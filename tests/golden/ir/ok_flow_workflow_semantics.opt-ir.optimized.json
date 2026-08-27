@@ -5,7 +5,7 @@
     {
       "scope": "workflow::formal::flow_workflow::ReviewWorkflow::safety::0",
       "kind": "running",
-      "reason": "temporal atom is not a pure expression fragment",
+      "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
         "begin": 1040,
         "end": 1055
@@ -14,7 +14,7 @@
     {
       "scope": "workflow::formal::flow_workflow::ReviewWorkflow::safety::0",
       "kind": "completed",
-      "reason": "temporal atom is not a pure expression fragment",
+      "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
         "begin": 1059,
         "end": 1075
@@ -23,7 +23,7 @@
     {
       "scope": "workflow::formal::flow_workflow::ReviewWorkflow::safety::1",
       "kind": "running",
-      "reason": "temporal atom is not a pure expression fragment",
+      "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
         "begin": 1102,
         "end": 1116
@@ -32,7 +32,7 @@
     {
       "scope": "workflow::formal::flow_workflow::ReviewWorkflow::liveness::0",
       "kind": "completed",
-      "reason": "temporal atom is not a pure expression fragment",
+      "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
         "begin": 1170,
         "end": 1193

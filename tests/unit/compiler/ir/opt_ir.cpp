@@ -338,6 +338,90 @@ TEST_CASE("lower_to_opt covers contract and workflow expression fragments") {
     CHECK(!verification.has_errors());
 }
 
+// KR5.12: the four temporal *atoms* (called / in_state / running / completed)
+// are a documented, bounded exemption from opt-IR functionalization — each is
+// recorded as an observable SkippedTemporalFragment rather than silently
+// dropped, while an embedded Bool expression nested inside a temporal operator
+// is still functionalized. This test pins the full exemption surface: all four
+// atom kinds are recorded (proving none is silently skipped), the exemption is
+// bounded (a nested embedded expr still becomes an OptFunction), and the
+// program still verifies.
+TEST_CASE("lower_to_opt records all four temporal atoms as bounded exemptions") {
+    ahfl::ir::Program program;
+
+    ahfl::ir::WorkflowDecl workflow;
+    workflow.name = "pkg::W";
+    workflow.symbol_ref.kind = ahfl::ir::SymbolRefKind::Workflow;
+    workflow.symbol_ref.canonical_name = "pkg::W";
+    workflow.input_type_ref = struct_type("pkg::Request");
+    workflow.output_type_ref = struct_type("pkg::Response");
+    workflow.return_value = make_bool_expr(program, true, 5, 9, 1);
+
+    // safety[0]: called(...)
+    workflow.safety.push_back(
+        make_temporal(ahfl::ir::CalledTemporalExpr{.capability = "Audit"}, 10, 20));
+    // safety[1]: in_state(...)
+    workflow.safety.push_back(
+        make_temporal(ahfl::ir::InStateTemporalExpr{.state = "Processing"}, 21, 31));
+    // liveness[0]: running(...)
+    workflow.liveness.push_back(
+        make_temporal(ahfl::ir::RunningTemporalExpr{.node = "run"}, 32, 42));
+    // liveness[1]: completed(...) nested inside `always(...)` — the unary
+    // operator recurses, and the completed atom is still recorded.
+    workflow.liveness.push_back(make_temporal(
+        ahfl::ir::TemporalUnaryExpr{
+            .op = ahfl::ir::TemporalUnaryOp::Always,
+            .operand = make_temporal(
+                ahfl::ir::CompletedTemporalExpr{.node = "run", .state_name = std::string{"Done"}},
+                43,
+                53),
+        },
+        43,
+        55));
+    // liveness[2]: a binary temporal whose lhs is an embedded Bool expr (still
+    // functionalized) and whose rhs is a running atom (recorded) — proves the
+    // exemption is bounded, not a blanket skip of anything temporal.
+    workflow.liveness.push_back(make_temporal(
+        ahfl::ir::TemporalBinaryExpr{
+            .op = ahfl::ir::TemporalBinaryOp::Implies,
+            .lhs = make_temporal(
+                ahfl::ir::EmbeddedTemporalExpr{.expr = make_bool_expr(program, true, 60, 64, 2)},
+                60,
+                64),
+            .rhs = make_temporal(ahfl::ir::RunningTemporalExpr{.node = "run"}, 65, 75),
+        },
+        60,
+        75));
+    program.declarations.push_back(std::move(workflow));
+
+    const auto opt = ahfl::ir::opt::lower_to_opt(program);
+
+    // Collect the recorded atom kinds.
+    std::vector<std::string> kinds;
+    for (const auto &fragment : opt.skipped_temporal_fragments) {
+        kinds.push_back(fragment.kind);
+        CHECK(!fragment.scope.empty());
+        CHECK(!fragment.reason.empty());
+    }
+    const auto has_kind = [&](std::string_view k) {
+        return std::find(kinds.begin(), kinds.end(), k) != kinds.end();
+    };
+    CHECK(has_kind("called"));
+    CHECK(has_kind("in_state"));
+    CHECK(has_kind("running"));
+    CHECK(has_kind("completed"));
+    // running appears twice (liveness[0] and the binary rhs).
+    CHECK(std::count(kinds.begin(), kinds.end(), std::string{"running"}) == 2);
+
+    // Bounded exemption: the embedded Bool inside the binary was functionalized.
+    // (liveness clauses: 0=running, 1=always(completed), 2=binary(embedded, running).)
+    const auto *embedded = find_function(opt, "workflow::pkg::W::liveness::2::embedded::0");
+    CHECK(embedded != nullptr);
+
+    const auto verification = ahfl::ir::opt::verify_opt_program(opt);
+    CHECK(!verification.has_errors());
+}
+
 TEST_CASE("lower_to_opt preserves if-let match and payload extraction") {
     ahfl::ir::Program program;
     ahfl::ir::SymbolRef agent_ref;

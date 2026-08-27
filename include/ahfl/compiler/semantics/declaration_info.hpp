@@ -407,6 +407,13 @@ struct TraitMethodInfo {
     // scope, stamped onto every TypeVar in this method's signature. Allocated
     // per trait by TypeCheckPass (shared by the trait's methods).
     std::uint32_t type_param_scope_id{kUnknownTypeVarScopeId};
+    // KR5.1 / RFC 0013 P2-S1 (R0.1): per-method scope id for method-level type
+    // params declared on a trait method (e.g. `fn fold<U>` / `fn map<A>`).
+    // Method-level TypeVars (index >= the trait's self-augmented tparam count)
+    // carry this scope id instead of the trait-wide type_param_scope_id, so
+    // same-named method-level params across a trait's methods stay distinct.
+    // kUnknownTypeVarScopeId for methods without method-level type params.
+    std::uint32_t method_scope_id{kUnknownTypeVarScopeId};
     FnEffectClauseInfo effect;
     SourceRange declaration_range;
 };

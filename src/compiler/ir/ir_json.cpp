@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -13,6 +14,8 @@
 #include <vector>
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/base/support/ownership.hpp"
+#include "base/json/json_value.hpp"
 #include "base/support/json.hpp"
 
 namespace ahfl {
@@ -2098,6 +2101,1143 @@ void emit_program_ir_json(const SourceGraph &graph,
                           const TypeCheckResult &type_check_result,
                           std::ostream &out) {
     print_program_ir_json(lower_program_ir(graph, resolve_result, type_check_result), out);
+}
+
+namespace {
+
+// ----------------------------------------------------------------------------
+// KR5.9: IR JSON deserializer. Mirrors IrJsonPrinter exactly (same schema,
+// co-located so the two stay in sync). Every parse helper propagates failure
+// through the shared `ok_` flag; the top-level parse returns nullopt if any
+// required field is missing or malformed. Expressions are rebuilt bottom-up
+// into program.expr_arena; derived analyses are recomputed after load.
+// ----------------------------------------------------------------------------
+
+using ahfl::json::JsonValue;
+
+// Reverse enum lookups. Each returns false and leaves the out-param untouched
+// when the string is unrecognized (caller flags the error).
+[[nodiscard]] bool parse_path_root_kind(std::string_view s, ir::PathRootKind &out) {
+    if (s == "identifier") { out = ir::PathRootKind::Identifier; return true; }
+    if (s == "input") { out = ir::PathRootKind::Input; return true; }
+    if (s == "context") { out = ir::PathRootKind::Context; return true; }
+    if (s == "output") { out = ir::PathRootKind::Output; return true; }
+    if (s == "state") { out = ir::PathRootKind::State; return true; }
+    if (s == "local") { out = ir::PathRootKind::Local; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_expr_unary_op(std::string_view s, ir::ExprUnaryOp &out) {
+    if (s == "not") { out = ir::ExprUnaryOp::Not; return true; }
+    if (s == "negate") { out = ir::ExprUnaryOp::Negate; return true; }
+    if (s == "positive") { out = ir::ExprUnaryOp::Positive; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_expr_binary_op(std::string_view s, ir::ExprBinaryOp &out) {
+    if (s == "implies") { out = ir::ExprBinaryOp::Implies; return true; }
+    if (s == "or") { out = ir::ExprBinaryOp::Or; return true; }
+    if (s == "and") { out = ir::ExprBinaryOp::And; return true; }
+    if (s == "equal") { out = ir::ExprBinaryOp::Equal; return true; }
+    if (s == "not_equal") { out = ir::ExprBinaryOp::NotEqual; return true; }
+    if (s == "less") { out = ir::ExprBinaryOp::Less; return true; }
+    if (s == "less_equal") { out = ir::ExprBinaryOp::LessEqual; return true; }
+    if (s == "greater") { out = ir::ExprBinaryOp::Greater; return true; }
+    if (s == "greater_equal") { out = ir::ExprBinaryOp::GreaterEqual; return true; }
+    if (s == "add") { out = ir::ExprBinaryOp::Add; return true; }
+    if (s == "subtract") { out = ir::ExprBinaryOp::Subtract; return true; }
+    if (s == "multiply") { out = ir::ExprBinaryOp::Multiply; return true; }
+    if (s == "divide") { out = ir::ExprBinaryOp::Divide; return true; }
+    if (s == "modulo") { out = ir::ExprBinaryOp::Modulo; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_temporal_unary_op(std::string_view s, ir::TemporalUnaryOp &out) {
+    if (s == "always") { out = ir::TemporalUnaryOp::Always; return true; }
+    if (s == "eventually") { out = ir::TemporalUnaryOp::Eventually; return true; }
+    if (s == "next") { out = ir::TemporalUnaryOp::Next; return true; }
+    if (s == "not") { out = ir::TemporalUnaryOp::Not; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_temporal_binary_op(std::string_view s, ir::TemporalBinaryOp &out) {
+    if (s == "implies") { out = ir::TemporalBinaryOp::Implies; return true; }
+    if (s == "or") { out = ir::TemporalBinaryOp::Or; return true; }
+    if (s == "and") { out = ir::TemporalBinaryOp::And; return true; }
+    if (s == "until") { out = ir::TemporalBinaryOp::Until; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_contract_clause_kind(std::string_view s, ir::ContractClauseKind &out) {
+    if (s == "requires") { out = ir::ContractClauseKind::Requires; return true; }
+    if (s == "ensures") { out = ir::ContractClauseKind::Ensures; return true; }
+    if (s == "invariant") { out = ir::ContractClauseKind::Invariant; return true; }
+    if (s == "forbid") { out = ir::ContractClauseKind::Forbid; return true; }
+    if (s == "decreases") { out = ir::ContractClauseKind::Decreases; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_symbol_ref_kind(std::string_view s, ir::SymbolRefKind &out) {
+    if (s == "unknown") { out = ir::SymbolRefKind::Unknown; return true; }
+    if (s == "type") { out = ir::SymbolRefKind::Type; return true; }
+    if (s == "const") { out = ir::SymbolRefKind::Const; return true; }
+    if (s == "capability") { out = ir::SymbolRefKind::Capability; return true; }
+    if (s == "predicate") { out = ir::SymbolRefKind::Predicate; return true; }
+    if (s == "agent") { out = ir::SymbolRefKind::Agent; return true; }
+    if (s == "workflow") { out = ir::SymbolRefKind::Workflow; return true; }
+    if (s == "function") { out = ir::SymbolRefKind::Function; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_type_ref_kind(std::string_view s, ir::TypeRefKind &out) {
+    if (s == "unresolved") { out = ir::TypeRefKind::Unresolved; return true; }
+    if (s == "any") { out = ir::TypeRefKind::Any; return true; }
+    if (s == "never") { out = ir::TypeRefKind::Never; return true; }
+    if (s == "unit") { out = ir::TypeRefKind::Unit; return true; }
+    if (s == "bool") { out = ir::TypeRefKind::Bool; return true; }
+    if (s == "int") { out = ir::TypeRefKind::Int; return true; }
+    if (s == "bounded_int") { out = ir::TypeRefKind::BoundedInt; return true; }
+    if (s == "float") { out = ir::TypeRefKind::Float; return true; }
+    if (s == "string") { out = ir::TypeRefKind::String; return true; }
+    if (s == "bounded_string") { out = ir::TypeRefKind::BoundedString; return true; }
+    if (s == "uuid") { out = ir::TypeRefKind::UUID; return true; }
+    if (s == "timestamp") { out = ir::TypeRefKind::Timestamp; return true; }
+    if (s == "duration") { out = ir::TypeRefKind::Duration; return true; }
+    if (s == "decimal") { out = ir::TypeRefKind::Decimal; return true; }
+    if (s == "struct") { out = ir::TypeRefKind::Struct; return true; }
+    if (s == "enum") { out = ir::TypeRefKind::Enum; return true; }
+    if (s == "fn") { out = ir::TypeRefKind::Fn; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_enum_variant_payload_kind(std::string_view s,
+                                                   ir::EnumVariantPayloadKind &out) {
+    if (s == "unit") { out = ir::EnumVariantPayloadKind::Unit; return true; }
+    if (s == "tuple") { out = ir::EnumVariantPayloadKind::Tuple; return true; }
+    if (s == "struct") { out = ir::EnumVariantPayloadKind::Struct; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_capability_effect_kind(std::string_view s, ir::CapabilityEffectKind &out) {
+    if (s == "unknown") { out = ir::CapabilityEffectKind::Unknown; return true; }
+    if (s == "read") { out = ir::CapabilityEffectKind::Read; return true; }
+    if (s == "external_side_effect") { out = ir::CapabilityEffectKind::ExternalSideEffect; return true; }
+    if (s == "durable_write") { out = ir::CapabilityEffectKind::DurableWrite; return true; }
+    if (s == "financial_write") { out = ir::CapabilityEffectKind::FinancialWrite; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_capability_receipt_mode(std::string_view s,
+                                                 ir::CapabilityReceiptMode &out) {
+    if (s == "none") { out = ir::CapabilityReceiptMode::None; return true; }
+    if (s == "optional") { out = ir::CapabilityReceiptMode::Optional; return true; }
+    if (s == "required") { out = ir::CapabilityReceiptMode::Required; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_capability_retry_mode(std::string_view s, ir::CapabilityRetryMode &out) {
+    if (s == "unsafe") { out = ir::CapabilityRetryMode::Unsafe; return true; }
+    if (s == "safe_if_idempotent") { out = ir::CapabilityRetryMode::SafeIfIdempotent; return true; }
+    if (s == "safe") { out = ir::CapabilityRetryMode::Safe; return true; }
+    return false;
+}
+
+[[nodiscard]] bool parse_expr_effect(std::string_view s, ExprEffect &out) {
+    if (s == "pure") { out = ExprEffect::Pure; return true; }
+    if (s == "const_only") { out = ExprEffect::ConstOnly; return true; }
+    if (s == "predicate_call") { out = ExprEffect::PredicateCall; return true; }
+    if (s == "nondet") { out = ExprEffect::Nondet; return true; }
+    if (s == "capability_call") { out = ExprEffect::CapabilityCall; return true; }
+    if (s == "external_effect") { out = ExprEffect::ExternalEffect; return true; }
+    if (s == "unknown") { out = ExprEffect::Unknown; return true; }
+    return false;
+}
+
+class IrJsonReader final {
+  public:
+    explicit IrJsonReader(ir::Program &program) : program_(&program) {}
+
+    [[nodiscard]] bool ok() const noexcept { return ok_; }
+
+    void fail() { ok_ = false; }
+
+    // --- primitive field readers -------------------------------------------
+
+    [[nodiscard]] std::string req_string(const JsonValue &obj, std::string_view key) {
+        const auto *field = obj.get(key);
+        if (field == nullptr) { fail(); return {}; }
+        const auto value = field->as_string();
+        if (!value.has_value()) { fail(); return {}; }
+        return std::string(*value);
+    }
+
+    [[nodiscard]] std::string opt_string(const JsonValue &obj, std::string_view key,
+                                         std::string fallback = {}) {
+        const auto *field = obj.get(key);
+        if (field == nullptr) { return fallback; }
+        const auto value = field->as_string();
+        if (!value.has_value()) { fail(); return {}; }
+        return std::string(*value);
+    }
+
+    [[nodiscard]] bool opt_bool(const JsonValue &obj, std::string_view key, bool fallback = false) {
+        const auto *field = obj.get(key);
+        if (field == nullptr) { return fallback; }
+        const auto value = field->as_bool();
+        if (!value.has_value()) { fail(); return fallback; }
+        return *value;
+    }
+
+    [[nodiscard]] std::int64_t req_i64(const JsonValue &obj, std::string_view key) {
+        const auto *field = obj.get(key);
+        if (field == nullptr) { fail(); return 0; }
+        const auto value = field->as_int();
+        if (!value.has_value()) { fail(); return 0; }
+        return *value;
+    }
+
+    [[nodiscard]] std::vector<std::string> string_array(const JsonValue &obj,
+                                                        std::string_view key) {
+        std::vector<std::string> result;
+        const auto *field = obj.get(key);
+        if (field == nullptr) { return result; }
+        if (!field->is_array()) { fail(); return result; }
+        for (const auto &item : field->array_items) {
+            const auto value = item->as_string();
+            if (!value.has_value()) { fail(); return result; }
+            result.emplace_back(*value);
+        }
+        return result;
+    }
+
+    // --- shared structural readers -----------------------------------------
+
+    [[nodiscard]] ir::SourceRangeOpt source_range(const JsonValue &obj) {
+        const auto *field = obj.get("source_range");
+        if (field == nullptr || !field->is_object()) { return std::nullopt; }
+        SourceRange range{};
+        range.begin_offset = static_cast<std::size_t>(req_i64(*field, "begin_offset"));
+        range.end_offset = static_cast<std::size_t>(req_i64(*field, "end_offset"));
+        return range;
+    }
+
+    [[nodiscard]] ir::DeclarationProvenance provenance(const JsonValue &obj) {
+        ir::DeclarationProvenance prov;
+        const auto *field = obj.get("provenance");
+        if (field == nullptr || !field->is_object()) { return prov; }
+        prov.module_name = req_string(*field, "module_name");
+        prov.source_path = req_string(*field, "source_path");
+        prov.source_range = source_range(*field);
+        return prov;
+    }
+
+    [[nodiscard]] ir::SymbolRef symbol_ref(const JsonValue &obj) {
+        ir::SymbolRef ref;
+        if (!obj.is_object()) { fail(); return ref; }
+        const auto kind_str = req_string(obj, "kind");
+        if (!parse_symbol_ref_kind(kind_str, ref.kind)) { fail(); }
+        ref.canonical_name = req_string(obj, "canonical_name");
+        ref.local_name = opt_string(obj, "local_name");
+        ref.module_name = opt_string(obj, "module_name");
+        if (const auto *id = obj.get("id"); id != nullptr) {
+            const auto value = id->as_int();
+            if (!value.has_value()) { fail(); } else {
+                ref.id = static_cast<std::size_t>(*value);
+            }
+        }
+        return ref;
+    }
+
+    // Optional symbol_ref field; returns default-constructed when absent.
+    [[nodiscard]] ir::SymbolRef opt_symbol_ref(const JsonValue &obj, std::string_view key) {
+        const auto *field = obj.get(key);
+        if (field == nullptr) { return {}; }
+        return symbol_ref(*field);
+    }
+
+    [[nodiscard]] ir::TypeRef type_ref(const JsonValue &obj) {
+        ir::TypeRef ref;
+        if (!obj.is_object()) { fail(); return ref; }
+        const auto kind_str = req_string(obj, "kind");
+        if (!parse_type_ref_kind(kind_str, ref.kind)) { fail(); }
+        ref.display_name = req_string(obj, "display_name");
+        ref.canonical_name = opt_string(obj, "canonical_name");
+        ref.variant_name = opt_string(obj, "variant_name");
+        if (const auto *bounds = obj.get("int_bounds"); bounds != nullptr) {
+            ref.int_bounds = std::pair<std::int64_t, std::int64_t>{
+                req_i64(*bounds, "minimum"), req_i64(*bounds, "maximum")};
+        }
+        if (const auto *bounds = obj.get("string_bounds"); bounds != nullptr) {
+            ref.string_bounds = std::pair<std::int64_t, std::int64_t>{
+                req_i64(*bounds, "minimum"), req_i64(*bounds, "maximum")};
+        }
+        if (const auto *scale = obj.get("decimal_scale"); scale != nullptr) {
+            const auto value = scale->as_int();
+            if (!value.has_value()) { fail(); } else { ref.decimal_scale = *value; }
+        }
+        if (const auto *cap = obj.get("collection_capacity"); cap != nullptr) {
+            const auto value = cap->as_int();
+            if (!value.has_value()) { fail(); } else {
+                ref.collection_capacity = static_cast<std::uint64_t>(*value);
+            }
+        }
+        if (const auto *first = obj.get("element_type"); first != nullptr) {
+            ref.first = make_owned<ir::TypeRef>(type_ref(*first));
+        }
+        if (const auto *second = obj.get("value_type"); second != nullptr) {
+            ref.second = make_owned<ir::TypeRef>(type_ref(*second));
+        }
+        if (const auto *args = obj.get("type_args"); args != nullptr) {
+            if (!args->is_array()) { fail(); return ref; }
+            for (const auto &item : args->array_items) {
+                if (item->is_null()) {
+                    ref.params.push_back(nullptr);
+                } else {
+                    ref.params.push_back(make_owned<ir::TypeRef>(type_ref(*item)));
+                }
+            }
+        }
+        ref.source_range = source_range(obj);
+        return ref;
+    }
+
+    // Optional type_ref field; default-constructed when absent (kind stays
+    // Unresolved). Also seeds display_name from the paired display string so
+    // re-emit of the "type"/"return_type"/... field reproduces byte-identically
+    // even when the structured _ref object was omitted.
+    [[nodiscard]] ir::TypeRef opt_type_ref(const JsonValue &obj, std::string_view ref_key,
+                                           std::string_view display_key) {
+        const auto *field = obj.get(ref_key);
+        if (field != nullptr) { return type_ref(*field); }
+        ir::TypeRef ref;
+        if (!display_key.empty()) {
+            const auto *display = obj.get(display_key);
+            if (display != nullptr) {
+                const auto value = display->as_string();
+                if (value.has_value() && *value != "Any") {
+                    // "Any" is the emitter's fallback for an empty ref; keep the
+                    // ref empty in that case so has_type_ref() stays false.
+                    ref.display_name = std::string(*value);
+                }
+            }
+        }
+        return ref;
+    }
+
+    [[nodiscard]] ir::Path path(const JsonValue &obj) {
+        ir::Path result;
+        if (!obj.is_object()) { fail(); return result; }
+        if (!parse_path_root_kind(req_string(obj, "root_kind"), result.root_kind)) { fail(); }
+        result.root_name = req_string(obj, "root_name");
+        result.members = string_array(obj, "members");
+        return result;
+    }
+
+    // --- expression readers ------------------------------------------------
+
+    // Parse an expr JSON object into the arena, returning its handle.
+    [[nodiscard]] ir::ExprRef expr(const JsonValue &obj) {
+        if (!obj.is_object()) { fail(); return nullptr; }
+        const auto kind = req_string(obj, "kind");
+        ir::ExprNode node = build_expr_node(obj, kind);
+
+        const auto id = static_cast<std::uint32_t>(req_i64(obj, "id"));
+        ExprEffect effect = ExprEffect::Unknown;
+        if (!parse_expr_effect(req_string(obj, "effect"), effect)) { fail(); }
+        auto range = source_range(obj);
+        ir::TypeRef resolved;
+        if (const auto *rt = obj.get("resolved_type"); rt != nullptr) {
+            resolved = type_ref(*rt);
+        }
+        return program_->expr_arena.make(std::move(node), std::move(range), std::move(resolved), id,
+                                         effect);
+    }
+
+    // Optional expr field; returns null ExprRef when absent or JSON null.
+    [[nodiscard]] ir::ExprRef opt_expr(const JsonValue &obj, std::string_view key) {
+        const auto *field = obj.get(key);
+        if (field == nullptr || field->is_null()) { return nullptr; }
+        return expr(*field);
+    }
+
+    [[nodiscard]] ir::ExprNode build_expr_node(const JsonValue &obj, std::string_view kind) {
+        if (kind == "bool_literal") {
+            return ir::BoolLiteralExpr{.value = opt_bool(obj, "value")};
+        }
+        if (kind == "integer_literal") {
+            return ir::IntegerLiteralExpr{.spelling = req_string(obj, "spelling")};
+        }
+        if (kind == "float_literal") {
+            return ir::FloatLiteralExpr{.spelling = req_string(obj, "spelling")};
+        }
+        if (kind == "decimal_literal") {
+            return ir::DecimalLiteralExpr{.spelling = req_string(obj, "spelling")};
+        }
+        if (kind == "string_literal") {
+            return ir::StringLiteralExpr{.spelling = req_string(obj, "spelling")};
+        }
+        if (kind == "duration_literal") {
+            return ir::DurationLiteralExpr{.spelling = req_string(obj, "spelling")};
+        }
+        if (kind == "path") {
+            const auto *p = obj.get("path");
+            if (p == nullptr) { fail(); return ir::UnitLiteralExpr{}; }
+            return ir::PathExpr{.path = path(*p)};
+        }
+        if (kind == "qualified_value") {
+            return ir::QualifiedValueExpr{.value = req_string(obj, "value")};
+        }
+        if (kind == "call") {
+            ir::CallExpr call;
+            call.callee = req_string(obj, "callee");
+            if (const auto *cref = obj.get("callee_ref"); cref != nullptr) {
+                call.callee_ref = symbol_ref(*cref);
+            }
+            const auto *args = obj.get("arguments");
+            if (args == nullptr || !args->is_array()) { fail(); return call; }
+            for (const auto &item : args->array_items) {
+                call.arguments.push_back(expr(*item));
+            }
+            return call;
+        }
+        if (kind == "lambda") {
+            ir::LambdaExpr lambda;
+            lambda.params = string_array(obj, "params");
+            lambda.captures = string_array(obj, "captures");
+            lambda.body = opt_expr(obj, "body");
+            return lambda;
+        }
+        if (kind == "struct_literal") {
+            ir::StructLiteralExpr lit;
+            lit.type_name = req_string(obj, "type_name");
+            lit.is_enum_variant = opt_bool(obj, "is_enum_variant");
+            lit.enum_name = opt_string(obj, "enum_name");
+            lit.variant_name = opt_string(obj, "variant_name");
+            const auto *fields = obj.get("fields");
+            if (fields == nullptr || !fields->is_array()) { fail(); return lit; }
+            for (const auto &item : fields->array_items) {
+                ir::StructFieldInit init;
+                init.name = req_string(*item, "name");
+                init.value = opt_expr(*item, "value");
+                lit.fields.push_back(std::move(init));
+            }
+            return lit;
+        }
+        if (kind == "unary") {
+            ir::UnaryExpr unary;
+            if (!parse_expr_unary_op(req_string(obj, "op"), unary.op)) { fail(); }
+            unary.operand = opt_expr(obj, "operand");
+            return unary;
+        }
+        if (kind == "binary") {
+            ir::BinaryExpr binary;
+            if (!parse_expr_binary_op(req_string(obj, "op"), binary.op)) { fail(); }
+            binary.lhs = opt_expr(obj, "lhs");
+            binary.rhs = opt_expr(obj, "rhs");
+            return binary;
+        }
+        if (kind == "member_access") {
+            ir::MemberAccessExpr access;
+            access.base = opt_expr(obj, "base");
+            access.member = req_string(obj, "member");
+            return access;
+        }
+        if (kind == "index_access") {
+            ir::IndexAccessExpr access;
+            access.base = opt_expr(obj, "base");
+            access.index = opt_expr(obj, "index");
+            return access;
+        }
+        if (kind == "match") {
+            ir::MatchExpr match;
+            match.scrutinee = opt_expr(obj, "scrutinee");
+            const auto *arms = obj.get("arms");
+            if (arms == nullptr || !arms->is_array()) { fail(); return match; }
+            for (const auto &item : arms->array_items) {
+                ir::MatchArmExpr arm;
+                const auto *pattern = item->get("pattern");
+                if (pattern == nullptr) { fail(); } else {
+                    arm.pattern = match_pattern(*pattern);
+                }
+                arm.guard = opt_expr(*item, "guard");
+                arm.body = opt_expr(*item, "body");
+                match.arms.push_back(std::move(arm));
+            }
+            return match;
+        }
+        if (kind == "unwrap") {
+            ir::UnwrapExpr unwrap;
+            unwrap.operand = opt_expr(obj, "operand");
+            unwrap.fallback_none_message = opt_expr(obj, "fallback_none_message");
+            return unwrap;
+        }
+        if (kind == "unit_literal") {
+            return ir::UnitLiteralExpr{};
+        }
+        if (kind == "quantifier") {
+            ir::QuantifierExpr quant;
+            quant.kind = req_string(obj, "quantifier") == "exists"
+                             ? ir::QuantifierExpr::Kind::Exists
+                             : ir::QuantifierExpr::Kind::ForAll;
+            quant.binder = req_string(obj, "binder");
+            quant.value_binder = req_string(obj, "value_binder");
+            quant.collection = opt_expr(obj, "collection");
+            quant.body = opt_expr(obj, "body");
+            return quant;
+        }
+        fail();
+        return ir::UnitLiteralExpr{};
+    }
+
+    // --- match patterns ----------------------------------------------------
+
+    [[nodiscard]] ir::MatchPattern match_pattern(const JsonValue &obj) {
+        ir::MatchPattern pattern;
+        if (!obj.is_object()) { fail(); return pattern; }
+        const auto kind = req_string(obj, "kind");
+        pattern.text = req_string(obj, "text");
+        pattern.source_range = source_range(obj);
+        pattern.node = build_pattern_node(obj, kind);
+        return pattern;
+    }
+
+    [[nodiscard]] Owned<ir::MatchPattern> opt_pattern_ptr(const JsonValue &item) {
+        if (item.is_null()) { return nullptr; }
+        return make_owned<ir::MatchPattern>(match_pattern(item));
+    }
+
+    [[nodiscard]] std::vector<Owned<ir::MatchPattern>> pattern_ptr_array(const JsonValue &obj,
+                                                                         std::string_view key) {
+        std::vector<Owned<ir::MatchPattern>> result;
+        const auto *field = obj.get(key);
+        if (field == nullptr || !field->is_array()) { return result; }
+        for (const auto &item : field->array_items) {
+            result.push_back(opt_pattern_ptr(*item));
+        }
+        return result;
+    }
+
+    [[nodiscard]] ir::MatchPatternNode build_pattern_node(const JsonValue &obj,
+                                                          std::string_view kind) {
+        if (kind == "literal") {
+            return ir::LiteralPattern{.spelling = req_string(obj, "spelling")};
+        }
+        if (kind == "int_range") {
+            return ir::IntRangePattern{.start = req_i64(obj, "start"), .end = req_i64(obj, "end")};
+        }
+        if (kind == "variant") {
+            ir::VariantPattern variant;
+            variant.path = req_string(obj, "path");
+            const auto payload_kind = req_string(obj, "payload_kind");
+            if (payload_kind == "unit") { variant.kind = ir::VariantPatternKind::Unit; }
+            else if (payload_kind == "tuple") { variant.kind = ir::VariantPatternKind::Tuple; }
+            else if (payload_kind == "struct") { variant.kind = ir::VariantPatternKind::Struct; }
+            else { fail(); }
+            variant.subpatterns = pattern_ptr_array(obj, "subpatterns");
+            const auto *fields = obj.get("fields");
+            if (fields != nullptr && fields->is_array()) {
+                for (const auto &item : fields->array_items) {
+                    ir::VariantPatternField field;
+                    field.name = req_string(*item, "name");
+                    field.is_rest = opt_bool(*item, "is_rest");
+                    const auto *pat = item->get("pattern");
+                    if (pat != nullptr) { field.pattern = opt_pattern_ptr(*pat); }
+                    variant.fields.push_back(std::move(field));
+                }
+            }
+            return variant;
+        }
+        if (kind == "wildcard") {
+            return ir::WildcardPattern{};
+        }
+        if (kind == "binding") {
+            ir::BindingPattern binding;
+            binding.name = req_string(obj, "name");
+            binding.is_mut = opt_bool(obj, "is_mut");
+            const auto *nested = obj.get("nested");
+            if (nested != nullptr) { binding.nested = opt_pattern_ptr(*nested); }
+            return binding;
+        }
+        if (kind == "tuple") {
+            return ir::TuplePattern{.elements = pattern_ptr_array(obj, "elements")};
+        }
+        if (kind == "or") {
+            return ir::OrPattern{.branches = pattern_ptr_array(obj, "branches")};
+        }
+        fail();
+        return ir::WildcardPattern{};
+    }
+
+    // --- temporal expressions ----------------------------------------------
+
+    [[nodiscard]] Owned<ir::TemporalExpr> temporal_expr(const JsonValue &obj) {
+        auto result = make_owned<ir::TemporalExpr>();
+        if (!obj.is_object()) { fail(); return result; }
+        const auto kind = req_string(obj, "kind");
+        result->source_range = source_range(obj);
+        if (kind == "embedded_expr") {
+            result->node = ir::EmbeddedTemporalExpr{.expr = opt_expr(obj, "expr")};
+        } else if (kind == "called") {
+            result->node = ir::CalledTemporalExpr{.capability = req_string(obj, "capability")};
+        } else if (kind == "in_state") {
+            result->node = ir::InStateTemporalExpr{.state = req_string(obj, "state")};
+        } else if (kind == "running") {
+            result->node = ir::RunningTemporalExpr{.node = req_string(obj, "node")};
+        } else if (kind == "completed") {
+            ir::CompletedTemporalExpr completed;
+            completed.node = req_string(obj, "node");
+            const auto *state = obj.get("state_name");
+            if (state != nullptr && !state->is_null()) {
+                const auto value = state->as_string();
+                if (!value.has_value()) { fail(); } else { completed.state_name = std::string(*value); }
+            }
+            result->node = std::move(completed);
+        } else if (kind == "unary") {
+            ir::TemporalUnaryExpr unary;
+            if (!parse_temporal_unary_op(req_string(obj, "op"), unary.op)) { fail(); }
+            const auto *operand = obj.get("operand");
+            if (operand == nullptr) { fail(); } else { unary.operand = temporal_expr(*operand); }
+            result->node = std::move(unary);
+        } else if (kind == "binary") {
+            ir::TemporalBinaryExpr binary;
+            if (!parse_temporal_binary_op(req_string(obj, "op"), binary.op)) { fail(); }
+            const auto *lhs = obj.get("lhs");
+            const auto *rhs = obj.get("rhs");
+            if (lhs == nullptr || rhs == nullptr) { fail(); } else {
+                binary.lhs = temporal_expr(*lhs);
+                binary.rhs = temporal_expr(*rhs);
+            }
+            result->node = std::move(binary);
+        } else {
+            fail();
+        }
+        return result;
+    }
+
+    // --- statements & blocks -----------------------------------------------
+
+    [[nodiscard]] Owned<ir::Statement> statement(const JsonValue &obj) {
+        auto result = make_owned<ir::Statement>();
+        if (!obj.is_object()) { fail(); return result; }
+        const auto kind = req_string(obj, "kind");
+        result->source_range = source_range(obj);
+        if (kind == "let") {
+            ir::LetStatement let;
+            let.name = req_string(obj, "name");
+            let.type_ref = opt_type_ref(obj, "type_ref", "type");
+            let.initializer = opt_expr(obj, "initializer");
+            result->node = std::move(let);
+        } else if (kind == "assign") {
+            ir::AssignStatement assign;
+            const auto *target = obj.get("target");
+            if (target == nullptr) { fail(); } else { assign.target = path(*target); }
+            assign.value = opt_expr(obj, "value");
+            result->node = std::move(assign);
+        } else if (kind == "if") {
+            ir::IfStatement stmt;
+            stmt.condition = opt_expr(obj, "condition");
+            stmt.then_block = req_block_ptr(obj, "then_block");
+            stmt.else_block = opt_block_ptr(obj, "else_block");
+            result->node = std::move(stmt);
+        } else if (kind == "if_let") {
+            ir::IfLetStatement stmt;
+            const auto *pattern = obj.get("pattern");
+            if (pattern == nullptr) { fail(); } else { stmt.pattern = match_pattern(*pattern); }
+            stmt.scrutinee = opt_expr(obj, "scrutinee");
+            stmt.then_block = req_block_ptr(obj, "then_block");
+            stmt.else_block = opt_block_ptr(obj, "else_block");
+            result->node = std::move(stmt);
+        } else if (kind == "goto") {
+            result->node = ir::GotoStatement{.target_state = req_string(obj, "target_state")};
+        } else if (kind == "return") {
+            result->node = ir::ReturnStatement{.value = opt_expr(obj, "value")};
+        } else if (kind == "assert") {
+            ir::AssertStatement stmt;
+            stmt.condition = opt_expr(obj, "condition");
+            stmt.message = opt_expr(obj, "message");
+            result->node = std::move(stmt);
+        } else if (kind == "unwrap") {
+            result->node = ir::UnwrapStatement{.operand = opt_expr(obj, "operand")};
+        } else if (kind == "requires") {
+            ir::RequiresStatement stmt;
+            stmt.condition = opt_expr(obj, "condition");
+            stmt.message = opt_expr(obj, "message");
+            result->node = std::move(stmt);
+        } else if (kind == "unreachable") {
+            result->node = ir::UnreachableStatement{.message = opt_expr(obj, "message")};
+        } else if (kind == "expr") {
+            result->node = ir::ExprStatement{.expr = opt_expr(obj, "expr")};
+        } else {
+            fail();
+        }
+        return result;
+    }
+
+    [[nodiscard]] ir::Block block(const JsonValue &obj) {
+        ir::Block result;
+        if (!obj.is_object()) { fail(); return result; }
+        result.source_range = source_range(obj);
+        const auto *statements = obj.get("statements");
+        if (statements == nullptr || !statements->is_array()) { fail(); return result; }
+        for (const auto &item : statements->array_items) {
+            result.statements.push_back(statement(*item));
+        }
+        return result;
+    }
+
+    [[nodiscard]] Owned<ir::Block> req_block_ptr(const JsonValue &obj, std::string_view key) {
+        const auto *field = obj.get(key);
+        if (field == nullptr) { fail(); return make_owned<ir::Block>(); }
+        return make_owned<ir::Block>(block(*field));
+    }
+
+    [[nodiscard]] Owned<ir::Block> opt_block_ptr(const JsonValue &obj, std::string_view key) {
+        const auto *field = obj.get(key);
+        if (field == nullptr || field->is_null()) { return nullptr; }
+        return make_owned<ir::Block>(block(*field));
+    }
+
+    // --- params -------------------------------------------------------------
+
+    [[nodiscard]] std::vector<ir::ParamDecl> params(const JsonValue &obj, std::string_view key) {
+        std::vector<ir::ParamDecl> result;
+        const auto *field = obj.get(key);
+        if (field == nullptr) { return result; }
+        if (!field->is_array()) { fail(); return result; }
+        for (const auto &item : field->array_items) {
+            ir::ParamDecl param;
+            param.name = req_string(*item, "name");
+            param.type_ref = opt_type_ref(*item, "type_ref", "type");
+            param.source_range = source_range(*item);
+            result.push_back(std::move(param));
+        }
+        return result;
+    }
+
+    // --- declarations -------------------------------------------------------
+
+    [[nodiscard]] std::optional<ir::Decl> decl(const JsonValue &obj) {
+        if (!obj.is_object()) { fail(); return std::nullopt; }
+        const auto kind = req_string(obj, "kind");
+        if (kind == "module") {
+            ir::ModuleDecl d;
+            d.provenance = provenance(obj);
+            d.name = req_string(obj, "name");
+            return ir::Decl{std::move(d)};
+        }
+        if (kind == "import") {
+            ir::ImportDecl d;
+            d.provenance = provenance(obj);
+            d.path = req_string(obj, "path");
+            const auto *alias = obj.get("alias");
+            if (alias != nullptr && !alias->is_null()) {
+                const auto value = alias->as_string();
+                if (!value.has_value()) { fail(); } else { d.alias = std::string(*value); }
+            }
+            return ir::Decl{std::move(d)};
+        }
+        if (kind == "const") {
+            ir::ConstDecl d;
+            d.provenance = provenance(obj);
+            d.name = req_string(obj, "name");
+            d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+            d.type_ref = opt_type_ref(obj, "type_ref", "type");
+            d.value = opt_expr(obj, "value");
+            return ir::Decl{std::move(d)};
+        }
+        if (kind == "type_alias") {
+            ir::TypeAliasDecl d;
+            d.provenance = provenance(obj);
+            d.name = req_string(obj, "name");
+            d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+            d.aliased_type_ref = opt_type_ref(obj, "aliased_type_ref", "aliased_type");
+            return ir::Decl{std::move(d)};
+        }
+        if (kind == "struct") {
+            ir::StructDecl d;
+            d.provenance = provenance(obj);
+            d.name = req_string(obj, "name");
+            d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+            const auto *fields = obj.get("fields");
+            if (fields != nullptr && fields->is_array()) {
+                for (const auto &item : fields->array_items) {
+                    ir::FieldDecl field;
+                    field.name = req_string(*item, "name");
+                    field.type_ref = opt_type_ref(*item, "type_ref", "type");
+                    field.source_range = source_range(*item);
+                    field.default_value = opt_expr(*item, "default_value");
+                    d.fields.push_back(std::move(field));
+                }
+            }
+            return ir::Decl{std::move(d)};
+        }
+        if (kind == "enum") {
+            return enum_decl(obj);
+        }
+        if (kind == "capability") {
+            ir::CapabilityDecl d;
+            d.provenance = provenance(obj);
+            d.name = req_string(obj, "name");
+            d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+            d.params = params(obj, "params");
+            d.return_type_ref = opt_type_ref(obj, "return_type_ref", "return_type");
+            if (const auto *effect = obj.get("effect"); effect != nullptr) {
+                d.effect = capability_effect(*effect);
+            }
+            return ir::Decl{std::move(d)};
+        }
+        if (kind == "predicate") {
+            ir::PredicateDecl d;
+            d.provenance = provenance(obj);
+            d.name = req_string(obj, "name");
+            d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+            d.params = params(obj, "params");
+            return ir::Decl{std::move(d)};
+        }
+        if (kind == "agent") {
+            return agent_decl(obj);
+        }
+        if (kind == "contract") {
+            return contract_decl(obj);
+        }
+        if (kind == "flow") {
+            return flow_decl(obj);
+        }
+        if (kind == "workflow") {
+            return workflow_decl(obj);
+        }
+        if (kind == "fn") {
+            return fn_decl(obj);
+        }
+        if (kind == "instance") {
+            return instance_decl(obj);
+        }
+        fail();
+        return std::nullopt;
+    }
+
+    [[nodiscard]] ir::CapabilityEffectSpec capability_effect(const JsonValue &obj) {
+        ir::CapabilityEffectSpec effect;
+        effect.declared = opt_bool(obj, "declared");
+        if (!parse_capability_effect_kind(req_string(obj, "kind"), effect.kind)) { fail(); }
+        if (!parse_capability_receipt_mode(req_string(obj, "receipt_mode"), effect.receipt_mode)) {
+            fail();
+        }
+        if (!parse_capability_retry_mode(req_string(obj, "retry_mode"), effect.retry_mode)) {
+            fail();
+        }
+        effect.domain = opt_nullable_string(obj, "domain");
+        effect.idempotency_key = opt_nullable_string(obj, "idempotency_key");
+        effect.timeout = opt_nullable_string(obj, "timeout");
+        effect.compensation = opt_nullable_string(obj, "compensation");
+        effect.policies = string_array(obj, "policies");
+        effect.source_range = source_range(obj);
+        return effect;
+    }
+
+    [[nodiscard]] std::optional<std::string> opt_nullable_string(const JsonValue &obj,
+                                                                std::string_view key) {
+        const auto *field = obj.get(key);
+        if (field == nullptr || field->is_null()) { return std::nullopt; }
+        const auto value = field->as_string();
+        if (!value.has_value()) { fail(); return std::nullopt; }
+        return std::string(*value);
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> enum_decl(const JsonValue &obj) {
+        ir::EnumDecl d;
+        d.provenance = provenance(obj);
+        d.name = req_string(obj, "name");
+        d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+        const auto *variants = obj.get("variants");
+        if (variants != nullptr && variants->is_array()) {
+            for (const auto &item : variants->array_items) {
+                ir::EnumVariantDecl variant;
+                variant.name = req_string(*item, "name");
+                if (!parse_enum_variant_payload_kind(req_string(*item, "payload_kind"),
+                                                     variant.payload_kind)) {
+                    fail();
+                }
+                variant.source_range = source_range(*item);
+                const auto *payload = item->get("payload");
+                if (payload != nullptr && payload->is_array()) {
+                    for (const auto &slot : payload->array_items) {
+                        variant.payload.push_back(opt_type_ref(*slot, "type_ref", "type"));
+                    }
+                }
+                const auto *fields = item->get("fields");
+                if (fields != nullptr && fields->is_array()) {
+                    for (const auto &field_obj : fields->array_items) {
+                        ir::EnumVariantFieldDecl field;
+                        field.name = req_string(*field_obj, "name");
+                        field.type_ref = opt_type_ref(*field_obj, "type_ref", "type");
+                        field.source_range = source_range(*field_obj);
+                        field.default_value = opt_expr(*field_obj, "default_value");
+                        variant.fields.push_back(std::move(field));
+                    }
+                }
+                d.variants.push_back(std::move(variant));
+            }
+        }
+        return ir::Decl{std::move(d)};
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> agent_decl(const JsonValue &obj) {
+        ir::AgentDecl d;
+        d.provenance = provenance(obj);
+        d.name = req_string(obj, "name");
+        d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+        d.input_type_ref = opt_type_ref(obj, "input_type_ref", "input_type");
+        d.context_type_ref = opt_type_ref(obj, "context_type_ref", "context_type");
+        d.output_type_ref = opt_type_ref(obj, "output_type_ref", "output_type");
+        d.states = string_array(obj, "states");
+        d.initial_state = req_string(obj, "initial_state");
+        d.final_states = string_array(obj, "final_states");
+        // The display-only "capabilities" string array is derived from
+        // capability_refs on emit; the authoritative refs live in
+        // "capability_refs" (omitted when empty).
+        if (const auto *refs = obj.get("capability_refs"); refs != nullptr && refs->is_array()) {
+            for (const auto &item : refs->array_items) {
+                d.capability_refs.push_back(symbol_ref(*item));
+            }
+        }
+        if (const auto *quota = obj.get("quota"); quota != nullptr && quota->is_array()) {
+            for (const auto &item : quota->array_items) {
+                d.quota.push_back(
+                    ir::QuotaItem{.name = req_string(*item, "name"),
+                                  .value = req_string(*item, "value")});
+            }
+        }
+        if (const auto *trans = obj.get("transitions"); trans != nullptr && trans->is_array()) {
+            for (const auto &item : trans->array_items) {
+                d.transitions.push_back(
+                    ir::TransitionDecl{.from_state = req_string(*item, "from_state"),
+                                       .to_state = req_string(*item, "to_state")});
+            }
+        }
+        return ir::Decl{std::move(d)};
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> contract_decl(const JsonValue &obj) {
+        ir::ContractDecl d;
+        d.provenance = provenance(obj);
+        d.target_ref = opt_symbol_ref(obj, "target_ref");
+        const auto *clauses = obj.get("clauses");
+        if (clauses != nullptr && clauses->is_array()) {
+            for (const auto &item : clauses->array_items) {
+                ir::ContractClause clause;
+                if (!parse_contract_clause_kind(req_string(*item, "kind"), clause.kind)) { fail(); }
+                clause.is_wildcard = opt_bool(*item, "wildcard");
+                clause.source_range = source_range(*item);
+                if (const auto *e = item->get("expr"); e != nullptr) {
+                    clause.value = expr(*e);
+                } else if (const auto *t = item->get("temporal"); t != nullptr) {
+                    clause.value = temporal_expr(*t);
+                }
+                if (const auto *dec = item->get("decreases"); dec != nullptr) {
+                    clause.decreases_wildcard = opt_bool(*dec, "wildcard");
+                    const auto *terms = dec->get("terms");
+                    if (terms != nullptr && terms->is_array()) {
+                        for (const auto &term : terms->array_items) {
+                            clause.decreases_terms.push_back(expr(*term));
+                        }
+                    }
+                }
+                d.clauses.push_back(std::move(clause));
+            }
+        }
+        return ir::Decl{std::move(d)};
+    }
+
+    [[nodiscard]] ir::StatePolicyItem state_policy_item(const JsonValue &obj) {
+        const auto kind = req_string(obj, "kind");
+        if (kind == "retry") {
+            return ir::RetryPolicy{.limit = req_string(obj, "limit")};
+        }
+        if (kind == "retry_on") {
+            return ir::RetryOnPolicy{.targets = string_array(obj, "targets")};
+        }
+        if (kind == "timeout") {
+            return ir::TimeoutPolicy{.duration = req_string(obj, "duration")};
+        }
+        fail();
+        return ir::RetryPolicy{};
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> flow_decl(const JsonValue &obj) {
+        ir::FlowDecl d;
+        d.provenance = provenance(obj);
+        d.target_ref = opt_symbol_ref(obj, "target_ref");
+        const auto *handlers = obj.get("state_handlers");
+        if (handlers != nullptr && handlers->is_array()) {
+            for (const auto &item : handlers->array_items) {
+                ir::StateHandler handler;
+                handler.state_name = req_string(*item, "state_name");
+                handler.source_range = source_range(*item);
+                if (const auto *policy = item->get("policy");
+                    policy != nullptr && policy->is_array()) {
+                    for (const auto &p : policy->array_items) {
+                        handler.policy.push_back(state_policy_item(*p));
+                    }
+                }
+                // "summary" is a derived analysis; recomputed after load.
+                const auto *body = item->get("body");
+                if (body == nullptr) { fail(); } else { handler.body = block(*body); }
+                d.state_handlers.push_back(std::move(handler));
+            }
+        }
+        return ir::Decl{std::move(d)};
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> workflow_decl(const JsonValue &obj) {
+        ir::WorkflowDecl d;
+        d.provenance = provenance(obj);
+        d.name = req_string(obj, "name");
+        d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+        d.input_type_ref = opt_type_ref(obj, "input_type_ref", "input_type");
+        d.output_type_ref = opt_type_ref(obj, "output_type_ref", "output_type");
+        const auto *nodes = obj.get("nodes");
+        if (nodes != nullptr && nodes->is_array()) {
+            for (const auto &item : nodes->array_items) {
+                ir::WorkflowNode node;
+                node.name = req_string(*item, "name");
+                node.source_range = source_range(*item);
+                node.target_ref = opt_symbol_ref(*item, "target_ref");
+                node.input = opt_expr(*item, "input");
+                // "input_summary" is derived; recomputed after load.
+                node.after = string_array(*item, "after");
+                d.nodes.push_back(std::move(node));
+            }
+        }
+        if (const auto *safety = obj.get("safety"); safety != nullptr && safety->is_array()) {
+            for (const auto &item : safety->array_items) {
+                d.safety.push_back(temporal_expr(*item));
+            }
+        }
+        if (const auto *liveness = obj.get("liveness"); liveness != nullptr && liveness->is_array()) {
+            for (const auto &item : liveness->array_items) {
+                d.liveness.push_back(temporal_expr(*item));
+            }
+        }
+        // "return_summary" is derived; recomputed after load.
+        d.return_value = opt_expr(obj, "return_value");
+        return ir::Decl{std::move(d)};
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> fn_decl(const JsonValue &obj) {
+        ir::FnDecl d;
+        d.provenance = provenance(obj);
+        d.name = req_string(obj, "name");
+        d.type_param_names = string_array(obj, "type_params");
+        d.params = params(obj, "params");
+        if (const auto *rt = obj.get("return_type"); rt != nullptr) {
+            d.has_return_type = true;
+            d.return_type_ref = opt_type_ref(obj, "return_type_ref", "return_type");
+        }
+        d.has_body = opt_bool(obj, "has_body");
+        if (const auto *effect = obj.get("effect"); effect != nullptr) {
+            d.effect = fn_effect(*effect);
+        }
+        if (const auto *body = obj.get("body"); body != nullptr && !body->is_null()) {
+            d.body = make_owned<ir::Block>(block(*body));
+        }
+        d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+        return ir::Decl{std::move(d)};
+    }
+
+    [[nodiscard]] ir::FnEffectClause fn_effect(const JsonValue &obj) {
+        ir::FnEffectClause effect;
+        const auto kind = req_string(obj, "kind");
+        if (kind == "Pure") { effect.kind = ir::FnEffectKind::Pure; }
+        else if (kind == "Nondet") { effect.kind = ir::FnEffectKind::Nondet; }
+        else if (kind == "Capability") { effect.kind = ir::FnEffectKind::Capability; }
+        else { fail(); }
+        if (const auto *caps = obj.get("capabilities"); caps != nullptr && caps->is_array()) {
+            for (const auto &item : caps->array_items) {
+                effect.capabilities.push_back(symbol_ref(*item));
+            }
+        }
+        effect.has_decreases = opt_bool(obj, "has_decreases");
+        if (const auto *terms = obj.get("decreases_terms");
+            terms != nullptr && terms->is_array()) {
+            for (const auto &item : terms->array_items) {
+                effect.decreases_terms.push_back(expr(*item));
+            }
+        }
+        return effect;
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> instance_decl(const JsonValue &obj) {
+        ir::InstanceDecl d;
+        d.provenance = provenance(obj);
+        d.name = req_string(obj, "name");
+        const auto kind = req_string(obj, "instance_kind");
+        if (kind == "capability") { d.kind = ir::InstanceKind::Capability; }
+        else if (kind == "predicate") { d.kind = ir::InstanceKind::Predicate; }
+        else if (kind == "agent") { d.kind = ir::InstanceKind::Agent; }
+        else if (kind == "workflow") { d.kind = ir::InstanceKind::Workflow; }
+        else if (kind == "fn") { d.kind = ir::InstanceKind::Fn; }
+        else if (kind == "unknown") { d.kind = ir::InstanceKind::Unknown; }
+        else { fail(); }
+        d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+        if (const auto *args = obj.get("type_args"); args != nullptr && args->is_array()) {
+            for (const auto &item : args->array_items) {
+                d.type_args.push_back(type_ref(*item));
+            }
+        }
+        d.params = params(obj, "params");
+        d.return_type_ref = opt_type_ref(obj, "return_type_ref", "return_type");
+        d.agent_input_type_ref = opt_type_ref(obj, "agent_input_type_ref", "agent_input_type");
+        d.agent_context_type_ref =
+            opt_type_ref(obj, "agent_context_type_ref", "agent_context_type");
+        d.agent_output_type_ref = opt_type_ref(obj, "agent_output_type_ref", "agent_output_type");
+        d.workflow_input_type_ref =
+            opt_type_ref(obj, "workflow_input_type_ref", "workflow_input_type");
+        d.workflow_output_type_ref =
+            opt_type_ref(obj, "workflow_output_type_ref", "workflow_output_type");
+        return ir::Decl{std::move(d)};
+    }
+
+    // --- top level ----------------------------------------------------------
+
+    [[nodiscard]] bool read_program(const JsonValue &root) {
+        if (!root.is_object()) { fail(); return false; }
+        program_->format_version = req_string(root, "format_version");
+        // "formal_observations" is a derived analysis recomputed after load.
+        const auto *declarations = root.get("declarations");
+        if (declarations == nullptr || !declarations->is_array()) { fail(); return false; }
+        for (const auto &item : declarations->array_items) {
+            auto parsed = decl(*item);
+            if (!ok_ || !parsed.has_value()) { fail(); return false; }
+            program_->declarations.push_back(std::move(*parsed));
+        }
+        return ok_;
+    }
+
+  private:
+    ir::Program *program_{nullptr};
+    bool ok_{true};
+};
+
+} // namespace
+
+std::optional<ir::Program> parse_program_ir_json(std::string_view json) {
+    auto parsed = ahfl::json::parse_json(json);
+    if (!parsed.has_value() || *parsed == nullptr) {
+        return std::nullopt;
+    }
+    ir::Program program;
+    // The default-constructed Program carries format_version = kFormatVersion;
+    // read_program overwrites it from JSON.
+    IrJsonReader reader(program);
+    if (!reader.read_program(**parsed)) {
+        return std::nullopt;
+    }
+    // Derived analyses (formal observations, flow/workflow summaries) are not
+    // stored in JSON — recompute them from the parsed declarations so a
+    // subsequent print_program_ir_json reproduces the input byte-for-byte.
+    ir::recompute_derived_analyses(program, ir::ProgramPhase::Analyzed);
+    return program;
 }
 
 } // namespace ahfl

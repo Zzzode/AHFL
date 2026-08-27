@@ -1132,6 +1132,17 @@ void set_return_terminator_for_operand(LoweringContext &ctx,
     return ctx.finish(std::move(return_type));
 }
 
+// KR5.12: the opt-IR is a *value-expression* optimizer — it functionalizes
+// pure, computable expression fragments (the `EmbeddedTemporalExpr` arm below
+// lowers its wrapped Bool expression into an OptFunction). The four temporal
+// *atoms* `called` / `in_state` / `running` / `completed` are runtime
+// event/state observations, not pure values: they name an agent state, a
+// capability event, or a workflow node's lifecycle flag with no expression
+// tree to optimize. They are therefore a documented, bounded exemption from
+// opt-IR functionalization rather than an omission — each occurrence is
+// recorded as an observable SkippedTemporalFragment (consumed by opt_verify /
+// opt_print / opt_json) so downstream tooling can see exactly what was left to
+// the SMV/BMC backend, which handles these atoms directly.
 void record_skipped_temporal_fragment(OptProgram &program,
                                       const std::string &function_prefix,
                                       std::string kind,
@@ -1139,7 +1150,8 @@ void record_skipped_temporal_fragment(OptProgram &program,
     program.skipped_temporal_fragments.push_back(SkippedTemporalFragment{
         .scope = function_prefix,
         .kind = std::move(kind),
-        .reason = "temporal atom is not a pure expression fragment",
+        .reason = "temporal atom is a runtime event/state observation, not a pure "
+                  "expression fragment; handled directly by the SMV/BMC backend",
         .source_range = source_range,
     });
 }

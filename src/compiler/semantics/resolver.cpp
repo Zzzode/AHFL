@@ -621,6 +621,16 @@ class ResolverPass final {
     // caller (visit(TraitDecl) pushes it).
     void resolve_trait_item(const ast::TraitItemSyntax &item) {
         if (item.kind == ast::TraitItemKind::Fn) {
+            // KR5.1: add the trait method's own method-level type params to the
+            // opaque set before resolving its signature, so references like `A`
+            // in `fn fold<A>(self, init: A) -> A` (or nested `Option<A>`) are
+            // treated as type variables instead of emitting "unknown type A".
+            // The trait-level params were already inserted by visit(TraitDecl);
+            // this mirrors resolve_fn_signature's handling for free functions.
+            const auto previous_method_type_params = generic_type_params_;
+            for (const auto &type_param : item.type_params) {
+                generic_type_params_.insert(type_param->name);
+            }
             for (const auto &type_param : item.type_params) {
                 for (const auto &bound : type_param->bounds) {
                     resolve_type(*bound);
@@ -648,6 +658,7 @@ class ResolverPass final {
                 }
             }
             resolve_effect_clause(item.effect_clause);
+            generic_type_params_ = previous_method_type_params;
             return;
         }
 

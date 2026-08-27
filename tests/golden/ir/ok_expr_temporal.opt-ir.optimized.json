@@ -5,7 +5,7 @@
     {
       "scope": "contract::ir::expr_temporal::ExprAgent::clause::1",
       "kind": "called",
-      "reason": "temporal atom is not a pure expression fragment",
+      "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
         "begin": 1533,
         "end": 1547
@@ -14,7 +14,7 @@
     {
       "scope": "workflow::ir::expr_temporal::ExprWorkflow::safety::0",
       "kind": "running",
-      "reason": "temporal atom is not a pure expression fragment",
+      "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
         "begin": 2401,
         "end": 2413
@@ -23,7 +23,7 @@
     {
       "scope": "workflow::ir::expr_temporal::ExprWorkflow::safety::0",
       "kind": "completed",
-      "reason": "temporal atom is not a pure expression fragment",
+      "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
         "begin": 2428,
         "end": 2442
@@ -32,7 +32,7 @@
     {
       "scope": "workflow::ir::expr_temporal::ExprWorkflow::liveness::0",
       "kind": "completed",
-      "reason": "temporal atom is not a pure expression fragment",
+      "reason": "temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend",
       "source_range": {
         "begin": 2470,
         "end": 2490

@@ -208,6 +208,10 @@ add_test(NAME ahfl.ir.structural_equality
     COMMAND $<TARGET_FILE:ahfl_compiler_ir_equal_tests>
 )
 
+add_test(NAME ahfl.ir.json_round_trip
+    COMMAND $<TARGET_FILE:ahfl_compiler_ir_json_round_trip_tests>
+)
+
 add_test(NAME ahfl.handoff.package.project_workflow_value_flow
     COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             project-workflow-value-flow

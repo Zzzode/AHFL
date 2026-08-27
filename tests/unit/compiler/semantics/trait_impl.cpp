@@ -2393,3 +2393,42 @@ impl Show for Counter {
         "method 'show' signature mismatch: trait expects (trait_impl::Counter, Int), "
         "impl provides (trait_impl::Counter, String)"));
 }
+
+// KR5.1: a trait method that declares its own method-level type parameter
+// (e.g. Foldable's `fold<A>`) must resolve that parameter as a TypeVar rather
+// than emitting UNKNOWN_TYPE. Before the fix, resolve_trait_method_info
+// resolved param/return types without the method-level tparam in scope, so
+// `A` in `fold<A>(self, init: A, ...) -> A` fell through to UNKNOWN_TYPE and
+// the container-algebra trait skeletons could not be declared.
+TEST_CASE("KR5.1 trait method with method-level type param resolves without UNKNOWN_TYPE") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Bag {
+    total: Int;
+}
+
+trait Foldable {
+    fn fold<A>(self: Bag, init: A) -> A effect Pure;
+}
+)AHFL";
+    const auto result = typecheck_source("trait_foldable.ahfl", source);
+    CHECK_FALSE(has_diagnostic_code(result, "UNKNOWN_TYPE"));
+}
+
+// KR5.1: the method-level type parameter must be resolvable in every signature
+// position — as a later parameter and as the return type — exercising the
+// combined trait+method scope across multiple occurrences, not just a single
+// leading `A`. (A nested stdlib form like `Option<A>` is avoided here because
+// the isolated typecheck fixture does not load the prelude.)
+TEST_CASE("KR5.1 trait method-level type param resolves in every signature position") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Bag {
+    total: Int;
+}
+
+trait Mapper {
+    fn combine<A>(self: Bag, first: A, second: A) -> A effect Pure;
+}
+)AHFL";
+    const auto result = typecheck_source("trait_mapper.ahfl", source);
+    CHECK_FALSE(has_diagnostic_code(result, "UNKNOWN_TYPE"));
+}

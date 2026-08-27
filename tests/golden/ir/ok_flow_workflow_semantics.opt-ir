@@ -1,8 +1,8 @@
 opt_program source_version=ahfl.ir.v2
-skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::0 kind=running reason="temporal atom is not a pure expression fragment" source=[1040,1055)
-skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[1059,1075)
-skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::1 kind=running reason="temporal atom is not a pure expression fragment" source=[1102,1116)
-skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::liveness::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[1170,1193)
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::0 kind=running reason="temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend" source=[1040,1055)
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::0 kind=completed reason="temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend" source=[1059,1075)
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::1 kind=running reason="temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend" source=[1102,1116)
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::liveness::0 kind=completed reason="temporal atom is a runtime event/state observation, not a pure expression fragment; handled directly by the SMV/BMC backend" source=[1170,1193)
 function flow::formal::flow_workflow::ReviewAgent::Init args=3 return=unresolved source=[541,675) {
   locals:
     %0 input type=struct(formal::flow_workflow::Request)

@@ -1408,18 +1408,53 @@ void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
 // activated by build_trait_types; the impl matcher substitutes the impl
 // target type + trait type arguments at match time.
 TraitMethodInfo DeclarationSema::resolve_trait_method_info(const ast::TraitItemSyntax &item) {
+    // KR5.1 / RFC 0013 P2-S1 (R0.1): activate the method-level type-param scope
+    // before resolving the method's param / return types. The caller
+    // (build_trait_types) has already activated the trait's self-augmented
+    // scope ([Self] + trait tparams) via current_type_param_names_. Method-level
+    // params (e.g. `fn fold<U>` / `fn map<A>`) must be appended to that scope so
+    // references like `U` in `-> U` / `Option<U>` resolve to a TypeVar instead
+    // of falling through to UNKNOWN_TYPE. This mirrors the impl-side loop in
+    // build_impl_types (the combined names carry impl/trait-level THEN
+    // method-level, and method-level TypeVars get a distinct per-method scope).
+    const auto *prev_type_params = current_type_param_names_;
+    const auto prev_method_scope_id = current_method_scope_id_;
+    const auto prev_method_tparam_offset = current_method_tparam_offset_;
+
+    // Combined scope: [trait self-augmented names...] + [method type params...].
+    std::vector<std::string> combined_type_param_names;
+    if (prev_type_params != nullptr) {
+        combined_type_param_names = *prev_type_params;
+    }
+    const auto method_tparam_base = combined_type_param_names.size();
+    for (const auto &type_param : item.type_params) {
+        combined_type_param_names.push_back(type_param->name);
+    }
+    const auto method_scope_id = item.type_params.empty()
+                                     ? kUnknownTypeVarScopeId
+                                     : driver_->allocate_type_param_scope_id();
+    // Only re-point the scope when this method actually introduces params, so a
+    // non-generic method keeps the trait-wide scope untouched.
+    if (!item.type_params.empty()) {
+        current_type_param_names_ = &combined_type_param_names;
+        current_method_scope_id_ = method_scope_id;
+        current_method_tparam_offset_ = method_tparam_base;
+    }
+
     TraitMethodInfo info{
         .name = item.name,
         .params = {},
         .return_type = item.return_type ? resolve_type(*item.return_type) : make_error_type(),
         .return_type_range = item.return_type ? item.return_type->range : SourceRange{},
         .type_param_names = {},
+        .method_scope_id = method_scope_id,
         .effect = resolve_effect_clause_info(item.effect_clause),
         .declaration_range = item.range,
     };
-    for (const auto &type_param : item.type_params) {
-        info.type_param_names.push_back(type_param->name);
-    }
+    // Store the combined names (trait self-augmented + method-level) so the
+    // TypeVar indices embedded in params/return_type align with the substitution
+    // map built at call sites (matches the impl-side ImplMethodInfo convention).
+    info.type_param_names = combined_type_param_names;
     for (const auto &param : item.params) {
         info.params.push_back(ParamTypeInfo{
             .name = param->name,
@@ -1427,6 +1462,10 @@ TraitMethodInfo DeclarationSema::resolve_trait_method_info(const ast::TraitItemS
             .declaration_range = param->range,
         });
     }
+
+    current_type_param_names_ = prev_type_params;
+    current_method_scope_id_ = prev_method_scope_id;
+    current_method_tparam_offset_ = prev_method_tparam_offset;
     return info;
 }
 
