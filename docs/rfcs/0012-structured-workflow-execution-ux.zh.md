@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["runtime", "tooling"]
 tracking_issue: "https://github.com/Zzzode/AHFL/issues/16"
 discussion: "https://github.com/Zzzode/AHFL/issues/16"
-implementation_prs: ["7c3ae2d2", "373e65b5", "e980eba1"]
+implementation_prs: ["7c3ae2d2", "373e65b5", "e980eba1", "e839b624", "6888c936"]
 decision_due: "2026-08-07"
 ---
 
