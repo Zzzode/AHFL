@@ -357,10 +357,45 @@ void test_mixed_under_limit_all_pass() {
     check(result.program != nullptr, "mixed.under_limit_has_ast");
 }
 
+// ---------------------------------------------------------------------------
+// KR5.7: builder-invariant diagnostics. Malformed input (`value: ;`) drives
+// ANTLR error recovery into a partial tree the builder cannot lower. The
+// resulting diagnostics must (1) carry a stable parse-stage code (never a
+// code-less "parser failed" string) and (2) NOT include the spurious
+// "internal parser invariant" compiler-bug message, since the real
+// UNEXPECTED_TOKEN already explains the malformed input.
+// ---------------------------------------------------------------------------
+void test_builder_invariant_is_structured() {
+    const std::string source = "struct Broken {\n    value: ;\n}\n";
+    const auto result = ahfl::Frontend{}.parse_text("test.ahfl", source);
+
+    check(result.has_errors(), "builder_invariant.has_errors");
+
+    const auto unexpected = count_diagnostics(result, [](const auto &d) {
+        return code_contains(d, "UNEXPECTED_TOKEN");
+    });
+    check(unexpected >= 1,
+          "builder_invariant.has_parse_code codes=" + diagnostic_codes_string(result));
+
+    // The internal-invariant diagnostic is suppressed when a prior parse error
+    // already exists (error-recovery artifact, not a true desync).
+    const auto internal = count_diagnostics(result, [](const auto &d) {
+        return code_contains(d, "INTERNAL_PARSE_INVARIANT");
+    });
+    check(internal == 0,
+          "builder_invariant.no_spurious_internal codes=" + diagnostic_codes_string(result));
+
+    // No diagnostic is code-less (Principle 5): every parse-stage error carries
+    // a stable code so tooling can branch on it.
+    const auto codeless = count_diagnostics(result, [](const auto &d) {
+        return !d.code.has_value();
+    });
+    check(codeless == 0, "builder_invariant.all_diagnostics_have_codes");
+}
+
 } // anonymous namespace
 
 int main() {
-    // Group 1 — parentheses (expression nesting)
     test_deep_parens_128_ok();
     test_deep_parens_255_boundary_ok();
     test_deep_parens_600_overflow();
@@ -381,6 +416,9 @@ int main() {
 
     // Group 5 — mixed under-limit sanity
     test_mixed_under_limit_all_pass();
+
+    // KR5.7 — builder-invariant diagnostics are structured & de-noised
+    test_builder_invariant_is_structured();
 
     // Summary: 10 test functions × 2 assertions most + 1 overflow × 3 = 48 total
     // (we intentionally overshoot the 48 target so some expansion is allowed).

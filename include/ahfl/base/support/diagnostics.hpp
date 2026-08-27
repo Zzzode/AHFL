@@ -159,6 +159,12 @@ inline constexpr ErrorCode<DiagnosticCategory::Parse> UnexpectedToken{"UNEXPECTE
 // exceeds the ProgramBuilder::kMaxRecursionDepth (256) safety limit. Prevents
 // the native stack overflow observed in fuzz batch 2026-06-22 (deep parentheses).
 inline constexpr ErrorCode<DiagnosticCategory::Parse> ParserStackOverflow{"PARSER_STACK_OVERFLOW"};
+// KR5.7: raised when the AST builder reaches a grammar production that matches
+// none of the labelled alternatives it knows how to lower (a grammar/builder
+// desync — malformed user input is already rejected by ANTLR before the
+// builder runs). Carries a SourceRange when the offending construct is known.
+inline constexpr ErrorCode<DiagnosticCategory::Parse> InternalParseInvariant{
+    "INTERNAL_PARSE_INVARIANT"};
 } // namespace parse
 
 namespace resolve {
@@ -478,6 +484,11 @@ namespace parse {
 inline constexpr MessageTemplate ParserStackOverflow{
     "parser recursion too deep ({} nesting = {}; hard limit = {}). Simplify this expression or "
     "split it into smaller named declarations."};
+// {0} = internal builder detail (which production failed to lower). This is a
+// compiler bug surfaced structurally rather than as a raw exception message.
+inline constexpr MessageTemplate InternalParseInvariant{
+    "internal parser invariant failed while lowering the parse tree: {}. This is a compiler bug; "
+    "please report it with the source that triggered it."};
 } // namespace parse
 namespace resolve {
 inline constexpr MessageTemplate DuplicateSymbol{"duplicate {} '{}'"};

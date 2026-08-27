@@ -65,6 +65,35 @@ class ParserStackOverflowException : public std::runtime_error {
     SourceRange where_;
 };
 
+// KR5.7: thrown by the AST builder when a grammar production reaches the
+// builder without matching any of the labelled alternatives the builder knows
+// how to lower. This indicates a grammar/builder desync (a compiler bug, not
+// malformed user input — ANTLR's error listener already rejects invalid
+// syntax before the builder runs), so it is caught in Frontend::parse_text and
+// converted into a structured, code-carrying diagnostic with a SourceRange
+// (Principle 5) instead of surfacing as an opaque `parser failed: ...` message.
+class AstBuilderInvariantError : public std::logic_error {
+  public:
+    AstBuilderInvariantError(std::string detail, SourceRange where)
+        : std::logic_error(std::move(detail)), where_(where) {}
+
+    [[nodiscard]] SourceRange where() const noexcept {
+        return where_;
+    }
+
+  private:
+    SourceRange where_;
+};
+
+// KR5.7: internal builder invariant with no meaningful user-facing source
+// range (e.g. an op-string → enum mapping, or a switch over an enum the
+// builder itself populated). Reachable only on a grammar/builder desync;
+// converted into the same structured INTERNAL_PARSE_INVARIANT diagnostic as
+// AstBuilderInvariantError (with a default range) rather than crashing.
+[[noreturn]] inline void builder_unreachable(std::string detail) {
+    throw AstBuilderInvariantError(std::move(detail), SourceRange{});
+}
+
 template <typename NodeT> [[nodiscard]] std::string text_of(NodeT &node) {
     return node.getText();
 }
@@ -179,7 +208,7 @@ template <typename DeclT, typename ContextT, typename... Args>
     const auto result = std::from_chars(begin, end, value);
 
     if (result.ec != std::errc{} || result.ptr != end) {
-        throw std::logic_error("invalid integer literal: " + std::string(text));
+        builder_unreachable("invalid integer literal: " + std::string(text));
     }
 
     return value;
@@ -205,7 +234,7 @@ template <typename DeclT, typename ContextT, typename... Args>
         return ast::ExprUnaryOp::Positive;
     }
 
-    throw std::logic_error("unsupported expression unary operator: " + std::string(op));
+    builder_unreachable("unsupported expression unary operator: " + std::string(op));
 }
 
 [[nodiscard]] ast::ExprBinaryOp expr_binary_op_from(std::string_view op) {
@@ -265,7 +294,7 @@ template <typename DeclT, typename ContextT, typename... Args>
         return ast::ExprBinaryOp::Modulo;
     }
 
-    throw std::logic_error("unsupported expression binary operator: " + std::string(op));
+    builder_unreachable("unsupported expression binary operator: " + std::string(op));
 }
 
 [[nodiscard]] ast::TemporalUnaryOp temporal_unary_op_from(std::string_view op) {
@@ -285,7 +314,7 @@ template <typename DeclT, typename ContextT, typename... Args>
         return ast::TemporalUnaryOp::Not;
     }
 
-    throw std::logic_error("unsupported temporal unary operator: " + std::string(op));
+    builder_unreachable("unsupported temporal unary operator: " + std::string(op));
 }
 
 [[nodiscard]] ast::TemporalBinaryOp temporal_binary_op_from(std::string_view op) {
@@ -305,7 +334,7 @@ template <typename DeclT, typename ContextT, typename... Args>
         return ast::TemporalBinaryOp::Until;
     }
 
-    throw std::logic_error("unsupported temporal binary operator: " + std::string(op));
+    builder_unreachable("unsupported temporal binary operator: " + std::string(op));
 }
 
 template <typename RecognizerT>
@@ -406,6 +435,15 @@ class DiagnosticErrorListener final : public antlr4::BaseErrorListener {
 class ProgramBuilder {
   public:
     explicit ProgramBuilder(const SourceFile &source) : source_(source) {}
+
+    // KR5.7: raise an AST-builder invariant failure carrying the offending
+    // construct's SourceRange. Used in place of bare `throw std::logic_error`
+    // at "did not match any supported alternative" builder sites so the
+    // resulting diagnostic is code-carrying and range-anchored.
+    template <typename ContextT>
+    [[noreturn]] void builder_invariant(ContextT &context, std::string detail) const {
+        throw AstBuilderInvariantError(std::move(detail), context_range(context, source_));
+    }
 
     [[nodiscard]] Owned<ast::Program> build(AHFLParser::ProgramContext &context) const {
         auto program =
@@ -754,7 +792,7 @@ class ProgramBuilder {
                     continue;
                 }
 
-                throw std::logic_error("workflow item did not match any supported AHFL kind");
+                builder_invariant(item, "workflow item did not match any supported AHFL kind");
             }
 
             declaration->return_value = build_expr_syntax(require(
@@ -792,7 +830,7 @@ class ProgramBuilder {
             return into_decl(build_use_decl(use_decl->get()));
         }
 
-        throw std::logic_error(
+        builder_invariant(context,
             "top-level declaration did not match any supported AHFL declaration kind");
     }
 
@@ -903,7 +941,7 @@ class ProgramBuilder {
             return item;
         }
 
-        throw std::logic_error("trait item did not match trait fn, assoc type, or assoc const");
+        builder_invariant(context, "trait item did not match trait fn, assoc type, or assoc const");
     }
 
     void populate_trait_fn_item(ast::TraitItemSyntax &item,
@@ -1049,7 +1087,7 @@ class ProgramBuilder {
                 item->assoc_const = assoc_const.get();
                 declaration->const_items.push_back(std::move(assoc_const));
             } else {
-                throw std::logic_error("impl item did not match fn, assoc type, or assoc const");
+                builder_invariant(context, "impl item did not match fn, assoc type, or assoc const");
             }
 
             declaration->items.push_back(std::move(item));
@@ -1540,7 +1578,7 @@ class ProgramBuilder {
             expr->node = ast::QuantifierExprSyntax{};
             break;
         default:
-            throw std::logic_error("unhandled ExprSyntaxKind in make_expr_syntax");
+            builder_unreachable("unhandled ExprSyntaxKind in make_expr_syntax");
         }
 
         return expr;
@@ -1575,7 +1613,7 @@ class ProgramBuilder {
             expr->node = ast::BinaryTemporalExpr{};
             break;
         default:
-            throw std::logic_error("unhandled TemporalExprSyntaxKind in make_temporal_expr_syntax");
+            builder_unreachable("unhandled TemporalExprSyntaxKind in make_temporal_expr_syntax");
         }
 
         return expr;
@@ -1600,7 +1638,7 @@ class ProgramBuilder {
                      BuilderT build_operand,
                      bool right_associative = false) const {
         if (operands.empty()) {
-            throw std::logic_error("expression chain is empty");
+            builder_unreachable("expression chain is empty");
         }
 
         const auto operators = build_infix_operator_texts(context);
@@ -1649,7 +1687,7 @@ class ProgramBuilder {
                          BuilderT build_operand,
                          bool right_associative = false) const {
         if (operands.empty()) {
-            throw std::logic_error("temporal expression chain is empty");
+            builder_unreachable("temporal expression chain is empty");
         }
 
         const auto operators = build_infix_operator_texts(context);
@@ -1873,7 +1911,7 @@ class ProgramBuilder {
                 continue;
             }
 
-            throw std::logic_error("unsupported postfix expression suffix");
+            builder_unreachable("unsupported postfix expression suffix");
         }
 
         return result;
@@ -1928,7 +1966,7 @@ class ProgramBuilder {
             return expr;
         }
 
-        throw std::logic_error("primary expression did not match any supported AHFL kind");
+        builder_invariant(context, "primary expression did not match any supported AHFL kind");
     }
 
     [[nodiscard]] Owned<ast::ExprSyntax>
@@ -1975,7 +2013,7 @@ class ProgramBuilder {
             return expr;
         }
 
-        throw std::logic_error("literal did not match any supported AHFL kind");
+        builder_invariant(context, "literal did not match any supported AHFL kind");
     }
 
     [[nodiscard]] Owned<ast::ExprSyntax>
@@ -2185,7 +2223,7 @@ class ProgramBuilder {
             return build_tuple_pattern(tuple->get());
         }
 
-        throw std::logic_error("pattern did not match any supported AHFL kind");
+        builder_invariant(context, "pattern did not match any supported AHFL kind");
     }
 
     [[nodiscard]] Owned<ast::PatternSyntax>
@@ -2196,7 +2234,7 @@ class ProgramBuilder {
 
         const auto bounds = context.signedIntegerPatternBound();
         if (bounds.size() != 2) {
-            throw std::logic_error("integer range pattern requires two bounds");
+            builder_invariant(context, "integer range pattern requires two bounds");
         }
         auto start_spelling = text_of(require(bounds[0], "integer range lower bound is missing"));
         auto end_spelling = text_of(require(bounds[1], "integer range upper bound is missing"));
@@ -2460,7 +2498,7 @@ class ProgramBuilder {
             return statement;
         }
 
-        throw std::logic_error("statement did not match any supported AHFL kind");
+        builder_invariant(context, "statement did not match any supported AHFL kind");
     }
 
     [[nodiscard]] Owned<ast::LetStmtSyntax>
@@ -2760,7 +2798,7 @@ class ProgramBuilder {
             return temporal;
         }
 
-        throw std::logic_error("temporal atom did not match any supported AHFL kind");
+        builder_invariant(context, "temporal atom did not match any supported AHFL kind");
     }
 
     [[nodiscard]] Owned<ast::IntegerSyntax>
@@ -2798,7 +2836,7 @@ class ProgramBuilder {
 
         const auto qualified_name = borrow(context.qualifiedIdent());
         if (!qualified_name) {
-            throw std::logic_error("type did not match any supported AHFL type syntax kind");
+            builder_invariant(context, "type did not match any supported AHFL type syntax kind");
         }
 
         ast::NamedType named{
@@ -2844,7 +2882,7 @@ class ProgramBuilder {
             if (!context.signedIntegerPatternBound().empty()) {
                 const auto bounds = context.signedIntegerPatternBound();
                 if (bounds.size() != 2) {
-                    throw std::logic_error("bounded Int type requires two bounds");
+                    builder_invariant(context, "bounded Int type requires two bounds");
                 }
                 auto minimum =
                     parse_integer_literal(text_of(require(bounds[0], "Int minimum is missing")));
@@ -2904,7 +2942,7 @@ class ProgramBuilder {
             return type;
         }
 
-        throw std::logic_error("primitive type did not match any supported AHFL primitive");
+        builder_invariant(context, "primitive type did not match any supported AHFL primitive");
     }
 
     [[nodiscard]] Owned<ast::TypeSyntax>
@@ -3136,7 +3174,7 @@ class ProgramBuilder {
                 continue;
             }
 
-            throw std::logic_error("capability effect item did not match any supported kind");
+            builder_invariant(context, "capability effect item did not match any supported kind");
         }
 
         return effect;
@@ -3266,7 +3304,7 @@ class ProgramBuilder {
         }
 
         // Defensive fallback (should not be reachable with the grammar above).
-        throw std::logic_error("enumVariant context did not match any labelled alternative");
+        builder_invariant(context, "enumVariant context did not match any labelled alternative");
     }
 
     [[nodiscard]] Owned<ast::TransitionSyntax>
@@ -3296,7 +3334,7 @@ class ProgramBuilder {
                 item->kind = ast::AgentQuotaItemKind::MaxExecutionTime;
                 item->duration_value = build_duration_syntax(duration_literal->get());
             } else {
-                throw std::logic_error("quota item did not match any supported AHFL kind");
+                builder_invariant(context, "quota item did not match any supported AHFL kind");
             }
 
             quota->items.push_back(std::move(item));
@@ -3349,7 +3387,7 @@ class ProgramBuilder {
             return clause;
         }
 
-        throw std::logic_error("contract clause did not match any supported AHFL kind");
+        builder_invariant(context, "contract clause did not match any supported AHFL kind");
     }
 
     [[nodiscard]] Owned<ast::StatePolicySyntax>
@@ -3372,7 +3410,7 @@ class ProgramBuilder {
                 item->kind = ast::StatePolicyItemKind::Timeout;
                 item->timeout = build_duration_syntax(timeout->get());
             } else {
-                throw std::logic_error("state policy item did not match any supported AHFL kind");
+                builder_invariant(context, "state policy item did not match any supported AHFL kind");
             }
 
             policy->items.push_back(std::move(item));
@@ -3444,7 +3482,8 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
         const auto invariant_violations = ast::validate_program_invariants(*result.program);
         for (const auto &violation : invariant_violations) {
             result.diagnostics.error()
-                .message("internal AST invariant violation: " + violation.message)
+                .code(error_codes::parse::InternalParseInvariant)
+                .message(messages::parse::InternalParseInvariant, violation.message)
                 .range(violation.range)
                 .emit();
         }
@@ -3463,10 +3502,41 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
                      std::to_string(overflow.limit()))
             .range(overflow.where())
             .emit();
+    } catch (const AstBuilderInvariantError &invariant) {
+        // KR5.7: an AST builder invariant failed. This can be reached two ways:
+        //   (a) a genuine grammar/builder desync (a compiler bug), or
+        //   (b) a downstream artifact of ANTLR error recovery, where malformed
+        //       user input already produced parse errors and left a partial
+        //       tree the builder cannot lower.
+        // In case (b) the ANTLR-stage diagnostics already explain the problem,
+        // so emitting a "compiler bug" message would be misleading noise. Only
+        // surface the structured internal-invariant diagnostic when no prior
+        // parse error was reported — that is the true-desync case. Either way
+        // the (null) program is discarded.
+        if (!result.diagnostics.has_error()) {
+            auto builder = result.diagnostics.error()
+                               .code(error_codes::parse::InternalParseInvariant)
+                               .message(messages::parse::InternalParseInvariant,
+                                        std::string_view(invariant.what()));
+            if (!invariant.where().empty()) {
+                std::move(builder).range(invariant.where()).emit();
+            } else {
+                std::move(builder).emit();
+            }
+        }
+        result.program.reset();
     } catch (const std::exception &exception) {
-        result.diagnostics.error()
-            .message("parser failed: " + std::string(exception.what()))
-            .emit();
+        // Last-resort catch-all: still attach the stable code so no parse-stage
+        // diagnostic is emitted without one (Principle 5). As above, suppress
+        // when malformed input already produced parse diagnostics.
+        if (!result.diagnostics.has_error()) {
+            result.diagnostics.error()
+                .code(error_codes::parse::InternalParseInvariant)
+                .message(messages::parse::InternalParseInvariant,
+                         std::string_view(exception.what()))
+                .emit();
+        }
+        result.program.reset();
     }
 
     if (result.program && options_.emit_parse_note && !result.has_errors()) {

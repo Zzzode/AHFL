@@ -1620,7 +1620,7 @@ void test_diagnostics_reflect_document_version() {
     const auto broken_response = response_body_for_id(broken_output, 2);
     check(broken_response.find("\"kind\":\"full\"") != std::string::npos,
           "diagnostics.version_1_full_report");
-    check(broken_response.find("parse.diagnostic") != std::string::npos,
+    check(broken_response.find("parse.UNEXPECTED_TOKEN") != std::string::npos,
           "diagnostics.version_1_has_errors");
 
     const auto fixed_output = run_lsp_messages({
@@ -1673,7 +1673,7 @@ void test_text_document_diagnostic_pull_report() {
           "textDocumentDiagnostic.full_report");
     check(broken_response.find("\"items\":[") != std::string::npos,
           "textDocumentDiagnostic.items_array");
-    check(broken_response.find("parse.diagnostic") != std::string::npos,
+    check(broken_response.find("parse.UNEXPECTED_TOKEN") != std::string::npos,
           "textDocumentDiagnostic.includes_parse_code");
 
     const std::string fixed_output = run_lsp_messages({
@@ -2520,7 +2520,7 @@ void test_project_input_source_cache_is_distinct_from_open_overlays() {
 
 void test_diagnostics_cover_parse_resolve_typecheck_and_validation() {
     const auto parse_output = diagnostics_output_for_source("struct Broken {\n    value: ;\n}\n");
-    check(parse_output.find("parse.diagnostic") != std::string::npos, "diagnostics.parse_code");
+    check(parse_output.find("parse.UNEXPECTED_TOKEN") != std::string::npos, "diagnostics.parse_code");
 
     const auto resolve_output =
         diagnostics_output_for_source("struct Envelope {\n    payload: Missing;\n}\n");
@@ -10835,7 +10835,7 @@ void test_close_then_reopen_recovers_diagnostics() {
 
     // The reopened document has a parse error.
     const auto response = response_body_for_id(output, 2);
-    check(response.find("parse.diagnostic") != std::string::npos,
+    check(response.find("parse.UNEXPECTED_TOKEN") != std::string::npos,
           "closeReopen.reopened_broken_has_parse_error");
     check(diagnostic_response_has_error(response),
           "closeReopen.reopened_broken_has_error_severity");
@@ -10864,7 +10864,7 @@ void test_broken_more_broken_fixed_recovery() {
 
     // Stage 1: parse error only.
     const auto stage1 = response_body_for_id(output, 2);
-    check(stage1.find("parse.diagnostic") != std::string::npos,
+    check(stage1.find("parse.UNEXPECTED_TOKEN") != std::string::npos,
           "brokenRecovery.stage1_parse_error");
 
     // Stage 2: type error (parse error fixed, type error introduced).
@@ -10905,7 +10905,7 @@ void test_parse_broken_to_typecheck_broken_to_clean() {
 
     // Stage 1: parse error.
     const auto stage1 = response_body_for_id(output, 2);
-    check(stage1.find("parse.diagnostic") != std::string::npos,
+    check(stage1.find("parse.UNEXPECTED_TOKEN") != std::string::npos,
           "parseToTypecheck.stage1_parse_error");
 
     // Stage 2: type error only (parse fixed).
