@@ -281,6 +281,28 @@ def main() -> int:
         "long soak allocator samples are inconsistent",
     )
 
+    # KR3.4: steady-state memory-growth guard. A long-lived worker replaying the
+    # same reference workflow should reach a stable allocator working set — the
+    # in-use bytes must not trend upward across the run. Compare the last-quartile
+    # mean to the first-quartile mean and fail if it grows beyond a tolerance
+    # (relative + an absolute floor so short smoke runs tolerate benign jitter but
+    # a genuine per-iteration leak still trips the gate). Only meaningful once
+    # there are enough iterations to form distinct quartiles.
+    if iteration > 5:
+        for key in ("allocator_in_use", "peak_rss"):
+            metric = worker_report[key]
+            first_mean = float(metric["first_quartile_mean_bytes"])
+            last_mean = float(metric["last_quartile_mean_bytes"])
+            growth = last_mean - first_mean
+            # Allow the larger of 5% of the first-quartile mean or a 1 MiB floor.
+            tolerance = max(first_mean * 0.05, 1024.0 * 1024.0)
+            require(
+                growth <= tolerance,
+                f"{key} trends upward across the soak (first_quartile_mean="
+                f"{first_mean:.0f}B, last_quartile_mean={last_mean:.0f}B, "
+                f"growth={growth:.0f}B > tolerance {tolerance:.0f}B) — possible leak",
+            )
+
     evidence.parent.mkdir(parents=True, exist_ok=True)
     evidence.write_text(
         json.dumps(
