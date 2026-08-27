@@ -111,7 +111,39 @@ capstone)已全部落库并测试。
 
 ---
 
-## 进入 Q4 的基线(已完成,支撑 Objective 1)
+## 剩余 KR 推进计划(Next actions)
+
+> 15/23 KR 已 ✅。整份 OKR 的 100% 收官被两个环境阻塞 KR(🚫 KR2.5、KR4.5)硬卡,
+> 它们需要本机不具备的外部条件,不由本季代码工作决定。以下把所有**非环境阻塞**的开放
+> KR 排成可执行顺序:纯代码、可验证、边界清晰者优先,每项拆小片提交 + 构建/测试验证。
+> 本季的可达目标 = 关闭所有非 🚫 KR。
+
+**推进顺序(可达目标口径):**
+
+1. **KR3.4 — Runtime 本地 soak / 内存趋势可观测**(⬜,纯代码,首选)。把 hour-scale
+   soak 与 `read_process_memory_stats()`(Linux/macOS/Windows,已存在)接成本地可跑
+   target,输出 RSS/allocator 趋势 JSON,不再只依赖 `Production Confidence` GitHub
+   Actions。下一步:定义本地 soak 入口 + 趋势 artifact schema + ctest 冒烟。
+2. **KR2.6 — counterexample 更深映射**(⬜,纯代码)。在 `counterexample.cpp`(+185
+   单测基座)上,把反例映射深化到 source range / workflow node / capability call /
+   contract clause 的更细粒度。下一步:选一条尚未映射的符号类别补映射 + 单测。
+3. **KR2.7 尾 — budget 趋势报告 + release-blocking 阈值**(🔵 已加 bounded-collection
+   样本)。复用 pass-trace 已有的 `--pass-trace-baseline` baseline-delta 模式,给
+   compile-time / memory-proxy / SMV-size budget 产出趋势 artifact 与可阻断阈值。
+4. **KR3.2 尾 — `ConstSema` 状态剥离**(🔵,语义敏感)。继续从 `TypeCheckPass` 剥离
+   source/diagnostic context 依赖,需足够负例;小步推进。
+5. **KR3.5 — LSP Typed HIR + condition facts**(⬜,大,需新 Typed HIR 字段)。切成小片:
+   先 hover,再 completion gating,再 signatureHelp 的 fact-driven active_parameter。
+6. **KR3.3 尾 — 窄可达 visibility 诊断补测**(🔵,难)。`MISSING_IMPORT` /
+   `PRIVATE_MODULE` / `MODULE_BOUNDARY_MISMATCH` 需特定 package-graph 状态才可达
+   (natural repro 先命中 `UNKNOWN_SYMBOL`);需要构造 manifest/workspace fixture,收益低,
+   靠后。
+
+**环境阻塞(🚫,不阻塞上述顺序,待外部条件具备后单独闭环):** KR2.5 真实
+NuSMV/nuXmv(本机仅 z3,装不了 binary)、KR4.5 RFC 0012 → `stabilized` 的真实
+public-LLM run 证据(需外部 LLM endpoint;migration note 可写,证据不可造)。
+
+
 
 - **RFC 0021 slice 1/2/3/5**:`ahfl_host.h` C ABI 契约;`WorkflowRuntime` capability
   派发从 ABI 函数指针表派生(`NativeHostBinding`);WASM import 对齐;参考宿主 + 绑定
@@ -126,9 +158,12 @@ capstone)已全部落库并测试。
 ## 关键路径与风险
 
 - **Objective 1 曾是硬依赖链**:1c(breaking)→ memo 核心(2–5)→ capstone 演示,已全部收口。
-- **Objective 4 的下一步抓手是 KR4.4**(beta-gate 逐项核对):纯脚本、可验证,能把 RFC 0012
-  的剩余差距从判断变成事实,是推进到 `implemented` 的前提。
+- **Objective 4 已到 `implemented`**(KR4.1–4.4 全绿,beta-gate 10/10);仅剩 KR4.5 的真实
+  LLM 证据(🚫)阻塞 `stabilized`。
+- **下一步抓手 = KR3.4**(runtime 本地 soak / 内存趋势可观测):纯代码、可验证,见"剩余 KR
+  推进计划"。
 - **环境阻塞 KR(🚫)不占主线余量**:KR2.5(NuSMV/nuXmv)、KR4.5(真实 LLM)需外部条件,
-  应在环境具备时单独闭环,不阻塞其余 Objective。
+  应在环境具备时单独闭环,不阻塞其余 Objective;它们也决定整份 OKR 无法在本机 100% 收官,
+  故本季可达目标 = 关闭所有非 🚫 KR。
 - **风险点**:KR3.2/KR3.5 涉及 `TypeCheckPass` 状态剥离与 Typed HIR 新字段,是语义敏感区,
   需充分的负例 / 语义矩阵测试;不要为赶 KR 引入临时规则(违反核心设计原则)。
