@@ -1284,11 +1284,14 @@ contract for MethodCallAgent {
     const auto *expr_ref = std::get_if<ahfl::ir::ExprRef>(&contract->clauses.front().value);
     REQUIRE(expr_ref != nullptr);
     REQUIRE(*expr_ref != nullptr);
-    const auto *call = std::get_if<ahfl::ir::CallExpr>(&(*expr_ref)->node);
+    // KR5.5: method calls now lower to a first-class MethodCallExpr node whose
+    // receiver is a distinct child rather than a flattened first argument.
+    const auto *call = std::get_if<ahfl::ir::MethodCallExpr>(&(*expr_ref)->node);
     REQUIRE(call != nullptr);
-    CHECK(call->callee == "impl#0::positive");
-    REQUIRE(call->arguments.size() == 1);
-    const auto *receiver = std::get_if<ahfl::ir::PathExpr>(&call->arguments.front()->node);
+    CHECK(call->method == "impl#0::positive");
+    CHECK(call->arguments.empty());
+    REQUIRE(call->receiver != nullptr);
+    const auto *receiver = std::get_if<ahfl::ir::PathExpr>(&call->receiver->node);
     REQUIRE(receiver != nullptr);
     CHECK(receiver->path.root_kind == ahfl::ir::PathRootKind::Input);
     CHECK(receiver->path.root_name == "input");

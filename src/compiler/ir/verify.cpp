@@ -657,6 +657,23 @@ class ProgramVerifier {
         }
     }
 
+    void verify_expr_node(const MethodCallExpr &expr, const std::string &path) {
+        verify_required_expr_ref(expr.receiver, path + ".receiver");
+        if (is_backend_ready_mode(mode_)) {
+            if (expr.method.empty() || contains_sentinel(expr.method)) {
+                add_error(path, "method call expression has empty or sentinel method target");
+            }
+            if (expr.method_ref.id.has_value() &&
+                expr.method_ref.kind == SymbolRefKind::Unknown) {
+                add_error(path, "resolved method call expression has unknown method symbol kind");
+            }
+        }
+        for (std::uint32_t index = 0; index < expr.arguments.size(); ++index) {
+            verify_required_expr_ref(expr.arguments[index],
+                                     path + ".arguments[" + std::to_string(index) + "]");
+        }
+    }
+
     void verify_expr_node(const LambdaExpr &expr, const std::string &path) {
         if (is_backend_ready_mode(mode_)) {
             for (std::uint32_t index = 0; index < expr.params.size(); ++index) {

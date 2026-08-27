@@ -200,6 +200,7 @@ namespace {
                           [](const ir::PathExpr &) { return false; },
                           [](const ir::QualifiedValueExpr &) { return false; },
                           [](const ir::CallExpr &) { return false; },
+                          [](const ir::MethodCallExpr &) { return false; },
                           [](const ir::LambdaExpr &) { return false; },
                           [](const ir::StructLiteralExpr &) { return false; },
 	                          [](const ir::MemberAccessExpr &) { return false; },
@@ -479,6 +480,18 @@ class IrProgramPrinter final {
                     const auto callee =
                         std::string(ir::symbol_canonical_name(value.callee_ref, value.callee));
                     return callee + "(" + join(arguments, ", ") + ")";
+                },
+                [this](const ir::MethodCallExpr &value) {
+                    std::vector<std::string> arguments;
+                    arguments.reserve(value.arguments.size());
+                    for (const auto &argument : value.arguments) {
+                        arguments.push_back(render_expr(*argument));
+                    }
+                    const auto receiver =
+                        value.receiver ? render_expr(*value.receiver) : std::string{"none"};
+                    const auto method =
+                        std::string(ir::symbol_canonical_name(value.method_ref, value.method));
+                    return receiver + "." + method + "(" + join(arguments, ", ") + ")";
                 },
                 [this](const ir::LambdaExpr &value) {
                     const auto body = value.body ? render_expr(*value.body) : std::string{"none"};

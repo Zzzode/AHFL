@@ -947,6 +947,30 @@ class IrJsonPrinter final {
                         });
                     });
                 },
+                [&](const ir::MethodCallExpr &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("method_call"); });
+                        print_expr_common_fields(field, expr, indent_level + 1);
+                        field("receiver", [&]() {
+                            if (value.receiver) {
+                                print_expr(*value.receiver, indent_level + 1);
+                            } else {
+                                out_ << "null";
+                            }
+                        });
+                        field("method", [&]() { write_string(value.method); });
+                        field("method_ref", [&]() {
+                            print_symbol_ref(value.method_ref, indent_level + 1);
+                        });
+                        field("arguments", [&]() {
+                            print_array(indent_level + 1, [&](const auto &item) {
+                                for (const auto &argument : value.arguments) {
+                                    item([&]() { print_expr(*argument, indent_level + 2); });
+                                }
+                            });
+                        });
+                    });
+                },
                 [&](const ir::LambdaExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("lambda"); });
@@ -2642,6 +2666,20 @@ class IrJsonReader final {
             call.callee = req_string(obj, "callee");
             if (const auto *cref = obj.get("callee_ref"); cref != nullptr) {
                 call.callee_ref = symbol_ref(*cref);
+            }
+            const auto *args = obj.get("arguments");
+            if (args == nullptr || !args->is_array()) { fail(); return call; }
+            for (const auto &item : args->array_items) {
+                call.arguments.push_back(expr(*item));
+            }
+            return call;
+        }
+        if (kind == "method_call") {
+            ir::MethodCallExpr call;
+            call.receiver = opt_expr(obj, "receiver");
+            call.method = req_string(obj, "method");
+            if (const auto *mref = obj.get("method_ref"); mref != nullptr) {
+                call.method_ref = symbol_ref(*mref);
             }
             const auto *args = obj.get("arguments");
             if (args == nullptr || !args->is_array()) { fail(); return call; }

@@ -73,6 +73,12 @@ bool exprs_structurally_equal(const Expr &lhs, const Expr &rhs) {
                 return a.callee == b.callee && symbol_ref_equal(a.callee_ref, b.callee_ref) &&
                        refs_equal(a.arguments, b.arguments);
             },
+            [&](const MethodCallExpr &a) {
+                const auto &b = std::get<MethodCallExpr>(rhs.node);
+                return a.method == b.method && symbol_ref_equal(a.method_ref, b.method_ref) &&
+                       exprs_structurally_equal(a.receiver, b.receiver) &&
+                       refs_equal(a.arguments, b.arguments);
+            },
             [&](const LambdaExpr &a) {
                 const auto &b = std::get<LambdaExpr>(rhs.node);
                 return a.params == b.params && a.captures == b.captures &&

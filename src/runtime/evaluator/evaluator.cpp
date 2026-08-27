@@ -1900,6 +1900,23 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
                 return eval_qualified_value_expr(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::CallExpr>) {
                 return eval_call_expr(node, expr.source_range, ctx, call_eval);
+            } else if constexpr (std::is_same_v<T, ir::MethodCallExpr>) {
+                // KR5.5: a method call dispatches exactly like the equivalent
+                // free call — the receiver is the leading argument and `method`
+                // is the resolved dispatch target. Reconstruct the flattened
+                // CallExpr shape so the existing call machinery handles it
+                // unchanged (runtime behavior is identical to the pre-node form).
+                ir::CallExpr flattened;
+                flattened.callee = node.method;
+                flattened.callee_ref = node.method_ref;
+                flattened.arguments.reserve(node.arguments.size() + 1);
+                if (node.receiver) {
+                    flattened.arguments.push_back(node.receiver);
+                }
+                for (const auto &argument : node.arguments) {
+                    flattened.arguments.push_back(argument);
+                }
+                return eval_call_expr(flattened, expr.source_range, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::LambdaExpr>) {
                 return eval_lambda_expr(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::StructLiteralExpr>) {

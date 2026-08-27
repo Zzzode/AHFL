@@ -1738,11 +1738,30 @@ class TypedIrLowerer final {
                 range);
         }
         ir::ExprRef visit_method_call(const TypedExpr &e) const {
-            ir::CallExpr call{.callee = self.render_method_target(e), .arguments = {}};
+            // KR5.5 / RFC 0013 P3: lower to a first-class MethodCallExpr that
+            // keeps the receiver and method distinct, rather than flattening
+            // the receiver into a CallExpr's first positional argument. The
+            // resolved dispatch target string (impl#N::name / builtin) is the
+            // same one a CallExpr callee held, so the runtime evaluator can
+            // dispatch it identically.
+            ir::MethodCallExpr call{
+                .receiver = ir::ExprRef{}, .method = self.render_method_target(e), .arguments = {}};
             if (const TypedExpr *receiver =
                     TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Base);
                 receiver != nullptr) {
-                call.arguments.push_back(self.lower_typed_expr(*receiver));
+                call.receiver = self.lower_typed_expr(*receiver);
+            }
+            if (e.resolved_symbol.has_value()) {
+                if (const auto symbol = self.typed_program_->find_symbol(*e.resolved_symbol);
+                    symbol.has_value()) {
+                    call.method_ref = ir::SymbolRef{
+                        .kind = ir::SymbolRefKind::Function,
+                        .canonical_name = symbol->get().canonical_name,
+                        .local_name = symbol->get().local_name,
+                        .module_name = symbol->get().module_name,
+                        .id = symbol->get().id.value,
+                    };
+                }
             }
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::Argument)
@@ -2521,6 +2540,14 @@ class TypedIrLowerer final {
                            for (const auto &a : value.arguments)
                                collect_called_targets_from_expr(*a, called_targets);
                        },
+                       [this, &called_targets](const ir::MethodCallExpr &value) {
+                           push_unique_value(called_targets, value.method);
+                           if (value.receiver) {
+                               collect_called_targets_from_expr(*value.receiver, called_targets);
+                           }
+                           for (const auto &a : value.arguments)
+                               collect_called_targets_from_expr(*a, called_targets);
+                       },
                        [this, &called_targets](const ir::LambdaExpr &value) {
                            if (value.body) {
                                collect_called_targets_from_expr(*value.body, called_targets);
@@ -2636,6 +2663,13 @@ class TypedIrLowerer final {
                        },
                        [](const ir::QualifiedValueExpr &) {},
                        [this, &node_names, &reads](const ir::CallExpr &value) {
+                           for (const auto &a : value.arguments)
+                               collect_workflow_value_reads(*a, node_names, reads);
+                       },
+                       [this, &node_names, &reads](const ir::MethodCallExpr &value) {
+                           if (value.receiver) {
+                               collect_workflow_value_reads(*value.receiver, node_names, reads);
+                           }
                            for (const auto &a : value.arguments)
                                collect_workflow_value_reads(*a, node_names, reads);
                        },

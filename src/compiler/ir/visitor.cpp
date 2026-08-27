@@ -217,6 +217,19 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
                            }
                        }
                    },
+                   [&](const MethodCallExpr &value) {
+                       if (value.receiver && !aborted_) {
+                           visit_expr(*value.receiver);
+                       }
+                       for (const auto &argument : value.arguments) {
+                           if (aborted_) {
+                               break;
+                           }
+                           if (argument) {
+                               visit_expr(*argument);
+                           }
+                       }
+                   },
                    [&](const LambdaExpr &value) {
                        if (value.body) {
                            visit_expr(*value.body);
@@ -670,6 +683,21 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
                               [](QualifiedValueExpr &) { return false; },
                               [&](CallExpr &value) {
                                   bool changed = false;
+                                  for (auto &argument : value.arguments) {
+                                      if (aborted_) {
+                                          break;
+                                      }
+                                      if (argument) {
+                                          changed = rewrite_expr(*argument) || changed;
+                                      }
+                                  }
+                                  return changed;
+                              },
+                              [&](MethodCallExpr &value) {
+                                  bool changed = false;
+                                  if (value.receiver && !aborted_) {
+                                      changed = rewrite_expr(*value.receiver) || changed;
+                                  }
                                   for (auto &argument : value.arguments) {
                                       if (aborted_) {
                                           break;

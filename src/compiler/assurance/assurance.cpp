@@ -441,6 +441,21 @@ analyze_capability(const ir::CapabilityDecl &capability,
                 out << ")";
                 return out.str();
             },
+            [&](const ir::MethodCallExpr &v) {
+                std::ostringstream out;
+                out << (v.receiver ? render_decreases_subject(*v.receiver) : std::string("none"))
+                    << "." << v.method << "(";
+                bool first = true;
+                for (const auto &arg : v.arguments) {
+                    if (!first) {
+                        out << ", ";
+                    }
+                    first = false;
+                    out << (arg ? render_decreases_subject(*arg) : std::string("none"));
+                }
+                out << ")";
+                return out.str();
+            },
             [](const auto &) { return std::string("<expr>"); },
         },
         expr.node);

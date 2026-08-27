@@ -104,6 +104,15 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
                            collect_called_targets_from_expr(*argument, called_targets);
                        }
                    },
+                   [&](const MethodCallExpr &value) {
+                       push_unique_value(called_targets, value.method);
+                       if (value.receiver) {
+                           collect_called_targets_from_expr(*value.receiver, called_targets);
+                       }
+                       for (const auto &argument : value.arguments) {
+                           collect_called_targets_from_expr(*argument, called_targets);
+                       }
+                   },
                    [&](const LambdaExpr &value) {
                        if (value.body) {
                            collect_called_targets_from_expr(*value.body, called_targets);
@@ -350,6 +359,14 @@ void collect_workflow_value_reads(const Expr &expr,
                    },
                    [](const QualifiedValueExpr &) {},
                    [&](const CallExpr &value) {
+                       for (const auto &argument : value.arguments) {
+                           collect_workflow_value_reads(*argument, workflow_node_names, reads);
+                       }
+                   },
+                   [&](const MethodCallExpr &value) {
+                       if (value.receiver) {
+                           collect_workflow_value_reads(*value.receiver, workflow_node_names, reads);
+                       }
                        for (const auto &argument : value.arguments) {
                            collect_workflow_value_reads(*argument, workflow_node_names, reads);
                        }

@@ -210,6 +210,23 @@ struct CallExpr {
     SymbolRef callee_ref{};         // Resolved identity; strings are display/diagnostic only
 };
 
+/// Method call expression: receiver.method(arg1, arg2, ...).
+///
+/// KR5.5 / RFC 0013 P3: a first-class node that preserves the
+/// receiver/method distinction across the IR boundary, instead of flattening
+/// the receiver into the first positional argument of a CallExpr. `method`
+/// holds the resolved dispatch target string (a `impl#<index>::<name>` handle
+/// or a `@builtin` hook name — the same string a CallExpr callee carried
+/// before this node existed), so the runtime evaluator can dispatch it exactly
+/// like the equivalent free call. `method_ref` is the resolved impl/trait
+/// method symbol; strings are display/diagnostic only (Principle 2).
+struct MethodCallExpr {
+    ExprRef receiver;               // Receiver object (the `self` argument)
+    std::string method;             // Resolved dispatch target (impl#N::name / builtin)
+    std::vector<ExprRef> arguments; // Explicit argument list (excludes the receiver)
+    SymbolRef method_ref{};         // Resolved identity; strings are display/diagnostic only
+};
+
 /// Pure lambda expression lowered from a typed closure.
 struct LambdaExpr {
     std::vector<std::string> params;
@@ -304,9 +321,9 @@ struct QuantifierExpr {
     ExprRef body;             // the Bool-typed body predicate
 };
 
-/// Expression node (19 variant alternatives - P5 Big Bang: container literals
+/// Expression node (20 variant alternatives - P5 Big Bang: container literals
 /// lowered to CallExpr via nominal stdlib constructors, Option variants via
-/// QualifiedValueExpr + CallExpr)
+/// QualifiedValueExpr + CallExpr; KR5.5 added MethodCallExpr)
 ///
 /// ---------------------------------------------------------------------------
 /// SWEEP CHECKLIST — every new ExprNode alternative MUST update all 8 locations
@@ -336,6 +353,7 @@ using ExprNode = std::variant<BoolLiteralExpr,
                               PathExpr,
                               QualifiedValueExpr,
                               CallExpr,
+                              MethodCallExpr,
                               LambdaExpr,
                               StructLiteralExpr,
                               UnaryExpr,

@@ -369,6 +369,29 @@ class LoweringContext {
         return make_local(dest);
     }
 
+    [[nodiscard]] Operand lower_expr_node(const ir::MethodCallExpr &e, const ir::Expr &expr) {
+        // KR5.5: lower a method call to the same Call rvalue shape as the
+        // equivalent free call — the receiver becomes the leading operand,
+        // followed by the explicit arguments. This keeps opt-IR call semantics
+        // identical to the pre-MethodCallExpr flattened form.
+        std::vector<Operand> args;
+        args.reserve(e.arguments.size() + 1);
+        if (e.receiver) {
+            args.push_back(lower_expr(e.receiver.get()));
+        }
+        for (const auto &arg : e.arguments) {
+            args.push_back(lower_expr(arg.get()));
+        }
+        auto dest = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Call;
+        rv.callee = e.method;
+        rv.operands = std::move(args);
+        rv.result_type = clone_type_ref(expr.resolved_type);
+        emit_assign(dest, std::move(rv), expr.source_range);
+        return make_local(dest);
+    }
+
     [[nodiscard]] Operand lower_expr_node(const ir::LambdaExpr &e, const ir::Expr &expr) {
         // The SSA opt IR has no first-class callable rvalue yet. Preserve the
         // typed Fn local as an opaque value so call sites keep their operand
