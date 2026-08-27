@@ -958,6 +958,30 @@ ahfl_add_manifest_check_fail_test(
     "COLLECTION_CAPACITY_NOT_ALLOWED.*only allowed on List, Set, or Map, not on 'Payload'"
 )
 
+# RFC 0013 P4: the `where length <= N` refinement sugar lowers to the same
+# bounded capacity as the nominal `(N)` form, so it reproduces the identical
+# COLLECTION_CAPACITY_EXCEEDED / COLLECTION_CAPACITY_NOT_ALLOWED diagnostics and
+# is interchangeable with `(N)` in an assignment (where-ok passes).
+ahfl_add_manifest_check_fail_test(
+    ahflc.fail.collection_capacity_where_list_exceeded
+    "${AHFL_CAPACITY_FAILURES_MANIFEST}"
+    where-list-exceeded
+    "COLLECTION_CAPACITY_EXCEEDED.*collection capacity 3 exceeds the target capacity 2"
+)
+
+ahfl_add_manifest_check_fail_test(
+    ahflc.fail.collection_capacity_where_not_allowed_struct
+    "${AHFL_CAPACITY_FAILURES_MANIFEST}"
+    where-not-allowed-struct
+    "COLLECTION_CAPACITY_NOT_ALLOWED.*only allowed on List, Set, or Map, not on 'Payload'"
+)
+
+ahfl_add_manifest_check_test(
+    ahflc.check.collection_capacity_where_ok
+    "${AHFL_CAPACITY_FAILURES_MANIFEST}"
+    where-ok
+)
+
 ahfl_add_check_fail_test(
     ahflc.fail.numeric_widening_int_float
     "${AHFL_TESTS_DIR}/golden/typecheck/numeric_widening_int_float.ahfl"

@@ -165,6 +165,12 @@ inline constexpr ErrorCode<DiagnosticCategory::Parse> ParserStackOverflow{"PARSE
 // builder runs). Carries a SourceRange when the offending construct is known.
 inline constexpr ErrorCode<DiagnosticCategory::Parse> InternalParseInvariant{
     "INTERNAL_PARSE_INVARIANT"};
+// RFC 0013 P4: raised when a collection type refinement uses an unsupported
+// measure keyword. The only supported form is `List<T> where length <= N`;
+// any other identifier (e.g. `where size <= N`) is reported here with a
+// SourceRange pointing at the offending measure name.
+inline constexpr ErrorCode<DiagnosticCategory::Parse> InvalidCapacityRefinement{
+    "INVALID_CAPACITY_REFINEMENT"};
 } // namespace parse
 
 namespace resolve {
@@ -489,6 +495,10 @@ inline constexpr MessageTemplate ParserStackOverflow{
 inline constexpr MessageTemplate InternalParseInvariant{
     "internal parser invariant failed while lowering the parse tree: {}. This is a compiler bug; "
     "please report it with the source that triggered it."};
+// {0} = the unsupported measure identifier the user wrote (e.g. "size").
+inline constexpr MessageTemplate InvalidCapacityRefinement{
+    "unsupported collection refinement '{}'; the only supported bound is 'where length <= N' "
+    "(equivalent to the '(N)' capacity suffix)"};
 } // namespace parse
 namespace resolve {
 inline constexpr MessageTemplate DuplicateSymbol{"duplicate {} '{}'"};

@@ -85,11 +85,19 @@ type_:
 	| fnType
 	| qualifiedIdent ('<' type_ (',' type_)* '>')? collectionCapacity?;
 
-// RFC 0025: optional static capacity refinement on a nominal collection type,
-// e.g. List<Int>(16). Parsed on any generic named type; the type checker
-// restricts it to List/Set/Map and rejects it elsewhere. Mirrors the
-// primitiveType Int(lo,hi) / String(lo,hi) refinement pattern.
-collectionCapacity: '(' INT_LITERAL ')';
+// RFC 0025 / RFC 0013 P4: optional static capacity refinement on a nominal
+// collection type. Two equivalent spellings:
+//   - nominal:    List<Int>(16)              (RFC 0025)
+//   - refinement: List<Int> where length <= 16   (RFC 0013 P4 sugar)
+// Both lower to the same `collection_capacity` on the NamedType AST node, so
+// downstream typecheck restriction (List/Set/Map only) and SMV finite-unroll
+// are shared. The refinement `length` is matched as IDENT (not a literal, which
+// would reserve the word) and validated in the parser builder. Parsed on any
+// generic named type; the type checker restricts it to List/Set/Map and rejects
+// it elsewhere. Mirrors the primitiveType Int(lo,hi) / String(lo,hi) pattern.
+collectionCapacity:
+	'(' INT_LITERAL ')'
+	| 'where' IDENT '<=' INT_LITERAL;
 
 primitiveType:
 	'Unit'

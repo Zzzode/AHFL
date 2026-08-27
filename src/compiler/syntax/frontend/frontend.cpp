@@ -434,7 +434,8 @@ class DiagnosticErrorListener final : public antlr4::BaseErrorListener {
 
 class ProgramBuilder {
   public:
-    explicit ProgramBuilder(const SourceFile &source) : source_(source) {}
+    ProgramBuilder(const SourceFile &source, DiagnosticBag &diagnostics)
+        : source_(source), diagnostics_(diagnostics) {}
 
     // KR5.7: raise an AST-builder invariant failure carrying the offending
     // construct's SourceRange. Used in place of bare `throw std::logic_error`
@@ -487,6 +488,11 @@ class ProgramBuilder {
 
   private:
     const SourceFile &source_;
+    // RFC 0013 P4: sink for recoverable, user-facing parse diagnostics the
+    // builder itself detects (e.g. an invalid collection-refinement measure).
+    // Distinct from AstBuilderInvariantError, which is reserved for true
+    // grammar/builder desyncs (compiler bugs).
+    DiagnosticBag &diagnostics_;
     // Monotonic counter used to assign stable ExprSyntax::node_id values during
     // the parse-tree lowering. Mutable so existing const builder methods remain
     // const while still able to mint fresh ids.
@@ -2850,11 +2856,32 @@ class ProgramBuilder {
             named.type_args.push_back(
                 build_type_syntax(require(child, "generic type argument is missing")));
         }
-        // RFC 0025: optional `(N)` capacity suffix on a bounded collection type.
+        // RFC 0025 / RFC 0013 P4: optional capacity refinement on a bounded
+        // collection type. Two equivalent spellings converge on the same
+        // `collection_capacity` field, so all downstream typecheck restriction
+        // and SMV finite-unroll is shared:
+        //   - nominal:    List<Int>(16)
+        //   - refinement: List<Int> where length <= 16
         // INT_LITERAL is unsigned in the grammar, so the parsed value is >= 0.
-        if (const auto capacity = borrow(context.collectionCapacity())) {
-            named.collection_capacity = static_cast<std::uint64_t>(parse_integer_literal(
-                text_of(require(capacity->get().INT_LITERAL(), "collection capacity is missing"))));
+        // The refinement measure is matched as IDENT (not a reserved literal)
+        // and must be exactly `length`; any other measure is a user error
+        // reported as INVALID_CAPACITY_REFINEMENT rather than silently ignored.
+        if (auto *cap = context.collectionCapacity(); cap != nullptr) {
+            bool refinement_ok = true;
+            if (auto *measure = cap->IDENT(); measure != nullptr) {
+                if (measure->getText() != "length") {
+                    diagnostics_.error()
+                        .code(error_codes::parse::InvalidCapacityRefinement)
+                        .message(messages::parse::InvalidCapacityRefinement, measure->getText())
+                        .range(terminal_range(*measure, source_))
+                        .emit();
+                    refinement_ok = false;
+                }
+            }
+            if (refinement_ok) {
+                named.collection_capacity = static_cast<std::uint64_t>(parse_integer_literal(
+                    text_of(require(cap->INT_LITERAL(), "collection capacity is missing"))));
+            }
         }
         type->node = std::move(named);
         return type;
@@ -3476,7 +3503,7 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
     install_error_listener(parser, error_listener);
 
     try {
-        ProgramBuilder builder(result.source);
+        ProgramBuilder builder(result.source, result.diagnostics);
         result.program =
             builder.build(require(parser.program(), "parser.program() returned no parse tree"));
         const auto invariant_violations = ast::validate_program_invariants(*result.program);

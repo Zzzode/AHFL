@@ -998,6 +998,19 @@ target_link_libraries(ahfl_if_let_syntax_tests
 )
 ahfl_apply_project_warnings(ahfl_if_let_syntax_tests)
 
+# RFC 0013 P4: `List<T> where length <= N` capacity refinement sugar. Parser /
+# AST coverage proving it lowers to the same NamedType::collection_capacity the
+# nominal `(N)` form populates, plus the INVALID_CAPACITY_REFINEMENT negative.
+add_executable(ahfl_capacity_refinement_sugar_tests
+    unit/compiler/syntax/frontend/capacity_refinement_sugar.cpp
+)
+target_link_libraries(ahfl_capacity_refinement_sugar_tests
+    PRIVATE
+        ahfl_compiler_syntax
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_capacity_refinement_sugar_tests)
+
 add_executable(ahfl_thread_pool_tests
     unit/base/support/thread_pool.cpp
 )
@@ -1326,6 +1339,7 @@ foreach(_tgt
     ahfl_decreases_symmetry_tests
     ahfl_enum_struct_variant_tests
     ahfl_if_let_syntax_tests
+    ahfl_capacity_refinement_sugar_tests
     ahfl_tooling_repl_tests
     ahfl_tooling_dap_tests
     ahfl_tooling_telemetry_tests

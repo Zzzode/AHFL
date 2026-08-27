@@ -1,0 +1,11 @@
+module typecheck::capacity_where_not_allowed_struct;
+
+// RFC 0013 P4: the `where length <= N` refinement is only meaningful on
+// List / Set / Map, exactly like the `(N)` suffix. Writing it on a
+// user-defined struct is a type error (COLLECTION_CAPACITY_NOT_ALLOWED),
+// proving the sugar shares the nominal form's typecheck restriction.
+struct Payload { value: Int; }
+
+struct Holder {
+    items: Payload where length <= 4;
+}

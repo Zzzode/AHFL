@@ -1,0 +1,11 @@
+module typecheck::capacity_where_ok;
+import std::collections;
+
+// RFC 0013 P4: the `where length <= N` refinement sugar parses and lowers to a
+// bounded-capacity collection type on a function parameter — the RFC's exact
+// motivating surface (fn sum_squares(xs: List<Int> where length <= 16) ...).
+// This is the positive companion to capacity_where_list_exceeded: a clean
+// check with no diagnostics proves the sugar type-checks end to end.
+fn sum_bounded(xs: collections::List<Int> where length <= 16) -> Int effect Pure decreases 0 {
+    return 0;
+}

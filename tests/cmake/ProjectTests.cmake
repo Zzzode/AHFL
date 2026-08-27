@@ -1311,6 +1311,11 @@ add_test(NAME ahfl.frontend.if_let_syntax_all
     COMMAND $<TARGET_FILE:ahfl_if_let_syntax_tests>
 )
 
+# RFC 0013 P4: capacity refinement sugar `List<T> where length <= N`.
+add_test(NAME ahfl.frontend.capacity_refinement_sugar_all
+    COMMAND $<TARGET_FILE:ahfl_capacity_refinement_sugar_tests>
+)
+
 add_test(NAME ahfl.support.thread_pool_all
     COMMAND $<TARGET_FILE:ahfl_thread_pool_tests>
 )

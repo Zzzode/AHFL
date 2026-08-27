@@ -1,0 +1,10 @@
+module typecheck::capacity_where_list_exceeded;
+import typecheck::capacity_where_list_exceeded as self;
+import std::collections;
+
+// RFC 0013 P4: the `where length <= N` refinement sugar must lower to the same
+// bounded capacity as the nominal `List<Int>(N)` form. A List bounded at 3
+// elements is not assignable to one bounded at 2, so this reproduces the exact
+// COLLECTION_CAPACITY_EXCEEDED diagnostic that the `(N)` spelling produces.
+const Big: collections::List<Int> where length <= 3 = collections::empty<Int>();
+const Small: collections::List<Int> where length <= 2 = self::Big;
