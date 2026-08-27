@@ -60,7 +60,8 @@ struct Encoder {
     // declaration wins; a later reference with the same name is ignored
     // (identical spelling ⇒ identical symbol). Deterministic first-encounter
     // order is preserved for byte-identical artifacts.
-    void note_symbol(const std::string &name, const ir::TypeRef &type) {
+    void note_symbol(const std::string &name, const ir::TypeRef &type,
+                     const ir::SourceRangeOpt &source_range = std::nullopt) {
         SmtSort sort{SmtSort::Int};
         switch (type.kind) {
         case ir::TypeRefKind::Bool:
@@ -74,8 +75,13 @@ struct Encoder {
             // Non-scalar (struct/enum/unresolved/string/...) — not a leaf term.
             return;
         }
-        for (const auto &existing : symbols) {
+        for (auto &existing : symbols) {
             if (existing.name == name) {
+                // First-encounter order is canonical, but backfill a source
+                // range if this later encounter carries one the first lacked.
+                if (!existing.source_range.has_value() && source_range.has_value()) {
+                    existing.source_range = source_range;
+                }
                 return;
             }
         }
@@ -85,6 +91,7 @@ struct Encoder {
         if (type.kind == ir::TypeRefKind::BoundedInt) {
             symbol.int_bounds = type.int_bounds;
         }
+        symbol.source_range = source_range;
         symbols.push_back(std::move(symbol));
     }
 
@@ -256,7 +263,7 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
                     }
                 }
                 auto symbol = path_symbol(e.path);
-                note_symbol(symbol, ref.ptr->resolved_type);
+                note_symbol(symbol, ref.ptr->resolved_type, ref.ptr->source_range);
                 return symbol;
             },
             [&](const ir::MemberAccessExpr &e) -> std::optional<std::string> {
@@ -266,7 +273,7 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
                 }
                 // Field projection folds into the flat symbol namespace.
                 auto symbol = *base + "__" + e.member;
-                note_symbol(symbol, ref.ptr->resolved_type);
+                note_symbol(symbol, ref.ptr->resolved_type, ref.ptr->source_range);
                 return symbol;
             },
             [&](const ir::BinaryExpr &e) -> std::optional<std::string> {

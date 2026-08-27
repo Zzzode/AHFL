@@ -62,6 +62,13 @@ struct SmtBmcGoal {
     // materialized counterexample. Symbol names are the flat SMT names
     // (e.g. "input__x") the encoder produced.
     std::vector<std::pair<std::string, std::string>> counterexample;
+    // KR2.6: the free symbols referenced by this goal's contract, carrying the
+    // AHFL source range of the field reference that introduced each (when
+    // known). A counterexample assignment `counterexample[i].first` can be
+    // joined by name against `symbols` to point the violating value back at its
+    // field declaration in the source. Populated for every goal (not only
+    // refuted ones) so emit/report paths can annotate uniformly.
+    std::vector<SmtSymbol> symbols;
     std::optional<SourceRange> source_range;
 };
 

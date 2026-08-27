@@ -38,9 +38,14 @@ struct ContractQueries {
 void merge_symbols(std::vector<SmtSymbol> &into, const std::vector<SmtSymbol> &from) {
     for (const auto &symbol : from) {
         bool seen = false;
-        for (const auto &existing : into) {
+        for (auto &existing : into) {
             if (existing.name == symbol.name) {
                 seen = true;
+                // Backfill a source range if a later clause referencing the
+                // same symbol carries one the first encounter lacked (KR2.6).
+                if (!existing.source_range.has_value() && symbol.source_range.has_value()) {
+                    existing.source_range = symbol.source_range;
+                }
                 break;
             }
         }
@@ -176,6 +181,10 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
             record.verdict = verdict.status;
             record.proven = verdict.status == SmtSolverStatus::Unsat;
             record.source_range = goal.source_range;
+            // KR2.6: carry the contract's symbols (with per-field source ranges)
+            // so a counterexample assignment can be joined by name to its field
+            // declaration in the source.
+            record.symbols = contract.symbols;
 
             if (record.proven) {
                 ++result.proven_count;
@@ -263,7 +272,18 @@ void print_smt_bmc_report(const SmtBmcResult &result, std::ostream &out) {
             out << "smt_bmc_refuted: contract " << goal.target_name << " " << goal.description
                 << "[" << goal.clause_index << "]\n";
             for (const auto &[name, value] : goal.counterexample) {
-                out << "  counterexample: " << name << " = " << value << '\n';
+                out << "  counterexample: " << name << " = " << value;
+                // KR2.6: annotate with the field's source offsets when the
+                // encoder recorded a range for this symbol.
+                for (const auto &symbol : goal.symbols) {
+                    if (symbol.name == name && symbol.source_range.has_value() &&
+                        !symbol.source_range->empty()) {
+                        out << " @[" << symbol.source_range->begin_offset << ","
+                            << symbol.source_range->end_offset << ")";
+                        break;
+                    }
+                }
+                out << '\n';
             }
         } else if (goal.bounded_only) {
             out << "smt_bmc_bounded: contract " << goal.target_name << " " << goal.description

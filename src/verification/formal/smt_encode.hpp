@@ -60,6 +60,12 @@ struct SmtSymbol {
     std::string name;
     SmtSort sort{SmtSort::Int};
     std::optional<std::pair<std::int64_t, std::int64_t>> int_bounds;
+    // RFC 0017/KR2.6: AHFL source range of the field reference that introduced
+    // this symbol (e.g. the `input.x` path expression). Lets an SMT-BMC
+    // counterexample point each violating assignment back at its field in the
+    // source, mirroring the SMV backend's AHFL_MAP ranges. Empty when the
+    // introducing expression carried no range (synthesized / unmapped).
+    std::optional<SourceRange> source_range;
 };
 
 // Result of encoding one contract expression. On success `term` holds the

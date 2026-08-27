@@ -49,12 +49,13 @@ ir::ExprRef int_lit(ir::Program &p, const std::string &spelling) {
     return p.expr_arena.make(ir::IntegerLiteralExpr{.spelling = spelling});
 }
 
-ir::ExprRef int_path(ir::Program &p, const std::string &root, std::vector<std::string> members) {
+ir::ExprRef int_path(ir::Program &p, const std::string &root, std::vector<std::string> members,
+                     ir::SourceRangeOpt source_range = std::nullopt) {
     ir::Path path;
     path.root_kind = ir::PathRootKind::Identifier;
     path.root_name = root;
     path.members = std::move(members);
-    return p.expr_arena.make(ir::PathExpr{.path = std::move(path)}, std::nullopt, int_type());
+    return p.expr_arena.make(ir::PathExpr{.path = std::move(path)}, source_range, int_type());
 }
 
 ir::ExprRef bin(ir::Program &p, ir::ExprBinaryOp op, ir::ExprRef lhs, ir::ExprRef rhs) {
@@ -211,20 +212,39 @@ void test_real_ensures_refuted() {
     }
     ir::Program p;
     // ensures: input.x >= 1 with NO precondition — refutable (x could be 0).
+    // The `input.x` reference carries a source range so we can assert KR2.6:
+    // the refuted goal's symbols map the counterexample variable back to source.
     add_contract(p, "Agent",
                  {{ir::ContractClauseKind::Ensures,
-                   bin(p, ir::ExprBinaryOp::GreaterEqual, int_path(p, "input", {"x"}),
+                   bin(p, ir::ExprBinaryOp::GreaterEqual,
+                       int_path(p, "input", {"x"}, ahfl::SourceRange{40, 47}),
                        int_lit(p, "1"))}});
     auto r = run_smt_bmc(p, {});
     check(r.status == SmtBmcStatus::Unsafe, "unconditioned ensures is refuted (Unsafe)");
     // The refuted goal must carry a concrete counterexample assignment.
     bool has_cex = false;
+    bool cex_var_mapped = false;
     for (const auto &g : r.goals) {
         if (g.verdict == SmtSolverStatus::Sat && !g.counterexample.empty()) {
             has_cex = true;
+            // KR2.6: each counterexample variable joins by name to a goal symbol
+            // carrying the source range of its field reference.
+            for (const auto &[name, value] : g.counterexample) {
+                (void)value;
+                for (const auto &sym : g.symbols) {
+                    if (sym.name == name && sym.name == "input__x" &&
+                        sym.source_range.has_value() &&
+                        sym.source_range->begin_offset == 40 &&
+                        sym.source_range->end_offset == 47) {
+                        cex_var_mapped = true;
+                    }
+                }
+            }
         }
     }
     check(has_cex, "refuted goal carries a materialized counterexample");
+    check(cex_var_mapped,
+          "refuted counterexample variable maps back to its field source range (KR2.6)");
 }
 
 // RFC 0024/0025: a bounded-collection quantifier discharged end-to-end by real

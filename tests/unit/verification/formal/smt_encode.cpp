@@ -96,6 +96,29 @@ void test_path_symbol() {
           "dotted path flattens to __-joined symbol");
 }
 
+// KR2.6: the encoder records the source range of the field reference that
+// introduced each free symbol, so an SMT-BMC counterexample can point a
+// violating assignment back at its field declaration.
+void test_path_symbol_carries_source_range() {
+    ir::ExprArena arena;
+    ir::Path p;
+    p.root_kind = ir::PathRootKind::Identifier;
+    p.root_name = "input";
+    p.members = {"x"};
+    // A path expr with an explicit source range and an Int resolved type.
+    ir::TypeRef int_type;
+    int_type.kind = ir::TypeRefKind::Int;
+    const auto ref = arena.make(ir::PathExpr{.path = std::move(p)},
+                                ahfl::SourceRange{10, 17}, std::move(int_type));
+    const auto r = encode_predicate(ref);
+    check(r.ok() && r.term == "input__x", "path with source range encodes normally");
+    check(r.symbols.size() == 1, "one symbol collected");
+    const bool mapped = r.symbols.size() == 1 && r.symbols.front().source_range.has_value() &&
+                        r.symbols.front().source_range->begin_offset == 10 &&
+                        r.symbols.front().source_range->end_offset == 17;
+    check(mapped, "symbol carries the field reference's source range");
+}
+
 void test_member_access() {
     ir::ExprArena arena;
     auto base = path(arena, "output", {});
@@ -368,6 +391,7 @@ int main() {
     test_bool_literal();
     test_integer_literal();
     test_path_symbol();
+    test_path_symbol_carries_source_range();
     test_member_access();
     test_binary_comparison();
     test_binary_logical();
