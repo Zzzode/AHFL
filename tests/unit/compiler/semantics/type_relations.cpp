@@ -628,3 +628,66 @@ TEST_CASE("TypeRelationContext member methods delegate to free functions") {
     CHECK(ctx.exact_schema(*s, *s));
     CHECK_FALSE(ctx.exact_schema(*bs, *s));
 }
+
+// ---------------------------------------------------------------------------
+// KR5.4 (RFC 0013 P5-02): user-generic variance via the injected provider.
+// A user nominal `test::Box<T>` compares its type argument according to the
+// variance the provider reports: Covariant -> subtype, Contravariant ->
+// reversed subtype, Invariant (default without a provider) -> equivalence.
+// ---------------------------------------------------------------------------
+TEST_CASE("type relations honor covariant user-generic variance") {
+    auto &tc = ahfl::TypeContext::global();
+    const auto bounded = tc.bounded_int(-2, 2); // BoundedInt(-2..2) <: Int
+    const auto int_type = tc.make(ahfl::TypeKind::Int);
+
+    const auto box_bounded =
+        tc.struct_type("test::Box", ahfl::SymbolId{9001}, std::vector<ahfl::TypePtr>{bounded});
+    const auto box_int =
+        tc.struct_type("test::Box", ahfl::SymbolId{9001}, std::vector<ahfl::TypePtr>{int_type});
+
+    // Default (no provider): user generics are invariant, so Box<Bounded> is
+    // NOT a subtype of Box<Int> even though Bounded <: Int.
+    {
+        ahfl::TypeRelationContext ctx;
+        CHECK_FALSE(ahfl::is_subtype_of(*box_bounded, *box_int, ctx));
+    }
+
+    // Covariant provider: Box<Bounded> <: Box<Int>, but not the reverse.
+    {
+        ahfl::TypeRelationContext ctx;
+        ctx.set_variance_provider([](std::string_view name) -> std::vector<ahfl::Variance> {
+            if (name == "test::Box") {
+                return {ahfl::Variance::Covariant};
+            }
+            return {};
+        });
+        CHECK(ahfl::is_subtype_of(*box_bounded, *box_int, ctx));
+        CHECK_FALSE(ahfl::is_subtype_of(*box_int, *box_bounded, ctx));
+    }
+
+    // Contravariant provider: the direction reverses.
+    {
+        ahfl::TypeRelationContext ctx;
+        ctx.set_variance_provider([](std::string_view name) -> std::vector<ahfl::Variance> {
+            if (name == "test::Box") {
+                return {ahfl::Variance::Contravariant};
+            }
+            return {};
+        });
+        CHECK_FALSE(ahfl::is_subtype_of(*box_bounded, *box_int, ctx));
+        CHECK(ahfl::is_subtype_of(*box_int, *box_bounded, ctx));
+    }
+
+    // Explicit invariant provider matches the no-provider default.
+    {
+        ahfl::TypeRelationContext ctx;
+        ctx.set_variance_provider([](std::string_view name) -> std::vector<ahfl::Variance> {
+            if (name == "test::Box") {
+                return {ahfl::Variance::Invariant};
+            }
+            return {};
+        });
+        CHECK_FALSE(ahfl::is_subtype_of(*box_bounded, *box_int, ctx));
+        CHECK(ahfl::is_subtype_of(*box_bounded, *box_bounded, ctx));
+    }
+}

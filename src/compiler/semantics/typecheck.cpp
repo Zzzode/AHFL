@@ -46,6 +46,250 @@ using internal::ValueContext;
 
 namespace {
 
+// ============================================================================
+// KR5.4 (RFC 0013 P5-02): structural variance inference for user generics.
+// ============================================================================
+// The variance of a nominal's type parameter is inferred from how the
+// parameter is *used* across the type's fields / enum-variant payloads
+// (OCaml / Rust-style use-site inference), replacing the previous hardcoded
+// per-container-name table. A parameter is:
+//   Covariant     — used only in covariant positions (fields, payloads,
+//                   covariant slots of stdlib containers, Fn return types)
+//   Contravariant — used only in contravariant positions (Fn parameter types)
+//   Invariant     — used in a mix of the above, in an invariant slot (Map key),
+//                   or transitively through another generic in an invariant
+//                   position.
+// The default for an unused parameter is Covariant (a phantom parameter cannot
+// break subtyping soundness); this matches the standard "bivariant collapses
+// to the safe covariant direction" convention.
+
+[[nodiscard]] Variance flip_variance(Variance v) {
+    switch (v) {
+    case Variance::Covariant:
+        return Variance::Contravariant;
+    case Variance::Contravariant:
+        return Variance::Covariant;
+    case Variance::Invariant:
+        return Variance::Invariant;
+    }
+    return Variance::Invariant;
+}
+
+// Merge two variance observations for the same parameter. A parameter observed
+// in two incompatible polarities is Invariant.
+[[nodiscard]] Variance join_variance(std::optional<Variance> current, Variance observed) {
+    if (!current.has_value()) {
+        return observed;
+    }
+    if (*current == observed) {
+        return observed;
+    }
+    return Variance::Invariant;
+}
+
+// Walk `type` occurring at `polarity` within a nominal that declares
+// `param_count` type parameters, accumulating each parameter's observed
+// variance into `out` (indexed by TypeVarT::index). `visited` guards against
+// unbounded recursion through nested/recursive user nominals.
+void collect_param_variance(const TypeEnvironment &environment,
+                            const Type &type,
+                            Variance polarity,
+                            std::size_t param_count,
+                            std::vector<std::optional<Variance>> &out,
+                            std::unordered_set<std::string> &visited);
+
+// Forward declaration: infer the full per-parameter variance vector for the
+// nominal named `canonical_name` (empty when unknown or non-generic).
+std::vector<Variance> infer_nominal_variance(const TypeEnvironment &environment,
+                                             std::string_view canonical_name,
+                                             std::unordered_set<std::string> &visited);
+
+// Compute the full per-parameter variance vector for a nominal identified by
+// its field/payload member types. Returns Covariant for unused parameters.
+[[nodiscard]] std::vector<Variance>
+finalize_variance(const std::vector<std::optional<Variance>> &observed) {
+    std::vector<Variance> result;
+    result.reserve(observed.size());
+    for (const auto &entry : observed) {
+        result.push_back(entry.value_or(Variance::Covariant));
+    }
+    return result;
+}
+
+void collect_member_variance(const TypeEnvironment &environment,
+                             const std::vector<TypePtr> &members,
+                             std::size_t param_count,
+                             std::vector<std::optional<Variance>> &out,
+                             std::unordered_set<std::string> &visited) {
+    for (const auto &member : members) {
+        if (member != nullptr) {
+            collect_param_variance(
+                environment, *member, Variance::Covariant, param_count, out, visited);
+        }
+    }
+}
+
+void collect_param_variance(const TypeEnvironment &environment,
+                            const Type &type,
+                            Variance polarity,
+                            std::size_t param_count,
+                            std::vector<std::optional<Variance>> &out,
+                            std::unordered_set<std::string> &visited) {
+    type.visit(Overloaded{
+        [&](const types::TypeVarT &var) {
+            if (var.index < param_count) {
+                out[var.index] = join_variance(out[var.index], polarity);
+            }
+        },
+        [&](const types::FnT &fn) {
+            // Parameters are contravariant, the return type is covariant.
+            for (const auto &param : fn.params) {
+                if (param != nullptr) {
+                    collect_param_variance(
+                        environment, *param, flip_variance(polarity), param_count, out, visited);
+                }
+            }
+            if (fn.return_type != nullptr) {
+                collect_param_variance(
+                    environment, *fn.return_type, polarity, param_count, out, visited);
+            }
+        },
+        [&](const types::StructT &s) {
+            // Stdlib containers carry known variance: List/Set/Option element is
+            // covariant, Map key is invariant, Map value covariant.
+            const auto container = stdlib_bridge::std_container_type_view(type);
+            if (container.has_value() && container->nominal) {
+                switch (container->kind) {
+                case stdlib_bridge::StdContainerKind::Map:
+                    if (container->first != nullptr) {
+                        collect_param_variance(environment,
+                                               *container->first,
+                                               Variance::Invariant,
+                                               param_count,
+                                               out,
+                                               visited);
+                    }
+                    if (container->second != nullptr) {
+                        collect_param_variance(
+                            environment, *container->second, polarity, param_count, out, visited);
+                    }
+                    return;
+                case stdlib_bridge::StdContainerKind::List:
+                case stdlib_bridge::StdContainerKind::Set:
+                case stdlib_bridge::StdContainerKind::Option:
+                    if (container->first != nullptr) {
+                        collect_param_variance(
+                            environment, *container->first, polarity, param_count, out, visited);
+                    }
+                    return;
+                }
+            }
+            // A nested user struct: compose the outer polarity with each of the
+            // nested nominal's own inferred parameter variances. Guard against
+            // recursive/cyclic nominal references.
+            if (!visited.insert(s.canonical_name).second) {
+                // Recursion: treat the argument conservatively as invariant.
+                for (const auto &arg : s.type_args) {
+                    if (arg != nullptr) {
+                        collect_param_variance(
+                            environment, *arg, Variance::Invariant, param_count, out, visited);
+                    }
+                }
+                return;
+            }
+            const auto nested = infer_nominal_variance(environment, s.canonical_name, visited);
+            for (std::size_t i = 0; i < s.type_args.size(); ++i) {
+                if (s.type_args[i] == nullptr) {
+                    continue;
+                }
+                const auto nested_variance =
+                    i < nested.size() ? nested[i] : Variance::Invariant;
+                Variance composed = polarity;
+                if (nested_variance == Variance::Contravariant) {
+                    composed = flip_variance(polarity);
+                } else if (nested_variance == Variance::Invariant) {
+                    composed = Variance::Invariant;
+                }
+                collect_param_variance(
+                    environment, *s.type_args[i], composed, param_count, out, visited);
+            }
+            visited.erase(s.canonical_name);
+        },
+        [&](const types::EnumT &e) {
+            if (!visited.insert(e.canonical_name).second) {
+                for (const auto &arg : e.type_args) {
+                    if (arg != nullptr) {
+                        collect_param_variance(
+                            environment, *arg, Variance::Invariant, param_count, out, visited);
+                    }
+                }
+                return;
+            }
+            const auto nested = infer_nominal_variance(environment, e.canonical_name, visited);
+            for (std::size_t i = 0; i < e.type_args.size(); ++i) {
+                if (e.type_args[i] == nullptr) {
+                    continue;
+                }
+                const auto nested_variance =
+                    i < nested.size() ? nested[i] : Variance::Invariant;
+                Variance composed = polarity;
+                if (nested_variance == Variance::Contravariant) {
+                    composed = flip_variance(polarity);
+                } else if (nested_variance == Variance::Invariant) {
+                    composed = Variance::Invariant;
+                }
+                collect_param_variance(
+                    environment, *e.type_args[i], composed, param_count, out, visited);
+            }
+            visited.erase(e.canonical_name);
+        },
+        [&](const auto &) {
+            // Scalars / Any / Never / etc. carry no type parameters.
+        },
+    });
+}
+
+std::vector<Variance> infer_nominal_variance(const TypeEnvironment &environment,
+                                             std::string_view canonical_name,
+                                             std::unordered_set<std::string> &visited) {
+    if (const auto info = environment.find_struct(canonical_name); info.has_value()) {
+        const auto param_count = info->get().type_param_names.size();
+        if (param_count == 0) {
+            return {};
+        }
+        std::vector<std::optional<Variance>> observed(param_count);
+        for (const auto &field : info->get().fields) {
+            if (field.type != nullptr) {
+                collect_param_variance(
+                    environment, *field.type, Variance::Covariant, param_count, observed, visited);
+            }
+        }
+        return finalize_variance(observed);
+    }
+    if (const auto info = environment.find_enum(canonical_name); info.has_value()) {
+        const auto param_count = info->get().type_param_names.size();
+        if (param_count == 0) {
+            return {};
+        }
+        std::vector<std::optional<Variance>> observed(param_count);
+        for (const auto &variant : info->get().variants) {
+            collect_member_variance(environment, variant.payload, param_count, observed, visited);
+            for (const auto &field : variant.fields) {
+                if (field.type != nullptr) {
+                    collect_param_variance(environment,
+                                           *field.type,
+                                           Variance::Covariant,
+                                           param_count,
+                                           observed,
+                                           visited);
+                }
+            }
+        }
+        return finalize_variance(observed);
+    }
+    return {};
+}
+
 void append_typed_child(std::vector<TypedExprChild> &children,
                         const TypedProgram &program,
                         const ast::ExprSyntax *child,
@@ -1129,6 +1373,23 @@ TypeCheckResult TypeCheckPass::run() {
     DeclarationIndexBuilder(session_, state_, declaration_index_, hir_builder_).run();
     auto environment_result = DeclarationSema(*this).run();
     result_.environment = std::move(environment_result.environment);
+
+    // KR5.4 (RFC 0013 P5-02): install the user-generic variance provider now
+    // that the environment (struct/enum type info) is populated. Variance is
+    // inferred structurally from field/payload usage and memoized per nominal.
+    relations_.set_variance_provider(
+        [this, cache = std::make_shared<std::unordered_map<std::string, std::vector<Variance>>>()](
+            std::string_view canonical_name) -> std::vector<Variance> {
+            const std::string key{canonical_name};
+            if (const auto it = cache->find(key); it != cache->end()) {
+                return it->second;
+            }
+            std::unordered_set<std::string> visited;
+            auto variance = infer_nominal_variance(environment(), canonical_name, visited);
+            auto [it, _] = cache->emplace(key, std::move(variance));
+            return it->second;
+        });
+
     hir_builder_.apply_declaration_payload_updates(
         std::move(environment_result.declaration_updates));
     // P3c.S5a: snapshot the declaration-layer impl_index from TypeEnvironment

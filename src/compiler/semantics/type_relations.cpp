@@ -536,6 +536,45 @@ bool equivalent_impl(const Type &lhs,
 
 // ---- Subtype ---------------------------------------------------------------
 
+// KR5.4 (RFC 0013 P5-02): resolve the declared variance of a user nominal's
+// type parameter at `index` via the injected variance provider. Defaults to
+// Invariant when no provider is set, the nominal is unknown, or the index is
+// out of the provided vector's range — exactly reproducing the pre-variance
+// behavior. Stdlib containers do not reach this helper (they are handled by
+// dedicated branches above).
+[[nodiscard]] Variance nominal_arg_variance(const TypeRelationContext *ctx,
+                                            std::string_view canonical_name,
+                                            std::size_t index) {
+    if (ctx == nullptr || !ctx->options().variance_provider) {
+        return Variance::Invariant;
+    }
+    const auto variances = ctx->options().variance_provider(canonical_name);
+    if (index >= variances.size()) {
+        return Variance::Invariant;
+    }
+    return variances[index];
+}
+
+// Apply the variance rule for one type-argument pair: Covariant defers to
+// source <: target, Contravariant to target <: source, Invariant to
+// equivalence. Returns whether the pair satisfies the relation.
+[[nodiscard]] bool solve_variant_arg(MemoizedRelationSolver &solver,
+                                     Variance variance,
+                                     const Type &source_arg,
+                                     const Type &target_arg,
+                                     const std::string &path) {
+    switch (variance) {
+    case Variance::Covariant:
+        return solver.solve(TypeRelationKind::Subtype, source_arg, target_arg, path);
+    case Variance::Contravariant:
+        return solver.solve(TypeRelationKind::Subtype, target_arg, source_arg, path);
+    case Variance::Invariant:
+        break;
+    }
+    return solver.solve(TypeRelationKind::Equivalent, source_arg, target_arg, path);
+}
+
+
 bool subtype_impl(const Type &source,
                   const Type &target,
                   TypeRelationContext *ctx,
@@ -669,15 +708,22 @@ bool subtype_impl(const Type &source,
                     }
                 }
             }
-            // Invariant fallback for all other struct nominals.
+            // KR5.4 (RFC 0013 P5-02): per-parameter variance for user struct
+            // nominals. Each argument position is compared according to its
+            // declared/inferred variance (Covariant -> subtype, Contravariant
+            // -> reversed subtype, Invariant -> equivalence). Absent a variance
+            // provider every position defaults to Invariant (legacy behavior).
             for (std::size_t i = 0; i < s->type_args.size(); ++i) {
                 if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {
                     return false;
                 }
-                if (!solver.solve(TypeRelationKind::Equivalent,
-                                  *s->type_args[i],
-                                  *t->type_args[i],
-                                  join_path(path, "struct.type_args[" + std::to_string(i) + "]"))) {
+                const auto variance = nominal_arg_variance(ctx, s->canonical_name, i);
+                if (!solve_variant_arg(solver,
+                                       variance,
+                                       *s->type_args[i],
+                                       *t->type_args[i],
+                                       join_path(path, "struct.type_args[" + std::to_string(i) +
+                                                           "]"))) {
                     return false;
                 }
             }
@@ -709,15 +755,20 @@ bool subtype_impl(const Type &source,
                                         join_path(path, "optional.inner"));
                 }
             }
-            // Invariant fallback for all other enum nominals (incl. Result).
+            // KR5.4 (RFC 0013 P5-02): per-parameter variance for user enum
+            // nominals (Result and other user enums). Same rule as structs;
+            // defaults to Invariant without a variance provider.
             for (std::size_t i = 0; i < s->type_args.size(); ++i) {
                 if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {
                     return false;
                 }
-                if (!solver.solve(TypeRelationKind::Equivalent,
-                                  *s->type_args[i],
-                                  *t->type_args[i],
-                                  join_path(path, "enum.type_args[" + std::to_string(i) + "]"))) {
+                const auto variance = nominal_arg_variance(ctx, s->canonical_name, i);
+                if (!solve_variant_arg(solver,
+                                       variance,
+                                       *s->type_args[i],
+                                       *t->type_args[i],
+                                       join_path(path, "enum.type_args[" + std::to_string(i) +
+                                                           "]"))) {
                     return false;
                 }
             }

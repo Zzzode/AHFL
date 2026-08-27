@@ -3,6 +3,7 @@
 #include "ahfl/compiler/semantics/types.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -11,6 +12,19 @@
 #include <vector>
 
 namespace ahfl {
+
+// KR5.4 (RFC 0013 P5-02): declaration variance of a generic type parameter.
+// Determines how a nominal type's subtyping relates to its type arguments:
+//   Covariant     — `Box<Sub> <: Box<Super>` when `Sub <: Super` (read-only use)
+//   Contravariant — `Sink<Super> <: Sink<Sub>` (write-only / Fn-parameter use)
+//   Invariant     — the argument must be equivalent (mixed / key-position use)
+// User nominals default to Invariant unless a variance provider supplies an
+// inferred vector (see TypeRelationOptions::variance_provider).
+enum class Variance {
+    Invariant,
+    Covariant,
+    Contravariant,
+};
 
 // ---------------------------------------------------------------------------
 // Type constraint skeleton (P1.5)
@@ -108,6 +122,15 @@ struct TypeRelationOptions {
     // closed. This is independent from trace volume limits: relation
     // evaluation still runs normally up to this bound even when traces are off.
     int max_solver_depth{256};
+
+    // KR5.4 (RFC 0013 P5-02): per-parameter variance provider for user-defined
+    // generic nominals (struct / enum). Given a nominal's canonical name, it
+    // returns the variance of each declared type parameter in order (empty when
+    // the nominal is unknown or non-generic). When unset — or when it returns
+    // fewer entries than the type has arguments — the missing positions default
+    // to Invariant, reproducing the pre-variance behavior exactly. Stdlib
+    // containers keep their dedicated hardcoded variance and never consult this.
+    std::function<std::vector<Variance>(std::string_view canonical_name)> variance_provider{};
 };
 
 // ---------------------------------------------------------------------------
@@ -247,6 +270,13 @@ class TypeRelationContext {
 
     [[nodiscard]] const TypeRelationOptions &options() const noexcept {
         return options_;
+    }
+
+    // KR5.4: install the per-parameter variance provider for user nominals.
+    // Set once by the typecheck driver after declarations are built.
+    void set_variance_provider(
+        std::function<std::vector<Variance>(std::string_view)> provider) {
+        options_.variance_provider = std::move(provider);
     }
 
     // ---- Flat trace API ------------------------------------------------------

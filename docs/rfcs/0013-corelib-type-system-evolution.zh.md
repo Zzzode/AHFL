@@ -5,7 +5,7 @@ status: "implementing"
 area: ["language", "compiler", "stdlib", "runtime"]
 stability: "experimental"
 created: "2026-06-21"
-updated: "2026-08-22"
+updated: "2026-08-27"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -321,10 +321,10 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 | --- | --- | --- | --- |
 | P0 哲学 + 边界冻结 | ✅ 完成 | 100% | — |
 | P1 ADT（enum 带 payload） | ✅ 完成 | 100% | 索引式模式匹配留作 follow-up |
-| P2 fn + 用户泛型 + 一等闭包 | 🟡 进行中 | 85% | 跨链泛型推断（argument-type → callee-type-param 反推 sub-engine）；method-level `<A>/<U>` tparam 传播；闭包捕获列表；const 泛型参数 |
+| P2 fn + 用户泛型 + 一等闭包 | 🟡 进行中 | 88% | 跨链泛型推断（argument-type → callee-type-param 反推 sub-engine）；闭包捕获列表；const 泛型参数。**method-level `<A>/<U>` tparam 传播已落地（KR5.1，2026-08-27）**：`resolver.cpp::resolve_trait_item` 与 typecheck `resolve_trait_method_info` 双侧激活组合 trait+method 作用域 + per-method scope id，`fn fold<A>`/`map<A>` 不再报 UNKNOWN_TYPE |
 | P3 trait / typeclass | 🟡 进行中 | 97% | IR 一等 TraitDecl/ImplDecl 节点；MethodCallExpr variant；where-clause 端到端传播。impl-body parser 3 语法 gap 全部落地：closure self/keyword 参数 + CANNOT_INFER_CLOSURE_PARAM（P3-gaps-A）、wildcard `let _` + `{}` unit literal（P3-gaps-B，2026-08-22） |
-| P4 effect 系统 + 可验证子集 | 🟡 进行中 | 75% | bounded refinement `List<T> where length <= N` grammar + SMV fixed-size array 接线；`decreases` 单调性证明与 SMV/BMC 消费；effect 多态 |
-| P5 容器 stdlib 化 | 🟡 进行中 | 92% | 5/5 nominal wrapper 终态（Option/Result/List 为 nominal enum，Set/Map 为 nominal struct）；剩余 8% 是 P3 trait impl 层（Foldable/Iterable/Functor × 容器） |
+| P4 effect 系统 + 可验证子集 | 🟡 进行中 | 80% | bounded refinement `List<T> where length <= N` grammar + SMV fixed-size array 接线；effect 多态。**返回位 where-bound 强制（KR5.2）与 `decreases` 终止校验(wildcard-on-cyclic + 度量识别，KR5.3)已落地（2026-08-27）** |
+| P5 容器 stdlib 化 + 用户泛型 variance | 🟡 进行中 | 95% | 5/5 nominal wrapper 终态（Option/Result/List 为 nominal enum，Set/Map 为 nominal struct）；P3 trait impl 层（Foldable/Iterable/Functor × 容器）。**用户泛型 variance 系统已落地（KR5.4 / P5-02，2026-08-27）**：`type_relations.cpp` 的 per-container-name 硬编码 variance 由 use-site 结构推断（OCaml/Rust 式：字段/payload 使用位极性 → Covariant/Contravariant/Invariant，Fn 参数逆变、Map 键不变）取代，经 `TypeRelationOptions::variance_provider` 注入,用户 nominal 不再一律 invariant |
 | P6 stdlib 实现 + prelude | 🟡 进行中 | 88% | 13 模块 + prelude 已落地；剩余 prelude semver 策略与 `#![no_prelude]` 语法 |
 | P7 runtime 补全 | ✅ 完成 | 100% | — |
 
@@ -387,3 +387,8 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 - 2026-08-22: P3c `Self` 关键字落地（trait/impl 签名解析 + `signatures_match` Self/trait-tparam 替换 + `std/traits.ahfl` 11 trait 迁移 + synthetic-candidate 派发修复）；P3c 阻塞解除，P3 完成率 92% → 95%。已知限制：容器包裹 `Self` 的 synthetic candidate 不匹配、trait 方法级 tparam 作用域未激活。
 - 2026-08-22: P3-gaps-A 落地（RFC 0013 Gap 3）：`lambdaParam` 改用 keyword-permissive `identifier` 规则，`self`/`map`/`set` 等可作闭包参数名；无标注且无期望 Fn 类型的闭包参数由静默 error-type（IR 边界崩溃）改为 `CANNOT_INFER_CLOSURE_PARAM` SourceRange 诊断；impl/method 体内 tparam 作用域到达闭包体，值/类型命名空间分离使参数名 `T` 与 tparam `T` 共存；lambda 参数 `self` 遮蔽 impl 方法 receiver。已知限制：`self` 之外的 keyword 参数在函数体内不能裸引用（pathRoot 未放宽）。
 - 2026-08-22: P3-gaps-B 落地（RFC 0013 Gap 1+2）：wildcard `let _ = e;` 不引入绑定（resolver 跳过 `add_value_binding`，typechecker 跳过 `SHADOWED_BINDING` + 绑定插入，HIR->IR 降级为 `ir::ExprStatement` 只求值副作用）；`{}` unit literal 端到端（`ast::UnitLiteralExpr` + `ir::UnitLiteralExpr` + 全 visitor 穷举 + `ConstValueKind::Unit` + `ValueKind::Unit`/`UnitValue` + monostate SSA 常量）。grammar 新增 `letBinding` 规则（`IDENT | '_'`）与 `unitExpr`（`'{' '}'`），parser 重新生成。P3 完成率 95% → 97%。
+- 2026-08-27: Q4 Objective-5 基座打磨批次落地（type-system soundness / 前端诊断 / 变型）：
+  - **KR5.1 方法级 trait tparam 作用域**（P2 85% → 88%）：`resolver.cpp::resolve_trait_item` 与 typecheck `resolve_trait_method_info` 双侧激活组合 trait+method 作用域 + per-method scope id（新 `TraitMethodInfo::method_scope_id`）；`fn fold<A>` / `map<A>` 的方法级 tparam 不再落 `UNKNOWN_TYPE`（解锁容器代数 trait 骨架）。**"trait 方法级 tparam 作用域未激活" 已知限制解除。**
+  - **KR5.2 返回位 where-bound 强制**（P4）：`check_return_position_bounds` 对返回类型引用的具体 nominal 的 `where <Nominal>: Trait` bound 复用 `check_bound` 校验，未满足报 `TRAIT_BOUND_NOT_SATISFIED` 带返回位 SourceRange（此前静默通过）。
+  - **KR5.3 `decreases` 终止校验**（P4）：`ValidationPass` 对 wildcard `decreases: *` on 环状 agent 报 `DECREASES_STAR_ON_CYCLIC_AGENT`，非良基度量 shape 报 `DECREASES_MEASURE_NOT_RECOGNIZED`（`decreases_recognizer` 首次进入验证路径）。
+  - **KR5.4 用户泛型 variance（P5-02）**（P5 92% → 95%）：`type_relations.cpp` 的 per-container-name 硬编码 variance 由 use-site 结构推断取代（字段/payload 使用位极性 → Covariant/Contravariant/Invariant，Fn 参数逆变、Map 键不变），经 `TypeRelationOptions::variance_provider` 注入；用户 nominal 不再一律 invariant，stdlib 容器行为不变。**variance 系统此前完全漏列于 phase 表，现补入 P5。**
