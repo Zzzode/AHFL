@@ -8,7 +8,13 @@ grammar AHFL;
 // inside flows - state reachability and transition validation - workflow DAG validation -
 // control-flow completion checks for non-final/final state handlers
 
-program: (moduleDecl | importDecl | topLevelDecl)* EOF;
+program: innerAttr* (moduleDecl | importDecl | topLevelDecl)* EOF;
+
+// RFC 0013 P6: file-level inner attribute. Currently the only supported name is
+// `no_prelude`, which opts the source unit out of implicit prelude injection.
+// The name is matched as IDENT and validated in the parser builder so unknown
+// attribute names get a range-anchored diagnostic rather than a lexer error.
+innerAttr: '#' '!' '[' IDENT ']';
 
 topLevelDecl:
 	visibilityModifier? constDecl

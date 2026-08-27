@@ -1011,6 +1011,17 @@ target_link_libraries(ahfl_capacity_refinement_sugar_tests
 )
 ahfl_apply_project_warnings(ahfl_capacity_refinement_sugar_tests)
 
+# RFC 0013 P6: `#![no_prelude]` inner attribute parser coverage.
+add_executable(ahfl_inner_attribute_tests
+    unit/compiler/syntax/frontend/inner_attribute.cpp
+)
+target_link_libraries(ahfl_inner_attribute_tests
+    PRIVATE
+        ahfl_compiler_syntax
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_inner_attribute_tests)
+
 add_executable(ahfl_thread_pool_tests
     unit/base/support/thread_pool.cpp
 )
@@ -1340,6 +1351,7 @@ foreach(_tgt
     ahfl_enum_struct_variant_tests
     ahfl_if_let_syntax_tests
     ahfl_capacity_refinement_sugar_tests
+    ahfl_inner_attribute_tests
     ahfl_tooling_repl_tests
     ahfl_tooling_dap_tests
     ahfl_tooling_telemetry_tests

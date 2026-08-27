@@ -450,6 +450,28 @@ class ProgramBuilder {
         auto program =
             make_owned<ast::Program>(source_.display_name, context_range(context, source_));
 
+        // RFC 0013 P6: leading `#![name]` inner attributes. Only `no_prelude`
+        // is recognized (opts the source unit out of implicit prelude
+        // injection); any other name is a range-anchored user error.
+        for (auto *attr : context.innerAttr()) {
+            if (attr == nullptr) {
+                continue;
+            }
+            auto *name = attr->IDENT();
+            if (name == nullptr) {
+                continue;
+            }
+            if (name->getText() == "no_prelude") {
+                program->suppress_prelude = true;
+            } else {
+                diagnostics_.error()
+                    .code(error_codes::parse::UnknownInnerAttribute)
+                    .message(messages::parse::UnknownInnerAttribute, name->getText())
+                    .range(terminal_range(*name, source_))
+                    .emit();
+            }
+        }
+
         const auto module_count = std::ranges::size(context.moduleDecl());
         const auto import_count = std::ranges::size(context.importDecl());
         const auto top_level_count = std::ranges::size(context.topLevelDecl());

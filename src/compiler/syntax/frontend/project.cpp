@@ -500,7 +500,12 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                     loaded_id = source_id;
 
                     auto &source_unit = result.graph.sources.back();
-                    if (should_inject_prelude(input, source_unit.module_name)) {
+                    // RFC 0013 P6: a leading `#![no_prelude]` inner attribute on
+                    // the source unit opts it out of implicit prelude injection.
+                    const bool file_opts_out =
+                        source_unit.program != nullptr && source_unit.program->suppress_prelude;
+                    if (!file_opts_out &&
+                        should_inject_prelude(input, source_unit.module_name)) {
                         source_unit.imports.push_back(ImportRequest{
                             .module_name = std::string(kStdPreludeModule),
                             .alias = "",

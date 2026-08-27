@@ -1316,6 +1316,11 @@ add_test(NAME ahfl.frontend.capacity_refinement_sugar_all
     COMMAND $<TARGET_FILE:ahfl_capacity_refinement_sugar_tests>
 )
 
+# RFC 0013 P6: `#![no_prelude]` inner attribute.
+add_test(NAME ahfl.frontend.inner_attribute_all
+    COMMAND $<TARGET_FILE:ahfl_inner_attribute_tests>
+)
+
 add_test(NAME ahfl.support.thread_pool_all
     COMMAND $<TARGET_FILE:ahfl_thread_pool_tests>
 )

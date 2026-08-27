@@ -1937,3 +1937,68 @@ struct Widget { w: String; }  // same local name → L1 fires
         CHECK_FALSE(res.diagnostics.has_error());
     }
 }
+
+// ---------------------------------------------------------------------------
+// RFC 0013 P6: `#![no_prelude]` inner attribute. With implicit prelude
+// injection enabled, the project loader auto-adds `import std::prelude` to a
+// non-std module's import list. A leading `#![no_prelude]` must suppress that
+// injected import for the source unit. We assert on the injected import edge
+// directly (the loader's observable), which is leak-free and deterministic —
+// unlike unqualified symbol resolution, which the multi-module search-root
+// harness can satisfy through other loaded modules.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Parse a single-module project (with implicit prelude injection on) alongside
+// a stub std::prelude, and report whether app::main ends up importing
+// std::prelude. A leading `#![no_prelude]` on app::main must flip this to false.
+[[nodiscard]] bool app_imports_injected_prelude(std::string_view tag,
+                                                const std::string &app_source) {
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_no_prelude_" + std::string{tag});
+    std::filesystem::remove_all(root);
+    write_file(module_source_path(root, "app::main"), app_source);
+    // Stub prelude so the injected import resolves without the repo sysroot.
+    write_file(module_source_path(root, "std::prelude"),
+               "module std::prelude;\nenum Option<T> { Some(T), None, }\n");
+
+    const ahfl::Frontend frontend;
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {module_source_path(root, "app::main")},
+                                .search_roots = {root},
+                                .inject_prelude = true,
+                            });
+    REQUIRE_FALSE(parse_result.has_errors());
+
+    for (const auto &source_unit : parse_result.graph.sources) {
+        if (source_unit.module_name != "app::main") {
+            continue;
+        }
+        for (const auto &import : source_unit.imports) {
+            if (import.module_name == "std::prelude") {
+                return true;
+            }
+        }
+        return false;
+    }
+    FAIL("app::main source unit not found");
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("RFC 0013 P6: implicit injection adds std::prelude to a plain module") {
+    CHECK(app_imports_injected_prelude("implicit_ok",
+                                       "module app::main;\n"
+                                       "struct Use { payload: Option<Int>; }\n"));
+}
+
+TEST_CASE("RFC 0013 P6: #![no_prelude] suppresses the injected std::prelude import") {
+    CHECK_FALSE(app_imports_injected_prelude("suppressed",
+                                             "#![no_prelude]\n"
+                                             "module app::main;\n"
+                                             "struct Use { payload: Int; }\n"));
+}
+

@@ -21,6 +21,8 @@ public:
    */
     virtual std::any visitProgram(AHFLParser::ProgramContext *context) = 0;
 
+    virtual std::any visitInnerAttr(AHFLParser::InnerAttrContext *context) = 0;
+
     virtual std::any visitTopLevelDecl(AHFLParser::TopLevelDeclContext *context) = 0;
 
     virtual std::any visitModuleDecl(AHFLParser::ModuleDeclContext *context) = 0;

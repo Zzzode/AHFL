@@ -36,62 +36,62 @@ public:
     T__124 = 125, T__125 = 126, T__126 = 127, T__127 = 128, T__128 = 129,
     T__129 = 130, T__130 = 131, T__131 = 132, T__132 = 133, T__133 = 134,
     T__134 = 135, T__135 = 136, T__136 = 137, T__137 = 138, T__138 = 139,
-    T__139 = 140, T__140 = 141, T__141 = 142, T__142 = 143, DURATION_LITERAL = 144,
-    DECIMAL_LITERAL = 145, FLOAT_LITERAL = 146, INT_LITERAL = 147, BACKSLASH = 148,
-    STRING_LITERAL = 149, IDENT = 150, DOC_COMMENT = 151, LINE_COMMENT = 152,
-    BLOCK_COMMENT = 153, WS = 154
+    T__139 = 140, T__140 = 141, T__141 = 142, T__142 = 143, T__143 = 144,
+    DURATION_LITERAL = 145, DECIMAL_LITERAL = 146, FLOAT_LITERAL = 147,
+    INT_LITERAL = 148, BACKSLASH = 149, STRING_LITERAL = 150, IDENT = 151,
+    DOC_COMMENT = 152, LINE_COMMENT = 153, BLOCK_COMMENT = 154, WS = 155
   };
 
   enum {
-    RuleProgram = 0, RuleTopLevelDecl = 1, RuleModuleDecl = 2, RuleImportDecl = 3,
-    RuleVisibilityModifier = 4, RuleUseDecl = 5, RuleIdentifier = 6, RuleQualifiedIdent = 7,
-    RuleCallableNamePiece = 8, RuleCallableName = 9, RuleQualifiedIdentList = 10,
-    RuleIdentList = 11, RuleIdentListOpt = 12, RuleQualifiedIdentListOpt = 13,
-    RuleType_ = 14, RuleCollectionCapacity = 15, RulePrimitiveType = 16,
-    RuleConstDecl = 17, RuleTypeAliasDecl = 18, RuleStructDecl = 19, RuleStructFieldDecl = 20,
-    RuleEnumDecl = 21, RuleEnumVariant = 22, RuleVariantFieldDecl = 23,
-    RuleVariantFieldList = 24, RuleTypeList = 25, RuleFnType = 26, RuleCapabilityDecl = 27,
-    RuleCapabilityEffectBlock = 28, RuleCapabilityEffectItem = 29, RuleCapabilityEffectKind = 30,
-    RuleCapabilityReceiptMode = 31, RuleCapabilityRetryMode = 32, RulePredicateDecl = 33,
-    RuleParamList = 34, RuleParam = 35, RuleAgentDecl = 36, RuleInputDecl = 37,
-    RuleContextDecl = 38, RuleOutputDecl = 39, RuleStatesDecl = 40, RuleInitialDecl = 41,
-    RuleFinalDecl = 42, RuleCapabilitiesDecl = 43, RuleQuotaDecl = 44, RuleQuotaItem = 45,
-    RuleTransitionDecl = 46, RuleContractDecl = 47, RuleContractItem = 48,
-    RuleRequiresDecl = 49, RuleEnsuresDecl = 50, RuleInvariantDecl = 51,
-    RuleForbidDecl = 52, RuleDecreasesDecl = 53, RuleFlowDecl = 54, RuleStateHandler = 55,
-    RuleStatePolicy = 56, RuleStatePolicyItem = 57, RuleWorkflowDecl = 58,
-    RuleWorkflowInputDecl = 59, RuleWorkflowOutputDecl = 60, RuleWorkflowItem = 61,
-    RuleWorkflowNodeDecl = 62, RuleWorkflowSafetyDecl = 63, RuleWorkflowLivenessDecl = 64,
-    RuleWorkflowReturnDecl = 65, RuleBuiltinAttr = 66, RuleFnDecl = 67,
-    RuleTypeParams = 68, RuleTypeParam = 69, RuleTypeBoundList = 70, RuleFnBody = 71,
-    RuleEffectClause = 72, RuleEffectSpec = 73, RuleCapabilityRef = 74,
-    RuleDecreasesClause = 75, RuleWhereClause = 76, RuleWhereConstraint = 77,
-    RuleLambdaExpr = 78, RuleLambdaCaptureListOpt = 79, RuleLambdaCaptureList = 80,
-    RuleUnitExpr = 81, RuleLambdaParamList = 82, RuleLambdaParam = 83, RuleTraitDecl = 84,
-    RuleTraitItem = 85, RuleTraitFnItem = 86, RuleAssocTypeItem = 87, RuleAssocConstItem = 88,
-    RuleImplDecl = 89, RuleTraitRef = 90, RuleImplItem = 91, RuleImplFnItem = 92,
-    RuleAssocTypeDef = 93, RuleAssocConstDef = 94, RuleBlock = 95, RuleStatement = 96,
-    RuleLetStmt = 97, RuleLetBinding = 98, RuleAssignStmt = 99, RuleIfStmt = 100,
-    RuleIfLetStmt = 101, RuleGotoStmt = 102, RuleReturnStmt = 103, RuleAssertStmt = 104,
-    RuleUnwrapStmt = 105, RuleRequiresStmt = 106, RuleUnreachableStmt = 107,
-    RuleExprStmt = 108, RuleLValue = 109, RuleExpr = 110, RuleQuantifierExpr = 111,
-    RuleQuantifierBinder = 112, RuleImpliesExpr = 113, RuleOrExpr = 114,
-    RuleAndExpr = 115, RuleEqualityExpr = 116, RuleCompareExpr = 117, RuleAddExpr = 118,
-    RuleMulExpr = 119, RuleUnaryExpr = 120, RulePostfixExpr = 121, RulePrimaryExpr = 122,
-    RuleUnwrapExpr = 123, RuleMatchExpr = 124, RuleMatchArm = 125, RulePattern = 126,
-    RuleOrPattern = 127, RuleConcatPattern = 128, RuleIntRangePattern = 129,
-    RuleSignedIntegerPatternBound = 130, RuleLiteralPattern = 131, RuleVariantPattern = 132,
-    RuleQualifiedVariantName = 133, RulePatternFieldList = 134, RulePatternField = 135,
-    RuleWildcardPattern = 136, RuleBindingPattern = 137, RuleTuplePattern = 138,
-    RulePatternList = 139, RulePathExpr = 140, RulePathRoot = 141, RuleQualifiedValueExpr = 142,
-    RuleCallExpr = 143, RuleExprList = 144, RuleLiteral = 145, RuleIntegerLiteral = 146,
-    RuleFloatLiteral = 147, RuleDecimalLiteral = 148, RuleStringLiteral = 149,
-    RuleDurationLiteral = 150, RuleStructLiteral = 151, RuleListLiteral = 152,
-    RuleSetLiteral = 153, RuleMapLiteral = 154, RuleMapEntryList = 155,
-    RuleMapEntry = 156, RuleStructInitList = 157, RuleStructInit = 158,
-    RuleConstExpr = 159, RuleTemporalExpr = 160, RuleWorkflowTemporalExpr = 161,
-    RuleTemporalImpliesExpr = 162, RuleTemporalOrExpr = 163, RuleTemporalAndExpr = 164,
-    RuleTemporalUntilExpr = 165, RuleTemporalUnaryExpr = 166, RuleTemporalAtom = 167
+    RuleProgram = 0, RuleInnerAttr = 1, RuleTopLevelDecl = 2, RuleModuleDecl = 3,
+    RuleImportDecl = 4, RuleVisibilityModifier = 5, RuleUseDecl = 6, RuleIdentifier = 7,
+    RuleQualifiedIdent = 8, RuleCallableNamePiece = 9, RuleCallableName = 10,
+    RuleQualifiedIdentList = 11, RuleIdentList = 12, RuleIdentListOpt = 13,
+    RuleQualifiedIdentListOpt = 14, RuleType_ = 15, RuleCollectionCapacity = 16,
+    RulePrimitiveType = 17, RuleConstDecl = 18, RuleTypeAliasDecl = 19,
+    RuleStructDecl = 20, RuleStructFieldDecl = 21, RuleEnumDecl = 22, RuleEnumVariant = 23,
+    RuleVariantFieldDecl = 24, RuleVariantFieldList = 25, RuleTypeList = 26,
+    RuleFnType = 27, RuleCapabilityDecl = 28, RuleCapabilityEffectBlock = 29,
+    RuleCapabilityEffectItem = 30, RuleCapabilityEffectKind = 31, RuleCapabilityReceiptMode = 32,
+    RuleCapabilityRetryMode = 33, RulePredicateDecl = 34, RuleParamList = 35,
+    RuleParam = 36, RuleAgentDecl = 37, RuleInputDecl = 38, RuleContextDecl = 39,
+    RuleOutputDecl = 40, RuleStatesDecl = 41, RuleInitialDecl = 42, RuleFinalDecl = 43,
+    RuleCapabilitiesDecl = 44, RuleQuotaDecl = 45, RuleQuotaItem = 46, RuleTransitionDecl = 47,
+    RuleContractDecl = 48, RuleContractItem = 49, RuleRequiresDecl = 50,
+    RuleEnsuresDecl = 51, RuleInvariantDecl = 52, RuleForbidDecl = 53, RuleDecreasesDecl = 54,
+    RuleFlowDecl = 55, RuleStateHandler = 56, RuleStatePolicy = 57, RuleStatePolicyItem = 58,
+    RuleWorkflowDecl = 59, RuleWorkflowInputDecl = 60, RuleWorkflowOutputDecl = 61,
+    RuleWorkflowItem = 62, RuleWorkflowNodeDecl = 63, RuleWorkflowSafetyDecl = 64,
+    RuleWorkflowLivenessDecl = 65, RuleWorkflowReturnDecl = 66, RuleBuiltinAttr = 67,
+    RuleFnDecl = 68, RuleTypeParams = 69, RuleTypeParam = 70, RuleTypeBoundList = 71,
+    RuleFnBody = 72, RuleEffectClause = 73, RuleEffectSpec = 74, RuleCapabilityRef = 75,
+    RuleDecreasesClause = 76, RuleWhereClause = 77, RuleWhereConstraint = 78,
+    RuleLambdaExpr = 79, RuleLambdaCaptureListOpt = 80, RuleLambdaCaptureList = 81,
+    RuleUnitExpr = 82, RuleLambdaParamList = 83, RuleLambdaParam = 84, RuleTraitDecl = 85,
+    RuleTraitItem = 86, RuleTraitFnItem = 87, RuleAssocTypeItem = 88, RuleAssocConstItem = 89,
+    RuleImplDecl = 90, RuleTraitRef = 91, RuleImplItem = 92, RuleImplFnItem = 93,
+    RuleAssocTypeDef = 94, RuleAssocConstDef = 95, RuleBlock = 96, RuleStatement = 97,
+    RuleLetStmt = 98, RuleLetBinding = 99, RuleAssignStmt = 100, RuleIfStmt = 101,
+    RuleIfLetStmt = 102, RuleGotoStmt = 103, RuleReturnStmt = 104, RuleAssertStmt = 105,
+    RuleUnwrapStmt = 106, RuleRequiresStmt = 107, RuleUnreachableStmt = 108,
+    RuleExprStmt = 109, RuleLValue = 110, RuleExpr = 111, RuleQuantifierExpr = 112,
+    RuleQuantifierBinder = 113, RuleImpliesExpr = 114, RuleOrExpr = 115,
+    RuleAndExpr = 116, RuleEqualityExpr = 117, RuleCompareExpr = 118, RuleAddExpr = 119,
+    RuleMulExpr = 120, RuleUnaryExpr = 121, RulePostfixExpr = 122, RulePrimaryExpr = 123,
+    RuleUnwrapExpr = 124, RuleMatchExpr = 125, RuleMatchArm = 126, RulePattern = 127,
+    RuleOrPattern = 128, RuleConcatPattern = 129, RuleIntRangePattern = 130,
+    RuleSignedIntegerPatternBound = 131, RuleLiteralPattern = 132, RuleVariantPattern = 133,
+    RuleQualifiedVariantName = 134, RulePatternFieldList = 135, RulePatternField = 136,
+    RuleWildcardPattern = 137, RuleBindingPattern = 138, RuleTuplePattern = 139,
+    RulePatternList = 140, RulePathExpr = 141, RulePathRoot = 142, RuleQualifiedValueExpr = 143,
+    RuleCallExpr = 144, RuleExprList = 145, RuleLiteral = 146, RuleIntegerLiteral = 147,
+    RuleFloatLiteral = 148, RuleDecimalLiteral = 149, RuleStringLiteral = 150,
+    RuleDurationLiteral = 151, RuleStructLiteral = 152, RuleListLiteral = 153,
+    RuleSetLiteral = 154, RuleMapLiteral = 155, RuleMapEntryList = 156,
+    RuleMapEntry = 157, RuleStructInitList = 158, RuleStructInit = 159,
+    RuleConstExpr = 160, RuleTemporalExpr = 161, RuleWorkflowTemporalExpr = 162,
+    RuleTemporalImpliesExpr = 163, RuleTemporalOrExpr = 164, RuleTemporalAndExpr = 165,
+    RuleTemporalUntilExpr = 166, RuleTemporalUnaryExpr = 167, RuleTemporalAtom = 168
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -112,6 +112,7 @@ public:
 
 
   class ProgramContext;
+  class InnerAttrContext;
   class TopLevelDeclContext;
   class ModuleDeclContext;
   class ImportDeclContext;
@@ -285,6 +286,8 @@ public:
     ProgramContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode *EOF();
+    std::vector<InnerAttrContext *> innerAttr();
+    InnerAttrContext* innerAttr(size_t i);
     std::vector<ModuleDeclContext *> moduleDecl();
     ModuleDeclContext* moduleDecl(size_t i);
     std::vector<ImportDeclContext *> importDecl();
@@ -298,6 +301,19 @@ public:
   };
 
   ProgramContext* program();
+
+  class  InnerAttrContext : public antlr4::ParserRuleContext {
+  public:
+    InnerAttrContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *IDENT();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  InnerAttrContext* innerAttr();
 
   class  TopLevelDeclContext : public antlr4::ParserRuleContext {
   public:

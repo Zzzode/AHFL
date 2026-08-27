@@ -1756,6 +1756,10 @@ struct Program final {
     ahfl::SourceRange range;
     std::string source_name;
     std::vector<Decl> declarations;
+    // RFC 0013 P6: set by a leading `#![no_prelude]` inner attribute. When true,
+    // the implicit `import std::prelude` normally injected into non-std modules
+    // is suppressed for this source unit only.
+    bool suppress_prelude{false};
 
     explicit Program(std::string source_name, ahfl::SourceRange range = {});
 };

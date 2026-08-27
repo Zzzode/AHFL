@@ -19,6 +19,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitInnerAttr(AHFLParser::InnerAttrContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitTopLevelDecl(AHFLParser::TopLevelDeclContext *ctx) override {
     return visitChildren(ctx);
   }

@@ -171,6 +171,10 @@ inline constexpr ErrorCode<DiagnosticCategory::Parse> InternalParseInvariant{
 // SourceRange pointing at the offending measure name.
 inline constexpr ErrorCode<DiagnosticCategory::Parse> InvalidCapacityRefinement{
     "INVALID_CAPACITY_REFINEMENT"};
+// RFC 0013 P6: raised when a file-level inner attribute `#![name]` uses an
+// unrecognized name. The only supported inner attribute is `#![no_prelude]`.
+inline constexpr ErrorCode<DiagnosticCategory::Parse> UnknownInnerAttribute{
+    "UNKNOWN_INNER_ATTRIBUTE"};
 } // namespace parse
 
 namespace resolve {
@@ -499,6 +503,9 @@ inline constexpr MessageTemplate InternalParseInvariant{
 inline constexpr MessageTemplate InvalidCapacityRefinement{
     "unsupported collection refinement '{}'; the only supported bound is 'where length <= N' "
     "(equivalent to the '(N)' capacity suffix)"};
+// {0} = the unrecognized inner-attribute name the user wrote.
+inline constexpr MessageTemplate UnknownInnerAttribute{
+    "unknown inner attribute '#![{}]'; the only supported inner attribute is '#![no_prelude]'"};
 } // namespace parse
 namespace resolve {
 inline constexpr MessageTemplate DuplicateSymbol{"duplicate {} '{}'"};
