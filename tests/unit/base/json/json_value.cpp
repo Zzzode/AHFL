@@ -61,12 +61,23 @@ bool test_parse_float() {
     if ((*exponent)->float_val < 149.9 || (*exponent)->float_val > 150.1)
         return false;
 
+    // An integer above INT64_MAX but within uint64 range now parses as an
+    // exact Int (readable losslessly via as_uint()), not a lossy Float — this
+    // lets a size_t identity with the high bit set round-trip through JSON.
     auto oversized_int = parse_json("9223372036854775808");
     if (!oversized_int)
         return false;
-    if ((*oversized_int)->kind != Kind::Float)
+    if ((*oversized_int)->kind != Kind::Int)
         return false;
-    if ((*oversized_int)->float_val < 9.22e18 || (*oversized_int)->float_val > 9.23e18)
+    const auto oversized_uint = (*oversized_int)->as_uint();
+    if (!oversized_uint.has_value() || *oversized_uint != 9223372036854775808ULL)
+        return false;
+
+    // A magnitude beyond uint64 range still falls back to Float.
+    auto huge = parse_json("99999999999999999999999");
+    if (!huge)
+        return false;
+    if ((*huge)->kind != Kind::Float)
         return false;
 
     return true;

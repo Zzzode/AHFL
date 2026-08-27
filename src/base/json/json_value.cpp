@@ -55,6 +55,17 @@ std::optional<int64_t> JsonValue::as_int() const {
     return int_val;
 }
 
+std::optional<uint64_t> JsonValue::as_uint() const {
+    // Integer JSON values above INT64_MAX are stored as the two's-complement
+    // bit pattern in `int_val` (see the number parser's uint64 fallback), so a
+    // full 64-bit unsigned magnitude — e.g. a size_t symbol id with the high
+    // bit set — round-trips losslessly through this accessor.
+    if (kind != Kind::Int) {
+        return std::nullopt;
+    }
+    return static_cast<uint64_t>(int_val);
+}
+
 std::optional<double> JsonValue::as_float() const {
     if (kind == Kind::Float) {
         return float_val;
@@ -346,7 +357,19 @@ class Parser {
         const auto end = num_str.data() + num_str.size();
         auto [ptr, ec] = std::from_chars(num_str.data(), end, val);
         if (ec != std::errc{} || ptr != end) {
-            // Overflow — try as float
+            // Signed overflow: an integer literal above INT64_MAX (e.g. a
+            // size_t identity with the high bit set). Retry as uint64 and store
+            // the two's-complement bit pattern so as_uint() recovers it
+            // losslessly; only fall back to float when it is not an integer at
+            // all (fractional / exponent forms are handled above).
+            uint64_t uval{};
+            auto [uptr, uec] = std::from_chars(num_str.data(), end, uval);
+            if (uec == std::errc{} && uptr == end) {
+                auto value = JsonValue::make_int(static_cast<int64_t>(uval));
+                value->begin_offset = start;
+                value->end_offset = pos_;
+                return value;
+            }
             auto fval = parse_json_number_float(num_str);
             if (!fval) {
                 pos_ = start;

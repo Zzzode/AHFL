@@ -1272,7 +1272,10 @@ contract for MethodCallAgent {
         const bool supported_decl = std::get_if<ahfl::ir::FnDecl>(&decl) != nullptr ||
                                     std::get_if<ahfl::ir::StructDecl>(&decl) != nullptr ||
                                     std::get_if<ahfl::ir::AgentDecl>(&decl) != nullptr ||
-                                    std::get_if<ahfl::ir::ModuleDecl>(&decl) != nullptr;
+                                    std::get_if<ahfl::ir::ModuleDecl>(&decl) != nullptr ||
+                                    // KR5.5: impls/traits now lower to first-class IR nodes.
+                                    std::get_if<ahfl::ir::ImplDecl>(&decl) != nullptr ||
+                                    std::get_if<ahfl::ir::TraitDecl>(&decl) != nullptr;
         CHECK(supported_decl);
     }
     REQUIRE(contract != nullptr);
@@ -2020,4 +2023,83 @@ TEST_CASE("P4.S6 IR ContractClause decreases fields survive structured JSON symm
     std::ostringstream mirror_out;
     ahfl::print_program_ir_json(mirror, mirror_out);
     CHECK(mirror_out.str() == text);
+}
+
+// KR5.5 / RFC §1.3 / §1.4: a trait declaration and an impl-of-trait lower to
+// first-class ir::TraitDecl / ir::ImplDecl nodes (not just method FnDecls), and
+// the emitted IR JSON round-trips byte-identically through the deserializer.
+TEST_CASE("Typed HIR lowering emits first-class trait and impl IR nodes") {
+    const std::string source = R"AHFL(
+module ir::trait_impl;
+
+struct Widget {
+    n: Int;
+}
+
+trait Show {
+    fn show(self: Widget) -> Int;
+}
+
+impl Show for Widget {
+    fn show(self: Widget) -> Int effect Pure decreases 0 {
+        return self.n;
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("ir_trait_impl.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto lowered =
+        ahfl::lower_typed_program(type_result.typed_program, *parse_result.program);
+
+    const ahfl::ir::TraitDecl *trait = nullptr;
+    const ahfl::ir::ImplDecl *impl = nullptr;
+    std::size_t impl_method_fns = 0;
+    for (const auto &decl : lowered.declarations) {
+        if (const auto *t = std::get_if<ahfl::ir::TraitDecl>(&decl)) {
+            trait = t;
+        } else if (const auto *i = std::get_if<ahfl::ir::ImplDecl>(&decl)) {
+            impl = i;
+        } else if (const auto *fn = std::get_if<ahfl::ir::FnDecl>(&decl)) {
+            if (fn->name.rfind("impl#", 0) == 0) {
+                ++impl_method_fns;
+            }
+        }
+    }
+
+    REQUIRE(trait != nullptr);
+    CHECK(trait->name == "ir::trait_impl::Show");
+    REQUIRE(trait->methods.size() == 1);
+    CHECK(trait->methods.front().name == "show");
+    CHECK(trait->methods.front().has_return_type);
+
+    REQUIRE(impl != nullptr);
+    CHECK_FALSE(impl->is_inherent);
+    // The impl-of-trait records its trait ref and references the lowered method
+    // FnDecl (body lives there, not duplicated on the ImplDecl).
+    CHECK(impl->trait_ref.canonical_name == "ir::trait_impl::Show");
+    REQUIRE(impl->method_refs.size() == 1);
+    CHECK(impl_method_fns == 1);
+    CHECK_FALSE(impl->method_refs.front().canonical_name.empty());
+
+    // The emitted IR JSON round-trips byte-identically (covers the new nodes).
+    std::ostringstream out;
+    ahfl::print_program_ir_json(lowered, out);
+    const std::string json = out.str();
+    const auto reparsed = ahfl::parse_program_ir_json(json);
+    REQUIRE(reparsed.has_value());
+    std::ostringstream reout;
+    ahfl::print_program_ir_json(*reparsed, reout);
+    CHECK(reout.str() == json);
 }

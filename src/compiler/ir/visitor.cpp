@@ -172,6 +172,12 @@ void ProgramVisitor::visit_decl(const Decl &declaration) {
                            visit_block(*value.body);
                        }
                    },
+                   // Bodyless declarations (module/import/struct/enum/const/
+                   // type-alias/capability/predicate/agent/contract/workflow/
+                   // instance and P3 trait/impl) carry no traversable
+                   // expression bodies here — trait methods are interface-only
+                   // and impl method bodies live on their own FnDecls, which
+                   // are visited as separate top-level declarations.
                    [](const auto &) {},
                },
                declaration);
@@ -628,6 +634,9 @@ bool ProgramRewriter::rewrite_decl(Decl &declaration) {
                     return changed;
                 },
                 [&](FnDecl &value) { return value.body != nullptr && rewrite_block(*value.body); },
+                // Bodyless declarations (including P3 trait/impl) have no
+                // expression body to rewrite here; impl method bodies are
+                // rewritten via their own FnDecls.
                 [](auto &) { return false; },
             },
             declaration) ||

@@ -486,6 +486,46 @@ class ProgramVerifier {
         }
     }
 
+    // P3 (RFC §1.3): a trait interface declaration. Its symbol lowers as a
+    // Type ref (traits occupy type positions at bound/impl sites); super-traits
+    // and method-signature parameter/return types are verified structurally.
+    void verify_decl(const TraitDecl &decl, const std::string &path) {
+        verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Type, decl.name);
+        for (std::uint32_t index = 0; index < decl.super_traits.size(); ++index) {
+            verify_symbol_ref(decl.super_traits[index],
+                              path + ".super_traits[" + std::to_string(index) + "]",
+                              SymbolRefKind::Type);
+        }
+        for (std::uint32_t index = 0; index < decl.methods.size(); ++index) {
+            const auto method_path = path + ".methods[" + std::to_string(index) + "]";
+            verify_params(decl.methods[index].params, method_path + ".params");
+            if (decl.methods[index].has_return_type) {
+                verify_type_ref(decl.methods[index].return_type_ref,
+                                method_path + ".return_type_ref");
+            }
+            verify_source_range(decl.methods[index].source_range, method_path, "source range");
+        }
+    }
+
+    // P3 (RFC §1.4): an impl declaration. The target type is always required;
+    // the trait ref (Type kind) is present only for trait impls. Method refs
+    // point at the lowered FnDecls that carry the bodies (Function kind).
+    void verify_decl(const ImplDecl &decl, const std::string &path) {
+        verify_type_ref(decl.target_type_ref, path + ".target_type_ref");
+        if (!decl.is_inherent) {
+            verify_symbol_ref(decl.trait_ref, path + ".trait_ref", SymbolRefKind::Type);
+        }
+        for (std::uint32_t index = 0; index < decl.trait_type_args.size(); ++index) {
+            verify_type_ref(decl.trait_type_args[index],
+                            path + ".trait_type_args[" + std::to_string(index) + "]");
+        }
+        for (std::uint32_t index = 0; index < decl.method_refs.size(); ++index) {
+            verify_symbol_ref(decl.method_refs[index],
+                              path + ".method_refs[" + std::to_string(index) + "]",
+                              SymbolRefKind::Function);
+        }
+    }
+
     void verify_params(const std::vector<ParamDecl> &params, const std::string &path) {
         for (std::uint32_t index = 0; index < params.size(); ++index) {
             const auto param_path = path + "[" + std::to_string(index) + "]";

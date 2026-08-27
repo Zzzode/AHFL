@@ -582,6 +582,62 @@ class IrJsonPrinter final {
         });
     }
 
+    // P3 (RFC §1.3): emit one interface method signature of a TraitDecl. Bodies
+    // are never present on trait methods (interface-only); the effect object
+    // mirrors the FnDecl effect emission so parsing is symmetric.
+    void print_fn_effect_clause(const ir::FnEffectClause &effect, int indent_level) {
+        print_object(indent_level, [&](const auto &entry) {
+            entry("kind", [&]() {
+                switch (effect.kind) {
+                case ir::FnEffectKind::Pure:
+                    write_string("Pure");
+                    break;
+                case ir::FnEffectKind::Nondet:
+                    write_string("Nondet");
+                    break;
+                case ir::FnEffectKind::Capability:
+                    write_string("Capability");
+                    break;
+                }
+            });
+            if (!effect.capabilities.empty()) {
+                entry("capabilities", [&]() {
+                    print_array(indent_level + 1, [&](const auto &item) {
+                        for (const auto &capability : effect.capabilities) {
+                            item([&]() { print_symbol_ref(capability, indent_level + 2); });
+                        }
+                    });
+                });
+            }
+        });
+    }
+
+    void print_trait_method_sig(const ir::TraitMethodSig &method, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("name", [&]() { write_string(method.name); });
+            if (!method.type_param_names.empty()) {
+                field("type_params", [&]() {
+                    print_array(indent_level + 1, [&](const auto &item) {
+                        for (const auto &type_param : method.type_param_names) {
+                            item([&]() { write_string(type_param); });
+                        }
+                    });
+                });
+            }
+            field("params", [&]() { print_params(method.params, indent_level + 1); });
+            if (method.has_return_type) {
+                field("return_type",
+                      [&]() { write_string(type_name(method.return_type_ref)); });
+                if (has_type_ref(method.return_type_ref)) {
+                    field("return_type_ref", [&]() {
+                        print_type_ref(method.return_type_ref, indent_level + 1);
+                    });
+                }
+            }
+            field("effect", [&]() { print_fn_effect_clause(method.effect, indent_level + 1); });
+        });
+    }
+
     void print_capability_effect(const ir::CapabilityEffectSpec &effect, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("declared", [&]() { write_bool(effect.declared); });
@@ -1984,6 +2040,98 @@ class IrJsonPrinter final {
                         }
                     });
                 },
+                [&](const ir::TraitDecl &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("trait"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
+                        }
+                        field("name", [&]() { write_string(value.name); });
+                        if (!value.type_param_names.empty()) {
+                            field("type_params", [&]() {
+                                print_array(indent_level + 1, [&](const auto &item) {
+                                    for (const auto &type_param : value.type_param_names) {
+                                        item([&]() { write_string(type_param); });
+                                    }
+                                });
+                            });
+                        }
+                        if (!value.super_traits.empty()) {
+                            field("super_traits", [&]() {
+                                print_array(indent_level + 1, [&](const auto &item) {
+                                    for (const auto &super : value.super_traits) {
+                                        item([&]() { print_symbol_ref(super, indent_level + 2); });
+                                    }
+                                });
+                            });
+                        }
+                        field("methods", [&]() {
+                            print_array(indent_level + 1, [&](const auto &item) {
+                                for (const auto &method : value.methods) {
+                                    item([&]() {
+                                        print_trait_method_sig(method, indent_level + 2);
+                                    });
+                                }
+                            });
+                        });
+                        if (has_symbol_ref(value.symbol_ref)) {
+                            field("symbol_ref",
+                                  [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });
+                        }
+                    });
+                },
+                [&](const ir::ImplDecl &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("impl"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
+                        }
+                        field("index", [&]() { write_index(value.index); });
+                        field("is_inherent", [&]() { write_bool(value.is_inherent); });
+                        field("target_type",
+                              [&]() { write_string(type_name(value.target_type_ref)); });
+                        if (has_type_ref(value.target_type_ref)) {
+                            field("target_type_ref", [&]() {
+                                print_type_ref(value.target_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (!value.is_inherent && has_symbol_ref(value.trait_ref)) {
+                            field("trait_ref",
+                                  [&]() { print_symbol_ref(value.trait_ref, indent_level + 1); });
+                        }
+                        if (!value.trait_type_args.empty()) {
+                            field("trait_type_args", [&]() {
+                                print_array(indent_level + 1, [&](const auto &item) {
+                                    for (const auto &arg : value.trait_type_args) {
+                                        item([&]() { print_type_ref(arg, indent_level + 2); });
+                                    }
+                                });
+                            });
+                        }
+                        if (!value.type_param_names.empty()) {
+                            field("type_params", [&]() {
+                                print_array(indent_level + 1, [&](const auto &item) {
+                                    for (const auto &type_param : value.type_param_names) {
+                                        item([&]() { write_string(type_param); });
+                                    }
+                                });
+                            });
+                        }
+                        if (!value.method_refs.empty()) {
+                            field("method_refs", [&]() {
+                                print_array(indent_level + 1, [&](const auto &item) {
+                                    for (const auto &method_ref : value.method_refs) {
+                                        item([&]() {
+                                            print_symbol_ref(method_ref, indent_level + 2);
+                                        });
+                                    }
+                                });
+                            });
+                        }
+                    });
+                },
                 [&](const ir::InstanceDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("instance"); });
@@ -2340,7 +2488,9 @@ class IrJsonReader final {
         ref.local_name = opt_string(obj, "local_name");
         ref.module_name = opt_string(obj, "module_name");
         if (const auto *id = obj.get("id"); id != nullptr) {
-            const auto value = id->as_int();
+            // Symbol ids are size_t; synthetic impl-method ids set the high bit
+            // and exceed INT64_MAX, so read the full unsigned magnitude.
+            const auto value = id->as_uint();
             if (!value.has_value()) { fail(); } else {
                 ref.id = static_cast<std::size_t>(*value);
             }
@@ -2909,6 +3059,12 @@ class IrJsonReader final {
         if (kind == "fn") {
             return fn_decl(obj);
         }
+        if (kind == "trait") {
+            return trait_decl(obj);
+        }
+        if (kind == "impl") {
+            return impl_decl(obj);
+        }
         if (kind == "instance") {
             return instance_decl(obj);
         }
@@ -3165,6 +3321,62 @@ class IrJsonReader final {
             }
         }
         return effect;
+    }
+
+    [[nodiscard]] ir::TraitMethodSig trait_method_sig(const JsonValue &obj) {
+        ir::TraitMethodSig method;
+        method.name = req_string(obj, "name");
+        method.type_param_names = string_array(obj, "type_params");
+        method.params = params(obj, "params");
+        if (const auto *rt = obj.get("return_type"); rt != nullptr) {
+            method.has_return_type = true;
+            method.return_type_ref = opt_type_ref(obj, "return_type_ref", "return_type");
+        }
+        if (const auto *effect = obj.get("effect"); effect != nullptr) {
+            method.effect = fn_effect(*effect);
+        }
+        return method;
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> trait_decl(const JsonValue &obj) {
+        ir::TraitDecl d;
+        d.provenance = provenance(obj);
+        d.name = req_string(obj, "name");
+        d.type_param_names = string_array(obj, "type_params");
+        if (const auto *supers = obj.get("super_traits");
+            supers != nullptr && supers->is_array()) {
+            for (const auto &item : supers->array_items) {
+                d.super_traits.push_back(symbol_ref(*item));
+            }
+        }
+        if (const auto *methods = obj.get("methods"); methods != nullptr && methods->is_array()) {
+            for (const auto &item : methods->array_items) {
+                d.methods.push_back(trait_method_sig(*item));
+            }
+        }
+        d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+        return ir::Decl{std::move(d)};
+    }
+
+    [[nodiscard]] std::optional<ir::Decl> impl_decl(const JsonValue &obj) {
+        ir::ImplDecl d;
+        d.provenance = provenance(obj);
+        d.index = static_cast<std::size_t>(req_i64(obj, "index"));
+        d.is_inherent = opt_bool(obj, "is_inherent");
+        d.target_type_ref = opt_type_ref(obj, "target_type_ref", "target_type");
+        d.trait_ref = opt_symbol_ref(obj, "trait_ref");
+        if (const auto *args = obj.get("trait_type_args"); args != nullptr && args->is_array()) {
+            for (const auto &item : args->array_items) {
+                d.trait_type_args.push_back(type_ref(*item));
+            }
+        }
+        d.type_param_names = string_array(obj, "type_params");
+        if (const auto *refs = obj.get("method_refs"); refs != nullptr && refs->is_array()) {
+            for (const auto &item : refs->array_items) {
+                d.method_refs.push_back(symbol_ref(*item));
+            }
+        }
+        return ir::Decl{std::move(d)};
     }
 
     [[nodiscard]] std::optional<ir::Decl> instance_decl(const JsonValue &obj) {

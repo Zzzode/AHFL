@@ -1002,6 +1002,60 @@ class IrProgramPrinter final {
         }
         line(0, "}");
     }
+
+    // P3 (RFC §1.3): trait interface declaration. Prints the trait's generic
+    // parameters, super-traits, and each interface method signature (no body).
+    void print_decl(const ir::TraitDecl &declaration) {
+        std::string header = "trait " + declaration.name;
+        if (!declaration.type_param_names.empty()) {
+            header += "<" + join(declaration.type_param_names, ", ") + ">";
+        }
+        if (!declaration.super_traits.empty()) {
+            header += ": " + join(symbol_names(declaration.super_traits), " + ");
+        }
+        line(0, header + " {");
+        line(1, "symbol: " + symbol_name(declaration.symbol_ref));
+        for (const auto &method : declaration.methods) {
+            std::string sig = "fn " + method.name;
+            if (!method.type_param_names.empty()) {
+                sig += "<" + join(method.type_param_names, ", ") + ">";
+            }
+            sig += "(" + print_params(method.params) + ")";
+            if (method.has_return_type) {
+                sig += " -> " + type_name(method.return_type_ref);
+            }
+            line(1, sig + ";");
+        }
+        line(0, "}");
+    }
+
+    // P3 (RFC §1.4): impl declaration. Prints the target type, the implemented
+    // trait (for trait impls), and references to the lowered method FnDecls
+    // (bodies live on those FnDecls, not duplicated here).
+    void print_decl(const ir::ImplDecl &declaration) {
+        std::string header = "impl";
+        if (!declaration.type_param_names.empty()) {
+            header += "<" + join(declaration.type_param_names, ", ") + ">";
+        }
+        if (!declaration.is_inherent) {
+            header += " " + symbol_name(declaration.trait_ref);
+            if (!declaration.trait_type_args.empty()) {
+                std::vector<std::string> args;
+                args.reserve(declaration.trait_type_args.size());
+                for (const auto &arg : declaration.trait_type_args) {
+                    args.push_back(type_name(arg));
+                }
+                header += "<" + join(args, ", ") + ">";
+            }
+            header += " for";
+        }
+        header += " " + type_name(declaration.target_type_ref);
+        line(0, header + " {");
+        for (const auto &method_ref : declaration.method_refs) {
+            line(1, "method: " + symbol_name(method_ref));
+        }
+        line(0, "}");
+    }
 };
 
 } // namespace

@@ -286,9 +286,25 @@ class TypedIrLowerer final {
                 continue;
             if (const auto *impl = payload_as<ImplTypeInfo>(typed_decl);
                 impl != nullptr && typed_decl->kind == ast::NodeKind::ImplDecl) {
+                // Lower each method body to a standalone FnDecl (the bodies live
+                // there), collecting their symbol refs, then emit a first-class
+                // ImplDecl that records the target/trait relationship and points
+                // at those FnDecls (KR5.5 / RFC §1.4).
+                std::vector<ir::SymbolRef> method_refs;
+                method_refs.reserve(impl->methods.size());
                 for (const auto &method : impl->methods) {
-                    program_ir.declarations.push_back(lower_impl_method(*impl, method));
+                    auto lowered = lower_impl_method(*impl, method);
+                    method_refs.push_back(lowered.symbol_ref);
+                    program_ir.declarations.push_back(std::move(lowered));
                 }
+                program_ir.declarations.push_back(lower_impl_decl(*impl, std::move(method_refs)));
+                continue;
+            }
+            if (const auto *trait = payload_as<TraitTypeInfo>(typed_decl);
+                trait != nullptr && typed_decl->kind == ast::NodeKind::TraitDecl) {
+                // KR5.5 / RFC §1.3: emit a first-class TraitDecl carrying the
+                // interface method signatures and super-trait references.
+                program_ir.declarations.push_back(lower_trait_decl(*typed_decl, *trait));
                 continue;
             }
             if (is_metadata_only_declaration(*typed_decl))
@@ -3297,6 +3313,77 @@ class TypedIrLowerer final {
             lowered.body = make_owned<ir::Block>(
                 lower_typed_block(typed_program_->blocks[method.body_block_index]));
             lowered.has_body = true;
+        }
+        return lowered;
+    }
+
+    // KR5.5 / RFC §1.3: lower a trait declaration into a first-class TraitDecl
+    // carrying its interface method signatures (bodyless) and super-traits.
+    [[nodiscard]] ir::TraitDecl lower_trait_decl(const TypedDecl &decl,
+                                                 const TraitTypeInfo &trait) const {
+        ir::TraitDecl lowered = with_provenance(
+            ir::TraitDecl{
+                .provenance = {},
+                .name = trait.canonical_name,
+                .symbol_ref = symbol_ref_from_decl(decl, "trait declaration"),
+                .type_param_names = trait.type_param_names,
+                .super_traits = {},
+                .methods = {},
+            },
+            trait.declaration_range);
+        lowered.super_traits.reserve(trait.super_traits.size());
+        for (const auto super_symbol : trait.super_traits) {
+            lowered.super_traits.push_back(
+                symbol_ref_from_symbol(typed_program_->find_symbol(super_symbol), "super-trait"));
+        }
+        lowered.methods.reserve(trait.methods.size());
+        for (const auto &method : trait.methods) {
+            ir::TraitMethodSig sig{
+                .name = method.name,
+                .params = lower_params(method.params),
+                .return_type_ref = {},
+                .has_return_type = method.return_type != nullptr,
+                .effect = lower_fn_effect(method.effect),
+                .type_param_names = method.type_param_names,
+                .source_range = method.declaration_range,
+            };
+            if (method.return_type != nullptr) {
+                sig.return_type_ref = type_ref_from_required_type(
+                    method.return_type, method.return_type_range, "trait method return type");
+            }
+            lowered.methods.push_back(std::move(sig));
+        }
+        return lowered;
+    }
+
+    // KR5.5 / RFC §1.4: lower an impl block into a first-class ImplDecl. Method
+    // bodies are NOT duplicated here — `method_refs` reference the FnDecls
+    // already emitted for this impl's methods.
+    [[nodiscard]] ir::ImplDecl lower_impl_decl(const ImplTypeInfo &impl,
+                                               std::vector<ir::SymbolRef> method_refs) const {
+        ir::ImplDecl lowered = with_provenance(
+            ir::ImplDecl{
+                .provenance = {},
+                .index = impl.index,
+                .is_inherent = impl.is_inherent,
+                .target_type_ref = impl.target_type != nullptr
+                                       ? type_ref_from_type(*impl.target_type)
+                                       : ir::TypeRef{},
+                .trait_ref = {},
+                .trait_type_args = {},
+                .type_param_names = impl.type_param_names,
+                .method_refs = std::move(method_refs),
+            },
+            impl.declaration_range);
+        if (!impl.is_inherent && impl.trait_symbol.has_value()) {
+            lowered.trait_ref = symbol_ref_from_symbol(
+                typed_program_->find_symbol(*impl.trait_symbol), "impl trait");
+        }
+        lowered.trait_type_args.reserve(impl.trait_type_args.size());
+        for (const auto &arg : impl.trait_type_args) {
+            if (arg != nullptr) {
+                lowered.trait_type_args.push_back(type_ref_from_type(*arg));
+            }
         }
         return lowered;
     }

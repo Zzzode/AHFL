@@ -16,6 +16,8 @@ declaration_kinds {
   contract 0
   flow 1
   workflow 1
+  trait 0
+  impl 0
   instance 1
 }
 formal_observations {

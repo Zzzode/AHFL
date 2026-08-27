@@ -45,6 +45,10 @@ struct JsonValue {
 
     [[nodiscard]] std::optional<std::string_view> as_string() const;
     [[nodiscard]] std::optional<int64_t> as_int() const;
+    // Reads an integer JSON value as a full 64-bit unsigned magnitude. Values
+    // above INT64_MAX (e.g. a size_t identity with the high bit set) round-trip
+    // losslessly through this accessor; as_int() would reject them as overflow.
+    [[nodiscard]] std::optional<uint64_t> as_uint() const;
     [[nodiscard]] std::optional<double> as_float() const;
     [[nodiscard]] std::optional<bool> as_bool() const;
 

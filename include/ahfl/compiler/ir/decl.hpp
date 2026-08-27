@@ -354,6 +354,66 @@ struct FnDecl {
 };
 
 // ----------------------------------------------------------------------------
+// P3 (RFC §3.2.2 / §1.3 / §1.4): first-class trait / impl IR declarations
+// ----------------------------------------------------------------------------
+//
+// Before KR5.5, traits and impls were lowered only implicitly: an impl's method
+// bodies became `FnDecl`s (via the synthetic-method path) and the trait
+// contract plus the impl-of-trait relationship were dropped at the IR boundary.
+// These nodes preserve the interface metadata so backends and IR consumers can
+// reason about trait conformance without re-entering the typed tree. They are
+// metadata/interface nodes: method BODIES are NOT duplicated here — the impl
+// references its lowered FnDecls by SymbolRef, and trait methods are
+// interface-only (no body in P3).
+
+/// One method signature declared inside a `trait` block. Interface-only: no
+/// body. Mirrors the resolved TraitMethodInfo surface the typed tree carries.
+struct TraitMethodSig {
+    std::string name;
+    std::vector<ParamDecl> params;
+    TypeRef return_type_ref; // Empty when the method returns Unit.
+    bool has_return_type{false};
+    FnEffectClause effect;
+    // Method-level generic type-parameter names (e.g. `fn fold<A>`), in
+    // declaration order after the trait-level params.
+    std::vector<std::string> type_param_names;
+    SourceRangeOpt source_range;
+};
+
+/// Trait declaration: trait Name<T>: Super { fn method(...) -> ...; ... }
+struct TraitDecl {
+    DeclarationProvenance provenance;
+    std::string name;
+    SymbolRef symbol_ref;
+    // Trait-level generic type-parameter names in declaration order (does NOT
+    // include the implicit `Self`).
+    std::vector<std::string> type_param_names;
+    // Resolved super-trait references (`trait B: A`).
+    std::vector<SymbolRef> super_traits;
+    // Interface method signatures in source order.
+    std::vector<TraitMethodSig> methods;
+};
+
+/// Impl declaration: impl<T> [Trait for] TargetType { fn method(...) {...} ... }
+///
+/// `trait_ref` is set for trait impls and empty (Unknown kind) for inherent
+/// impls. `method_refs` reference the already-lowered `FnDecl`s that carry the
+/// method bodies — this node does not duplicate them.
+struct ImplDecl {
+    DeclarationProvenance provenance;
+    // Impls have no user-facing name; `index` is the source declaration order.
+    std::size_t index{0};
+    bool is_inherent{true};
+    TypeRef target_type_ref;
+    SymbolRef trait_ref; // Unknown kind for inherent impls.
+    // Trait-ref type arguments (e.g. [T] for `impl<T> Iterable<T> for List<T>`).
+    std::vector<TypeRef> trait_type_args;
+    std::vector<std::string> type_param_names;
+    // References to the lowered impl-method FnDecls (bodies live there).
+    std::vector<SymbolRef> method_refs;
+};
+
+// ----------------------------------------------------------------------------
 // Concrete instance declarations (monomorphization output)
 // ----------------------------------------------------------------------------
 

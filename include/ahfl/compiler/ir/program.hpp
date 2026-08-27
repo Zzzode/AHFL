@@ -61,6 +61,8 @@ using Decl = std::variant<ModuleDecl,
                           FlowDecl,
                           WorkflowDecl,
                           FnDecl,
+                          TraitDecl,
+                          ImplDecl,
                           InstanceDecl>;
 
 enum class ProgramPhase {
