@@ -576,7 +576,73 @@ trait Describe {
 }
 
 // ---------------------------------------------------------------------------
-// TC11 (P3c): Inherent method dispatch. A value receiver call `c.add(1)` should
+// TC10c (KR5.5 regression): cross-module trait-method dispatch must not crash.
+// A container type lives in module A, a trait + its `impl Trait for A::Type`
+// lives in module B (orphan-rule-legal: co-located with the trait), and a
+// call site in module C dispatches the trait method on an A::Type receiver.
+//
+// Before the fix, `check_bound` resolved the impl's fully-qualified trait name
+// ("B::Trait") only via a module-LOCAL lookup scoped to the call site's module
+// (C), which structurally cannot find a trait defined in B. It returned false
+// with no diagnostic; the caller then produced a silent ErrorT that crashed IR
+// lowering ("TypedProgram contains an error type at the IR lowering boundary").
+// The fix adds a canonical fallback for qualified trait names, so the legal
+// call type-checks cleanly. This asserts no error (and, implicitly, no crash).
+// ---------------------------------------------------------------------------
+TEST_CASE("cross-module trait method dispatches without crashing") {
+    const std::vector<ModuleSource> units = {
+        ModuleSource{
+            .display_name = "cont.ahfl",
+            .module_name = "cont",
+            .text = R"AHFL(
+module cont;
+
+struct Bag {
+    count: Int;
+}
+)AHFL",
+        },
+        ModuleSource{
+            // Co-located with the trait: orphan rule passes.
+            .display_name = "tr.ahfl",
+            .module_name = "tr",
+            .text = R"AHFL(
+module tr;
+import cont;
+
+trait Emptyable {
+    fn drain(self: cont::Bag) -> cont::Bag effect Pure;
+}
+
+impl Emptyable for cont::Bag {
+    fn drain(self: cont::Bag) -> cont::Bag effect Pure decreases 0 {
+        return self;
+    }
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "use_mod.ahfl",
+            .module_name = "use_mod",
+            .text = R"AHFL(
+module use_mod;
+import cont;
+import tr;
+
+fn go(b: cont::Bag) -> cont::Bag effect Pure decreases 0 {
+    return b.drain();
+}
+)AHFL",
+        },
+    };
+
+    const auto result = typecheck_modules(units, /*expect_resolve_clean=*/true);
+    CHECK_FALSE(result.has_errors());
+    CHECK_FALSE(has_diagnostic_code(result, "UNKNOWN_CALLABLE"));
+    CHECK_FALSE(has_diagnostic_code(result, "TRAIT_BOUND_NOT_SATISFIED"));
+}
+
+// ---------------------------------------------------------------------------
 // resolve to the unique inherent impl method for the receiver's nominal type,
 // check the receiver against the method's explicit `self` parameter, and return
 // the method's declared return type.

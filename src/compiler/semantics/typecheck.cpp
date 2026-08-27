@@ -2086,10 +2086,40 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
     if (!trait_symbol.has_value()) {
         trait_symbol = find_local_here(SymbolNamespace::Types, local_name);
     }
+    if (!trait_symbol.has_value() && local_name.size() != trait_name.size()) {
+        // Cross-module trait dispatch: `trait_name` is a fully-qualified
+        // canonical name ("mod::Trait") whose defining module differs from the
+        // call site, so the module-local lookups above (which only search the
+        // current module's names) cannot resolve it. The trait IS declared and
+        // imported — just in another module — so resolve it directly by its
+        // canonical name. Without this, a legal cross-module trait-method call
+        // (e.g. `impl<T> Trait for cont::Bag<T>` in one module, `b.method()` in
+        // another) fails the bound check silently and crashes IR lowering.
+        trait_symbol =
+            resolve_result_.symbol_table.find_canonical(SymbolNamespace::Traits, trait_name);
+    }
     if (!trait_symbol.has_value()) {
-        // Unknown trait: the resolver would already have flagged an undeclared
-        // trait reference at the where-clause declaration site. To avoid
-        // double-reporting (once per call site), silently decline the check.
+        // Unknown trait. Two cases reach here:
+        //  (1) An unqualified where-clause bound spelling ("Show") naming an
+        //      undeclared trait — already flagged by the resolver at the
+        //      declaration site. Decline silently to avoid double-reporting
+        //      once per call site.
+        //  (2) A fully-qualified dispatch trait name that resolved to no symbol
+        //      even after the canonical fallback. Dispatch only reaches here
+        //      with a real impl's trait, so an unresolvable qualified name is a
+        //      genuine failure that must NOT yield a silent ErrorT (which later
+        //      crashes IR lowering). Emit a bound-not-satisfied diagnostic
+        //      (Principle 5) so the error surfaces at the call site.
+        if (local_name.size() != trait_name.size()) {
+            const std::string nominal_name = nominal_symbol_of(subject_type).has_value()
+                                                 ? nominal_describe(subject_type)
+                                                 : std::string{"<type>"};
+            typecheck_error_here(error_codes::typecheck::TraitBoundNotSatisfied,
+                                 messages::typecheck::TraitBoundNotSatisfied.format_with(
+                                     nominal_name, std::string{trait_name},
+                                     subject_type.describe()),
+                                 range);
+        }
         return false;
     }
     const auto trait_info = environment().get_trait(trait_symbol->get().id);
