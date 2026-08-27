@@ -3,6 +3,7 @@
 #include "ahfl/compiler/semantics/declaration_info.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
 #include "compiler/project_discovery/discovery.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 #include "tooling/formatter/formatter.hpp"
 #include "tooling/lsp/code_action.hpp"
 #include "tooling/lsp/code_lens.hpp"
@@ -2278,10 +2279,59 @@ flow_at(const TypeEnvironment &environment, std::optional<SourceId> source_id, s
     return nullptr;
 }
 
+// KR3.5: is the place named `root` (a simple root identifier, no member path)
+// narrowed to a definitely-present value (Option `is_not_none`) by an enclosing
+// if-condition at the cursor? Consumes the SAME persisted TypedExpr narrowing
+// facts hover renders, so completion inside a narrowed `then`/`else` branch can
+// unwrap the Option before enumerating members. Returns true when some enclosing
+// branch establishes `is_not_none` for a bare `root` place.
+[[nodiscard]] bool root_narrowed_present(const TypedProgram &program,
+                                         std::optional<SourceId> source_id,
+                                         std::size_t offset,
+                                         std::string_view root) {
+    for (const auto &stmt : program.statements) {
+        if (stmt.kind != TypedStmtKind::If ||
+            !same_source(stmt.source_id, source_id) ||
+            stmt.children_expr_index.empty()) {
+            continue;
+        }
+        const auto cond_index = stmt.children_expr_index.front();
+        if (cond_index == UINT32_MAX || cond_index >= program.expressions.size()) {
+            continue;
+        }
+        // Which branch (if any) contains the cursor determines which fact set
+        // is in force: `then` sees narrowing_when_true, `else` the false facts.
+        const auto branch_contains_cursor = [&](std::uint32_t block_index) -> bool {
+            if (block_index == UINT32_MAX || block_index >= program.blocks.size()) {
+                return false;
+            }
+            const auto &block = program.blocks[block_index];
+            return same_source(block.source_id, source_id) && contains(block.range, offset);
+        };
+
+        const auto &cond = program.expressions[cond_index];
+        const std::vector<TypedNarrowingFact> *facts = nullptr;
+        if (branch_contains_cursor(stmt.then_block_index)) {
+            facts = &cond.narrowing_when_true;
+        } else if (branch_contains_cursor(stmt.else_block_index)) {
+            facts = &cond.narrowing_when_false;
+        }
+        if (facts == nullptr) {
+            continue;
+        }
+        for (const auto &fact : *facts) {
+            if (fact.members.empty() && fact.root == root &&
+                (fact.kind == "is_not_none" || fact.kind == "is_variant")) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void push_struct_field_completions(std::vector<CompletionItem> &items,
                                    const TypeEnvironment &environment,
-                                   TypePtr type) {
-    if (type == nullptr) {
+                                   TypePtr type) {    if (type == nullptr) {
         return;
     }
     const auto struct_info = environment.get_struct(*type);
@@ -2342,6 +2392,21 @@ void push_member_completions(std::vector<CompletionItem> &items,
     }
 
     if (root_type != nullptr) {
+        // KR3.5: if an enclosing if-condition narrowed this root place to a
+        // definitely-present Option value (`x != none` in the then-branch, or
+        // the else of `x == none`), complete on the unwrapped inner type — the
+        // same persisted narrowing facts hover surfaces. Only applies to a bare
+        // root place (no member path) reached through a resolved Option type.
+        if (program != nullptr && root.root_begin < root.root_end) {
+            if (const auto view = stdlib_bridge::std_container_type_view(*root_type);
+                view.has_value() &&
+                view->kind == stdlib_bridge::StdContainerKind::Option &&
+                view->first != nullptr &&
+                root_narrowed_present(*program, source.source_id, offset, root.name)) {
+                root_type = view->first;
+            }
+        }
+
         bool added = false;
 
         if (const auto struct_info = environment.get_struct(*root_type);

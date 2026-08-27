@@ -8380,6 +8380,90 @@ void test_completion_field_access_chain_root_type() {
           "completion.field_chain_rejects_result_field");
 }
 
+/// KR3.5: member completion consumes persisted flow-narrowing facts. Inside the
+/// then-branch of `if (opt != Option::None)`, completion at `opt.` must offer the
+/// UNWRAPPED inner struct's fields (the same narrowing hover surfaces), and it
+/// must NOT do so outside a narrowing branch where the value stays Optional.
+/// Requires a std sysroot so `Optional`/`Option::None` resolve.
+void test_completion_narrowed_option_offers_inner_members() {
+    const auto root = make_temp_project("completion_narrowed_option");
+    const auto sysroot = root / "toolchain";
+    const auto std_root = sysroot / "std";
+    write_std_manifest(std_root);
+    write_file(std_root / "option.ahfl",
+               "module std::option;\n"
+               "\n"
+               "pub enum Option<T> { Some(T), None, }\n");
+    write_file(std_root / "collections.ahfl",
+               "module std::collections;\n"
+               "\n"
+               "pub struct List<T> {}\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-narrow", "app", "\"main\"", "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+    const std::string main_source =
+        "module app::main;\n"
+        "import std::option as option;\n"
+        "\n"
+        "struct Payload {\n"
+        "    field_a: Int;\n"
+        "    field_b: String;\n"
+        "}\n"
+        "\n"
+        "fn narrowed(seed: option::Option<Payload>) -> Int effect Pure decreases 0 {\n"
+        "    let opt: option::Option<Payload> = seed;\n"
+        "    if (opt != option::Option::None) {\n"
+        "        let v = opt.field_a;\n"
+        "        return v;\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "fn unnarrowed(seed: option::Option<Payload>) -> Int effect Pure decreases 0 {\n"
+        "    let opt: option::Option<Payload> = seed;\n"
+        "    let v = opt.field_a;\n"
+        "    return 0;\n"
+        "}\n";
+    write_file(main_path, main_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    // Sysroot must be the toolchain root (parent of std/), not the std dir itself.
+    const auto init = initialize_body_with_sysroot(root, sysroot);
+    const auto open_main = did_open_body(main_uri, 1, main_source);
+
+    // Cursor after "opt." inside the narrowed then-branch: the Option is unwrapped
+    // to Payload, so its fields are offered.
+    const auto narrowed_cursor =
+        position_after(position_of(main_source, "opt.field_a;\n        return v;"), "opt.");
+    const auto narrowed_req =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":)" +
+        hover_params_at(main_uri, narrowed_cursor) + R"(})";
+
+    // Cursor after "opt." in the un-narrowed fn: the value is still Optional<Payload>,
+    // so the inner struct's fields must NOT leak through.
+    const auto plain_cursor =
+        position_after(position_of(main_source, "opt.field_a;\n    return 0;"), "opt.");
+    const auto plain_req =
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":)" +
+        hover_params_at(main_uri, plain_cursor) + R"(})";
+
+    const auto shutdown = R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})";
+    const auto output = run_lsp_messages({init, open_main, narrowed_req, plain_req, shutdown});
+
+    const auto narrowed_response = response_body_for_id(output, 2);
+    const auto plain_response = response_body_for_id(output, 3);
+
+    check(narrowed_response.find("\"label\":\"field_a\"") != std::string::npos,
+          "completion.narrowed_option_offers_inner_field_a");
+    check(narrowed_response.find("\"label\":\"field_b\"") != std::string::npos,
+          "completion.narrowed_option_offers_inner_field_b");
+    check(plain_response.find("\"label\":\"field_a\"") == std::string::npos,
+          "completion.unnarrowed_option_hides_inner_field_a");
+}
+
+
 void test_completion_pattern_context_uses_typed_pattern_facts() {
     const std::string source = "enum Choice {\n"
                                "    First,\n"
@@ -11079,6 +11163,7 @@ int main() {
     test_completion_local_struct_inherent_impl_methods();
     test_completion_generic_type_inherent_impl_methods();
     test_completion_field_access_chain_root_type();
+    test_completion_narrowed_option_offers_inner_members();
     test_completion_pattern_context_uses_typed_pattern_facts();
     test_completion_bool_pattern_context_uses_typed_pattern_facts();
     test_completion_bounded_int_pattern_context_uses_typed_pattern_facts();
