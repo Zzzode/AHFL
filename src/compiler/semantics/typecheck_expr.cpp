@@ -1041,6 +1041,84 @@ struct MethodCandidate {
     return name;
 }
 
+// Does `type` contain a bare `TypeVarT` anywhere in its structure? Used to
+// recognize container-wrapped Self trait-method receivers (`self: Option<Self>`),
+// whose payload/type-args carry the Self TypeVar even though the outer type is a
+// concrete StructT/EnumT. Recurses through the same composite shapes that
+// `substitute_type` and `unify_param_with_arg` walk.
+[[nodiscard]] bool type_contains_type_var(const Type &type) noexcept {
+    if (type.holds<types::TypeVarT>()) {
+        return true;
+    }
+    const auto any_arg = [](const std::vector<TypePtr> &args) {
+        for (const auto &arg : args) {
+            if (arg != nullptr && type_contains_type_var(*arg)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (const auto *structure = type.get_if<types::StructT>(); structure != nullptr) {
+        return any_arg(structure->type_args);
+    }
+    if (const auto *enumeration = type.get_if<types::EnumT>(); enumeration != nullptr) {
+        return any_arg(enumeration->type_args);
+    }
+    if (const auto *variant = type.get_if<types::EnumVariantT>(); variant != nullptr) {
+        return any_arg(variant->type_args);
+    }
+    if (const auto *fn = type.get_if<types::FnT>(); fn != nullptr) {
+        if (fn->return_type != nullptr && type_contains_type_var(*fn->return_type)) {
+            return true;
+        }
+        return any_arg(fn->params);
+    }
+    return false;
+}
+
+// Given a trait method's self-parameter type (which contains the Self TypeVar,
+// possibly wrapped in a container like `Box<Self>`) and a concrete receiver
+// type, return the receiver sub-type occupying the Self position. For a bare
+// `Self` self param this is the whole receiver; for `Box<Self>` against a
+// receiver `Box<Counter>` it is `Counter`. Returns nullptr when the two shapes
+// do not align (defensive — the candidate collector already matched the nominal
+// head, so aligned shapes are the norm). Used by the stage-3 bound check so
+// container-wrapped Self verifies `Self: Trait` rather than the wrapper type.
+[[nodiscard]] const Type *extract_self_binding(const Type &self_param,
+                                               const Type &receiver) noexcept {
+    if (self_param.holds<types::TypeVarT>()) {
+        return &receiver;
+    }
+    const auto self_args = [](const Type &t) -> const std::vector<TypePtr> * {
+        if (const auto *s = t.get_if<types::StructT>(); s != nullptr) {
+            return &s->type_args;
+        }
+        if (const auto *e = t.get_if<types::EnumT>(); e != nullptr) {
+            return &e->type_args;
+        }
+        if (const auto *v = t.get_if<types::EnumVariantT>(); v != nullptr) {
+            return &v->type_args;
+        }
+        return nullptr;
+    };
+    const auto *param_args = self_args(self_param);
+    const auto *recv_args = self_args(receiver);
+    if (param_args == nullptr || recv_args == nullptr ||
+        param_args->size() != recv_args->size()) {
+        return nullptr;
+    }
+    for (std::size_t i = 0; i < param_args->size(); ++i) {
+        if ((*param_args)[i] == nullptr || (*recv_args)[i] == nullptr) {
+            continue;
+        }
+        if (const auto *found = extract_self_binding(*(*param_args)[i], *(*recv_args)[i]);
+            found != nullptr) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
 // Strip the module-qualification prefix from a symbol spelling so the
 // per-argument diagnostic refers to the short callable name (e.g. "handle"
 // instead of "lib::api::handle"). Keeps a class-method style dot separator so
@@ -1549,14 +1627,29 @@ class ExpressionCheckerServices final {
             // and leave the synthetic-candidate path dead. The stage-3 bound
             // check (check_bound) gates actual impl existence, so an
             // unimpl'd receiver still gets TRAIT_BOUND_NOT_SATISFIED rather
-            // than silently resolving. Container-wrapped Self (e.g.
-            // `self: Option<Self>`) is a known limitation: the self param is
-            // a StructT/EnumT, not a bare TypeVarT, so this skip does not
-            // fire and the synthetic candidate stays dead for that shape.
+            // than silently resolving.
+            //
+            // Container-wrapped Self (`self: Option<Self>`) is handled by the
+            // same principle: the self param is a StructT/EnumT whose type
+            // args transitively contain the Self TypeVar, so an exact-key
+            // comparison never matches a concrete receiver. We accept the
+            // candidate when the receiver's nominal head matches the self
+            // param's nominal head; downstream `check_impl_method_call`
+            // unifies the receiver structurally and `signatures_match`
+            // substitutes Self correctly, so no false positive survives.
             const bool self_is_type_var = self_param.type->holds<types::TypeVarT>();
-            if (!self_is_type_var &&
-                TypeEnvironment::normalize_type_key(*self_param.type) != receiver_key) {
-                continue;
+            const bool self_wraps_type_var =
+                !self_is_type_var && type_contains_type_var(*self_param.type);
+            if (!self_is_type_var) {
+                const bool key_match =
+                    TypeEnvironment::normalize_type_key(*self_param.type) == receiver_key;
+                const auto self_nominal = nominal_symbol_of_type(*self_param.type);
+                const bool nominal_match = self_wraps_type_var && receiver_nominal.has_value() &&
+                                           self_nominal.has_value() &&
+                                           *receiver_nominal == *self_nominal;
+                if (!key_match && !nominal_match) {
+                    continue;
+                }
             }
             // Skip: a concrete impl of this trait for the receiver type
             // already contributed a candidate via pass (1).
@@ -1609,6 +1702,15 @@ class ExpressionCheckerServices final {
                 .return_type = trait_method.return_type,
                 .return_type_range = trait_method.return_type_range,
                 .type_param_names = trait_method.type_param_names,
+                // Carry the trait method's scope ids so check_impl_method_call's
+                // generic path substitutes Self (index 0 of the trait's
+                // self-augmented scope) and any trait/method-level params. Without
+                // these, `is_generic` reads the combined type_param_names but
+                // substitute_method_type stamps scope 0, leaving Self unresolved
+                // and a container-wrapped `self: Box<Self>` receiver failing the
+                // assignability check as `expected Box<Self>, got Box<Counter>`.
+                .type_param_scope_id = trait_method.type_param_scope_id,
+                .method_scope_id = trait_method.method_scope_id,
                 .effect = trait_method.effect,
                 .has_body = false,
                 .declaration_range = trait_method.declaration_range,
@@ -1621,7 +1723,11 @@ class ExpressionCheckerServices final {
                 .trait_name = trait.canonical_name,
                 .target_type = self_param.type,
                 .target_symbol = nominal_symbol_of_type(*self_param.type),
-                .type_param_names = trait.type_param_names,
+                // The impl-level type-param names mirror the trait's self-augmented
+                // scope ([Self] + trait tparams). check_impl_method_call offsets
+                // explicit call-site type args past this count so `<A>` binds to
+                // method-level params, never to Self / trait params.
+                .type_param_names = trait.self_augmented_type_param_names,
                 .methods = {},
                 .assoc_items = {},
                 .declaration_range = trait.declaration_range,
@@ -3870,9 +3976,37 @@ class ExpressionChecker final {
         // ---- Stage 3: bound check (trait selections only) --------------------
         if (selected_from_trait && selected->impl != nullptr) {
             const std::string_view trait_name = selected->impl->trait_name;
-            dispatch_note("[dispatch.stage3.bound] verifying bound '" + receiver.type->describe() +
+            // For a container-wrapped Self self param (`self: Box<Self>`), the
+            // bound to verify is `Self: Trait`, i.e. the receiver sub-type in
+            // the Self position — NOT the wrapper type. extract_self_binding
+            // returns the whole receiver for a bare `Self` self param, so the
+            // common case is unchanged.
+            //
+            // This reduction applies ONLY to the synthetic trait-method
+            // candidate, whose target_type is the trait method's own `self`
+            // parameter type carrying the Self TypeVar. A real generic impl
+            // (`impl<T> Eq for Option<T>`) also has a TypeVar-bearing
+            // target_type, but there the bound subject is the whole receiver
+            // (`Option<Int> : Eq`), NOT the payload — extracting `Int : Eq`
+            // would be a false negative. The synthetic candidate is built from
+            // a trait signature with no body (has_body == false); a real impl
+            // method always has one, so gate on that.
+            const Type *bound_subject = receiver.type;
+            const bool is_synthetic_trait_candidate =
+                selected->method != nullptr && !selected->method->has_body;
+            if (is_synthetic_trait_candidate && selected->impl->target_type != nullptr &&
+                receiver.type != nullptr &&
+                type_contains_type_var(*selected->impl->target_type) &&
+                !selected->impl->target_type->holds<types::TypeVarT>()) {
+                if (const auto *self_binding =
+                        extract_self_binding(*selected->impl->target_type, *receiver.type);
+                    self_binding != nullptr) {
+                    bound_subject = self_binding;
+                }
+            }
+            dispatch_note("[dispatch.stage3.bound] verifying bound '" + bound_subject->describe() +
                           " : " + std::string(trait_name) + "' for trait dispatch target");
-            const bool bound_ok = services_.check_bound(*receiver.type, trait_name, expr.range);
+            const bool bound_ok = services_.check_bound(*bound_subject, trait_name, expr.range);
             if (bound_ok) {
                 dispatch_note("[dispatch.stage3.bound] bound satisfied for trait '" +
                               std::string(trait_name) + "'");

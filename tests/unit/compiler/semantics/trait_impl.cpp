@@ -631,6 +631,44 @@ fn caller(c: Counter) -> Int effect Pure decreases 0 {
     REQUIRE_FALSE(result.has_errors());
 }
 
+// ---------------------------------------------------------------------------
+// TC12b (KR5.5): container-wrapped Self dispatch. A trait method whose self
+// parameter is `Box<Self>` (a generic wrapper carrying the Self TypeVar in its
+// type args, not a bare Self) must still contribute a synthetic candidate for
+// a concrete receiver `Box<Counter>`. Before KR5.5 the synthetic-candidate
+// collector skipped this shape because normalize_type_key produced a
+// `type_var:Self` sub-key that never matched a concrete receiver key, leaving
+// the trait method dead. This asserts the container-wrapped Self path resolves.
+// ---------------------------------------------------------------------------
+TEST_CASE("container-wrapped Self trait method dispatches for concrete receiver") {
+    const std::string source = module_preamble() + R"AHFL(
+enum Box<T> {
+    Wrap(T),
+}
+
+struct Counter {
+    value: Int;
+}
+
+trait Unwrap {
+    fn tag(self: Box<Self>) -> Int;
+}
+
+impl Unwrap for Counter {
+    fn tag(self: Box<Counter>) -> Int effect Pure decreases 0 {
+        return 0;
+    }
+}
+
+fn caller(b: Box<Counter>) -> Int effect Pure decreases 0 {
+    return b.tag();
+}
+)AHFL";
+
+    const auto result = typecheck_source("trait_container_self_dispatch.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
 TEST_CASE("impl method body with wrong return type produces error") {
     const std::string source = module_preamble() + R"AHFL(
 struct Counter {
