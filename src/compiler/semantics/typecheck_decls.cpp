@@ -1688,6 +1688,7 @@ void DeclarationSema::build_impl_types() {
                 .target_symbol = std::nullopt,
                 .type_param_names = {},
                 .trait_type_args = {},
+                .where_clause = build_where_clause_info(decl.where_clause),
                 .methods = {},
                 .assoc_items = {},
                 .declaration_range = decl.range,
@@ -1766,6 +1767,59 @@ void DeclarationSema::build_impl_types() {
             // resolves too. Restored after the assoc/const item loops below.
             const auto prev_self_type = driver_->current_self_type_;
             driver_->current_self_type_ = info.target_type;
+
+            // RFC 0013 P3: resolve each impl-level where-bound subject to a
+            // concrete type under the active impl scope (impl type params + Self
+            // override + cross-module imports). Dispatch-site enforcement reads
+            // these resolved subjects directly; a bound whose subject is one of
+            // the impl's own generic type params is left unresolved (subject_type
+            // stays null) because that subject only becomes concrete once the
+            // receiver pins the impl type args at the call site — dispatch
+            // resolves those via the receiver substitution instead. The raw AST
+            // where-clause is walked here (build_where_clause_info stored only
+            // spellings) so subject TypeSyntax nodes resolve with references
+            // already recorded by the resolver.
+            if (decl.where_clause) {
+                for (std::size_t bound_index = 0;
+                     bound_index < info.where_clause.bounds.size() &&
+                     bound_index < decl.where_clause->constraints.size();
+                     ++bound_index) {
+                    auto &bound_info = info.where_clause.bounds[bound_index];
+                    const auto &constraint = decl.where_clause->constraints[bound_index];
+                    if (constraint == nullptr || !constraint->subject) {
+                        continue;
+                    }
+                    // A subject naming one of the impl's own type params is
+                    // generic; leave it unresolved for call-site substitution.
+                    if (std::find(info.type_param_names.begin(),
+                                  info.type_param_names.end(),
+                                  bound_info.subject_name) != info.type_param_names.end()) {
+                        continue;
+                    }
+                    bound_info.subject_type = resolve_type(*constraint->subject);
+                }
+                // Canonicalize the bound trait spellings under the impl's
+                // module scope. The clause is enforced at the call site (which
+                // may live in another module), where only fully-qualified
+                // canonical trait names resolve; store the canonical form now so
+                // check_bound's cross-module fallback can find the trait.
+                for (auto &bound_info : info.where_clause.bounds) {
+                    for (auto &trait_name : bound_info.trait_names) {
+                        std::string_view local = trait_name;
+                        if (const auto sep = trait_name.rfind("::");
+                            sep != std::string_view::npos) {
+                            local = std::string_view{trait_name}.substr(sep + 2);
+                        }
+                        auto sym = find_local_here(SymbolNamespace::Traits, local);
+                        if (!sym.has_value()) {
+                            sym = find_local_here(SymbolNamespace::Types, local);
+                        }
+                        if (sym.has_value()) {
+                            trait_name = sym->get().canonical_name;
+                        }
+                    }
+                }
+            }
 
             // Resolve trait_ref -> Trait symbol. C-2 (Wave-24): traits live in
             // their own namespace; resolver writes TraitBound references.

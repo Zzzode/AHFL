@@ -643,6 +643,139 @@ fn go(b: cont::Bag) -> cont::Bag effect Pure decreases 0 {
 }
 
 // ---------------------------------------------------------------------------
+// RFC 0013 P3: impl-level where-clause bounds must be ENFORCED at method
+// dispatch. An impl `impl Emptyable for Bag where Bag: Marker` only applies
+// when `Bag: Marker` actually holds. Before this fix the clause was parsed but
+// silently dropped, so `b.drain()` type-checked even though `Bag` never
+// implemented `Marker` — a soundness hole (an unsatisfiable impl still applied).
+//
+// NEGATIVE: no `impl Marker for Bag` exists, so the bound is unsatisfiable and
+// dispatch must reject the call with TRAIT_BOUND_NOT_SATISFIED.
+// ---------------------------------------------------------------------------
+TEST_CASE("impl-level where-clause with unsatisfiable bound rejects dispatch") {
+    const std::vector<ModuleSource> units = {
+        ModuleSource{
+            .display_name = "cont.ahfl",
+            .module_name = "cont",
+            .text = R"AHFL(
+module cont;
+
+struct Bag {
+    count: Int;
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "tr.ahfl",
+            .module_name = "tr",
+            .text = R"AHFL(
+module tr;
+import cont;
+
+trait Marker {
+    fn tag(self: Self) -> Int effect Pure;
+}
+
+trait Emptyable {
+    fn drain(self: cont::Bag) -> cont::Bag effect Pure;
+}
+
+impl Emptyable for cont::Bag where cont::Bag: Marker {
+    fn drain(self: cont::Bag) -> cont::Bag effect Pure decreases 0 {
+        return self;
+    }
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "use_mod.ahfl",
+            .module_name = "use_mod",
+            .text = R"AHFL(
+module use_mod;
+import cont;
+import tr;
+
+fn go(b: cont::Bag) -> cont::Bag effect Pure decreases 0 {
+    return b.drain();
+}
+)AHFL",
+        },
+    };
+
+    const auto result = typecheck_modules(units, /*expect_resolve_clean=*/true);
+    CHECK(result.has_errors());
+    CHECK(has_exact_diagnostic_code(result, "typecheck.TRAIT_BOUND_NOT_SATISFIED"));
+}
+
+// ---------------------------------------------------------------------------
+// RFC 0013 P3 (positive counterpart): once `impl Marker for Bag` is present,
+// the impl-level bound `where cont::Bag: Marker` is satisfied and `b.drain()`
+// type-checks cleanly — the enforcement must be a precise gate, not a blanket
+// rejection of every where-carrying impl.
+// ---------------------------------------------------------------------------
+TEST_CASE("impl-level where-clause with satisfied bound type-checks cleanly") {
+    const std::vector<ModuleSource> units = {
+        ModuleSource{
+            .display_name = "cont.ahfl",
+            .module_name = "cont",
+            .text = R"AHFL(
+module cont;
+
+struct Bag {
+    count: Int;
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "tr.ahfl",
+            .module_name = "tr",
+            .text = R"AHFL(
+module tr;
+import cont;
+
+trait Marker {
+    fn tag(self: Self) -> Int effect Pure;
+}
+
+trait Emptyable {
+    fn drain(self: cont::Bag) -> cont::Bag effect Pure;
+}
+
+impl Marker for cont::Bag {
+    fn tag(self: cont::Bag) -> Int effect Pure decreases 0 {
+        return 0;
+    }
+}
+
+impl Emptyable for cont::Bag where cont::Bag: Marker {
+    fn drain(self: cont::Bag) -> cont::Bag effect Pure decreases 0 {
+        return self;
+    }
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "use_mod.ahfl",
+            .module_name = "use_mod",
+            .text = R"AHFL(
+module use_mod;
+import cont;
+import tr;
+
+fn go(b: cont::Bag) -> cont::Bag effect Pure decreases 0 {
+    return b.drain();
+}
+)AHFL",
+        },
+    };
+
+    const auto result = typecheck_modules(units, /*expect_resolve_clean=*/true);
+    CHECK_FALSE(result.has_errors());
+    CHECK_FALSE(has_diagnostic_code(result, "TRAIT_BOUND_NOT_SATISFIED"));
+    CHECK_FALSE(has_diagnostic_code(result, "UNKNOWN_CALLABLE"));
+}
+
+// ---------------------------------------------------------------------------
 // resolve to the unique inherent impl method for the receiver's nominal type,
 // check the receiver against the method's explicit `self` parameter, and return
 // the method's declared return type.

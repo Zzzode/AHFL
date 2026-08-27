@@ -4023,6 +4023,73 @@ class ExpressionChecker final {
             dispatch_note("[dispatch.stage3.bound] inherent dispatch skips bound check");
         }
 
+        // ---- Stage 3b: impl-level where-clause bounds ------------------------
+        // RFC 0013 P3: an impl may carry its own where-clause
+        // (`impl Trait for T where T: Marker`). The clause was PARSED and stored
+        // on ImplTypeInfo but never enforced, so an impl whose bounds are
+        // unsatisfiable still applied — a soundness hole. Enforce every bound of
+        // the SELECTED impl here: a concrete subject (resolved at declaration
+        // time under the impl scope) is checked directly; a subject naming one
+        // of the impl's own generic type params is resolved through the receiver
+        // substitution (the receiver pins the impl type args). Any unsatisfied
+        // bound makes the impl inapplicable — check_bound emits
+        // TRAIT_BOUND_NOT_SATISFIED and we return an error-typed value so the
+        // call is not treated as well-typed.
+        if (selected->impl != nullptr && !selected->impl->where_clause.bounds.empty()) {
+            const ImplTypeInfo &impl = *selected->impl;
+            // Lazily compute the impl type-param substitution from the receiver
+            // (only needed for generic-subject bounds). The impl target type
+            // carries TypeVarT indices aligned to impl.type_param_names.
+            TypeSubstitutionMap impl_subst;
+            bool impl_subst_built = false;
+            const auto impl_subject_type = [&](const WhereBoundInfo &bound) -> TypePtr {
+                if (bound.subject_type != nullptr) {
+                    return bound.subject_type;
+                }
+                const auto it = std::find(impl.type_param_names.begin(),
+                                          impl.type_param_names.end(),
+                                          bound.subject_name);
+                if (it == impl.type_param_names.end()) {
+                    return nullptr;
+                }
+                if (!impl_subst_built) {
+                    impl_subst.assign(impl.type_param_names.size(), nullptr);
+                    if (impl.target_type != nullptr && receiver.type != nullptr) {
+                        unify_param_with_arg(*impl.target_type, *receiver.type, impl_subst);
+                    }
+                    impl_subst_built = true;
+                }
+                const auto index = static_cast<std::size_t>(it - impl.type_param_names.begin());
+                if (index >= impl_subst.size()) {
+                    return nullptr;
+                }
+                return impl_subst[index];
+            };
+
+            bool all_satisfied = true;
+            for (const auto &bound : impl.where_clause.bounds) {
+                const TypePtr subject = impl_subject_type(bound);
+                // A subject that still resolves to a bare TypeVar has no concrete
+                // impl to look up (the receiver did not pin it); skip it — the
+                // generic caller's own where-clause is responsible.
+                if (subject == nullptr || subject->holds<types::TypeVarT>()) {
+                    continue;
+                }
+                for (const auto &trait_name : bound.trait_names) {
+                    dispatch_note("[dispatch.stage3b.impl_where] verifying impl bound '" +
+                                  subject->describe() + " : " + trait_name + "'");
+                    if (!services_.check_bound(*subject, trait_name, expr.range)) {
+                        all_satisfied = false;
+                    }
+                }
+            }
+            if (!all_satisfied) {
+                dispatch_note("[dispatch.stage3b.impl_where] impl where-clause bound(s) NOT "
+                              "satisfied → impl inapplicable");
+                return values_.error_typed_effect(receiver.effect);
+            }
+        }
+
         return check_impl_method_call(expr, receiver, *selected);
     }
 

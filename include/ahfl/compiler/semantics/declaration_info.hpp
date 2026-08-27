@@ -33,6 +33,12 @@ struct WhereBoundInfo {
     std::string subject_name;   // raw spelling of the subject type parameter
     std::vector<std::string> trait_names; // raw trait / capability spellings
     SourceRange source_range;
+    // RFC 0013 P3: the subject type resolved in the owning declaration's scope
+    // (cross-module references + Self override active). Populated only for
+    // impl-level where-clauses today, where dispatch-site enforcement needs the
+    // concrete subject type without re-resolving a raw spelling. nullptr when
+    // the subject is a generic type parameter or the owner did not resolve it.
+    TypePtr subject_type{nullptr};
 };
 
 /// Bundled where-clause info attached to nominal declarations that may carry
@@ -519,6 +525,11 @@ struct ImplTypeInfo {
     // impls and for trait refs without type arguments. The trait/impl
     // signature matcher substitutes trait-level type params with these.
     std::vector<TypePtr> trait_type_args{};
+    // RFC 0013 P3: impl-level where-clause bounds (e.g.
+    // `impl Emptyable for Bag where Bag: Marker`). Empty for impls without a
+    // where-clause. Enforced by method dispatch: an impl whose bounds are not
+    // all satisfied is not applicable. Mirrors StructTypeInfo/FnTypeInfo.
+    WhereClauseInfo where_clause{};
     std::vector<ImplMethodInfo> methods{};
     std::vector<ImplAssocItemInfo> assoc_items{};
     SourceRange declaration_range{};
