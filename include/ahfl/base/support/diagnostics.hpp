@@ -498,7 +498,16 @@ inline constexpr MessageTemplate AmbiguousCallable{
 inline constexpr MessageTemplate CyclicTypeAlias{"type alias cycle detected: {}"};
 inline constexpr MessageTemplate DuplicateImport{"duplicate import alias '{}'"};
 inline constexpr MessageTemplate ModuleBoundaryMismatch{
-    "source unit module boundary does not match graph owner"};
+    "source unit declares module '{}' but the package graph owns it as module '{}'"};
+// Related note attached to a ModuleBoundaryMismatch: points the user at the
+// module name the graph expected for this source unit.
+inline constexpr MessageTemplate ModuleBoundaryMismatchNote{
+    "the package graph expects this source unit to declare module '{}'"};
+// KR5.8: moved out of an inline MessageTemplate{...} at the resolver call site
+// so the multiple-module-declaration diagnostic is defined in the catalogue
+// alongside its FirstModuleDeclarationHere note.
+inline constexpr MessageTemplate MultipleModuleDeclarations{
+    "multiple module declarations are not supported in one source file"};
 inline constexpr MessageTemplate VariantNameShadowsType{
     "enum variant '{}' in enum '{}' conflicts with type '{}' in the same module"};
 // ---- Structured notes (shared error code with the primary diagnostic; distinguished by message text) ----

@@ -226,6 +226,21 @@ std = { source = "sysroot" }
     return has_diagnostic(result.diagnostics, needle);
 }
 
+// KR5.8: match a diagnostic by its stable code (exact) rather than message
+// text, so tests pin the code taxonomy that tooling branches on.
+[[nodiscard]] bool
+has_diagnostic_code(const std::vector<ahfl::package_graph::Diagnostic> &diagnostics,
+                    std::string_view code) {
+    return std::any_of(diagnostics.begin(), diagnostics.end(), [code](const auto &diag) {
+        return diag.code == code;
+    });
+}
+
+[[nodiscard]] bool has_error_code(const ahfl::package_graph::BuildResult &result,
+                                  std::string_view code) {
+    return has_diagnostic_code(result.diagnostics, code);
+}
+
 [[nodiscard]] bool has_source_unit_role(const ahfl::package_graph::SourceUnitNode &unit,
                                         ahfl::package_graph::SourceUnitRole role) {
     return std::find(unit.roles.begin(), unit.roles.end(), role) != unit.roles.end();
@@ -469,6 +484,7 @@ TEST_CASE("PackageGraph rejects sysroot std manifests that violate RFC contract"
 
         REQUIRE(result.has_errors());
         CHECK(has_error(result, "sysroot std module.root must be '.'"));
+        CHECK(has_error_code(result, "package.INVALID_SYSROOT_PACKAGE"));
     }
 
     SUBCASE("prelude declaration") {
@@ -542,6 +558,7 @@ TEST_CASE("PackageGraph rejects duplicate module prefix before resolver") {
 
     REQUIRE(result.has_errors());
     CHECK(has_error(result, "duplicate module prefix"));
+    CHECK(has_error_code(result, "package.DUPLICATE_MODULE_PREFIX"));
 }
 
 TEST_CASE("PackageGraph rejects duplicate package names before resolver") {
@@ -554,6 +571,7 @@ TEST_CASE("PackageGraph rejects duplicate package names before resolver") {
 
     REQUIRE(result.has_errors());
     CHECK(has_error(result, "duplicate package name 'refund-audit'"));
+    CHECK(has_error_code(result, "package.DUPLICATE_PACKAGE_NAME"));
 }
 
 TEST_CASE("PackageGraph rejects missing dependencies") {
@@ -564,6 +582,7 @@ TEST_CASE("PackageGraph rejects missing dependencies") {
 
     REQUIRE(result.has_errors());
     CHECK(has_error(result, "missing dependency package 'audit-core'"));
+    CHECK(has_error_code(result, "package.DEPENDENCY_RESOLUTION"));
 }
 
 TEST_CASE("PackageGraph fails closed for registry dependencies before registry resolver") {
@@ -749,6 +768,7 @@ TEST_CASE("PackageGraph rejects dependency cycles") {
 
     REQUIRE(result.has_errors());
     CHECK(has_error(result, "dependency cycle"));
+    CHECK(has_error_code(result, "package.DEPENDENCY_CYCLE"));
 }
 
 TEST_CASE("PackageGraph rejects user package named std") {
@@ -759,6 +779,7 @@ TEST_CASE("PackageGraph rejects user package named std") {
 
     REQUIRE(result.has_errors());
     CHECK(has_error(result, "user package cannot be named 'std'"));
+    CHECK(has_error_code(result, "package.RESERVED_PACKAGE_NAME"));
 }
 
 TEST_CASE("PackageGraph rejects user standard-library packages") {

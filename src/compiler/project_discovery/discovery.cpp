@@ -10,12 +10,16 @@
 namespace ahfl::project_discovery {
 namespace {
 
-constexpr std::string_view kProjectDiscovery = "E::project_discovery";
 constexpr std::string_view kToolchainSysrootInvalid = "E::toolchain_sysroot_invalid";
 constexpr std::string_view kToolchainSysrootMissing = "E::toolchain_sysroot_missing";
 constexpr std::string_view kToolchainSysrootMismatch = "E::toolchain_sysroot_mismatch";
 constexpr std::string_view kToolchainProfileAmbiguous = "E::toolchain_profile_ambiguous";
 constexpr std::string_view kToolchainIncompatible = "E::toolchain_incompatible";
+// KR5.8: stable codes for the two blanket project-discovery diagnostics
+// (I/O failure and workspace-membership lookup) that previously shared the
+// generic E::project_discovery code, so tooling can classify them.
+constexpr std::string_view kProjectIoError = "project.IO_ERROR";
+constexpr std::string_view kWorkspacePackageNotFound = "project.WORKSPACE_PACKAGE_NOT_FOUND";
 
 void add_error_with_code(std::vector<package_graph::Diagnostic> &diagnostics,
                          std::string_view code,
@@ -28,12 +32,6 @@ void add_error_with_code(std::vector<package_graph::Diagnostic> &diagnostics,
         .range = range,
         .related = std::move(related),
     });
-}
-
-void add_error(std::vector<package_graph::Diagnostic> &diagnostics,
-               std::string message,
-               SourceRange range = {}) {
-    add_error_with_code(diagnostics, kProjectDiscovery, std::move(message), range);
 }
 
 [[nodiscard]] package_graph::Diagnostic::Related related_path(std::filesystem::path path,
@@ -62,7 +60,7 @@ void append_manifest_diagnostics(std::vector<package_graph::Diagnostic> &target,
                                   std::string_view role) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        add_error(diagnostics,
+        add_error_with_code(diagnostics, kProjectIoError,
                   "failed to open " + std::string{role} + " '" + path.generic_string() + "'");
         return false;
     }
@@ -648,7 +646,7 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
             return workspace_discovery;
         }
         if (input.explicit_workspace_manifest_path.has_value()) {
-            add_error(discovery.diagnostics,
+            add_error_with_code(discovery.diagnostics, kWorkspacePackageNotFound,
                       "workspace does not contain package manifest '" +
                           normalized_package_manifest.generic_string() + "'");
             return discovery;

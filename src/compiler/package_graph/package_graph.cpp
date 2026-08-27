@@ -17,13 +17,38 @@
 namespace ahfl::package_graph {
 namespace {
 
-constexpr std::string_view kPackageGraph = "E::package_graph";
+// KR5.8: stable, category-meaningful diagnostic codes for the package graph.
+// These replace the single blanket `E::package_graph` code so tooling (CLI /
+// LSP / CI gates) can branch on the specific failure family and users get an
+// actionable classification. Codes are namespaced under `package.` to mirror
+// the `error_codes` catalogue convention used by the compiler-side diagnostics.
+namespace pkg_code {
+constexpr std::string_view kIoError = "package.IO_ERROR";
+constexpr std::string_view kDuplicatePackageName = "package.DUPLICATE_PACKAGE_NAME";
+constexpr std::string_view kDuplicateModulePrefix = "package.DUPLICATE_MODULE_PREFIX";
+constexpr std::string_view kDuplicateExportModule = "package.DUPLICATE_EXPORT_MODULE";
+constexpr std::string_view kInvalidExportModule = "package.INVALID_EXPORT_MODULE";
+constexpr std::string_view kInvalidSysrootPackage = "package.INVALID_SYSROOT_PACKAGE";
+constexpr std::string_view kInvalidStdDependency = "package.INVALID_STD_DEPENDENCY";
+constexpr std::string_view kReservedPackageName = "package.RESERVED_PACKAGE_NAME";
+constexpr std::string_view kDependencyResolution = "package.DEPENDENCY_RESOLUTION";
+constexpr std::string_view kDependencyCycle = "package.DEPENDENCY_CYCLE";
+constexpr std::string_view kWorkspaceDependencyConflict = "package.WORKSPACE_DEPENDENCY_CONFLICT";
+constexpr std::string_view kWorkspaceDependencyContext = "package.WORKSPACE_DEPENDENCY_CONTEXT";
+constexpr std::string_view kWorkspaceMemberNested = "package.WORKSPACE_MEMBER_NESTED";
+constexpr std::string_view kDuplicateWorkspaceMember = "package.DUPLICATE_WORKSPACE_MEMBER";
+constexpr std::string_view kWorkspacePackageNotFound = "package.WORKSPACE_PACKAGE_NOT_FOUND";
+constexpr std::string_view kPathDependencyKeyMismatch = "package.PATH_DEPENDENCY_KEY_MISMATCH";
+} // namespace pkg_code
 
 [[nodiscard]] std::filesystem::path normalize_manifest_path(const std::filesystem::path &path);
 
-void add_error(std::vector<Diagnostic> &diagnostics, std::string message, SourceRange range = {}) {
+void add_error(std::vector<Diagnostic> &diagnostics,
+               std::string_view code,
+               std::string message,
+               SourceRange range = {}) {
     diagnostics.push_back(Diagnostic{
-        .code = std::string{kPackageGraph},
+        .code = std::string{code},
         .message = std::move(message),
         .range = range,
     });
@@ -353,7 +378,7 @@ struct SemVer {
                                   std::string_view role) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        add_error(diagnostics,
+        add_error(diagnostics, pkg_code::kIoError,
                   "failed to open " + std::string{role} + " '" + path.generic_string() + "'");
         return false;
     }
@@ -447,7 +472,7 @@ compute_package_checksum_impl(const PackageInput &input, std::vector<Diagnostic>
     const auto module_root_exists = std::filesystem::exists(module_root, error);
     if (error) {
         add_error(diagnostics,
-                  "failed to inspect module root '" + module_root.generic_string() + "'");
+                  pkg_code::kIoError, "failed to inspect module root '" + module_root.generic_string() + "'");
         return std::nullopt;
     }
     if (!module_root_exists) {
@@ -457,7 +482,7 @@ compute_package_checksum_impl(const PackageInput &input, std::vector<Diagnostic>
     const auto module_root_is_directory = std::filesystem::is_directory(module_root, error);
     if (error) {
         add_error(diagnostics,
-                  "failed to inspect module root '" + module_root.generic_string() + "'");
+                  pkg_code::kIoError, "failed to inspect module root '" + module_root.generic_string() + "'");
         return std::nullopt;
     }
     if (!module_root_is_directory) {
@@ -478,7 +503,7 @@ compute_package_checksum_impl(const PackageInput &input, std::vector<Diagnostic>
         }
     } catch (const std::filesystem::filesystem_error &ex) {
         add_error(diagnostics,
-                  "failed to scan package source root '" + module_root.generic_string() +
+                  pkg_code::kIoError, "failed to scan package source root '" + module_root.generic_string() +
                       "': " + ex.what());
         return std::nullopt;
     }
@@ -587,7 +612,7 @@ void apply_workspace_defaults(PackageInput &package,
         if (existing != package.manifest.dependencies.end()) {
             if (!same_dependency_spec(*existing, workspace_dependency)) {
                 add_error(diagnostics,
-                          "workspace dependency default for '" + workspace_dependency.key +
+                          pkg_code::kWorkspaceDependencyConflict, "workspace dependency default for '" + workspace_dependency.key +
                               "' conflicts with package dependency declaration",
                           existing->range);
             }
@@ -613,7 +638,7 @@ void validate_nested_workspace_members(const std::vector<PackageInput> &members,
             }
 
             add_error(diagnostics,
-                      "workspace member package '" + members[outer].manifest.package_name +
+                      pkg_code::kWorkspaceMemberNested, "workspace member package '" + members[outer].manifest.package_name +
                           "' contains member package '" + members[inner].manifest.package_name +
                           "'; nested workspace members must be split into sibling packages");
         }
@@ -632,7 +657,7 @@ void collect_path_dependencies(const PackageInput &from,
         if (dependency.source == "workspace") {
             if (!allow_workspace_dependencies) {
                 add_error(diagnostics,
-                          "workspace dependency '" + dependency.key +
+                          pkg_code::kWorkspaceDependencyContext, "workspace dependency '" + dependency.key +
                               "' requires workspace manifest context",
                           dependency.range);
             }
@@ -655,7 +680,7 @@ void collect_path_dependencies(const PackageInput &from,
         }
         if (loaded->manifest.package_name != dependency.key) {
             add_error(diagnostics,
-                      "path dependency key '" + dependency.key + "' must match package name '" +
+                      pkg_code::kPathDependencyKeyMismatch, "path dependency key '" + dependency.key + "' must match package name '" +
                           loaded->manifest.package_name + "'",
                       dependency.range);
             continue;
@@ -684,7 +709,7 @@ void validate_exported_modules(const IndexedInput &indexed, std::vector<Diagnost
         const std::filesystem::path module_path{exported};
         if (!seen.insert(module_path.generic_string()).second) {
             add_error(diagnostics,
-                      "package '" + indexed.input->manifest.package_name +
+                      pkg_code::kDuplicateExportModule, "package '" + indexed.input->manifest.package_name +
                           "' exports duplicate module '" + exported + "'",
                       exported_module.range);
             continue;
@@ -692,7 +717,7 @@ void validate_exported_modules(const IndexedInput &indexed, std::vector<Diagnost
 
         if (path_has_escape_or_invalid_part(module_path)) {
             add_error(diagnostics,
-                      "package '" + indexed.input->manifest.package_name + "' export module '" +
+                      pkg_code::kInvalidExportModule, "package '" + indexed.input->manifest.package_name + "' export module '" +
                           exported + "' must be a relative module path inside module root",
                       exported_module.range);
             continue;
@@ -707,7 +732,7 @@ void validate_exported_modules(const IndexedInput &indexed, std::vector<Diagnost
 
         if (single_exists && directory_exists) {
             add_error(diagnostics,
-                      "package '" + indexed.input->manifest.package_name + "' export module '" +
+                      pkg_code::kInvalidExportModule, "package '" + indexed.input->manifest.package_name + "' export module '" +
                           exported +
                           "' is ambiguous: both single-file and directory-module layouts exist",
                       exported_module.range);
@@ -716,7 +741,7 @@ void validate_exported_modules(const IndexedInput &indexed, std::vector<Diagnost
 
         if (!single_exists && !directory_exists) {
             add_error(diagnostics,
-                      "package '" + indexed.input->manifest.package_name + "' export module '" +
+                      pkg_code::kInvalidExportModule, "package '" + indexed.input->manifest.package_name + "' export module '" +
                           exported + "' does not exist under module root '" +
                           module_root.generic_string() + "'",
                       exported_module.range);
@@ -730,22 +755,22 @@ void validate_sysroot_std_contract(const PackageInput &sysroot_std,
         sysroot_std.manifest.package_kind != "standard-library" ||
         sysroot_std.manifest.module_prefix != "std") {
         add_error(diagnostics,
-                  "sysroot package must be standard-library package 'std' with prefix 'std'");
+                  pkg_code::kInvalidSysrootPackage, "sysroot package must be standard-library package 'std' with prefix 'std'");
     }
 
     if (sysroot_std.manifest.module_root != ".") {
-        add_error(diagnostics, "sysroot std module.root must be '.'");
+        add_error(diagnostics, pkg_code::kInvalidSysrootPackage, "sysroot std module.root must be '.'");
     }
 
     if (sysroot_std.manifest.prelude_module != "std::prelude" ||
         sysroot_std.manifest.prelude_injection != "explicit") {
         add_error(diagnostics,
-                  "sysroot std must declare prelude.module 'std::prelude' with explicit "
+                  pkg_code::kInvalidSysrootPackage, "sysroot std must declare prelude.module 'std::prelude' with explicit "
                   "injection");
     }
 
     if (sysroot_std.manifest.compiler_intrinsics_allow.empty()) {
-        add_error(diagnostics, "sysroot std must declare compiler_intrinsics.allow");
+        add_error(diagnostics, pkg_code::kInvalidSysrootPackage, "sysroot std must declare compiler_intrinsics.allow");
     }
 }
 
@@ -813,11 +838,11 @@ BuildResult build_package_graph(const BuildInput &input) {
     std::unordered_map<std::string, PackageId> by_prefix;
     for (const auto &package : graph.packages) {
         if (!by_name.emplace(package.name, package.id).second) {
-            add_error(result.diagnostics, "duplicate package name '" + package.name + "'");
+            add_error(result.diagnostics, pkg_code::kDuplicatePackageName, "duplicate package name '" + package.name + "'");
         }
         if (!by_prefix.emplace(package.module_prefix, package.id).second) {
             add_error(result.diagnostics,
-                      "duplicate module prefix '" + package.module_prefix + "'");
+                      pkg_code::kDuplicateModulePrefix, "duplicate module prefix '" + package.module_prefix + "'");
         }
     }
 
@@ -831,7 +856,7 @@ BuildResult build_package_graph(const BuildInput &input) {
         if (dependency.key == "std") {
             if (dependency.source != "sysroot") {
                 add_error(result.diagnostics,
-                          "user package cannot declare a second std package",
+                          pkg_code::kInvalidStdDependency, "user package cannot declare a second std package",
                           dependency.range);
                 return std::nullopt;
             }
@@ -840,7 +865,7 @@ BuildResult build_package_graph(const BuildInput &input) {
 
         if (from.input->source == PackageSourceKind::Sysroot) {
             add_error(result.diagnostics,
-                      "std cannot depend on user package '" + dependency.key + "'",
+                      pkg_code::kInvalidStdDependency, "std cannot depend on user package '" + dependency.key + "'",
                       dependency.range);
             return std::nullopt;
         }
@@ -850,13 +875,13 @@ BuildResult build_package_graph(const BuildInput &input) {
             if (dependency.source == "registry") {
                 add_error(
                     result.diagnostics,
-                    "registry dependency '" + dependency.key +
+                    pkg_code::kDependencyResolution, "registry dependency '" + dependency.key +
                         "' requires registry resolver support before PackageGraph materialization",
                     dependency.range);
                 return std::nullopt;
             }
             add_error(result.diagnostics,
-                      "missing dependency package '" + dependency.key + "'",
+                      pkg_code::kDependencyResolution, "missing dependency package '" + dependency.key + "'",
                       dependency.range);
             return std::nullopt;
         }
@@ -864,7 +889,7 @@ BuildResult build_package_graph(const BuildInput &input) {
         const auto *target = graph.find_package(found->second);
         if (target == nullptr) {
             add_error(result.diagnostics,
-                      "dependency package '" + dependency.key + "' is not in PackageGraph",
+                      pkg_code::kDependencyResolution, "dependency package '" + dependency.key + "' is not in PackageGraph",
                       dependency.range);
             return std::nullopt;
         }
@@ -872,7 +897,7 @@ BuildResult build_package_graph(const BuildInput &input) {
         if (dependency.source == "registry") {
             if (target->source != PackageSourceKind::Registry || !target->registry.has_value()) {
                 add_error(result.diagnostics,
-                          "registry dependency '" + dependency.key +
+                          pkg_code::kDependencyResolution, "registry dependency '" + dependency.key +
                               "' does not resolve to a registry package",
                           dependency.range);
                 return std::nullopt;
@@ -880,7 +905,7 @@ BuildResult build_package_graph(const BuildInput &input) {
             const auto expected_registry = dependency.registry.value_or("default");
             if (target->registry->registry_id != expected_registry) {
                 add_error(result.diagnostics,
-                          "registry dependency '" + dependency.key + "' requires registry '" +
+                          pkg_code::kDependencyResolution, "registry dependency '" + dependency.key + "' requires registry '" +
                               expected_registry + "' but resolved registry '" +
                               target->registry->registry_id + "'",
                           dependency.range);
@@ -888,14 +913,14 @@ BuildResult build_package_graph(const BuildInput &input) {
             }
             if (!dependency.version.has_value()) {
                 add_error(result.diagnostics,
-                          "registry dependency '" + dependency.key +
+                          pkg_code::kDependencyResolution, "registry dependency '" + dependency.key +
                               "' is missing version requirement",
                           dependency.range);
                 return std::nullopt;
             }
             if (!semver_satisfies(target->version, *dependency.version)) {
                 add_error(result.diagnostics,
-                          "registry dependency '" + dependency.key + "' requires version " +
+                          pkg_code::kDependencyResolution, "registry dependency '" + dependency.key + "' requires version " +
                               *dependency.version + " but resolved " + target->version,
                           dependency.range);
                 return std::nullopt;
@@ -906,7 +931,7 @@ BuildResult build_package_graph(const BuildInput &input) {
         if (dependency.source == "workspace" && target->source != PackageSourceKind::Workspace &&
             target->source != PackageSourceKind::Root) {
             add_error(result.diagnostics,
-                      "workspace dependency '" + dependency.key +
+                      pkg_code::kWorkspaceDependencyContext, "workspace dependency '" + dependency.key +
                           "' does not resolve to a workspace package",
                       dependency.range);
             return std::nullopt;
@@ -915,7 +940,7 @@ BuildResult build_package_graph(const BuildInput &input) {
         if (dependency.source == "path") {
             if (!dependency.path.has_value()) {
                 add_error(result.diagnostics,
-                          "path dependency '" + dependency.key + "' is missing path",
+                          pkg_code::kDependencyResolution, "path dependency '" + dependency.key + "' is missing path",
                           dependency.range);
                 return std::nullopt;
             }
@@ -923,7 +948,7 @@ BuildResult build_package_graph(const BuildInput &input) {
             const auto dependency_manifest =
                 normalize_manifest_path(from.input->package_root / *dependency.path / "ahfl.toml");
             if (normalize_manifest_path(target->manifest_path) != dependency_manifest) {
-                add_error(result.diagnostics,
+                add_error(result.diagnostics, pkg_code::kDependencyResolution,
                           "path dependency '" + dependency.key +
                               "' does not resolve to declared path package '" +
                               dependency_manifest.generic_string() + "'",
@@ -934,7 +959,7 @@ BuildResult build_package_graph(const BuildInput &input) {
 
         if (dependency.version.has_value() && *dependency.version != target->version) {
             add_error(result.diagnostics,
-                      "dependency '" + dependency.key + "' requires version " +
+                      pkg_code::kDependencyResolution, "dependency '" + dependency.key + "' requires version " +
                           *dependency.version + " but resolved " + target->version,
                       dependency.range);
             return std::nullopt;
@@ -986,10 +1011,10 @@ BuildResult build_package_graph(const BuildInput &input) {
 
     for (const auto &package : graph.packages) {
         if (is_user_package(package.source) && package.name == "std") {
-            add_error(result.diagnostics, "user package cannot be named 'std'");
+            add_error(result.diagnostics, pkg_code::kReservedPackageName, "user package cannot be named 'std'");
         }
         if (is_user_package(package.source) && package.kind == "standard-library") {
-            add_error(result.diagnostics,
+            add_error(result.diagnostics, pkg_code::kReservedPackageName,
                       "user package '" + package.name +
                           "' cannot declare package.kind 'standard-library'");
         }
@@ -1027,7 +1052,7 @@ BuildResult build_package_graph(const BuildInput &input) {
                 if (const auto *node = graph.find_package(next); node != nullptr) {
                     cycle += node->name;
                 }
-                add_error(result.diagnostics, "dependency cycle: " + cycle);
+                add_error(result.diagnostics, pkg_code::kDependencyCycle, "dependency cycle: " + cycle);
                 cycle_reported = true;
                 return;
             }
@@ -1101,7 +1126,7 @@ BuildResult build_package_graph_from_workspace(const WorkspaceBuildInput &input)
         const auto member_manifest = normalize_manifest_path(workspace_root / member / "ahfl.toml");
         if (!loaded_manifest_paths.insert(member_manifest.string()).second) {
             add_error(result.diagnostics,
-                      "workspace contains duplicate member path '" + member + "'");
+                      pkg_code::kDuplicateWorkspaceMember, "workspace contains duplicate member path '" + member + "'");
             continue;
         }
 
@@ -1125,7 +1150,7 @@ BuildResult build_package_graph_from_workspace(const WorkspaceBuildInput &input)
     });
     if (selected == members.end()) {
         add_error(result.diagnostics,
-                  "workspace does not contain package named '" + input.package_name + "'");
+                  pkg_code::kWorkspacePackageNotFound, "workspace does not contain package named '" + input.package_name + "'");
         return result;
     }
 

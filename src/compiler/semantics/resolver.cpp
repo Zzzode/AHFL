@@ -169,7 +169,14 @@ class ResolverPass final {
                 emit_error(error_codes::resolve::ModuleBoundaryMismatch,
                            messages::resolve::ModuleBoundaryMismatch,
                            current_source_,
-                           node.range);
+                           node.range,
+                           node.name->spelling(),
+                           *module_name_);
+                emit_note(error_codes::resolve::ModuleBoundaryMismatch,
+                          messages::resolve::ModuleBoundaryMismatchNote,
+                          current_source_,
+                          node.range,
+                          *module_name_);
             }
             return;
         }
@@ -183,7 +190,7 @@ class ResolverPass final {
 
         emit_error(
             error_codes::resolve::MultipleModuleDeclarations,
-            MessageTemplate{"multiple module declarations are not supported in one source file"},
+            messages::resolve::MultipleModuleDeclarations,
             current_source_,
             node.range);
         emit_note(error_codes::resolve::MultipleModuleDeclarations,
