@@ -53,7 +53,7 @@ capstone)已全部落库并测试。
 | KR2.3 | 有界集合类型 `List<T>(N)` capacity 精化 + `UNBOUNDED_QUANTIFIER` fail-closed | ✅ | RFC 0025 `stabilized`(spec §4.3/§5.5/§5.6) |
 | KR2.4 | 真实 Z3 在 CI 端到端验证有界量化契约(可证 Safe / 无前置 Unsafe 带反例) | ✅ | `smt_bmc.cpp` 两个 `AHFL_Z3_PATH` 守卫用例;`ahfl.formal.smt_bmc_real_z3` ctest。commit a4b68265 / 90fbf241 |
 | KR2.5 | 真实 NuSMV / nuXmv 在 CI 留证 | 🚫 | 本机仅有 z3,NuSMV/nuXmv 缺,需环境提供 |
-| KR2.6 | counterexample 更深映射 + AHFL property semantics 深化(§3.5) | ⬜ | — |
+| KR2.6 | counterexample 更深映射 + AHFL property semantics 深化(§3.5) | 🔵 | 审计:SMV 侧映射已相当完整(agent state / workflow node state·phase / failure-request / capability call / embedded observation / 违约 contract clause 均带 AHFL_MAP source range,185 单测)。剩余深度在 **SMT-BMC 侧**:D2 `input__*` / D3 `context__*` 标量字段的反例投影(`make_projected`)会消费 AHFL_MAP,但 SMT 编码器目前不为这些字段发 source map → 投影 source range 为空。补齐需把 struct-field 声明 range 穿过 SMT 编码器,较大且跨切面,单列后续 slice |
 | KR2.7 | §3.6 Pass / target backend 产品化;§3.7 门禁趋势化(compile-time / memory-proxy / SMV-size budget → 趋势报告 + release-blocking 阈值) | 🔵 | §3.6 已 stabilized(pass/backend 产品化项全绿);SMV-size budget 新增 bounded-collection 代表样本(commit bade4719);仍待:budget → 趋势报告 + release-blocking 阈值(需 baseline-delta artifact,较大) |
 
 ---
@@ -122,10 +122,10 @@ capstone)已全部落库并测试。
 
 1. ~~**KR3.4 — Runtime 本地 soak / 内存趋势可观测**~~ ✅ 已完成:本地 soak smoke 已闭环并
    产出 RSS/allocator 趋势 artifact,新增稳态内存增长回归门(commit ac887e72)。
-2. **KR2.6 — counterexample 更深映射**(⬜,纯代码,**下一步抓手**)。在
-   `counterexample.cpp`(+185 单测基座)上,把反例映射深化到 source range / workflow
-   node / capability call / contract clause 的更细粒度。下一步:选一条尚未映射的符号
-   类别补映射 + 单测。
+2. **KR2.6 — counterexample 更深映射**(🔵,审计已完成)。SMV 侧映射已完整;剩余深度是
+   SMT-BMC 侧 `input__*`/`context__*` 标量字段的 source map(需把 struct-field range 穿过
+   SMT 编码器,较大跨切面)。下一步:在 SMT 编码器为 bounded scalar 字段发 AHFL_MAP,
+   `make_projected` 已就绪消费。
 3. **KR2.7 尾 — budget 趋势报告 + release-blocking 阈值**(🔵 已加 bounded-collection
    样本)。复用 pass-trace 已有的 `--pass-trace-baseline` baseline-delta 模式,给
    compile-time / memory-proxy / SMV-size budget 产出趋势 artifact 与可阻断阈值。
