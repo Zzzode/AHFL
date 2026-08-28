@@ -17,9 +17,11 @@ add_test(NAME ahfl.architecture.boundaries
 #     precedence, and skip-vs-fail policy via a fake wasmtime shim; always runs,
 #     needs no real wasmtime (this is what keeps the gate honest on CI images
 #     without the toolchain).
-#  3. real-execution smoke — only registered when a wasmtime was discovered
-#     (AHFL_WASMTIME); runs the fixture and asserts exit code + stdout sentinel.
-#     Exit 77 == ctest SKIP for a PATH-discovered-but-unusable toolchain.
+#  3. real-execution smoke — ALWAYS registered so a missing toolchain surfaces
+#     as a visible ctest SKIP (exit 77) rather than a silently absent test.
+#     Discovery provenance is preserved: the EXPLICIT path (AHFL_WASMTIME) and
+#     the PATH-discovered path (AHFL_DETECTED_WASMTIME) are forwarded under
+#     separate flags so the harness owns the skip-vs-fail decision.
 add_test(NAME ahfl.wasm.preflight_fixture_integrity
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/fixtures/wasm/make_preflight_fixture.py"
@@ -31,14 +33,21 @@ add_test(NAME ahfl.wasm.preflight_decision_logic
             "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_preflight_test.py"
 )
 
-if(AHFL_WASMTIME)
-    add_test(NAME ahfl.wasm.preflight_execution
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_preflight.py"
-                "${AHFL_WASMTIME}"
-    )
-    set_tests_properties(ahfl.wasm.preflight_execution PROPERTIES SKIP_RETURN_CODE 77)
+# find_program leaves AHFL_DETECTED_WASMTIME as `<var>-NOTFOUND` when absent;
+# normalize that sentinel to an empty string so the harness sees "nothing
+# discovered" rather than a bogus path.
+set(_ahfl_detected_wasmtime "${AHFL_DETECTED_WASMTIME}")
+if(NOT AHFL_DETECTED_WASMTIME)
+    set(_ahfl_detected_wasmtime "")
 endif()
+
+add_test(NAME ahfl.wasm.preflight_execution
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_preflight.py"
+            --explicit-wasmtime "${AHFL_WASMTIME}"
+            --detected-wasmtime "${_ahfl_detected_wasmtime}"
+)
+set_tests_properties(ahfl.wasm.preflight_execution PROPERTIES SKIP_RETURN_CODE 77)
 
 add_test(NAME ahfl.runtime.native_grpc_gate
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-native-grpc-gate.py"

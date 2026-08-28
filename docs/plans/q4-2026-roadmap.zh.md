@@ -182,7 +182,7 @@ capstone)已全部落库并测试。
 >
 > **工具链前置(2026-08-29 加入,两 bot review 达成一致)**:本机 / CI 当前**无** `wasmtime` /
 > `wasm-tools` / `wat2wasm`,而 KR6.5 要求 wasmtime 真实执行。为避免把版本 / WAT→WASM 转换 /
-> runner 风险推迟到主干最敏感处,先落一个**独立小提交**做 wasmtime preflight(见下 KR6.4-pre)。
+> runner 风险推迟到主干最敏感处,先落一个**独立小提交**做 wasmtime preflight(见下 Prerequisite P-6A,非计数)。
 > 边界:wasmtime 作为**可选测试/宿主工具**,`find_program` 门控 + 确定 skip reason,**绝不链接进
 > AHFL 核心构建**——复用 z3(`AHFL_Z3_PATH`)/ NuSMV(`AHFL_SMV_CHECKER`)/ llama.cpp
 > (`AHFL_LLAMA_SERVER`)先例,不破坏 RFC 0019/0021「无强运行时依赖」定位。
@@ -193,12 +193,25 @@ capstone)已全部落库并测试。
 | KR6.2 | IR 塔骨架落地(RFC 0026 P1):`AHFL-IR` / `Core-IR` 层类型 + 层边界定义,空壳零行为变更,现有 backend 仍消费旧路径 | ✅ | `tower.hpp`:`Layer`(TypedHir=0→AhflIr=1→CoreIr=2 索引式身份)+ `Path` + `path_of()` 编码 Dafny 式分叉 + 零成本 `LayerTag<L>`;`tower.cpp` static_assert 锁层序/分叉;3 doctest 用例。零消费者、现有 backend 仍走 `ir::Program`;全套件 463/463 绿(commit `0243ff10`,RFC 0026 → `implementing`) |
 | KR6.3 | AHFL-IR 净化(P2):验证/视图后端(smv/smt/k8s/terraform/openapi)改为消费 `AHFL-IR`,移出纯执行细节;golden 无回归 | ✅ | alias-first:`using AhflIr = Program`(验证/编排层名,`tower::Layer::AhflIr`);验证/视图后端入口签名 re-point 到 `const ir::AhflIr&`(print_program_smv / SmvPrinter::print / lower_k8s_crd / lower_openapi / lower_terraform / lower_wasm / emit_program_smt)。8 文件 +58/-19,零行为变更,SMV/emit-ir/k8s/openapi/terraform golden 逐字节不变,全套件 exit 0(commit `a1a38d1a`)。节点集实际净化留后续片 |
 | KR6.4 | lower pass `AHFL-IR → Core-IR`(P3+P4):单态化 + effect→显式 capability-call + temporal/contract/decreases 擦除 + 控制流结构化 + 值表示/内存布局(Bool/Int/Float/Decimal/String/enum/struct/bounded 容器/闭包) | 🔵 | **已落地(仅声明侧骨架)**:(1) P3 骨架 + 脚手架(`31eded7f`):`core_ir.hpp`(`CoreProgram`/`CoreDecl`/`CoreAgentDecl`,索引式 `CoreStateId`,temporal/contract 擦除)+ `lower_ahfl_to_core`(AgentDecl 状态机)+ 3 doctest;(2) capability **声明/import 签名投影**(`c48e2c18`):`CoreCapabilityDecl`(SymbolRef + CapabilityEffectKind + ahfl_cap marshalling 签名)+ lower 臂 + 3 doctest。均 additive 零行为变更、无 backend 消费、全套件 463/463 绿。**准确定性(2026-08-29 Codex review 修正):当前是「骨架已建、P3 主体未过半」——尚无真正的 call-site `CapabilityCall` 节点(`core_ir.hpp:145` 注释即写明「call site is filled by later KR6.4 sub-slices」),`lower_ahfl_to_core` 跳过除 Agent 外全部 Decl。剩余子片显式列出**:① 真正的 Core-IR `CapabilityCall` 节点(args/result)+ handler/body 真实 call-site lowering;② 结构化控制流 region(match/try/loop/early-exit);③ capability 参数/返回值 marshalling;④ Core-IR verifier(禁泛型残留 + 禁 contract/temporal/decreases 残留);⑤ 完整单态化;⑥ flow/workflow lower;⑦ 值表示/内存布局(P4);⑧ 擦除负例 + golden/property 测试 |
-| KR6.4-pre | **WASM 工具链 preflight**(独立小提交,KR6.5 前置):CMake `find_program` 发现 wasmtime(`AHFL_WASMTIME` 显式路径优先 → PATH 兜底,确定序);最低版本线强制;**未安装 → 带 reason skip,用户显式配坏路径/版本过低 → fail(不伪装 skip)**;版本探测解析有单测(覆盖不同 `--version` 输出格式);最小 smoke 真实执行固定 WASM fixture 并断言 exit code + stdout/可观察结果(不只 `--version`);默认 configure/build/test 不联网,bootstrap 仅显式运行;零新增核心 link/runtime 依赖 | ✅ | 已落地(commit `a625efc3`):`CMakeLists.txt` AHFL_WASMTIME 探测(显式 cache→env→PATH,确定序,STATUS 消息);`tests/scripts/wasm_preflight.py` 纯函数决策逻辑(discovery 优先级 / 版本解析容错多种 `--version` shape / 最低版本 ≥15.0.0 / skip-vs-fail:missing→skip(77)、显式坏路径·版本过低·不可解析→fail(1)、PATH 发现但不可用→skip / smoke 真跑 fixture 断言 exit+stdout sentinel);`tests/fixtures/wasm/{make_preflight_fixture.py,preflight.wasm}` 手写 152B WASI command 模块(import fd_write / export memory+_start / 写 sentinel / exit 0,byte-exact 可再生,无 wat2wasm 依赖,`--check` 校验);`wasm_preflight_test.py` 11 个纯 Python 单测(无需真 wasmtime,fake shim 覆盖每条 skip/fail 分支)。fixture-integrity + decision-logic 常跑,execution smoke 仅 `AHFL_WASMTIME` 下注册(SKIP_RETURN_CODE 77),`wasm` 标签。验证:dev configure 报 not found、wasm 标签 ctest 5/5 绿、fixture `--check` byte-exact、决策单测 11/11 绿 |
-| KR6.5 | WASM codegen 编排层(P5):`Core-IR → WASM`,agent transition/flow/workflow + `ahfl_cap` import(复用 RFC 0019 契约);产物在 wasmtime 真正跑起来,conformance 子集绿 | ⬜ | wasm_backend 从 WAT 骨架升级为真 codegen;wasmtime 集成测试(依赖 KR6.4-pre) |
+| KR6.5 | WASM codegen 编排层(P5):`Core-IR → WASM`,agent transition/flow/workflow + `ahfl_cap` import(复用 RFC 0019 契约);产物在 wasmtime 真正跑起来,conformance 子集绿 | ⬜ | wasm_backend 从 WAT 骨架升级为真 codegen;wasmtime 集成测试(前置见下 **P-6A 工具链 preflight**) |
 | KR6.6 | WASM codegen 计算层(P6):表达式/算术/控制流/match/闭包全部 lower 到 WASM 指令,产物完全自包含 | ⬜ | 覆盖 Core-IR 全节点 |
 | KR6.7 | conformance 套件(P7):evaluator e2e/golden 迁移为**引擎无关**用例(`.ahfl` + 期望 output),WASM 全绿 + WASM vs evaluator 差分(状态迁移/capability 序列/output)通过 | ⬜ | evaluator 退役的验收门 |
 | KR6.8 | evaluator 退役(P8):conformance 全绿后**原子删除** `src/runtime/evaluator/`,`ahflc run`/REPL/DAP 切 WASM 引擎;`BREAKING CHANGE:` 标注,全套件绿 | ⬜ | 单一执行路径,无 legacy |
 | KR6.9 | 分层 IR-JSON 投影(P9):每层 JSON 投影 + 逐字节 round-trip(沿用 KR5.9 方法),旧单层投影标记弃用 | ⬜ | ir_json.cpp 扩展 |
+
+> **Prerequisite P-6A(非计数,不进 Q4 总盘)—— WASM 工具链 preflight。** 这是 KR6.5+ 的
+> 前置证据项,不是一个可验收 KR(不占 54 计数)。**实现已落地**(commit `a625efc3` + P0/P1 修复):
+> CMake 保留 discovery provenance —— `AHFL_WASMTIME`(用户显式:`-D`/env,不可用 → **fail**)与
+> `AHFL_DETECTED_WASMTIME`(PATH 发现,不可用 → **skip**)分开,两路 provenance 经
+> `--explicit-wasmtime`/`--detected-wasmtime` 传给 harness(harness 而非 CMake 拥有 skip/fail 决策);
+> `tests/scripts/wasm_preflight.py` 决策逻辑(版本正则锚定 `wasmtime`/`wasmtime-cli` 行 / 最低
+> ≥15.0.0 / `TimeoutExpired`+`OSError` 按 provenance 归一化 / smoke 真跑 fixture 断言 exit+stdout
+> sentinel);手写 152B WASI fixture(`--check` byte-exact,无 wat2wasm 依赖);`wasm_preflight_test.py`
+> 15 单测(含真实 CMake 接线分支:同一过低 wasmtime PATH 发现→skip、显式 `-D`→fail);execution
+> test **始终注册**(missing→exit 77 可见 skip);`scripts/bootstrap-wasmtime.sh` 显式、默认零联网、
+> 版本锁定。**状态:实现已落、真实 wasmtime execution 证据待补** —— 本机拿不到真实 wasmtime
+> (无网/不可得),已在真 Node/V8 WASI 引擎验证 fixture 合法可执行;真实最低版本 wasmtime 的
+> CLI/WASI 行为确认列为 **KR6.5 开工前 checklist 项**(未关闭证据项,不阻塞 preflight 代码)。
 
 ### 6B — query 前端与 IR 单一真相源(RFC 0027)
 
@@ -304,7 +317,7 @@ capstone)已全部落库并测试。
    Questions + owner sign-off。这是所有实现 KR 的前置(未 accepted 不动代码)。
 2. **6A 主干(依赖图,非全程串行 —— 2026-08-29 Codex review 修正)**:准确依赖为
    `KR6.4 → {KR6.5 编排 codegen ∥ KR6.6 计算 codegen} → KR6.7 → KR6.8`。其中
-   **① 工具链前置 KR6.4-pre(独立小提交)先落**,再推 KR6.4;② KR6.5/6.6 在 Core-IR
+   **① 工具链前置 P-6A(独立小提交,非计数)先落**,再推 KR6.4;② KR6.5/6.6 在 Core-IR
    边界稳定后可按节点集**并行**,不必完全串行;③ **唯一硬门控是 KR6.7 conformance 全绿 →
    KR6.8 删 evaluator**;④ KR6.9 分层 IR-JSON 投影本身可**提前并行**,充当 6.4–6.6 的层边界
    golden/round-trip 锚点(删旧单层投影才依赖 KR6.8)。**6A 是架构关键主干,但不是每一步都不可并行。**
@@ -320,7 +333,7 @@ capstone)已全部落库并测试。
 构建 NuSMV 解除;KR4.5(真实 LLM)通过驱动真实本地 llama.cpp 引擎解除。nuXmv 仍不可得(闭源、
 fbk DNS 不可达),但 NuSMV 已覆盖 SMV 检查路径,不影响任何 KR。**待补齐的工具链前置**:本机 / CI
 当前无 `wasmtime` / `wasm-tools` / `wat2wasm`,KR6.5 需真实 wasmtime——不是硬阻塞(gated 可选 +
-bootstrap),但须在 6A 主干开工前由 KR6.4-pre 补齐。**本季无遗留 🚫。**
+bootstrap),但须在 6A 主干开工前由 Prerequisite P-6A 补齐。**本季无遗留 🚫。**
 
 
 

@@ -285,21 +285,15 @@ ahfl_label_tests(
         ahfl.runtime.http_transport_all
 )
 
-# RFC 0026 Objective 6A: WASM toolchain preflight. The integrity + decision
-# tests always run; the execution smoke registers only under AHFL_WASMTIME.
+# RFC 0026 Objective 6A: WASM toolchain preflight. All three always register;
+# the execution smoke surfaces a missing toolchain as an exit-77 ctest SKIP.
 ahfl_label_tests(
     LABELS wasm
     TESTS
         ahfl.wasm.preflight_fixture_integrity
         ahfl.wasm.preflight_decision_logic
+        ahfl.wasm.preflight_execution
 )
-if(AHFL_WASMTIME)
-    ahfl_label_tests(
-        LABELS wasm
-        TESTS
-            ahfl.wasm.preflight_execution
-    )
-endif()
 
 ahfl_label_tests(
     LABELS grpc-transport

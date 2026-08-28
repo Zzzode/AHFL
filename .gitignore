@@ -25,3 +25,6 @@ tools/vscode/*.vsix
 build-*/
 __pycache__/
 *.pyc
+
+# Local wasmtime installed by scripts/bootstrap-wasmtime.sh (RFC 0026 6A tests)
+.wasmtime/

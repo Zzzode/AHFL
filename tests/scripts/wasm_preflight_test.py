@@ -2,16 +2,20 @@
 """Unit tests for the WASM toolchain preflight decision logic (KR6.4-pre).
 
 These are pure-function tests: they exercise version parsing, the minimum-version
-gate, discovery precedence, and — via a fake wasmtime shim — the skip-vs-fail
-policy, WITHOUT requiring a real wasmtime binary. This is what makes the gate
-itself testable on a machine (like the current CI image) that has no wasmtime.
+gate, discovery precedence, provenance-aware skip-vs-fail policy, and subprocess
+failure normalization — WITHOUT requiring a real wasmtime binary. This is what
+makes the gate itself testable on a machine (like the current CI image) that has
+no wasmtime.
+
+Crucially, the skip-vs-fail tests drive the SAME provenance split the CMake
+integration produces (explicit AHFL_WASMTIME vs PATH-discovered
+AHFL_DETECTED_WASMTIME), so they cover the real wiring, not just an ideal branch.
 
 Run: python3 wasm_preflight_test.py
 """
 from __future__ import annotations
 
 import importlib.util
-import os
 import stat
 import sys
 import tempfile
@@ -49,6 +53,22 @@ def expect_raises(fn, msg: str) -> None:
     print(f"  FAIL: {msg} (no PreflightError raised)")
 
 
+def _write_fake_wasmtime(dir_path: Path, script: str) -> Path:
+    fake = dir_path / "wasmtime"
+    fake.write_text("#!/usr/bin/env bash\n" + script)
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return fake
+
+
+# A fake that answers --version with `ver` and, on `run`, prints `run_stdout`
+# and exits `run_rc`. Covers the full happy/sad matrix without a real engine.
+def _fake_script(ver: str, run_stdout: str, run_rc: int) -> str:
+    return (
+        f'if [ "$1" = "--version" ]; then echo "{ver}"; exit 0; fi\n'
+        f'echo "{run_stdout}"; exit {run_rc}\n'
+    )
+
+
 def test_parse_version_formats() -> None:
     print("test_parse_version_formats")
     cases = {
@@ -63,6 +83,16 @@ def test_parse_version_formats() -> None:
     # Garbage / versionless output must FAIL loudly, not mis-parse.
     expect_raises(lambda: wp.parse_version("wasmtime (dev build)"), "versionless output raises")
     expect_raises(lambda: wp.parse_version(""), "empty output raises")
+    # Regex is ANCHORED to a wasmtime-named line: an unrelated version banner
+    # (e.g. a wrapper or system warning) must NOT be mistaken for wasmtime.
+    expect_raises(
+        lambda: wp.parse_version("some-wrapper 3.2.1\nwarning: libfoo 9.9.9"),
+        "unrelated x.y.z without wasmtime token raises",
+    )
+    check(
+        wp.parse_version("wrapper note\nwasmtime 22.1.0") == (22, 1, 0),
+        "picks the wasmtime-anchored version amid noise",
+    )
 
 
 def test_minimum_gate() -> None:
@@ -75,30 +105,20 @@ def test_minimum_gate() -> None:
 
 def test_discovery_precedence() -> None:
     print("test_discovery_precedence")
-    d = wp.discover_wasmtime("/explicit/wasmtime", {"AHFL_WASMTIME": "/env/wasmtime"})
-    check(d.path == "/explicit/wasmtime" and d.explicit, "argv path wins over env")
-    d = wp.discover_wasmtime(None, {"AHFL_WASMTIME": "/env/wasmtime"})
-    check(d.path == "/env/wasmtime" and d.explicit, "env path used when no argv, marked explicit")
-    d = wp.discover_wasmtime(None, {})
-    # No argv, no env: PATH lookup. On this CI image wasmtime is absent, so
-    # path is None and not explicit -> a skip candidate.
-    check(not d.explicit, "PATH lookup is non-explicit")
-
-
-def _write_fake_wasmtime(dir_path: Path, script: str) -> Path:
-    fake = dir_path / "wasmtime"
-    fake.write_text("#!/usr/bin/env bash\n" + script)
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return fake
+    d = wp.discover_wasmtime("/explicit/wasmtime", "/detected/wasmtime", {})
+    check(d.path == "/explicit/wasmtime" and d.explicit, "explicit arg wins, marked explicit")
+    d = wp.discover_wasmtime(None, "/detected/wasmtime", {"AHFL_WASMTIME": "/env/wasmtime"})
+    check(d.path == "/env/wasmtime" and d.explicit, "env path beats detected, marked explicit")
+    d = wp.discover_wasmtime(None, "/detected/wasmtime", {})
+    check(d.path == "/detected/wasmtime" and not d.explicit, "detected path used, NOT explicit")
+    d = wp.discover_wasmtime(None, None, {})
+    check(not d.explicit, "bare PATH lookup is non-explicit")
 
 
 def test_missing_toolchain_skips() -> None:
     print("test_missing_toolchain_skips")
-    # No argv, no env, and we cannot rely on PATH — force a clean environ.
-    rc = wp.preflight(None, _FIXTURE, environ={})
-    # On an image without wasmtime on PATH this is a skip; if a real wasmtime is
-    # present it may legitimately pass. Either is acceptable, but never FAIL.
-    check(rc in (wp.SKIP_EXIT, 0), f"missing/PATH toolchain -> skip or ok (got {rc})")
+    rc = wp.preflight(None, _FIXTURE, environ={}, detected_path=None)
+    check(rc == wp.SKIP_EXIT, f"nothing found -> skip 77 (got {rc})")
 
 
 def test_explicit_bad_path_fails() -> None:
@@ -109,12 +129,23 @@ def test_explicit_bad_path_fails() -> None:
     check(rc == wp.FAIL_EXIT, f"explicit env nonexistent path FAILs (got {rc})")
 
 
-def test_explicit_too_old_fails() -> None:
-    print("test_explicit_too_old_fails")
+def test_detected_bad_path_skips() -> None:
+    print("test_detected_bad_path_skips")
+    # A PATH-discovered (non-explicit) nonexistent/broken binary must SKIP.
+    rc = wp.preflight(None, _FIXTURE, environ={}, detected_path="/nonexistent/wasmtime")
+    check(rc == wp.SKIP_EXIT, f"detected nonexistent path SKIPs (got {rc})")
+
+
+def test_explicit_too_old_fails_but_detected_too_old_skips() -> None:
+    # This is the exact real-wiring bug Codex found: the same too-old wasmtime
+    # must FAIL when explicitly named and SKIP when only PATH-discovered.
+    print("test_explicit_too_old_fails_but_detected_too_old_skips")
     with tempfile.TemporaryDirectory() as td:
         fake = _write_fake_wasmtime(Path(td), 'echo "wasmtime 9.0.0"\n')
-        rc = wp.preflight(str(fake), _FIXTURE, environ={})
-        check(rc == wp.FAIL_EXIT, f"explicit too-old wasmtime FAILs (got {rc})")
+        rc_explicit = wp.preflight(str(fake), _FIXTURE, environ={})
+        check(rc_explicit == wp.FAIL_EXIT, f"explicit too-old FAILs (got {rc_explicit})")
+        rc_detected = wp.preflight(None, _FIXTURE, environ={}, detected_path=str(fake))
+        check(rc_detected == wp.SKIP_EXIT, f"detected too-old SKIPs (got {rc_detected})")
 
 
 def test_explicit_unparseable_fails() -> None:
@@ -125,27 +156,49 @@ def test_explicit_unparseable_fails() -> None:
         check(rc == wp.FAIL_EXIT, f"explicit unparseable version FAILs (got {rc})")
 
 
-def test_path_discovered_broken_skips() -> None:
-    print("test_path_discovered_broken_skips")
-    # A wasmtime found only via PATH that is too old should SKIP (not our
-    # misconfiguration to blame), distinguishing it from an explicit bad path.
+def test_timeout_normalized_per_provenance() -> None:
+    print("test_timeout_normalized_per_provenance")
+    # A wasmtime whose --version hangs past the timeout: explicit -> FAIL,
+    # detected -> SKIP. Proves TimeoutExpired is normalized, not a traceback.
     with tempfile.TemporaryDirectory() as td:
-        _write_fake_wasmtime(Path(td), 'echo "wasmtime 9.0.0"\n')
-        environ = {"PATH": td}
-        rc = wp.preflight(None, _FIXTURE, environ=environ)
-        check(rc == wp.SKIP_EXIT, f"PATH-discovered too-old wasmtime SKIPs (got {rc})")
+        fake = _write_fake_wasmtime(Path(td), 'sleep 120\n')
+        # Monkeypatch subprocess.run to a tiny timeout so the test is fast but
+        # still exercises the TimeoutExpired -> PreflightError normalization.
+        import subprocess as _sp
+
+        real_run = _sp.run
+
+        def fast_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["timeout"] = 0.5
+            return real_run(cmd, **kwargs)
+
+        _sp.run = fast_run  # type: ignore[assignment]
+        try:
+            rc_explicit = wp.preflight(str(fake), _FIXTURE, environ={})
+            rc_detected = wp.preflight(None, _FIXTURE, environ={}, detected_path=str(fake))
+        finally:
+            _sp.run = real_run  # type: ignore[assignment]
+        check(rc_explicit == wp.FAIL_EXIT, f"explicit --version timeout FAILs (got {rc_explicit})")
+        check(rc_detected == wp.SKIP_EXIT, f"detected --version timeout SKIPs (got {rc_detected})")
+
+
+def test_oserror_on_run_normalized_per_provenance() -> None:
+    print("test_oserror_on_run_normalized_per_provenance")
+    # A fixture path that is a directory makes `wasmtime run <dir>`... still runs
+    # our fake; to force an OSError at launch we point at a non-executable file.
+    with tempfile.TemporaryDirectory() as td:
+        non_exec = Path(td) / "not-exec"
+        non_exec.write_text("#!/usr/bin/env bash\necho hi\n")  # intentionally not chmod +x
+        rc_explicit = wp.preflight(str(non_exec), _FIXTURE, environ={})
+        rc_detected = wp.preflight(None, _FIXTURE, environ={}, detected_path=str(non_exec))
+        check(rc_explicit == wp.FAIL_EXIT, f"explicit non-exec FAILs (got {rc_explicit})")
+        check(rc_detected == wp.SKIP_EXIT, f"detected non-exec SKIPs (got {rc_detected})")
 
 
 def test_good_version_bad_run_fails_when_explicit() -> None:
     print("test_good_version_bad_run_fails_when_explicit")
-    # Version passes, but the fixture run fails: an explicit toolchain must FAIL,
-    # proving the smoke does not stop at --version.
     with tempfile.TemporaryDirectory() as td:
-        fake = _write_fake_wasmtime(
-            Path(td),
-            'if [ "$1" = "--version" ]; then echo "wasmtime 27.0.0"; exit 0; fi\n'
-            'echo "boom" >&2; exit 3\n',
-        )
+        fake = _write_fake_wasmtime(Path(td), _fake_script("wasmtime 27.0.0", "boom", 3))
         rc = wp.preflight(str(fake), _FIXTURE, environ={})
         check(rc == wp.FAIL_EXIT, f"explicit good-version failing-run FAILs (got {rc})")
 
@@ -153,27 +206,20 @@ def test_good_version_bad_run_fails_when_explicit() -> None:
 def test_good_version_wrong_stdout_fails() -> None:
     print("test_good_version_wrong_stdout_fails")
     with tempfile.TemporaryDirectory() as td:
-        fake = _write_fake_wasmtime(
-            Path(td),
-            'if [ "$1" = "--version" ]; then echo "wasmtime 27.0.0"; exit 0; fi\n'
-            'echo "some-other-output"; exit 0\n',
-        )
+        fake = _write_fake_wasmtime(Path(td), _fake_script("wasmtime 27.0.0", "some-other-output", 0))
         rc = wp.preflight(str(fake), _FIXTURE, environ={})
         check(rc == wp.FAIL_EXIT, f"explicit run without sentinel FAILs (got {rc})")
 
 
 def test_fake_end_to_end_ok() -> None:
     print("test_fake_end_to_end_ok")
-    # Simulate a healthy wasmtime: correct version AND emits the sentinel on the
-    # fixture run. This exercises the full happy path without a real engine.
     with tempfile.TemporaryDirectory() as td:
-        fake = _write_fake_wasmtime(
-            Path(td),
-            'if [ "$1" = "--version" ]; then echo "wasmtime 27.0.0"; exit 0; fi\n'
-            f'echo "{wp.SENTINEL}"; exit 0\n',
-        )
+        fake = _write_fake_wasmtime(Path(td), _fake_script("wasmtime 27.0.0", wp.SENTINEL, 0))
         rc = wp.preflight(str(fake), _FIXTURE, environ={})
         check(rc == 0, f"healthy fake wasmtime returns OK (got {rc})")
+        # Same healthy binary via the detected (non-explicit) channel also OK.
+        rc_detected = wp.preflight(None, _FIXTURE, environ={}, detected_path=str(fake))
+        check(rc_detected == 0, f"healthy detected wasmtime returns OK (got {rc_detected})")
 
 
 def main() -> int:
@@ -183,9 +229,11 @@ def main() -> int:
         test_discovery_precedence,
         test_missing_toolchain_skips,
         test_explicit_bad_path_fails,
-        test_explicit_too_old_fails,
+        test_detected_bad_path_skips,
+        test_explicit_too_old_fails_but_detected_too_old_skips,
         test_explicit_unparseable_fails,
-        test_path_discovered_broken_skips,
+        test_timeout_normalized_per_provenance,
+        test_oserror_on_run_normalized_per_provenance,
         test_good_version_bad_run_fails_when_explicit,
         test_good_version_wrong_stdout_fails,
         test_fake_end_to_end_ok,

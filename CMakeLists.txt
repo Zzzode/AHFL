@@ -108,32 +108,35 @@ else()
 endif()
 
 # RFC 0026 Objective 6A (KR6.4-pre): optional wasmtime for the WASM toolchain
-# preflight and, later, the Core-IR -> WASM execution tests (KR6.5+). Detection
-# mirrors the solver vars above: explicit cache var, then AHFL_WASMTIME env,
-# then a PATH lookup for `wasmtime`. wasmtime is a TEST/HOST tool only and is
-# never linked into the AHFL core build (see RFC 0019/0021 no-strong-runtime
-# boundary). When absent the preflight skips with a reason; when explicitly
-# configured but broken/too-old it fails (see tests/scripts/wasm_preflight.py).
+# preflight and, later, the Core-IR -> WASM execution tests (KR6.5+). wasmtime
+# is a TEST/HOST tool only and is never linked into the AHFL core build (see
+# RFC 0019/0021 no-strong-runtime boundary).
+#
+# CRITICAL — discovery PROVENANCE is preserved, because the preflight's
+# skip-vs-fail contract depends on it: a user who EXPLICITLY names a broken /
+# too-old wasmtime must FAIL, while a merely PATH-discovered one that is unusable
+# must SKIP. So we keep two distinct variables and never collapse them:
+#   * AHFL_WASMTIME          — an EXPLICIT path (-D on the command line, or the
+#                              AHFL_WASMTIME environment variable). User intent.
+#   * AHFL_DETECTED_WASMTIME — a PATH lookup result. Not user intent.
+# Both are forwarded to the harness under separate flags so it can honour the
+# contract (see tests/scripts/wasm_preflight.py).
 set(AHFL_WASMTIME "" CACHE FILEPATH
-    "Path to a wasmtime binary used by optional RFC 0026 WASM execution tests"
+    "EXPLICIT path to a wasmtime binary for optional RFC 0026 WASM tests (user intent; broken/too-old -> FAIL)"
 )
 if(NOT AHFL_WASMTIME AND DEFINED ENV{AHFL_WASMTIME})
     set(AHFL_WASMTIME "$ENV{AHFL_WASMTIME}" CACHE FILEPATH
-        "Path to a wasmtime binary used by optional RFC 0026 WASM execution tests"
+        "EXPLICIT path to a wasmtime binary for optional RFC 0026 WASM tests (user intent; broken/too-old -> FAIL)"
         FORCE
     )
 endif()
-if(NOT AHFL_WASMTIME)
-    find_program(AHFL_DETECTED_WASMTIME NAMES wasmtime)
-    if(AHFL_DETECTED_WASMTIME)
-        set(AHFL_WASMTIME "${AHFL_DETECTED_WASMTIME}" CACHE FILEPATH
-            "Path to a wasmtime binary used by optional RFC 0026 WASM execution tests"
-            FORCE
-        )
-    endif()
-endif()
+# PATH discovery is kept in its OWN variable and never merged into AHFL_WASMTIME,
+# so the harness still sees it as non-explicit (unusable -> SKIP, not FAIL).
+find_program(AHFL_DETECTED_WASMTIME NAMES wasmtime)
 if(AHFL_WASMTIME)
-    message(STATUS "AHFL wasmtime for optional WASM tests: ${AHFL_WASMTIME}")
+    message(STATUS "AHFL wasmtime (explicit) for optional WASM tests: ${AHFL_WASMTIME}")
+elseif(AHFL_DETECTED_WASMTIME)
+    message(STATUS "AHFL wasmtime (PATH-discovered) for optional WASM tests: ${AHFL_DETECTED_WASMTIME}")
 else()
     message(STATUS "AHFL wasmtime for optional WASM tests: not found")
 endif()
