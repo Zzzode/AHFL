@@ -20,16 +20,14 @@
 //   * structured for WASM control flow, with explicit ADT / closure memory
 //     layout.
 //
-// THIS INCREMENT (KR6.4 sub-slices so far) carries the orchestration constructs
-// end-to-end far enough to model an agent's state machine, the explicit
-// capability-call (`ahfl_cap` import) DECLARATION the effect->capability-call
-// lowering produces, AND the capability CALL SITES themselves — extracted from
-// each flow state handler as an ordered, arity-preserving call sequence. The
-// rest of the node set (monomorphized function bodies, structured control-flow
-// regions, full argument/value representation & memory layout, workflow
-// lowering) is filled by the later KR6.4 sub-slices and is intentionally NOT
-// present yet. Argument forms without a direct execution meaning are recorded as
-// a bounded, observable `Opaque` arg (never silently dropped).
+// THIS INCREMENT (KR6.4 sub-slices so far) is a SKELETON. It defines the
+// minimal node set needed to carry the simplest orchestration construct
+// end-to-end — an agent's state machine — plus the explicit capability-call
+// (`ahfl_cap` import) declaration that the effect->capability-call lowering
+// produces, plus the scaffolded lower entry `lower_ahfl_to_core`. The rest of
+// the node set (monomorphized function bodies, structured control-flow regions,
+// value representation / memory layout, capability-call ARGUMENT passing) is
+// filled by the later KR6.4 sub-slices and is intentionally NOT present yet.
 //
 // Nothing consumes `CoreProgram` yet: WASM codegen is KR6.5 and the evaluator is
 // untouched. This header + `core_lower.cpp` are purely additive scaffolding
@@ -44,6 +42,8 @@
 //     later sub-slices.
 
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -161,137 +161,353 @@ struct CoreCapabilityDecl {
     ir::TypeRef return_type_ref;
 };
 
+/// Core-IR declaration node set. Minimal by design: this skeleton represents
+/// agent state machines and explicit capability-call (import) declarations.
+/// Later KR6.4 sub-slices grow the variant with monomorphized function bodies
+/// and the remaining orchestration constructs (flow / workflow). Kept a
+/// `std::variant` (Principle 4) so those additions are additive alternatives,
+/// not a class hierarchy.
+using CoreDecl = std::variant<CoreAgentDecl, CoreCapabilityDecl>;
+
 // ----------------------------------------------------------------------------
-// Capability CALL-SITE node set (KR6.4: the actual invocation, not the import)
+// Execution body: A-normalized (ANF) expressions, statements, regions
 // ----------------------------------------------------------------------------
 //
-// `CoreCapabilityDecl` above is the DECLARATION (the `ahfl_cap` import). The
-// nodes below are the CALL SITES: where a flow's state handler actually invokes
-// a capability. Separating them mirrors WASM's own import-vs-call distinction
-// and is what makes "effect -> explicit capability-call" concrete rather than
-// declaration-only (the gap called out in the KR6.4 review).
+// The flow-handler execution body is lowered into A-normal form (as in Rust MIR
+// / Swift SIL): every intermediate result is a named `CoreValueId`, and every
+// EFFECT (a capability call) is a top-level ordered STATEMENT, never a nested
+// sub-expression. This makes eval order, data dependency, capability
+// pending/suspend, resume checkpoints, and "a completed inner call is never
+// replayed" STRUCTURAL FACTS rather than traversal conventions.
+//
+//   ctx.ticket_id = Option::Some(TicketCreate(id, reason));
+// lowers to (schematically):
+//   %t0 = capability_call TicketCreate(%id, %reason)   // CoreStmt::CapabilityCall
+//   %t1 = construct Option::Some(%t0)                  // CoreStmt::Let (pure)
+//   store ctx.ticket_id <- %t1                         // CoreStmt::Store
+//
+// Principle 2 (index identity): values are `CoreValueId`, capabilities
+// `CoreCapabilityId`, states `CoreStateId`, expressions `CoreExprId` — never
+// strings. Principle 3 (flat stores): expressions live in a per-flow arena.
 
-/// One lowered argument to a capability call.
-///
-/// Core-IR is the execution layer, so an argument is reduced to an execution
-/// shape rather than an AhflIr expression tree. This slice lowers the argument
-/// forms that already have a direct execution meaning:
-///   * `Literal`  — a scalar/string literal; `text` is its spelling.
-///   * `Path`     — a value read (`input.x`, `ctx.y`, a local): `text` is the
-///                  canonical dotted path.
-///   * `Qualified`— a qualified value such as an enum variant (`Priority::High`).
-/// Any other argument expression (nested call, arithmetic, struct literal, …)
-/// is recorded as `Opaque` with a `text` reason. This is a BOUNDED, OBSERVABLE
-/// exemption (mirroring opt-IR's `record_skipped_temporal_fragment` precedent):
-/// full expression lowering / value representation is a later KR6.4 sub-slice,
-/// but no argument is ever silently dropped — arity is always preserved.
-struct CoreCallArg {
-    enum class Kind { Literal, Path, Qualified, Opaque };
-    Kind kind{Kind::Opaque};
-    /// Literal spelling / canonical path / qualified name / opaque reason.
-    std::string text;
-
-    [[nodiscard]] friend bool operator==(const CoreCallArg &,
-                                         const CoreCallArg &) noexcept = default;
+/// SSA-like value produced by a pure `CoreExpr` or a capability call result.
+struct CoreValueId {
+    std::uint32_t value{0};
+    [[nodiscard]] friend bool operator==(CoreValueId, CoreValueId) noexcept = default;
 };
 
-/// An explicit capability CALL SITE inside a flow's state handler.
-///
-/// This is the concrete "capability-call" node: it names the resolved callee
-/// (canonical `SymbolRef` identity, Principle 2), carries the effect kind (so
-/// the executor / host can classify the `ahfl_cap` invocation without a second
-/// lookup), and preserves the ordered argument list (arity-preserving; each
-/// argument lowered to a `CoreCallArg`). Result binding / value layout is a
-/// later sub-slice; this node establishes the call site itself.
-struct CoreCapabilityCall {
-    /// Display spelling of the callee (diagnostic only).
-    std::string callee_name;
-    /// Resolved capability symbol (canonical identity; strings display-only).
-    ir::SymbolRef callee_ref;
-    /// Effect category of the invoked capability, resolved from its declaration
-    /// (`CapabilityEffectKind::Unknown` if the callee could not be resolved to a
-    /// capability declaration — a defensive, still-deterministic fallback).
-    ir::CapabilityEffectKind effect_kind{ir::CapabilityEffectKind::Unknown};
-    /// Lowered arguments in call order (arity preserved).
-    std::vector<CoreCallArg> args;
-
-    [[nodiscard]] friend bool operator==(const CoreCapabilityCall &,
-                                         const CoreCapabilityCall &) noexcept = default;
+/// Index into a flow's pure-expression arena (`CoreFlowDecl::exprs`).
+struct CoreExprId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreExprId, CoreExprId) noexcept = default;
 };
 
-/// The execution-layer projection of one flow state handler: the ordered
-/// sequence of capability call sites reached in that state. Control-flow
-/// structure (branch/loop regions) and non-capability statements are NOT
-/// modelled yet — this slice extracts the capability call sequence in source
-/// (pre-order) traversal so the executor has the concrete invocation list.
+/// Index into the program's capability table (`CoreProgram::capabilities`).
+struct CoreCapabilityId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreCapabilityId, CoreCapabilityId) noexcept = default;
+};
+
+/// Root of a path read, mirroring `ir::PathRootKind` structurally (Principle 2:
+/// we keep the kind, we do NOT flatten the path to a dotted string).
+enum class CorePathRoot { Input, Context, Local, Identifier };
+
+// --- pure expressions (NO effects; a capability call is never a CoreExpr) ---
+
+/// Literal categories carried structurally (physical i32/i64/decimal encoding is
+/// deferred to P4; here we keep the kind + spelling so nothing is lost).
+enum class CoreLiteralKind { Bool, Integer, Float, Decimal, String, Duration, Unit };
+
+struct CoreLiteralExpr {
+    CoreLiteralKind kind{CoreLiteralKind::Unit};
+    std::string spelling; // original spelling (empty for Unit)
+    [[nodiscard]] friend bool operator==(const CoreLiteralExpr &,
+                                         const CoreLiteralExpr &) noexcept = default;
+};
+
+/// Reference to a previously-bound value (SSA use).
+struct CoreValueRefExpr {
+    CoreValueId value{};
+    [[nodiscard]] friend bool operator==(const CoreValueRefExpr &,
+                                         const CoreValueRefExpr &) noexcept = default;
+};
+
+/// A path read (`input.x`, `ctx.y`, a local, or a free identifier). The member
+/// chain is kept structured; a `Local` root additionally resolves to the
+/// binding's `CoreValueId` when the reader is an in-scope let-binding.
+struct CorePathExpr {
+    CorePathRoot root{CorePathRoot::Identifier};
+    std::string root_name;             // display / identifier root
+    std::vector<std::string> members;  // structured member chain (not flattened)
+    CoreValueId local{};               // valid iff root == Local (resolved binding)
+    bool has_local{false};
+    [[nodiscard]] friend bool operator==(const CorePathExpr &,
+                                         const CorePathExpr &) noexcept = default;
+};
+
+/// A qualified value (e.g. an enum variant with no payload: `Priority::High`).
+struct CoreQualifiedExpr {
+    std::string name;
+    [[nodiscard]] friend bool operator==(const CoreQualifiedExpr &,
+                                         const CoreQualifiedExpr &) noexcept = default;
+};
+
+enum class CoreUnaryOp { Not, Neg };
+struct CoreUnaryExpr {
+    CoreUnaryOp op{CoreUnaryOp::Not};
+    CoreExprId operand{};
+    [[nodiscard]] friend bool operator==(const CoreUnaryExpr &,
+                                         const CoreUnaryExpr &) noexcept = default;
+};
+
+/// Binary op tag mirrors the AHFL-IR set structurally (kept as-is; physical
+/// semantics are unchanged, only re-tagged at the execution layer).
+enum class CoreBinaryOp {
+    Add, Sub, Mul, Div, Mod,
+    Eq, Ne, Lt, Le, Gt, Ge,
+    And, Or,
+};
+struct CoreBinaryExpr {
+    CoreBinaryOp op{CoreBinaryOp::Add};
+    CoreExprId lhs{};
+    CoreExprId rhs{};
+    [[nodiscard]] friend bool operator==(const CoreBinaryExpr &,
+                                         const CoreBinaryExpr &) noexcept = default;
+};
+
+/// A PURE constructor / aggregate (struct literal, enum variant with payload,
+/// e.g. `Option::Some(%t0)`). Its operands are already-bound value ids, so a
+/// capability call nested in a source constructor has been hoisted OUT to a
+/// preceding `CoreStmt::CapabilityCall` before this node is built. For an enum
+/// variant, `variant` carries the typed declaration-order index (Principle 2);
+/// `type_name`/`variant_name` are display-only.
+struct CoreConstructExpr {
+    std::string type_name;                 // constructed nominal / enum name (display)
+    std::string variant_name;              // non-empty for an enum variant (display)
+    bool is_enum_variant{false};
+    std::uint32_t variant{0};              // typed variant index (iff is_enum_variant)
+    bool variant_resolved{false};          // false => index not resolved (see diagnostics)
+    std::vector<CoreValueId> args;         // payload / field values (ANF operands)
+    [[nodiscard]] friend bool operator==(const CoreConstructExpr &,
+                                         const CoreConstructExpr &) noexcept = default;
+};
+
+/// A structurally-preserved but not-yet-lowered PURE expression (e.g. match,
+/// lambda, index/member access forms deferred to a later sub-slice). It carries
+/// the source expr kind + range so the Core-IR verifier can reject it if a
+/// backend reaches it, WITHOUT it ever hiding an effect (effectful unsupported
+/// shapes fail-closed in the lowerer and never reach here). This is NOT a
+/// lossy string blob: the kind is enumerated and the range is preserved.
+struct CoreUnsupportedExpr {
+    std::string source_kind; // e.g. "MatchExpr", "LambdaExpr"
+    SourceRangeOpt source_range;
+    [[nodiscard]] friend bool operator==(const CoreUnsupportedExpr &,
+                                         const CoreUnsupportedExpr &) noexcept = default;
+};
+
+using CoreExprNode = std::variant<CoreLiteralExpr,
+                                  CoreValueRefExpr,
+                                  CorePathExpr,
+                                  CoreQualifiedExpr,
+                                  CoreUnaryExpr,
+                                  CoreBinaryExpr,
+                                  CoreConstructExpr,
+                                  CoreUnsupportedExpr>;
+
+struct CoreExpr {
+    CoreExprNode node;
+    SourceRangeOpt source_range;
+    [[nodiscard]] friend bool operator==(const CoreExpr &, const CoreExpr &) noexcept = default;
+};
+
+// --- assignment target (a place) ---
+
+/// A storable place (`ctx.field`, a local, …). Structured, not a dotted string.
+struct CorePlace {
+    CorePathRoot root{CorePathRoot::Context};
+    std::string root_name;
+    std::vector<std::string> members;
+    [[nodiscard]] friend bool operator==(const CorePlace &, const CorePlace &) noexcept = default;
+};
+
+// --- statements (ANF; effects are ordered statements) ---
+
+struct CoreRegion; // forward decl (owns statements)
+
+/// Bind a pure expression's result to a value id.
+struct CoreLetStmt {
+    CoreValueId result{};
+    CoreExprId expr{};
+    [[nodiscard]] friend bool operator==(const CoreLetStmt &, const CoreLetStmt &) noexcept = default;
+};
+
+/// The EFFECT node: an ordered capability invocation. Args are already-bound
+/// value ids (ANF). `result` names the value id the call produces (a resume
+/// checkpoint: on replay a completed call's result is reused, not re-invoked).
+struct CoreCapabilityCallStmt {
+    CoreValueId result{};
+    CoreCapabilityId capability{};
+    std::string callee_name;         // display only; `capability` is identity
+    std::vector<CoreValueId> args;   // ANF operands, in left-to-right eval order
+    [[nodiscard]] friend bool operator==(const CoreCapabilityCallStmt &,
+                                         const CoreCapabilityCallStmt &) noexcept = default;
+};
+
+/// Store a value id into a place.
+struct CoreStoreStmt {
+    CorePlace place;
+    CoreValueId value{};
+    [[nodiscard]] friend bool operator==(const CoreStoreStmt &, const CoreStoreStmt &) noexcept = default;
+};
+
+/// Structured conditional — branch mutual exclusion is preserved (NOT flattened
+/// into a single statement list). `condition` is an already-bound Bool value id.
+struct CoreIfStmt {
+    CoreValueId condition{};
+    std::unique_ptr<CoreRegion> then_region;
+    std::unique_ptr<CoreRegion> else_region; // may be null (no else)
+    friend bool operator==(const CoreIfStmt &, const CoreIfStmt &) noexcept;
+};
+
+/// State jump — the actual next-state decision from the handler (distinct from
+/// the agent's legal-edge set). Target is index identity into the agent states.
+struct CoreGotoStmt {
+    CoreStateId target{};
+    std::string target_name; // display only
+    [[nodiscard]] friend bool operator==(const CoreGotoStmt &, const CoreGotoStmt &) noexcept = default;
+};
+
+/// Return from the handler; optional value id.
+struct CoreReturnStmt {
+    bool has_value{false};
+    CoreValueId value{};
+    [[nodiscard]] friend bool operator==(const CoreReturnStmt &, const CoreReturnStmt &) noexcept = default;
+};
+
+using CoreStmtNode = std::variant<CoreLetStmt,
+                                  CoreCapabilityCallStmt,
+                                  CoreStoreStmt,
+                                  CoreIfStmt,
+                                  CoreGotoStmt,
+                                  CoreReturnStmt>;
+
+struct CoreStmt {
+    CoreStmtNode node;
+    SourceRangeOpt source_range;
+    friend bool operator==(const CoreStmt &, const CoreStmt &) noexcept;
+};
+
+/// An ordered statement region (a block). Statement order == effect order.
+struct CoreRegion {
+    std::vector<CoreStmt> statements;
+    friend bool operator==(const CoreRegion &, const CoreRegion &) noexcept;
+};
+
+// --- flow (state handlers with executable bodies) ---
+
+/// Execution policy carried onto a state handler (retry / retry_on / timeout).
+/// Kept structurally so the executor honours it; NOT a verification concern.
+struct CoreStatePolicy {
+    std::optional<std::string> retry_limit;      // "3"
+    std::vector<std::string> retry_on;           // error type names
+    std::optional<std::string> timeout;          // "30s"
+    [[nodiscard]] friend bool operator==(const CoreStatePolicy &,
+                                         const CoreStatePolicy &) noexcept = default;
+};
+
+/// One flow state handler with its executable body.
 struct CoreFlowState {
-    /// State name (display); the owning agent addresses states by index, but a
-    /// flow handler is keyed by name in the source model.
-    std::string state_name;
-    /// Capability call sites in this state, in source pre-order.
-    std::vector<CoreCapabilityCall> calls;
-
-    [[nodiscard]] friend bool operator==(const CoreFlowState &,
-                                         const CoreFlowState &) noexcept = default;
+    CoreStateId state{};       // index identity into the target agent's states
+    std::string state_name;    // display only
+    CoreStatePolicy policy;
+    CoreRegion body;
+    friend bool operator==(const CoreFlowState &, const CoreFlowState &) noexcept;
 };
 
-/// The execution-layer projection of an `ir::FlowDecl`: per-state capability
-/// call sequences for the target agent. Contract / temporal clauses that a flow
-/// may reference are verification-layer and do not appear here.
+/// The execution-layer projection of an `ir::FlowDecl`. Owns the per-flow pure
+/// expression arena (`exprs`, addressed by `CoreExprId`) and the value counter.
 struct CoreFlowDecl {
-    /// Display name of the flow's target agent (diagnostic only).
-    std::string agent_name;
-    /// Resolved target-agent symbol (canonical identity).
-    ir::SymbolRef target_ref;
-    /// Per-state call sequences, in source handler order.
+    std::string agent_name;             // display only
+    ir::SymbolRef target_ref;           // resolved target agent identity
+    std::vector<CoreExpr> exprs;        // pure-expression arena (Principle 3)
+    std::uint32_t value_count{0};       // number of CoreValueIds allocated
     std::vector<CoreFlowState> states;
-
-    [[nodiscard]] friend bool operator==(const CoreFlowDecl &,
-                                         const CoreFlowDecl &) noexcept = default;
+    friend bool operator==(const CoreFlowDecl &, const CoreFlowDecl &) noexcept;
 };
-
-/// Core-IR declaration node set. This slice represents agent state machines,
-/// explicit capability-call (import) declarations, and flow capability
-/// call-site sequences. Later KR6.4 sub-slices grow the variant with
-/// monomorphized function bodies, structured control-flow regions, and value
-/// representation. Kept a `std::variant` (Principle 4) so those additions are
-/// additive alternatives, not a class hierarchy.
-using CoreDecl = std::variant<CoreAgentDecl, CoreCapabilityDecl, CoreFlowDecl>;
 
 // ----------------------------------------------------------------------------
 // Core-IR program
 // ----------------------------------------------------------------------------
 
 /// A complete Core-IR compilation unit — the execution layer's program.
+///
+/// Dedicated flat stores (Principle 3) replace the earlier `variant`-of-decls:
+/// capabilities are addressed by `CoreCapabilityId` (index into `capabilities`),
+/// agents and flows keep source order for determinism.
 struct CoreProgram {
     std::string format_version{std::string(kCoreFormatVersion)};
-    /// Flat declaration store (Principle 3). Index is the declaration's
-    /// canonical position; order mirrors the source `AhflIr` for determinism.
-    std::vector<CoreDecl> declarations;
+    std::vector<CoreCapabilityDecl> capabilities; // index == CoreCapabilityId
+    std::vector<CoreAgentDecl> agents;
+    std::vector<CoreFlowDecl> flows;
 };
 
 // ----------------------------------------------------------------------------
-// Lower entry: AhflIr -> Core-IR (scaffold)
+// Lower entry: AhflIr -> Core-IR
 // ----------------------------------------------------------------------------
 
+/// Severity of a lowering diagnostic. Only `Error` makes the program
+/// non-executable; `Warning` is retained but does not gate backend consumption.
+enum class CoreDiagnosticSeverity { Error, Warning };
+
+/// A structured lowering diagnostic (fail-closed: no throw, no Unknown node).
+struct CoreLowerDiagnostic {
+    CoreDiagnosticSeverity severity{CoreDiagnosticSeverity::Error};
+    std::string code;          // stable code, e.g. "core.UNRESOLVED_CAPABILITY_CALL"
+    std::string message;       // human-readable, actionable (Principle 5)
+    SourceRangeOpt source_range;
+};
+
+/// Result of lowering: the program plus any structured diagnostics. Only ERROR
+/// diagnostics make the program non-executable; warnings are retained and the
+/// program stays backend-consumable. When not executable the program is a
+/// PARTIAL artifact for diagnostics/tests only — never a BackendReady input.
+struct CoreLowerResult {
+    CoreProgram program;
+    std::vector<CoreLowerDiagnostic> diagnostics;
+    bool is_executable{true};
+
+    [[nodiscard]] bool has_errors() const noexcept {
+        for (const auto &d : diagnostics) {
+            if (d.severity == CoreDiagnosticSeverity::Error) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /// A program is consumable iff it has no ERROR diagnostics.
+    /// Invariant: ok() == !has_errors() == is_executable.
+    [[nodiscard]] bool ok() const noexcept { return !has_errors(); }
+};
+
 /// Lower the verification / orchestration layer (`AhflIr`) to the execution
-/// layer (`CoreProgram`).
+/// layer (`CoreProgram`), in A-normal form.
 ///
-/// SCOPE (KR6.4 sub-slices so far): lowers each `ir::AgentDecl`'s state machine
-/// into a `CoreAgentDecl` (erasing contract / temporal / decreases and quota —
-/// verification-layer concerns), each `ir::CapabilityDecl` into a
-/// `CoreCapabilityDecl` (the explicit capability-call = `ahfl_cap` import
-/// boundary; the effect spec beyond its kind is erased), and each `ir::FlowDecl`
-/// into a `CoreFlowDecl` whose per-state `CoreCapabilityCall` sequence is
-/// extracted (in source pre-order) from the handler bodies. The call's effect
-/// kind is resolved against the program's capability declarations. All other
-/// declaration kinds (structs, enums, contracts, workflows, fns, traits, impls,
-/// …) are skipped in this increment — their execution-layer lowering
-/// (monomorphized bodies, structured control flow, memory layout) is filled by
-/// the later KR6.4 sub-slices.
+/// SCOPE (this sub-slice): lowers each `ir::AgentDecl` state machine, each
+/// `ir::CapabilityDecl` import, and each `ir::FlowDecl` handler body. Handler
+/// bodies are A-normalized: pure computation lands in the per-flow `CoreExpr`
+/// arena and every capability invocation is an ordered `CoreCapabilityCallStmt`
+/// (nested source calls are recursively hoisted so an inner call's result feeds
+/// the outer pure constructor). `if`/`goto`/`return`/`let`/assign are lowered
+/// with branch mutual-exclusion preserved (`CoreIfStmt` regions). Unresolved
+/// capability callees and effectful-unsupported shapes fail closed with a
+/// diagnostic (never a silent drop or an Unknown node).
 ///
-/// Deterministic: declarations are visited in source order and emitted in that
-/// order; the instance key comes from the deterministic `mangle_instance`.
-[[nodiscard]] CoreProgram lower_ahfl_to_core(const AhflIr &ahfl_ir);
+/// Deferred to later KR6.4 sub-slices: match/try/loop regions, workflow
+/// lowering, monomorphization, and physical value representation / memory
+/// layout (P4). A pure unsupported shape becomes a `CoreUnsupportedExpr`
+/// (enumerated kind + range) the verifier can reject; it never hides an effect.
+[[nodiscard]] CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir);
 
 } // namespace ahfl::ir::core

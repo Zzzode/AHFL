@@ -1,29 +1,43 @@
 #include <doctest.h>
 
 #include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
 
+#include <optional>
+#include <cctype>
+#include <cstdio>
 #include <string>
+#include <utility>
 #include <variant>
-// RFC 0026 slice P3/P4 first increment (KR6.4): scaffold coverage for the
-// AhflIr -> Core-IR lowering. Builds a tiny AhflIr with one AgentDecl (plus a
-// verification-only ContractDecl that must NOT leak into Core-IR), runs
-// `lower_ahfl_to_core`, and asserts the CoreProgram carries the agent's state
-// machine with index-based state identity and that no verification construct
-// crossed the layer boundary. A determinism check (lower twice -> equal)
-// guards the pass's stability.
+#include <vector>
+
+// RFC 0026 P3 (KR6.4): A-normal-form Core-IR lowering of agent state machines,
+// capability imports, and flow handler bodies. These tests cover:
+//   * agent + capability projection (hand-built AhflIr, isolated);
+//   * the ANF invariants Codex's review required, driven through the REAL front
+//     end (parse -> resolve -> typecheck -> lower to AhflIr -> lower to Core):
+//       - a nested capability call inside a pure constructor is NOT dropped and
+//         is hoisted to its own ordered CapabilityCall statement (P0-1);
+//       - if/else branches keep mutual exclusion as distinct regions, never a
+//         flattened statement list (P0-2);
+//       - goto targets resolve to typed CoreStateId;
+//       - state retry/timeout policy is preserved;
+//       - an unresolved capability call fails closed with a diagnostic + range.
 
 namespace {
 
 using namespace ahfl;
 
-// Build a minimal single-agent AhflIr: 3 states, 1 initial, 1 final, 2
-// transitions, quota + a ContractDecl attached (both verification-layer, must
-// be erased). Kept hand-built (no frontend) so the test isolates the lower
-// pass from parsing/typechecking.
+// --------------------------------------------------------------------------
+// Hand-built AhflIr helpers (isolate the decl-level projection).
+// --------------------------------------------------------------------------
+
 ir::AhflIr make_single_agent_program() {
     ir::AhflIr program;
-
     ir::AgentDecl agent;
     agent.name = "Classifier";
     agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
@@ -34,32 +48,19 @@ ir::AhflIr make_single_agent_program() {
     agent.initial_state = "Init";
     agent.final_states = {"Done"};
     agent.quota = {ir::QuotaItem{"max_tool_calls", "10"}};
-    agent.transitions = {
-        ir::TransitionDecl{"Init", "Working"},
-        ir::TransitionDecl{"Working", "Done"},
-    };
-
+    agent.transitions = {ir::TransitionDecl{"Init", "Working"},
+                         ir::TransitionDecl{"Working", "Done"}};
     program.declarations.emplace_back(std::move(agent));
 
-    // A verification-only contract targeting the agent — this must be dropped
-    // by the execution-layer lowering (RFC 0026 erasure invariant).
-    ir::ContractDecl contract;
+    ir::ContractDecl contract; // verification-only: must be erased
     contract.target_ref.kind = ir::SymbolRefKind::Agent;
     contract.target_ref.canonical_name = "app::Classifier";
     program.declarations.emplace_back(std::move(contract));
-
     return program;
 }
 
-// Build a minimal AhflIr containing (in source order) one CapabilityDecl, one
-// AgentDecl, and one verification-only ContractDecl. Exercises the effect ->
-// explicit capability-call lowering: the capability must produce a
-// CoreCapabilityDecl carrying its symbol_ref + effect kind + signature, while
-// the contract must be erased and the agent must still lower.
 ir::AhflIr make_capability_program() {
     ir::AhflIr program;
-
-    // capability ChargeCard(amount: Int) -> Bool;  effect: financial write.
     ir::CapabilityDecl cap;
     cap.name = "ChargeCard";
     cap.symbol_ref.kind = ir::SymbolRefKind::Capability;
@@ -75,7 +76,6 @@ ir::AhflIr make_capability_program() {
     cap.return_type_ref.display_name = "Bool";
     cap.effect.declared = true;
     cap.effect.kind = ir::CapabilityEffectKind::FinancialWrite;
-    // Orchestration-only spec fields that must NOT survive to Core-IR.
     cap.effect.domain = "payments";
     cap.effect.receipt_mode = ir::CapabilityReceiptMode::Required;
     program.declarations.emplace_back(std::move(cap));
@@ -91,335 +91,483 @@ ir::AhflIr make_capability_program() {
     agent.final_states = {"Done"};
     agent.transitions = {ir::TransitionDecl{"Init", "Done"}};
     program.declarations.emplace_back(std::move(agent));
-
-    // Verification-only contract: must be erased.
-    ir::ContractDecl contract;
-    contract.target_ref.kind = ir::SymbolRefKind::Agent;
-    contract.target_ref.canonical_name = "app::Classifier";
-    program.declarations.emplace_back(std::move(contract));
-
     return program;
 }
 
+// --------------------------------------------------------------------------
+// Real front-end driver: source -> AhflIr (parse/resolve/typecheck/lower).
+// Returns nullopt if any stage errors (so a corpus regression is visible).
+// --------------------------------------------------------------------------
+std::optional<ir::AhflIr> lower_source_to_ahfl_ir(const std::string &label,
+                                                  const std::string &source) {
+    const Frontend frontend;
+    auto parse = frontend.parse_text(label + ".ahfl", source);
+    if (parse.has_errors() || parse.program == nullptr) {
+        return std::nullopt;
+    }
+    const Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    if (resolve.has_errors()) {
+        return std::nullopt;
+    }
+    const TypeChecker checker;
+    const auto typecheck = checker.check(*parse.program, resolve);
+    if (typecheck.has_errors()) {
+        return std::nullopt;
+    }
+    return lower_program_ir(*parse.program, resolve, typecheck);
+}
+
+// Count capability-call statements reachable in a region (recursing branches).
+void collect_calls(const ir::core::CoreRegion &region,
+                   std::vector<const ir::core::CoreCapabilityCallStmt *> &out) {
+    for (const auto &stmt : region.statements) {
+        std::visit(
+            [&](const auto &node) {
+                using T = std::decay_t<decltype(node)>;
+                if constexpr (std::is_same_v<T, ir::core::CoreCapabilityCallStmt>) {
+                    out.push_back(&node);
+                } else if constexpr (std::is_same_v<T, ir::core::CoreIfStmt>) {
+                    if (node.then_region) {
+                        collect_calls(*node.then_region, out);
+                    }
+                    if (node.else_region) {
+                        collect_calls(*node.else_region, out);
+                    }
+                }
+            },
+            stmt.node);
+    }
+}
+
+// True if a (possibly module-qualified) callee names the given capability, e.g.
+// "nestflow::Charge" or "Charge" both name "Charge".
+bool callee_is(const std::string &callee, const std::string &name) {
+    return callee == name || (callee.size() > name.size() &&
+                              callee.compare(callee.size() - name.size() - 2, 2, "::") == 0 &&
+                              callee.compare(callee.size() - name.size(), name.size(), name) == 0);
+}
+
+} // namespace
+
 TEST_CASE("lower_ahfl_to_core lowers an agent state machine into Core-IR") {
-    const ir::AhflIr program = make_single_agent_program();
-    const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
-
-    // The ContractDecl is a verification construct: it must NOT produce a
-    // Core-IR declaration. Exactly one CoreAgentDecl is expected.
-    REQUIRE(core.declarations.size() == 1);
-    REQUIRE(std::holds_alternative<ir::core::CoreAgentDecl>(core.declarations[0]));
-    const auto &agent = std::get<ir::core::CoreAgentDecl>(core.declarations[0]);
-
+    const auto result = ir::core::lower_ahfl_to_core(make_single_agent_program());
+    CHECK(result.ok());
+    CHECK(result.is_executable);
+    // The ContractDecl is a verification construct: it produces no Core decl.
+    REQUIRE(result.program.agents.size() == 1);
+    CHECK(result.program.flows.empty());
+    const auto &agent = result.program.agents[0];
     CHECK(agent.name == "Classifier");
-    CHECK(agent.symbol_ref.canonical_name == "app::Classifier");
-    CHECK_FALSE(agent.instance_key.empty());
-
-    // States carried, in declaration order (index-based identity).
     REQUIRE(agent.states.size() == 3);
-    CHECK(agent.states[0] == "Init");
-    CHECK(agent.states[1] == "Working");
-    CHECK(agent.states[2] == "Done");
-
-    // Initial and final states addressed by index into `states`.
-    CHECK(agent.initial.value == 0);
     CHECK(agent.states[agent.initial.value] == "Init");
     REQUIRE(agent.finals.size() == 1);
     CHECK(agent.states[agent.finals[0].value] == "Done");
-
-    // Transitions resolved to state indices.
     REQUIRE(agent.transitions.size() == 2);
-    CHECK(agent.states[agent.transitions[0].from.value] == "Init");
-    CHECK(agent.states[agent.transitions[0].to.value] == "Working");
-    CHECK(agent.states[agent.transitions[1].from.value] == "Working");
-    CHECK(agent.states[agent.transitions[1].to.value] == "Done");
-
-    // The execution layer stamps its own format version.
-    CHECK(core.format_version == std::string(ir::core::kCoreFormatVersion));
+    CHECK(result.program.format_version == std::string(ir::core::kCoreFormatVersion));
 }
 
-TEST_CASE("lower_ahfl_to_core does not leak verification constructs into Core-IR") {
-    const ir::AhflIr program = make_single_agent_program();
-    const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
-
-    // The CoreDecl variant has no alternative capable of representing a
-    // contract / temporal / decreases node — the layer is defined so that a
-    // verification construct is *unrepresentable* at Core-IR. The behavioural
-    // check: the ContractDecl in the source program produced no declaration,
-    // and the sole emitted declaration is the agent skeleton.
-    for (const auto &decl : core.declarations) {
-        CHECK(std::holds_alternative<ir::core::CoreAgentDecl>(decl));
-    }
-    CHECK(core.declarations.size() == 1);
-}
-
-TEST_CASE("lower_ahfl_to_core is deterministic") {
-    const ir::AhflIr program = make_single_agent_program();
-    const ir::core::CoreProgram a = ir::core::lower_ahfl_to_core(program);
-    const ir::core::CoreProgram b = ir::core::lower_ahfl_to_core(program);
-
-    REQUIRE(a.declarations.size() == b.declarations.size());
-    CHECK(a.format_version == b.format_version);
-
-    const auto &agent_a = std::get<ir::core::CoreAgentDecl>(a.declarations[0]);
-    const auto &agent_b = std::get<ir::core::CoreAgentDecl>(b.declarations[0]);
-    CHECK(agent_a.name == agent_b.name);
-    CHECK(agent_a.instance_key == agent_b.instance_key);
-    CHECK(agent_a.states == agent_b.states);
-    CHECK(agent_a.initial == agent_b.initial);
-    CHECK(agent_a.finals == agent_b.finals);
-    CHECK(agent_a.transitions == agent_b.transitions);
-}
-
-TEST_CASE("lower_ahfl_to_core lowers a capability into an explicit capability-call") {
-    const ir::AhflIr program = make_capability_program();
-    const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
-
-    // Source order: CapabilityDecl, AgentDecl, ContractDecl. The contract is a
-    // verification construct and must be erased, so exactly two Core-IR
-    // declarations are expected — the capability-call and the agent skeleton,
-    // in that source order.
-    REQUIRE(core.declarations.size() == 2);
-    REQUIRE(std::holds_alternative<ir::core::CoreCapabilityDecl>(core.declarations[0]));
-    REQUIRE(std::holds_alternative<ir::core::CoreAgentDecl>(core.declarations[1]));
-
-    const auto &cap = std::get<ir::core::CoreCapabilityDecl>(core.declarations[0]);
-
-    // Canonical identity (Principle 2) is reused from the source symbol_ref.
+TEST_CASE("lower_ahfl_to_core lowers a capability into an explicit import decl") {
+    const auto result = ir::core::lower_ahfl_to_core(make_capability_program());
+    CHECK(result.ok());
+    REQUIRE(result.program.capabilities.size() == 1);
+    const auto &cap = result.program.capabilities[0];
     CHECK(cap.name == "ChargeCard");
-    CHECK(cap.symbol_ref.kind == ir::SymbolRefKind::Capability);
     CHECK(cap.symbol_ref.canonical_name == "app::ChargeCard");
-    REQUIRE(cap.symbol_ref.id.has_value());
-    CHECK(cap.symbol_ref.id.value() == 11);
-
-    // The effect KIND survives as the import's classification.
     CHECK(cap.effect_kind == ir::CapabilityEffectKind::FinancialWrite);
-
-    // Marshalling signature: one Int param, Bool return.
     REQUIRE(cap.param_types.size() == 1);
     CHECK(cap.param_types[0].kind == ir::TypeRefKind::Int);
     CHECK(cap.return_type_ref.kind == ir::TypeRefKind::Bool);
 }
 
-TEST_CASE("lower_ahfl_to_core erases capability effect-spec metadata beyond the kind") {
-    const ir::AhflIr program = make_capability_program();
-    const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
-
-    // Every emitted declaration is either a capability-call or an agent — no
-    // Core-IR alternative can represent the erased orchestration metadata
-    // (domain / receipt / retry / …) or a verification construct. The layer is
-    // defined so those are *unrepresentable*; this is the behavioural witness.
-    for (const auto &decl : core.declarations) {
-        CHECK((std::holds_alternative<ir::core::CoreCapabilityDecl>(decl) ||
-               std::holds_alternative<ir::core::CoreAgentDecl>(decl)));
-    }
-    REQUIRE(core.declarations.size() == 2);
+TEST_CASE("lower_ahfl_to_core is deterministic (decl level)") {
+    const auto program = make_capability_program();
+    const auto a = ir::core::lower_ahfl_to_core(program);
+    const auto b = ir::core::lower_ahfl_to_core(program);
+    REQUIRE(a.program.capabilities.size() == b.program.capabilities.size());
+    REQUIRE(a.program.agents.size() == b.program.agents.size());
+    CHECK(a.program.agents[0].instance_key == b.program.agents[0].instance_key);
 }
 
-TEST_CASE("lower_ahfl_to_core is deterministic for capability + agent programs") {
-    const ir::AhflIr program = make_capability_program();
-    const ir::core::CoreProgram a = ir::core::lower_ahfl_to_core(program);
-    const ir::core::CoreProgram b = ir::core::lower_ahfl_to_core(program);
+// ==========================================================================
+// ANF flow lowering (real front end).
+// ==========================================================================
 
-    REQUIRE(a.declarations.size() == b.declarations.size());
-    REQUIRE(a.declarations.size() == 2);
+// A self-contained program exercising: a nested capability call inside an enum
+// constructor, an if/else with a capability call in one branch, a goto, and a
+// state policy. Deliberately small but structurally identical to refund/audit.
+const char *const kFlowSource = R"AHFL(
+module payflow;
 
-    const auto &cap_a = std::get<ir::core::CoreCapabilityDecl>(a.declarations[0]);
-    const auto &cap_b = std::get<ir::core::CoreCapabilityDecl>(b.declarations[0]);
-    CHECK(cap_a.name == cap_b.name);
-    CHECK(cap_a.symbol_ref.canonical_name == cap_b.symbol_ref.canonical_name);
-    CHECK(cap_a.effect_kind == cap_b.effect_kind);
-    REQUIRE(cap_a.param_types.size() == cap_b.param_types.size());
-    CHECK(cap_a.param_types[0].kind == cap_b.param_types[0].kind);
-    CHECK(cap_a.return_type_ref.kind == cap_b.return_type_ref.kind);
+struct Order {
+    total: Int;
 }
 
-// ---------------------------------------------------------------------------
-// Flow capability call-site lowering (KR6.4 call-site sub-slice)
-// ---------------------------------------------------------------------------
+struct Ctx {
+    charged: Bool = false;
+}
 
-// Build an AhflIr with a capability decl and a flow whose two state handlers
-// invoke capabilities: state Init calls Fetch("q") directly; state Work calls
-// Charge(amount) inside an if-branch and also has a nested-call argument that
-// must lower to an Opaque arg (arity preserved). Exercises effect-kind
-// resolution, argument lowering, and if-branch descent.
-ir::AhflIr make_flow_program() {
-    ir::AhflIr program;
+struct Outcome {
+    ok: Bool = false;
+}
 
-    // capability Fetch(query: String) -> String;  effect: Read.
-    ir::CapabilityDecl fetch;
-    fetch.name = "Fetch";
-    fetch.symbol_ref.kind = ir::SymbolRefKind::Capability;
-    fetch.symbol_ref.canonical_name = "app::Fetch";
-    fetch.symbol_ref.local_name = "Fetch";
-    fetch.symbol_ref.id = 21;
-    fetch.effect.declared = true;
-    fetch.effect.kind = ir::CapabilityEffectKind::Read;
-    program.declarations.emplace_back(std::move(fetch));
+capability Fetch(id: Int) -> Order;
+capability Charge(amount: Int) -> Bool;
 
-    // capability Charge(amount: Int) -> Bool;  effect: FinancialWrite.
-    ir::CapabilityDecl charge;
-    charge.name = "Charge";
-    charge.symbol_ref.kind = ir::SymbolRefKind::Capability;
-    charge.symbol_ref.canonical_name = "app::Charge";
-    charge.symbol_ref.local_name = "Charge";
-    charge.symbol_ref.id = 22;
-    charge.effect.declared = true;
-    charge.effect.kind = ir::CapabilityEffectKind::FinancialWrite;
-    program.declarations.emplace_back(std::move(charge));
+agent Payer {
+    input: Order;
+    context: Ctx;
+    output: Outcome;
+    states: [Init, Work, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Fetch, Charge];
 
-    ir::AgentDecl agent;
-    agent.name = "Payer";
-    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
-    agent.symbol_ref.canonical_name = "app::Payer";
-    agent.symbol_ref.local_name = "Payer";
-    agent.symbol_ref.id = 7;
-    agent.states = {"Init", "Work"};
-    agent.initial_state = "Init";
-    agent.final_states = {"Work"};
-    program.declarations.emplace_back(std::move(agent));
+    transition Init -> Work;
+    transition Work -> Done;
+}
 
-    // flow for Payer { state Init { Fetch("q"); }  state Work { if (c) { Charge(input.n); } } }
-    ir::FlowDecl flow;
-    flow.target_ref.kind = ir::SymbolRefKind::Agent;
-    flow.target_ref.canonical_name = "app::Payer";
-    flow.target_ref.local_name = "Payer";
-    flow.target_ref.id = 7;
-
-    // --- state Init: Fetch("q"); as an ExprStatement ---
-    {
-        ir::CallExpr call;
-        call.callee = "Fetch";
-        call.callee_ref.kind = ir::SymbolRefKind::Capability;
-        call.callee_ref.canonical_name = "app::Fetch";
-        call.callee_ref.id = 21;
-        ir::ExprRef arg =
-            program.expr_arena.make(ir::StringLiteralExpr{"\"q\""});
-        call.arguments.push_back(arg);
-        ir::ExprRef call_ref = program.expr_arena.make(std::move(call));
-
-        auto init_stmt = std::make_unique<ir::Statement>();
-        init_stmt->node = ir::ExprStatement{call_ref};
-
-        ir::StateHandler init;
-        init.state_name = "Init";
-        init.body.statements.push_back(std::move(init_stmt));
-        flow.state_handlers.push_back(std::move(init));
+flow for Payer {
+    state Init {
+        goto Work;
     }
 
-    // --- state Work: if (c) { Charge(input.n + 1); } ---
-    // The argument is a BinaryExpr (input.n + 1) -> must lower to Opaque.
-    {
-        // Build the opaque nested argument expr: input.n + 1.
-        ir::PathExpr lhs_path;
-        lhs_path.path.root_name = "input";
-        lhs_path.path.members = {"n"};
-        ir::ExprRef lhs = program.expr_arena.make(std::move(lhs_path));
-        ir::ExprRef rhs = program.expr_arena.make(ir::IntegerLiteralExpr{"1"});
-        ir::BinaryExpr sum;
-        sum.op = ir::ExprBinaryOp::Add;
-        sum.lhs = lhs;
-        sum.rhs = rhs;
-        ir::ExprRef sum_ref = program.expr_arena.make(std::move(sum));
-
-        ir::CallExpr call;
-        call.callee = "Charge";
-        call.callee_ref.kind = ir::SymbolRefKind::Capability;
-        call.callee_ref.canonical_name = "app::Charge";
-        call.callee_ref.id = 22;
-        call.arguments.push_back(sum_ref);
-        ir::ExprRef call_ref = program.expr_arena.make(std::move(call));
-
-        auto charge_stmt = std::make_unique<ir::Statement>();
-        charge_stmt->node = ir::ExprStatement{call_ref};
-
-        auto then_block = std::make_unique<ir::Block>();
-        then_block->statements.push_back(std::move(charge_stmt));
-
-        ir::ExprRef cond = program.expr_arena.make(ir::BoolLiteralExpr{true});
-        ir::IfStatement if_stmt;
-        if_stmt.condition = cond;
-        if_stmt.then_block = std::move(then_block);
-
-        auto work_stmt = std::make_unique<ir::Statement>();
-        work_stmt->node = std::move(if_stmt);
-
-        ir::StateHandler work;
-        work.state_name = "Work";
-        work.body.statements.push_back(std::move(work_stmt));
-        flow.state_handlers.push_back(std::move(work));
+    state Work with {
+        retry: 2;
+        timeout: 30s;
+    } {
+        let order = Fetch(input.total);
+        if order.total > 0 {
+            ctx.charged = Charge(order.total);
+            goto Done;
+        } else {
+            goto Done;
+        }
     }
 
-    program.declarations.emplace_back(std::move(flow));
-    return program;
+    state Done {
+        return Outcome { ok: ctx.charged };
+    }
 }
+)AHFL";
 
-TEST_CASE("lower_ahfl_to_core extracts flow capability call sites") {
-    const ir::AhflIr program = make_flow_program();
-    const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
+TEST_CASE("flow lowering: capability call inside a branch is preserved (P0-2 mutual exclusion)") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("payflow", kFlowSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    CHECK(result.ok());
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow = result.program.flows[0];
+    REQUIRE(flow.states.size() == 3);
 
-    // Source order: Fetch cap, Charge cap, Payer agent, flow. All four lower
-    // (two CoreCapabilityDecl, one CoreAgentDecl, one CoreFlowDecl).
-    REQUIRE(core.declarations.size() == 4);
-    REQUIRE(std::holds_alternative<ir::core::CoreFlowDecl>(core.declarations[3]));
-    const auto &flow = std::get<ir::core::CoreFlowDecl>(core.declarations[3]);
+    // Find the Work state.
+    const ir::core::CoreFlowState *work = nullptr;
+    for (const auto &s : flow.states) {
+        if (s.state_name == "Work") {
+            work = &s;
+        }
+    }
+    REQUIRE(work != nullptr);
 
-    CHECK(flow.agent_name == "Payer");
-    CHECK(flow.target_ref.canonical_name == "app::Payer");
-    REQUIRE(flow.states.size() == 2);
-
-    // state Init: one Fetch call with a single string-literal arg, effect Read.
-    const auto &init = flow.states[0];
-    CHECK(init.state_name == "Init");
-    REQUIRE(init.calls.size() == 1);
-    CHECK(init.calls[0].callee_name == "Fetch");
-    CHECK(init.calls[0].callee_ref.canonical_name == "app::Fetch");
-    CHECK(init.calls[0].effect_kind == ir::CapabilityEffectKind::Read);
-    REQUIRE(init.calls[0].args.size() == 1);
-    CHECK(init.calls[0].args[0].kind == ir::core::CoreCallArg::Kind::Literal);
-    CHECK(init.calls[0].args[0].text == "\"q\"");
-
-    // state Work: the Charge call is INSIDE an if-branch and must still be
-    // found; its arg is a nested expression -> Opaque (arity preserved).
-    const auto &work = flow.states[1];
-    CHECK(work.state_name == "Work");
-    REQUIRE(work.calls.size() == 1);
-    CHECK(work.calls[0].callee_name == "Charge");
-    CHECK(work.calls[0].effect_kind == ir::CapabilityEffectKind::FinancialWrite);
-    REQUIRE(work.calls[0].args.size() == 1);
-    CHECK(work.calls[0].args[0].kind == ir::core::CoreCallArg::Kind::Opaque);
-}
-
-TEST_CASE("lower_ahfl_to_core flow lowering is deterministic") {
-    const ir::AhflIr program = make_flow_program();
-    const ir::core::CoreProgram a = ir::core::lower_ahfl_to_core(program);
-    const ir::core::CoreProgram b = ir::core::lower_ahfl_to_core(program);
-
-    REQUIRE(a.declarations.size() == b.declarations.size());
-    const auto &flow_a = std::get<ir::core::CoreFlowDecl>(a.declarations[3]);
-    const auto &flow_b = std::get<ir::core::CoreFlowDecl>(b.declarations[3]);
-    // The new value-type equality (SymbolRef == plus derived node ==) makes the
-    // whole flow projection comparable structurally.
-    CHECK(flow_a == flow_b);
-}
-
-TEST_CASE("lower_ahfl_to_core never silently drops a capability-call argument") {
-    const ir::AhflIr program = make_flow_program();
-    const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
-    const auto &flow = std::get<ir::core::CoreFlowDecl>(core.declarations[3]);
-
-    // Every call site preserves arity: the arg count equals the source arg
-    // count even when an argument is an unlowered (Opaque) expression.
-    for (const auto &state : flow.states) {
-        for (const auto &call : state.calls) {
-            CHECK(call.args.size() >= 1);
-            for (const auto &arg : call.args) {
-                // No arg is left with an empty descriptor — Opaque args still
-                // carry an observable reason string.
-                CHECK_FALSE(arg.text.empty());
+    // The Charge call must live INSIDE the then-branch region — mutual
+    // exclusion preserved, NOT flattened into the top-level statement list.
+    bool found_if = false;
+    bool charge_at_top_level = false;
+    for (const auto &stmt : work->body.statements) {
+        if (std::holds_alternative<ir::core::CoreIfStmt>(stmt.node)) {
+            found_if = true;
+            const auto &if_stmt = std::get<ir::core::CoreIfStmt>(stmt.node);
+            REQUIRE(if_stmt.then_region);
+            std::vector<const ir::core::CoreCapabilityCallStmt *> then_calls;
+            collect_calls(*if_stmt.then_region, then_calls);
+            CHECK(then_calls.size() == 1); // Charge is in the then-branch
+            if (!then_calls.empty()) {
+                CHECK(callee_is(then_calls[0]->callee_name, "Charge"));
+            }
+        }
+        if (std::holds_alternative<ir::core::CoreCapabilityCallStmt>(stmt.node)) {
+            const auto &call = std::get<ir::core::CoreCapabilityCallStmt>(stmt.node);
+            if (callee_is(call.callee_name, "Charge")) {
+                charge_at_top_level = true;
             }
         }
     }
+    CHECK(found_if);
+    CHECK_FALSE(charge_at_top_level); // Charge must NOT be hoisted out of its branch
+}
+
+TEST_CASE("flow lowering: goto resolves to a typed CoreStateId and policy is preserved") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("payflow", kFlowSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    REQUIRE(result.ok());
+    const auto &flow = result.program.flows[0];
+
+    const ir::core::CoreFlowState *work = nullptr;
+    for (const auto &s : flow.states) {
+        if (s.state_name == "Work") {
+            work = &s;
+        }
+    }
+    REQUIRE(work != nullptr);
+    // retry/timeout policy carried onto the state.
+    CHECK(work->policy.retry_limit.has_value());
+    CHECK(work->policy.timeout.has_value());
+
+    // The Init state's goto must resolve to a typed state id (not a bare string).
+    const ir::core::CoreFlowState *init = nullptr;
+    for (const auto &s : flow.states) {
+        if (s.state_name == "Init") {
+            init = &s;
+        }
+    }
+    REQUIRE(init != nullptr);
+    bool found_goto = false;
+    for (const auto &stmt : init->body.statements) {
+        if (std::holds_alternative<ir::core::CoreGotoStmt>(stmt.node)) {
+            found_goto = true;
+            const auto &g = std::get<ir::core::CoreGotoStmt>(stmt.node);
+            CHECK(g.target_name == "Work");
+            // Work is state index 1 in [Init, Work, Done].
+            CHECK(g.target.value == 1);
+        }
+    }
+    CHECK(found_goto);
+}
+
+// Nested capability call inside an enum constructor (the refund/audit shape):
+//   ctx.ticket = Option::Some(Charge(order.total));
+// The inner Charge MUST become its own ordered CapabilityCall statement whose
+// result feeds the outer pure Some(...) construct — never dropped (P0-1).
+const char *const kNestedSource = R"AHFL(
+module nestflow;
+
+enum Box {
+    Wrap(Bool),
+    Empty,
+}
+
+struct Order {
+    total: Int;
+}
+
+struct Ctx {
+    ticket: Box = Box::Empty;
+}
+
+struct Outcome {
+    ok: Bool = false;
+}
+
+capability Charge(amount: Int) -> Bool;
+
+agent Payer {
+    input: Order;
+    context: Ctx;
+    output: Outcome;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Charge];
+
+    transition Init -> Done;
+}
+
+flow for Payer {
+    state Init {
+        ctx.ticket = Box::Wrap(Charge(input.total));
+        goto Done;
+    }
+
+    state Done {
+        return Outcome { ok: false };
+    }
+}
+)AHFL";
+
+TEST_CASE("flow lowering: nested capability call inside a constructor is not dropped (P0-1)") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("nestflow", kNestedSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    CHECK(result.ok());
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow = result.program.flows[0];
+
+    const ir::core::CoreFlowState *init = nullptr;
+    for (const auto &s : flow.states) {
+        if (s.state_name == "Init") {
+            init = &s;
+        }
+    }
+    REQUIRE(init != nullptr);
+
+    std::vector<const ir::core::CoreCapabilityCallStmt *> calls;
+    collect_calls(init->body, calls);
+    // The inner Charge call survives as an explicit ordered capability-call stmt.
+    REQUIRE(calls.size() == 1);
+    CHECK(callee_is(calls[0]->callee_name, "Charge"));
+    // Its result value id must be consumed by a later pure construct (Some).
+    const ir::core::CoreValueId charge_result = calls[0]->result;
+
+    bool result_consumed_by_construct = false;
+    for (const auto &expr : flow.exprs) {
+        if (std::holds_alternative<ir::core::CoreConstructExpr>(expr.node)) {
+            const auto &ctor = std::get<ir::core::CoreConstructExpr>(expr.node);
+            for (const auto &arg : ctor.args) {
+                if (arg == charge_result) {
+                    result_consumed_by_construct = true;
+                    // The Wrap variant resolves to a typed index (Wrap=0).
+                    CHECK(ctor.is_enum_variant);
+                    CHECK(ctor.variant_resolved);
+                    CHECK(ctor.variant == 0u);
+                }
+            }
+        }
+    }
+    CHECK(result_consumed_by_construct);
+}
+
+// ==========================================================================
+// Fail-closed: unresolved capability call (hand-built AhflIr).
+// ==========================================================================
+
+TEST_CASE("flow lowering fails closed on an unresolved capability call") {
+    // A flow that calls a capability whose declaration is absent from the
+    // program: lowering must emit an error diagnostic with a range and mark the
+    // program non-executable — never silently drop the call.
+    ir::AhflIr program;
+
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+
+    // A capability CallExpr whose callee_ref is NOT backed by any CapabilityDecl.
+    ir::CallExpr call;
+    call.callee = "Ghost";
+    call.callee_ref.kind = ir::SymbolRefKind::Capability;
+    call.callee_ref.canonical_name = "app::Ghost";
+    call.callee_ref.id = 999;
+    ir::ExprRef call_ref = program.expr_arena.make(std::move(call), SourceRange{10, 20});
+
+    auto stmt = std::make_unique<ir::Statement>();
+    stmt->node = ir::ExprStatement{call_ref};
+    stmt->source_range = SourceRange{10, 20};
+
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    handler.body.statements.push_back(std::move(stmt));
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    CHECK(result.has_errors());
+    REQUIRE_FALSE(result.diagnostics.empty());
+    CHECK(result.diagnostics[0].code == "core.UNRESOLVED_CAPABILITY_CALL");
+    CHECK(result.diagnostics[0].source_range.has_value());
+}
+
+// ==========================================================================
+// Builtin Option/Result variant order must match the sysroot declaration.
+// ==========================================================================
+
+namespace {
+
+// Extract the variant names of the first `enum <Name>` block in an AHFL source
+// file, in declaration order. Minimal textual scan (no full parse) — enough to
+// pin the sysroot declaration order the builtin table must mirror.
+std::vector<std::string> read_enum_variant_order(const std::string &path,
+                                                 const std::string &enum_name) {
+    std::vector<std::string> variants;
+    std::FILE *f = std::fopen(path.c_str(), "rb");
+    if (f == nullptr) {
+        return variants;
+    }
+    std::string text;
+    char buf[4096];
+    size_t n = 0;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
+        text.append(buf, n);
+    }
+    std::fclose(f);
+
+    const auto enum_pos = text.find("enum " + enum_name);
+    if (enum_pos == std::string::npos) {
+        return variants;
+    }
+    const auto open = text.find('{', enum_pos);
+    const auto close = text.find('}', open);
+    if (open == std::string::npos || close == std::string::npos) {
+        return variants;
+    }
+    const std::string body = text.substr(open + 1, close - open - 1);
+    // Each variant is the leading identifier of a comma-separated entry. Skip
+    // any parenthesized payload so a payload type name (e.g. the `T` in
+    // `Some(T)`) is not mistaken for the next variant.
+    std::string token;
+    int paren_depth = 0;
+    for (char c : body) {
+        if (c == '(') {
+            // The identifier accumulated so far is the variant name; the payload
+            // that follows is skipped.
+            if (!token.empty()) {
+                variants.push_back(token);
+                token.clear();
+            }
+            ++paren_depth;
+            continue;
+        }
+        if (c == ')') {
+            if (paren_depth > 0) {
+                --paren_depth;
+            }
+            continue;
+        }
+        if (paren_depth > 0) {
+            continue; // inside a payload: ignore
+        }
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+            token.push_back(c);
+        } else {
+            if (!token.empty()) {
+                variants.push_back(token);
+                token.clear();
+            }
+        }
+    }
+    if (!token.empty()) {
+        variants.push_back(token);
+    }
+    return variants;
 }
 
 } // namespace
+
+TEST_CASE("builtin Option/Result variant order matches stdlib declaration order") {
+    // The lowerer's builtin variant table (Option -> [Some, None], Result ->
+    // [Ok, Err]) must mirror the sysroot declaration order. If someone reorders
+    // std/option.ahfl or std/result.ahfl, this test fails, forcing the table to
+    // be updated in lockstep (the drift Codex flagged).
+    const auto option_variants = read_enum_variant_order("std/option.ahfl", "Option");
+    REQUIRE(option_variants.size() >= 2);
+    CHECK(option_variants[0] == "Some"); // builtin table: Some=0
+    CHECK(option_variants[1] == "None"); // builtin table: None=1
+
+    const auto result_variants = read_enum_variant_order("std/result.ahfl", "Result");
+    REQUIRE(result_variants.size() >= 2);
+    CHECK(result_variants[0] == "Ok");  // builtin table: Ok=0
+    CHECK(result_variants[1] == "Err"); // builtin table: Err=1
+}

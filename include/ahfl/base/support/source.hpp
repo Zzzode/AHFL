@@ -28,6 +28,9 @@ struct SourceRange {
     [[nodiscard]] bool empty() const noexcept {
         return begin_offset == end_offset;
     }
+
+    [[nodiscard]] friend bool operator==(const SourceRange &,
+                                         const SourceRange &) noexcept = default;
 };
 
 struct SourceFile {
