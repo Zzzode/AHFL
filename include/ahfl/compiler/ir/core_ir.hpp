@@ -20,11 +20,13 @@
 //   * structured for WASM control flow, with explicit ADT / closure memory
 //     layout.
 //
-// THIS INCREMENT (KR6.4 first sub-slice) is a SKELETON. It defines the minimal
-// node set needed to carry the simplest orchestration construct end-to-end — an
-// agent's state machine — plus the scaffolded lower entry `lower_ahfl_to_core`.
-// The full node set (capability-call nodes, monomorphized function bodies,
-// structured control-flow regions, value representation / memory layout) is
+// THIS INCREMENT (KR6.4 sub-slices so far) is a SKELETON. It defines the
+// minimal node set needed to carry the simplest orchestration construct
+// end-to-end — an agent's state machine — plus the explicit capability-call
+// (`ahfl_cap` import) declaration that the effect->capability-call lowering
+// produces, plus the scaffolded lower entry `lower_ahfl_to_core`. The rest of
+// the node set (monomorphized function bodies, structured control-flow regions,
+// value representation / memory layout, capability-call ARGUMENT passing) is
 // filled by the later KR6.4 sub-slices and is intentionally NOT present yet.
 //
 // Nothing consumes `CoreProgram` yet: WASM codegen is KR6.5 and the evaluator is
@@ -109,13 +111,61 @@ struct CoreAgentDecl {
     std::vector<CoreTransition> transitions;
 };
 
+// ----------------------------------------------------------------------------
+// Capability-call node set (effect -> explicit capability-call)
+// ----------------------------------------------------------------------------
+
+/// The execution-layer projection of an `ir::CapabilityDecl`.
+///
+/// This is where RFC 0026's "effect 降为显式 capability-call" step lands: a
+/// source capability (which carried a graded `CapabilityEffectSpec`) becomes an
+/// explicit capability-call declaration — the `ahfl_cap` IMPORT BOUNDARY of
+/// RFC 0019 (`(ptr,len)->ptr`). It is the concrete landing point of "计算留宿主"
+/// (computation stays host-side, RFC 0020): the host, in any language, binds
+/// each of these declarations as an `ahfl_cap` import that WASM codegen (KR6.5)
+/// will call. Core-IR itself never runs the capability — it only names the
+/// import and its marshalling signature.
+///
+/// What is CARRIED (execution-relevant shape):
+///   * `symbol_ref` — the canonical identity (Principle 2), reused verbatim from
+///     the verification layer; the strings on it are display/diagnostic only.
+///   * `name` — display spelling for diagnostics.
+///   * `effect_kind` — the capability's effect CATEGORY (`ir::CapabilityEffectKind`,
+///     reused, not redefined). The kind is the one piece of the source
+///     `CapabilityEffectSpec` the execution layer keeps, so a host can classify
+///     the import (e.g. read vs. financial-write) at bind time.
+///   * `param_types` / `return_type_ref` — the marshalling signature (arity +
+///     concrete types) the `ahfl_cap` frame needs. Source-level param NAMES are
+///     display-only and are intentionally dropped here.
+///
+/// What is ERASED: the rest of the `CapabilityEffectSpec` (domain, idempotency
+/// key, receipt/retry mode, timeout, compensation, policies) is verification /
+/// orchestration metadata consumed above Core-IR; it does not exist at this
+/// layer (RFC 0026 erasure invariant). Full argument-passing / value layout for
+/// the call site is filled by later KR6.4 sub-slices.
+struct CoreCapabilityDecl {
+    /// Display name (diagnostic only). `symbol_ref` is the canonical identity.
+    std::string name;
+    /// Resolved nominal symbol of the originating capability (reused as-is from
+    /// the verification layer; strings on it are display/diagnostic only).
+    ir::SymbolRef symbol_ref;
+    /// Effect category of the capability (reused `ir::CapabilityEffectKind`).
+    ir::CapabilityEffectKind effect_kind{ir::CapabilityEffectKind::Unknown};
+    /// Import-signature parameter types in declaration order (arity + types the
+    /// `ahfl_cap` frame marshals). Param names are source-level, so they are not
+    /// carried here.
+    std::vector<ir::TypeRef> param_types;
+    /// Import-signature return type.
+    ir::TypeRef return_type_ref;
+};
+
 /// Core-IR declaration node set. Minimal by design: this skeleton represents
-/// only agent state machines. Later KR6.4 sub-slices grow the variant with
-/// monomorphized function bodies, explicit capability-call nodes, and the
-/// remaining orchestration constructs (flow / workflow). Kept a `std::variant`
-/// (Principle 4) so those additions are additive alternatives, not a class
-/// hierarchy.
-using CoreDecl = std::variant<CoreAgentDecl>;
+/// agent state machines and explicit capability-call (import) declarations.
+/// Later KR6.4 sub-slices grow the variant with monomorphized function bodies
+/// and the remaining orchestration constructs (flow / workflow). Kept a
+/// `std::variant` (Principle 4) so those additions are additive alternatives,
+/// not a class hierarchy.
+using CoreDecl = std::variant<CoreAgentDecl, CoreCapabilityDecl>;
 
 // ----------------------------------------------------------------------------
 // Core-IR program
@@ -136,13 +186,15 @@ struct CoreProgram {
 /// Lower the verification / orchestration layer (`AhflIr`) to the execution
 /// layer (`CoreProgram`).
 ///
-/// SCOPE (KR6.4 first increment): lowers each `ir::AgentDecl`'s state machine
-/// into a `CoreAgentDecl`, erasing contract / temporal / decreases and quota
-/// (they are verification-layer concerns). All other declaration kinds
-/// (structs, enums, capabilities, contracts, flows, workflows, fns, traits,
-/// impls, …) are skipped in this increment — their execution-layer lowering
-/// (monomorphized bodies, explicit capability-calls, structured control flow,
-/// memory layout) is filled by the later KR6.4 sub-slices.
+/// SCOPE (KR6.4 sub-slices so far): lowers each `ir::AgentDecl`'s state machine
+/// into a `CoreAgentDecl` (erasing contract / temporal / decreases and quota —
+/// verification-layer concerns) and each `ir::CapabilityDecl` into a
+/// `CoreCapabilityDecl` (the explicit capability-call = `ahfl_cap` import
+/// boundary; the effect spec beyond its kind is erased). All other declaration
+/// kinds (structs, enums, contracts, flows, workflows, fns, traits, impls, …)
+/// are skipped in this increment — their execution-layer lowering
+/// (monomorphized bodies, structured control flow, memory layout) is filled by
+/// the later KR6.4 sub-slices.
 ///
 /// Deterministic: declarations are visited in source order and emitted in that
 /// order; the instance key comes from the deterministic `mangle_instance`.

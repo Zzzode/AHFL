@@ -52,6 +52,56 @@ ir::AhflIr make_single_agent_program() {
     return program;
 }
 
+// Build a minimal AhflIr containing (in source order) one CapabilityDecl, one
+// AgentDecl, and one verification-only ContractDecl. Exercises the effect ->
+// explicit capability-call lowering: the capability must produce a
+// CoreCapabilityDecl carrying its symbol_ref + effect kind + signature, while
+// the contract must be erased and the agent must still lower.
+ir::AhflIr make_capability_program() {
+    ir::AhflIr program;
+
+    // capability ChargeCard(amount: Int) -> Bool;  effect: financial write.
+    ir::CapabilityDecl cap;
+    cap.name = "ChargeCard";
+    cap.symbol_ref.kind = ir::SymbolRefKind::Capability;
+    cap.symbol_ref.canonical_name = "app::ChargeCard";
+    cap.symbol_ref.local_name = "ChargeCard";
+    cap.symbol_ref.id = 11;
+    ir::ParamDecl amount;
+    amount.name = "amount";
+    amount.type_ref.kind = ir::TypeRefKind::Int;
+    amount.type_ref.display_name = "Int";
+    cap.params.push_back(std::move(amount));
+    cap.return_type_ref.kind = ir::TypeRefKind::Bool;
+    cap.return_type_ref.display_name = "Bool";
+    cap.effect.declared = true;
+    cap.effect.kind = ir::CapabilityEffectKind::FinancialWrite;
+    // Orchestration-only spec fields that must NOT survive to Core-IR.
+    cap.effect.domain = "payments";
+    cap.effect.receipt_mode = ir::CapabilityReceiptMode::Required;
+    program.declarations.emplace_back(std::move(cap));
+
+    ir::AgentDecl agent;
+    agent.name = "Classifier";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::Classifier";
+    agent.symbol_ref.local_name = "Classifier";
+    agent.symbol_ref.id = 7;
+    agent.states = {"Init", "Done"};
+    agent.initial_state = "Init";
+    agent.final_states = {"Done"};
+    agent.transitions = {ir::TransitionDecl{"Init", "Done"}};
+    program.declarations.emplace_back(std::move(agent));
+
+    // Verification-only contract: must be erased.
+    ir::ContractDecl contract;
+    contract.target_ref.kind = ir::SymbolRefKind::Agent;
+    contract.target_ref.canonical_name = "app::Classifier";
+    program.declarations.emplace_back(std::move(contract));
+
+    return program;
+}
+
 TEST_CASE("lower_ahfl_to_core lowers an agent state machine into Core-IR") {
     const ir::AhflIr program = make_single_agent_program();
     const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
@@ -120,6 +170,69 @@ TEST_CASE("lower_ahfl_to_core is deterministic") {
     CHECK(agent_a.initial == agent_b.initial);
     CHECK(agent_a.finals == agent_b.finals);
     CHECK(agent_a.transitions == agent_b.transitions);
+}
+
+TEST_CASE("lower_ahfl_to_core lowers a capability into an explicit capability-call") {
+    const ir::AhflIr program = make_capability_program();
+    const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
+
+    // Source order: CapabilityDecl, AgentDecl, ContractDecl. The contract is a
+    // verification construct and must be erased, so exactly two Core-IR
+    // declarations are expected — the capability-call and the agent skeleton,
+    // in that source order.
+    REQUIRE(core.declarations.size() == 2);
+    REQUIRE(std::holds_alternative<ir::core::CoreCapabilityDecl>(core.declarations[0]));
+    REQUIRE(std::holds_alternative<ir::core::CoreAgentDecl>(core.declarations[1]));
+
+    const auto &cap = std::get<ir::core::CoreCapabilityDecl>(core.declarations[0]);
+
+    // Canonical identity (Principle 2) is reused from the source symbol_ref.
+    CHECK(cap.name == "ChargeCard");
+    CHECK(cap.symbol_ref.kind == ir::SymbolRefKind::Capability);
+    CHECK(cap.symbol_ref.canonical_name == "app::ChargeCard");
+    REQUIRE(cap.symbol_ref.id.has_value());
+    CHECK(cap.symbol_ref.id.value() == 11);
+
+    // The effect KIND survives as the import's classification.
+    CHECK(cap.effect_kind == ir::CapabilityEffectKind::FinancialWrite);
+
+    // Marshalling signature: one Int param, Bool return.
+    REQUIRE(cap.param_types.size() == 1);
+    CHECK(cap.param_types[0].kind == ir::TypeRefKind::Int);
+    CHECK(cap.return_type_ref.kind == ir::TypeRefKind::Bool);
+}
+
+TEST_CASE("lower_ahfl_to_core erases capability effect-spec metadata beyond the kind") {
+    const ir::AhflIr program = make_capability_program();
+    const ir::core::CoreProgram core = ir::core::lower_ahfl_to_core(program);
+
+    // Every emitted declaration is either a capability-call or an agent — no
+    // Core-IR alternative can represent the erased orchestration metadata
+    // (domain / receipt / retry / …) or a verification construct. The layer is
+    // defined so those are *unrepresentable*; this is the behavioural witness.
+    for (const auto &decl : core.declarations) {
+        CHECK((std::holds_alternative<ir::core::CoreCapabilityDecl>(decl) ||
+               std::holds_alternative<ir::core::CoreAgentDecl>(decl)));
+    }
+    REQUIRE(core.declarations.size() == 2);
+}
+
+TEST_CASE("lower_ahfl_to_core is deterministic for capability + agent programs") {
+    const ir::AhflIr program = make_capability_program();
+    const ir::core::CoreProgram a = ir::core::lower_ahfl_to_core(program);
+    const ir::core::CoreProgram b = ir::core::lower_ahfl_to_core(program);
+
+    REQUIRE(a.declarations.size() == b.declarations.size());
+    REQUIRE(a.declarations.size() == 2);
+
+    const auto &cap_a = std::get<ir::core::CoreCapabilityDecl>(a.declarations[0]);
+    const auto &cap_b = std::get<ir::core::CoreCapabilityDecl>(b.declarations[0]);
+    CHECK(cap_a.name == cap_b.name);
+    CHECK(cap_a.symbol_ref.canonical_name == cap_b.symbol_ref.canonical_name);
+    CHECK(cap_a.effect_kind == cap_b.effect_kind);
+    REQUIRE(cap_a.param_types.size() == cap_b.param_types.size());
+    CHECK(cap_a.param_types[0].kind == cap_b.param_types[0].kind);
+    CHECK(cap_a.return_type_ref.kind == cap_b.return_type_ref.kind);
 }
 
 } // namespace

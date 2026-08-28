@@ -4,10 +4,13 @@
 //
 // This is the scaffolded entry point for the execution-layer lowering. See
 // `include/ahfl/compiler/ir/core_ir.hpp` for the layer's contract. This
-// increment lowers only agent state machines and erases the verification-layer
-// constructs (contract / temporal / decreases / quota). The remaining Decl
-// kinds and the full lowering (monomorphization, explicit capability-calls,
-// structured control flow, memory layout) are filled by later KR6.4 sub-slices.
+// increment lowers agent state machines and capability declarations (effect ->
+// explicit capability-call), erasing the verification-layer constructs
+// (contract / temporal / decreases / quota) and the orchestration-only slice of
+// a capability's effect spec (domain / receipt / retry / … — only the effect
+// KIND survives). The remaining Decl kinds and the full lowering
+// (monomorphization, structured control flow, memory layout, capability-call
+// argument passing) are filled by later KR6.4 sub-slices.
 
 #include "ahfl/compiler/ir/core_ir.hpp"
 
@@ -21,6 +24,36 @@
 
 namespace ahfl::ir::core {
 namespace {
+
+/// Deep-copy a structured `ir::TypeRef`. `TypeRef` owns its child refs through
+/// `Owned<TypeRef>` (move-only), so carrying a capability's signature into
+/// Core-IR needs an explicit recursive clone rather than an assignment. Mirrors
+/// the per-TU clone used by the opt lowering (`opt_lower.cpp`); no shared clone
+/// helper is exported by the IR headers.
+[[nodiscard]] TypeRef clone_type_ref(const TypeRef &type) {
+    TypeRef clone;
+    clone.kind = type.kind;
+    clone.display_name = type.display_name;
+    clone.canonical_name = type.canonical_name;
+    clone.variant_name = type.variant_name;
+    clone.int_bounds = type.int_bounds;
+    clone.string_bounds = type.string_bounds;
+    clone.decimal_scale = type.decimal_scale;
+    clone.collection_capacity = type.collection_capacity;
+    clone.source_range = type.source_range;
+    if (type.first) {
+        clone.first = make_owned<TypeRef>(clone_type_ref(*type.first));
+    }
+    if (type.second) {
+        clone.second = make_owned<TypeRef>(clone_type_ref(*type.second));
+    }
+    clone.params.reserve(type.params.size());
+    for (const auto &param : type.params) {
+        clone.params.push_back(param ? make_owned<TypeRef>(clone_type_ref(*param))
+                                     : nullptr);
+    }
+    return clone;
+}
 
 /// Resolve a state name to its index in `names`, appending it if unseen. Keeps
 /// state identity index-based (AGENTS.md Principle 2) while tolerating an agent
@@ -94,6 +127,32 @@ intern_state(std::vector<std::string> &names,
     return out;
 }
 
+/// Lower one `ir::CapabilityDecl` into a `CoreCapabilityDecl` — the explicit
+/// capability-call / `ahfl_cap` import boundary (RFC 0026 step 2, RFC 0019 /
+/// RFC 0020 "computation stays host-side"). Only the execution-relevant shape
+/// survives: canonical `symbol_ref` identity, display name, the effect KIND, and
+/// the marshalling signature (param types + return type). The rest of the
+/// capability's `CapabilityEffectSpec` (domain / idempotency key / receipt /
+/// retry / timeout / compensation / policies) is verification / orchestration
+/// metadata and is erased at this layer.
+[[nodiscard]] CoreCapabilityDecl lower_capability(const CapabilityDecl &cap) {
+    CoreCapabilityDecl out;
+    out.name = cap.name;
+    out.symbol_ref = cap.symbol_ref;
+    // Reuse the source effect CATEGORY verbatim; do not reinterpret it.
+    out.effect_kind = cap.effect.kind;
+
+    // Marshalling signature: parameter types in declaration order (arity + the
+    // concrete types the `ahfl_cap` frame carries). Source-level param NAMES are
+    // display-only and are intentionally dropped at the execution layer.
+    out.param_types.reserve(cap.params.size());
+    for (const ParamDecl &param : cap.params) {
+        out.param_types.push_back(clone_type_ref(param.type_ref));
+    }
+    out.return_type_ref = clone_type_ref(cap.return_type_ref);
+    return out;
+}
+
 } // namespace
 
 CoreProgram lower_ahfl_to_core(const AhflIr &ahfl_ir) {
@@ -103,6 +162,9 @@ CoreProgram lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         std::visit(Overloaded{
                        [&](const AgentDecl &agent) {
                            core.declarations.emplace_back(lower_agent(agent));
+                       },
+                       [&](const CapabilityDecl &cap) {
+                           core.declarations.emplace_back(lower_capability(cap));
                        },
                        // Every other Decl kind is skipped in this increment;
                        // its execution-layer lowering is filled by later KR6.4
