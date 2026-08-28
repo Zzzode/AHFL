@@ -153,7 +153,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0026"
     title: "IR Tower and Execution Model"
-    status: "accepted"
+    status: "implementing"
     file: "0026-ir-tower-and-execution-model.zh.md"
     area: ["compiler", "ir", "runtime"]
     stability: "experimental"
