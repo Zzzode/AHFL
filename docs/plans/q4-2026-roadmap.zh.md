@@ -30,7 +30,7 @@
 「架构北极星」,RFC 0026 IR 塔+执行模型、RFC 0027 query 前端+IR 单一真相源已 draft),新增
 **Objective 6**(编译器架构升级:三层 IR 塔取代单层、WASM 唯一执行引擎、tree-walking
 evaluator 退役、前端 query 化、消灭 8-location sweep)与 **Objective 7**(backlog §3 已落库
-能力产品化到顶尖)。**Q4 验收口径随之扩张:总盘 54 KR,当前 35 ✅ / 19 ⬜。**
+能力产品化到顶尖)。**Q4 验收口径随之扩张:总盘 54 KR,当前 37 ✅ / 17 ⬜。**
 
 ---
 
@@ -182,7 +182,7 @@ capstone)已全部落库并测试。
 
 | KR | 目标(可验收) | 状态 | 证据 / 待做 |
 |----|----------------|------|-------------|
-| KR6.1 | RFC 0026 → `accepted`:清 4 个 Open Question(Core-IR 内存模型 arena vs 所有权、控制流结构化边界、语义保持验证深度、单态化爆炸预算)+ compiler/runtime owner sign-off | ⬜ | draft 已落库(commit `b8652f58`);待清 Open Questions 并走 review→accepted |
+| KR6.1 | RFC 0026 → `accepted`:清 4 个 Open Question(Core-IR 内存模型 arena vs 所有权、控制流结构化边界、语义保持验证深度、单态化爆炸预算)+ compiler/runtime owner sign-off | ✅ | 5 个 Open Questions 全部给出决策+理由(arena/无 GC、WASM 结构化 region/无 relooper、conformance 差分必做+形式化证明长期可选、单态化预算 fail-closed、双 IR-JSON 弃用绑 KR6.9);draft→review→accepted(commit `728db370`),sign-off 经 Q4 路线图 Objective 6 确认 |
 | KR6.2 | IR 塔骨架落地(RFC 0026 P1):`AHFL-IR` / `Core-IR` 层类型 + 层边界定义,空壳零行为变更,现有 backend 仍消费旧路径 | ⬜ | 新增 `include/ahfl/compiler/ir/` 下 ahfl_ir/core_ir 头;全套件零回归 |
 | KR6.3 | AHFL-IR 净化(P2):验证/视图后端(smv/smt/k8s/terraform/openapi)改为消费 `AHFL-IR`,移出纯执行细节;golden 无回归 | ⬜ | smv.cpp / verification/formal / infra 后端切层 |
 | KR6.4 | lower pass `AHFL-IR → Core-IR`(P3+P4):单态化 + effect→显式 capability-call + temporal/contract/decreases 擦除 + 控制流结构化 + 值表示/内存布局(Bool/Int/Float/Decimal/String/enum/struct/bounded 容器/闭包) | ⬜ | 新 lower pass;Core-IR verifier 捕获"验证节点误入执行层""未单态化残留" |
@@ -200,7 +200,7 @@ capstone)已全部落库并测试。
 
 | KR | 目标(可验收) | 状态 | 证据 / 待做 |
 |----|----------------|------|-------------|
-| KR6.10 | RFC 0027 → `accepted`:清 Open Question(SSOT 选型 X-macro vs 代码生成、query 粒度、cycle 策略、RFC 0016 持久化衔接)+ compiler/tooling owner sign-off | ⬜ | draft 已落库(`b8652f58`) |
+| KR6.10 | RFC 0027 → `accepted`:清 Open Question(SSOT 选型 X-macro vs 代码生成、query 粒度、cycle 策略、RFC 0016 持久化衔接)+ compiler/tooling owner sign-off | ✅ | 5 个 Open Questions 全部给出决策+理由(SSOT 先 X-macro 后按需升级、query 分级粒度对齐 rust-analyzer、cycle 用 coinductive fixpoint 统一 RFC 0013、持久化承接 RFC 0016 cache contract、穷尽性用编译期 static_assert);draft→review→accepted(commit `728db370`) |
 | KR6.11 | 自研 QueryEngine 内核(P1)+ 前端 query 化(P2/P3):input storage + memo + revision 失效 + cycle 策略;parse/hir/resolve/type_of 包成 query,driver 经 QueryEngine 求值,全量结果与旧流水线逐位等价 | ⬜ | 纯库 + 等价回归守护 |
 | KR6.12 | LSP 切 query + 删手工 incremental(P4/P5):hover/completion/signatureHelp 改读 `type_of`/`hir` query(取代文本启发,关闭 backlog §3.3 缺口);`src/tooling/incremental/` 退役,能力并入 QueryEngine,RFC 0016 cache contract 重锚为持久化层 | ⬜ | 真实编辑序列回归;`BREAKING CHANGE:` |
 | KR6.13 | IR 单一真相源(P6/P7/P8):选定机制后,三层 IR 全部节点迁到单一定义,自动派生 visitor/print/verify/json(与手写产物逐字节等价),删除 `expr.hpp:329-344` 的 8-location sweep,加编译期穷尽性门禁(漏节点即编译失败) | ⬜ | 负例:故意漏节点断言编译失败 |
@@ -242,9 +242,9 @@ capstone)已全部落库并测试。
 
 > **阶段一(Objective 1–4)23/23 KR 已 ✅ —— 可嵌入性 / 验证 / 产品化全部收官。**
 > **阶段二(Objective 5)12/12 KR 已 ✅ —— 编译器基座完备性收官。**
-> **阶段三(Objective 6–7)0/19 KR —— 编译器架构升级到顶尖 + 已落库能力产品化,本季新增开放面。**
+> **阶段三(Objective 6–7)2/19 KR —— 编译器架构升级到顶尖 + 已落库能力产品化,本季新增开放面。**
 > 阶段一最后一个曾被标为环境阻塞的 KR4.5(真实 LLM run 证据)已通过驱动真实本地 llama.cpp
-> 推理引擎解除。当前总盘:**54 个 KR,35 ✅ / 19 ⬜。** 阶段一+二(35 KR)已收官:KR5.5
+> 推理引擎解除。当前总盘:**54 个 KR,37 ✅ / 17 ⬜。** 阶段一+二(35 KR)已收官:KR5.5
 > (RFC 0013 → `implemented`)达成,frontmatter `implementing → implemented`(commit
 > `9ac22713`),以 §Implementation Plan 阶段验收表 P0–P7 逐条核对为准,全部达成并经
 > clean-rebuild 全套件 457/457 验证。收官路上补齐的两处 soundness 洞——跨模块 trait dispatch
@@ -290,7 +290,7 @@ capstone)已全部落库并测试。
    ✅ 已完成:错误恢复接入真实 ANTLR 路径;共享 IR 结构相等 + redundancy pass 补强;opt-IR
    时序原子文档化为有界豁免。
 
-**阶段三(Objective 6–7)推进顺序 —— 架构主干先行,产品化并行(0/19 ⬜):**
+**阶段三(Objective 6–7)推进顺序 —— 架构主干先行,产品化并行(2/19 ✅:KR6.1/6.10 设计门已过):**
 
 1. **KR6.1 / KR6.10 先行(设计门)**:RFC 0026 / 0027 从 draft → accepted——清各自 Open
    Questions + owner sign-off。这是所有实现 KR 的前置(未 accepted 不动代码)。
