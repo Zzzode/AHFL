@@ -44,7 +44,7 @@ namespace {
 // Build a canonical-name -> effect kind index over the program's capability
 // declarations, so an agent's capability refs can be resolved to their effect.
 [[nodiscard]] std::unordered_map<std::string, WasmCapabilityEffect>
-build_capability_effects(const ir::Program &program) {
+build_capability_effects(const ir::AhflIr &program) {
     std::unordered_map<std::string, WasmCapabilityEffect> effects;
     for (const auto &decl : program.declarations) {
         if (const auto *cap = std::get_if<ir::CapabilityDecl>(&decl)) {
@@ -59,7 +59,7 @@ build_capability_effects(const ir::Program &program) {
 
 } // namespace
 
-std::vector<K8sCrdConfig> lower_k8s_crd(const ir::Program &program) {
+std::vector<K8sCrdConfig> lower_k8s_crd(const ir::AhflIr &program) {
     std::vector<K8sCrdConfig> result;
     for (const auto &decl : program.declarations) {
         if (const auto *agent = std::get_if<ir::AgentDecl>(&decl)) {
@@ -73,7 +73,7 @@ std::vector<K8sCrdConfig> lower_k8s_crd(const ir::Program &program) {
     return result;
 }
 
-std::optional<OpenApiConfig> lower_openapi(const ir::Program &program) {
+std::optional<OpenApiConfig> lower_openapi(const ir::AhflIr &program) {
     OpenApiConfig config;
     config.title = "AHFL Generated API";
     for (const auto &decl : program.declarations) {
@@ -91,7 +91,7 @@ std::optional<OpenApiConfig> lower_openapi(const ir::Program &program) {
     return config;
 }
 
-std::vector<TerraformConfig> lower_terraform(const ir::Program &program) {
+std::vector<TerraformConfig> lower_terraform(const ir::AhflIr &program) {
     std::vector<TerraformConfig> result;
     for (const auto &decl : program.declarations) {
         if (const auto *workflow = std::get_if<ir::WorkflowDecl>(&decl)) {
@@ -111,7 +111,7 @@ std::vector<TerraformConfig> lower_terraform(const ir::Program &program) {
     return result;
 }
 
-std::vector<WasmAgentConfig> lower_wasm(const ir::Program &program) {
+std::vector<WasmAgentConfig> lower_wasm(const ir::AhflIr &program) {
     std::vector<WasmAgentConfig> result;
     const auto capability_effects = build_capability_effects(program);
     for (const auto &decl : program.declarations) {

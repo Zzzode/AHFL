@@ -47,7 +47,7 @@ struct Document {
 
 } // namespace
 
-void emit_program_smt(const ir::Program &program, std::ostream &out,
+void emit_program_smt(const ir::AhflIr &program, std::ostream &out,
                       const SmtEncodeOptions &options) {
     Document doc;
 

@@ -34,7 +34,11 @@ class SmvPrinter final {
   public:
     explicit SmvPrinter(std::ostream &out) : out_(out) {}
 
-    void print(const ir::Program &program);
+    // Entry point: consumes the AHFL-IR (verification / orchestration) layer of
+    // the RFC 0026 IR tower. `ir::AhflIr` aliases `ir::Program` today, so the
+    // internal indexing / collection helpers below continue to take
+    // `const ir::Program &` (same type) — only the layer boundary is annotated.
+    void print(const ir::AhflIr &program);
 
   private:
     std::ostream &out_;

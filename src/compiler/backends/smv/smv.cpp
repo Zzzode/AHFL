@@ -8,7 +8,7 @@ namespace ahfl {
 using namespace smv;
 using namespace smv_detail;
 
-void SmvPrinter::print(const ir::Program &program) {
+void SmvPrinter::print(const ir::AhflIr &program) {
     index_declarations(program);
     index_observations(program);
     collect_state_variables();
@@ -63,7 +63,7 @@ void SmvPrinter::emit() {
     }
 }
 
-void print_program_smv(const ir::Program &program, std::ostream &out) {
+void print_program_smv(const ir::AhflIr &program, std::ostream &out) {
     SmvPrinter printer(out);
     printer.print(program);
 }

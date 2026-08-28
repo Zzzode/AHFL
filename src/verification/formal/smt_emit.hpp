@@ -21,7 +21,12 @@
 namespace ahfl::formal {
 
 // Emit the SMT-LIB 2 document for `program`'s contracts to `out`.
-void emit_program_smt(const ir::Program &program, std::ostream &out,
+//
+// RFC 0026 (KR6.3): the SMT-BMC verification backend consumes the AHFL-IR
+// (verification / orchestration) layer of the IR tower. `ir::AhflIr` is that
+// layer; today it aliases `ir::Program`, so this is a zero-behavior-change
+// boundary annotation.
+void emit_program_smt(const ir::AhflIr &program, std::ostream &out,
                       const SmtEncodeOptions &options = {});
 
 } // namespace ahfl::formal
