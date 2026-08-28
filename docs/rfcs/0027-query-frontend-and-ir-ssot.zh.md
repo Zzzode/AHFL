@@ -1,20 +1,20 @@
 ---
 rfc: "0027"
 title: "Query-Based Frontend and IR Single Source of Truth"
-status: "draft"
+status: "review"
 area: ["compiler", "ir", "tooling"]
 stability: "experimental"
 created: "2026-08-28"
 updated: "2026-08-28"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
   compiler: "compiler owner"
   ir: "compiler owner"
   tooling: "tooling owner"
 required_reviewers: ["compiler", "tooling"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-10-15"
 ---
@@ -288,17 +288,33 @@ flowchart TD
 
 ## Open Questions
 
-1. **SSOT 机制选型**:X-macro vs 轻量代码生成脚本 vs `constexpr` 反射习语。倾向先试
-   X-macro(零依赖、纯 C++、可增量引入),若可读性/表达力不足再升级到代码生成脚本。**在
-   accepted 前定选型,或定"先 X-macro 后按需升级"的策略。**
-2. **query 粒度**:query 到 per-file / per-module / per-expr 哪一级?过细则缓存开销大,过粗则
-   增量收益小。倾向 rust-analyzer 的分级(文件级 parse,符号级 resolve,表达式级 type_of)。
-3. **cycle 策略**:相互递归类型 `type_of` 等潜在环用 fixpoint 还是报诊断?与 RFC 0013 关系求解
-   的 coinductive 假设如何统一。
-4. **持久化衔接**:QueryEngine 持久化层与 [RFC 0016](0016-incremental-cache-contract.zh.md)
-   cache contract 的确切边界(哪些 query 结果可持久化、如何 key、跨进程验真)。
-5. **穷尽性门禁的实现手段**:静态断言 / 构建期检查 / 派生代码里的 `static_assert`——选最能
-   给出可读诊断的方式(Principle 5:诊断可操作)。
+进入 `review` 前,五个设计问题已给出**决策 + 理由**(共同哲学:零重依赖、可增量引入、
+穷尽性靠编译期而非运行时)。
+
+1. **SSOT 机制选型** → **决策:先 X-macro,按需升级到轻量代码生成脚本。** 首版用 X-macro
+   (纯 C++ 预处理器、零依赖、可对单个节点集合增量引入),先在一个节点集合(Typed HIR 的
+   Expr)试点(KR6.13 / RFC P6);若 X-macro 的可读性 / 表达力在铺开(P7)时不足,再升级到
+   构建期代码生成脚本(从 schema 生成 `.hpp`/`.cpp`)。**理由**:与"不引 MLIR/LLVM/salsa
+   crate"同一工程判断——先用最轻、零依赖的机制拿到"单一定义 + 编译期穷尽"的核心收益,把
+   引入生成步骤的成本推迟到确有需要时。
+2. **query 粒度** → **决策:分级粒度,对齐 rust-analyzer。** 文件级 `parse(file)`/`hir(file)`、
+   符号/模块级 `resolve(module)`、表达式级 `type_of(expr_id)`。**理由**:分级在缓存开销与
+   增量收益间取平衡;单点类型查询(LSP hover/completion 需要)必须做到表达式级才廉价,而
+   parse 做到文件级即可,无谓细分只增开销。
+3. **cycle 策略** → **决策:query 图默认无环;潜在环(相互递归类型 `type_of`)用引擎的
+   fixpoint / 已访问哨兵处理,与 RFC 0013 关系求解的 coinductive 假设统一(遇到正在求值的
+   同一 key 返回保守假设,收敛后定值)。** 真正的非法环报带 SourceRange 的诊断。**理由**:
+   复用项目已验证的 coinductive 关系求解习语(`type_relations.cpp`),避免两套环处理语义。
+4. **持久化衔接** → **决策:QueryEngine 持久化层承接 [RFC 0016](0016-incremental-cache-contract.zh.md)
+   的 cache contract——只持久化确定性、可 key 化(索引式 query key + input revision 指纹)、
+   secret-free 的 derived query 结果;跨进程验真靠 input 指纹比对。** 具体哪些 query 结果进
+   持久化层由 KR6.12 分片按收益定,首版可只持久化 parse/hir 级。**理由**:RFC 0016 已定
+   cache contract 的 secret-free / 确定性 / 索引式 key 原则,QueryEngine 持久化层是它的实现
+   载体而非新契约。
+5. **穷尽性门禁的实现手段** → **决策:派生代码里用 `std::visit` + variant 全 alternative 的
+   编译期穷尽 + `static_assert`,漏节点即编译失败,并附可读的 `static_assert` 消息指出缺失的
+   节点种类(Principle 5)。** **理由**:编译期失败 + 可读消息把"运行时静默丢数据"变成"构建期
+   可操作错误",是 8-location sweep 问题的根治手段。
 
 ## Decision History
 
@@ -307,3 +323,9 @@ flowchart TD
   query 化(并删除 `src/tooling/incremental/` 手工模拟)+ IR 节点 SSOT 派生(消灭
   `expr.hpp:329-344` 的 8-location sweep)。与 [RFC 0026](0026-ir-tower-and-execution-model.zh.md)
   的 IR 塔分层软依赖、可独立分片。
+- 2026-08-28: Status draft → review(KR6.10 部分)。五个 Open Questions 全部给出决策 + 理由:
+  SSOT 先 X-macro 后按需升级;query 分级粒度(文件/符号/表达式)对齐 rust-analyzer;cycle 用
+  coinductive fixpoint 统一 RFC 0013 习语;持久化承接 RFC 0016 cache contract;穷尽性用
+  编译期 `static_assert` + 可读消息。填 shepherd/tracking/discussion。**`review → accepted`
+  待 compiler + tooling owner sign-off**——该步授权删除 `src/tooling/incremental/` 与前端
+  query 化重构,须显式批准。

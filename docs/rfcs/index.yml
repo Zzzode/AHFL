@@ -153,13 +153,13 @@ rfcs:
     stability: "experimental"
   - rfc: "0026"
     title: "IR Tower and Execution Model"
-    status: "draft"
+    status: "review"
     file: "0026-ir-tower-and-execution-model.zh.md"
     area: ["compiler", "ir", "runtime"]
     stability: "experimental"
   - rfc: "0027"
     title: "Query-Based Frontend and IR Single Source of Truth"
-    status: "draft"
+    status: "review"
     file: "0027-query-frontend-and-ir-ssot.zh.md"
     area: ["compiler", "ir", "tooling"]
     stability: "experimental"

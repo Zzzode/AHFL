@@ -1,20 +1,20 @@
 ---
 rfc: "0026"
 title: "IR Tower and Execution Model"
-status: "draft"
+status: "review"
 area: ["compiler", "ir", "runtime"]
 stability: "experimental"
 created: "2026-08-28"
 updated: "2026-08-28"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
   compiler: "compiler owner"
   ir: "compiler owner"
   runtime: "runtime owner"
 required_reviewers: ["compiler", "runtime"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-10-15"
 ---
@@ -338,17 +338,38 @@ IR-JSON（`src/compiler/ir/ir_json.cpp`，RFC 0013 KR5.9 已做到逐字节 roun
 
 ## Open Questions
 
-1. **Core-IR 内存管理模型**：arena / bump（workflow 有界阶段化,倾向此)vs 引用计数 vs 线性
-   类型式所有权。倾向 arena,但需确认闭包环境跨阶段存活的场景是否需要更强机制。**在 accepted
-   前定**。
-2. **控制流结构化的边界**：AHFL 当前无任意 goto,但 `MatchExpr` + 未来可能的 early-return/`?`
-   （RFC 0014 try 算子）需要确认能否全部降为 WASM 结构化 region 而不需 relooper 级算法。
-3. **语义保持验证的深度**：conformance 差分测试（工程级)是必做;是否进一步做 CompCert 式
-   "lower pass 语义保持的形式化证明"作为 AHFL 验证护城河的延伸,是长期可选项——本 RFC 只留
-   接口,不承诺。
-4. **单态化爆炸预算**：单态化可能产生大量实例。复用 RFC 0013 §Design 提到的"编译期预算 +
-   缓存"策略;需确认预算阈值与超限时的降级/报错行为。
-5. **过渡期双 IR-JSON 的弃用时点**:旧单层投影何时删,取决于下游消费者迁移进度。
+进入 `review` 前,五个设计问题已给出**决策 + 理由**(共同哲学:执行层薄而确定、内存有界、
+爆炸可控;验证深度分"必做工程级"与"长期可选证明级")。具体阈值与证明深度的落地细节由
+Implementation Plan 对应分片承载。
+
+1. **Core-IR 内存管理模型** → **决策:arena / region-based,不引入 GC。** workflow 执行是
+   有界、阶段化的(agent 状态迁移 / flow 步 / workflow DAG 节点),天然适合按执行 region 分配
+   与整体回收;bounded 容器(RFC 0025)容量编译期已知,布局定长。闭包(RFC 0013 首版无捕获
+   列表)的环境是受限的,其跨阶段存活用**显式 region 提升**处理(把需跨阶段存活的环境分配到
+   更外层 region),而非引入通用 GC。**理由**:GC 与 WASM 线性内存 + 形式化验证的确定性诉求
+   冲突(GC 引入非确定回收时机);arena 的分配/回收确定、可建模、与 bounded 验证子集一致。
+   若未来出现 region 无法覆盖的真实存活场景,再按数据升级到区域推断,不预先过度设计。
+2. **控制流结构化边界** → **决策:全部降为 WASM 结构化 region,不需 relooper。** AHFL 无任意
+   goto;`MatchExpr`(`expr.hpp:289`)降为嵌套 `block`/`br_table`,`?`(RFC 0014 try 算子)与
+   early-return 降为 `block` + `br` 到块末(结构化 early-exit,WASM 原生支持)。AHFL 的控制流
+   本就是结构化的,不会产生不可归约(irreducible)控制流图,故无需 relooper 级算法。**理由**:
+   语言层已无 goto,结构化 lowering 是自然映射;这也与"decreases 可验证终止"一致(结构化
+   循环才好证终止)。
+3. **语义保持验证的深度** → **决策:conformance 差分测试为必做验收门(工程级);CompCert 式
+   形式化 lower-证明为长期可选,本 RFC 只留接口不承诺。** evaluator 退役(KR6.8)严格门控在
+   conformance 全绿(KR6.7),这是必做。是否把"lower pass 保持参考语义"上升为形式化证明,作为
+   AHFL 验证护城河的延伸,列为 accepted 后可独立立项的增强,不阻塞本 RFC 落地。**理由**:
+   工程级差分已足以安全退役 evaluator;形式化证明 ROI 高但工程量大,不该绑死在架构落地的
+   关键路径上。
+4. **单态化爆炸预算** → **决策:复用 RFC 0013 §Design 的"编译期预算 + 缓存"策略,超限
+   fail-closed 报诊断。** 单态化实例按 mangled key(`include/ahfl/compiler/ir/mangling.hpp`)
+   缓存去重;设一个编译期实例数预算(具体阈值由 KR6.4 分片定,可配置),超限时报一条带
+   SourceRange 的可操作诊断(指出爆炸源的泛型调用链),而非静默生成或 OOM。**理由**:
+   fail-closed + 可操作诊断符合 Principle 5;预算可配置留调优空间。
+5. **过渡期双 IR-JSON 的弃用时点** → **决策:旧单层 IR-JSON 在 evaluator 退役(KR6.8)后、
+   所有下游消费者迁移到分层投影(KR6.9)时删除,以 `BREAKING CHANGE:` 标注。** 过渡期两者
+   并存,用 round-trip golden 双守护。**理由**:artifact 消费者迁移是渐进的,弃用时点绑定到
+   一个明确的里程碑(KR6.9 完成)而非悬空。
 
 ## Decision History
 
@@ -357,3 +378,9 @@ IR-JSON（`src/compiler/ir/ir_json.cpp`，RFC 0013 KR5.9 已做到逐字节 roun
   `AHFL-IR → Core-IR` 降级语义 + WASM codegen 值表示/内存模型 + evaluator 退役路径 + 9 片
   Implementation Plan。query 化前端与 IR 单一真相源派生转交
   [RFC 0027](0027-query-frontend-and-ir-ssot.zh.md)。
+- 2026-08-28: Status draft → review(KR6.1 部分)。五个 Open Questions 全部给出决策 + 理由:
+  Core-IR 内存 = arena/region(无 GC);控制流全部降 WASM 结构化 region(无 relooper);
+  语义保持 = conformance 差分必做、形式化证明长期可选;单态化 = 编译期预算 + 缓存 + 超限
+  fail-closed 诊断;双 IR-JSON 弃用绑定 KR6.9 里程碑。填 shepherd/tracking/discussion。
+  **`review → accepted` 待 compiler + runtime owner sign-off**——该步授权一场删除现役
+  evaluator、重写 IR 分层的大型重构,须显式批准。
