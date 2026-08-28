@@ -6,6 +6,7 @@ add_library(ahfl_compiler_ir STATIC
     ir_print.cpp
     ir_json.cpp
     program_view.cpp
+    tower.cpp
     typed_hir_lower.cpp
     verify.cpp
     visitor.cpp
