@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -160,26 +161,26 @@ def test_timeout_normalized_per_provenance() -> None:
     print("test_timeout_normalized_per_provenance")
     # A wasmtime whose --version hangs past the timeout: explicit -> FAIL,
     # detected -> SKIP. Proves TimeoutExpired is normalized, not a traceback.
-    with tempfile.TemporaryDirectory() as td:
-        fake = _write_fake_wasmtime(Path(td), 'sleep 120\n')
-        # Monkeypatch subprocess.run to a tiny timeout so the test is fast but
-        # still exercises the TimeoutExpired -> PreflightError normalization.
-        import subprocess as _sp
+    #
+    # We mock subprocess.run to RAISE TimeoutExpired directly rather than spawn a
+    # real `sleep` — a real sleep launched via bash leaks a grandchild process
+    # that subprocess's timeout kill does not reap, polluting the CI host. The
+    # mock is both faster and leak-free.
+    import subprocess as _sp
 
-        real_run = _sp.run
+    real_run = _sp.run
 
-        def fast_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-            kwargs["timeout"] = 0.5
-            return real_run(cmd, **kwargs)
+    def timeout_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout", 0))
 
-        _sp.run = fast_run  # type: ignore[assignment]
-        try:
-            rc_explicit = wp.preflight(str(fake), _FIXTURE, environ={})
-            rc_detected = wp.preflight(None, _FIXTURE, environ={}, detected_path=str(fake))
-        finally:
-            _sp.run = real_run  # type: ignore[assignment]
-        check(rc_explicit == wp.FAIL_EXIT, f"explicit --version timeout FAILs (got {rc_explicit})")
-        check(rc_detected == wp.SKIP_EXIT, f"detected --version timeout SKIPs (got {rc_detected})")
+    _sp.run = timeout_run  # type: ignore[assignment]
+    try:
+        rc_explicit = wp.preflight("/any/wasmtime", _FIXTURE, environ={})
+        rc_detected = wp.preflight(None, _FIXTURE, environ={}, detected_path="/any/wasmtime")
+    finally:
+        _sp.run = real_run  # type: ignore[assignment]
+    check(rc_explicit == wp.FAIL_EXIT, f"explicit --version timeout FAILs (got {rc_explicit})")
+    check(rc_detected == wp.SKIP_EXIT, f"detected --version timeout SKIPs (got {rc_detected})")
 
 
 def test_oserror_on_run_normalized_per_provenance() -> None:
@@ -211,6 +212,33 @@ def test_good_version_wrong_stdout_fails() -> None:
         check(rc == wp.FAIL_EXIT, f"explicit run without sentinel FAILs (got {rc})")
 
 
+def test_bootstrap_min_version_in_sync() -> None:
+    # Anti-drift: the shell bootstrap's MIN_MAJOR must match the harness's
+    # MIN_WASMTIME major, so the two version floors cannot silently diverge.
+    print("test_bootstrap_min_version_in_sync")
+    import re
+
+    script = (_HERE.parent.parent / "scripts" / "bootstrap-wasmtime.sh").read_text()
+    m = re.search(r"^MIN_MAJOR=(\d+)", script, re.MULTILINE)
+    check(m is not None, "bootstrap script declares MIN_MAJOR")
+    if m is not None:
+        shell_min_major = int(m.group(1))
+        check(
+            shell_min_major == wp.MIN_WASMTIME[0],
+            f"bootstrap MIN_MAJOR ({shell_min_major}) == harness MIN_WASMTIME major "
+            f"({wp.MIN_WASMTIME[0]})",
+        )
+    # The pinned DEFAULT_VERSION must itself satisfy the minimum.
+    dm = re.search(r'^DEFAULT_VERSION="(\d+)\.', script, re.MULTILINE)
+    check(dm is not None, "bootstrap script declares DEFAULT_VERSION")
+    if dm is not None:
+        check(
+            int(dm.group(1)) >= wp.MIN_WASMTIME[0],
+            f"DEFAULT_VERSION major ({dm.group(1)}) >= min ({wp.MIN_WASMTIME[0]})",
+        )
+
+
+
 def test_fake_end_to_end_ok() -> None:
     print("test_fake_end_to_end_ok")
     with tempfile.TemporaryDirectory() as td:
@@ -236,6 +264,7 @@ def main() -> int:
         test_oserror_on_run_normalized_per_provenance,
         test_good_version_bad_run_fails_when_explicit,
         test_good_version_wrong_stdout_fails,
+        test_bootstrap_min_version_in_sync,
         test_fake_end_to_end_ok,
     ]
     for t in tests:
