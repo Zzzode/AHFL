@@ -24,7 +24,13 @@
 这句话对应 **Objective 1**;Objective 2/3/4 把"第二护城河可信"、"已落库能力产品化"、
 "结构化执行 UX 收口"作为支撑方向。**Objective 5** 则把镜头转回编译器本体,把类型系统 soundness、
 前端健壮性、IR/测试保真度打磨到完备可信——前四者已收官(阶段一),Objective 5(阶段二)
-亦已 12/12 收官,RFC 0013 类型系统演进推进到 `implemented`。**全季 35/35 KR 达成。**
+亦已 12/12 收官,RFC 0013 类型系统演进推进到 `implemented`。**阶段一 + 二共 35/35 KR 达成。**
+
+**阶段三(2026-08-28 扩张):从"完备可信"到"业内顶尖"。** 基于架构重构想(RFC 0020 补
+「架构北极星」,RFC 0026 IR 塔+执行模型、RFC 0027 query 前端+IR 单一真相源已 draft),新增
+**Objective 6**(编译器架构升级:三层 IR 塔取代单层、WASM 唯一执行引擎、tree-walking
+evaluator 退役、前端 query 化、消灭 8-location sweep)与 **Objective 7**(backlog §3 已落库
+能力产品化到顶尖)。**Q4 验收口径随之扩张:总盘 54 KR,当前 35 ✅ / 19 ⬜。**
 
 ---
 
@@ -157,14 +163,78 @@ capstone)已全部落库并测试。
 
 ---
 
+## Objective 6 — 编译器架构升级到业内顶尖(RFC 0020/0026/0027)
+
+> Objective 1–5 把 AHFL 做到**完备可信**;本 Objective 把它推向**业内顶尖**(对标
+> Rust/Swift/GHC/Dafny)。根据 2026-08-28 的架构重构想:当前**单层 IR + tree-walking
+> 解释执行**被判定为过渡形态。[RFC 0020](../rfcs/0020-strategic-positioning-embeddable-workflow-dsl.zh.md)
+> 已补「架构北极星」,[RFC 0026](../rfcs/0026-ir-tower-and-execution-model.zh.md)(IR 塔 +
+> 执行模型)与 [RFC 0027](../rfcs/0027-query-frontend-and-ir-ssot.zh.md)(query 前端 + IR
+> 单一真相源)已 draft。本 Objective 把这三篇从设计推到**完整落地**:三层 IR 塔取代单层、
+> WASM 成为唯一执行引擎、tree-walking evaluator 退役、前端 query 化、8-location sweep 消灭。
+> **这会重新打开 Q4 验收口径**:「完整 WASM codegen」从下方「明确排除」表移出(见该表更新)。
+
+### 6A — IR 塔与执行模型(RFC 0026,9 片)
+
+> 三层塔:Typed HIR(诊断,已有)→ AHFL-IR(验证/编排)→ Core-IR(执行)。验证路径吃
+> AHFL-IR、执行路径吃 Core-IR(Dafny 式分叉),根治当前 temporal/contract 与执行节点混装的
+> altitude 冲突。WASM 唯一引擎,不自研 VM;evaluator conformance 验收后原子删除。
+
+| KR | 目标(可验收) | 状态 | 证据 / 待做 |
+|----|----------------|------|-------------|
+| KR6.1 | RFC 0026 → `accepted`:清 4 个 Open Question(Core-IR 内存模型 arena vs 所有权、控制流结构化边界、语义保持验证深度、单态化爆炸预算)+ compiler/runtime owner sign-off | ⬜ | draft 已落库(commit `b8652f58`);待清 Open Questions 并走 review→accepted |
+| KR6.2 | IR 塔骨架落地(RFC 0026 P1):`AHFL-IR` / `Core-IR` 层类型 + 层边界定义,空壳零行为变更,现有 backend 仍消费旧路径 | ⬜ | 新增 `include/ahfl/compiler/ir/` 下 ahfl_ir/core_ir 头;全套件零回归 |
+| KR6.3 | AHFL-IR 净化(P2):验证/视图后端(smv/smt/k8s/terraform/openapi)改为消费 `AHFL-IR`,移出纯执行细节;golden 无回归 | ⬜ | smv.cpp / verification/formal / infra 后端切层 |
+| KR6.4 | lower pass `AHFL-IR → Core-IR`(P3+P4):单态化 + effect→显式 capability-call + temporal/contract/decreases 擦除 + 控制流结构化 + 值表示/内存布局(Bool/Int/Float/Decimal/String/enum/struct/bounded 容器/闭包) | ⬜ | 新 lower pass;Core-IR verifier 捕获"验证节点误入执行层""未单态化残留" |
+| KR6.5 | WASM codegen 编排层(P5):`Core-IR → WASM`,agent transition/flow/workflow + `ahfl_cap` import(复用 RFC 0019 契约);产物在 wasmtime 真正跑起来,conformance 子集绿 | ⬜ | wasm_backend 从 WAT 骨架升级为真 codegen;wasmtime 集成测试 |
+| KR6.6 | WASM codegen 计算层(P6):表达式/算术/控制流/match/闭包全部 lower 到 WASM 指令,产物完全自包含 | ⬜ | 覆盖 Core-IR 全节点 |
+| KR6.7 | conformance 套件(P7):evaluator e2e/golden 迁移为**引擎无关**用例(`.ahfl` + 期望 output),WASM 全绿 + WASM vs evaluator 差分(状态迁移/capability 序列/output)通过 | ⬜ | evaluator 退役的验收门 |
+| KR6.8 | evaluator 退役(P8):conformance 全绿后**原子删除** `src/runtime/evaluator/`,`ahflc run`/REPL/DAP 切 WASM 引擎;`BREAKING CHANGE:` 标注,全套件绿 | ⬜ | 单一执行路径,无 legacy |
+| KR6.9 | 分层 IR-JSON 投影(P9):每层 JSON 投影 + 逐字节 round-trip(沿用 KR5.9 方法),旧单层投影标记弃用 | ⬜ | ir_json.cpp 扩展 |
+
+### 6B — query 前端与 IR 单一真相源(RFC 0027)
+
+> 前端从 pass 流水线重构为 salsa 式 query 图,LSP 增量成为架构自然产物;IR 节点单一真相源
+> 自动派生 visitor/printer/verifier/serializer,把 8-location sweep 从"漏一处=静默 bug"变成
+> "漏一处=编译不过"。两条子线可与 6A 并行。
+
+| KR | 目标(可验收) | 状态 | 证据 / 待做 |
+|----|----------------|------|-------------|
+| KR6.10 | RFC 0027 → `accepted`:清 Open Question(SSOT 选型 X-macro vs 代码生成、query 粒度、cycle 策略、RFC 0016 持久化衔接)+ compiler/tooling owner sign-off | ⬜ | draft 已落库(`b8652f58`) |
+| KR6.11 | 自研 QueryEngine 内核(P1)+ 前端 query 化(P2/P3):input storage + memo + revision 失效 + cycle 策略;parse/hir/resolve/type_of 包成 query,driver 经 QueryEngine 求值,全量结果与旧流水线逐位等价 | ⬜ | 纯库 + 等价回归守护 |
+| KR6.12 | LSP 切 query + 删手工 incremental(P4/P5):hover/completion/signatureHelp 改读 `type_of`/`hir` query(取代文本启发,关闭 backlog §3.3 缺口);`src/tooling/incremental/` 退役,能力并入 QueryEngine,RFC 0016 cache contract 重锚为持久化层 | ⬜ | 真实编辑序列回归;`BREAKING CHANGE:` |
+| KR6.13 | IR 单一真相源(P6/P7/P8):选定机制后,三层 IR 全部节点迁到单一定义,自动派生 visitor/print/verify/json(与手写产物逐字节等价),删除 `expr.hpp:329-344` 的 8-location sweep,加编译期穷尽性门禁(漏节点即编译失败) | ⬜ | 负例:故意漏节点断言编译失败 |
+
+## Objective 7 — 已落库能力产品化到顶尖(backlog §3)
+
+> 依据 `issue-backlog-global-gaps.zh.md` §3.1–§3.7:一批能力**代码已在、但未做到产品级**。
+> 本 Objective 把它们从"handler 可用"推到"生产可信"。注:LSP IDE 化(§3.3)已被 Objective 6B
+> 的 KR6.12 覆盖,不在此重复。
+
+| KR | 目标(可验收) | 状态 | 证据 / 待做 |
+|----|----------------|------|-------------|
+| KR7.1 | Runtime/LLM 生产化(§3.1):hour-scale nightly soak + RSS/allocator 趋势常态观测 + 真实部署环境复跑(从 bounded CI 提升到小时级) | ⬜ | 现有 telemetry/profiling 基础扩展为趋势报告 |
+| KR7.2 | Formal backend 真实性深化(§3.5):BMC/k-induction 从"reachability 原型"做成真 k-induction;counterexample 更深源码映射;真实模型检查器矩阵扩展 | ⬜ | `src/verification/formal/bmc.cpp` + counterexample |
+| KR7.3 | 质量门禁趋势化(§3.7):compile-time / memory-proxy / SMV-size budget → 趋势报告 + release-blocking 阈值;真实 mutation score(非仅 config report) | ⬜ | 现有 `quality-gates` 扩展 |
+| KR7.4 | Pass / target backend 产品化(§3.6):扩大 `-O` 收益指标 + target 验收;K8s/Terraform/OpenAPI 视图后端从骨架到产品级语义 | ⬜ | passes + infra 后端 |
+| KR7.5 | VS Code 真实 Marketplace 发布闭环(§3.3/§四):真实发布演练 + workspace folder extension 序列 + 更深真实编辑序列回归 | ⬜ | tools/vscode + 发布脚本 |
+| KR7.6 | Distributed scheduler 生产语义(§3.1/四):确定性 + restore 语义债务收口,向真实多 region control plane 推进(或明确记为 P3 冻结依赖) | ⬜ | `src/runtime/engine/distributed.cpp` |
+
+---
+
 ## 明确排除(Q4 不做)
 
 | 项 | 原因 |
 |---|---|
-| 执行型 native-vs-WASM 差分 | 需嵌入 WASM 运行时;RFC 0019/0021 明确范围外,触碰"无外部运行时依赖" |
-| Rust/Go/Node 宿主 SDK、完整 WASM codegen | RFC 0021 已声明为后续工作 |
+| Rust/Go/Node 宿主 SDK | RFC 0021 已声明为后续工作(embedding ABI 已定,多语言 SDK 未立项) |
 | RFC 0018 nuXmv library-mode | WebFetch 墙,license 无法核实 |
 | RFC 0004 gRPC transport | L3,已冻结 |
+
+> **2026-08-28 更新**:原「完整 WASM codegen」与「执行型 native-vs-WASM 差分」两项已从本表
+> **移出**——它们现由 **Objective 6**(RFC 0026)正式纳入 Q4 范围:WASM 成为唯一执行引擎、
+> Core-IR → WASM 完整 codegen、evaluator 经 conformance 差分验收后退役。这是 2026-08-28 架构
+> 重构想(RFC 0020 架构北极星)带来的范围扩张,非"无外部运行时依赖"原则的破坏——WASM 由
+> 成熟宿主(wasmtime/浏览器)执行,capability 仍经 `ahfl_cap` 边界回调宿主,战略定位不变。
 
 ---
 
@@ -172,17 +242,19 @@ capstone)已全部落库并测试。
 
 > **阶段一(Objective 1–4)23/23 KR 已 ✅ —— 可嵌入性 / 验证 / 产品化全部收官。**
 > **阶段二(Objective 5)12/12 KR 已 ✅ —— 编译器基座完备性收官。**
+> **阶段三(Objective 6–7)0/19 KR —— 编译器架构升级到顶尖 + 已落库能力产品化,本季新增开放面。**
 > 阶段一最后一个曾被标为环境阻塞的 KR4.5(真实 LLM run 证据)已通过驱动真实本地 llama.cpp
-> 推理引擎解除。当前总盘:**35 个 KR,35 ✅ / 0 🔵 —— Q4 全部收官。** KR5.5(RFC 0013 →
-> `implemented`)已达成:frontmatter `implementing → implemented`(commit `9ac22713`),以
-> §Implementation Plan 阶段验收表 P0–P7 逐条核对为准,全部达成并经 clean-rebuild 全套件
-> 457/457 验证。收官路上补齐的两处 soundness 洞——跨模块 trait dispatch 崩溃(`c52f9730`)
-> 与 impl-level where-clause 静默漏检(`0a6d7898`)——均为 Objective-5 mandate 内的健壮性修复;
-> P5 容器 trait impl 层(`8c4ec5b2`)、P4 `where length<=N` sugar(`f93f6458`)、P6
-> `#![no_prelude]`(`139bce8f`)、first-class `MethodCallExpr`/`TraitDecl`/`ImplDecl` IR 节点
-> 全部落地。明确非验收项(cross-chain 泛型推断、effect 多态、闭包捕获、const 泛型等均为
-> Non-Goal;method-level where 精化与 Set/Map Foldable/Iterable 为安全失败的后续增强)不阻塞
-> `implemented`,与"Report outcomes faithfully"一致。
+> 推理引擎解除。当前总盘:**54 个 KR,35 ✅ / 19 ⬜。** 阶段一+二(35 KR)已收官:KR5.5
+> (RFC 0013 → `implemented`)达成,frontmatter `implementing → implemented`(commit
+> `9ac22713`),以 §Implementation Plan 阶段验收表 P0–P7 逐条核对为准,全部达成并经
+> clean-rebuild 全套件 457/457 验证。收官路上补齐的两处 soundness 洞——跨模块 trait dispatch
+> 崩溃(`c52f9730`)与 impl-level where-clause 静默漏检(`0a6d7898`)——均为 Objective-5
+> mandate 内的健壮性修复;P5 容器 trait impl 层(`8c4ec5b2`)、P4 `where length<=N` sugar
+> (`f93f6458`)、P6 `#![no_prelude]`(`139bce8f`)、first-class `MethodCallExpr`/`TraitDecl`/
+> `ImplDecl` IR 节点全部落地。**阶段三(Objective 6–7,19 KR ⬜)是新的主要开放面:承接
+> 2026-08-28 架构重构想,把 RFC 0020 架构北极星 + RFC 0026/0027(均 draft)推到完整落地——
+> 三层 IR 塔、WASM 唯一执行引擎、evaluator 退役、query 前端、8-location sweep 消灭,以及
+> backlog §3 的产品化缺口收口。**
 
 **阶段一(Objective 1–4)推进顺序 —— 已全部 ✅:**
 
@@ -217,6 +289,19 @@ capstone)已全部落库并测试。
 5. ~~**KR5.6 parser 错误恢复接线**、**KR5.11 结构相等工具 + 冗余 pass**、**KR5.12 opt-IR 时序片段**~~
    ✅ 已完成:错误恢复接入真实 ANTLR 路径;共享 IR 结构相等 + redundancy pass 补强;opt-IR
    时序原子文档化为有界豁免。
+
+**阶段三(Objective 6–7)推进顺序 —— 架构主干先行,产品化并行(0/19 ⬜):**
+
+1. **KR6.1 / KR6.10 先行(设计门)**:RFC 0026 / 0027 从 draft → accepted——清各自 Open
+   Questions + owner sign-off。这是所有实现 KR 的前置(未 accepted 不动代码)。
+2. **6A 主干(KR6.2→6.9,尊重 RFC 0026 分片依赖)**:塔骨架 → AHFL-IR 净化 → lower pass →
+   WASM codegen(编排层 → 计算层) → conformance 套件 → **evaluator 退役** → 分层 IR-JSON。
+   evaluator 删除严格门控在 conformance 全绿(KR6.7)之后。
+3. **6B 并行(KR6.11→6.13)**:QueryEngine 内核 + 前端 query 化 → LSP 切 query + 删手工
+   incremental → IR 单一真相源派生。与 6A 软依赖,可并行推进。
+4. **Objective 7 产品化(KR7.1→7.6)**:runtime soak / formal 真实性 / 质量门禁趋势化 /
+   pass·target 产品化 / VS Code 发布 / distributed 语义。多数可与架构主干并行;LSP IDE 化已
+   并入 KR6.12,不重复。关键路径是 6A(WASM 引擎)——它同时解锁可部署产物与浏览器 Playground。
 
 **环境阻塞 —— 已全部解除:** KR2.5(真实 NuSMV)通过从源码构建 NuSMV 解除;KR4.5(真实 LLM)
 通过驱动真实本地 llama.cpp 引擎解除(不等不可达的外部 public endpoint)。nuXmv 仍不可得
