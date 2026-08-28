@@ -107,6 +107,37 @@ else()
     message(STATUS "AHFL llama-server for optional real-LLM test: not found")
 endif()
 
+# RFC 0026 Objective 6A (KR6.4-pre): optional wasmtime for the WASM toolchain
+# preflight and, later, the Core-IR -> WASM execution tests (KR6.5+). Detection
+# mirrors the solver vars above: explicit cache var, then AHFL_WASMTIME env,
+# then a PATH lookup for `wasmtime`. wasmtime is a TEST/HOST tool only and is
+# never linked into the AHFL core build (see RFC 0019/0021 no-strong-runtime
+# boundary). When absent the preflight skips with a reason; when explicitly
+# configured but broken/too-old it fails (see tests/scripts/wasm_preflight.py).
+set(AHFL_WASMTIME "" CACHE FILEPATH
+    "Path to a wasmtime binary used by optional RFC 0026 WASM execution tests"
+)
+if(NOT AHFL_WASMTIME AND DEFINED ENV{AHFL_WASMTIME})
+    set(AHFL_WASMTIME "$ENV{AHFL_WASMTIME}" CACHE FILEPATH
+        "Path to a wasmtime binary used by optional RFC 0026 WASM execution tests"
+        FORCE
+    )
+endif()
+if(NOT AHFL_WASMTIME)
+    find_program(AHFL_DETECTED_WASMTIME NAMES wasmtime)
+    if(AHFL_DETECTED_WASMTIME)
+        set(AHFL_WASMTIME "${AHFL_DETECTED_WASMTIME}" CACHE FILEPATH
+            "Path to a wasmtime binary used by optional RFC 0026 WASM execution tests"
+            FORCE
+        )
+    endif()
+endif()
+if(AHFL_WASMTIME)
+    message(STATUS "AHFL wasmtime for optional WASM tests: ${AHFL_WASMTIME}")
+else()
+    message(STATUS "AHFL wasmtime for optional WASM tests: not found")
+endif()
+
 option(AHFL_ENABLE_BACKEND_FORMAL "Build formal verification backend (SMV)" ON)
 option(AHFL_ENABLE_BACKEND_INFRA "Build infrastructure backends (WASM, K8s, OpenAPI, Terraform)" ON)
 option(AHFL_ENABLE_BACKEND_PIPELINE "Build pipeline observation backends" ON)

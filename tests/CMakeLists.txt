@@ -10,6 +10,36 @@ add_test(NAME ahfl.architecture.boundaries
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-architecture.py"
 )
 
+# RFC 0026 Objective 6A (KR6.4-pre): WASM toolchain preflight. Three tiers:
+#  1. fixture integrity — the committed preflight.wasm matches its generator
+#     (byte-exact, auditable, no wat2wasm dependency); always runs.
+#  2. decision-logic unit test — version parsing, minimum gate, discovery
+#     precedence, and skip-vs-fail policy via a fake wasmtime shim; always runs,
+#     needs no real wasmtime (this is what keeps the gate honest on CI images
+#     without the toolchain).
+#  3. real-execution smoke — only registered when a wasmtime was discovered
+#     (AHFL_WASMTIME); runs the fixture and asserts exit code + stdout sentinel.
+#     Exit 77 == ctest SKIP for a PATH-discovered-but-unusable toolchain.
+add_test(NAME ahfl.wasm.preflight_fixture_integrity
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/wasm/make_preflight_fixture.py"
+            --check
+)
+
+add_test(NAME ahfl.wasm.preflight_decision_logic
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_preflight_test.py"
+)
+
+if(AHFL_WASMTIME)
+    add_test(NAME ahfl.wasm.preflight_execution
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_preflight.py"
+                "${AHFL_WASMTIME}"
+    )
+    set_tests_properties(ahfl.wasm.preflight_execution PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 add_test(NAME ahfl.runtime.native_grpc_gate
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-native-grpc-gate.py"
 )
