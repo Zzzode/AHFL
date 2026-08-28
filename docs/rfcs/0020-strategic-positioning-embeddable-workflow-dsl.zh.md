@@ -5,7 +5,7 @@ status: "stabilized"
 area: ["process", "language", "runtime", "tooling"]
 stability: "experimental"
 created: "2026-08-25"
-updated: "2026-08-25"
+updated: "2026-08-28"
 authors: ["zzzode"]
 shepherd: "project lead"
 owners:
@@ -140,11 +140,103 @@ import 契约)。AHFL 的对应物是 **capability embedding ABI**,其第一个�
 
 | target/后端 | 定位角色 | 状态 |
 | --- | --- | --- |
-| 原生解释器(`WorkflowRuntime`) | **参考宿主**:语义真值 + 开发/调试(DAP) | 现役唯一执行器 |
-| WASM + WASI | **沙箱宿主**:可移植 + 运行时权限隔离 | ABI 契约已定([RFC 0019](0019-wasm-runtime-model.zh.md)),codegen 待做 |
+| WASM + WASI | **唯一执行引擎**:可移植 + 运行时权限隔离(wasmtime / 浏览器) | ABI 契约已定([RFC 0019](0019-wasm-runtime-model.zh.md)),codegen 待做 |
+| 原生 tree-walking evaluator(`WorkflowRuntime`) | **过渡期唯一执行器**:WASM codegen 验收通过后原子删除(见下「架构北极星」) | 现役,计划退役 |
 | SMV / SMT-BMC | **验证产物**:证明契约([RFC 0017](0017-bmc-contract-semantics.zh.md)) | stabilized / implemented |
 | K8s CRD / Terraform / OpenAPI | **部署视图**:把 workflow 结构投影为运维配置 | 结构骨架,深度待补 |
 | IR-JSON / NativeJson / ExecutionPlan | **交换格式**:交给下游宿主/工具 | 现役 |
+
+### 架构北极星:定位如何在编译器结构里落地
+
+前面几节确立了**定位**(可嵌入、可验证、多宿主、计算留宿主);本节确立**架构北极星**
+——把该定位映射为编译器内部结构的目标形态,作为后续实现型架构 RFC(IR 塔与执行模型、
+query 化前端)对齐的判据。它回答的是"用什么结构才能既可验证、又能高效嵌入多宿主",
+而非任何具体字节格式或代码。
+
+**这是一次自上而下的重构想:当前的单层 IR 与 tree-walking 执行器被显式判定为过渡形态。**
+参照系(按 `AGENTS.md` 优先级):Rust(HIR→THIR→MIR→LLVM 的 IR 塔与单态化 MIR)、
+Swift(SIL 的 raw/canonical 分相)、GHC(Core→STG→Cmm 的极小核心)、Dafny(验证路径
+与执行路径分叉)、CompCert(逐层 lowering 的语义保持)。
+
+#### 北极星一:IR 塔(purpose-built IR tower),取代当前单层 IR
+
+顶尖编译器没有单层 IR。AHFL 目标形态是三层塔,每层只服务一个"海拔(altitude)":
+
+```mermaid
+flowchart TD
+    Src["AHFL source"]
+    Src --> THIR["Typed HIR — 诊断层: 源码保真 / 全类型 / 泛型未单态化 (已有)"]
+    THIR --> AIR["AHFL-IR — 验证 / 编排层: agent·flow·workflow·contract·effect·temporal·decreases 皆一等公民"]
+    AIR --> VER["验证路径: SMV / SMT-BMC / k-induction (消费 AHFL-IR)"]
+    AIR --> CORE["Core-IR — 执行层: 单态化 / effect 降为显式 capability-call / temporal·contract 擦除 / 结构化控制流对齐 WASM / ADT·闭包显式内存表示"]
+    CORE --> EXEC["执行路径: WASM codegen (消费 Core-IR)"]
+```
+
+- **Typed HIR(诊断层)**:源码保真、全类型、泛型未单态化;所有面向用户的诊断住这层
+  (已存在,`include/ahfl/compiler/semantics/typed_hir.hpp` 一线)。
+- **AHFL-IR(验证 / 编排层)**:AHFL 的独特价值层。agent 状态机、flow、workflow DAG、
+  contract、effect、temporal 算子、decreases 度量都是**一等公民**。SMV/SMT/BMC 验证后端
+  消费这一层。当前 `ir::Program` 大致对应此层的职责,但混入了执行细节——需净化。
+- **Core-IR(执行层)**:单态化后、effect 降为显式 capability-call、temporal/contract
+  **擦除**(验证已在上层完成)、控制流结构化以对齐 WASM 的 block/loop region、ADT 与闭包
+  拥有显式内存表示。执行后端(WASM codegen)与调试消费这一层。
+- **路径分叉(Dafny 式)**:**验证路径消费 AHFL-IR,执行路径消费 Core-IR。** temporal /
+  contract 不污染执行层;单态化 / 内存布局不污染验证层。这解决了当前单层 IR 的
+  altitude 冲突——今天 temporal 节点(只有验证关心)与执行节点挤在同一个 variant 里,
+  逼每个后端"处理或显式拒绝"自己根本不消费的节点。
+
+#### 北极星二:执行模型——WASM 是唯一执行引擎,不自研 VM
+
+- **WASM(+WASI)是唯一执行引擎**:消费 Core-IR,capability 调用降为 `ahfl_cap` import
+  (复用 [RFC 0019](0019-wasm-runtime-model.zh.md) 已定契约),用成熟宿主(wasmtime /
+  浏览器)执行。**不自研虚拟机**——WASM 生态(引擎、沙箱、调试、组件模型)比任何自研
+  字节码 VM 成熟,自研 VM 是"用数倍工作量换更差结果"。这与"多宿主"定位一致:WASM 是
+  可移植沙箱宿主,而 embedding ABI 仍允许原生宿主经 C ABI 承载 capability。
+- **当前 tree-walking evaluator 是过渡形态,不是最终架构**:它现役、是唯一执行器,但一旦
+  WASM codegen(Core-IR → 真 WASM)落地并通过 conformance 验收,**tree-walking evaluator
+  被原子删除,一行不留**。AHFL 只有一家实现、只需一条执行语义与一条执行路径;长期共存
+  第二个执行引擎既非正统,也违反 `AGENTS.md` Principle 1(禁止"just in case"死代码)。
+  codegen 正确性由 conformance 测试套件 + AHFL 自身的语义保持验证(CompCert 式,长期
+  可选)保证,**而非**靠养一个慢解释器做差分基准。退役是**目标**,只是不在替代品就绪前
+  先删。
+
+#### 北极星三:backend / target 分类学(各消费 IR 塔的哪一层)
+
+| 类别 | 成员 | 消费层 | 角色 |
+| --- | --- | --- | --- |
+| **执行后端** | WASM codegen | Core-IR | 唯一执行引擎(生产 + 开发内循环) |
+| **验证后端** | SMV / SMT-BMC / k-induction | AHFL-IR | 证明契约 / 可验证子集 |
+| **视图后端** | K8s CRD / Terraform / OpenAPI | AHFL-IR(编排结构投影) | 部署 / 接口视图,非执行 |
+| **交换格式** | IR-JSON / NativeJson / ExecutionPlan | 对应层的机器可读投影 | 下游宿主 / 工具消费 |
+
+分类学的判据:**执行后端消费 Core-IR(擦除了验证专属构造),验证与视图后端消费 AHFL-IR
+(保留编排 / 契约 / temporal 语义)。** 这让"该后端消费哪一层"成为架构约束,而非惯例。
+
+#### 北极星四:query 化前端 + IR 单一真相源
+
+- **query-based / demand-driven 前端(salsa 式)**:顶尖 IDE(rust-analyzer / Roslyn /
+  rustc)的前端都是**带缓存、按需求值、自动失效**的 query 图,而非"从头跑到尾的 pass
+  流水线"。AHFL 目标是把前端建成 query 系统,使 **LSP 的增量、缓存、亚秒级响应成为架构
+  自然产物**,而不是像今天 `src/tooling/incremental/` 那样在流水线外**手工模拟**依赖图与
+  失效。[RFC 0016](0016-incremental-cache-contract.zh.md) 的 cache contract 是这条路上
+  已落地的一块,但目标是让整个前端都 query 化。
+- **IR 节点单一真相源(single source of truth)**:当前每新增一个 IR 节点要手改约 8 处
+  (analysis / ir_print / verify / ir_json / opt_lower / visitor / typed_hir_lower /
+  assurance),漏一处即静默 bug——这是**设计缺陷**,不是纪律问题。目标形态:IR 节点用
+  一个声明式定义(宏 / 内建 DSL,对标 Rust derive 宏)一次定义,**自动派生** visitor /
+  printer / verifier / serializer。**不引入 MLIR**:对 AHFL 体量,MLIR 属过度工程;当前
+  的 `std::variant` + flat arena + hash-consing 存储策略是对的(符合 `AGENTS.md`
+  Principle 2/3/4),缺的只是**分层**与**单一真相源派生**。
+
+#### 与既有定位的关系(不改北极星,只补"如何实现")
+
+本节**不改变** RFC 0020 既有定位(可嵌入 / 可验证 / 多宿主 / 计算留宿主 / 拒绝通用
+语言);它给该定位补上"用什么编译器结构去实现它"。三层 IR 塔让**可验证**(AHFL-IR 喂
+验证后端)与**可嵌入高效执行**(Core-IR 喂 WASM)各得其所;WASM 唯一引擎 + embedding
+ABI 让**多宿主**落地而不牺牲执行语义唯一性;query 前端让**工具链**达到 rust-analyzer 档。
+具体设计由后续实现型架构 RFC 承载:**RFC 0026(IR 塔 + 执行模型,含 WASM codegen 与
+evaluator 退役路径)**、**RFC 0027(query 化前端 + IR 单一真相源)**。本节是它们的北极星
+判据来源。
 
 ## User Impact
 
@@ -283,3 +375,14 @@ import 契约)。AHFL 的对应物是 **capability embedding ABI**,其第一个�
   §1.5)与 `docs/spec`(core-language §1.3)稳定表述,且项目路线图
   (`docs/plans/project-status.zh.md` 项目概览 + 路线图组织轴)以本定位为组织轴,后续
   RFC(0021)据此开题并已开始实现(slice 1 落库)。Rollout 全部条件满足。
+- 2026-08-28: 新增 Design 子节「架构北极星:定位如何在编译器结构里落地」(additive,
+  定位陈述与 A/B 型边界不变,故 status 保持 stabilized)。确立四条架构北极星:
+  (1) 三层 **IR 塔**(Typed HIR 诊断层 → AHFL-IR 验证/编排层 → Core-IR 执行层)取代当前
+  单层 IR,验证路径消费 AHFL-IR、执行路径消费 Core-IR(Dafny 式分叉);
+  (2) **WASM 是唯一执行引擎**(消费 Core-IR + `ahfl_cap` import),不自研 VM,当前
+  tree-walking evaluator 判定为过渡形态、WASM codegen 验收通过后原子删除(不留 legacy);
+  (3) **backend/target 分类学**(执行/验证/视图/交换格式各消费 IR 塔的哪一层);
+  (4) **query 化前端 + IR 单一真相源**(消灭 8-location sweep,LSP 增量成为架构自然产物)。
+  同步更新「现有 target/后端归位」表:WASM 从「沙箱宿主」提级为「唯一执行引擎」,原生
+  evaluator 归位为「过渡期唯一执行器,计划退役」。完整设计由后续 RFC 0026(IR 塔+执行
+  模型)/ RFC 0027(query 前端)承载;本节是其北极星判据来源。
