@@ -10,6 +10,7 @@
 #include <optional>
 #include <cctype>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -148,6 +149,22 @@ bool callee_is(const std::string &callee, const std::string &name) {
                               callee.compare(callee.size() - name.size(), name.size(), name) == 0);
 }
 
+// The ANF/structure flow tests below exercise capability hoisting, branch
+// regions, and goto — but their sample programs also contain member
+// projections (`input.x`, `ctx.y`), which this slice deliberately fails closed
+// on (typed field-index resolution is a deferred sub-slice). So these tests
+// tolerate `core.UNLOWERED_FIELD_PROJECTION` diagnostics while asserting NO
+// diagnostic represents a dropped effect / unresolved capability / lost
+// statement — the properties under test must hold regardless of the deferral.
+bool only_field_projection_diagnostics(const ir::core::CoreLowerResult &result) {
+    for (const auto &d : result.diagnostics) {
+        if (d.code != "core.UNLOWERED_FIELD_PROJECTION") {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 TEST_CASE("lower_ahfl_to_core lowers an agent state machine into Core-IR") {
@@ -256,7 +273,7 @@ TEST_CASE("flow lowering: capability call inside a branch is preserved (P0-2 mut
     REQUIRE(ahfl_ir.has_value());
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
-    CHECK(result.ok());
+    CHECK(only_field_projection_diagnostics(result));
     REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
     REQUIRE(flow.states.size() == 3);
@@ -301,7 +318,8 @@ TEST_CASE("flow lowering: goto resolves to a typed CoreStateId and policy is pre
     const auto ahfl_ir = lower_source_to_ahfl_ir("payflow", kFlowSource);
     REQUIRE(ahfl_ir.has_value());
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
-    REQUIRE(result.ok());
+    CHECK(only_field_projection_diagnostics(result));
+    REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
 
     const ir::core::CoreFlowState *work = nullptr;
@@ -391,7 +409,7 @@ TEST_CASE("flow lowering: nested capability call inside a constructor is not dro
     REQUIRE(ahfl_ir.has_value());
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
-    CHECK(result.ok());
+    CHECK(only_field_projection_diagnostics(result));
     REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
 
@@ -556,18 +574,287 @@ std::vector<std::string> read_enum_variant_order(const std::string &path,
 
 } // namespace
 
-TEST_CASE("builtin Option/Result variant order matches stdlib declaration order") {
-    // The lowerer's builtin variant table (Option -> [Some, None], Result ->
-    // [Ok, Err]) must mirror the sysroot declaration order. If someone reorders
-    // std/option.ahfl or std/result.ahfl, this test fails, forcing the table to
-    // be updated in lockstep (the drift Codex flagged).
-    const auto option_variants = read_enum_variant_order("std/option.ahfl", "Option");
-    REQUIRE(option_variants.size() >= 2);
-    CHECK(option_variants[0] == "Some"); // builtin table: Some=0
-    CHECK(option_variants[1] == "None"); // builtin table: None=1
+TEST_CASE("builtin variant table matches stdlib declaration order (production vs sysroot)") {
+    // This reads the ACTUAL production builtin table (builtin_enum_table()) and
+    // asserts each descriptor's variant order equals the sysroot declaration
+    // order parsed from std/*.ahfl. Reordering EITHER the production table OR
+    // the stdlib source now fails this test — closing the drift Codex flagged
+    // (the previous version only checked the source against a hard-coded copy).
+    const auto &table = ir::core::builtin_enum_table();
+    REQUIRE_FALSE(table.empty());
+    for (const auto &desc : table) {
+        const std::string name(desc.name);
+        const std::string path = "std/" + [&] {
+            std::string lower;
+            for (char c : name) {
+                lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            }
+            return lower;
+        }() + ".ahfl";
+        const auto sysroot_order = read_enum_variant_order(path, name);
+        REQUIRE(sysroot_order.size() >= desc.variants.size());
+        for (std::size_t i = 0; i < desc.variants.size(); ++i) {
+            INFO("enum " << name << " variant #" << i);
+            CHECK(std::string(desc.variants[i]) == sysroot_order[i]);
+        }
+    }
+}
 
-    const auto result_variants = read_enum_variant_order("std/result.ahfl", "Result");
-    REQUIRE(result_variants.size() >= 2);
-    CHECK(result_variants[0] == "Ok");  // builtin table: Ok=0
-    CHECK(result_variants[1] == "Err"); // builtin table: Err=1
+TEST_CASE("builtin enum variant resolves via the builtin path by symbol identity") {
+    // A hand-built AhflIr that constructs std::option::Option::Some(<int>) with
+    // a callee_ref to the Option ENUM symbol (as the front end emits). No user
+    // Option is declared, so resolution must go through the builtin table — and
+    // by SYMBOL IDENTITY / canonical name, not by unqualified-name hijack.
+    ir::AhflIr program;
+
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+
+    // Option::Some(0) as a variant-constructor CallExpr (callee_ref -> Enum).
+    ir::ExprRef arg = program.expr_arena.make(ir::IntegerLiteralExpr{"0"});
+    ir::CallExpr call;
+    call.callee = "std::option::Option::Some";
+    call.callee_ref.kind = ir::SymbolRefKind::Type; // the front end resolves to the Enum symbol
+    call.callee_ref.canonical_name = "std::option::Option";
+    call.arguments.push_back(arg);
+    ir::ExprRef call_ref = program.expr_arena.make(std::move(call));
+
+    auto stmt = std::make_unique<ir::Statement>();
+    stmt->node = ir::ExprStatement{call_ref};
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    handler.body.statements.push_back(std::move(stmt));
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    CHECK(result.ok());
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow_out = result.program.flows[0];
+
+    bool found_some = false;
+    for (const auto &expr : flow_out.exprs) {
+        if (std::holds_alternative<ir::core::CoreConstructExpr>(expr.node)) {
+            const auto &ctor = std::get<ir::core::CoreConstructExpr>(expr.node);
+            if (ctor.is_enum_variant && ctor.variant_name == "Some") {
+                found_some = true;
+                CHECK(ctor.variant_resolved);
+                CHECK(ctor.variant == 0u); // Some=0 in the builtin table
+                // The owning type id points at the builtin Option in the type table.
+                REQUIRE(ctor.type_id.value < result.program.types.size());
+                CHECK(result.program.types[ctor.type_id.value].name == "std::option::Option");
+            }
+        }
+    }
+    CHECK(found_some);
+}
+
+// ==========================================================================
+// Fail-closed executable completeness + scope + target (Codex re-review).
+// ==========================================================================
+
+// Build a minimal flow whose single handler statement is provided by `make_stmt`.
+ir::AhflIr make_single_handler_flow(
+    const std::function<ir::StatementPtr(ir::AhflIr &)> &make_stmt) {
+    ir::AhflIr program;
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    handler.body.statements.push_back(make_stmt(program));
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+    return program;
+}
+
+TEST_CASE("unsupported statement makes the program non-executable (P0-1)") {
+    // An `assert(...)` is not yet lowered; dropping it would turn a failing
+    // program into a no-op, so lowering must FAIL closed (Error), not Warning.
+    const auto program = make_single_handler_flow([](ir::AhflIr &p) {
+        ir::ExprRef cond = p.expr_arena.make(ir::BoolLiteralExpr{false});
+        auto stmt = std::make_unique<ir::Statement>();
+        stmt->node = ir::AssertStatement{cond, ir::ExprRef{}};
+        stmt->source_range = ahfl::SourceRange{1, 2};
+        return stmt;
+    });
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    REQUIRE_FALSE(result.diagnostics.empty());
+    CHECK(result.diagnostics[0].code == "core.UNLOWERED_STATEMENT");
+    CHECK(result.diagnostics[0].severity == ir::core::CoreDiagnosticSeverity::Error);
+}
+
+TEST_CASE("branch-local let bindings do not leak across branches or past the if (P0-2)") {
+    // let x = 1; if true { let x = 2; } else { let x = 3; } return x;
+    // The returned value must be the OUTER x (value id from `let x = 1`), not
+    // the else-branch's shadow. We assert the return's value id equals the
+    // outer binding's, proving branch scopes are snapshot/restored.
+    ir::AhflIr program;
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+
+    ir::StateHandler handler;
+    handler.state_name = "S";
+
+    const auto make_let = [&](const std::string &name, const std::string &val) {
+        ir::ExprRef init = program.expr_arena.make(ir::IntegerLiteralExpr{val});
+        auto s = std::make_unique<ir::Statement>();
+        ir::LetStatement let;
+        let.name = name;
+        let.initializer = init;
+        s->node = std::move(let);
+        return s;
+    };
+    // let x = 1;
+    handler.body.statements.push_back(make_let("x", "1"));
+    // if true { let x = 2; } else { let x = 3; }
+    {
+        ir::ExprRef cond = program.expr_arena.make(ir::BoolLiteralExpr{true});
+        ir::IfStatement if_stmt;
+        if_stmt.condition = cond;
+        auto then_block = std::make_unique<ir::Block>();
+        then_block->statements.push_back(make_let("x", "2"));
+        auto else_block = std::make_unique<ir::Block>();
+        else_block->statements.push_back(make_let("x", "3"));
+        if_stmt.then_block = std::move(then_block);
+        if_stmt.else_block = std::move(else_block);
+        auto s = std::make_unique<ir::Statement>();
+        s->node = std::move(if_stmt);
+        handler.body.statements.push_back(std::move(s));
+    }
+    // return x;
+    {
+        ir::PathExpr px;
+        px.path.root_name = "x";
+        ir::ExprRef xref = program.expr_arena.make(std::move(px));
+        auto s = std::make_unique<ir::Statement>();
+        s->node = ir::ReturnStatement{xref};
+        handler.body.statements.push_back(std::move(s));
+    }
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    REQUIRE(result.ok());
+    const auto &body = result.program.flows[0].states[0].body;
+
+    // Outer `let x = 1` is the FIRST let statement; capture its result value id.
+    std::optional<ir::core::CoreValueId> outer_x;
+    for (const auto &stmt : body.statements) {
+        if (std::holds_alternative<ir::core::CoreLetStmt>(stmt.node)) {
+            outer_x = std::get<ir::core::CoreLetStmt>(stmt.node).result;
+            break;
+        }
+    }
+    REQUIRE(outer_x.has_value());
+
+    // The return reads `x`; after the if, the local `x` must still be the outer
+    // binding, so its lowered value-ref chain must originate from outer_x —
+    // never the else-branch's `3`. We check the return statement's value id
+    // traces to a pure expr that references outer_x (a bare local ref returns
+    // the binding's value id directly).
+    std::optional<ir::core::CoreValueId> returned;
+    for (const auto &stmt : body.statements) {
+        if (std::holds_alternative<ir::core::CoreReturnStmt>(stmt.node)) {
+            const auto &r = std::get<ir::core::CoreReturnStmt>(stmt.node);
+            REQUIRE(r.has_value);
+            returned = r.value;
+        }
+    }
+    REQUIRE(returned.has_value());
+    CHECK(*returned == *outer_x); // returns OUTER x, branch shadows discarded
+}
+
+TEST_CASE("flow with an unresolved target agent fails closed (P1-1)") {
+    ir::AhflIr program;
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::Ghost";
+    flow.target_ref.local_name = "Ghost";
+    flow.target_ref.id = 404;
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    REQUIRE_FALSE(result.diagnostics.empty());
+    CHECK(result.diagnostics[0].code == "core.UNRESOLVED_FLOW_TARGET");
+}
+
+TEST_CASE("flow handler naming an unknown state fails closed, never defaults to state 0 (P1-1)") {
+    ir::AhflIr program;
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"Init"};
+    agent.initial_state = "Init";
+    agent.final_states = {"Init"};
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+    ir::StateHandler handler;
+    handler.state_name = "Nonexistent"; // not a declared state
+    handler.source_range = ahfl::SourceRange{5, 9};
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    REQUIRE_FALSE(result.diagnostics.empty());
+    CHECK(result.diagnostics[0].code == "core.UNKNOWN_HANDLER_STATE");
+    CHECK(result.diagnostics[0].source_range.has_value());
+    // The bogus handler was NOT lowered onto state 0.
+    REQUIRE(result.program.flows.size() == 1);
+    CHECK(result.program.flows[0].states.empty());
 }

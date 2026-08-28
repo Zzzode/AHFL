@@ -18,6 +18,7 @@
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/mangling.hpp"
 
+#include <cctype>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -70,6 +71,17 @@ bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
            a.exprs == b.exprs && a.value_count == b.value_count && a.states == b.states;
 }
 
+// The production builtin variant table — the SINGLE SOURCE OF TRUTH for the
+// well-known stdlib enum variant order. Both the lowerer (below) and the public
+// `builtin_enum_table()` (for the sync test) read this.
+const std::vector<BuiltinEnumDescriptor> &builtin_enum_table() {
+    static const std::vector<BuiltinEnumDescriptor> table = {
+        {"Option", {"Some", "None"}}, // std/option.ahfl: Some(T) then None
+        {"Result", {"Ok", "Err"}},    // std/result.ahfl: Ok(T) then Err(E)
+    };
+    return table;
+}
+
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -111,56 +123,126 @@ namespace {
 // order (std/option.ahfl: `Some(T)` then `None`), guarded by a sync test.
 // ---------------------------------------------------------------------------
 
-struct StructInfo {
-    std::vector<std::string> field_names; // index == CoreFieldId
-};
-struct EnumInfo {
-    std::vector<std::string> variant_names; // index == CoreVariantId
+struct BuiltinEnum {
+    std::string name;                    // unqualified enum name
+    std::vector<std::string> variants;   // declaration order
 };
 
-/// Builtin variant order for well-known stdlib enums. Kept in one place so the
-/// sync test can assert it matches the sysroot declaration order.
-[[nodiscard]] const std::unordered_map<std::string, std::vector<std::string>> &
-builtin_enum_variants() {
-    static const std::unordered_map<std::string, std::vector<std::string>> table = {
-        // std/option.ahfl declares `Some(T)` before `None`.
-        {"Option", {"Some", "None"}},
-        // std/result.ahfl declares `Ok(T)` before `Err(E)`.
-        {"Result", {"Ok", "Err"}},
-    };
+/// The lowerer's view of the builtin enums, derived from the single public SSOT
+/// `builtin_enum_table()` (which the sync test also reads). No second hand-
+/// written order to drift.
+[[nodiscard]] const std::vector<BuiltinEnum> &builtin_enum_descriptors() {
+    static const std::vector<BuiltinEnum> table = [] {
+        std::vector<BuiltinEnum> out;
+        for (const BuiltinEnumDescriptor &d : builtin_enum_table()) {
+            BuiltinEnum e;
+            e.name = std::string(d.name);
+            for (std::string_view v : d.variants) {
+                e.variants.emplace_back(v);
+            }
+            out.push_back(std::move(e));
+        }
+        return out;
+    }();
     return table;
 }
 
+// ---------------------------------------------------------------------------
+// Type environment: nominal name/identity -> CoreTypeId + typed field/variant
+// indices (Principle 2). Builds the CoreProgram::types table.
+//
+// Resolution is FULL-QUALIFIED by canonical name (or symbol id) — we do NOT
+// index by unqualified name (which let a user `Option` hijack `std::option`),
+// nor blindly strip module paths. Well-known stdlib enums are registered as
+// synthetic types so a program using `std::option::Option::Some` resolves even
+// when the sysroot EnumDecl is not inlined.
+// ---------------------------------------------------------------------------
 class TypeEnv {
   public:
+    explicit TypeEnv(std::vector<CoreTypeDecl> &types) : types_(types) {}
+
     void add_struct(const StructDecl &decl) {
-        StructInfo info;
-        info.field_names.reserve(decl.fields.size());
+        CoreTypeDecl t;
+        t.kind = CoreTypeDecl::Kind::Struct;
+        t.name = decl.symbol_ref.canonical_name.empty() ? decl.name
+                                                        : decl.symbol_ref.canonical_name;
         for (const FieldDecl &f : decl.fields) {
-            info.field_names.push_back(f.name);
+            t.fields.push_back(f.name);
         }
-        structs_.emplace(decl.name, std::move(info));
-        // Also index by last path segment (unqualified) for convenience.
-        structs_.emplace(unqualified(decl.name), structs_.at(decl.name));
+        register_type(std::move(t), decl.symbol_ref);
     }
     void add_enum(const EnumDecl &decl) {
-        EnumInfo info;
-        info.variant_names.reserve(decl.variants.size());
+        CoreTypeDecl t;
+        t.kind = CoreTypeDecl::Kind::Enum;
+        t.name = decl.symbol_ref.canonical_name.empty() ? decl.name
+                                                       : decl.symbol_ref.canonical_name;
         for (const EnumVariantDecl &v : decl.variants) {
-            info.variant_names.push_back(v.name);
+            t.variants.push_back(v.name);
         }
-        enums_.emplace(decl.name, std::move(info));
-        enums_.emplace(unqualified(decl.name), enums_.at(decl.name));
+        register_type(std::move(t), decl.symbol_ref);
     }
 
-    /// Resolve a struct field name to its declaration-order index.
-    [[nodiscard]] std::optional<std::uint32_t> field_index(const std::string &type_name,
-                                                           const std::string &field) const {
-        const auto it = structs_.find(type_name);
-        if (it == structs_.end()) {
+    /// Register the well-known stdlib enums as synthetic types (only if a user
+    /// declaration has not already claimed the canonical name).
+    void add_builtins() {
+        for (const BuiltinEnum &b : builtin_enum_descriptors()) {
+            const std::string canonical = "std::" + lower_ascii(b.name) + "::" + b.name;
+            if (by_name_.count(canonical) != 0) {
+                continue; // a real declaration wins
+            }
+            CoreTypeDecl t;
+            t.kind = CoreTypeDecl::Kind::Enum;
+            t.name = canonical;
+            t.variants = b.variants;
+            const auto id = CoreTypeId{static_cast<std::uint32_t>(types_.size())};
+            by_name_.emplace(canonical, id);
+            types_.push_back(std::move(t));
+        }
+    }
+
+    /// Resolve a nominal type by resolved symbol identity, then canonical name.
+    [[nodiscard]] std::optional<CoreTypeId> resolve(const SymbolRef &ref) const {
+        if (ref.id.has_value()) {
+            if (const auto it = by_id_.find(*ref.id); it != by_id_.end()) {
+                return it->second;
+            }
+        }
+        if (!ref.canonical_name.empty()) {
+            if (const auto it = by_name_.find(ref.canonical_name); it != by_name_.end()) {
+                return it->second;
+            }
+        }
+        return std::nullopt;
+    }
+    [[nodiscard]] std::optional<CoreTypeId> resolve_by_name(const std::string &canonical) const {
+        if (const auto it = by_name_.find(canonical); it != by_name_.end()) {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+
+    /// Variant index within a resolved enum type.
+    [[nodiscard]] std::optional<std::uint32_t> variant_index(CoreTypeId type,
+                                                             const std::string &variant) const {
+        if (type.value >= types_.size()) {
             return std::nullopt;
         }
-        const auto &names = it->second.field_names;
+        const auto &names = types_[type.value].variants;
+        for (std::uint32_t i = 0; i < names.size(); ++i) {
+            if (names[i] == variant) {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+
+    /// Struct field index within a resolved struct type.
+    [[nodiscard]] std::optional<std::uint32_t> field_index(CoreTypeId type,
+                                                           const std::string &field) const {
+        if (type.value >= types_.size()) {
+            return std::nullopt;
+        }
+        const auto &names = types_[type.value].fields;
         for (std::uint32_t i = 0; i < names.size(); ++i) {
             if (names[i] == field) {
                 return i;
@@ -169,38 +251,26 @@ class TypeEnv {
         return std::nullopt;
     }
 
-    /// Resolve an enum variant name to its declaration-order index (user enum
-    /// first, then the builtin table for well-known stdlib enums).
-    [[nodiscard]] std::optional<std::uint32_t> variant_index(const std::string &enum_name,
-                                                             const std::string &variant) const {
-        const auto lookup = [&variant](const std::vector<std::string> &names)
-            -> std::optional<std::uint32_t> {
-            for (std::uint32_t i = 0; i < names.size(); ++i) {
-                if (names[i] == variant) {
-                    return i;
-                }
-            }
-            return std::nullopt;
-        };
-        if (const auto it = enums_.find(enum_name); it != enums_.end()) {
-            if (auto idx = lookup(it->second.variant_names)) {
-                return idx;
-            }
-        }
-        const auto &builtin = builtin_enum_variants();
-        if (const auto it = builtin.find(unqualified(enum_name)); it != builtin.end()) {
-            return lookup(it->second);
-        }
-        return std::nullopt;
-    }
-
   private:
-    [[nodiscard]] static std::string unqualified(const std::string &name) {
-        const auto pos = name.rfind("::");
-        return pos == std::string::npos ? name : name.substr(pos + 2);
+    void register_type(CoreTypeDecl t, const SymbolRef &ref) {
+        const auto id = CoreTypeId{static_cast<std::uint32_t>(types_.size())};
+        if (ref.id.has_value()) {
+            by_id_.emplace(*ref.id, id);
+        }
+        if (!t.name.empty()) {
+            by_name_.emplace(t.name, id);
+        }
+        types_.push_back(std::move(t));
     }
-    std::unordered_map<std::string, StructInfo> structs_;
-    std::unordered_map<std::string, EnumInfo> enums_;
+    [[nodiscard]] static std::string lower_ascii(std::string s) {
+        for (char &c : s) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return s;
+    }
+    std::vector<CoreTypeDecl> &types_;
+    std::unordered_map<std::size_t, CoreTypeId> by_id_;
+    std::unordered_map<std::string, CoreTypeId> by_name_;
 };
 
 // ---------------------------------------------------------------------------
@@ -448,15 +518,18 @@ class FlowLowerer {
                        [&](const IfStatement &s) { lower_if(s, stmt.source_range, region); },
                        [&](const GotoStatement &s) { lower_goto(s, stmt.source_range, region); },
                        [&](const ReturnStatement &s) { lower_return(s, stmt.source_range, region); },
-                       // Statements without an execution-layer form in this slice
-                       // (if-let / assert / requires / unwrap / unreachable) are
-                       // deferred; a diagnostic keeps the omission observable but
-                       // is a WARNING (they carry no capability effect to lose).
+                       // Statements without an execution-layer form in this
+                       // slice (if-let / assert / requires / unwrap /
+                       // unreachable) are DEFERRED. Because dropping them would
+                       // change execution behaviour (e.g. `assert(false)` must
+                       // not silently become a no-op) and no Core-IR verifier
+                       // exists yet, this is an ERROR that marks the program
+                       // non-executable — never a silent Warning drop.
                        [&](const auto &) {
-                           diags_.push_back(CoreLowerDiagnostic{
-                               CoreDiagnosticSeverity::Warning, "core.UNLOWERED_STATEMENT",
-                               "statement kind not yet lowered to Core-IR (deferred sub-slice)",
-                               stmt.source_range});
+                           error("core.UNLOWERED_STATEMENT",
+                                 "statement kind is not yet lowered to Core-IR; the "
+                                 "program cannot be executed until this slice lands",
+                                 stmt.source_range);
                        },
                    },
                    stmt.node);
@@ -474,6 +547,15 @@ class FlowLowerer {
         place.root = map_path_root(s.target.root_kind, s.target.root_name);
         place.root_name = s.target.root_name;
         place.members = s.target.members;
+        // A store into a member PROJECTION (`ctx.field = …`) needs the same
+        // typed CoreFieldId resolution as a member read (deferred sub-slice).
+        // Fail closed until it lands rather than emit an unexecutable place.
+        if (!s.target.members.empty()) {
+            error("core.UNLOWERED_FIELD_PROJECTION",
+                  "assignment target '" + s.target.root_name + ".…' cannot yet be resolved to a "
+                  "typed field index (deferred sub-slice); the program is not executable",
+                  range);
+        }
         region.statements.push_back(
             CoreStmt{CoreStoreStmt{std::move(place), value}, std::move(range)});
     }
@@ -483,15 +565,21 @@ class FlowLowerer {
         CoreIfStmt node;
         node.condition = cond;
         // Each branch is its own region: mutual exclusion is preserved (the two
-        // branches are NOT appended to one flat list).
+        // branches are NOT appended to one flat list). Each branch is lexically
+        // scoped: it starts from the SAME outer local snapshot and its
+        // branch-local `let` bindings are discarded afterwards, so a binding in
+        // one branch cannot leak into the other branch or past the `if`.
+        const auto outer_locals = locals_;
         if (s.then_block) {
             node.then_region = std::make_unique<CoreRegion>(lower_block(*s.then_block));
         } else {
             node.then_region = std::make_unique<CoreRegion>();
         }
+        locals_ = outer_locals; // restore before the else branch
         if (s.else_block) {
             node.else_region = std::make_unique<CoreRegion>(lower_block(*s.else_block));
         }
+        locals_ = outer_locals; // restore after the if
         region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
     }
 
@@ -586,10 +674,9 @@ class FlowLowerer {
         node.root = map_path_root(e.path.root_kind, e.path.root_name);
         node.root_name = e.path.root_name;
         node.members = e.path.members;
-        // Resolve an identifier root that names an in-scope local to its value id.
+        // A bare local reference lowers directly to its bound value id.
         if (node.root == CorePathRoot::Identifier && e.path.members.empty()) {
             if (const auto it = locals_.find(e.path.root_name); it != locals_.end()) {
-                // A bare local reference lowers directly to its bound value id.
                 return it->second;
             }
         }
@@ -599,6 +686,18 @@ class FlowLowerer {
                 node.local = it->second;
                 node.has_local = true;
             }
+        }
+        // Member PROJECTIONS (`input.x`, `ctx.y.z`, `local.field`) require
+        // resolving each member to a typed `CoreFieldId`, which needs per-step
+        // value-type tracking not yet implemented (a deferred sub-slice). Rather
+        // than emit a projection with string members that a backend cannot
+        // execute, fail closed: the program is not executable until field-index
+        // resolution lands. Bare root reads (no members) remain executable.
+        if (!e.path.members.empty()) {
+            error("core.UNLOWERED_FIELD_PROJECTION",
+                  "path projection '" + e.path.root_name + ".…' cannot yet be resolved to a "
+                  "typed field index (deferred sub-slice); the program is not executable",
+                  range);
         }
         return bind_pure(std::move(node), range, region);
     }
@@ -651,19 +750,27 @@ class FlowLowerer {
         node.type_name = e.is_enum_variant ? e.enum_name : e.type_name;
         node.is_enum_variant = e.is_enum_variant;
         node.variant_name = e.variant_name;
-        // Resolve the enum variant to its typed declaration-order index
-        // (Principle 2). An unresolvable user variant is fail-closed; the
-        // string names remain for display only.
-        if (e.is_enum_variant) {
-            if (const auto idx = types_.variant_index(e.enum_name, e.variant_name)) {
-                node.variant = *idx;
-                node.variant_resolved = true;
-            } else {
-                error("core.UNRESOLVED_ENUM_VARIANT",
-                      "enum variant '" + e.enum_name + "::" + e.variant_name +
-                          "' could not be resolved to a declared variant index",
-                      range);
+        // Resolve the constructed nominal to a typed CoreTypeId (Principle 2),
+        // then the variant/field indices within it. An unresolvable type or
+        // variant is fail-closed (Error) — the string names remain display-only.
+        if (const auto type_id = types_.resolve_by_name(node.type_name)) {
+            node.type_id = *type_id;
+            if (e.is_enum_variant) {
+                if (const auto idx = types_.variant_index(*type_id, e.variant_name)) {
+                    node.variant = *idx;
+                    node.variant_resolved = true;
+                } else {
+                    error("core.UNRESOLVED_ENUM_VARIANT",
+                          "enum variant '" + node.type_name + "::" + e.variant_name +
+                              "' could not be resolved to a declared variant index",
+                          range);
+                }
             }
+        } else {
+            error("core.UNRESOLVED_TYPE",
+                  "constructed type '" + node.type_name +
+                      "' could not be resolved to a Core-IR type id",
+                  range);
         }
         node.args.reserve(e.fields.size());
         for (const StructFieldInit &field : e.fields) {
@@ -701,17 +808,21 @@ class FlowLowerer {
             return result;
         }
         // A non-capability call may be an ENUM-VARIANT CONSTRUCTOR — the front
-        // end lowers `Enum::Variant(payload)` to a CallExpr whose callee is the
-        // qualified variant path (e.g. "Box::Wrap", "std::option::Option::Some").
-        // These are PURE constructors: their arguments are lowered first (a
-        // nested capability call among them is hoisted, A-normal), then a
-        // CoreConstructExpr consumes the resulting value ids.
-        if (auto ev = split_enum_variant(call.callee)) {
-            if (const auto idx = types_.variant_index(ev->first, ev->second)) {
+        // end lowers `Enum::Variant(payload)` to a CallExpr whose `callee_ref`
+        // resolves to the ENUM symbol and whose `callee` string ends in the
+        // variant name. We resolve the owning type by SYMBOL IDENTITY (not by
+        // string munging), then the variant index within that type. These are
+        // PURE constructors: arguments are lowered first (a nested capability
+        // call among them is hoisted, A-normal), then a CoreConstructExpr
+        // consumes the resulting value ids.
+        if (const auto type_id = types_.resolve(call.callee_ref)) {
+            const std::string variant = variant_suffix(call.callee);
+            if (const auto idx = types_.variant_index(*type_id, variant)) {
                 CoreConstructExpr node;
-                node.type_name = ev->first;
-                node.variant_name = ev->second;
+                node.type_name = call.callee_ref.canonical_name;
+                node.variant_name = variant;
                 node.is_enum_variant = true;
+                node.type_id = *type_id;
                 node.variant = *idx;
                 node.variant_resolved = true;
                 node.args.reserve(call.arguments.size());
@@ -727,26 +838,11 @@ class FlowLowerer {
         return lower_unsupported_value(expr, "CallExpr", range, region);
     }
 
-    /// Split a qualified variant-constructor callee ("a::b::Enum::Variant") into
-    /// its enum name and variant name. Returns nullopt if it has no `::`.
-    [[nodiscard]] static std::optional<std::pair<std::string, std::string>>
-    split_enum_variant(const std::string &callee) {
+    /// The trailing `::`-separated segment of a qualified callee (the variant
+    /// name); the whole string if it has no `::`.
+    [[nodiscard]] static std::string variant_suffix(const std::string &callee) {
         const auto last = callee.rfind("::");
-        if (last == std::string::npos) {
-            return std::nullopt;
-        }
-        const std::string variant = callee.substr(last + 2);
-        std::string enum_name = callee.substr(0, last);
-        // Reduce the enum path to its last segment (the TypeEnv also indexes the
-        // unqualified name); e.g. "std::option::Option" -> "Option".
-        const auto enum_last = enum_name.rfind("::");
-        if (enum_last != std::string::npos) {
-            enum_name = enum_name.substr(enum_last + 2);
-        }
-        if (enum_name.empty() || variant.empty()) {
-            return std::nullopt;
-        }
-        return std::make_pair(enum_name, variant);
+        return last == std::string::npos ? callee : callee.substr(last + 2);
     }
 
     /// Fail-closed handler for a not-yet-lowered expression. If the subtree
@@ -845,8 +941,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     CoreLowerResult result;
     CoreProgram &core = result.program;
 
-    // Pass 1: type environment + capability table + agent index.
-    TypeEnv types;
+    // Pass 1: type table (structs/enums + builtin stdlib enums).
+    TypeEnv types(core.types);
     for (const Decl &decl : ahfl_ir.declarations) {
         if (const auto *s = std::get_if<StructDecl>(&decl)) {
             types.add_struct(*s);
@@ -854,7 +950,9 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             types.add_enum(*e);
         }
     }
+    types.add_builtins();
 
+    // Capability table.
     CapabilityIndex cap_index;
     for (const Decl &decl : ahfl_ir.declarations) {
         if (const auto *cap = std::get_if<CapabilityDecl>(&decl)) {
@@ -864,13 +962,26 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         }
     }
 
+    // Agent table + identity index (SymbolId / canonical name -> CoreAgentId),
+    // so a flow's target resolves by identity rather than a linear string scan.
+    std::unordered_map<std::size_t, CoreAgentId> agent_by_id;
+    std::unordered_map<std::string, CoreAgentId> agent_by_name;
     for (const Decl &decl : ahfl_ir.declarations) {
         if (const auto *agent = std::get_if<AgentDecl>(&decl)) {
+            const auto id = CoreAgentId{static_cast<std::uint32_t>(core.agents.size())};
+            if (agent->symbol_ref.id.has_value()) {
+                agent_by_id.emplace(*agent->symbol_ref.id, id);
+            }
+            if (!agent->symbol_ref.canonical_name.empty()) {
+                agent_by_name.emplace(agent->symbol_ref.canonical_name, id);
+            }
             core.agents.push_back(lower_agent(*agent));
         }
     }
 
-    // Pass 2: flows. Resolve each flow's target agent to get its state index.
+    // Pass 2: flows. Resolve each flow's target agent BY IDENTITY; a missing
+    // target or an unknown handler state is a fail-closed Error (never a
+    // silent fallback to state 0).
     for (const Decl &decl : ahfl_ir.declarations) {
         const auto *flow = std::get_if<FlowDecl>(&decl);
         if (flow == nullptr) {
@@ -882,22 +993,43 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                                    ? flow->target_ref.canonical_name
                                    : flow->target_ref.local_name;
 
-        // Find the target agent's states for goto resolution.
-        const CoreAgentDecl *target_agent = nullptr;
-        for (const CoreAgentDecl &a : core.agents) {
-            if (a.symbol_ref.canonical_name == flow->target_ref.canonical_name &&
-                !flow->target_ref.canonical_name.empty()) {
-                target_agent = &a;
-                break;
+        std::optional<CoreAgentId> target;
+        if (flow->target_ref.id.has_value()) {
+            if (const auto it = agent_by_id.find(*flow->target_ref.id); it != agent_by_id.end()) {
+                target = it->second;
             }
         }
-        const std::vector<std::string> empty_states;
-        StateIndex state_index(target_agent ? target_agent->states : empty_states);
+        if (!target && !flow->target_ref.canonical_name.empty()) {
+            if (const auto it = agent_by_name.find(flow->target_ref.canonical_name);
+                it != agent_by_name.end()) {
+                target = it->second;
+            }
+        }
+        if (!target) {
+            result.diagnostics.push_back(CoreLowerDiagnostic{
+                CoreDiagnosticSeverity::Error, "core.UNRESOLVED_FLOW_TARGET",
+                "flow target agent '" + core_flow.agent_name +
+                    "' could not be resolved to a declared agent",
+                std::nullopt});
+            core.flows.push_back(std::move(core_flow));
+            continue;
+        }
+
+        const CoreAgentDecl &target_agent = core.agents[target->value];
+        StateIndex state_index(target_agent.states);
 
         FlowLowerer lowerer(core_flow, cap_index, state_index, types, result.diagnostics);
         for (const StateHandler &handler : flow->state_handlers) {
             const auto state_id = state_index.lookup(handler.state_name);
-            lowerer.lower_handler(handler, state_id.value_or(CoreStateId{0}));
+            if (!state_id) {
+                result.diagnostics.push_back(CoreLowerDiagnostic{
+                    CoreDiagnosticSeverity::Error, "core.UNKNOWN_HANDLER_STATE",
+                    "flow handler names state '" + handler.state_name +
+                        "' which is not declared by agent '" + core_flow.agent_name + "'",
+                    handler.source_range});
+                continue; // do NOT lower a handler onto a bogus state 0
+            }
+            lowerer.lower_handler(handler, *state_id);
         }
         core.flows.push_back(std::move(core_flow));
     }

@@ -210,6 +210,23 @@ struct CoreCapabilityId {
     [[nodiscard]] friend bool operator==(CoreCapabilityId, CoreCapabilityId) noexcept = default;
 };
 
+/// Nominal type identity (Principle 2): index into `CoreProgram::types`. A
+/// variant index is only meaningful together with the enum's `CoreTypeId`, so
+/// `Option::Some#0` and `Result::Ok#0` are distinguishable by type id, not by a
+/// display string.
+struct CoreTypeId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreTypeId, CoreTypeId) noexcept = default;
+};
+
+/// Index into the program's agent table (`CoreProgram::agents`).
+struct CoreAgentId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreAgentId, CoreAgentId) noexcept = default;
+};
+
 /// Root of a path read, mirroring `ir::PathRootKind` structurally (Principle 2:
 /// we keep the kind, we do NOT flatten the path to a dotted string).
 enum class CorePathRoot { Input, Context, Local, Identifier };
@@ -287,7 +304,8 @@ struct CoreConstructExpr {
     std::string type_name;                 // constructed nominal / enum name (display)
     std::string variant_name;              // non-empty for an enum variant (display)
     bool is_enum_variant{false};
-    std::uint32_t variant{0};              // typed variant index (iff is_enum_variant)
+    CoreTypeId type_id{};                  // owning nominal type identity (Principle 2)
+    std::uint32_t variant{0};              // variant index WITHIN `type_id` (iff enum)
     bool variant_resolved{false};          // false => index not resolved (see diagnostics)
     std::vector<CoreValueId> args;         // payload / field values (ANF operands)
     [[nodiscard]] friend bool operator==(const CoreConstructExpr &,
@@ -441,15 +459,29 @@ struct CoreFlowDecl {
 // Core-IR program
 // ----------------------------------------------------------------------------
 
+/// A nominal type in the execution layer's type table (`CoreProgram::types`),
+/// addressed by `CoreTypeId`. Fields (structs) and variants (enums) are keyed by
+/// declaration-order index — the canonical `CoreFieldId` / variant index.
+struct CoreTypeDecl {
+    enum class Kind { Struct, Enum };
+    Kind kind{Kind::Struct};
+    std::string name;                       // canonical name (display + provenance)
+    std::vector<std::string> fields;        // struct field names; index == CoreFieldId
+    std::vector<std::string> variants;      // enum variant names; index == variant id
+    [[nodiscard]] friend bool operator==(const CoreTypeDecl &,
+                                         const CoreTypeDecl &) noexcept = default;
+};
+
 /// A complete Core-IR compilation unit — the execution layer's program.
 ///
 /// Dedicated flat stores (Principle 3) replace the earlier `variant`-of-decls:
-/// capabilities are addressed by `CoreCapabilityId` (index into `capabilities`),
-/// agents and flows keep source order for determinism.
+/// types are addressed by `CoreTypeId`, capabilities by `CoreCapabilityId`,
+/// agents by `CoreAgentId`; flows keep source order for determinism.
 struct CoreProgram {
     std::string format_version{std::string(kCoreFormatVersion)};
+    std::vector<CoreTypeDecl> types;              // index == CoreTypeId
     std::vector<CoreCapabilityDecl> capabilities; // index == CoreCapabilityId
-    std::vector<CoreAgentDecl> agents;
+    std::vector<CoreAgentDecl> agents;            // index == CoreAgentId
     std::vector<CoreFlowDecl> flows;
 };
 
@@ -509,5 +541,17 @@ struct CoreLowerResult {
 /// layout (P4). A pure unsupported shape becomes a `CoreUnsupportedExpr`
 /// (enumerated kind + range) the verifier can reject; it never hides an effect.
 [[nodiscard]] CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir);
+
+/// A well-known stdlib enum the lowerer resolves via a builtin variant table
+/// (its EnumDecl lives in the sysroot and may not be inlined in a program).
+struct BuiltinEnumDescriptor {
+    std::string_view name;                       // unqualified enum name
+    std::vector<std::string_view> variants;      // declaration order
+};
+
+/// The production builtin variant order. Exposed so a sync test can compare it
+/// against the actual sysroot declaration order (std/option.ahfl,
+/// std/result.ahfl) and fail if the two ever drift apart.
+[[nodiscard]] const std::vector<BuiltinEnumDescriptor> &builtin_enum_table();
 
 } // namespace ahfl::ir::core
