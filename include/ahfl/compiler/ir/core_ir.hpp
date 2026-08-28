@@ -528,10 +528,29 @@ struct CoreProgram {
 /// non-executable; `Warning` is retained but does not gate backend consumption.
 enum class CoreDiagnosticSeverity { Error, Warning };
 
+/// Stable diagnostic codes emitted by the AHFL-IR -> Core-IR lowering. Kept as
+/// named constants (the layer's diagnostics catalogue) so the lowerer and tests
+/// share one source of truth rather than duplicating call-site string literals.
+namespace diag {
+inline constexpr std::string_view kUnresolvedCapabilityCall = "core.UNRESOLVED_CAPABILITY_CALL";
+inline constexpr std::string_view kUnresolvedType = "core.UNRESOLVED_TYPE";
+inline constexpr std::string_view kUnresolvedEnumVariant = "core.UNRESOLVED_ENUM_VARIANT";
+inline constexpr std::string_view kUnresolvedStructField = "core.UNRESOLVED_STRUCT_FIELD";
+inline constexpr std::string_view kUnresolvedQualifiedValue = "core.UNRESOLVED_QUALIFIED_VALUE";
+inline constexpr std::string_view kUnresolvedFlowTarget = "core.UNRESOLVED_FLOW_TARGET";
+inline constexpr std::string_view kUnknownHandlerState = "core.UNKNOWN_HANDLER_STATE";
+inline constexpr std::string_view kUnknownGotoTarget = "core.UNKNOWN_GOTO_TARGET";
+inline constexpr std::string_view kUnloweredStatement = "core.UNLOWERED_STATEMENT";
+inline constexpr std::string_view kUnloweredExpression = "core.UNLOWERED_EXPRESSION";
+inline constexpr std::string_view kUnloweredFieldProjection = "core.UNLOWERED_FIELD_PROJECTION";
+inline constexpr std::string_view kEffectfulUnsupported = "core.EFFECTFUL_UNSUPPORTED";
+inline constexpr std::string_view kNullExpr = "core.NULL_EXPR";
+} // namespace diag
+
 /// A structured lowering diagnostic (fail-closed: no throw, no Unknown node).
 struct CoreLowerDiagnostic {
     CoreDiagnosticSeverity severity{CoreDiagnosticSeverity::Error};
-    std::string code;          // stable code, e.g. "core.UNRESOLVED_CAPABILITY_CALL"
+    std::string code;          // one of the `diag::` codes above
     std::string message;       // human-readable, actionable (Principle 5)
     SourceRangeOpt source_range;
 };

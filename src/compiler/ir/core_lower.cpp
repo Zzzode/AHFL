@@ -21,6 +21,7 @@
 #include <cctype>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -67,8 +68,9 @@ namespace {
 } // namespace
 
 bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
-    return a.agent_name == b.agent_name && symbol_ref_equal(a.target_ref, b.target_ref) &&
-           a.exprs == b.exprs && a.value_count == b.value_count && a.states == b.states;
+    return a.target == b.target && a.agent_name == b.agent_name &&
+           symbol_ref_equal(a.target_ref, b.target_ref) && a.exprs == b.exprs &&
+           a.value_count == b.value_count && a.states == b.states;
 }
 
 // The production builtin variant table — the SINGLE SOURCE OF TRUTH for the
@@ -477,8 +479,8 @@ class FlowLowerer {
         flow_.exprs.push_back(CoreExpr{std::move(node), std::move(range)});
         return CoreExprId{idx};
     }
-    void error(std::string code, std::string message, SourceRangeOpt range) {
-        diags_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error, std::move(code),
+    void error(std::string_view code, std::string message, SourceRangeOpt range) {
+        diags_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error, std::string(code),
                                              std::move(message), std::move(range)});
     }
 
@@ -526,7 +528,7 @@ class FlowLowerer {
                        // exists yet, this is an ERROR that marks the program
                        // non-executable — never a silent Warning drop.
                        [&](const auto &) {
-                           error("core.UNLOWERED_STATEMENT",
+                           error(diag::kUnloweredStatement,
                                  "statement kind is not yet lowered to Core-IR; the "
                                  "program cannot be executed until this slice lands",
                                  stmt.source_range);
@@ -551,7 +553,7 @@ class FlowLowerer {
         // typed CoreFieldId resolution as a member read (deferred sub-slice).
         // Fail closed until it lands rather than emit an unexecutable place.
         if (!s.target.members.empty()) {
-            error("core.UNLOWERED_FIELD_PROJECTION",
+            error(diag::kUnloweredFieldProjection,
                   "assignment target '" + s.target.root_name + ".…' cannot yet be resolved to a "
                   "typed field index (deferred sub-slice); the program is not executable",
                   range);
@@ -589,7 +591,7 @@ class FlowLowerer {
         if (const auto id = states_.lookup(s.target_state)) {
             node.target = *id;
         } else {
-            error("core.UNKNOWN_GOTO_TARGET",
+            error(diag::kUnknownGotoTarget,
                   "goto targets unknown state '" + s.target_state + "'", range);
         }
         region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
@@ -611,7 +613,7 @@ class FlowLowerer {
     // left-to-right eval order); pure expressions are bound via a CoreLetStmt.
     [[nodiscard]] CoreValueId lower_value(const ExprRef &expr, CoreRegion &region) {
         if (expr.ptr == nullptr) {
-            error("core.NULL_EXPR", "null expression in flow body", std::nullopt);
+            error(diag::kNullExpr, "null expression in flow body", std::nullopt);
             return fresh_value();
         }
         const SourceRangeOpt range = expr.ptr->source_range;
@@ -694,7 +696,7 @@ class FlowLowerer {
         // execute, fail closed: the program is not executable until field-index
         // resolution lands. Bare root reads (no members) remain executable.
         if (!e.path.members.empty()) {
-            error("core.UNLOWERED_FIELD_PROJECTION",
+            error(diag::kUnloweredFieldProjection,
                   "path projection '" + e.path.root_name + ".…' cannot yet be resolved to a "
                   "typed field index (deferred sub-slice); the program is not executable",
                   range);
@@ -720,13 +722,13 @@ class FlowLowerer {
             // Only `Implies` reaches here. Fail closed either way: an effectful
             // operand is a dropped effect, a pure one is an unexecutable node.
             if (expr_has_capability_call(e.lhs) || expr_has_capability_call(e.rhs)) {
-                error("core.EFFECTFUL_UNSUPPORTED",
+                error(diag::kEffectfulUnsupported,
                       "binary operator carries a capability effect but is not yet "
                       "lowered to Core-IR",
                       range);
                 return fresh_value();
             }
-            error("core.UNLOWERED_EXPRESSION",
+            error(diag::kUnloweredExpression,
                   "binary operator is not yet lowered to Core-IR; the program is not "
                   "executable until this slice lands",
                   range);
@@ -758,7 +760,7 @@ class FlowLowerer {
 
         const auto type_id = types_.resolve_by_name(node.type_name);
         if (!type_id) {
-            error("core.UNRESOLVED_TYPE",
+            error(diag::kUnresolvedType,
                   "constructed type '" + node.type_name +
                       "' could not be resolved to a Core-IR type id",
                   range);
@@ -769,7 +771,7 @@ class FlowLowerer {
                     node.variant = CoreVariantId{*idx};
                     node.resolved = true;
                 } else {
-                    error("core.UNRESOLVED_ENUM_VARIANT",
+                    error(diag::kUnresolvedEnumVariant,
                           "enum variant '" + node.type_name + "::" + e.variant_name +
                               "' could not be resolved to a declared variant index",
                           range);
@@ -795,7 +797,7 @@ class FlowLowerer {
                     arg.field = CoreFieldId{*fidx};
                 } else {
                     node.resolved = false;
-                    error("core.UNRESOLVED_STRUCT_FIELD",
+                    error(diag::kUnresolvedStructField,
                           "struct '" + node.type_name + "' has no field named '" +
                               field.name + "'",
                           range);
@@ -827,7 +829,7 @@ class FlowLowerer {
             }
         }
         if (!node.resolved) {
-            error("core.UNRESOLVED_QUALIFIED_VALUE",
+            error(diag::kUnresolvedQualifiedValue,
                   "qualified value '" + e.value +
                       "' could not be resolved to a typed enum variant",
                   range);
@@ -843,7 +845,7 @@ class FlowLowerer {
             if (!info.has_value()) {
                 // Fail closed: an unresolved capability call must not produce an
                 // Unknown node the backend would treat as a no-op.
-                error("core.UNRESOLVED_CAPABILITY_CALL",
+                error(diag::kUnresolvedCapabilityCall,
                       "capability call '" + call.callee +
                           "' could not be resolved to a capability declaration",
                       range);
@@ -913,14 +915,14 @@ class FlowLowerer {
     [[nodiscard]] CoreValueId lower_unsupported_value(const ExprRef &expr, std::string kind,
                                                       SourceRangeOpt range, CoreRegion &region) {
         if (expr_has_capability_call(expr)) {
-            error("core.EFFECTFUL_UNSUPPORTED",
+            error(diag::kEffectfulUnsupported,
                   "expression kind '" + kind +
                       "' carries a capability effect but is not yet lowered to Core-IR "
                       "(cannot be reduced to A-normal form in this slice)",
                   range);
             return fresh_value();
         }
-        error("core.UNLOWERED_EXPRESSION",
+        error(diag::kUnloweredExpression,
               "expression kind '" + kind +
                   "' is not yet lowered to Core-IR; the program is not executable until "
                   "this slice lands",
@@ -1073,7 +1075,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         }
         if (!target) {
             result.diagnostics.push_back(CoreLowerDiagnostic{
-                CoreDiagnosticSeverity::Error, "core.UNRESOLVED_FLOW_TARGET",
+                CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedFlowTarget),
                 "flow target agent '" + core_flow.agent_name +
                     "' could not be resolved to a declared agent",
                 flow->provenance.source_range});
@@ -1090,7 +1092,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             const auto state_id = state_index.lookup(handler.state_name);
             if (!state_id) {
                 result.diagnostics.push_back(CoreLowerDiagnostic{
-                    CoreDiagnosticSeverity::Error, "core.UNKNOWN_HANDLER_STATE",
+                    CoreDiagnosticSeverity::Error, std::string(diag::kUnknownHandlerState),
                     "flow handler names state '" + handler.state_name +
                         "' which is not declared by agent '" + core_flow.agent_name + "'",
                     handler.source_range});

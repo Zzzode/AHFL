@@ -158,7 +158,7 @@ bool callee_is(const std::string &callee, const std::string &name) {
 // statement — the properties under test must hold regardless of the deferral.
 bool only_field_projection_diagnostics(const ir::core::CoreLowerResult &result) {
     for (const auto &d : result.diagnostics) {
-        if (d.code != "core.UNLOWERED_FIELD_PROJECTION") {
+        if (d.code != ir::core::diag::kUnloweredFieldProjection) {
             return false;
         }
     }
@@ -494,7 +494,7 @@ TEST_CASE("flow lowering fails closed on an unresolved capability call") {
     CHECK_FALSE(result.is_executable);
     CHECK(result.has_errors());
     REQUIRE_FALSE(result.diagnostics.empty());
-    CHECK(result.diagnostics[0].code == "core.UNRESOLVED_CAPABILITY_CALL");
+    CHECK(result.diagnostics[0].code == ir::core::diag::kUnresolvedCapabilityCall);
     CHECK(result.diagnostics[0].source_range.has_value());
 }
 
@@ -708,7 +708,7 @@ TEST_CASE("unsupported statement makes the program non-executable (P0-1)") {
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.is_executable);
     REQUIRE_FALSE(result.diagnostics.empty());
-    CHECK(result.diagnostics[0].code == "core.UNLOWERED_STATEMENT");
+    CHECK(result.diagnostics[0].code == ir::core::diag::kUnloweredStatement);
     CHECK(result.diagnostics[0].severity == ir::core::CoreDiagnosticSeverity::Error);
 }
 
@@ -822,7 +822,7 @@ TEST_CASE("flow with an unresolved target agent fails closed (P1-1)") {
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.is_executable);
     REQUIRE_FALSE(result.diagnostics.empty());
-    CHECK(result.diagnostics[0].code == "core.UNRESOLVED_FLOW_TARGET");
+    CHECK(result.diagnostics[0].code == ir::core::diag::kUnresolvedFlowTarget);
 }
 
 TEST_CASE("flow handler naming an unknown state fails closed, never defaults to state 0 (P1-1)") {
@@ -852,7 +852,7 @@ TEST_CASE("flow handler naming an unknown state fails closed, never defaults to 
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.is_executable);
     REQUIRE_FALSE(result.diagnostics.empty());
-    CHECK(result.diagnostics[0].code == "core.UNKNOWN_HANDLER_STATE");
+    CHECK(result.diagnostics[0].code == ir::core::diag::kUnknownHandlerState);
     CHECK(result.diagnostics[0].source_range.has_value());
     // The bogus handler was NOT lowered onto state 0.
     REQUIRE(result.program.flows.size() == 1);
@@ -877,7 +877,7 @@ TEST_CASE("pure unsupported expression makes the program non-executable (P0-1 ro
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.is_executable);
     REQUIRE_FALSE(result.diagnostics.empty());
-    CHECK(result.diagnostics[0].code == "core.UNLOWERED_EXPRESSION");
+    CHECK(result.diagnostics[0].code == ir::core::diag::kUnloweredExpression);
     CHECK(result.diagnostics[0].severity == ir::core::CoreDiagnosticSeverity::Error);
 }
 
@@ -921,9 +921,11 @@ flow for A {
     REQUIRE(ahfl_ir.has_value());
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
-    // A struct construct with no member projections and all fields resolved is
-    // fully executable.
-    CHECK(only_field_projection_diagnostics(result));
+    // This program has NO member projections and all fields resolve, so it must
+    // be fully executable — a hard assertion, not the weak field-projection
+    // tolerance used by the ANF-structure tests above.
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
     REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
 
