@@ -213,28 +213,29 @@ def test_good_version_wrong_stdout_fails() -> None:
 
 
 def test_bootstrap_min_version_in_sync() -> None:
-    # Anti-drift: the shell bootstrap's MIN_MAJOR must match the harness's
-    # MIN_WASMTIME major, so the two version floors cannot silently diverge.
+    # Anti-drift: the shell bootstrap's MIN_VERSION must match the harness's
+    # MIN_WASMTIME across ALL THREE semver segments, so the two version floors
+    # cannot silently diverge (not just the major).
     print("test_bootstrap_min_version_in_sync")
     import re
 
     script = (_HERE.parent.parent / "scripts" / "bootstrap-wasmtime.sh").read_text()
-    m = re.search(r"^MIN_MAJOR=(\d+)", script, re.MULTILINE)
-    check(m is not None, "bootstrap script declares MIN_MAJOR")
+    m = re.search(r'^MIN_VERSION="(\d+)\.(\d+)\.(\d+)"', script, re.MULTILINE)
+    check(m is not None, "bootstrap script declares a full MIN_VERSION triple")
     if m is not None:
-        shell_min_major = int(m.group(1))
+        shell_min = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
         check(
-            shell_min_major == wp.MIN_WASMTIME[0],
-            f"bootstrap MIN_MAJOR ({shell_min_major}) == harness MIN_WASMTIME major "
-            f"({wp.MIN_WASMTIME[0]})",
+            shell_min == wp.MIN_WASMTIME,
+            f"bootstrap MIN_VERSION {shell_min} == harness MIN_WASMTIME {wp.MIN_WASMTIME}",
         )
     # The pinned DEFAULT_VERSION must itself satisfy the minimum.
-    dm = re.search(r'^DEFAULT_VERSION="(\d+)\.', script, re.MULTILINE)
+    dm = re.search(r'^DEFAULT_VERSION="(\d+)\.(\d+)\.(\d+)"', script, re.MULTILINE)
     check(dm is not None, "bootstrap script declares DEFAULT_VERSION")
     if dm is not None:
+        default_ver = (int(dm.group(1)), int(dm.group(2)), int(dm.group(3)))
         check(
-            int(dm.group(1)) >= wp.MIN_WASMTIME[0],
-            f"DEFAULT_VERSION major ({dm.group(1)}) >= min ({wp.MIN_WASMTIME[0]})",
+            default_ver >= wp.MIN_WASMTIME,
+            f"DEFAULT_VERSION {default_ver} >= min {wp.MIN_WASMTIME}",
         )
 
 

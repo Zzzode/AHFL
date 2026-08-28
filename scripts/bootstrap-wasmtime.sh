@@ -18,9 +18,10 @@
 # hand, once, to turn the real-execution WASM tests from SKIP into RUN.
 set -euo pipefail
 
-# --- pins (keep MIN_MAJOR in sync with wasm_preflight.py MIN_WASMTIME major) ---
+# --- pins (keep MIN_VERSION in sync with wasm_preflight.py MIN_WASMTIME) ---
 DEFAULT_VERSION="27.0.0"
-MIN_MAJOR=15   # matches MIN_WASMTIME = (15, 0, 0)
+MIN_VERSION="15.0.0"          # full semver floor; matches MIN_WASMTIME = (15, 0, 0)
+MIN_MAJOR="${MIN_VERSION%%.*}" # major used for the fast in-script gate below
 
 # Known-good SHA-256 of each pinned release asset, keyed "version:triple".
 # FAIL-CLOSED: entries are intentionally EMPTY until a maintainer with network
@@ -110,8 +111,8 @@ if [ -z "${EXPECT_SHA}" ]; then
 fi
 if [ -z "${EXPECT_SHA}" ]; then
     echo "no known SHA-256 for wasmtime ${VERSION} (${triple})." >&2
-    echo "refusing to install an unverified download — pass --sha256 <hex> of the" >&2
-    echo ".tar.xz asset, or use the pinned default version ${DEFAULT_VERSION}." >&2
+    echo "refusing to install an unverified download — populate the known-good" >&2
+    echo "table in this script, or pass --sha256 <hex> of the .tar.xz asset." >&2
     exit 2
 fi
 
