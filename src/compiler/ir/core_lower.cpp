@@ -21,6 +21,7 @@
 #include <string>
 #include <unordered_map>
 #include <variant>
+#include <vector>
 
 namespace ahfl::ir::core {
 namespace {
@@ -153,10 +154,238 @@ intern_state(std::vector<std::string> &names,
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Flow capability call-site extraction
+// ---------------------------------------------------------------------------
+
+/// Build a lookup from a capability's canonical identity to its effect kind, so
+/// each lowered call site can carry the effect category without a second pass.
+/// Keyed by the numeric SymbolId when present (Principle 2), else by canonical
+/// name as a fallback (still deterministic).
+using EffectKindByName = std::unordered_map<std::string, CapabilityEffectKind>;
+using EffectKindById = std::unordered_map<std::size_t, CapabilityEffectKind>;
+
+struct CapabilityEffectIndex {
+    EffectKindById by_id;
+    EffectKindByName by_name;
+
+    [[nodiscard]] CapabilityEffectKind lookup(const SymbolRef &ref) const {
+        if (ref.id.has_value()) {
+            const auto it = by_id.find(*ref.id);
+            if (it != by_id.end()) {
+                return it->second;
+            }
+        }
+        if (!ref.canonical_name.empty()) {
+            const auto it = by_name.find(ref.canonical_name);
+            if (it != by_name.end()) {
+                return it->second;
+            }
+        }
+        // Defensive fallback: an unresolved callee keeps Unknown (still a valid,
+        // deterministic call site — the executor treats it as an opaque import).
+        return CapabilityEffectKind::Unknown;
+    }
+};
+
+[[nodiscard]] CapabilityEffectIndex build_effect_index(const AhflIr &ahfl_ir) {
+    CapabilityEffectIndex index;
+    for (const Decl &decl : ahfl_ir.declarations) {
+        if (const auto *cap = std::get_if<CapabilityDecl>(&decl)) {
+            if (cap->symbol_ref.id.has_value()) {
+                index.by_id.emplace(*cap->symbol_ref.id, cap->effect.kind);
+            }
+            if (!cap->symbol_ref.canonical_name.empty()) {
+                index.by_name.emplace(cap->symbol_ref.canonical_name, cap->effect.kind);
+            }
+        }
+    }
+    return index;
+}
+
+/// Canonical dotted spelling of a path (root + member chain).
+[[nodiscard]] std::string path_text(const Path &path) {
+    std::string text = path.root_name;
+    for (const std::string &member : path.members) {
+        text += '.';
+        text += member;
+    }
+    return text;
+}
+
+/// Lower one argument expression into a `CoreCallArg`. Only the forms with a
+/// direct execution meaning are recognized; anything else becomes a bounded,
+/// observable `Opaque` arg (arity preserved, never silently dropped).
+[[nodiscard]] CoreCallArg lower_call_arg(const ExprRef &arg) {
+    CoreCallArg out;
+    if (arg.ptr == nullptr) {
+        out.kind = CoreCallArg::Kind::Opaque;
+        out.text = "<null-arg>";
+        return out;
+    }
+    std::visit(Overloaded{
+                   [&](const BoolLiteralExpr &e) {
+                       out.kind = CoreCallArg::Kind::Literal;
+                       out.text = e.value ? "true" : "false";
+                   },
+                   [&](const IntegerLiteralExpr &e) {
+                       out.kind = CoreCallArg::Kind::Literal;
+                       out.text = e.spelling;
+                   },
+                   [&](const FloatLiteralExpr &e) {
+                       out.kind = CoreCallArg::Kind::Literal;
+                       out.text = e.spelling;
+                   },
+                   [&](const DecimalLiteralExpr &e) {
+                       out.kind = CoreCallArg::Kind::Literal;
+                       out.text = e.spelling;
+                   },
+                   [&](const StringLiteralExpr &e) {
+                       out.kind = CoreCallArg::Kind::Literal;
+                       out.text = e.spelling;
+                   },
+                   [&](const DurationLiteralExpr &e) {
+                       out.kind = CoreCallArg::Kind::Literal;
+                       out.text = e.spelling;
+                   },
+                   [&](const PathExpr &e) {
+                       out.kind = CoreCallArg::Kind::Path;
+                       out.text = path_text(e.path);
+                   },
+                   [&](const QualifiedValueExpr &e) {
+                       out.kind = CoreCallArg::Kind::Qualified;
+                       out.text = e.value;
+                   },
+                   // Bounded exemption: any richer argument shape (nested call,
+                   // arithmetic, struct literal, match, …) is recorded opaquely
+                   // with a reason. Full argument lowering / value layout is a
+                   // later KR6.4 sub-slice; arity is still preserved here.
+                   [&](const auto &) {
+                       out.kind = CoreCallArg::Kind::Opaque;
+                       out.text = "<unlowered-expr>";
+                   },
+               },
+               arg.ptr->node);
+    return out;
+}
+
+/// If `expr` is a capability call, append its lowered call site to `out`.
+/// A capability call is a `CallExpr` whose resolved `callee_ref` is a
+/// capability symbol. Nested capability calls inside its arguments are NOT
+/// recursed into here (arguments are lowered opaquely in this slice); the
+/// executor sees one call site per source capability invocation statement.
+void collect_call_from_expr(const ExprRef &expr,
+                            const CapabilityEffectIndex &effects,
+                            std::vector<CoreCapabilityCall> &out) {
+    if (expr.ptr == nullptr) {
+        return;
+    }
+    const auto *call = std::get_if<CallExpr>(&expr.ptr->node);
+    if (call == nullptr) {
+        return;
+    }
+    if (call->callee_ref.kind != SymbolRefKind::Capability) {
+        return;
+    }
+    CoreCapabilityCall lowered;
+    lowered.callee_name = call->callee;
+    lowered.callee_ref = call->callee_ref;
+    lowered.effect_kind = effects.lookup(call->callee_ref);
+    lowered.args.reserve(call->arguments.size());
+    for (const ExprRef &arg : call->arguments) {
+        lowered.args.push_back(lower_call_arg(arg));
+    }
+    out.push_back(std::move(lowered));
+}
+
+// Forward declaration: block walking recurses through nested blocks.
+void collect_calls_from_block(const Block &block,
+                              const CapabilityEffectIndex &effects,
+                              std::vector<CoreCapabilityCall> &out);
+
+/// Walk one statement, appending capability call sites in source (pre-order)
+/// traversal. Control-flow structure is not modelled yet — but branch bodies
+/// are still descended so a capability call inside an `if` is not lost.
+void collect_calls_from_statement(const Statement &stmt,
+                                  const CapabilityEffectIndex &effects,
+                                  std::vector<CoreCapabilityCall> &out) {
+    std::visit(Overloaded{
+                   [&](const LetStatement &s) {
+                       collect_call_from_expr(s.initializer, effects, out);
+                   },
+                   [&](const AssignStatement &s) {
+                       collect_call_from_expr(s.value, effects, out);
+                   },
+                   [&](const ExprStatement &s) {
+                       collect_call_from_expr(s.expr, effects, out);
+                   },
+                   [&](const ReturnStatement &s) {
+                       collect_call_from_expr(s.value, effects, out);
+                   },
+                   [&](const IfStatement &s) {
+                       // Condition first, then branch bodies (pre-order).
+                       collect_call_from_expr(s.condition, effects, out);
+                       if (s.then_block) {
+                           collect_calls_from_block(*s.then_block, effects, out);
+                       }
+                       if (s.else_block) {
+                           collect_calls_from_block(*s.else_block, effects, out);
+                       }
+                   },
+                   [&](const IfLetStatement &s) {
+                       collect_call_from_expr(s.scrutinee, effects, out);
+                       if (s.then_block) {
+                           collect_calls_from_block(*s.then_block, effects, out);
+                       }
+                       if (s.else_block) {
+                           collect_calls_from_block(*s.else_block, effects, out);
+                       }
+                   },
+                   // Statements that cannot host a capability call in this slice
+                   // (goto / assert / requires / unwrap / unreachable): nothing
+                   // to collect. Their operands are Bool/Option predicates, not
+                   // capability invocations.
+                   [](const auto &) {},
+               },
+               stmt.node);
+}
+
+void collect_calls_from_block(const Block &block,
+                              const CapabilityEffectIndex &effects,
+                              std::vector<CoreCapabilityCall> &out) {
+    for (const StatementPtr &stmt : block.statements) {
+        if (stmt) {
+            collect_calls_from_statement(*stmt, effects, out);
+        }
+    }
+}
+
+/// Lower one `ir::FlowDecl` into a `CoreFlowDecl`: per-state capability call
+/// sequences extracted from the handler bodies, in source handler order.
+[[nodiscard]] CoreFlowDecl lower_flow(const FlowDecl &flow,
+                                      const CapabilityEffectIndex &effects) {
+    CoreFlowDecl out;
+    out.target_ref = flow.target_ref;
+    out.agent_name = flow.target_ref.local_name.empty()
+                         ? flow.target_ref.canonical_name
+                         : flow.target_ref.local_name;
+    out.states.reserve(flow.state_handlers.size());
+    for (const StateHandler &handler : flow.state_handlers) {
+        CoreFlowState state;
+        state.state_name = handler.state_name;
+        collect_calls_from_block(handler.body, effects, state.calls);
+        out.states.push_back(std::move(state));
+    }
+    return out;
+}
+
 } // namespace
 
 CoreProgram lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     CoreProgram core;
+    // Build the capability effect-kind index once so each flow call site can
+    // carry its effect category without a per-call scan.
+    const CapabilityEffectIndex effects = build_effect_index(ahfl_ir);
     // Visit declarations in source order and emit in that order: deterministic.
     for (const Decl &decl : ahfl_ir.declarations) {
         std::visit(Overloaded{
@@ -165,6 +394,9 @@ CoreProgram lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                        },
                        [&](const CapabilityDecl &cap) {
                            core.declarations.emplace_back(lower_capability(cap));
+                       },
+                       [&](const FlowDecl &flow) {
+                           core.declarations.emplace_back(lower_flow(flow, effects));
                        },
                        // Every other Decl kind is skipped in this increment;
                        // its execution-layer lowering is filled by later KR6.4

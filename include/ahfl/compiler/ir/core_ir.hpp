@@ -20,14 +20,16 @@
 //   * structured for WASM control flow, with explicit ADT / closure memory
 //     layout.
 //
-// THIS INCREMENT (KR6.4 sub-slices so far) is a SKELETON. It defines the
-// minimal node set needed to carry the simplest orchestration construct
-// end-to-end — an agent's state machine — plus the explicit capability-call
-// (`ahfl_cap` import) declaration that the effect->capability-call lowering
-// produces, plus the scaffolded lower entry `lower_ahfl_to_core`. The rest of
-// the node set (monomorphized function bodies, structured control-flow regions,
-// value representation / memory layout, capability-call ARGUMENT passing) is
-// filled by the later KR6.4 sub-slices and is intentionally NOT present yet.
+// THIS INCREMENT (KR6.4 sub-slices so far) carries the orchestration constructs
+// end-to-end far enough to model an agent's state machine, the explicit
+// capability-call (`ahfl_cap` import) DECLARATION the effect->capability-call
+// lowering produces, AND the capability CALL SITES themselves — extracted from
+// each flow state handler as an ordered, arity-preserving call sequence. The
+// rest of the node set (monomorphized function bodies, structured control-flow
+// regions, full argument/value representation & memory layout, workflow
+// lowering) is filled by the later KR6.4 sub-slices and is intentionally NOT
+// present yet. Argument forms without a direct execution meaning are recorded as
+// a bounded, observable `Opaque` arg (never silently dropped).
 //
 // Nothing consumes `CoreProgram` yet: WASM codegen is KR6.5 and the evaluator is
 // untouched. This header + `core_lower.cpp` are purely additive scaffolding
@@ -159,13 +161,102 @@ struct CoreCapabilityDecl {
     ir::TypeRef return_type_ref;
 };
 
-/// Core-IR declaration node set. Minimal by design: this skeleton represents
-/// agent state machines and explicit capability-call (import) declarations.
-/// Later KR6.4 sub-slices grow the variant with monomorphized function bodies
-/// and the remaining orchestration constructs (flow / workflow). Kept a
-/// `std::variant` (Principle 4) so those additions are additive alternatives,
-/// not a class hierarchy.
-using CoreDecl = std::variant<CoreAgentDecl, CoreCapabilityDecl>;
+// ----------------------------------------------------------------------------
+// Capability CALL-SITE node set (KR6.4: the actual invocation, not the import)
+// ----------------------------------------------------------------------------
+//
+// `CoreCapabilityDecl` above is the DECLARATION (the `ahfl_cap` import). The
+// nodes below are the CALL SITES: where a flow's state handler actually invokes
+// a capability. Separating them mirrors WASM's own import-vs-call distinction
+// and is what makes "effect -> explicit capability-call" concrete rather than
+// declaration-only (the gap called out in the KR6.4 review).
+
+/// One lowered argument to a capability call.
+///
+/// Core-IR is the execution layer, so an argument is reduced to an execution
+/// shape rather than an AhflIr expression tree. This slice lowers the argument
+/// forms that already have a direct execution meaning:
+///   * `Literal`  — a scalar/string literal; `text` is its spelling.
+///   * `Path`     — a value read (`input.x`, `ctx.y`, a local): `text` is the
+///                  canonical dotted path.
+///   * `Qualified`— a qualified value such as an enum variant (`Priority::High`).
+/// Any other argument expression (nested call, arithmetic, struct literal, …)
+/// is recorded as `Opaque` with a `text` reason. This is a BOUNDED, OBSERVABLE
+/// exemption (mirroring opt-IR's `record_skipped_temporal_fragment` precedent):
+/// full expression lowering / value representation is a later KR6.4 sub-slice,
+/// but no argument is ever silently dropped — arity is always preserved.
+struct CoreCallArg {
+    enum class Kind { Literal, Path, Qualified, Opaque };
+    Kind kind{Kind::Opaque};
+    /// Literal spelling / canonical path / qualified name / opaque reason.
+    std::string text;
+
+    [[nodiscard]] friend bool operator==(const CoreCallArg &,
+                                         const CoreCallArg &) noexcept = default;
+};
+
+/// An explicit capability CALL SITE inside a flow's state handler.
+///
+/// This is the concrete "capability-call" node: it names the resolved callee
+/// (canonical `SymbolRef` identity, Principle 2), carries the effect kind (so
+/// the executor / host can classify the `ahfl_cap` invocation without a second
+/// lookup), and preserves the ordered argument list (arity-preserving; each
+/// argument lowered to a `CoreCallArg`). Result binding / value layout is a
+/// later sub-slice; this node establishes the call site itself.
+struct CoreCapabilityCall {
+    /// Display spelling of the callee (diagnostic only).
+    std::string callee_name;
+    /// Resolved capability symbol (canonical identity; strings display-only).
+    ir::SymbolRef callee_ref;
+    /// Effect category of the invoked capability, resolved from its declaration
+    /// (`CapabilityEffectKind::Unknown` if the callee could not be resolved to a
+    /// capability declaration — a defensive, still-deterministic fallback).
+    ir::CapabilityEffectKind effect_kind{ir::CapabilityEffectKind::Unknown};
+    /// Lowered arguments in call order (arity preserved).
+    std::vector<CoreCallArg> args;
+
+    [[nodiscard]] friend bool operator==(const CoreCapabilityCall &,
+                                         const CoreCapabilityCall &) noexcept = default;
+};
+
+/// The execution-layer projection of one flow state handler: the ordered
+/// sequence of capability call sites reached in that state. Control-flow
+/// structure (branch/loop regions) and non-capability statements are NOT
+/// modelled yet — this slice extracts the capability call sequence in source
+/// (pre-order) traversal so the executor has the concrete invocation list.
+struct CoreFlowState {
+    /// State name (display); the owning agent addresses states by index, but a
+    /// flow handler is keyed by name in the source model.
+    std::string state_name;
+    /// Capability call sites in this state, in source pre-order.
+    std::vector<CoreCapabilityCall> calls;
+
+    [[nodiscard]] friend bool operator==(const CoreFlowState &,
+                                         const CoreFlowState &) noexcept = default;
+};
+
+/// The execution-layer projection of an `ir::FlowDecl`: per-state capability
+/// call sequences for the target agent. Contract / temporal clauses that a flow
+/// may reference are verification-layer and do not appear here.
+struct CoreFlowDecl {
+    /// Display name of the flow's target agent (diagnostic only).
+    std::string agent_name;
+    /// Resolved target-agent symbol (canonical identity).
+    ir::SymbolRef target_ref;
+    /// Per-state call sequences, in source handler order.
+    std::vector<CoreFlowState> states;
+
+    [[nodiscard]] friend bool operator==(const CoreFlowDecl &,
+                                         const CoreFlowDecl &) noexcept = default;
+};
+
+/// Core-IR declaration node set. This slice represents agent state machines,
+/// explicit capability-call (import) declarations, and flow capability
+/// call-site sequences. Later KR6.4 sub-slices grow the variant with
+/// monomorphized function bodies, structured control-flow regions, and value
+/// representation. Kept a `std::variant` (Principle 4) so those additions are
+/// additive alternatives, not a class hierarchy.
+using CoreDecl = std::variant<CoreAgentDecl, CoreCapabilityDecl, CoreFlowDecl>;
 
 // ----------------------------------------------------------------------------
 // Core-IR program
@@ -188,11 +279,14 @@ struct CoreProgram {
 ///
 /// SCOPE (KR6.4 sub-slices so far): lowers each `ir::AgentDecl`'s state machine
 /// into a `CoreAgentDecl` (erasing contract / temporal / decreases and quota —
-/// verification-layer concerns) and each `ir::CapabilityDecl` into a
+/// verification-layer concerns), each `ir::CapabilityDecl` into a
 /// `CoreCapabilityDecl` (the explicit capability-call = `ahfl_cap` import
-/// boundary; the effect spec beyond its kind is erased). All other declaration
-/// kinds (structs, enums, contracts, flows, workflows, fns, traits, impls, …)
-/// are skipped in this increment — their execution-layer lowering
+/// boundary; the effect spec beyond its kind is erased), and each `ir::FlowDecl`
+/// into a `CoreFlowDecl` whose per-state `CoreCapabilityCall` sequence is
+/// extracted (in source pre-order) from the handler bodies. The call's effect
+/// kind is resolved against the program's capability declarations. All other
+/// declaration kinds (structs, enums, contracts, workflows, fns, traits, impls,
+/// …) are skipped in this increment — their execution-layer lowering
 /// (monomorphized bodies, structured control flow, memory layout) is filled by
 /// the later KR6.4 sub-slices.
 ///

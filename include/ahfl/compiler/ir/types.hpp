@@ -160,6 +160,12 @@ struct SymbolRef {
     std::string local_name{};
     std::string module_name{};
     std::optional<std::size_t> id{}; // Numeric symbol ID for O(1) cross-declaration lookup
+
+    // Value-type equality: a SymbolRef is a plain resolved-identity record, so
+    // structural equality is well-defined and lets aggregates that embed it
+    // (e.g. Core-IR call-site nodes) derive their own defaulted `==`.
+    [[nodiscard]] friend bool operator==(const SymbolRef &,
+                                         const SymbolRef &) noexcept = default;
 };
 
 /// Resolved or structured type reference.
