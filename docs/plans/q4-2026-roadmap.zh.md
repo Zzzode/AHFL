@@ -30,7 +30,7 @@
 「架构北极星」,RFC 0026 IR 塔+执行模型、RFC 0027 query 前端+IR 单一真相源已 draft),新增
 **Objective 6**(编译器架构升级:三层 IR 塔取代单层、WASM 唯一执行引擎、tree-walking
 evaluator 退役、前端 query 化、消灭 8-location sweep)与 **Objective 7**(backlog §3 已落库
-能力产品化到顶尖)。**Q4 验收口径随之扩张:总盘 54 KR,当前 38 ✅ / 16 ⬜。**
+能力产品化到顶尖)。**Q4 验收口径随之扩张:总盘 54 KR,当前 39 ✅ / 15 ⬜。**
 
 ---
 
@@ -184,7 +184,7 @@ capstone)已全部落库并测试。
 |----|----------------|------|-------------|
 | KR6.1 | RFC 0026 → `accepted`:清 4 个 Open Question(Core-IR 内存模型 arena vs 所有权、控制流结构化边界、语义保持验证深度、单态化爆炸预算)+ compiler/runtime owner sign-off | ✅ | 5 个 Open Questions 全部给出决策+理由(arena/无 GC、WASM 结构化 region/无 relooper、conformance 差分必做+形式化证明长期可选、单态化预算 fail-closed、双 IR-JSON 弃用绑 KR6.9);draft→review→accepted(commit `728db370`),sign-off 经 Q4 路线图 Objective 6 确认 |
 | KR6.2 | IR 塔骨架落地(RFC 0026 P1):`AHFL-IR` / `Core-IR` 层类型 + 层边界定义,空壳零行为变更,现有 backend 仍消费旧路径 | ✅ | `tower.hpp`:`Layer`(TypedHir=0→AhflIr=1→CoreIr=2 索引式身份)+ `Path` + `path_of()` 编码 Dafny 式分叉 + 零成本 `LayerTag<L>`;`tower.cpp` static_assert 锁层序/分叉;3 doctest 用例。零消费者、现有 backend 仍走 `ir::Program`;全套件 463/463 绿(commit `0243ff10`,RFC 0026 → `implementing`) |
-| KR6.3 | AHFL-IR 净化(P2):验证/视图后端(smv/smt/k8s/terraform/openapi)改为消费 `AHFL-IR`,移出纯执行细节;golden 无回归 | ⬜ | smv.cpp / verification/formal / infra 后端切层 |
+| KR6.3 | AHFL-IR 净化(P2):验证/视图后端(smv/smt/k8s/terraform/openapi)改为消费 `AHFL-IR`,移出纯执行细节;golden 无回归 | ✅ | alias-first:`using AhflIr = Program`(验证/编排层名,`tower::Layer::AhflIr`);验证/视图后端入口签名 re-point 到 `const ir::AhflIr&`(print_program_smv / SmvPrinter::print / lower_k8s_crd / lower_openapi / lower_terraform / lower_wasm / emit_program_smt)。8 文件 +58/-19,零行为变更,SMV/emit-ir/k8s/openapi/terraform golden 逐字节不变,全套件 exit 0(commit `a1a38d1a`)。节点集实际净化留后续片 |
 | KR6.4 | lower pass `AHFL-IR → Core-IR`(P3+P4):单态化 + effect→显式 capability-call + temporal/contract/decreases 擦除 + 控制流结构化 + 值表示/内存布局(Bool/Int/Float/Decimal/String/enum/struct/bounded 容器/闭包) | ⬜ | 新 lower pass;Core-IR verifier 捕获"验证节点误入执行层""未单态化残留" |
 | KR6.5 | WASM codegen 编排层(P5):`Core-IR → WASM`,agent transition/flow/workflow + `ahfl_cap` import(复用 RFC 0019 契约);产物在 wasmtime 真正跑起来,conformance 子集绿 | ⬜ | wasm_backend 从 WAT 骨架升级为真 codegen;wasmtime 集成测试 |
 | KR6.6 | WASM codegen 计算层(P6):表达式/算术/控制流/match/闭包全部 lower 到 WASM 指令,产物完全自包含 | ⬜ | 覆盖 Core-IR 全节点 |
@@ -242,9 +242,9 @@ capstone)已全部落库并测试。
 
 > **阶段一(Objective 1–4)23/23 KR 已 ✅ —— 可嵌入性 / 验证 / 产品化全部收官。**
 > **阶段二(Objective 5)12/12 KR 已 ✅ —— 编译器基座完备性收官。**
-> **阶段三(Objective 6–7)3/19 KR —— 编译器架构升级到顶尖 + 已落库能力产品化,本季新增开放面。**
+> **阶段三(Objective 6–7)4/19 KR —— 编译器架构升级到顶尖 + 已落库能力产品化,本季新增开放面。**
 > 阶段一最后一个曾被标为环境阻塞的 KR4.5(真实 LLM run 证据)已通过驱动真实本地 llama.cpp
-> 推理引擎解除。当前总盘:**54 个 KR,38 ✅ / 16 ⬜。** 阶段一+二(35 KR)已收官:KR5.5
+> 推理引擎解除。当前总盘:**54 个 KR,39 ✅ / 15 ⬜。** 阶段一+二(35 KR)已收官:KR5.5
 > (RFC 0013 → `implemented`)达成,frontmatter `implementing → implemented`(commit
 > `9ac22713`),以 §Implementation Plan 阶段验收表 P0–P7 逐条核对为准,全部达成并经
 > clean-rebuild 全套件 457/457 验证。收官路上补齐的两处 soundness 洞——跨模块 trait dispatch
@@ -290,7 +290,7 @@ capstone)已全部落库并测试。
    ✅ 已完成:错误恢复接入真实 ANTLR 路径;共享 IR 结构相等 + redundancy pass 补强;opt-IR
    时序原子文档化为有界豁免。
 
-**阶段三(Objective 6–7)推进顺序 —— 架构主干先行,产品化并行(3/19 ✅:KR6.1/6.10 设计门 + KR6.2 塔骨架):**
+**阶段三(Objective 6–7)推进顺序 —— 架构主干先行,产品化并行(4/19 ✅:设计门 + 塔骨架 + AHFL-IR 层边界):**
 
 1. **KR6.1 / KR6.10 先行(设计门)**:RFC 0026 / 0027 从 draft → accepted——清各自 Open
    Questions + owner sign-off。这是所有实现 KR 的前置(未 accepted 不动代码)。
