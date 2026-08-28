@@ -227,6 +227,22 @@ struct CoreAgentId {
     [[nodiscard]] friend bool operator==(CoreAgentId, CoreAgentId) noexcept = default;
 };
 
+/// Declaration-order index of a field WITHIN its owning struct `CoreTypeId`.
+/// A distinct type so a field index cannot be confused with a variant index or
+/// a raw integer (Principle 2: no bare uint32 identity).
+struct CoreFieldId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreFieldId, CoreFieldId) noexcept = default;
+};
+
+/// Declaration-order index of a variant WITHIN its owning enum `CoreTypeId`.
+struct CoreVariantId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreVariantId, CoreVariantId) noexcept = default;
+};
+
 /// Root of a path read, mirroring `ir::PathRootKind` structurally (Principle 2:
 /// we keep the kind, we do NOT flatten the path to a dotted string).
 enum class CorePathRoot { Input, Context, Local, Identifier };
@@ -264,9 +280,14 @@ struct CorePathExpr {
                                          const CorePathExpr &) noexcept = default;
 };
 
-/// A qualified value (e.g. an enum variant with no payload: `Priority::High`).
+/// A qualified value — in this slice, a UNIT enum variant with no payload
+/// (e.g. `Option::None`, `AuditResult::Approve`). Carries typed identity: the
+/// owning enum `type_id` and the `variant` id. `name` is display-only.
 struct CoreQualifiedExpr {
-    std::string name;
+    std::string name;          // display (e.g. "std::option::Option::None")
+    CoreTypeId type_id{};      // owning enum type identity
+    CoreVariantId variant{};   // variant identity within `type_id`
+    bool resolved{false};      // false => not resolved to a typed variant (diagnostic)
     [[nodiscard]] friend bool operator==(const CoreQualifiedExpr &,
                                          const CoreQualifiedExpr &) noexcept = default;
 };
@@ -294,20 +315,33 @@ struct CoreBinaryExpr {
                                          const CoreBinaryExpr &) noexcept = default;
 };
 
+/// One field/payload operand of a constructor, carrying its typed field
+/// identity so a backend never relies on source WRITE order. For a struct
+/// literal each `field` is the owning struct's `CoreFieldId`; for an enum
+/// variant payload it is the positional payload slot (0-based).
+struct CoreConstructArg {
+    CoreFieldId field{};   // typed field identity within the owning type
+    CoreValueId value{};   // the ANF operand
+    [[nodiscard]] friend bool operator==(const CoreConstructArg &,
+                                         const CoreConstructArg &) noexcept = default;
+};
+
 /// A PURE constructor / aggregate (struct literal, enum variant with payload,
 /// e.g. `Option::Some(%t0)`). Its operands are already-bound value ids, so a
 /// capability call nested in a source constructor has been hoisted OUT to a
-/// preceding `CoreStmt::CapabilityCall` before this node is built. For an enum
-/// variant, `variant` carries the typed declaration-order index (Principle 2);
-/// `type_name`/`variant_name` are display-only.
+/// preceding `CoreStmt::CapabilityCall` before this node is built. Identity is
+/// typed (Principle 2): the owning `type_id`, the `variant` id (for an enum),
+/// and each arg's `CoreFieldId`. `type_name`/`variant_name` are display-only.
+/// Field IDENTITY (not source write order) determines which value fills which
+/// field, so `Pair { b: 2, a: 1 }` cannot be mis-assigned.
 struct CoreConstructExpr {
     std::string type_name;                 // constructed nominal / enum name (display)
     std::string variant_name;              // non-empty for an enum variant (display)
     bool is_enum_variant{false};
-    CoreTypeId type_id{};                  // owning nominal type identity (Principle 2)
-    std::uint32_t variant{0};              // variant index WITHIN `type_id` (iff enum)
-    bool variant_resolved{false};          // false => index not resolved (see diagnostics)
-    std::vector<CoreValueId> args;         // payload / field values (ANF operands)
+    CoreTypeId type_id{};                  // owning nominal type identity
+    CoreVariantId variant{};               // variant identity WITHIN `type_id` (iff enum)
+    bool resolved{false};                  // false => type/variant not resolved (diagnostic)
+    std::vector<CoreConstructArg> args;    // field-identified operands (order-independent)
     [[nodiscard]] friend bool operator==(const CoreConstructExpr &,
                                          const CoreConstructExpr &) noexcept = default;
 };
@@ -447,8 +481,9 @@ struct CoreFlowState {
 /// The execution-layer projection of an `ir::FlowDecl`. Owns the per-flow pure
 /// expression arena (`exprs`, addressed by `CoreExprId`) and the value counter.
 struct CoreFlowDecl {
-    std::string agent_name;             // display only
-    ir::SymbolRef target_ref;           // resolved target agent identity
+    CoreAgentId target{};               // typed target-agent identity (Principle 2)
+    std::string agent_name;             // display / provenance only
+    ir::SymbolRef target_ref;           // provenance / display only
     std::vector<CoreExpr> exprs;        // pure-expression arena (Principle 3)
     std::uint32_t value_count{0};       // number of CoreValueIds allocated
     std::vector<CoreFlowState> states;

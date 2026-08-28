@@ -434,12 +434,12 @@ TEST_CASE("flow lowering: nested capability call inside a constructor is not dro
         if (std::holds_alternative<ir::core::CoreConstructExpr>(expr.node)) {
             const auto &ctor = std::get<ir::core::CoreConstructExpr>(expr.node);
             for (const auto &arg : ctor.args) {
-                if (arg == charge_result) {
+                if (arg.value == charge_result) {
                     result_consumed_by_construct = true;
                     // The Wrap variant resolves to a typed index (Wrap=0).
                     CHECK(ctor.is_enum_variant);
-                    CHECK(ctor.variant_resolved);
-                    CHECK(ctor.variant == 0u);
+                    CHECK(ctor.resolved);
+                    CHECK(ctor.variant.value == 0u);
                 }
             }
         }
@@ -652,8 +652,8 @@ TEST_CASE("builtin enum variant resolves via the builtin path by symbol identity
             const auto &ctor = std::get<ir::core::CoreConstructExpr>(expr.node);
             if (ctor.is_enum_variant && ctor.variant_name == "Some") {
                 found_some = true;
-                CHECK(ctor.variant_resolved);
-                CHECK(ctor.variant == 0u); // Some=0 in the builtin table
+                CHECK(ctor.resolved);
+                CHECK(ctor.variant.value == 0u); // Some=0 in the builtin table
                 // The owning type id points at the builtin Option in the type table.
                 REQUIRE(ctor.type_id.value < result.program.types.size());
                 CHECK(result.program.types[ctor.type_id.value].name == "std::option::Option");
@@ -857,4 +857,118 @@ TEST_CASE("flow handler naming an unknown state fails closed, never defaults to 
     // The bogus handler was NOT lowered onto state 0.
     REQUIRE(result.program.flows.size() == 1);
     CHECK(result.program.flows[0].states.empty());
+}
+
+TEST_CASE("pure unsupported expression makes the program non-executable (P0-1 round 3)") {
+    // A MatchExpr (no capability) is not yet lowered. Even without an effect,
+    // it must FAIL closed — a CoreUnsupportedExpr the backend cannot execute
+    // may never be reported as executable while no Core verifier exists.
+    const auto program = make_single_handler_flow([](ir::AhflIr &p) {
+        // return match on a bare bool literal (unsupported, pure).
+        ir::ExprRef scrut = p.expr_arena.make(ir::BoolLiteralExpr{true});
+        ir::MatchExpr m;
+        m.scrutinee = scrut;
+        ir::ExprRef mref = p.expr_arena.make(std::move(m));
+        auto stmt = std::make_unique<ir::Statement>();
+        stmt->node = ir::ReturnStatement{mref};
+        return stmt;
+    });
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    REQUIRE_FALSE(result.diagnostics.empty());
+    CHECK(result.diagnostics[0].code == "core.UNLOWERED_EXPRESSION");
+    CHECK(result.diagnostics[0].severity == ir::core::CoreDiagnosticSeverity::Error);
+}
+
+TEST_CASE("struct constructor binds values by field identity, not source write order (P0-2 round 3)") {
+    // struct Pair { a: Int; b: Int; }  return Pair { b: 2, a: 1 };
+    // Fields are WRITTEN b-then-a but must bind by identity: the arg tagged
+    // CoreFieldId a(=0) is the value `1`, and b(=1) is `2` — never positional.
+    const char *const source = R"AHFL(
+module pairflow;
+
+struct Pair {
+    a: Int;
+    b: Int;
+}
+
+struct Req {
+    n: Int;
+}
+
+struct Ctx {
+    seen: Bool = false;
+}
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Pair;
+    states: [S];
+    initial: S;
+    final: [S];
+    capabilities: [];
+}
+
+flow for A {
+    state S {
+        return Pair { b: 2, a: 1 };
+    }
+}
+)AHFL";
+    const auto ahfl_ir = lower_source_to_ahfl_ir("pairflow", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    // A struct construct with no member projections and all fields resolved is
+    // fully executable.
+    CHECK(only_field_projection_diagnostics(result));
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow = result.program.flows[0];
+
+    // Find the Pair construct and the literal each arg's value came from.
+    const ir::core::CoreConstructExpr *pair = nullptr;
+    for (const auto &expr : flow.exprs) {
+        if (std::holds_alternative<ir::core::CoreConstructExpr>(expr.node)) {
+            const auto &c = std::get<ir::core::CoreConstructExpr>(expr.node);
+            if (c.type_name.find("Pair") != std::string::npos && !c.is_enum_variant) {
+                pair = &c;
+            }
+        }
+    }
+    REQUIRE(pair != nullptr);
+    REQUIRE(pair->resolved);
+    REQUIRE(pair->args.size() == 2);
+
+    // Map each field id -> the integer literal spelling that produced its value.
+    const auto literal_for_value = [&](ir::core::CoreValueId v) -> std::string {
+        // The value is bound by a CoreLetStmt whose expr is an integer literal.
+        for (const auto &state : flow.states) {
+            for (const auto &stmt : state.body.statements) {
+                if (const auto *let = std::get_if<ir::core::CoreLetStmt>(&stmt.node)) {
+                    if (let->result == v && let->expr.value < flow.exprs.size()) {
+                        const auto &e = flow.exprs[let->expr.value].node;
+                        if (const auto *lit = std::get_if<ir::core::CoreLiteralExpr>(&e)) {
+                            return lit->spelling;
+                        }
+                    }
+                }
+            }
+        }
+        return {};
+    };
+
+    std::string field_a_val;
+    std::string field_b_val;
+    for (const auto &arg : pair->args) {
+        if (arg.field.value == 0u) { // field `a` (declared first)
+            field_a_val = literal_for_value(arg.value);
+        } else if (arg.field.value == 1u) { // field `b` (declared second)
+            field_b_val = literal_for_value(arg.value);
+        }
+    }
+    // Despite `Pair { b: 2, a: 1 }`, identity binds a<-1 and b<-2.
+    CHECK(field_a_val == "1");
+    CHECK(field_b_val == "2");
 }

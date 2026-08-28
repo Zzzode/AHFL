@@ -642,7 +642,7 @@ class FlowLowerer {
                 },
                 [&](const PathExpr &e) { return lower_path_value(e, range, region); },
                 [&](const QualifiedValueExpr &e) {
-                    return bind_pure(CoreQualifiedExpr{e.value}, range, region);
+                    return lower_qualified_value(e, range, region);
                 },
                 [&](const UnaryExpr &e) { return lower_unary_value(e, range, region); },
                 [&](const BinaryExpr &e) { return lower_binary_value(e, range, region); },
@@ -717,8 +717,8 @@ class FlowLowerer {
                                                  CoreRegion &region) {
         const auto op = map_binary_op(e.op);
         if (!op.has_value()) {
-            // Only `Implies` reaches here. Fail closed if either operand carries
-            // an effect; otherwise record a pure unsupported node.
+            // Only `Implies` reaches here. Fail closed either way: an effectful
+            // operand is a dropped effect, a pure one is an unexecutable node.
             if (expr_has_capability_call(e.lhs) || expr_has_capability_call(e.rhs)) {
                 error("core.EFFECTFUL_UNSUPPORTED",
                       "binary operator carries a capability effect but is not yet "
@@ -726,6 +726,10 @@ class FlowLowerer {
                       range);
                 return fresh_value();
             }
+            error("core.UNLOWERED_EXPRESSION",
+                  "binary operator is not yet lowered to Core-IR; the program is not "
+                  "executable until this slice lands",
+                  range);
             const CoreExprId expr_id = push_expr(CoreUnsupportedExpr{"BinaryExpr", range}, range);
             const CoreValueId value = fresh_value();
             region.statements.push_back(CoreStmt{CoreLetStmt{value, expr_id}, range});
@@ -743,38 +747,90 @@ class FlowLowerer {
 
     [[nodiscard]] CoreValueId lower_struct_value(const StructLiteralExpr &e, SourceRangeOpt range,
                                                  CoreRegion &region) {
-        // A struct / enum-variant constructor is PURE. Its field/payload values
-        // are lowered first (effects hoisted, left-to-right), then the construct
-        // consumes their value ids.
+        // A struct / enum-variant constructor is PURE. Arguments are lowered
+        // first (effects hoisted, in source order), then the construct consumes
+        // their value ids — but each is tagged with its TYPED field identity so
+        // a backend never relies on source WRITE order.
         CoreConstructExpr node;
         node.type_name = e.is_enum_variant ? e.enum_name : e.type_name;
         node.is_enum_variant = e.is_enum_variant;
         node.variant_name = e.variant_name;
-        // Resolve the constructed nominal to a typed CoreTypeId (Principle 2),
-        // then the variant/field indices within it. An unresolvable type or
-        // variant is fail-closed (Error) — the string names remain display-only.
-        if (const auto type_id = types_.resolve_by_name(node.type_name)) {
+
+        const auto type_id = types_.resolve_by_name(node.type_name);
+        if (!type_id) {
+            error("core.UNRESOLVED_TYPE",
+                  "constructed type '" + node.type_name +
+                      "' could not be resolved to a Core-IR type id",
+                  range);
+        } else {
             node.type_id = *type_id;
             if (e.is_enum_variant) {
                 if (const auto idx = types_.variant_index(*type_id, e.variant_name)) {
-                    node.variant = *idx;
-                    node.variant_resolved = true;
+                    node.variant = CoreVariantId{*idx};
+                    node.resolved = true;
                 } else {
                     error("core.UNRESOLVED_ENUM_VARIANT",
                           "enum variant '" + node.type_name + "::" + e.variant_name +
                               "' could not be resolved to a declared variant index",
                           range);
                 }
+            } else {
+                node.resolved = true; // a struct type resolved; per-field below
             }
-        } else {
-            error("core.UNRESOLVED_TYPE",
-                  "constructed type '" + node.type_name +
-                      "' could not be resolved to a Core-IR type id",
-                  range);
         }
+
         node.args.reserve(e.fields.size());
+        std::uint32_t positional = 0;
         for (const StructFieldInit &field : e.fields) {
-            node.args.push_back(lower_value(field.value, region));
+            CoreConstructArg arg;
+            arg.value = lower_value(field.value, region);
+            if (node.is_enum_variant) {
+                // Enum payload: positional slot identity (0-based) in source order.
+                arg.field = CoreFieldId{positional++};
+            } else if (type_id) {
+                // Struct literal: resolve the WRITTEN field name to its typed
+                // CoreFieldId so write order is irrelevant. Unresolvable field
+                // name is fail-closed.
+                if (const auto fidx = types_.field_index(*type_id, field.name)) {
+                    arg.field = CoreFieldId{*fidx};
+                } else {
+                    node.resolved = false;
+                    error("core.UNRESOLVED_STRUCT_FIELD",
+                          "struct '" + node.type_name + "' has no field named '" +
+                              field.name + "'",
+                          range);
+                }
+            }
+            node.args.push_back(arg);
+        }
+        return bind_pure(std::move(node), range, region);
+    }
+
+    /// Lower a qualified value — a UNIT enum variant (no payload), e.g.
+    /// `Option::None`, `AuditResult::Approve`. Resolves typed identity by the
+    /// FULL qualified name (owning enum = everything before the last `::`);
+    /// unresolvable is fail-closed.
+    [[nodiscard]] CoreValueId lower_qualified_value(const QualifiedValueExpr &e,
+                                                    SourceRangeOpt range, CoreRegion &region) {
+        CoreQualifiedExpr node;
+        node.name = e.value;
+        const auto sep = e.value.rfind("::");
+        if (sep != std::string::npos) {
+            const std::string enum_name = e.value.substr(0, sep);
+            const std::string variant = e.value.substr(sep + 2);
+            if (const auto type_id = types_.resolve_by_name(enum_name)) {
+                if (const auto idx = types_.variant_index(*type_id, variant)) {
+                    node.type_id = *type_id;
+                    node.variant = CoreVariantId{*idx};
+                    node.resolved = true;
+                }
+            }
+        }
+        if (!node.resolved) {
+            error("core.UNRESOLVED_QUALIFIED_VALUE",
+                  "qualified value '" + e.value +
+                      "' could not be resolved to a typed enum variant",
+                  range);
         }
         return bind_pure(std::move(node), range, region);
     }
@@ -823,11 +879,14 @@ class FlowLowerer {
                 node.variant_name = variant;
                 node.is_enum_variant = true;
                 node.type_id = *type_id;
-                node.variant = *idx;
-                node.variant_resolved = true;
+                node.variant = CoreVariantId{*idx};
+                node.resolved = true;
                 node.args.reserve(call.arguments.size());
+                std::uint32_t positional = 0;
                 for (const ExprRef &arg : call.arguments) {
-                    node.args.push_back(lower_value(arg, region));
+                    // Enum payload: positional slot identity, in source order.
+                    node.args.push_back(CoreConstructArg{CoreFieldId{positional++},
+                                                         lower_value(arg, region)});
                 }
                 return bind_pure(std::move(node), range, region);
             }
@@ -845,10 +904,12 @@ class FlowLowerer {
         return last == std::string::npos ? callee : callee.substr(last + 2);
     }
 
-    /// Fail-closed handler for a not-yet-lowered expression. If the subtree
-    /// contains ANY capability call, this is an ERROR (we must never silently
-    /// drop an effect). Otherwise it is a pure `CoreUnsupportedExpr` (enumerated
-    /// kind + range) that the Core-IR verifier can reject at backend time.
+    /// Fail-closed handler for a not-yet-lowered expression. Whether it carries
+    /// an effect or not, the resulting program is NOT executable: with no
+    /// Core-IR verifier yet, a `CoreUnsupportedExpr` the backend cannot execute
+    /// must never be reported as executable. So this ALWAYS emits an Error. The
+    /// node (with enumerated kind + range) is still recorded so the produced
+    /// partial program remains inspectable for diagnostics/tests.
     [[nodiscard]] CoreValueId lower_unsupported_value(const ExprRef &expr, std::string kind,
                                                       SourceRangeOpt range, CoreRegion &region) {
         if (expr_has_capability_call(expr)) {
@@ -859,6 +920,11 @@ class FlowLowerer {
                   range);
             return fresh_value();
         }
+        error("core.UNLOWERED_EXPRESSION",
+              "expression kind '" + kind +
+                  "' is not yet lowered to Core-IR; the program is not executable until "
+                  "this slice lands",
+              range);
         const CoreExprId expr_id = push_expr(CoreUnsupportedExpr{std::move(kind), range}, range);
         const CoreValueId value = fresh_value();
         region.statements.push_back(CoreStmt{CoreLetStmt{value, expr_id}, range});
@@ -1010,10 +1076,11 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                 CoreDiagnosticSeverity::Error, "core.UNRESOLVED_FLOW_TARGET",
                 "flow target agent '" + core_flow.agent_name +
                     "' could not be resolved to a declared agent",
-                std::nullopt});
+                flow->provenance.source_range});
             core.flows.push_back(std::move(core_flow));
             continue;
         }
+        core_flow.target = *target; // typed target-agent identity (Principle 2)
 
         const CoreAgentDecl &target_agent = core.agents[target->value];
         StateIndex state_index(target_agent.states);
