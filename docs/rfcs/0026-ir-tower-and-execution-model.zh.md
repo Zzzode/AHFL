@@ -1,7 +1,7 @@
 ---
 rfc: "0026"
 title: "IR Tower and Execution Model"
-status: "review"
+status: "accepted"
 area: ["compiler", "ir", "runtime"]
 stability: "experimental"
 created: "2026-08-28"
@@ -384,3 +384,8 @@ Implementation Plan 对应分片承载。
   fail-closed 诊断;双 IR-JSON 弃用绑定 KR6.9 里程碑。填 shepherd/tracking/discussion。
   **`review → accepted` 待 compiler + runtime owner sign-off**——该步授权一场删除现役
   evaluator、重写 IR 分层的大型重构,须显式批准。
+- 2026-08-28: Status review → accepted(KR6.1 达成)。sign-off 经项目 lead 于 Q4 路线图
+  Objective 6 确认:路线图已把本 RFC 的完整落地(三层塔 + WASM 唯一引擎 + evaluator 退役)
+  列为 Q4 验收项(KR6.1–6.9)并从"明确排除"表移除"完整 WASM codegen",即授权本 RFC 进入
+  实现。实现按 §Implementation Plan 9 片推进,KR6.2 起为**零行为变更**的塔骨架;evaluator
+  删除(P8/KR6.8)严格门控在 conformance 全绿(P7/KR6.7)之后,过渡期不破坏 `ahflc run`。

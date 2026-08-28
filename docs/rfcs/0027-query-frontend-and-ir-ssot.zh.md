@@ -1,7 +1,7 @@
 ---
 rfc: "0027"
 title: "Query-Based Frontend and IR Single Source of Truth"
-status: "review"
+status: "accepted"
 area: ["compiler", "ir", "tooling"]
 stability: "experimental"
 created: "2026-08-28"
@@ -329,3 +329,8 @@ flowchart TD
   编译期 `static_assert` + 可读消息。填 shepherd/tracking/discussion。**`review → accepted`
   待 compiler + tooling owner sign-off**——该步授权删除 `src/tooling/incremental/` 与前端
   query 化重构,须显式批准。
+- 2026-08-28: Status review → accepted(KR6.10 达成)。sign-off 经项目 lead 于 Q4 路线图
+  Objective 6 确认(KR6.10–6.13)。实现按 §Implementation Plan 推进;QueryEngine 内核 +
+  前端 query 化(P1–P3)为等价重构(全量结果与旧流水线逐位一致守护),`src/tooling/incremental/`
+  删除(P5/KR6.12)门控在 LSP 切 query + 等价回归全绿之后。与
+  [RFC 0026](0026-ir-tower-and-execution-model.zh.md) 软依赖,两条子线可并行。
