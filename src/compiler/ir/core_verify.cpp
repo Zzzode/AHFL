@@ -60,19 +60,74 @@ class Verifier {
     }
 
     // --- type table ---
+    //
+    // The type table is the domain every downstream check (projection, construct,
+    // and — next slice — pattern) trusts for field/variant arity. If its own
+    // shape is malformed (parallel arrays out of sync, a struct carrying enum
+    // metadata, a payload whose kind and vectors disagree), those checks build on
+    // sand. So the table's SELF-CONSISTENCY is proven first, fail-closed, with a
+    // dedicated code — never conflated with an ID-out-of-range.
     void verify_types() {
         for (std::uint32_t i = 0; i < program_.types.size(); ++i) {
             const CoreTypeDecl &t = program_.types[i];
-            // `field_types` is parallel to `fields` (one typed entry per field).
-            // A length mismatch means the fixup pass did not cover every field —
-            // a projection through a missing entry would silently read kInvalid.
-            if (t.kind == CoreTypeDecl::Kind::Struct &&
-                t.field_types.size() != t.fields.size()) {
-                error(verify::kTypeIdOutOfRange,
-                      "struct '" + t.name + "' has " + std::to_string(t.fields.size()) +
-                          " fields but " + std::to_string(t.field_types.size()) +
-                          " field types (parallel vectors must match)",
+            const auto shape_error = [&](std::string msg) {
+                error(verify::kTypeTableShapeInvalid, "type '" + t.name + "': " + std::move(msg),
                       std::nullopt);
+            };
+            if (t.kind == CoreTypeDecl::Kind::Struct) {
+                // Struct parallel arrays must all match; struct carries NO enum
+                // metadata.
+                if (t.field_types.size() != t.fields.size()) {
+                    shape_error("field_types size (" + std::to_string(t.field_types.size()) +
+                                ") != fields size (" + std::to_string(t.fields.size()) + ")");
+                }
+                if (t.field_has_default.size() != t.fields.size()) {
+                    shape_error("field_has_default size (" +
+                                std::to_string(t.field_has_default.size()) + ") != fields size (" +
+                                std::to_string(t.fields.size()) + ")");
+                }
+                if (!t.variants.empty() || !t.variant_payloads.empty()) {
+                    shape_error("a struct must not carry enum variants/payloads");
+                }
+            } else { // Enum
+                // Enum parallel arrays must match; enum carries NO struct metadata.
+                if (t.variant_payloads.size() != t.variants.size()) {
+                    shape_error("variant_payloads size (" +
+                                std::to_string(t.variant_payloads.size()) + ") != variants size (" +
+                                std::to_string(t.variants.size()) + ")");
+                }
+                if (!t.fields.empty() || !t.field_types.empty() || !t.field_has_default.empty()) {
+                    shape_error("an enum must not carry struct field metadata");
+                }
+                // Each variant payload's kind must agree with its vectors.
+                for (std::uint32_t v = 0; v < t.variant_payloads.size(); ++v) {
+                    const auto &p = t.variant_payloads[v];
+                    using PK = CoreTypeDecl::VariantPayload::Kind;
+                    if (p.kind == PK::Unit) {
+                        if (!p.slot_types.empty() || !p.field_names.empty()) {
+                            shape_error("variant #" + std::to_string(v) +
+                                        " is Unit but carries payload slots");
+                        }
+                    } else if (p.kind == PK::Tuple) {
+                        if (!p.field_names.empty()) {
+                            shape_error("variant #" + std::to_string(v) +
+                                        " is Tuple but carries field names");
+                        }
+                    } else { // Struct payload
+                        if (p.field_names.size() != p.slot_types.size()) {
+                            shape_error("variant #" + std::to_string(v) +
+                                        " struct payload field_names/slot_types size mismatch");
+                        }
+                    }
+                    // Every non-kInvalid payload slot type id must be in range.
+                    for (const CoreTypeId st : p.slot_types) {
+                        if (st.value != CoreTypeId::kInvalid && st.value >= program_.types.size()) {
+                            shape_error("variant #" + std::to_string(v) +
+                                        " payload slot references out-of-range type id " +
+                                        std::to_string(st.value));
+                        }
+                    }
+                }
             }
             // Each valid field_types entry must be an in-range type id (it need
             // not be a struct — an enum field type is legal, though it cannot be
@@ -387,12 +442,17 @@ class Verifier {
                       "constructor '" + c.type_name + "::" + c.variant_name + "' variant id " +
                           std::to_string(c.variant.value) + " is out of range",
                       range);
-            } else if (c.variant.value < type.variant_payloads.size()) {
+            } else if (c.variant.value >= type.variant_payloads.size()) {
+                // Every enum (user or builtin) now carries complete payload
+                // metadata, so a MISSING entry is a malformed table — not an
+                // "unknown arity" to skip (that was a bypass). Fail closed.
+                error(verify::kTypeTableShapeInvalid,
+                      "enum '" + c.type_name + "' variant #" + std::to_string(c.variant.value) +
+                          " has no payload metadata (table is malformed)",
+                      range);
+            } else {
                 // Enum-variant payload args are positional slots; their count
-                // must match the declared payload arity. (When the enum carries
-                // NO payload metadata — e.g. a builtin registered by fallback —
-                // arity is unknown and this check is skipped, never falsely
-                // rejected.)
+                // must match the declared payload arity.
                 const auto arity = type.variant_payloads[c.variant.value].slot_types.size();
                 if (c.args.size() != arity) {
                     error(verify::kConstructPayloadArity,

@@ -626,13 +626,92 @@ TEST_CASE("verifier fails closed on an enum context (not folded into Unit)") {
     CHECK(has_code(result, verify::kTypedShellInvalid));
 }
 
-// --- P2: parallel-vector length ---
+// --- type-table shape self-consistency (Codex P0/P1) ---
 
 TEST_CASE("verifier fails closed when a struct's field_types length differs from fields") {
     GoodProgram g = make_good_program();
-    g.program.types[1].field_types.pop_back(); // Ctx now has 2 fields, 1 field_type
+    g.program.types[1].field_types.pop_back(); // Ctx: 2 fields, 1 field_type
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
-    CHECK(has_code(result, verify::kTypeIdOutOfRange));
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("verifier fails closed when a struct's field_has_default length differs from fields") {
+    GoodProgram g = make_good_program();
+    g.program.types[1].field_has_default.pop_back();
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("verifier fails closed when an enum's variant_payloads length differs from variants") {
+    GoodProgram g = make_good_program();
+    g.program.types[2].variant_payloads.clear(); // Flag: 2 variants, 0 payloads
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("verifier fails closed when a struct carries enum metadata") {
+    GoodProgram g = make_good_program();
+    g.program.types[1].variants.push_back("Bogus"); // a struct must have no variants
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("verifier fails closed when an enum carries struct field metadata") {
+    GoodProgram g = make_good_program();
+    g.program.types[2].fields.push_back("bogus"); // an enum must have no fields
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("verifier fails closed when a Unit payload variant carries slots") {
+    GoodProgram g = make_good_program();
+    g.program.types[2].variant_payloads[0].slot_types.push_back(CoreTypeId{}); // On is Unit
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("verifier fails closed when a struct-payload variant's field_names/slots mismatch") {
+    GoodProgram g = make_good_program();
+    auto &pv = g.program.types[2].variant_payloads[0];
+    pv.kind = CoreTypeDecl::VariantPayload::Kind::Struct;
+    pv.slot_types = {CoreTypeId{}, CoreTypeId{}};
+    pv.field_names = {"only_one"}; // 1 name vs 2 slots
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("verifier fails closed when a payload slot type id is out of range") {
+    GoodProgram g = make_good_program();
+    g.program.types[2].variant_payloads[0].kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
+    g.program.types[2].variant_payloads[0].slot_types = {CoreTypeId{999}}; // OOR
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("verifier fails closed on an enum-variant construct whose variant has no metadata (P0)") {
+    GoodProgram g = make_good_program();
+    // Drop Flag's payload metadata to simulate a tampered/JSON-missing table,
+    // then construct Flag::On. The arity check must NOT be skipped.
+    g.program.types[2].variant_payloads.clear();
+    CoreConstructExpr ctor;
+    ctor.type_name = "Flag";
+    ctor.variant_name = "On";
+    ctor.is_enum_variant = true;
+    ctor.type_id = CoreTypeId{2};
+    ctor.variant = CoreVariantId{0};
+    ctor.resolved = true;
+    ctor.args = {}; // arity unknown must NOT be a free pass
+    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeTableShapeInvalid));
 }
 

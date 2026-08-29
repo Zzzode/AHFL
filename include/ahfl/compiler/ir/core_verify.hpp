@@ -18,10 +18,14 @@
 //     future backends can re-check a program at the consumption boundary.
 //
 // What it checks (fail-closed on every violation):
+//   * type-table self-consistency: struct/enum parallel arrays are in sync
+//     (field_types == fields == field_has_default; variant_payloads == variants),
+//     a struct carries no enum metadata and vice versa, each variant payload's
+//     kind agrees with its vectors, and every payload slot type id is in range —
+//     a dedicated core.verify.TYPE_TABLE_SHAPE_INVALID, so downstream arity /
+//     field-domain checks cannot be bypassed by a malformed table;
 //   * typed-ID bounds: every CoreTypeId / CoreAgentId / CoreCapabilityId /
 //     CoreStateId / CoreExprId / CoreValueId is in range for its store;
-//   * value discipline: SSA single-definition, and def-before-use with
-//     branch-local scope (a value defined in an `if` branch does not escape);
 //   * projection self-containment: root_type is a valid struct, the step chain
 //     is continuous (step[i].owner == step[i-1].result, step[0].owner == root),
 //     each field id is in range and its result_type equals the owner's declared
@@ -66,6 +70,7 @@ namespace ahfl::ir::core {
 /// the verifier and its tests share one source of truth (Principle 5).
 namespace verify {
 inline constexpr std::string_view kTypeIdOutOfRange = "core.verify.TYPE_ID_OUT_OF_RANGE";
+inline constexpr std::string_view kTypeTableShapeInvalid = "core.verify.TYPE_TABLE_SHAPE_INVALID";
 inline constexpr std::string_view kAgentStateInvalid = "core.verify.AGENT_STATE_INVALID";
 inline constexpr std::string_view kCapabilityIdOutOfRange = "core.verify.CAPABILITY_ID_OUT_OF_RANGE";
 inline constexpr std::string_view kStateIdOutOfRange = "core.verify.STATE_ID_OUT_OF_RANGE";

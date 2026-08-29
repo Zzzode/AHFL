@@ -521,12 +521,50 @@ TEST_CASE("flow lowering fails closed on an unresolved capability call") {
 
 namespace {
 
-// Extract the variant names of the first `enum <Name>` block in an AHFL source
-// file, in declaration order. Minimal textual scan (no full parse) — enough to
-// pin the sysroot declaration order the builtin table must mirror.
-std::vector<std::string> read_enum_variant_order(const std::string &path,
-                                                 const std::string &enum_name) {
-    std::vector<std::string> variants;
+// A variant's declaration shape parsed from the sysroot: name + payload kind +
+// payload arity. Enough to prove the builtin SSOT mirrors the real stdlib
+// declaration (not just the name order).
+struct SysrootVariant {
+    std::string name;
+    ir::core::CoreTypeDecl::VariantPayload::Kind kind{
+        ir::core::CoreTypeDecl::VariantPayload::Kind::Unit};
+    std::uint32_t arity{0};
+};
+
+// Count top-level (depth-1) comma-separated items in a payload body, i.e. the
+// payload arity. `Some(T)` -> 1, `Pair(A, B)` -> 2, `Rec { a: T, b: U }` -> 2.
+[[nodiscard]] std::uint32_t count_payload_items(const std::string &body) {
+    // An empty/whitespace body means zero items.
+    bool any = false;
+    for (char c : body) {
+        if (!std::isspace(static_cast<unsigned char>(c))) {
+            any = true;
+            break;
+        }
+    }
+    if (!any) {
+        return 0;
+    }
+    std::uint32_t items = 1;
+    int depth = 0;
+    for (char c : body) {
+        if (c == '(' || c == '<' || c == '{' || c == '[') {
+            ++depth;
+        } else if (c == ')' || c == '>' || c == '}' || c == ']') {
+            --depth;
+        } else if (c == ',' && depth == 0) {
+            ++items;
+        }
+    }
+    return items;
+}
+
+// Extract the variants (name + payload kind + arity) of the first `enum <Name>`
+// block in an AHFL source file, in declaration order. Minimal textual scan (no
+// full parse) — enough to pin the sysroot declaration the builtin table mirrors.
+std::vector<SysrootVariant> read_enum_variants(const std::string &path,
+                                               const std::string &enum_name) {
+    std::vector<SysrootVariant> variants;
     std::FILE *f = std::fopen(path.c_str(), "rb");
     if (f == nullptr) {
         return variants;
@@ -539,64 +577,107 @@ std::vector<std::string> read_enum_variant_order(const std::string &path,
     }
     std::fclose(f);
 
+    // The enum header may be `enum Name` or `enum Name<...>`; match the bare name
+    // then the following `{`.
     const auto enum_pos = text.find("enum " + enum_name);
     if (enum_pos == std::string::npos) {
         return variants;
     }
     const auto open = text.find('{', enum_pos);
-    const auto close = text.find('}', open);
-    if (open == std::string::npos || close == std::string::npos) {
+    if (open == std::string::npos) {
+        return variants;
+    }
+    // Find the matching close brace for the enum body (variants may contain
+    // nested `{...}` struct payloads, so track depth).
+    std::size_t close = std::string::npos;
+    int depth = 0;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        if (text[i] == '{') {
+            ++depth;
+        } else if (text[i] == '}') {
+            if (--depth == 0) {
+                close = i;
+                break;
+            }
+        }
+    }
+    if (close == std::string::npos) {
         return variants;
     }
     const std::string body = text.substr(open + 1, close - open - 1);
-    // Each variant is the leading identifier of a comma-separated entry. Skip
-    // any parenthesized payload so a payload type name (e.g. the `T` in
-    // `Some(T)`) is not mistaken for the next variant.
-    std::string token;
-    int paren_depth = 0;
-    for (char c : body) {
-        if (c == '(') {
-            // The identifier accumulated so far is the variant name; the payload
-            // that follows is skipped.
-            if (!token.empty()) {
-                variants.push_back(token);
-                token.clear();
+    // Walk top-level (depth-0) comma-separated variant entries. Each entry is an
+    // identifier optionally followed by `(...)` (tuple) or `{...}` (struct).
+    using PK = ir::core::CoreTypeDecl::VariantPayload::Kind;
+    std::size_t i = 0;
+    while (i < body.size()) {
+        // Skip separators / whitespace.
+        while (i < body.size() && !(std::isalnum(static_cast<unsigned char>(body[i])) ||
+                                    body[i] == '_')) {
+            ++i;
+        }
+        if (i >= body.size()) {
+            break;
+        }
+        std::string name;
+        while (i < body.size() &&
+               (std::isalnum(static_cast<unsigned char>(body[i])) || body[i] == '_')) {
+            name.push_back(body[i++]);
+        }
+        // Skip whitespace to peek at an optional payload delimiter.
+        while (i < body.size() && std::isspace(static_cast<unsigned char>(body[i]))) {
+            ++i;
+        }
+        SysrootVariant v;
+        v.name = name;
+        if (i < body.size() && (body[i] == '(' || body[i] == '{')) {
+            const char open_ch = body[i];
+            const char close_ch = open_ch == '(' ? ')' : '}';
+            v.kind = open_ch == '(' ? PK::Tuple : PK::Struct;
+            int d = 0;
+            const std::size_t payload_start = i + 1;
+            std::size_t payload_end = i;
+            for (; i < body.size(); ++i) {
+                if (body[i] == open_ch) {
+                    ++d;
+                } else if (body[i] == close_ch) {
+                    if (--d == 0) {
+                        payload_end = i;
+                        ++i;
+                        break;
+                    }
+                }
             }
-            ++paren_depth;
-            continue;
-        }
-        if (c == ')') {
-            if (paren_depth > 0) {
-                --paren_depth;
-            }
-            continue;
-        }
-        if (paren_depth > 0) {
-            continue; // inside a payload: ignore
-        }
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
-            token.push_back(c);
+            v.arity = count_payload_items(body.substr(payload_start, payload_end - payload_start));
         } else {
-            if (!token.empty()) {
-                variants.push_back(token);
-                token.clear();
-            }
+            v.kind = PK::Unit;
+            v.arity = 0;
         }
-    }
-    if (!token.empty()) {
-        variants.push_back(token);
+        variants.push_back(std::move(v));
+        // Advance past a trailing top-level comma.
+        while (i < body.size() && body[i] != ',') {
+            // Skip anything up to the next separator only if it's whitespace; a
+            // stray token would be malformed source, which the parser would have
+            // rejected — here we simply resync on the next comma.
+            if (!std::isspace(static_cast<unsigned char>(body[i]))) {
+                break;
+            }
+            ++i;
+        }
+        if (i < body.size() && body[i] == ',') {
+            ++i;
+        }
     }
     return variants;
 }
 
 } // namespace
 
-TEST_CASE("builtin variant table matches stdlib declaration order (production vs sysroot)") {
-    // This reads the ACTUAL production builtin table (builtin_enum_table()) and
-    // asserts each descriptor's variant order equals the sysroot declaration
-    // order parsed from std/*.ahfl. Reordering EITHER the production table OR
-    // the stdlib source now fails this test — closing the drift Codex flagged
-    // (the previous version only checked the source against a hard-coded copy).
+TEST_CASE("builtin variant table matches stdlib declaration (name + payload kind + arity)") {
+    // Reads the ACTUAL production builtin table (builtin_enum_table()) and the
+    // sysroot std/*.ahfl, and asserts each descriptor's variants match the
+    // sysroot declaration by NAME, PAYLOAD KIND, and ARITY. Reordering or
+    // reshaping EITHER side (e.g. changing std Option's `Some(T)` to a struct
+    // payload) now fails — closing the "sync test doesn't compare std" gap.
     const auto &table = ir::core::builtin_enum_table();
     REQUIRE_FALSE(table.empty());
     for (const auto &desc : table) {
@@ -608,40 +689,16 @@ TEST_CASE("builtin variant table matches stdlib declaration order (production vs
             }
             return lower;
         }() + ".ahfl";
-        const auto sysroot_order = read_enum_variant_order(path, name);
-        REQUIRE(sysroot_order.size() >= desc.variants.size());
+        const auto sysroot = read_enum_variants(path, name);
+        INFO("enum " << name << " from " << path);
+        REQUIRE(sysroot.size() == desc.variants.size());
         for (std::size_t i = 0; i < desc.variants.size(); ++i) {
-            INFO("enum " << name << " variant #" << i);
-            CHECK(std::string(desc.variants[i].name) == sysroot_order[i]);
+            INFO("variant #" << i);
+            CHECK(std::string(desc.variants[i].name) == sysroot[i].name);
+            CHECK(desc.variants[i].payload_kind == sysroot[i].kind);
+            CHECK(desc.variants[i].payload_arity == sysroot[i].arity);
         }
     }
-    // The SSOT also locks each builtin variant's payload kind + arity, so std
-    // Option/Result construct/pattern arity cannot silently drift (Codex).
-    const auto find = [&](std::string_view enum_name) -> const ir::core::BuiltinEnumDescriptor * {
-        for (const auto &d : table) {
-            if (d.name == enum_name) {
-                return &d;
-            }
-        }
-        return nullptr;
-    };
-    using PK = ir::core::CoreTypeDecl::VariantPayload::Kind;
-    const auto *option = find("Option");
-    REQUIRE(option != nullptr);
-    REQUIRE(option->variants.size() == 2);
-    CHECK(option->variants[0].name == "Some");
-    CHECK(option->variants[0].payload_kind == PK::Tuple);
-    CHECK(option->variants[0].payload_arity == 1u);
-    CHECK(option->variants[1].name == "None");
-    CHECK(option->variants[1].payload_kind == PK::Unit);
-    CHECK(option->variants[1].payload_arity == 0u);
-    const auto *result = find("Result");
-    REQUIRE(result != nullptr);
-    REQUIRE(result->variants.size() == 2);
-    CHECK(result->variants[0].payload_kind == PK::Tuple);
-    CHECK(result->variants[0].payload_arity == 1u); // Ok(T)
-    CHECK(result->variants[1].payload_kind == PK::Tuple);
-    CHECK(result->variants[1].payload_arity == 1u); // Err(E)
 }
 
 TEST_CASE("builtin enum variant resolves via the builtin path by symbol identity") {
