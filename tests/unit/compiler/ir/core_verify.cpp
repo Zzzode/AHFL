@@ -432,6 +432,40 @@ TEST_CASE("verifier fails closed on an enum-variant construct with the wrong pay
     CHECK(has_code(result, verify::kConstructPayloadArity));
 }
 
+TEST_CASE("verifier fails closed on an enum constructed as a plain struct literal (kind gate)") {
+    GoodProgram g = make_good_program();
+    // Flag is an Enum. A struct-literal constructor (is_enum_variant=false)
+    // targeting it must be rejected — not silently pass the struct branch just
+    // because an enum carries no fields.
+    CoreConstructExpr ctor;
+    ctor.type_name = "Flag";
+    ctor.is_enum_variant = false; // masquerading as a struct construct
+    ctor.type_id = CoreTypeId{2}; // Flag (an enum)
+    ctor.resolved = true;
+    ctor.args = {};
+    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kConstructTypeInvalid));
+}
+
+TEST_CASE("verifier fails closed on a struct constructed as an enum variant (kind gate)") {
+    GoodProgram g = make_good_program();
+    // Ctx is a Struct. An enum-variant constructor targeting it must be rejected.
+    CoreConstructExpr ctor;
+    ctor.type_name = "Ctx";
+    ctor.variant_name = "Bogus";
+    ctor.is_enum_variant = true; // masquerading as an enum variant
+    ctor.type_id = CoreTypeId{1}; // Ctx (a struct)
+    ctor.variant = CoreVariantId{0};
+    ctor.resolved = true;
+    ctor.args = {};
+    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kConstructTypeInvalid));
+}
+
 TEST_CASE("verifier fails closed on an unlowered expression in an executable program") {
     GoodProgram g = make_good_program();
     g.flow->exprs.push_back(CoreExpr{CoreUnsupportedExpr{"MatchExpr", std::nullopt}, std::nullopt});

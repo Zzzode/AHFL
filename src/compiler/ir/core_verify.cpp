@@ -436,6 +436,25 @@ class Verifier {
             return;
         }
         const CoreTypeDecl &type = program_.types[c.type_id.value];
+        // The constructor FORM must match the type's kind: an enum-variant
+        // constructor targets an Enum, a struct literal targets a Struct.
+        // Otherwise a backend receives an impossible "struct-construct an enum"
+        // (or vice versa) node — a struct-construct of an enum would slip past
+        // the struct branch (an enum carries no fields) with zero args.
+        if (c.is_enum_variant && type.kind != CoreTypeDecl::Kind::Enum) {
+            error(verify::kConstructTypeInvalid,
+                  "enum-variant constructor '" + c.type_name + "::" + c.variant_name +
+                      "' targets a type that is not an enum",
+                  range);
+            return;
+        }
+        if (!c.is_enum_variant && type.kind != CoreTypeDecl::Kind::Struct) {
+            error(verify::kConstructTypeInvalid,
+                  "struct-literal constructor '" + c.type_name +
+                      "' targets a type that is not a struct",
+                  range);
+            return;
+        }
         if (c.is_enum_variant) {
             if (c.variant.value >= type.variants.size()) {
                 error(verify::kConstructVariantInvalid,
