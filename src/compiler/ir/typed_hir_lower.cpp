@@ -981,12 +981,34 @@ class TypedIrLowerer final {
         return nullptr;
     }
 
+    // RFC 0026 (3)-3b P0-2: every AST subpattern that carries an actual pattern
+    // MUST have an aligned TypedPattern child, so typed identity is never lost by
+    // degrading to AST spelling. A missing child is a structural defect
+    // (fail-closed); the only patterns with no typed child are the ones with no
+    // AST pattern at all (e.g. a struct-payload `..` rest field), which the
+    // caller never resolves.
+    [[nodiscard]] const TypedPattern *require_typed_child(const TypedPattern *parent,
+                                                          std::string_view name) const {
+        const TypedPattern *child = typed_child(parent, name);
+        if (child == nullptr) {
+            throw std::logic_error("match sub-pattern '" + std::string(name) +
+                                   "' has no aligned TypedPattern child (typed identity missing)");
+        }
+        return child;
+    }
+
     [[nodiscard]] ir::MatchPattern lower_pattern(const ast::PatternSyntax *pattern,
                                                  const TypedPattern *typed) const {
         if (pattern == nullptr) {
             ir::MatchPattern empty{.node = ir::WildcardPattern{}, .source_range = std::nullopt};
             empty.matched_enum = matched_enum_ref(typed);
             return empty;
+        }
+        // RFC 0026 (3)-3b P0-2: a real AST pattern MUST have an aligned typed
+        // pattern, or its identity would silently degrade to AST spelling.
+        if (typed == nullptr) {
+            throw std::logic_error(
+                "match pattern has no aligned TypedPattern (typed identity missing)");
         }
 
         ir::MatchPattern lowered{
@@ -1037,7 +1059,7 @@ class TypedIrLowerer final {
                     }
                     variant.subpatterns.reserve(value.subpatterns.size());
                     for (std::size_t i = 0; i < value.subpatterns.size(); ++i) {
-                        const TypedPattern *sub_typed = typed_child(typed, std::to_string(i));
+                        const TypedPattern *sub_typed = require_typed_child(typed, std::to_string(i));
                         variant.subpatterns.push_back(make_owned<ir::MatchPattern>(
                             lower_pattern(value.subpatterns[i].get(), sub_typed)));
                     }
@@ -1052,7 +1074,7 @@ class TypedIrLowerer final {
                             .is_rest = field->is_rest,
                         };
                         if (field->pattern) {
-                            const TypedPattern *field_typed = typed_child(typed, field->name);
+                            const TypedPattern *field_typed = require_typed_child(typed, field->name);
                             lowered_field.pattern = make_owned<ir::MatchPattern>(
                                 lower_pattern(field->pattern.get(), field_typed));
                         }
@@ -1097,7 +1119,7 @@ class TypedIrLowerer final {
                         .nested = nullptr,
                     };
                     if (value.nested) {
-                        const TypedPattern *nested_typed = typed_child(typed, "nested");
+                        const TypedPattern *nested_typed = require_typed_child(typed, "nested");
                         binding.nested = make_owned<ir::MatchPattern>(
                             lower_pattern(value.nested.get(), nested_typed));
                     }
@@ -1107,7 +1129,7 @@ class TypedIrLowerer final {
                     ir::TuplePattern tuple;
                     tuple.elements.reserve(value.elements.size());
                     for (std::size_t i = 0; i < value.elements.size(); ++i) {
-                        const TypedPattern *elem_typed = typed_child(typed, std::to_string(i));
+                        const TypedPattern *elem_typed = require_typed_child(typed, std::to_string(i));
                         tuple.elements.push_back(make_owned<ir::MatchPattern>(
                             lower_pattern(value.elements[i].get(), elem_typed)));
                     }
@@ -1117,7 +1139,7 @@ class TypedIrLowerer final {
                     ir::OrPattern pattern_or;
                     pattern_or.branches.reserve(value.branches.size());
                     for (std::size_t i = 0; i < value.branches.size(); ++i) {
-                        const TypedPattern *branch_typed = typed_child(typed, std::to_string(i));
+                        const TypedPattern *branch_typed = require_typed_child(typed, std::to_string(i));
                         pattern_or.branches.push_back(make_owned<ir::MatchPattern>(
                             lower_pattern(value.branches[i].get(), branch_typed)));
                     }
@@ -2131,6 +2153,23 @@ class TypedIrLowerer final {
 
             ir::ExprRef pending_guard = nullptr;
             std::size_t arm_index = 0;
+            // RFC 0026 (3)-3b P0-1: the typed pattern index list MUST be present
+            // and 1:1 with the arms BEFORE we lower any arm — an empty / short /
+            // long list means the typed identity was not persisted, and silently
+            // falling back to AST-derived identity is exactly the string-guessing
+            // this slice removes. Lock the count up front (fail-closed).
+            std::size_t body_child_count = 0;
+            for (const auto &child : e.children) {
+                if (child.role == TypedExprChildRole::MatchArmBody) {
+                    ++body_child_count;
+                }
+            }
+            if (e.match_arm_pattern_indexes.size() != body_child_count) {
+                throw std::logic_error(
+                    "match TypedExpr match_arm_pattern_indexes count (" +
+                    std::to_string(e.match_arm_pattern_indexes.size()) +
+                    ") does not match its arm count (" + std::to_string(body_child_count) + ")");
+            }
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::MatchArmGuard &&
                     child.role != TypedExprChildRole::MatchArmBody) {
@@ -2150,26 +2189,15 @@ class TypedIrLowerer final {
                     ast_match->arms[arm_index]) {
                     pattern = ast_match->arms[arm_index]->pattern.get();
                 }
-                // RFC 0026 (3)-3b: resolve this arm's TypedPattern by index (in
-                // source arm order) so lowering carries typed variant / matched
-                // enum identity, never the AST spelling. The index list MUST be
-                // present and aligned with the arms; a missing / out-of-range
-                // entry is a structural defect (fail-closed, never fall back to
-                // AST-derived identity).
-                if (e.match_arm_pattern_indexes.size() != 0 &&
-                    arm_index >= e.match_arm_pattern_indexes.size()) {
+                // The count is already locked 1:1 above; resolve this arm's
+                // TypedPattern by index (an out-of-range index is a structural
+                // defect — never fall back to AST-derived identity).
+                const std::uint32_t pat_idx = e.match_arm_pattern_indexes[arm_index];
+                if (pat_idx >= self.typed_program_->patterns.size()) {
                     throw std::logic_error(
-                        "match TypedExpr has fewer match_arm_pattern_indexes than arms");
+                        "match arm pattern index is out of range of TypedProgram::patterns");
                 }
-                const TypedPattern *arm_typed = nullptr;
-                if (arm_index < e.match_arm_pattern_indexes.size()) {
-                    const std::uint32_t pat_idx = e.match_arm_pattern_indexes[arm_index];
-                    if (pat_idx >= self.typed_program_->patterns.size()) {
-                        throw std::logic_error(
-                            "match arm pattern index is out of range of TypedProgram::patterns");
-                    }
-                    arm_typed = &self.typed_program_->patterns[pat_idx];
-                }
+                const TypedPattern *arm_typed = &self.typed_program_->patterns[pat_idx];
                 match.arms.push_back(ir::MatchArmExpr{
                     .pattern = self.lower_pattern(pattern, arm_typed),
                     .guard = pending_guard,
@@ -2571,17 +2599,20 @@ class TypedIrLowerer final {
             auto else_ptr =
                 else_block ? make_owned<ir::Block>(self.lower_typed_block(*else_block)) : nullptr;
             const auto *syntax = self.find_ast_if_let_stmt(stmt);
-            // RFC 0026 (3)-3b: an if-let statement persists its root pattern in
-            // TypedStatement::pattern_index; resolve it so lowering carries typed
-            // identity. An out-of-range index is a structural defect (fail-closed).
-            const TypedPattern *typed_pattern = nullptr;
-            if (stmt.pattern_index != UINT32_MAX) {
-                if (stmt.pattern_index >= self.typed_program_->patterns.size()) {
-                    throw std::logic_error(
-                        "if-let statement pattern index is out of range of TypedProgram::patterns");
-                }
-                typed_pattern = &self.typed_program_->patterns[stmt.pattern_index];
+            // RFC 0026 (3)-3b P0-1: an if-let statement MUST persist its root
+            // pattern in TypedStatement::pattern_index. A missing (UINT32_MAX) or
+            // out-of-range index means the typed identity was not persisted;
+            // falling back to AST-derived identity is the string-guessing this
+            // slice removes, so both are structural defects (fail-closed).
+            if (stmt.pattern_index == UINT32_MAX) {
+                throw std::logic_error(
+                    "if-let statement has no pattern_index (typed identity not persisted)");
             }
+            if (stmt.pattern_index >= self.typed_program_->patterns.size()) {
+                throw std::logic_error(
+                    "if-let statement pattern index is out of range of TypedProgram::patterns");
+            }
+            const TypedPattern *typed_pattern = &self.typed_program_->patterns[stmt.pattern_index];
             return self.make_statement(
                 ir::IfLetStatement{
                     .pattern = self.lower_pattern(

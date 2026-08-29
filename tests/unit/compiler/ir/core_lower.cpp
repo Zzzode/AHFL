@@ -3,6 +3,7 @@
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program.hpp"
+#include "ahfl/compiler/ir/typed_hir_lower.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
@@ -1777,4 +1778,155 @@ flow for A {
     CHECK(some->variant_name == "Some");
     CHECK(some->owner_enum.canonical_name.find("Maybe") != std::string::npos);
     CHECK(match->arms[0].pattern.matched_enum.canonical_name.find("Maybe") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// (3)-3b forward-fix P0-1 / P0-2: the typed pattern identity bridge must FAIL
+// CLOSED when the typed pattern index / child is missing or misaligned. These
+// drive the real lowerer with a surgically-corrupted TypedProgram and assert it
+// throws rather than silently degrading to AST-derived identity.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct FrontendState {
+    ahfl::ParseResult parse;
+    std::optional<ahfl::ResolveResult> resolve;
+    std::optional<ahfl::TypeCheckResult> typecheck;
+    [[nodiscard]] bool ok() const {
+        return typecheck.has_value() && !typecheck->has_errors();
+    }
+};
+
+// Parse + resolve + typecheck a source, RETAINING all state so a test can mutate
+// the TypedProgram before lowering. Returns nullopt if any stage errors.
+std::optional<FrontendState> frontend_state(const std::string &label, const std::string &source) {
+    FrontendState st;
+    const Frontend frontend;
+    st.parse = frontend.parse_text(label + ".ahfl", source);
+    if (st.parse.has_errors() || st.parse.program == nullptr) {
+        return std::nullopt;
+    }
+    const Resolver resolver;
+    st.resolve = resolver.resolve(*st.parse.program);
+    if (st.resolve->has_errors()) {
+        return std::nullopt;
+    }
+    const TypeChecker checker;
+    st.typecheck = checker.check(*st.parse.program, *st.resolve);
+    if (st.typecheck->has_errors()) {
+        return std::nullopt;
+    }
+    return st;
+}
+
+// Index of the first Match expression in the typed program (UINT32_MAX if none).
+std::uint32_t find_typed_match(const ahfl::TypedProgram &tp) {
+    for (std::uint32_t i = 0; i < tp.expressions.size(); ++i) {
+        if (tp.expressions[i].kind == ahfl::ast::ExprSyntaxKind::Match) {
+            return i;
+        }
+    }
+    return UINT32_MAX;
+}
+
+const std::string kMatchProgram = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let m: Maybe = Maybe::Some(input.id);
+        let r: Int = match m {
+            Some(x) => x,
+            None => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("(3)-3b P0-1: match with EMPTY pattern-index list fails closed (no AST fallback)") {
+    auto st = frontend_state("empty_idx", kMatchProgram);
+    REQUIRE(st.has_value());
+    const auto mi = find_typed_match(st->typecheck->typed_program);
+    REQUIRE(mi != UINT32_MAX);
+    // Corrupt: drop the persisted arm pattern indexes entirely.
+    st->typecheck->typed_program.expressions[mi].match_arm_pattern_indexes.clear();
+    CHECK_THROWS_AS(
+        static_cast<void>(ahfl::lower_typed_program(st->typecheck->typed_program, *st->parse.program)),
+        std::logic_error);
+}
+
+TEST_CASE("(3)-3b P0-1: match with a SHORT pattern-index list fails closed") {
+    auto st = frontend_state("short_idx", kMatchProgram);
+    REQUIRE(st.has_value());
+    const auto mi = find_typed_match(st->typecheck->typed_program);
+    REQUIRE(mi != UINT32_MAX);
+    auto &idxs = st->typecheck->typed_program.expressions[mi].match_arm_pattern_indexes;
+    REQUIRE(idxs.size() == 2);
+    idxs.pop_back(); // one fewer than the 2 arms
+    CHECK_THROWS_AS(
+        static_cast<void>(ahfl::lower_typed_program(st->typecheck->typed_program, *st->parse.program)),
+        std::logic_error);
+}
+
+TEST_CASE("(3)-3b P0-1: match with an EXTRA pattern-index entry fails closed") {
+    auto st = frontend_state("long_idx", kMatchProgram);
+    REQUIRE(st.has_value());
+    const auto mi = find_typed_match(st->typecheck->typed_program);
+    REQUIRE(mi != UINT32_MAX);
+    auto &idxs = st->typecheck->typed_program.expressions[mi].match_arm_pattern_indexes;
+    idxs.push_back(idxs.front()); // one more than the 2 arms
+    CHECK_THROWS_AS(
+        static_cast<void>(ahfl::lower_typed_program(st->typecheck->typed_program, *st->parse.program)),
+        std::logic_error);
+}
+
+TEST_CASE("(3)-3b P0-1: match with an OUT-OF-RANGE pattern index fails closed") {
+    auto st = frontend_state("oor_idx", kMatchProgram);
+    REQUIRE(st.has_value());
+    const auto mi = find_typed_match(st->typecheck->typed_program);
+    REQUIRE(mi != UINT32_MAX);
+    auto &idxs = st->typecheck->typed_program.expressions[mi].match_arm_pattern_indexes;
+    REQUIRE_FALSE(idxs.empty());
+    idxs[0] = 999999; // out of TypedProgram::patterns range
+    CHECK_THROWS_AS(
+        static_cast<void>(ahfl::lower_typed_program(st->typecheck->typed_program, *st->parse.program)),
+        std::logic_error);
+}
+
+TEST_CASE("(3)-3b P0-2: deleting a nested TypedPatternChild fails closed") {
+    // Some(x) is a tuple-payload variant with one child (the `x` binding). Drop
+    // the child so the recursive lower_pattern cannot find its typed sub-pattern.
+    auto st = frontend_state("del_child", kMatchProgram);
+    REQUIRE(st.has_value());
+    auto &tp = st->typecheck->typed_program;
+    // Find the Some variant pattern (has >= 1 child) and clear its children.
+    bool corrupted = false;
+    for (auto &pat : tp.patterns) {
+        if (pat.kind == ahfl::TypedPatternKind::Variant && !pat.children.empty()) {
+            pat.children.clear();
+            corrupted = true;
+            break;
+        }
+    }
+    REQUIRE(corrupted);
+    CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
 }

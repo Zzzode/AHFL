@@ -585,7 +585,7 @@ class ProgramVerifier {
     }
 
     void verify_statement_node(const IfLetStatement &stmt, const std::string &path) {
-        verify_match_pattern(stmt.pattern, path + ".pattern");
+        verify_match_pattern(stmt.pattern, path + ".pattern", /*is_root=*/true);
         verify_required_expr_ref(stmt.scrutinee, path + ".scrutinee");
         if (stmt.then_block) {
             verify_block(*stmt.then_block, path + ".then");
@@ -724,7 +724,7 @@ class ProgramVerifier {
         verify_required_expr_ref(expr.scrutinee, path + ".scrutinee");
         for (std::uint32_t index = 0; index < expr.arms.size(); ++index) {
             const auto arm_path = path + ".arms[" + std::to_string(index) + "]";
-            verify_match_pattern(expr.arms[index].pattern, arm_path + ".pattern");
+            verify_match_pattern(expr.arms[index].pattern, arm_path + ".pattern", /*is_root=*/true);
             verify_optional_expr_ref(expr.arms[index].guard, arm_path + ".guard");
             verify_required_expr_ref(expr.arms[index].body, arm_path + ".body");
         }
@@ -744,9 +744,22 @@ class ProgramVerifier {
         verify_required_expr_ref(expr.body, path + ".body");
     }
 
-    void verify_match_pattern(const MatchPattern &pattern, const std::string &path) {
+    void verify_match_pattern(const MatchPattern &pattern, const std::string &path,
+                              bool is_root = false) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.text)) {
             add_error(path, "match pattern contains sentinel text");
+        }
+        // RFC 0026 (3)-3b: a ROOT arm / if-let pattern is matched against the
+        // scrutinee enum; its typed matched_enum identity must be resolved (a
+        // Type SymbolRef), so a backend never recovers it from the `path`
+        // spelling. Nested primitive-payload patterns need not carry it.
+        if (is_root && is_backend_ready_mode(mode_)) {
+            if (pattern.matched_enum.kind != SymbolRefKind::Type ||
+                pattern.matched_enum.canonical_name.empty()) {
+                add_error(path,
+                          "match root pattern has no resolved matched-enum identity "
+                          "(BackendReady requires a typed scrutinee enum)");
+            }
         }
         std::visit([this, &path](const auto &node) { verify_match_pattern_node(node, path); },
                    pattern.node);
@@ -759,6 +772,19 @@ class ProgramVerifier {
         if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.path)) {
             add_error(path, "variant pattern contains sentinel path");
         }
+        // RFC 0026 (3)-3b: a variant pattern's typed identity must be resolved,
+        // so a backend resolves the variant by symbol, never by parsing `path`.
+        if (is_backend_ready_mode(mode_)) {
+            if (pattern.owner_enum.kind != SymbolRefKind::Type ||
+                pattern.owner_enum.canonical_name.empty()) {
+                add_error(path,
+                          "variant pattern has no resolved owner-enum identity "
+                          "(BackendReady requires a typed owner enum)");
+            }
+            if (pattern.variant_name.empty()) {
+                add_error(path, "variant pattern has an empty variant name");
+            }
+        }
         for (std::uint32_t index = 0; index < pattern.subpatterns.size(); ++index) {
             const auto subpattern_path = path + ".subpatterns[" + std::to_string(index) + "]";
             if (!pattern.subpatterns[index]) {
@@ -766,6 +792,14 @@ class ProgramVerifier {
                 continue;
             }
             verify_match_pattern(*pattern.subpatterns[index], subpattern_path);
+        }
+        // Struct-payload fields carry their own sub-patterns (a `..` rest field
+        // has none); recurse into each present one.
+        for (std::uint32_t index = 0; index < pattern.fields.size(); ++index) {
+            const auto field_path = path + ".fields[" + std::to_string(index) + "]";
+            if (pattern.fields[index].pattern) {
+                verify_match_pattern(*pattern.fields[index].pattern, field_path);
+            }
         }
     }
 

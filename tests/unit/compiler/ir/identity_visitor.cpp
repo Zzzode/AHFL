@@ -2106,3 +2106,112 @@ impl Show for Widget {
     ahfl::print_program_ir_json(*reparsed, reout);
     CHECK(reout.str() == json);
 }
+
+// RFC 0026 (3)-3b: the BackendReady verifier enforces typed pattern identity —
+// a match arm / if-let root pattern must carry a resolved matched-enum, and a
+// variant pattern a resolved owner-enum + non-empty variant name.
+namespace {
+
+const char *const kMatchIdentitySource = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let m: Maybe = Maybe::Some(input.id);
+        let r: Int = match m {
+            Some(x) => x,
+            None => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+
+[[nodiscard]] ahfl::ir::Program lower_match_identity_program() {
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("match_backend_ready.ahfl", kMatchIdentitySource);
+    REQUIRE_FALSE(parse.has_errors());
+    REQUIRE(parse.program != nullptr);
+    const ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+    const ahfl::TypeChecker checker;
+    const auto typecheck = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(typecheck.has_errors());
+    return ahfl::lower_program_ir(*parse.program, resolve, typecheck);
+}
+
+} // namespace
+
+TEST_CASE("Semantic IR backend-ready verifier accepts a match carrying typed pattern identity") {
+    const auto ir = lower_match_identity_program();
+    CHECK_FALSE(ahfl::ir::verify_ir_program(ir).has_errors());
+    const auto backend_ready =
+        ahfl::ir::verify_ir_program(ir, ahfl::ir::IrVerificationMode::BackendReady);
+    CHECK_FALSE(backend_ready.has_errors());
+}
+
+TEST_CASE("Semantic IR backend-ready verifier rejects a variant pattern missing owner-enum identity") {
+    auto ir = lower_match_identity_program();
+    // Corrupt: strip the typed owner-enum from every variant pattern (as if a
+    // backend consumed a hand-built / string-only IR). BackendReady must reject.
+    bool corrupted = false;
+    for (ahfl::ir::Expr *expr : ir.all_exprs()) {
+        if (expr == nullptr) {
+            continue;
+        }
+        if (auto *m = std::get_if<ahfl::ir::MatchExpr>(&expr->node)) {
+            for (auto &arm : m->arms) {
+                if (auto *v = std::get_if<ahfl::ir::VariantPattern>(&arm.pattern.node)) {
+                    v->owner_enum = ahfl::ir::SymbolRef{};
+                    v->variant_name.clear();
+                    corrupted = true;
+                }
+            }
+        }
+    }
+    REQUIRE(corrupted);
+    const auto backend_ready =
+        ahfl::ir::verify_ir_program(ir, ahfl::ir::IrVerificationMode::BackendReady);
+    CHECK(backend_ready.has_errors());
+    CHECK(has_ir_diagnostic_containing(backend_ready, ahfl::ir::VerificationSeverity::Error,
+                                       "variant pattern has no resolved owner-enum identity"));
+}
+
+TEST_CASE("Semantic IR backend-ready verifier rejects a match root pattern missing matched-enum") {
+    auto ir = lower_match_identity_program();
+    bool corrupted = false;
+    for (ahfl::ir::Expr *expr : ir.all_exprs()) {
+        if (expr == nullptr) {
+            continue;
+        }
+        if (auto *m = std::get_if<ahfl::ir::MatchExpr>(&expr->node)) {
+            for (auto &arm : m->arms) {
+                arm.pattern.matched_enum = ahfl::ir::SymbolRef{};
+                corrupted = true;
+            }
+        }
+    }
+    REQUIRE(corrupted);
+    const auto backend_ready =
+        ahfl::ir::verify_ir_program(ir, ahfl::ir::IrVerificationMode::BackendReady);
+    CHECK(backend_ready.has_errors());
+    CHECK(has_ir_diagnostic_containing(backend_ready, ahfl::ir::VerificationSeverity::Error,
+                                       "match root pattern has no resolved matched-enum identity"));
+}

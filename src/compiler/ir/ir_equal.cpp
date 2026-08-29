@@ -19,6 +19,95 @@ namespace {
     return lhs.kind == rhs.kind && lhs.canonical_name == rhs.canonical_name;
 }
 
+// RFC 0026 (3)-3b: match patterns compare STRUCTURALLY, including the typed
+// identity persisted at lowering (matched_enum on every pattern; owner_enum +
+// variant_name on a variant pattern). Two arms with identical `text` but a
+// different owner/matched enum are NOT lowering-equivalent, so a backend / opt
+// pass consuming this fidelity boundary must see them as distinct.
+[[nodiscard]] bool match_patterns_equal(const MatchPattern &lhs, const MatchPattern &rhs);
+
+[[nodiscard]] bool match_patterns_equal_ptr(const Owned<MatchPattern> &lhs,
+                                            const Owned<MatchPattern> &rhs) {
+    if (lhs == nullptr || rhs == nullptr) {
+        return lhs.get() == rhs.get();
+    }
+    return match_patterns_equal(*lhs, *rhs);
+}
+
+[[nodiscard]] bool match_patterns_equal(const MatchPattern &lhs, const MatchPattern &rhs) {
+    if (lhs.node.index() != rhs.node.index()) {
+        return false;
+    }
+    // The scrutinee-enum identity is part of the pattern's meaning (a `none` /
+    // wildcard against a different enum is a different pattern).
+    if (!symbol_ref_equal(lhs.matched_enum, rhs.matched_enum)) {
+        return false;
+    }
+    return std::visit(
+        Overloaded{
+            [&](const LiteralPattern &a) {
+                return a.spelling == std::get<LiteralPattern>(rhs.node).spelling;
+            },
+            [&](const IntRangePattern &a) {
+                const auto &b = std::get<IntRangePattern>(rhs.node);
+                return a.start == b.start && a.end == b.end;
+            },
+            [&](const WildcardPattern &) { return true; },
+            [&](const BindingPattern &a) {
+                const auto &b = std::get<BindingPattern>(rhs.node);
+                return a.name == b.name && a.is_mut == b.is_mut &&
+                       match_patterns_equal_ptr(a.nested, b.nested);
+            },
+            [&](const VariantPattern &a) {
+                const auto &b = std::get<VariantPattern>(rhs.node);
+                if (a.kind != b.kind || a.variant_name != b.variant_name ||
+                    !symbol_ref_equal(a.owner_enum, b.owner_enum) ||
+                    a.subpatterns.size() != b.subpatterns.size() ||
+                    a.fields.size() != b.fields.size()) {
+                    return false;
+                }
+                for (std::size_t i = 0; i < a.subpatterns.size(); ++i) {
+                    if (!match_patterns_equal_ptr(a.subpatterns[i], b.subpatterns[i])) {
+                        return false;
+                    }
+                }
+                for (std::size_t i = 0; i < a.fields.size(); ++i) {
+                    if (a.fields[i].name != b.fields[i].name ||
+                        a.fields[i].is_rest != b.fields[i].is_rest ||
+                        !match_patterns_equal_ptr(a.fields[i].pattern, b.fields[i].pattern)) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+            [&](const TuplePattern &a) {
+                const auto &b = std::get<TuplePattern>(rhs.node);
+                if (a.elements.size() != b.elements.size()) {
+                    return false;
+                }
+                for (std::size_t i = 0; i < a.elements.size(); ++i) {
+                    if (!match_patterns_equal_ptr(a.elements[i], b.elements[i])) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+            [&](const OrPattern &a) {
+                const auto &b = std::get<OrPattern>(rhs.node);
+                if (a.branches.size() != b.branches.size()) {
+                    return false;
+                }
+                for (std::size_t i = 0; i < a.branches.size(); ++i) {
+                    if (!match_patterns_equal_ptr(a.branches[i], b.branches[i])) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+        },
+        lhs.node);
+}
+
 [[nodiscard]] bool refs_equal(const std::vector<ExprRef> &lhs, const std::vector<ExprRef> &rhs) {
     if (lhs.size() != rhs.size()) {
         return false;
@@ -124,10 +213,10 @@ bool exprs_structurally_equal(const Expr &lhs, const Expr &rhs) {
                     return false;
                 }
                 for (std::size_t index = 0; index < a.arms.size(); ++index) {
-                    // Patterns compare by their canonical source text (the IR
-                    // does not expose a structural pattern-equality primitive;
-                    // `text` is the normalized spelling produced at lowering).
-                    if (a.arms[index].pattern.text != b.arms[index].pattern.text ||
+                    // RFC 0026 (3)-3b: compare patterns STRUCTURALLY (node shape
+                    // + typed owner/matched enum identity), not just the `text`
+                    // spelling, so a different owner enum is not judged equal.
+                    if (!match_patterns_equal(a.arms[index].pattern, b.arms[index].pattern) ||
                         !exprs_structurally_equal(a.arms[index].guard, b.arms[index].guard) ||
                         !exprs_structurally_equal(a.arms[index].body, b.arms[index].body)) {
                         return false;
