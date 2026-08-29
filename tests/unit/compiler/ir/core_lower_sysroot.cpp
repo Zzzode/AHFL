@@ -163,12 +163,15 @@ flow for Payer {
     const auto ahfl_ir = lower_program_ir(parse_result.graph, resolve_result, type_result);
     const auto result = ir::core::lower_ahfl_to_core(ahfl_ir);
 
-    // Only the deferred field-projection diagnostics are allowed; NO dropped
-    // effect / unresolved capability / unresolved type/variant.
+    // Member projections now resolve to typed field ids, so this program —
+    // which uses input.amount, ctx.slot, ctx.verdict, ctx.mine — lowers with
+    // NO diagnostics at all and is fully executable.
     for (const auto &d : result.diagnostics) {
         INFO("unexpected core diagnostic: " << d.code << " — " << d.message);
-        CHECK(d.code == ir::core::diag::kUnloweredFieldProjection);
+        CHECK(false);
     }
+    CHECK(result.ok());
+    CHECK(result.is_executable);
 
     // Locate the Payer flow.
     const ir::core::CoreFlowDecl *flow = nullptr;

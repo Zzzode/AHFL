@@ -149,22 +149,6 @@ bool callee_is(const std::string &callee, const std::string &name) {
                               callee.compare(callee.size() - name.size(), name.size(), name) == 0);
 }
 
-// The ANF/structure flow tests below exercise capability hoisting, branch
-// regions, and goto — but their sample programs also contain member
-// projections (`input.x`, `ctx.y`), which this slice deliberately fails closed
-// on (typed field-index resolution is a deferred sub-slice). So these tests
-// tolerate `core.UNLOWERED_FIELD_PROJECTION` diagnostics while asserting NO
-// diagnostic represents a dropped effect / unresolved capability / lost
-// statement — the properties under test must hold regardless of the deferral.
-bool only_field_projection_diagnostics(const ir::core::CoreLowerResult &result) {
-    for (const auto &d : result.diagnostics) {
-        if (d.code != ir::core::diag::kUnloweredFieldProjection) {
-            return false;
-        }
-    }
-    return true;
-}
-
 } // namespace
 
 TEST_CASE("lower_ahfl_to_core lowers an agent state machine into Core-IR") {
@@ -273,7 +257,7 @@ TEST_CASE("flow lowering: capability call inside a branch is preserved (P0-2 mut
     REQUIRE(ahfl_ir.has_value());
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
-    CHECK(only_field_projection_diagnostics(result));
+    REQUIRE(result.ok()); // member projections now resolve; fully executable
     REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
     REQUIRE(flow.states.size() == 3);
@@ -318,7 +302,7 @@ TEST_CASE("flow lowering: goto resolves to a typed CoreStateId and policy is pre
     const auto ahfl_ir = lower_source_to_ahfl_ir("payflow", kFlowSource);
     REQUIRE(ahfl_ir.has_value());
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
-    CHECK(only_field_projection_diagnostics(result));
+    REQUIRE(result.ok()); // member projections now resolve; fully executable
     REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
 
@@ -409,7 +393,7 @@ TEST_CASE("flow lowering: nested capability call inside a constructor is not dro
     REQUIRE(ahfl_ir.has_value());
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
-    CHECK(only_field_projection_diagnostics(result));
+    REQUIRE(result.ok()); // member projections now resolve; fully executable
     REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
 
@@ -973,4 +957,168 @@ flow for A {
     // Despite `Pair { b: 2, a: 1 }`, identity binds a<-1 and b<-2.
     CHECK(field_a_val == "1");
     CHECK(field_b_val == "2");
+}
+
+// ==========================================================================
+// Struct-field member projection lowering (resolves to typed CoreFieldId).
+// ==========================================================================
+
+const char *const kProjectionSource = R"AHFL(
+module projflow;
+
+struct Inner {
+    n: Int;
+}
+
+struct Req {
+    top: Int;
+    inner: Inner;
+}
+
+struct Ctx {
+    saved: Int = 0;
+    nested: Inner = Inner { n: 0 };
+}
+
+struct Reply {
+    ok: Bool = false;
+}
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Reply;
+    states: [S];
+    initial: S;
+    final: [S];
+    capabilities: [];
+}
+
+flow for A {
+    state S {
+        ctx.saved = input.top;
+        ctx.nested.n = input.inner.n;
+    }
+}
+)AHFL";
+
+TEST_CASE("member projection resolves reads and stores to typed CoreFieldId (fail-closed lifted)") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("projflow", kProjectionSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    // With member projections now resolved, the program is fully executable —
+    // NO more field-projection fail-closed diagnostics.
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow = result.program.flows[0];
+    REQUIRE(flow.states.size() == 1);
+    const auto &body = flow.states[0].body;
+
+    // Gather the resolved read (CorePathExpr) and store (CoreStoreStmt) projections.
+    // Reads live in the expr arena; stores are statements.
+    bool saw_input_top_read = false;   // input.top -> field 0 of Req
+    bool saw_input_inner_n_read = false; // input.inner.n -> [1, 0]
+    for (const auto &expr : flow.exprs) {
+        if (const auto *p = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
+            if (p->root == ir::core::CorePathRoot::Input && p->members.size() == 1 &&
+                p->members[0] == "top") {
+                saw_input_top_read = true;
+                CHECK(p->members_resolved);
+                REQUIRE(p->member_fields.size() == 1);
+                CHECK(p->member_fields[0].value == 0u); // Req.top is field 0
+            }
+            if (p->root == ir::core::CorePathRoot::Input && p->members.size() == 2 &&
+                p->members[0] == "inner" && p->members[1] == "n") {
+                saw_input_inner_n_read = true;
+                CHECK(p->members_resolved);
+                REQUIRE(p->member_fields.size() == 2);
+                CHECK(p->member_fields[0].value == 1u); // Req.inner is field 1
+                CHECK(p->member_fields[1].value == 0u); // Inner.n is field 0
+            }
+        }
+    }
+    CHECK(saw_input_top_read);
+    CHECK(saw_input_inner_n_read);
+
+    bool saw_ctx_saved_store = false;    // ctx.saved -> field 0 of Ctx
+    bool saw_ctx_nested_n_store = false; // ctx.nested.n -> [1, 0]
+    for (const auto &stmt : body.statements) {
+        if (const auto *store = std::get_if<ir::core::CoreStoreStmt>(&stmt.node)) {
+            const auto &pl = store->place;
+            if (pl.root == ir::core::CorePathRoot::Context && pl.members.size() == 1 &&
+                pl.members[0] == "saved") {
+                saw_ctx_saved_store = true;
+                CHECK(pl.members_resolved);
+                REQUIRE(pl.member_fields.size() == 1);
+                CHECK(pl.member_fields[0].value == 0u); // Ctx.saved is field 0
+            }
+            if (pl.root == ir::core::CorePathRoot::Context && pl.members.size() == 2 &&
+                pl.members[0] == "nested" && pl.members[1] == "n") {
+                saw_ctx_nested_n_store = true;
+                CHECK(pl.members_resolved);
+                REQUIRE(pl.member_fields.size() == 2);
+                CHECK(pl.member_fields[0].value == 1u); // Ctx.nested is field 1
+                CHECK(pl.member_fields[1].value == 0u); // Inner.n is field 0
+            }
+        }
+    }
+    CHECK(saw_ctx_saved_store);
+    CHECK(saw_ctx_nested_n_store);
+}
+
+TEST_CASE("member projection on an unknown field fails closed") {
+    // Hand-built AhflIr: agent input is a struct with field `a`, but the flow
+    // reads `input.ghost` (no such field) -> fail-closed diagnostic, not a
+    // silently-executable projection.
+    ir::AhflIr program;
+
+    ir::StructDecl req;
+    req.name = "Req";
+    req.symbol_ref.kind = ir::SymbolRefKind::Type;
+    req.symbol_ref.canonical_name = "app::Req";
+    req.symbol_ref.id = 50;
+    ir::FieldDecl fa;
+    fa.name = "a";
+    fa.type_ref.kind = ir::TypeRefKind::Int;
+    req.fields.push_back(std::move(fa));
+    program.declarations.emplace_back(std::move(req));
+
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    agent.input_type_ref.kind = ir::TypeRefKind::Struct;
+    agent.input_type_ref.canonical_name = "app::Req";
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+    // return input.ghost;
+    ir::PathExpr px;
+    px.path.root_kind = ir::PathRootKind::Input;
+    px.path.root_name = "input";
+    px.path.members = {"ghost"};
+    ir::ExprRef pref = program.expr_arena.make(std::move(px), SourceRange{3, 9});
+    auto stmt = std::make_unique<ir::Statement>();
+    stmt->node = ir::ReturnStatement{pref};
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    handler.body.statements.push_back(std::move(stmt));
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    REQUIRE_FALSE(result.diagnostics.empty());
+    CHECK(result.diagnostics[0].code == ir::core::diag::kUnloweredFieldProjection);
 }

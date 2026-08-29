@@ -268,12 +268,17 @@ struct CoreValueRefExpr {
 };
 
 /// A path read (`input.x`, `ctx.y`, a local, or a free identifier). The member
-/// chain is kept structured; a `Local` root additionally resolves to the
-/// binding's `CoreValueId` when the reader is an in-scope let-binding.
+/// chain is kept structured (display), but each member is ALSO resolved to a
+/// typed `CoreFieldId` in `member_fields` (parallel to `members`), computed by
+/// walking the root's struct type. A `Local` root additionally resolves to the
+/// binding's `CoreValueId`. `members_resolved` is false when a member could not
+/// be resolved to a field id (fail-closed: the lowering emits a diagnostic).
 struct CorePathExpr {
     CorePathRoot root{CorePathRoot::Identifier};
     std::string root_name;             // display / identifier root
-    std::vector<std::string> members;  // structured member chain (not flattened)
+    std::vector<std::string> members;  // structured member chain (display)
+    std::vector<CoreFieldId> member_fields; // typed field id per member (Principle 2)
+    bool members_resolved{true};       // false => a member could not be resolved
     CoreValueId local{};               // valid iff root == Local (resolved binding)
     bool has_local{false};
     [[nodiscard]] friend bool operator==(const CorePathExpr &,
@@ -377,10 +382,14 @@ struct CoreExpr {
 // --- assignment target (a place) ---
 
 /// A storable place (`ctx.field`, a local, …). Structured, not a dotted string.
+/// Each member is resolved to a typed `CoreFieldId` (parallel to `members`);
+/// `members_resolved` is false when resolution failed (fail-closed).
 struct CorePlace {
     CorePathRoot root{CorePathRoot::Context};
     std::string root_name;
     std::vector<std::string> members;
+    std::vector<CoreFieldId> member_fields; // typed field id per member (Principle 2)
+    bool members_resolved{true};
     [[nodiscard]] friend bool operator==(const CorePlace &, const CorePlace &) noexcept = default;
 };
 
@@ -502,6 +511,11 @@ struct CoreTypeDecl {
     Kind kind{Kind::Struct};
     std::string name;                       // canonical name (display + provenance)
     std::vector<std::string> fields;        // struct field names; index == CoreFieldId
+    /// Canonical type name of each struct field (parallel to `fields`), empty
+    /// for a non-nominal/primitive field type. Lets a member chain (`a.b.c`)
+    /// advance from one struct's CoreTypeId to the next during projection
+    /// resolution, without re-querying AHFL-IR.
+    std::vector<std::string> field_type_names;
     std::vector<std::string> variants;      // enum variant names; index == variant id
     [[nodiscard]] friend bool operator==(const CoreTypeDecl &,
                                          const CoreTypeDecl &) noexcept = default;
