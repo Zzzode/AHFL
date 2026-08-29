@@ -42,6 +42,9 @@ class Verifier {
         for (const CoreFlowDecl &flow : program_.flows) {
             verify_flow(flow);
         }
+        for (std::uint32_t i = 0; i < program_.workflows.size(); ++i) {
+            verify_workflow(program_.workflows[i], i);
+        }
         return std::move(diags_);
     }
 
@@ -286,6 +289,23 @@ class Verifier {
         }
     }
 
+    // --- shared arena view ---
+    //
+    // A non-owning view over the arenas a lowered body owns (a CoreFlowDecl OR a
+    // CoreWorkflowDecl). The static arena checks (expr / pattern bounds +
+    // acyclicity), the per-path region walk, and the match verifier all consume
+    // THIS rather than a concrete owner, so the flow and workflow verify arms
+    // share one implementation (no duplicated walk -> no future drift). `label`
+    // is the owner phrase used in diagnostics (e.g. "flow 'Decider'" or
+    // "workflow 'IncidentWorkflow' node 'decide'"). Flow-specific concerns
+    // (state_count, goto targets) are passed to the region walk separately.
+    struct ArenaView {
+        const std::vector<CoreExpr> &exprs;
+        std::uint32_t value_count;
+        const std::vector<CorePattern> &patterns;
+        std::string label; // owner phrase for diagnostics (bare, no leading "flow"/"in")
+    };
+
     // --- pure expression arena (static, order-independent checks) ---
     //
     // Bounds every CoreExprId reference, rejects any CoreUnsupportedExpr (an
@@ -296,13 +316,13 @@ class Verifier {
     // statement reaches, so an unused-but-malformed expr cannot slip past a
     // consumption-boundary re-verify. Value-use ORDER is checked separately in
     // the per-state statement walk.
-    void verify_expr_arena(const CoreFlowDecl &flow) {
+    void verify_expr_arena(const ArenaView &flow) {
         const auto expr_count = static_cast<std::uint32_t>(flow.exprs.size());
         const auto check_expr_id = [&](CoreExprId e, SourceRangeOpt range) {
             if (e.value >= expr_count) {
                 error(verify::kExprIdOutOfRange,
                       "expression id " + std::to_string(e.value) + " is out of range in flow '" +
-                          flow.agent_name + "'",
+                          flow.label + "'",
                       range);
             }
         };
@@ -316,7 +336,7 @@ class Verifier {
                 error(verify::kValueIdOutOfRange,
                       "value id " + std::to_string(v.value) +
                           " embedded in an expression is out of range in flow '" +
-                          flow.agent_name + "'",
+                          flow.label + "'",
                       range);
             }
         };
@@ -327,6 +347,26 @@ class Verifier {
                            [&](const CorePathExpr &p) {
                                if (p.has_local) {
                                    check_value_id(p.local, expr.source_range);
+                               }
+                               // Root / identity consistency (Principle 2): a Local
+                               // root iff has_local; a WorkflowNodeOutput root iff a
+                               // valid workflow_node id; any OTHER root must carry a
+                               // kInvalid workflow_node (a stray node id on an
+                               // input/ctx/local path is a malformed IR).
+                               const bool has_node =
+                                   p.workflow_node.value != CoreWorkflowNodeId::kInvalid;
+                               if ((p.root == CorePathRoot::Local) != p.has_local) {
+                                   error(verify::kWorkflowPathRootInvalid,
+                                         "path expression root/has_local mismatch in '" + flow.label +
+                                             "'",
+                                         expr.source_range);
+                               }
+                               if ((p.root == CorePathRoot::WorkflowNodeOutput) != has_node) {
+                                   error(verify::kWorkflowPathRootInvalid,
+                                         "path expression WorkflowNodeOutput root must carry a valid "
+                                         "workflow node id (and only that root may) in '" +
+                                             flow.label + "'",
+                                         expr.source_range);
                                }
                                verify_projection(p.root_type, p.projection, p.projection_resolved,
                                                  p.root_name, expr.source_range);
@@ -360,7 +400,7 @@ class Verifier {
     // edges); a Black node is a finished shared DAG node (legal, revisited
     // cheaply). Only CoreUnaryExpr/CoreBinaryExpr carry intra-arena edges in
     // this slice — the other nodes reference values, not exprs.
-    void verify_expr_arena_acyclic(const CoreFlowDecl &flow) {
+    void verify_expr_arena_acyclic(const ArenaView &flow) {
         enum class Color : std::uint8_t { White, Gray, Black };
         const auto expr_count = static_cast<std::uint32_t>(flow.exprs.size());
         std::vector<Color> color(expr_count, Color::White);
@@ -383,7 +423,7 @@ class Verifier {
                             error(verify::kExprCycle,
                                   "expression #" + std::to_string(e.value) +
                                       " participates in a reference cycle in flow '" +
-                                      flow.agent_name + "'",
+                                      flow.label + "'",
                                   flow.exprs[id].source_range);
                         } else if (color[e.value] == Color::White) {
                             stack.push_back(e.value);
@@ -417,13 +457,13 @@ class Verifier {
     // domain + no duplicate); an or-pattern has >= 2 alternatives. (Arm-binding
     // reference validity and or-alternative binding-set consistency are checked
     // with the match arm in the next slice, where the arm's binding list lives.)
-    void verify_pattern_arena(const CoreFlowDecl &flow) {
+    void verify_pattern_arena(const ArenaView &flow) {
         const auto pat_count = static_cast<std::uint32_t>(flow.patterns.size());
         const auto check_id = [&](CorePatternId p, SourceRangeOpt range) {
             if (p.value >= pat_count) {
                 error(verify::kPatternIdOutOfRange,
                       "pattern id " + std::to_string(p.value) + " is out of range in flow '" +
-                          flow.agent_name + "'",
+                          flow.label + "'",
                       range);
             }
         };
@@ -553,7 +593,7 @@ class Verifier {
     // Iterative 3-color DFS over the pattern reference graph (binding.nested,
     // variant tuple/struct children, or alternatives). A back edge to a Gray
     // node is a cycle.
-    void verify_pattern_arena_acyclic(const CoreFlowDecl &flow) {
+    void verify_pattern_arena_acyclic(const ArenaView &flow) {
         enum class Color : std::uint8_t { White, Gray, Black };
         const auto count = static_cast<std::uint32_t>(flow.patterns.size());
         std::vector<Color> color(count, Color::White);
@@ -574,7 +614,7 @@ class Verifier {
                             error(verify::kPatternCycle,
                                   "pattern #" + std::to_string(e.value) +
                                       " participates in a reference cycle in flow '" +
-                                      flow.agent_name + "'",
+                                      flow.label + "'",
                                   flow.patterns[id].source_range);
                         } else if (color[e.value] == Color::White) {
                             stack.push_back(e.value);
@@ -765,8 +805,9 @@ class Verifier {
 
     // --- flow wiring + per-state statement discipline ---
     void verify_flow(const CoreFlowDecl &flow) {
-        verify_expr_arena(flow);
-        verify_pattern_arena(flow);
+        const ArenaView av{flow.exprs, flow.value_count, flow.patterns, flow.agent_name};
+        verify_expr_arena(av);
+        verify_pattern_arena(av);
 
         if (flow.target.value >= program_.agents.size()) {
             error(verify::kFlowTargetInvalid,
@@ -795,12 +836,13 @@ class Verifier {
                 continue;
             }
             std::unordered_set<std::uint32_t> visible; // fresh scope per state body
-            static_cast<void>(verify_region(flow, state_count, state.body, all_definitions, visible));
+            static_cast<void>(verify_region(av, state_count, state.body, all_definitions, visible));
         }
     }
 
+
     // Recursively collect every CoreValueId a pure expr USES (through the arena).
-    void collect_expr_uses(const CoreFlowDecl &flow, CoreExprId id,
+    void collect_expr_uses(const ArenaView &flow, CoreExprId id,
                            std::vector<CoreValueId> &out,
                            std::unordered_set<std::uint32_t> &visiting) const {
         if (id.value >= flow.exprs.size() || !visiting.insert(id.value).second) {
@@ -844,7 +886,14 @@ class Verifier {
     // an arm body still yields from that arm). `terminated_out` (optional)
     // reports whether the region ended in a terminator/yield, so a match arm can
     // require its body/guard to end well.
-    enum class RegionContext { Flow, Guard, MatchArmValue, MatchArmUnit };
+    enum class RegionContext { Flow, Guard, MatchArmValue, MatchArmUnit, WorkflowNodeInput, WorkflowReturn };
+
+    // A workflow node-input / return region is a value-producing region with NO
+    // flow-state control flow: it must yield a value (or Trap) on every path and
+    // may NOT goto / return. These two contexts share that discipline.
+    [[nodiscard]] static bool is_workflow_ctx(RegionContext ctx) {
+        return ctx == RegionContext::WorkflowNodeInput || ctx == RegionContext::WorkflowReturn;
+    }
 
     // A region's control-flow exit summary, MERGED across all paths. `fallthrough`
     // = at least one path runs off the region end; the diverge/yield flags = at
@@ -873,7 +922,7 @@ class Verifier {
     // CoreYieldStmt is legal); yield/context legality is enforced by the CALLER
     // from the returned RegionExit, except that a yield in a `Flow` region is an
     // immediate error here.
-    [[nodiscard]] RegionExit verify_region(const CoreFlowDecl &flow, std::uint32_t state_count,
+    [[nodiscard]] RegionExit verify_region(const ArenaView &flow, std::uint32_t state_count,
                                            const CoreRegion &region,
                                            std::unordered_set<std::uint32_t> &all_definitions,
                                            std::unordered_set<std::uint32_t> &visible,
@@ -882,7 +931,7 @@ class Verifier {
             if (v.value >= flow.value_count) {
                 error(verify::kValueIdOutOfRange,
                       "value id " + std::to_string(v.value) + " is out of range in flow '" +
-                          flow.agent_name + "'",
+                          flow.label + "'",
                       range);
                 return;
             }
@@ -897,7 +946,7 @@ class Verifier {
             if (v.value >= flow.value_count) {
                 error(verify::kValueIdOutOfRange,
                       "defined value id " + std::to_string(v.value) + " is out of range in flow '" +
-                          flow.agent_name + "'",
+                          flow.label + "'",
                       range);
                 return;
             }
@@ -925,7 +974,7 @@ class Verifier {
         for (const CoreStmt &stmt : region.statements) {
             if (!live) {
                 error(verify::kStmtAfterTerminator,
-                      "statement follows a terminator in flow '" + flow.agent_name + "'",
+                      "statement follows a terminator in flow '" + flow.label + "'",
                       stmt.source_range);
             }
             std::visit(Overloaded{
@@ -994,16 +1043,29 @@ class Verifier {
                                live = then_exit.fallthrough || else_exit.fallthrough;
                            },
                            [&](const CoreGotoStmt &s) {
-                               if (s.target.value >= state_count) {
+                               if (is_workflow_ctx(ctx)) {
+                                   error(verify::kWorkflowRegionYield,
+                                         "workflow region '" + flow.label +
+                                             "' contains a goto (no flow-state control flow in a "
+                                             "workflow node input / return region)",
+                                         stmt.source_range);
+                               } else if (s.target.value >= state_count) {
                                    error(verify::kGotoTargetInvalid,
                                          "goto target state id " + std::to_string(s.target.value) +
-                                             " is out of range in flow '" + flow.agent_name + "'",
+                                             " is out of range in flow '" + flow.label + "'",
                                          stmt.source_range);
                                }
                                exit.diverges_control = true;
                                live = false;
                            },
                            [&](const CoreReturnStmt &s) {
+                               if (is_workflow_ctx(ctx)) {
+                                   error(verify::kWorkflowRegionYield,
+                                         "workflow region '" + flow.label +
+                                             "' contains a return (a node input / return region "
+                                             "yields its value, it does not return)",
+                                         stmt.source_range);
+                               }
                                if (s.has_value) {
                                    use_value(s.value, stmt.source_range);
                                }
@@ -1014,7 +1076,7 @@ class Verifier {
                                if (ctx == RegionContext::Flow) {
                                    error(verify::kYieldOutsideMatchArm,
                                          "yield outside a match arm / guard region in flow '" +
-                                             flow.agent_name + "'",
+                                             flow.label + "'",
                                          stmt.source_range);
                                }
                                if (s.has_value) {
@@ -1051,7 +1113,7 @@ class Verifier {
 
     // Verify a match statement and return its exit summary for the PARENT region
     // (arm yields are consumed here; control/trap divergence propagates up).
-    [[nodiscard]] RegionExit verify_match(const CoreFlowDecl &flow, std::uint32_t state_count,
+    [[nodiscard]] RegionExit verify_match(const ArenaView &flow, std::uint32_t state_count,
                                           const CoreMatchStmt &m,
                                           std::unordered_set<std::uint32_t> &all_definitions,
                                           std::unordered_set<std::uint32_t> &visible,
@@ -1195,7 +1257,7 @@ class Verifier {
     //   * the root pattern's binding set must equal the arm binding domain
     //     {0 .. bindings.size-1} exactly — no unused declared binding, none out
     //     of range.
-    void verify_arm_pattern_bindings(const CoreFlowDecl &flow, const CoreMatchArm &arm,
+    void verify_arm_pattern_bindings(const ArenaView &flow, const CoreMatchArm &arm,
                                      SourceRangeOpt range) {
         const auto pat_count = static_cast<std::uint32_t>(flow.patterns.size());
         const auto binding_count = static_cast<std::uint32_t>(arm.bindings.size());
@@ -1300,6 +1362,326 @@ class Verifier {
                       range);
             }
         }
+    }
+
+    // --- workflow (multi-agent DAG orchestration) ---
+    //
+    // Verifies one CoreWorkflowDecl: shell types, node identity + target, the
+    // `after` dependency DAG (bounds / self / duplicate edge + acyclicity), the
+    // node-output path references (a node input may only read a node that is a
+    // direct or transitive dependency; the return region may read any node), and
+    // each node input / return region (ANF, value-yielding, no flow control). SSA
+    // single-definition is workflow-global (one shared `all_definitions`); each
+    // region gets a fresh `visible` scope. safety / liveness are ERASED (no field
+    // exists here), which this proves structurally by their absence.
+    //
+    // HONEST P4 BOUNDARY: CoreValue has no physical value type yet, so the
+    // verifier proves each region "yields A value", NOT that the yielded value's
+    // type equals the target agent input / workflow output schema. Exact-schema
+    // agreement remains a Sema guarantee until the P4 value-representation slice.
+    void verify_workflow(const CoreWorkflowDecl &wf, std::uint32_t index) {
+        const std::string label = "workflow '" + wf.name + "'";
+        // Identity: id == index into CoreProgram::workflows (Principle 2).
+        if (wf.id.value != index) {
+            error(verify::kWorkflowIdOutOfRange,
+                  label + " id " + std::to_string(wf.id.value) +
+                      " does not equal its index " + std::to_string(index),
+                  std::nullopt);
+        }
+        // Shell: input / output must be valid Struct types (like an agent).
+        if (!is_struct(wf.input_type)) {
+            error(verify::kWorkflowShellInvalid, label + " input type is not a valid struct",
+                  std::nullopt);
+        }
+        if (!is_struct(wf.output_type)) {
+            error(verify::kWorkflowShellInvalid, label + " output type is not a valid struct",
+                  std::nullopt);
+        }
+
+        const auto node_count = static_cast<std::uint32_t>(wf.nodes.size());
+        // Node identity + target + `after` edge bounds / self / duplicate.
+        for (std::uint32_t i = 0; i < node_count; ++i) {
+            const CoreWorkflowNode &node = wf.nodes[i];
+            if (node.id.value != i) {
+                error(verify::kWorkflowNodeInvalid,
+                      label + " node #" + std::to_string(i) + " id " +
+                          std::to_string(node.id.value) + " does not equal its index",
+                      std::nullopt);
+            }
+            if (node.target.value >= program_.agents.size()) {
+                error(verify::kWorkflowTargetInvalid,
+                      label + " node '" + node.node_name + "' target agent id " +
+                          std::to_string(node.target.value) + " is out of range",
+                      std::nullopt);
+            }
+            std::set<std::uint32_t> seen_edges;
+            for (const CoreWorkflowNodeId dep : node.after) {
+                if (dep.value >= node_count) {
+                    error(verify::kWorkflowEdgeInvalid,
+                          label + " node '" + node.node_name + "' depends on out-of-range node id " +
+                              std::to_string(dep.value),
+                          std::nullopt);
+                    continue;
+                }
+                if (dep.value == i) {
+                    error(verify::kWorkflowEdgeInvalid,
+                          label + " node '" + node.node_name + "' depends on itself",
+                          std::nullopt);
+                }
+                if (!seen_edges.insert(dep.value).second) {
+                    error(verify::kWorkflowEdgeInvalid,
+                          label + " node '" + node.node_name +
+                              "' has a duplicate dependency edge to node id " +
+                              std::to_string(dep.value),
+                          std::nullopt);
+                }
+            }
+        }
+
+        // DAG acyclicity: ONE 3-color DFS over the `after` edges (single SSOT for
+        // the cycle check — no parallel Kahn). A back edge to a Gray node is a
+        // cycle. Only reachable through in-range edges (OOR already reported).
+        enum class Color : std::uint8_t { White, Gray, Black };
+        std::vector<Color> color(node_count, Color::White);
+        bool acyclic = true;
+        for (std::uint32_t root = 0; root < node_count; ++root) {
+            if (color[root] != Color::White) {
+                continue;
+            }
+            std::vector<std::uint32_t> stack{root};
+            while (!stack.empty()) {
+                const std::uint32_t id = stack.back();
+                if (color[id] == Color::White) {
+                    color[id] = Color::Gray;
+                    for (const CoreWorkflowNodeId dep : wf.nodes[id].after) {
+                        if (dep.value >= node_count) {
+                            continue;
+                        }
+                        if (color[dep.value] == Color::Gray) {
+                            acyclic = false;
+                            error(verify::kWorkflowCycle,
+                                  label + " node '" + wf.nodes[id].node_name +
+                                      "' participates in a dependency cycle",
+                                  std::nullopt);
+                        } else if (color[dep.value] == Color::White) {
+                            stack.push_back(dep.value);
+                        }
+                    }
+                } else {
+                    if (color[id] == Color::Gray) {
+                        color[id] = Color::Black;
+                    }
+                    stack.pop_back();
+                }
+            }
+        }
+
+        // Ancestor (transitive dependency) closure per node — only meaningful when
+        // the DAG is acyclic. A node input may reference ONLY a node in its own
+        // ancestor set; the return region may reference ANY node.
+        std::vector<std::set<std::uint32_t>> ancestors(node_count);
+        if (acyclic) {
+            // Nodes in Kahn-free topological-ish order: since it is a DAG, a simple
+            // memoized closure works (dependencies have strictly-earlier reachable
+            // sets; recompute via DFS over `after`).
+            for (std::uint32_t i = 0; i < node_count; ++i) {
+                std::vector<std::uint32_t> stack(wf.nodes[i].after.size());
+                for (std::size_t k = 0; k < wf.nodes[i].after.size(); ++k) {
+                    stack[k] = wf.nodes[i].after[k].value;
+                }
+                while (!stack.empty()) {
+                    const std::uint32_t d = stack.back();
+                    stack.pop_back();
+                    if (d >= node_count || !ancestors[i].insert(d).second) {
+                        continue;
+                    }
+                    for (const CoreWorkflowNodeId dd : wf.nodes[d].after) {
+                        stack.push_back(dd.value);
+                    }
+                }
+            }
+        }
+
+        // The shared arena (expr + pattern) + workflow-global SSA. Value ids are
+        // allocated once from wf.value_count across ALL node regions + the return
+        // region, so a single `all_definitions` set catches any redefinition.
+        const ArenaView av{wf.exprs, wf.value_count, wf.patterns, wf.name};
+        verify_expr_arena(av);
+        verify_pattern_arena(av);
+        std::unordered_set<std::uint32_t> all_definitions;
+
+        // Each node input region: value-yielding, no flow control, and its
+        // NodeOutput references must be dependency-reachable.
+        for (std::uint32_t i = 0; i < node_count; ++i) {
+            const CoreWorkflowNode &node = wf.nodes[i];
+            if (!node.input_region) {
+                error(verify::kWorkflowRegionYield,
+                      label + " node '" + node.node_name + "' has no input region", std::nullopt);
+                continue;
+            }
+            const ArenaView node_av{wf.exprs, wf.value_count, wf.patterns,
+                                    wf.name + "' node '" + node.node_name};
+            std::unordered_set<std::uint32_t> visible;
+            const RegionExit e = verify_region(node_av, /*state_count=*/0, *node.input_region,
+                                                all_definitions, visible,
+                                                RegionContext::WorkflowNodeInput);
+            require_workflow_region(e, node_av.label);
+            verify_workflow_node_refs(wf, *node.input_region, ancestors[i], acyclic, node_av.label);
+            check_workflow_path_types(wf, *node.input_region, node_av.label);
+        }
+        // Return region: value-yielding, no flow control, may reference any node.
+        if (!wf.return_region) {
+            error(verify::kWorkflowRegionYield, label + " has no return region", std::nullopt);
+        } else {
+            const ArenaView ret_av{wf.exprs, wf.value_count, wf.patterns, wf.name + "' return"};
+            std::unordered_set<std::uint32_t> visible;
+            const RegionExit e = verify_region(ret_av, /*state_count=*/0, *wf.return_region,
+                                                all_definitions, visible,
+                                                RegionContext::WorkflowReturn);
+            require_workflow_region(e, ret_av.label);
+            std::set<std::uint32_t> all_nodes;
+            for (std::uint32_t i = 0; i < node_count; ++i) {
+                all_nodes.insert(i);
+            }
+            verify_workflow_node_refs(wf, *wf.return_region, all_nodes, /*enforce=*/true,
+                                      ret_av.label);
+            check_workflow_path_types(wf, *wf.return_region, ret_av.label);
+        }
+    }
+
+    // A workflow node input / return region must yield a VALUE on every path (or
+    // Trap): no fallthrough, no unit yield, no control divergence (goto/return are
+    // already rejected in-context, which shows up as diverges_control).
+    void require_workflow_region(const RegionExit &e, const std::string &label) {
+        if (e.fallthrough || e.yields_unit || e.diverges_control) {
+            error(verify::kWorkflowRegionYield,
+                  "workflow region '" + label +
+                      "' must yield a value on every path (no fallthrough / unit yield / control "
+                      "escape)",
+                  std::nullopt);
+        }
+    }
+
+    // Walk a workflow region's referenced exprs and check every WorkflowNodeOutput
+    // path root refers to an ALLOWED node: for a node input, one of its transitive
+    // dependencies (`allowed`); for the return region, any node. Node id bounds are
+    // also enforced here. `enforce` is false when the DAG had a cycle (ancestor
+    // sets are unreliable), so we only bounds-check then.
+    void verify_workflow_node_refs(const CoreWorkflowDecl &wf, const CoreRegion &region,
+                                   const std::set<std::uint32_t> &allowed, bool enforce,
+                                   const std::string &label) {
+        const auto node_count = static_cast<std::uint32_t>(wf.nodes.size());
+        for_each_region_path_expr(wf, region, [&](const CorePathExpr &p, SourceRangeOpt range) {
+            if (p.root != CorePathRoot::WorkflowNodeOutput) {
+                return;
+            }
+            if (p.workflow_node.value >= node_count) {
+                error(verify::kWorkflowNodeRefInvalid,
+                      "workflow region '" + label + "' references out-of-range node id " +
+                          std::to_string(p.workflow_node.value),
+                      range);
+                return;
+            }
+            if (enforce && allowed.find(p.workflow_node.value) == allowed.end()) {
+                error(verify::kWorkflowNodeRefInvalid,
+                      "workflow region '" + label + "' references node '" +
+                          wf.nodes[p.workflow_node.value].node_name +
+                          "' which is not a (transitive) dependency it can observe",
+                      range);
+            }
+        });
+    }
+
+    // Check the typed identity of workflow path roots: WorkflowInput's root_type
+    // must equal the workflow input struct; a WorkflowNodeOutput's root_type must
+    // equal the referenced node's target agent output struct. (Projection through
+    // that root is already validated by verify_projection in the arena pass.)
+    void check_workflow_path_types(const CoreWorkflowDecl &wf, const CoreRegion &region,
+                                   const std::string &label) {
+        const auto node_count = static_cast<std::uint32_t>(wf.nodes.size());
+        for_each_region_path_expr(wf, region, [&](const CorePathExpr &p, SourceRangeOpt range) {
+            if (p.root == CorePathRoot::WorkflowInput) {
+                if (!(p.root_type == wf.input_type)) {
+                    error(verify::kWorkflowPathRootInvalid,
+                          "workflow region '" + label +
+                              "' input path root type does not equal the workflow input type",
+                          range);
+                }
+            } else if (p.root == CorePathRoot::WorkflowNodeOutput &&
+                       p.workflow_node.value < node_count) {
+                const CoreWorkflowNode &producer = wf.nodes[p.workflow_node.value];
+                const CoreTypeId expect = producer.target.value < program_.agents.size()
+                                              ? program_.agents[producer.target.value].output_type
+                                              : CoreTypeId{};
+                if (!(p.root_type == expect)) {
+                    error(verify::kWorkflowPathRootInvalid,
+                          "workflow region '" + label + "' node-output path root type does not equal "
+                          "the referenced node's target agent output type",
+                          range);
+                }
+            }
+        });
+    }
+
+    // Visit every CorePathExpr REACHABLE from a region's statements (through the
+    // workflow's shared expr arena), invoking `fn(path, range)`. Reuses the same
+    // arena the region's value ids index into.
+    template <class Fn>
+    void for_each_region_path_expr(const CoreWorkflowDecl &wf, const CoreRegion &region, Fn &&fn) {
+        for (const CoreStmt &stmt : region.statements) {
+            std::visit(Overloaded{
+                           [&](const CoreLetStmt &s) {
+                               visit_expr_paths(wf, s.expr, stmt.source_range, fn);
+                           },
+                           [&](const CoreCapabilityCallStmt &) {},
+                           [&](const CoreStoreStmt &) {},
+                           [&](const CoreYieldStmt &) {},
+                           [&](const CoreReturnStmt &) {},
+                           [&](const CoreGotoStmt &) {},
+                           [&](const CoreTrapStmt &) {},
+                           [&](const CoreIfStmt &s) {
+                               if (s.then_region) {
+                                   for_each_region_path_expr(wf, *s.then_region, fn);
+                               }
+                               if (s.else_region) {
+                                   for_each_region_path_expr(wf, *s.else_region, fn);
+                               }
+                           },
+                           [&](const CoreMatchStmt &s) {
+                               for (const CoreMatchArm &arm : s.arms) {
+                                   if (arm.guard_region) {
+                                       for_each_region_path_expr(wf, *arm.guard_region, fn);
+                                   }
+                                   if (arm.body) {
+                                       for_each_region_path_expr(wf, *arm.body, fn);
+                                   }
+                               }
+                               if (s.fallback_region) {
+                                   for_each_region_path_expr(wf, *s.fallback_region, fn);
+                               }
+                           },
+                       },
+                       stmt.node);
+        }
+    }
+
+    // Recursively visit CorePathExpr nodes inside a pure expr (through operand
+    // edges), invoking `fn`. Bounded by expr-arena acyclicity (proven separately).
+    template <class Fn>
+    void visit_expr_paths(const CoreWorkflowDecl &wf, CoreExprId id, SourceRangeOpt range, Fn &&fn) {
+        if (id.value >= wf.exprs.size()) {
+            return;
+        }
+        std::visit(Overloaded{
+                       [&](const CorePathExpr &p) { fn(p, range); },
+                       [&](const CoreUnaryExpr &u) { visit_expr_paths(wf, u.operand, range, fn); },
+                       [&](const CoreBinaryExpr &b) {
+                           visit_expr_paths(wf, b.lhs, range, fn);
+                           visit_expr_paths(wf, b.rhs, range, fn);
+                       },
+                       [&](const auto &) {},
+                   },
+                   wf.exprs[id.value].node);
     }
 
     const CoreProgram &program_;

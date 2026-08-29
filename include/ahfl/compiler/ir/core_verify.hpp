@@ -130,6 +130,16 @@ inline constexpr std::string_view kMatchArmYield = "core.verify.MATCH_ARM_YIELD"
 inline constexpr std::string_view kMatchNotTotal = "core.verify.MATCH_NOT_TOTAL";
 inline constexpr std::string_view kPatternBindingInvalid = "core.verify.PATTERN_BINDING_INVALID";
 inline constexpr std::string_view kOrBindingSetMismatch = "core.verify.OR_BINDING_SET_MISMATCH";
+// --- workflow (multi-agent DAG orchestration) ---
+inline constexpr std::string_view kWorkflowIdOutOfRange = "core.verify.WORKFLOW_ID_OUT_OF_RANGE";
+inline constexpr std::string_view kWorkflowShellInvalid = "core.verify.WORKFLOW_SHELL_INVALID";
+inline constexpr std::string_view kWorkflowNodeInvalid = "core.verify.WORKFLOW_NODE_INVALID";
+inline constexpr std::string_view kWorkflowTargetInvalid = "core.verify.WORKFLOW_TARGET_INVALID";
+inline constexpr std::string_view kWorkflowEdgeInvalid = "core.verify.WORKFLOW_EDGE_INVALID";
+inline constexpr std::string_view kWorkflowCycle = "core.verify.WORKFLOW_CYCLE";
+inline constexpr std::string_view kWorkflowNodeRefInvalid = "core.verify.WORKFLOW_NODE_REF_INVALID";
+inline constexpr std::string_view kWorkflowRegionYield = "core.verify.WORKFLOW_REGION_YIELD";
+inline constexpr std::string_view kWorkflowPathRootInvalid = "core.verify.WORKFLOW_PATH_ROOT_INVALID";
 } // namespace verify
 
 /// Result of verifying a Core-IR program: any structural violations, as

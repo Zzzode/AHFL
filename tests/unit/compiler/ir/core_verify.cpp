@@ -222,6 +222,139 @@ struct GoodProgram {
     return g;
 }
 
+// --------------------------------------------------------------------------
+// A known-good WORKFLOW program builder (RFC 0026 KR6.4 workflow slice). Shape:
+//   types:  [0] struct WIn  { amount: Int }   (workflow input + First input)
+//           [1] struct WMid  { total: Int }    (First output + Second input)
+//           [2] struct WOut  { ok: Bool }      (Second output + workflow output)
+//   agents: [0] First  (input WIn,  output WMid)
+//           [1] Second (input WMid, output WOut)
+//   workflow Pipe { input WIn, output WOut }:
+//     node 0 "first":  First(input)                          -> yields <input read>
+//     node 1 "second": Second(first.total) after [first]     -> yields <node0 read>
+//     return: second                                          -> yields <node1 read>
+// Every typed id / edge / node-output reference is valid.
+// --------------------------------------------------------------------------
+struct GoodWorkflow {
+    CoreProgram program;
+    CoreWorkflowDecl *wf{nullptr};
+};
+
+[[nodiscard]] GoodWorkflow make_good_workflow() {
+    GoodWorkflow g;
+    CoreProgram &p = g.program;
+
+    CoreTypeDecl win;
+    win.kind = CoreTypeDecl::Kind::Struct;
+    win.name = "WIn";
+    win.fields = {"amount"};
+    win.field_types = {CoreTypeId{}};
+    win.field_has_default = {false};
+    p.types.push_back(std::move(win));
+
+    CoreTypeDecl wmid;
+    wmid.kind = CoreTypeDecl::Kind::Struct;
+    wmid.name = "WMid";
+    wmid.fields = {"total"};
+    wmid.field_types = {CoreTypeId{}};
+    wmid.field_has_default = {false};
+    p.types.push_back(std::move(wmid));
+
+    CoreTypeDecl wout;
+    wout.kind = CoreTypeDecl::Kind::Struct;
+    wout.name = "WOut";
+    wout.fields = {"ok"};
+    wout.field_types = {CoreTypeId{}};
+    wout.field_has_default = {false};
+    p.types.push_back(std::move(wout));
+
+    const CoreTypeId win_ty{0};
+    const CoreTypeId wmid_ty{1};
+    const CoreTypeId wout_ty{2};
+
+    const auto make_agent = [&](std::string name, CoreTypeId in, CoreTypeId out) {
+        CoreAgentDecl a;
+        a.name = std::move(name);
+        a.states = {"Done"};
+        a.initial = CoreStateId{0};
+        a.finals = {CoreStateId{0}};
+        a.input_type = in;
+        a.output_type = out;
+        a.context_kind = CoreAgentDecl::ContextKind::Unit;
+        p.agents.push_back(std::move(a));
+    };
+    make_agent("First", win_ty, wmid_ty);   // agent 0
+    make_agent("Second", wmid_ty, wout_ty);  // agent 1
+
+    CoreWorkflowDecl wf;
+    wf.id = CoreWorkflowId{0};
+    wf.name = "Pipe";
+    wf.input_type = win_ty;
+    wf.output_type = wout_ty;
+
+    // Shared arena. value ids: %0 node0-input(WorkflowInput read), %1 node1-input
+    // (node0 output read), %2 return (node1 output read).
+    wf.value_count = 3;
+    // expr[0]: WorkflowInput path (`input`), typed WIn.
+    {
+        CorePathExpr in_path;
+        in_path.root = CorePathRoot::WorkflowInput;
+        in_path.root_name = "input";
+        in_path.root_type = win_ty;
+        wf.exprs.push_back(CoreExpr{std::move(in_path), std::nullopt});
+    }
+    // expr[1]: node0 output read (`first`), typed WMid (First's output).
+    {
+        CorePathExpr n0;
+        n0.root = CorePathRoot::WorkflowNodeOutput;
+        n0.root_name = "first";
+        n0.root_type = wmid_ty;
+        n0.workflow_node = CoreWorkflowNodeId{0};
+        wf.exprs.push_back(CoreExpr{std::move(n0), std::nullopt});
+    }
+    // expr[2]: node1 output read (`second`), typed WOut (Second's output).
+    {
+        CorePathExpr n1;
+        n1.root = CorePathRoot::WorkflowNodeOutput;
+        n1.root_name = "second";
+        n1.root_type = wout_ty;
+        n1.workflow_node = CoreWorkflowNodeId{1};
+        wf.exprs.push_back(CoreExpr{std::move(n1), std::nullopt});
+    }
+    const auto region_yielding = [](CoreExprId expr, CoreValueId result) {
+        auto r = std::make_unique<CoreRegion>();
+        r->statements.push_back(CoreStmt{CoreLetStmt{result, expr}, std::nullopt});
+        r->statements.push_back(CoreStmt{CoreYieldStmt{true, result}, std::nullopt});
+        return r;
+    };
+
+    // node 0 "first": First(input)
+    {
+        CoreWorkflowNode node;
+        node.id = CoreWorkflowNodeId{0};
+        node.node_name = "first";
+        node.target = CoreAgentId{0};
+        node.input_region = region_yielding(CoreExprId{0}, CoreValueId{0});
+        wf.nodes.push_back(std::move(node));
+    }
+    // node 1 "second": Second(first.total) after [first]
+    {
+        CoreWorkflowNode node;
+        node.id = CoreWorkflowNodeId{1};
+        node.node_name = "second";
+        node.target = CoreAgentId{1};
+        node.after = {CoreWorkflowNodeId{0}};
+        node.input_region = region_yielding(CoreExprId{1}, CoreValueId{1});
+        wf.nodes.push_back(std::move(node));
+    }
+    // return: second
+    wf.return_region = region_yielding(CoreExprId{2}, CoreValueId{2});
+
+    p.workflows.push_back(std::move(wf));
+    g.wf = &p.workflows.back();
+    return g;
+}
+
 } // namespace
 
 TEST_CASE("verifier accepts a well-formed Core-IR program") {
@@ -1313,4 +1446,130 @@ TEST_CASE("core_region_exit: a match with a diverging arm AND a yielding arm sti
     r.statements.push_back(CoreStmt{std::move(m), std::nullopt});
     r.statements.push_back(let_stmt()); // reachable: the yielding arm completes
     CHECK(core_region_may_fallthrough(r));
+}
+
+// --- workflow (RFC 0026 KR6.4 workflow vertical slice) verifier arm ---
+
+TEST_CASE("verifier accepts a well-formed workflow") {
+    const GoodWorkflow g = make_good_workflow();
+    const auto result = verify_core_program(g.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("workflow verifier: a self-dependency edge is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    g.wf->nodes[1].after.push_back(CoreWorkflowNodeId{1}); // second after [first, second]
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowEdgeInvalid));
+}
+
+TEST_CASE("workflow verifier: a duplicate dependency edge is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    g.wf->nodes[1].after.push_back(CoreWorkflowNodeId{0}); // second after [first, first]
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowEdgeInvalid));
+}
+
+TEST_CASE("workflow verifier: an out-of-range dependency edge is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    g.wf->nodes[1].after = {CoreWorkflowNodeId{9}};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowEdgeInvalid));
+}
+
+TEST_CASE("workflow verifier: a dependency cycle is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // Make first depend on second too: first <-> second is a 2-cycle.
+    g.wf->nodes[0].after.push_back(CoreWorkflowNodeId{1});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowCycle));
+}
+
+TEST_CASE("workflow verifier: a node reading a NON-dependency node is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // Drop node1's dependency on node0 but keep its `first.total` output read:
+    // now `second` reads a node that is not a (transitive) dependency.
+    g.wf->nodes[1].after.clear();
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowNodeRefInvalid));
+}
+
+TEST_CASE("workflow verifier: an out-of-range node-output reference is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // Point node1's input read at a non-existent node id.
+    std::get<CorePathExpr>(g.wf->exprs[1].node).workflow_node = CoreWorkflowNodeId{9};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowNodeRefInvalid));
+}
+
+TEST_CASE("workflow verifier: a non-struct input shell is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    g.wf->input_type = CoreTypeId{}; // kInvalid
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowShellInvalid));
+}
+
+TEST_CASE("workflow verifier: an out-of-range node target agent is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    g.wf->nodes[0].target = CoreAgentId{9};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowTargetInvalid));
+}
+
+TEST_CASE("workflow verifier: a node id not equal to its index is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    g.wf->nodes[1].id = CoreWorkflowNodeId{5};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowNodeInvalid));
+}
+
+TEST_CASE("workflow verifier: a WorkflowInput root type mismatch is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // node0 reads `input` typed as WIn (id 0); corrupt it to WOut (id 2).
+    std::get<CorePathExpr>(g.wf->exprs[0].node).root_type = CoreTypeId{2};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowPathRootInvalid));
+}
+
+TEST_CASE("workflow verifier: a NodeOutput root type not equal to the producer output is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // node1 reads node0 output typed WMid (id 1); corrupt it to WIn (id 0).
+    std::get<CorePathExpr>(g.wf->exprs[1].node).root_type = CoreTypeId{0};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowPathRootInvalid));
+}
+
+TEST_CASE("workflow verifier: a stray node id on a non-NodeOutput root is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // WorkflowInput path must carry a kInvalid workflow_node.
+    std::get<CorePathExpr>(g.wf->exprs[0].node).workflow_node = CoreWorkflowNodeId{0};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowPathRootInvalid));
+}
+
+TEST_CASE("workflow verifier: a node region that does not yield a value is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // Replace node0's input region with a fallthrough (a bare let, no yield).
+    auto r = std::make_unique<CoreRegion>();
+    r->statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+    g.wf->nodes[0].input_region = std::move(r);
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowRegionYield));
 }

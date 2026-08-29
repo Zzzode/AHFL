@@ -721,6 +721,42 @@ class FlowRootPolicy {
     CoreTypeId context_type_;
 };
 
+// Workflow policy: a path root inside a node input / return region is either the
+// workflow input (`input`, typed as the workflow input struct) or an upstream
+// node's output (a bare identifier whose name is a declared node — typed as that
+// node's target agent output struct, carrying the node's typed id). Every other
+// identifier stays identifier-like and is subject to local-scope lookup FIRST, so
+// a match-arm binding that shadows a node name wins (Codex-locked precedence).
+class WorkflowRootPolicy {
+  public:
+    struct NodeOutput {
+        CoreWorkflowNodeId id{};
+        CoreTypeId output_type{}; // target agent output struct (kInvalid if unresolved)
+    };
+    WorkflowRootPolicy(CoreTypeId input_type,
+                       const std::unordered_map<std::string, NodeOutput> *nodes)
+        : input_type_(input_type), nodes_(nodes) {}
+    // A local (match-arm binding) may shadow ANY identifier-like root — including a
+    // node name — but never the `input` keyword. Mirrors FlowRootPolicy.
+    [[nodiscard]] bool root_may_be_local(PathRootKind kind) const {
+        return kind != PathRootKind::Input;
+    }
+    [[nodiscard]] ResolvedExternalRoot resolve_external_root(const Path &path) const {
+        if (path.root_kind == PathRootKind::Input) {
+            return {CorePathRoot::WorkflowInput, input_type_, {}};
+        }
+        if (path.root_kind == PathRootKind::Identifier && nodes_ != nullptr) {
+            if (const auto it = nodes_->find(path.root_name); it != nodes_->end()) {
+                return {CorePathRoot::WorkflowNodeOutput, it->second.output_type, it->second.id};
+            }
+        }
+        return {CorePathRoot::Identifier, CoreTypeId{}, {}};
+    }
+  private:
+    CoreTypeId input_type_;
+    const std::unordered_map<std::string, NodeOutput> *nodes_; // not owned
+};
+
 /// Human-readable source expression kind for unsupported-node diagnostics.
 [[nodiscard]] std::string expr_kind_name(const ExprNode &node) {
     return std::visit(Overloaded{
@@ -786,7 +822,7 @@ template <class RootPolicy> class ExprLowerer {
     // left-to-right eval order); pure expressions are bound via a CoreLetStmt.
     [[nodiscard]] CoreValueId lower_value(const ExprRef &expr, CoreRegion &region) {
         if (expr.ptr == nullptr) {
-            error(diag::kNullExpr, "null expression in flow body", std::nullopt);
+            error(diag::kNullExpr, "null expression in lowered body", std::nullopt);
             return fresh_value();
         }
         const SourceRangeOpt range = expr.ptr->source_range;
@@ -1926,6 +1962,141 @@ class FlowLowerer {
     const StateIndex &states_;
 };
 
+// Lowers one AHFL-IR WorkflowDecl into a CoreWorkflowDecl (RFC 0026 KR6.4). A
+// workflow is a DAG of agent invocations: each node computes its input from an
+// ANF `input_region` that runs once its dependencies are ready, and a separate
+// `return_region` computes the workflow output after the DAG completes. Two
+// passes (Codex-locked): Pass A assigns each node a typed CoreWorkflowNodeId
+// (== declaration index), builds a UNIQUE node-name table, and resolves each
+// node's target agent + `after` dependency edges by identity; Pass B lowers the
+// node input / return expressions through an ExprLowerer<WorkflowRootPolicy> that
+// classifies `input` / upstream-node-output path roots. safety / liveness are
+// erased (verification is finished at the AhflIr layer).
+class WorkflowLowerer {
+  public:
+    WorkflowLowerer(CoreWorkflowDecl &wf, const CapabilityIndex &caps, const TypeEnv &types,
+                    const std::vector<CoreAgentDecl> &agents,
+                    const std::unordered_map<std::size_t, CoreAgentId> &agent_by_id,
+                    const std::unordered_map<std::string, CoreAgentId> &agent_by_name,
+                    std::vector<CoreLowerDiagnostic> &diags)
+        : wf_(wf), caps_(caps), types_(types), agents_(agents), agent_by_id_(agent_by_id),
+          agent_by_name_(agent_by_name), diags_(diags) {}
+
+    void lower(const WorkflowDecl &decl) {
+        wf_.name = decl.name;
+        wf_.symbol_ref = decl.symbol_ref;
+        wf_.input_type = types_.type_id_of(decl.input_type_ref).value_or(CoreTypeId{});
+        wf_.output_type = types_.type_id_of(decl.output_type_ref).value_or(CoreTypeId{});
+
+        // Pass A: assign node ids (== declaration index), build the unique node
+        // name table + resolve target/after. A DUPLICATE source node name is a
+        // fail-closed lowering error (never a silent map first-wins).
+        wf_.nodes.reserve(decl.nodes.size());
+        for (std::uint32_t i = 0; i < decl.nodes.size(); ++i) {
+            const WorkflowNode &src = decl.nodes[i];
+            const CoreWorkflowNodeId id{i};
+            CoreWorkflowNode node;
+            node.id = id;
+            node.node_name = src.name;
+            node.target_ref = src.target_ref;
+            const auto target = resolve_agent(src.target_ref);
+            if (!target) {
+                error(diag::kUnresolvedWorkflowTarget,
+                      "workflow '" + wf_.name + "' node '" + src.name +
+                          "' targets agent '" + agent_display(src.target_ref) +
+                          "' which could not be resolved to a declared agent",
+                      src.source_range);
+            } else {
+                node.target = *target;
+            }
+            // Record the node-name -> {id, target output type} entry BEFORE Pass
+            // B, and reject a duplicate name fail-closed.
+            const CoreTypeId out_type =
+                target ? agents_[target->value].output_type : CoreTypeId{};
+            if (!node_index_.emplace(src.name, WorkflowRootPolicy::NodeOutput{id, out_type}).second) {
+                error(diag::kUnknownWorkflowDependency,
+                      "workflow '" + wf_.name + "' declares more than one node named '" +
+                          src.name + "'; node names must be unique",
+                      src.source_range);
+            }
+            wf_.nodes.push_back(std::move(node));
+        }
+        // Resolve `after` edges by node name -> typed CoreWorkflowNodeId. An
+        // unknown dependency name is fail-closed. (Self / cycle / bounds are the
+        // verifier's job; here we only resolve identity.)
+        for (std::uint32_t i = 0; i < decl.nodes.size(); ++i) {
+            const WorkflowNode &src = decl.nodes[i];
+            for (const std::string &dep : src.after) {
+                const auto it = node_index_.find(dep);
+                if (it == node_index_.end()) {
+                    error(diag::kUnknownWorkflowDependency,
+                          "workflow '" + wf_.name + "' node '" + src.name +
+                              "' declares dependency on unknown node '" + dep + "'",
+                          src.source_range);
+                    continue;
+                }
+                wf_.nodes[i].after.push_back(it->second.id);
+            }
+        }
+
+        // Pass B: lower each node's input expression + the return expression.
+        // Each region is ANF and ends by yielding its single value.
+        for (std::uint32_t i = 0; i < decl.nodes.size(); ++i) {
+            wf_.nodes[i].input_region = std::make_unique<CoreRegion>();
+            lower_value_region(decl.nodes[i].input, *wf_.nodes[i].input_region,
+                               decl.nodes[i].source_range);
+        }
+        wf_.return_region = std::make_unique<CoreRegion>();
+        lower_value_region(decl.return_value, *wf_.return_region, decl.provenance.source_range);
+    }
+
+  private:
+    void error(std::string_view code, std::string message, SourceRangeOpt range) {
+        diags_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error, std::string(code),
+                                             std::move(message), std::move(range)});
+    }
+
+    /// Lower a single workflow value expression (node input / return) into `region`
+    /// as ANF, appending a value-yield of the result. Uses a fresh
+    /// ExprLowerer<WorkflowRootPolicy> over the workflow's shared arenas.
+    void lower_value_region(const ExprRef &expr, CoreRegion &region, SourceRangeOpt range) {
+        ExprLowerer<WorkflowRootPolicy> ex(
+            CoreBodyStorageRef{wf_.exprs, wf_.value_count, wf_.patterns}, caps_, types_,
+            WorkflowRootPolicy{wf_.input_type, &node_index_}, diags_);
+        const CoreValueId value = ex.lower_value(expr, region);
+        region.statements.push_back(CoreStmt{CoreYieldStmt{true, value}, range});
+    }
+
+    [[nodiscard]] std::optional<CoreAgentId> resolve_agent(const SymbolRef &ref) const {
+        if (ref.id.has_value()) {
+            if (const auto it = agent_by_id_.find(*ref.id); it != agent_by_id_.end()) {
+                return it->second;
+            }
+        }
+        if (!ref.canonical_name.empty()) {
+            if (const auto it = agent_by_name_.find(ref.canonical_name); it != agent_by_name_.end()) {
+                return it->second;
+            }
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] static std::string agent_display(const SymbolRef &ref) {
+        return ref.local_name.empty() ? ref.canonical_name : ref.local_name;
+    }
+
+    CoreWorkflowDecl &wf_;
+    const CapabilityIndex &caps_;
+    const TypeEnv &types_;
+    const std::vector<CoreAgentDecl> &agents_;
+    const std::unordered_map<std::size_t, CoreAgentId> &agent_by_id_;
+    const std::unordered_map<std::string, CoreAgentId> &agent_by_name_;
+    std::vector<CoreLowerDiagnostic> &diags_;
+    // node name -> {typed id, target agent output type}. Built in Pass A, consumed
+    // by Pass B's WorkflowRootPolicy to classify node-output path roots.
+    std::unordered_map<std::string, WorkflowRootPolicy::NodeOutput> node_index_;
+};
+
 } // namespace
 
 CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
@@ -2034,6 +2205,26 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             lowerer.lower_handler(handler, *state_id);
         }
         core.flows.push_back(std::move(core_flow));
+    }
+
+    // Pass 3: workflows. Each WorkflowDecl lowers to a CoreWorkflowDecl (DAG of
+    // agent invocations); node ids are declaration-order indices, node/return
+    // input expressions are ANF regions ending in a value-yield, and safety /
+    // liveness temporal properties are erased. Node target agents + `after`
+    // dependencies resolve by identity; unresolved / duplicate / unknown are
+    // fail-closed diagnostics (the verifier then proves the DAG + node-output
+    // references on a lowering-clean program).
+    for (const Decl &decl : ahfl_ir.declarations) {
+        const auto *wf = std::get_if<WorkflowDecl>(&decl);
+        if (wf == nullptr) {
+            continue;
+        }
+        CoreWorkflowDecl core_wf;
+        core_wf.id = CoreWorkflowId{static_cast<std::uint32_t>(core.workflows.size())};
+        WorkflowLowerer lowerer(core_wf, cap_index, types, core.agents, agent_by_id, agent_by_name,
+                                result.diagnostics);
+        lowerer.lower(*wf);
+        core.workflows.push_back(std::move(core_wf));
     }
 
     // Auto-verify the candidate program at the lowering boundary. When the

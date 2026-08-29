@@ -2508,3 +2508,127 @@ flow for A {
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     CHECK_FALSE(result.ok()); // shape mismatch is fail-closed, not normalized
 }
+
+// --- KR6.4 workflow lowering (RFC 0026 P3 workflow vertical slice) ---
+
+namespace {
+// A self-contained multi-node DAG workflow: two agents, a workflow whose second
+// node depends on the first and reads its output, and a return that reads the
+// last node. Mirrors the shape of examples/execution-demo (input root, node.field
+// projection, struct-literal node input, `after` deps, bare-node return).
+const std::string kWorkflowSource = R"AHFL(
+module wf;
+
+struct Req { amount: Int; }
+struct Mid { total: Int; }
+struct Reply { ok: Bool; }
+
+agent First {
+    input: Req;
+    output: Mid;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+agent Second {
+    input: Mid;
+    output: Reply;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+workflow Pipe {
+    input: Req;
+    output: Reply;
+
+    node first: First(input);
+    node second: Second(Mid { total: first.total }) after [first];
+
+    return: second;
+}
+)AHFL";
+
+const ir::core::CoreWorkflowDecl *find_workflow(const ir::core::CoreProgram &program,
+                                                const std::string &name) {
+    for (const auto &wf : program.workflows) {
+        // The lowered name is the canonical name (e.g. "wf::Pipe"); match by the
+        // trailing simple name so the test is module-path agnostic.
+        if (wf.name == name || (wf.name.size() > name.size() &&
+                                wf.name.compare(wf.name.size() - name.size() - 2, 2, "::") == 0 &&
+                                wf.name.compare(wf.name.size() - name.size(), name.size(), name) ==
+                                    0)) {
+            return &wf;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+TEST_CASE("KR6.4 workflow: a multi-node DAG lowers into a CoreWorkflowDecl and verifies") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("wf_pipe", kWorkflowSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const ir::core::CoreWorkflowDecl *wf = find_workflow(result.program, "Pipe");
+    REQUIRE(wf != nullptr);
+    // Typed shell resolved to structs.
+    CHECK(wf->input_type.value != ir::core::CoreTypeId::kInvalid);
+    CHECK(wf->output_type.value != ir::core::CoreTypeId::kInvalid);
+    // Two nodes, ids == declaration index.
+    REQUIRE(wf->nodes.size() == 2);
+    CHECK(wf->nodes[0].id.value == 0u);
+    CHECK(wf->nodes[1].id.value == 1u);
+    CHECK(wf->nodes[0].node_name == "first");
+    CHECK(wf->nodes[1].node_name == "second");
+    // `second after [first]` resolved to a typed node id (not a name string).
+    REQUIRE(wf->nodes[1].after.size() == 1);
+    CHECK(wf->nodes[1].after[0].value == 0u);
+    CHECK(wf->nodes[0].after.empty());
+    // Every node has an ANF input region ending in a value-yield; return region too.
+    REQUIRE(wf->nodes[0].input_region);
+    REQUIRE(wf->nodes[1].input_region);
+    REQUIRE(wf->return_region);
+    const auto ends_in_value_yield = [](const ir::core::CoreRegion &r) {
+        if (r.statements.empty()) {
+            return false;
+        }
+        const auto *y = std::get_if<ir::core::CoreYieldStmt>(&r.statements.back().node);
+        return y != nullptr && y->has_value;
+    };
+    CHECK(ends_in_value_yield(*wf->nodes[0].input_region));
+    CHECK(ends_in_value_yield(*wf->nodes[1].input_region));
+    CHECK(ends_in_value_yield(*wf->return_region));
+
+    // The node-output reads resolved to WorkflowNodeOutput path roots carrying the
+    // typed producer node id: `first.total` in node `second`'s input reads node 0
+    // (with a resolved `.total` projection); `return: second` reads node 1 (bare).
+    bool saw_first_total = false;
+    bool saw_return_second = false;
+    for (const auto &expr : wf->exprs) {
+        if (const auto *p = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
+            if (p->root != ir::core::CorePathRoot::WorkflowNodeOutput) {
+                continue;
+            }
+            if (p->workflow_node.value == 0u && !p->projection.empty()) {
+                saw_first_total = true;
+                CHECK(p->projection_resolved); // `.total` resolved to a typed step
+            }
+            if (p->workflow_node.value == 1u) {
+                saw_return_second = true; // bare `second` node reference
+            }
+        }
+    }
+    CHECK(saw_first_total);
+    CHECK(saw_return_second);
+    // safety/liveness are erased: the Core workflow has no such field (structural).
+}
