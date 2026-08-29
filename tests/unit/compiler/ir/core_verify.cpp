@@ -1573,3 +1573,84 @@ TEST_CASE("workflow verifier: a node region that does not yield a value is fail-
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kWorkflowRegionYield));
 }
+
+// --- workflow verifier forward-fix (Codex re-review: 2 P0 + 1 P1) ---
+
+TEST_CASE("workflow verifier P0-1: a reachable cyclic expr does NOT crash and reports EXPR_CYCLE") {
+    GoodWorkflow g = make_good_workflow();
+    // node0's input reads expr[0] (a WorkflowInput path). Replace it with a
+    // self-referential unary: expr[0] = Not(expr[0]). The path walk MUST stay
+    // total (no SIGSEGV / no native-stack blow-up) and the acyclic checker must
+    // report EXPR_CYCLE — the verifier still RETURNS a result.
+    g.wf->exprs[0].node = CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{0}};
+    const auto result = verify_core_program(g.program); // must not crash
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kExprCycle));
+}
+
+TEST_CASE("workflow verifier P0-1: a deep operand chain does not blow the native stack") {
+    GoodWorkflow g = make_good_workflow();
+    // Build a long acyclic unary chain expr[k] = Not(expr[k+1]) ... and point
+    // node0's input at its head. A recursive walk would overflow; the iterative
+    // walk must handle it and verify (the chain is acyclic + well-formed).
+    const std::uint32_t base = static_cast<std::uint32_t>(g.wf->exprs.size());
+    const int depth = 20000;
+    for (int k = 0; k < depth; ++k) {
+        g.wf->exprs.push_back(
+            CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{base + static_cast<std::uint32_t>(k) + 1}},
+                     std::nullopt});
+    }
+    // Tail references the original WorkflowInput path expr[0] so the chain is a
+    // valid Bool-ish computation rooted at the workflow input.
+    g.wf->exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt});
+    // Rebind node0's input let to the chain head, still yielding value 0.
+    auto r = std::make_unique<CoreRegion>();
+    r->statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{base}}, std::nullopt});
+    r->statements.push_back(CoreStmt{CoreYieldStmt{true, CoreValueId{0}}, std::nullopt});
+    g.wf->nodes[0].input_region = std::move(r);
+    const auto result = verify_core_program(g.program); // must not overflow the stack
+    // The chain is acyclic + in-range; no EXPR_CYCLE / out-of-range.
+    CHECK_FALSE(has_code(result, verify::kExprCycle));
+}
+
+TEST_CASE("workflow verifier P0-2: a flow carrying a workflow-only path root is fail-closed") {
+    GoodProgram g = make_good_program();
+    // Corrupt the flow's nested-path expr (expr[1]) to a WorkflowNodeOutput root
+    // (a workflow-only root has no place in a flow body).
+    auto &pe = std::get<CorePathExpr>(g.flow->exprs[1].node);
+    pe.root = CorePathRoot::WorkflowNodeOutput;
+    pe.workflow_node = CoreWorkflowNodeId{0};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowPathRootInvalid));
+}
+
+TEST_CASE("workflow verifier P0-2: a workflow carrying an unresolved Identifier root is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // node0's input reads a WorkflowInput path (expr[0]); corrupt it to a bare
+    // unresolved Identifier root (kInvalid type/node). In a workflow body the 4th
+    // path is unresolved -> fail-closed, NOT a legal free variable.
+    auto &pe = std::get<CorePathExpr>(g.wf->exprs[0].node);
+    pe.root = CorePathRoot::Identifier;
+    pe.root_name = "ghost";
+    pe.root_type = CoreTypeId{};
+    pe.workflow_node = CoreWorkflowNodeId{};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowPathRootInvalid));
+}
+
+TEST_CASE("workflow verifier P1: an UNREFERENCED bad WorkflowNodeOutput is still checked") {
+    GoodWorkflow g = make_good_workflow();
+    // Append an expr that NO region reads, with an out-of-range node id. The
+    // static full-arena pass must still catch it (node-id bounds is an all-expr
+    // invariant, not just region-reachable).
+    CorePathExpr ghost;
+    ghost.root = CorePathRoot::WorkflowNodeOutput;
+    ghost.root_type = CoreTypeId{1}; // some valid type
+    ghost.workflow_node = CoreWorkflowNodeId{99};
+    g.wf->exprs.push_back(CoreExpr{std::move(ghost), std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kWorkflowNodeRefInvalid));
+}
