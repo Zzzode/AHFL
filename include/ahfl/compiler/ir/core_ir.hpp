@@ -155,6 +155,17 @@ struct CoreWorkflowNodeId {
     [[nodiscard]] friend bool operator==(CoreWorkflowNodeId, CoreWorkflowNodeId) noexcept = default;
 };
 
+/// Canonical identity of a monomorphized INSTANCE within `CoreProgram::instances`
+/// (Principle 2): the index into that flat store. A workflow node's invocation
+/// target and (later) a fn call resolve to a `CoreInstanceId`, never a mangled
+/// name string. The mangled `instance_key` on the decl is an execution-dispatch
+/// label + global-uniqueness key, NOT the in-IR identity.
+struct CoreInstanceId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreInstanceId, CoreInstanceId) noexcept = default;
+};
+
 // ----------------------------------------------------------------------------
 // State-machine node set (minimal orchestration skeleton)
 // ----------------------------------------------------------------------------
@@ -186,19 +197,11 @@ struct CoreTransition {
 /// capability-calls / control-flow regions are filled by the later KR6.4
 /// sub-slices.
 struct CoreAgentDecl {
-    /// Display name (diagnostic only). `symbol_ref` / `instance_key` are the
-    /// canonical identities.
+    /// Display name (diagnostic only). `symbol_ref` is the canonical identity.
     std::string name;
     /// Resolved nominal symbol of the originating agent (reused as-is from the
     /// verification layer; strings on it are display/diagnostic only).
     ir::SymbolRef symbol_ref;
-    /// Monomorphization instance key from `mangle::mangle_instance` — the
-    /// canonical execution identity of this (agent, type-args) instance. For a
-    /// non-generic agent the type-arg list is empty; when full monomorphization
-    /// lands (a later KR6.4 sub-slice) generic agents produce one CoreAgentDecl
-    /// per concrete instantiation, each with its own key. Core-IR REUSES the
-    /// mangling facility rather than reinventing the key.
-    std::string instance_key;
     /// State-name table; index == `CoreStateId::value`.
     std::vector<std::string> states;
     /// Initial state.
@@ -922,7 +925,9 @@ struct CoreFlowDecl {
 // CoreValueId SSA domain. Verification-only `safety` / `liveness` temporal
 // properties are ERASED (no field here).
 
-/// One node of a workflow DAG. `target` is the invoked agent (typed identity).
+/// One node of a workflow DAG. `target_instance` is the monomorphized agent
+/// INSTANCE this node invokes (a CoreInstanceId into `CoreProgram::instances`;
+/// resolve its nominal agent + output type through the CoreAgentInstance there).
 /// `after` are the upstream nodes this node depends on (typed ids, resolved from
 /// source names). `input_region` is the node's ANF input computation: it ends by
 /// yielding the single value passed to the agent (RegionContext WorkflowNodeInput
@@ -930,7 +935,7 @@ struct CoreFlowDecl {
 /// runs only once the node's dependencies are satisfied.
 struct CoreWorkflowNode {
     CoreWorkflowNodeId id{};
-    CoreAgentId target{};                    // typed target-agent identity
+    CoreInstanceId target_instance{};        // invoked agent INSTANCE (Principle 2)
     std::string node_name;                   // display / provenance only
     ir::SymbolRef target_ref;                // provenance / display only
     std::vector<CoreWorkflowNodeId> after;   // typed dependency edges (no name strings)
@@ -956,6 +961,95 @@ struct CoreWorkflowDecl {
     std::vector<CoreWorkflowNode> nodes;      // DAG nodes; index == CoreWorkflowNodeId
     std::unique_ptr<CoreRegion> return_region; // ANF; ends in Yield(output value)
     friend bool operator==(const CoreWorkflowDecl &, const CoreWorkflowDecl &) noexcept;
+};
+
+// ----------------------------------------------------------------------------
+// Monomorphized instances (RFC 0026 KR6.4 slice: instance registry / dispatch
+// identity consumption)
+// ----------------------------------------------------------------------------
+//
+// The Typed-HIR -> AHFL-IR lowering already discovers every concrete
+// `(nominal symbol, dispatch types)` instance and mangles it into an
+// `ir::InstanceDecl` (dedup keyed by symbol + type args). Core-IR CONSUMES those
+// decls into a flat `CoreProgram::instances` table — it does NOT re-discover or
+// re-mangle. Each instance's canonical execution identity is its byte-exact
+// `instance_key` (== `ir::InstanceDecl::name`); the in-IR identity is its
+// `CoreInstanceId` index.
+//
+// `dispatch_types` are the vector `mangle_instance()` was given — a DISPATCH
+// descriptor, NOT uniform generic type-args (its source differs per kind: a fn's
+// concrete generic args, a capability/method's argument types, an agent's
+// [input, context, output] shell). It is kept as concrete structural
+// `ir::TypeRef` (like a CoreCapabilityDecl signature) until the P4 value-type
+// arena can encode primitive/bounded/container/Fn/parameterized types uniformly;
+// the verifier rejects any non-concrete (`Unresolved`/`Any`) dispatch type.
+//
+// The kind of an instance is a STRUCTURAL FACT of its payload variant (no
+// separate drift-prone enum). Agent / Workflow payloads carry the concrete shell
+// as resolved CoreTypeIds + a `base` back-reference into the nominal table;
+// Capability carries its base id; Predicate / Fn keep only the origin symbol
+// until their Core base tables land (Fn body lowering is a later slice).
+
+/// A capability instantiated at concrete argument types. `base` is the nominal
+/// capability it dispatches to.
+struct CoreCapabilityInstance {
+    CoreCapabilityId base{};
+    [[nodiscard]] friend bool operator==(const CoreCapabilityInstance &,
+                                         const CoreCapabilityInstance &) noexcept = default;
+};
+
+/// A predicate instance. No Core predicate table exists yet, so the origin
+/// SymbolRef on the enclosing CoreInstanceDecl is the only identity carried.
+struct CorePredicateInstance {
+    [[nodiscard]] friend bool operator==(const CorePredicateInstance &,
+                                         const CorePredicateInstance &) noexcept = default;
+};
+
+/// A concrete agent invocation instance. `base` is the nominal agent; the shell
+/// (input / context / output) is the concrete schema this instance applies.
+struct CoreAgentInstance {
+    CoreAgentId base{};
+    CoreTypeId input_type{};
+    CoreAgentDecl::ContextKind context_kind{CoreAgentDecl::ContextKind::Unit};
+    CoreTypeId context_type{};
+    CoreTypeId output_type{};
+    [[nodiscard]] friend bool operator==(const CoreAgentInstance &,
+                                         const CoreAgentInstance &) noexcept = default;
+};
+
+/// A workflow instantiated as part of a larger composition. `base` is the
+/// nominal workflow; input/output are its concrete shell.
+struct CoreWorkflowInstance {
+    CoreWorkflowId base{};
+    CoreTypeId input_type{};
+    CoreTypeId output_type{};
+    [[nodiscard]] friend bool operator==(const CoreWorkflowInstance &,
+                                         const CoreWorkflowInstance &) noexcept = default;
+};
+
+/// A top-level `fn` instantiated at concrete type args. The base fn table + body
+/// lowering are a later monomorphization slice; only the origin (on the enclosing
+/// decl) is carried for now.
+struct CoreFnInstance {
+    [[nodiscard]] friend bool operator==(const CoreFnInstance &,
+                                         const CoreFnInstance &) noexcept = default;
+};
+
+using CoreInstancePayload =
+    std::variant<CoreCapabilityInstance, CorePredicateInstance, CoreAgentInstance,
+                 CoreWorkflowInstance, CoreFnInstance>;
+
+/// One monomorphized instance consumed from an `ir::InstanceDecl`. `instance_key`
+/// is the byte-exact mangled name (execution dispatch label + global-uniqueness
+/// key — NEVER re-derived or string-parsed in Core). `payload` makes kind a
+/// structural fact.
+struct CoreInstanceDecl {
+    CoreInstanceId id{};
+    std::string instance_key;                // == ir::InstanceDecl::name (byte-exact)
+    ir::SymbolRef origin;                    // nominal symbol that was instantiated
+    std::vector<ir::TypeRef> dispatch_types; // mangle dispatch descriptor (concrete)
+    CoreInstancePayload payload;
+    friend bool operator==(const CoreInstanceDecl &, const CoreInstanceDecl &) noexcept;
 };
 
 // ----------------------------------------------------------------------------
@@ -1014,6 +1108,7 @@ struct CoreProgram {
     std::vector<CoreAgentDecl> agents;            // index == CoreAgentId
     std::vector<CoreFlowDecl> flows;
     std::vector<CoreWorkflowDecl> workflows;      // index == CoreWorkflowId
+    std::vector<CoreInstanceDecl> instances;      // index == CoreInstanceId
 };
 
 // ----------------------------------------------------------------------------
@@ -1044,6 +1139,10 @@ inline constexpr std::string_view kNullExpr = "core.NULL_EXPR";
 inline constexpr std::string_view kUnresolvedWorkflowTarget = "core.UNRESOLVED_WORKFLOW_TARGET";
 inline constexpr std::string_view kUnknownWorkflowDependency = "core.UNKNOWN_WORKFLOW_DEPENDENCY";
 inline constexpr std::string_view kWorkflowCycle = "core.WORKFLOW_CYCLE";
+inline constexpr std::string_view kDuplicateInstanceKey = "core.DUPLICATE_INSTANCE_KEY";
+inline constexpr std::string_view kUnresolvedInstanceBase = "core.UNRESOLVED_INSTANCE_BASE";
+inline constexpr std::string_view kUnknownInstanceKind = "core.UNKNOWN_INSTANCE_KIND";
+inline constexpr std::string_view kUnresolvedWorkflowInvocation = "core.UNRESOLVED_WORKFLOW_INVOCATION";
 } // namespace diag
 
 /// A structured lowering diagnostic (fail-closed: no throw, no Unknown node).

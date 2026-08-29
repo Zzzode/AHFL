@@ -328,21 +328,43 @@ struct GoodWorkflow {
         return r;
     };
 
-    // node 0 "first": First(input)
+    // Two concrete agent invocation instances (index == CoreInstanceId), each
+    // with a shell matching its nominal agent. Workflow nodes invoke THESE.
+    {
+        CoreInstanceDecl first_inst;
+        first_inst.id = CoreInstanceId{0};
+        first_inst.instance_key = "_inst_first_First";
+        first_inst.origin = ir::SymbolRef{ir::SymbolRefKind::Agent, "First", "First", "", 100};
+        first_inst.payload = CoreAgentInstance{CoreAgentId{0}, win_ty,
+                                               CoreAgentDecl::ContextKind::Unit, CoreTypeId{},
+                                               wmid_ty};
+        p.instances.push_back(std::move(first_inst));
+
+        CoreInstanceDecl second_inst;
+        second_inst.id = CoreInstanceId{1};
+        second_inst.instance_key = "_inst_second_Second";
+        second_inst.origin = ir::SymbolRef{ir::SymbolRefKind::Agent, "Second", "Second", "", 101};
+        second_inst.payload = CoreAgentInstance{CoreAgentId{1}, wmid_ty,
+                                                CoreAgentDecl::ContextKind::Unit, CoreTypeId{},
+                                                wout_ty};
+        p.instances.push_back(std::move(second_inst));
+    }
+
+    // node 0 "first": First(input) -> invokes instance 0
     {
         CoreWorkflowNode node;
         node.id = CoreWorkflowNodeId{0};
         node.node_name = "first";
-        node.target = CoreAgentId{0};
+        node.target_instance = CoreInstanceId{0};
         node.input_region = region_yielding(CoreExprId{0}, CoreValueId{0});
         wf.nodes.push_back(std::move(node));
     }
-    // node 1 "second": Second(first.total) after [first]
+    // node 1 "second": Second(first.total) after [first] -> invokes instance 1
     {
         CoreWorkflowNode node;
         node.id = CoreWorkflowNodeId{1};
         node.node_name = "second";
-        node.target = CoreAgentId{1};
+        node.target_instance = CoreInstanceId{1};
         node.after = {CoreWorkflowNodeId{0}};
         node.input_region = region_yielding(CoreExprId{1}, CoreValueId{1});
         wf.nodes.push_back(std::move(node));
@@ -1520,12 +1542,12 @@ TEST_CASE("workflow verifier: a non-struct input shell is fail-closed") {
     CHECK(has_code(result, verify::kWorkflowShellInvalid));
 }
 
-TEST_CASE("workflow verifier: an out-of-range node target agent is fail-closed") {
+TEST_CASE("workflow verifier: a node target_instance not resolving to an agent instance is fail-closed") {
     GoodWorkflow g = make_good_workflow();
-    g.wf->nodes[0].target = CoreAgentId{9};
+    g.wf->nodes[0].target_instance = CoreInstanceId{9}; // out of range
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
-    CHECK(has_code(result, verify::kWorkflowTargetInvalid));
+    CHECK(has_code(result, verify::kWorkflowInvocationInvalid));
 }
 
 TEST_CASE("workflow verifier: a node id not equal to its index is fail-closed") {

@@ -45,6 +45,7 @@ class Verifier {
         for (std::uint32_t i = 0; i < program_.workflows.size(); ++i) {
             verify_workflow(program_.workflows[i], i);
         }
+        verify_instances();
         return std::move(diags_);
     }
 
@@ -64,6 +65,16 @@ class Verifier {
     }
     [[nodiscard]] bool is_enum(CoreTypeId t) const {
         return type_in_range(t) && program_.types[t.value].kind == CoreTypeDecl::Kind::Enum;
+    }
+
+    // The CoreAgentInstance a CoreInstanceId resolves to, or nullptr when the id
+    // is kInvalid / out of range / not an Agent-kind instance. Lets a workflow
+    // node's invocation target resolve to its concrete agent instance.
+    [[nodiscard]] const CoreAgentInstance *agent_instance_of(CoreInstanceId id) const {
+        if (id.value == CoreInstanceId::kInvalid || id.value >= program_.instances.size()) {
+            return nullptr;
+        }
+        return std::get_if<CoreAgentInstance>(&program_.instances[id.value].payload);
     }
 
     // --- type table ---
@@ -1513,10 +1524,14 @@ class Verifier {
                           std::to_string(node.id.value) + " does not equal its index",
                       std::nullopt);
             }
-            if (node.target.value >= program_.agents.size()) {
-                error(verify::kWorkflowTargetInvalid,
-                      label + " node '" + node.node_name + "' target agent id " +
-                          std::to_string(node.target.value) + " is out of range",
+            // The node's invocation target must be a valid Agent INSTANCE (a
+            // concrete monomorphized invocation), resolved via target_instance ->
+            // instances[] -> CoreAgentInstance. kInvalid / out-of-range / non-Agent
+            // is fail-closed (the link pass must have bound every node).
+            if (agent_instance_of(node.target_instance) == nullptr) {
+                error(verify::kWorkflowInvocationInvalid,
+                      label + " node '" + node.node_name +
+                          "' target_instance does not resolve to a valid agent instance",
                       std::nullopt);
             }
             std::set<std::uint32_t> seen_edges;
@@ -1607,16 +1622,15 @@ class Verifier {
             }
         }
 
-        // Per-node target-agent output type (kInvalid if the target is out of
-        // range) — the expected type of a WorkflowNodeOutput root reading that
-        // node. Used by the FULL-arena root-type/bounds check (every expr), so a
-        // malformed unreferenced WorkflowNodeOutput cannot slip past.
+        // Per-node target-agent output type (kInvalid if the node's target
+        // instance is unresolved) — the expected type of a WorkflowNodeOutput root
+        // reading that node. Resolved through target_instance -> CoreAgentInstance
+        // -> output_type. Used by the FULL-arena root-type/bounds check (every
+        // expr), so a malformed unreferenced WorkflowNodeOutput cannot slip past.
         std::vector<CoreTypeId> node_output_types(node_count);
         for (std::uint32_t i = 0; i < node_count; ++i) {
-            const CoreWorkflowNode &node = wf.nodes[i];
-            node_output_types[i] = node.target.value < program_.agents.size()
-                                       ? program_.agents[node.target.value].output_type
-                                       : CoreTypeId{};
+            const CoreAgentInstance *ai = agent_instance_of(wf.nodes[i].target_instance);
+            node_output_types[i] = ai ? ai->output_type : CoreTypeId{};
         }
 
         // The shared arena (expr + pattern) + workflow-global SSA. Value ids are
@@ -1793,6 +1807,108 @@ class Verifier {
                        },
                        wf.exprs[id].node);
         }
+    }
+
+    // --- monomorphized instance table ---
+    //
+    // Verifies CoreProgram.instances: id == index; instance_key non-empty +
+    // globally unique (a duplicate key is a re-definition, fail-closed); every
+    // dispatch type is CONCRETE (a mangle dispatch descriptor with an
+    // Unresolved/Any/Never shape is malformed); and each payload's base id (where
+    // a Core base table exists — Capability / Agent / Workflow) is in range and,
+    // for Agent/Workflow, its instance shell matches the nominal base's shell.
+    // Predicate / Fn keep only the origin (no Core base table yet), so nothing to
+    // bound. NOTE: this does NOT require every call site to have an instance
+    // (stdlib deliberate omission when include_stdlib_ == false is a legal
+    // exception), and it consumes the emit_instantiated_declarations closure — the
+    // budgeted run_monomorphization closure is not yet the same SSOT.
+    void verify_instances() {
+        std::unordered_set<std::string> seen_keys;
+        for (std::uint32_t i = 0; i < program_.instances.size(); ++i) {
+            const CoreInstanceDecl &inst = program_.instances[i];
+            if (inst.id.value != i) {
+                error(verify::kInstanceBaseInvalid,
+                      "instance #" + std::to_string(i) + " id " + std::to_string(inst.id.value) +
+                          " does not equal its index",
+                      std::nullopt);
+            }
+            if (inst.instance_key.empty()) {
+                error(verify::kInstanceKeyEmpty,
+                      "instance #" + std::to_string(i) + " has an empty instance key", std::nullopt);
+            } else if (!seen_keys.insert(inst.instance_key).second) {
+                error(verify::kInstanceKeyDuplicated,
+                      "instance key '" + inst.instance_key + "' is defined more than once",
+                      std::nullopt);
+            }
+            for (const ir::TypeRef &t : inst.dispatch_types) {
+                if (!type_ref_is_concrete(t)) {
+                    error(verify::kInstanceDispatchTypeInvalid,
+                          "instance '" + inst.instance_key +
+                              "' has a non-concrete dispatch type (Unresolved / Any / Never)",
+                          std::nullopt);
+                }
+            }
+            std::visit(Overloaded{
+                           [&](const CoreCapabilityInstance &p) {
+                               if (p.base.value >= program_.capabilities.size()) {
+                                   error(verify::kInstanceBaseInvalid,
+                                         "capability instance '" + inst.instance_key +
+                                             "' base id is out of range",
+                                         std::nullopt);
+                               }
+                           },
+                           [&](const CorePredicateInstance &) {},
+                           [&](const CoreAgentInstance &p) {
+                               if (p.base.value >= program_.agents.size()) {
+                                   error(verify::kInstanceBaseInvalid,
+                                         "agent instance '" + inst.instance_key +
+                                             "' base id is out of range",
+                                         std::nullopt);
+                                   return;
+                               }
+                               const CoreAgentDecl &base = program_.agents[p.base.value];
+                               if (!(p.input_type == base.input_type) ||
+                                   p.context_kind != base.context_kind ||
+                                   !(p.context_type == base.context_type) ||
+                                   !(p.output_type == base.output_type)) {
+                                   error(verify::kInstanceShellMismatch,
+                                         "agent instance '" + inst.instance_key +
+                                             "' shell does not match its nominal agent '" +
+                                             base.name + "'",
+                                         std::nullopt);
+                               }
+                           },
+                           [&](const CoreWorkflowInstance &p) {
+                               if (p.base.value >= program_.workflows.size()) {
+                                   error(verify::kInstanceBaseInvalid,
+                                         "workflow instance '" + inst.instance_key +
+                                             "' base id is out of range",
+                                         std::nullopt);
+                                   return;
+                               }
+                               const CoreWorkflowDecl &base = program_.workflows[p.base.value];
+                               if (!(p.input_type == base.input_type) ||
+                                   !(p.output_type == base.output_type)) {
+                                   error(verify::kInstanceShellMismatch,
+                                         "workflow instance '" + inst.instance_key +
+                                             "' shell does not match its nominal workflow '" +
+                                             base.name + "'",
+                                         std::nullopt);
+                               }
+                           },
+                           [&](const CoreFnInstance &) {},
+                       },
+                       inst.payload);
+        }
+    }
+
+    // A dispatch type must be a CONCRETE structural type: not Unresolved / Any /
+    // Never. (Deep structural well-formedness of nested container/Fn params is a
+    // P4 value-type-arena concern; here we reject the top-level non-concrete
+    // shapes the mangler should never have emitted for a real instance.)
+    [[nodiscard]] static bool type_ref_is_concrete(const ir::TypeRef &t) {
+        return t.kind != ir::TypeRefKind::Unresolved && t.kind != ir::TypeRefKind::Any &&
+               t.kind != ir::TypeRefKind::Never;
     }
 
     const CoreProgram &program_;

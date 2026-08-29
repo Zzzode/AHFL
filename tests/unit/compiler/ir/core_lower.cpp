@@ -1,6 +1,7 @@
 #include <doctest.h>
 
 #include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program.hpp"
 #include "ahfl/compiler/ir/typed_hir_lower.hpp"
@@ -185,6 +186,16 @@ bool callee_is(const std::string &callee, const std::string &name) {
                               callee.compare(callee.size() - name.size(), name.size(), name) == 0);
 }
 
+// Does a verify result carry an ERROR diagnostic with this stable code?
+bool has_verify_code(const ir::core::CoreVerifyResult &r, std::string_view code) {
+    for (const auto &d : r.diagnostics) {
+        if (d.severity == ir::core::CoreDiagnosticSeverity::Error && d.code == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 TEST_CASE("lower_ahfl_to_core lowers an agent state machine into Core-IR") {
@@ -223,7 +234,11 @@ TEST_CASE("lower_ahfl_to_core is deterministic (decl level)") {
     const auto b = ir::core::lower_ahfl_to_core(program);
     REQUIRE(a.program.capabilities.size() == b.program.capabilities.size());
     REQUIRE(a.program.agents.size() == b.program.agents.size());
-    CHECK(a.program.agents[0].instance_key == b.program.agents[0].instance_key);
+    // Agent identity is its symbol (instance_key was removed from CoreAgentDecl;
+    // execution/dispatch identity now lives only on CoreInstanceDecl).
+    CHECK(a.program.agents[0].symbol_ref.canonical_name ==
+          b.program.agents[0].symbol_ref.canonical_name);
+    CHECK(a.program.instances.size() == b.program.instances.size());
 }
 
 // ==========================================================================
@@ -2630,5 +2645,150 @@ TEST_CASE("KR6.4 workflow: a multi-node DAG lowers into a CoreWorkflowDecl and v
     }
     CHECK(saw_first_total);
     CHECK(saw_return_second);
+
+    // Each workflow node is LINKED to a concrete agent instance: its
+    // target_instance resolves to a CoreAgentInstance whose base + output type
+    // match the nominal target agent. (The instance registry + invocation link
+    // pass consumed the frontend's ir::InstanceDecls; nothing re-mangles here.)
+    for (const auto &node : wf->nodes) {
+        REQUIRE(node.target_instance.value != ir::core::CoreInstanceId::kInvalid);
+        REQUIRE(node.target_instance.value < result.program.instances.size());
+        const auto &inst = result.program.instances[node.target_instance.value];
+        const auto *ai = std::get_if<ir::core::CoreAgentInstance>(&inst.payload);
+        REQUIRE(ai != nullptr);
+        CHECK(ai->base.value < result.program.agents.size());
+        // instance_key came verbatim from the frontend (never empty, never re-mangled).
+        CHECK_FALSE(inst.instance_key.empty());
+    }
+    // node `first` outputs WMid, node `second` outputs WOut (Reply) — the two
+    // instances carry distinct output shells.
+    const auto &first_ai =
+        std::get<ir::core::CoreAgentInstance>(
+            result.program.instances[wf->nodes[0].target_instance.value].payload);
+    const auto &second_ai =
+        std::get<ir::core::CoreAgentInstance>(
+            result.program.instances[wf->nodes[1].target_instance.value].payload);
+    CHECK(first_ai.output_type.value != second_ai.output_type.value);
     // safety/liveness are erased: the Core workflow has no such field (structural).
 }
+
+// --- KR6.4 monomorphization Slice 1: instance registry / dispatch identity ---
+
+namespace {
+// A generic `fn id<T>(x: T) -> T` invoked at Int + a workflow whose agents give
+// Agent instances. Exercises the Fn-instance + Agent-instance consumption path.
+const std::string kGenericInstanceSource = R"AHFL(
+module gi;
+
+struct Req { amount: Int; }
+struct Reply { ok: Bool; }
+
+fn id<T>(x: T) -> T { return x; }
+
+fn use_it(n: Int) -> Int { return id<Int>(n); }
+)AHFL";
+} // namespace
+
+TEST_CASE("KR6.4 mono Slice 1: a generic fn instance is consumed into CoreProgram.instances") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("gen_inst", kGenericInstanceSource);
+    REQUIRE(ahfl_ir.has_value());
+    // Count AHFL-IR InstanceDecls so the test is meaningful even if the frontend
+    // emits zero (then the consumption path has nothing to prove and we skip the
+    // strong assertions rather than assert a false invariant).
+    std::size_t ahfl_fn_instances = 0;
+    for (const auto &d : ahfl_ir->declarations) {
+        if (const auto *inst = std::get_if<ir::InstanceDecl>(&d)) {
+            if (inst->kind == ir::InstanceKind::Fn) {
+                ++ahfl_fn_instances;
+            }
+        }
+    }
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &diag : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << diag.code << " — " << diag.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    // Every AHFL-IR InstanceDecl becomes exactly one CoreInstanceDecl, byte-exact
+    // key, and (Fn kind) a CoreFnInstance payload.
+    std::size_t core_fn_instances = 0;
+    for (const auto &inst : result.program.instances) {
+        CHECK_FALSE(inst.instance_key.empty());
+        if (std::holds_alternative<ir::core::CoreFnInstance>(inst.payload)) {
+            ++core_fn_instances;
+        }
+    }
+    CHECK(core_fn_instances == ahfl_fn_instances);
+    // The Core key equals the AHFL InstanceDecl name byte-for-byte (no re-mangle).
+    for (const auto &d : ahfl_ir->declarations) {
+        if (const auto *inst = std::get_if<ir::InstanceDecl>(&d)) {
+            bool found = false;
+            for (const auto &ci : result.program.instances) {
+                if (ci.instance_key == inst->name) {
+                    found = true;
+                    break;
+                }
+            }
+            INFO("AHFL instance '" << inst->name << "' has no byte-exact Core instance");
+            CHECK(found);
+        }
+    }
+}
+
+// --- mono Slice 1 verifier negatives (hand-built Core instance table) ---
+
+TEST_CASE("mono verifier: a duplicate instance key is fail-closed") {
+    ir::core::CoreProgram p;
+    ir::core::CoreInstanceDecl a;
+    a.id = ir::core::CoreInstanceId{0};
+    a.instance_key = "_inst_dup";
+    a.payload = ir::core::CoreFnInstance{};
+    ir::core::CoreInstanceDecl b;
+    b.id = ir::core::CoreInstanceId{1};
+    b.instance_key = "_inst_dup"; // same key
+    b.payload = ir::core::CoreFnInstance{};
+    p.instances.push_back(std::move(a));
+    p.instances.push_back(std::move(b));
+    const auto result = ir::core::verify_core_program(p);
+    CHECK_FALSE(result.ok());
+    CHECK(has_verify_code(result, ir::core::verify::kInstanceKeyDuplicated));
+}
+
+TEST_CASE("mono verifier: an empty instance key is fail-closed") {
+    ir::core::CoreProgram p;
+    ir::core::CoreInstanceDecl a;
+    a.id = ir::core::CoreInstanceId{0};
+    a.instance_key = ""; // empty
+    a.payload = ir::core::CoreFnInstance{};
+    p.instances.push_back(std::move(a));
+    const auto result = ir::core::verify_core_program(p);
+    CHECK_FALSE(result.ok());
+    CHECK(has_verify_code(result, ir::core::verify::kInstanceKeyEmpty));
+}
+
+TEST_CASE("mono verifier: a non-concrete dispatch type is fail-closed") {
+    ir::core::CoreProgram p;
+    ir::core::CoreInstanceDecl a;
+    a.id = ir::core::CoreInstanceId{0};
+    a.instance_key = "_inst_bad_dispatch";
+    ir::TypeRef unresolved; // kind defaults to Unresolved
+    a.dispatch_types.push_back(std::move(unresolved));
+    a.payload = ir::core::CoreFnInstance{};
+    p.instances.push_back(std::move(a));
+    const auto result = ir::core::verify_core_program(p);
+    CHECK_FALSE(result.ok());
+    CHECK(has_verify_code(result, ir::core::verify::kInstanceDispatchTypeInvalid));
+}
+
+TEST_CASE("mono verifier: an out-of-range instance base is fail-closed") {
+    ir::core::CoreProgram p;
+    ir::core::CoreInstanceDecl a;
+    a.id = ir::core::CoreInstanceId{0};
+    a.instance_key = "_inst_bad_base";
+    a.payload = ir::core::CoreCapabilityInstance{ir::core::CoreCapabilityId{9}}; // no caps
+    p.instances.push_back(std::move(a));
+    const auto result = ir::core::verify_core_program(p);
+    CHECK_FALSE(result.ok());
+    CHECK(has_verify_code(result, ir::core::verify::kInstanceBaseInvalid));
+}
+

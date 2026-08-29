@@ -17,13 +17,13 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
-#include "ahfl/compiler/ir/mangling.hpp"
 
 #include <cctype>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -106,10 +106,41 @@ namespace {
     }
     return *x == *y;
 }
+
+// Structural equality of two ir::TypeRef (recursive over first/second/params).
+// Used by CoreInstanceDecl equality — dispatch_types are kept as concrete
+// structural TypeRefs until the P4 value-type arena lands.
+[[nodiscard]] bool type_ref_equal(const TypeRef &a, const TypeRef &b);
+[[nodiscard]] bool type_ref_ptr_equal(const TypeRefPtr &x, const TypeRefPtr &y) {
+    if (!x || !y) {
+        return x.get() == y.get();
+    }
+    return type_ref_equal(*x, *y);
+}
+[[nodiscard]] bool type_ref_equal(const TypeRef &a, const TypeRef &b) {
+    if (a.kind != b.kind || a.canonical_name != b.canonical_name ||
+        a.display_name != b.display_name || a.variant_name != b.variant_name ||
+        a.int_bounds != b.int_bounds || a.string_bounds != b.string_bounds ||
+        a.decimal_scale != b.decimal_scale || a.collection_capacity != b.collection_capacity) {
+        return false;
+    }
+    if (!type_ref_ptr_equal(a.first, b.first) || !type_ref_ptr_equal(a.second, b.second)) {
+        return false;
+    }
+    if (a.params.size() != b.params.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.params.size(); ++i) {
+        if (!type_ref_ptr_equal(a.params[i], b.params[i])) {
+            return false;
+        }
+    }
+    return true;
+}
 } // namespace
 
 bool operator==(const CoreWorkflowNode &a, const CoreWorkflowNode &b) noexcept {
-    return a.id == b.id && a.target == b.target && a.node_name == b.node_name &&
+    return a.id == b.id && a.target_instance == b.target_instance && a.node_name == b.node_name &&
            symbol_ref_equal(a.target_ref, b.target_ref) && a.after == b.after &&
            region_ptr_eq(a.input_region, b.input_region);
 }
@@ -119,6 +150,22 @@ bool operator==(const CoreWorkflowDecl &a, const CoreWorkflowDecl &b) noexcept {
            a.input_type == b.input_type && a.output_type == b.output_type && a.exprs == b.exprs &&
            a.value_count == b.value_count && a.patterns == b.patterns && a.nodes == b.nodes &&
            region_ptr_eq(a.return_region, b.return_region);
+}
+
+bool operator==(const CoreInstanceDecl &a, const CoreInstanceDecl &b) noexcept {
+    if (!(a.id == b.id) || a.instance_key != b.instance_key ||
+        !symbol_ref_equal(a.origin, b.origin) || !(a.payload == b.payload)) {
+        return false;
+    }
+    if (a.dispatch_types.size() != b.dispatch_types.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.dispatch_types.size(); ++i) {
+        if (!type_ref_equal(a.dispatch_types[i], b.dispatch_types[i])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // The production builtin variant table — the SINGLE SOURCE OF TRUTH for the
@@ -615,17 +662,6 @@ intern_state(std::vector<std::string> &names,
         out.context_kind = CoreAgentDecl::ContextKind::Struct;
         out.context_type = types.type_id_of(agent.context_type_ref).value_or(CoreTypeId{});
     }
-
-    const SymbolId symbol{agent.symbol_ref.id.value_or(0)};
-    const std::string canonical = agent.symbol_ref.canonical_name;
-    const mangle::SymbolCanonicalNameFn resolver =
-        [&canonical](SymbolId) -> std::optional<std::string> {
-        if (canonical.empty()) {
-            return std::nullopt;
-        }
-        return canonical;
-    };
-    out.instance_key = mangle::mangle_instance(symbol, /*type_args=*/{}, resolver);
 
     std::unordered_map<std::string, std::uint32_t> index_of;
     out.states.reserve(agent.states.size());
@@ -1999,6 +2035,11 @@ class WorkflowLowerer {
             node.id = id;
             node.node_name = src.name;
             node.target_ref = src.target_ref;
+            // target_instance stays kInvalid here — the workflow-invocation LINK
+            // pass (in lower_ahfl_to_core, after the instance table is built)
+            // resolves each node to its concrete Agent CoreInstanceId. We still
+            // resolve the NOMINAL agent now, ONLY to type this node's output for
+            // WorkflowRootPolicy (a lowering-only side fact, not a Core field).
             const auto target = resolve_agent(src.target_ref);
             if (!target) {
                 error(diag::kUnresolvedWorkflowTarget,
@@ -2006,8 +2047,6 @@ class WorkflowLowerer {
                           "' targets agent '" + agent_display(src.target_ref) +
                           "' which could not be resolved to a declared agent",
                       src.source_range);
-            } else {
-                node.target = *target;
             }
             // Record the node-name -> {id, target output type} entry BEFORE Pass
             // B, and reject a duplicate name fail-closed.
@@ -2225,6 +2264,219 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                                 result.diagnostics);
         lowerer.lower(*wf);
         core.workflows.push_back(std::move(core_wf));
+    }
+
+    // Workflow-by-identity index (SymbolId / canonical name -> CoreWorkflowId), so
+    // a workflow INSTANCE resolves its base by identity like flows/agents do.
+    std::unordered_map<std::size_t, CoreWorkflowId> workflow_by_id;
+    std::unordered_map<std::string, CoreWorkflowId> workflow_by_name;
+    for (std::uint32_t i = 0; i < core.workflows.size(); ++i) {
+        const auto &wf = core.workflows[i];
+        if (wf.symbol_ref.id.has_value()) {
+            workflow_by_id.emplace(*wf.symbol_ref.id, CoreWorkflowId{i});
+        }
+        if (!wf.symbol_ref.canonical_name.empty()) {
+            workflow_by_name.emplace(wf.symbol_ref.canonical_name, CoreWorkflowId{i});
+        }
+    }
+
+    // Pass 6: instances. Consume every AHFL-IR InstanceDecl into the flat
+    // CoreProgram.instances table (index == CoreInstanceId, in AHFL declaration
+    // order). The mangled `name` is used VERBATIM as instance_key (never
+    // re-mangled). kind becomes a structural payload variant; Capability / Agent /
+    // Workflow payloads resolve their base BY SYMBOL IDENTITY (no id-0 fallback).
+    // A duplicate instance_key is fail-closed (never a silent dedup). NOTE: the
+    // budgeted authoritative monomorphization closure (run_monomorphization) is
+    // NOT yet wired to this SSOT — we consume emit_instantiated_declarations'
+    // InstanceDecls; unifying the two is a later slice.
+    std::unordered_set<std::string> seen_instance_keys;
+    for (const Decl &decl : ahfl_ir.declarations) {
+        const auto *inst = std::get_if<InstanceDecl>(&decl);
+        if (inst == nullptr) {
+            continue;
+        }
+        const CoreInstanceId id{static_cast<std::uint32_t>(core.instances.size())};
+        CoreInstanceDecl out;
+        out.id = id;
+        out.instance_key = inst->name; // byte-exact; NEVER re-mangle
+        out.origin = inst->symbol_ref;
+        out.dispatch_types.reserve(inst->type_args.size());
+        for (const TypeRef &t : inst->type_args) {
+            out.dispatch_types.push_back(clone_type_ref(t));
+        }
+        if (!seen_instance_keys.insert(inst->name).second) {
+            result.diagnostics.push_back(CoreLowerDiagnostic{
+                CoreDiagnosticSeverity::Error, std::string(diag::kDuplicateInstanceKey),
+                "instance key '" + inst->name + "' is defined by more than one instance",
+                inst->provenance.source_range});
+        }
+        const auto unresolved_base = [&](const std::string &what) {
+            result.diagnostics.push_back(CoreLowerDiagnostic{
+                CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedInstanceBase),
+                "instance '" + inst->name + "' " + what, inst->provenance.source_range});
+        };
+        switch (inst->kind) {
+        case InstanceKind::Capability: {
+            CoreCapabilityInstance p;
+            if (const auto info = cap_index.lookup(inst->symbol_ref)) {
+                p.base = info->id;
+            } else {
+                unresolved_base("could not resolve its base capability by identity");
+            }
+            out.payload = p;
+            break;
+        }
+        case InstanceKind::Predicate:
+            out.payload = CorePredicateInstance{};
+            break;
+        case InstanceKind::Agent: {
+            CoreAgentInstance p;
+            std::optional<CoreAgentId> base;
+            if (inst->symbol_ref.id.has_value()) {
+                if (const auto it = agent_by_id.find(*inst->symbol_ref.id); it != agent_by_id.end()) {
+                    base = it->second;
+                }
+            }
+            if (!base && !inst->symbol_ref.canonical_name.empty()) {
+                if (const auto it = agent_by_name.find(inst->symbol_ref.canonical_name);
+                    it != agent_by_name.end()) {
+                    base = it->second;
+                }
+            }
+            if (!base) {
+                unresolved_base("could not resolve its base agent by identity");
+            } else {
+                p.base = *base;
+            }
+            // The concrete shell this instance applies (resolved to CoreTypeIds).
+            p.input_type = types.type_id_of(inst->agent_input_type_ref).value_or(CoreTypeId{});
+            p.output_type = types.type_id_of(inst->agent_output_type_ref).value_or(CoreTypeId{});
+            if (inst->agent_context_type_ref.kind == TypeRefKind::Unit) {
+                p.context_kind = CoreAgentDecl::ContextKind::Unit;
+                p.context_type = CoreTypeId{};
+            } else {
+                p.context_kind = CoreAgentDecl::ContextKind::Struct;
+                p.context_type =
+                    types.type_id_of(inst->agent_context_type_ref).value_or(CoreTypeId{});
+            }
+            out.payload = p;
+            break;
+        }
+        case InstanceKind::Workflow: {
+            CoreWorkflowInstance p;
+            std::optional<CoreWorkflowId> base;
+            if (inst->symbol_ref.id.has_value()) {
+                if (const auto it = workflow_by_id.find(*inst->symbol_ref.id);
+                    it != workflow_by_id.end()) {
+                    base = it->second;
+                }
+            }
+            if (!base && !inst->symbol_ref.canonical_name.empty()) {
+                if (const auto it = workflow_by_name.find(inst->symbol_ref.canonical_name);
+                    it != workflow_by_name.end()) {
+                    base = it->second;
+                }
+            }
+            if (!base) {
+                unresolved_base("could not resolve its base workflow by identity");
+            } else {
+                p.base = *base;
+            }
+            p.input_type = types.type_id_of(inst->workflow_input_type_ref).value_or(CoreTypeId{});
+            p.output_type = types.type_id_of(inst->workflow_output_type_ref).value_or(CoreTypeId{});
+            out.payload = p;
+            break;
+        }
+        case InstanceKind::Fn:
+            out.payload = CoreFnInstance{};
+            break;
+        case InstanceKind::Unknown:
+        default:
+            result.diagnostics.push_back(CoreLowerDiagnostic{
+                CoreDiagnosticSeverity::Error, std::string(diag::kUnknownInstanceKind),
+                "instance '" + inst->name + "' has an unknown kind", inst->provenance.source_range});
+            out.payload = CoreFnInstance{}; // placeholder; program already non-executable
+            break;
+        }
+        core.instances.push_back(std::move(out));
+    }
+
+    // Pass 7: link workflow invocations. Each workflow node invokes a CONCRETE
+    // agent instance — resolve it to a unique CoreInstanceId by the typed tuple
+    // (base agent, input, context_kind, context, output) taken from the node's
+    // nominal target agent shell. The mangled key is NEVER re-derived here. A node
+    // that matches zero or more than one Agent instance is fail-closed.
+    {
+        // Index: agent-shell tuple -> CoreInstanceId (only Agent-kind instances).
+        struct AgentShellKey {
+            std::uint32_t base;
+            std::uint32_t input;
+            int context_kind;
+            std::uint32_t context;
+            std::uint32_t output;
+            [[nodiscard]] bool operator==(const AgentShellKey &o) const noexcept {
+                return base == o.base && input == o.input && context_kind == o.context_kind &&
+                       context == o.context && output == o.output;
+            }
+        };
+        struct AgentShellHash {
+            [[nodiscard]] std::size_t operator()(const AgentShellKey &k) const noexcept {
+                std::size_t h = k.base;
+                for (std::uint32_t v : {k.input, static_cast<std::uint32_t>(k.context_kind),
+                                        k.context, k.output}) {
+                    h = h * 1000003u + v;
+                }
+                return h;
+            }
+        };
+        std::unordered_map<AgentShellKey, std::vector<CoreInstanceId>, AgentShellHash> agent_insts;
+        for (const CoreInstanceDecl &inst : core.instances) {
+            if (const auto *a = std::get_if<CoreAgentInstance>(&inst.payload)) {
+                agent_insts[AgentShellKey{a->base.value, a->input_type.value,
+                                          static_cast<int>(a->context_kind), a->context_type.value,
+                                          a->output_type.value}]
+                    .push_back(inst.id);
+            }
+        }
+        for (CoreWorkflowDecl &wf : core.workflows) {
+            for (CoreWorkflowNode &node : wf.nodes) {
+                // Recover the node's nominal target agent + shell (the same
+                // resolution the lowering-only side table used).
+                std::optional<CoreAgentId> base;
+                if (node.target_ref.id.has_value()) {
+                    if (const auto it = agent_by_id.find(*node.target_ref.id);
+                        it != agent_by_id.end()) {
+                        base = it->second;
+                    }
+                }
+                if (!base && !node.target_ref.canonical_name.empty()) {
+                    if (const auto it = agent_by_name.find(node.target_ref.canonical_name);
+                        it != agent_by_name.end()) {
+                        base = it->second;
+                    }
+                }
+                if (!base) {
+                    // Already reported as kUnresolvedWorkflowTarget in Pass 5.
+                    continue;
+                }
+                const CoreAgentDecl &agent = core.agents[base->value];
+                const AgentShellKey key{base->value, agent.input_type.value,
+                                        static_cast<int>(agent.context_kind),
+                                        agent.context_type.value, agent.output_type.value};
+                const auto it = agent_insts.find(key);
+                const std::size_t n = it == agent_insts.end() ? 0 : it->second.size();
+                if (n != 1) {
+                    result.diagnostics.push_back(CoreLowerDiagnostic{
+                        CoreDiagnosticSeverity::Error,
+                        std::string(diag::kUnresolvedWorkflowInvocation),
+                        "workflow '" + wf.name + "' node '" + node.node_name + "' resolves to " +
+                            std::to_string(n) + " agent instances (expected exactly 1)",
+                        std::nullopt});
+                    continue;
+                }
+                node.target_instance = it->second.front();
+            }
+        }
     }
 
     // Auto-verify the candidate program at the lowering boundary. When the
