@@ -720,13 +720,21 @@ struct CoreRegion {
     friend bool operator==(const CoreRegion &, const CoreRegion &) noexcept;
 };
 
-// --- structural control-flow exit summary (single source of truth) ---
+// --- structural control-flow exit summary (lowerer side of a lockstep pair) ---
 //
 // `core_region_exit` computes, purely structurally, HOW a region leaves on its
-// paths. It is the ONE recursive definition the lowerer (to decide whether a
-// statement-position region needs a trailing unit yield) and the verifier's
-// per-path analysis both agree with, so the two never drift. Three exit modes,
-// each "some path leaves this way" (merged across paths):
+// paths. It is the LOWERER's control-flow model: the seal
+// (`seal_statement_arm`) uses it to decide whether a statement-position region
+// needs a trailing unit yield. The Core verifier (`core_verify.cpp`) keeps its
+// OWN per-path walk with a richer `RegionExit` (it additionally tracks value
+// def/use, yield ARITY, and Flow-vs-arm context), and does NOT literally call
+// this function. The two are a LOCKSTEP pair with MIRRORED control-flow
+// semantics — the completion / divergence / fallthrough rules below are exactly
+// the rules the verifier's walk applies — and they MUST stay in sync by hand:
+// P0-2 (fixed in 7a3eff83) was precisely a drift where the lowerer's structural
+// helper diverged from the verifier's per-path rule for nested-match yields.
+// The shared per-path fixtures in `core_verify.cpp` guard that parity. Three
+// exit modes, each "some path leaves this way" (merged across paths):
 //   * fallthrough — a path runs off the region END with no explicit exit;
 //   * yields      — a path exits via a CoreYieldStmt (arm / guard completion);
 //   * diverges    — a path exits via Return / Goto / Trap.

@@ -1149,13 +1149,20 @@ TEST_CASE("verifier fails closed on two tuple slots reusing one arm binding id")
     CHECK(has_code(result, verify::kPatternBindingInvalid));
 }
 
-// --- (3)-3c forward-fix: shared structural exit summary ---
+// --- (3)-3c forward-fix: structural exit summary (lowerer/verifier parity) ---
 //
-// core_region_exit / core_region_may_fallthrough is the ONE definition the
-// lowerer (seal) and the verifier's per-path analysis both follow. These
-// fixtures lock its per-path semantics so the two never drift — in particular
-// that a NESTED match / if whose arms YIELD *completes* (control returns to the
-// parent), it does NOT terminate the parent.
+// `core_region_exit` is the LOWERER's structural control-flow model (used by
+// seal). The verifier keeps its own richer per-path `RegionExit` walk and does
+// NOT call it; the two are a lockstep pair with MIRRORED control-flow semantics
+// that must stay in sync by hand. These fixtures pin the lowerer helper's
+// per-path semantics — in particular that a NESTED match / if whose arms YIELD
+// *completes* (control returns to the parent), it does NOT terminate the parent
+// — so a future edit that drifts the helper from the verifier's rule trips a
+// fixture. (P0-2 was exactly such a drift.) End-to-end parity is additionally
+// enforced by the auto-wired verifier: every lowering e2e ending in
+// `REQUIRE(result.ok())` runs BOTH the seal (via core_region_exit) and the
+// verifier's per-path walk on the same program, so a divergence surfaces as a
+// spurious MATCH_ARM_YIELD / STMT_AFTER_TERMINATOR there.
 namespace {
 CoreStmt let_stmt() { return CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt}; }
 CoreStmt return_stmt() { return CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt}; }
