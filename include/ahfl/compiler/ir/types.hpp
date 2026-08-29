@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/base/support/source.hpp"
@@ -179,10 +180,32 @@ struct TypeRef {
     // type is one of the nominal stdlib collections; nullopt otherwise and for
     // unbounded collection forms. Mirrors int_bounds for scalar refinements.
     std::optional<std::uint64_t> collection_capacity{};
+    // RFC 0026 P4: for a Struct/Enum type, the RESOLVED nominal declaration this
+    // type refers to (id-first identity; `canonical_name` mirrors this ref's own
+    // `canonical_name`). Lets the Core-IR value-type lowering resolve the nominal
+    // base by symbol identity (Principle 2) rather than by canonical string —
+    // avoiding cross-module hijack. `kind == Unknown` for a non-nominal type
+    // (primitive / Fn / Unit / ...); a Struct/Enum with an Unknown nominal_ref is
+    // a lowering-time fail-closed error at the value-type boundary.
+    SymbolRef nominal_ref{};
     std::optional<SourceRange> source_range{};
     TypeRefPtr first{};
     TypeRefPtr second{};
     std::vector<TypeRefPtr> params{};
 };
+
+/// Deep-clone a `TypeRef` (recursively copies `first`/`second`/`params`). This
+/// is the SINGLE source of truth for duplicating a `TypeRef`: every field —
+/// including refinements (`int_bounds`, `string_bounds`, `decimal_scale`),
+/// `collection_capacity` (RFC 0025) and `nominal_ref` (RFC 0026 P4) — is copied.
+/// Do NOT hand-roll a local clone: divergent copies silently drop fields (the
+/// exact hazard this consolidates away). Prefer this everywhere a `TypeRef`
+/// must be duplicated across arenas / programs.
+[[nodiscard]] TypeRef clone_type_ref(const TypeRef &type);
+
+/// Pointer-preserving variant of `clone_type_ref`: returns `nullptr` for a null
+/// input, otherwise an owning deep clone. Convenience for the common
+/// `clone(ptr.get())` shape.
+[[nodiscard]] TypeRefPtr clone_type_ref(const TypeRef *type);
 
 } // namespace ahfl::ir

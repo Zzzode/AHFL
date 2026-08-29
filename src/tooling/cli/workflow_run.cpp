@@ -902,27 +902,9 @@ optional_string_map_field(const ahfl::json::JsonValue &object,
     return config;
 }
 
-[[nodiscard]] std::unique_ptr<ahfl::ir::TypeRef>
-clone_type_ref_ptr(const ahfl::ir::TypeRef *type_ref) {
-    if (type_ref == nullptr) {
-        return nullptr;
-    }
-    auto clone = std::make_unique<ahfl::ir::TypeRef>();
-    clone->kind = type_ref->kind;
-    clone->display_name = type_ref->display_name;
-    clone->canonical_name = type_ref->canonical_name;
-    clone->variant_name = type_ref->variant_name;
-    clone->string_bounds = type_ref->string_bounds;
-    clone->decimal_scale = type_ref->decimal_scale;
-    clone->source_range = type_ref->source_range;
-    clone->first = clone_type_ref_ptr(type_ref->first.get());
-    clone->second = clone_type_ref_ptr(type_ref->second.get());
-    return clone;
-}
-
 [[nodiscard]] std::shared_ptr<const ahfl::ir::TypeRef>
 capability_response_schema(const ahfl::ir::CapabilityDecl &capability) {
-    auto clone = clone_type_ref_ptr(&capability.return_type_ref);
+    auto clone = ahfl::ir::clone_type_ref(&capability.return_type_ref);
     return std::shared_ptr<const ahfl::ir::TypeRef>(std::move(clone));
 }
 

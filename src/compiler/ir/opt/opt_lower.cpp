@@ -26,33 +26,6 @@ struct RootTypeHints {
     std::vector<std::pair<std::string, TypeRef>> extra_arguments;
 };
 
-[[nodiscard]] TypeRef clone_type_ref(const TypeRef &type) {
-    TypeRef clone;
-    clone.kind = type.kind;
-    clone.display_name = type.display_name;
-    clone.canonical_name = type.canonical_name;
-    clone.variant_name = type.variant_name;
-    clone.int_bounds = type.int_bounds;
-    clone.string_bounds = type.string_bounds;
-    clone.decimal_scale = type.decimal_scale;
-    clone.source_range = type.source_range;
-    if (type.first) {
-        clone.first = make_owned<TypeRef>(clone_type_ref(*type.first));
-    }
-    if (type.second) {
-        clone.second = make_owned<TypeRef>(clone_type_ref(*type.second));
-    }
-    clone.params.reserve(type.params.size());
-    for (const auto &param : type.params) {
-        if (param) {
-            clone.params.push_back(make_owned<TypeRef>(clone_type_ref(*param)));
-        } else {
-            clone.params.push_back(nullptr);
-        }
-    }
-    return clone;
-}
-
 [[nodiscard]] RootTypeHints clone_root_type_hints(const RootTypeHints &hints) {
     RootTypeHints clone;
     clone.has_input = hints.has_input;

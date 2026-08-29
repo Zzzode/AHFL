@@ -10,6 +10,7 @@ add_library(ahfl_compiler_ir STATIC
     program_view.cpp
     tower.cpp
     typed_hir_lower.cpp
+    types.cpp
     verify.cpp
     visitor.cpp
 )

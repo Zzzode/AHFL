@@ -185,34 +185,6 @@ const std::vector<BuiltinEnumDescriptor> &builtin_enum_table() {
 namespace {
 
 // ---------------------------------------------------------------------------
-// TypeRef clone (TypeRef owns children via Owned<TypeRef>, move-only).
-// ---------------------------------------------------------------------------
-[[nodiscard]] TypeRef clone_type_ref(const TypeRef &type) {
-    TypeRef clone;
-    clone.kind = type.kind;
-    clone.display_name = type.display_name;
-    clone.canonical_name = type.canonical_name;
-    clone.variant_name = type.variant_name;
-    clone.int_bounds = type.int_bounds;
-    clone.string_bounds = type.string_bounds;
-    clone.decimal_scale = type.decimal_scale;
-    clone.collection_capacity = type.collection_capacity;
-    clone.source_range = type.source_range;
-    if (type.first) {
-        clone.first = make_owned<TypeRef>(clone_type_ref(*type.first));
-    }
-    if (type.second) {
-        clone.second = make_owned<TypeRef>(clone_type_ref(*type.second));
-    }
-    clone.params.reserve(type.params.size());
-    for (const auto &param : type.params) {
-        clone.params.push_back(param ? make_owned<TypeRef>(clone_type_ref(*param))
-                                     : nullptr);
-    }
-    return clone;
-}
-
-// ---------------------------------------------------------------------------
 // Type environment: name -> typed field / variant indices (Principle 2).
 //
 // P3 resolves names to typed indices so P4 (physical layout) never re-queries
