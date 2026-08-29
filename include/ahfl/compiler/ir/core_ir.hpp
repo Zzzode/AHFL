@@ -138,6 +138,23 @@ struct CorePatternBindingId {
                                          CorePatternBindingId) noexcept = default;
 };
 
+/// Canonical identity of a workflow within `CoreProgram::workflows` (Principle 2):
+/// the index into that flat store. The workflow's name is display-only.
+struct CoreWorkflowId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreWorkflowId, CoreWorkflowId) noexcept = default;
+};
+
+/// Canonical identity of a node within a `CoreWorkflowDecl` (Principle 2): the
+/// index into `CoreWorkflowDecl::nodes`. Dependency edges (`after`) and node-
+/// output value roots refer to a node by this id, NEVER by its source name.
+struct CoreWorkflowNodeId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreWorkflowNodeId, CoreWorkflowNodeId) noexcept = default;
+};
+
 // ----------------------------------------------------------------------------
 // State-machine node set (minimal orchestration skeleton)
 // ----------------------------------------------------------------------------
@@ -295,7 +312,12 @@ using CoreDecl = std::variant<CoreAgentDecl, CoreCapabilityDecl>;
 
 /// Root of a path read, mirroring `ir::PathRootKind` structurally (Principle 2:
 /// we keep the kind, we do NOT flatten the path to a dotted string).
-enum class CorePathRoot { Input, Context, Local, Identifier };
+///
+/// `WorkflowInput` / `WorkflowNodeOutput` are the two workflow value roots (RFC
+/// 0026 KR6.4 workflow lower): inside a workflow node input / return region, a
+/// path roots at the workflow input struct, or at an upstream node's output
+/// (identified by a typed `CoreWorkflowNodeId`, NEVER the node's source name).
+enum class CorePathRoot { Input, Context, Local, Identifier, WorkflowInput, WorkflowNodeOutput };
 
 // --- pure expressions (NO effects; a capability call is never a CoreExpr) ---
 
@@ -350,6 +372,10 @@ struct CorePathExpr {
     bool projection_resolved{true};         // false => a member could not be resolved
     CoreValueId local{};                    // valid iff root == Local (resolved binding)
     bool has_local{false};
+    /// Valid iff root == WorkflowNodeOutput: the upstream workflow node whose
+    /// output this path reads. `root_type` is that node's target agent output
+    /// type, so the `projection` chain resolves against it like any struct read.
+    CoreWorkflowNodeId workflow_node{};
     [[nodiscard]] friend bool operator==(const CorePathExpr &,
                                          const CorePathExpr &) noexcept = default;
 };
@@ -884,6 +910,55 @@ struct CoreFlowDecl {
 };
 
 // ----------------------------------------------------------------------------
+// Workflow (multi-agent DAG orchestration) — RFC 0026 KR6.4
+// ----------------------------------------------------------------------------
+//
+// A workflow is a DAG of agent invocations. Each node targets an agent, depends
+// on a set of upstream nodes (`after`), and computes its input from an ANF
+// `input_region` that runs AFTER those dependencies are ready (so a capability
+// call in a node input is sequenced correctly, not hoisted). The workflow return
+// is a separate `return_region` evaluated after the DAG completes. Node identity
+// is a typed `CoreWorkflowNodeId` (DAG-parallel), distinct from a flow's linear
+// CoreValueId SSA domain. Verification-only `safety` / `liveness` temporal
+// properties are ERASED (no field here).
+
+/// One node of a workflow DAG. `target` is the invoked agent (typed identity).
+/// `after` are the upstream nodes this node depends on (typed ids, resolved from
+/// source names). `input_region` is the node's ANF input computation: it ends by
+/// yielding the single value passed to the agent (RegionContext WorkflowNodeInput
+/// in the verifier); a capability call inside it is an ordered statement, so it
+/// runs only once the node's dependencies are satisfied.
+struct CoreWorkflowNode {
+    CoreWorkflowNodeId id{};
+    CoreAgentId target{};                    // typed target-agent identity
+    std::string node_name;                   // display / provenance only
+    ir::SymbolRef target_ref;                // provenance / display only
+    std::vector<CoreWorkflowNodeId> after;   // typed dependency edges (no name strings)
+    std::unique_ptr<CoreRegion> input_region; // ANF; ends in Yield(input value)
+    friend bool operator==(const CoreWorkflowNode &, const CoreWorkflowNode &) noexcept;
+};
+
+/// The execution-layer projection of an `ir::WorkflowDecl`. Owns the per-workflow
+/// pure-expression arena + value counter + pattern arena shared by all node input
+/// regions and the return region. `input_type` / `output_type` are the workflow's
+/// typed shell (both Struct, like an agent). `return_region` computes the workflow
+/// output after the DAG completes (RegionContext WorkflowReturn), yielding the
+/// output value. safety/liveness are erased.
+struct CoreWorkflowDecl {
+    CoreWorkflowId id{};
+    std::string name;                         // display / provenance only
+    ir::SymbolRef symbol_ref;                 // provenance / display only
+    CoreTypeId input_type{};                  // workflow input struct
+    CoreTypeId output_type{};                 // workflow output struct
+    std::vector<CoreExpr> exprs;              // per-workflow pure-expression arena
+    std::uint32_t value_count{0};             // number of CoreValueIds allocated
+    std::vector<CorePattern> patterns;        // per-workflow pattern arena (match in a node/return region)
+    std::vector<CoreWorkflowNode> nodes;      // DAG nodes; index == CoreWorkflowNodeId
+    std::unique_ptr<CoreRegion> return_region; // ANF; ends in Yield(output value)
+    friend bool operator==(const CoreWorkflowDecl &, const CoreWorkflowDecl &) noexcept;
+};
+
+// ----------------------------------------------------------------------------
 // Core-IR program
 // ----------------------------------------------------------------------------
 
@@ -938,6 +1013,7 @@ struct CoreProgram {
     std::vector<CoreCapabilityDecl> capabilities; // index == CoreCapabilityId
     std::vector<CoreAgentDecl> agents;            // index == CoreAgentId
     std::vector<CoreFlowDecl> flows;
+    std::vector<CoreWorkflowDecl> workflows;      // index == CoreWorkflowId
 };
 
 // ----------------------------------------------------------------------------
@@ -965,6 +1041,9 @@ inline constexpr std::string_view kUnloweredExpression = "core.UNLOWERED_EXPRESS
 inline constexpr std::string_view kUnloweredFieldProjection = "core.UNLOWERED_FIELD_PROJECTION";
 inline constexpr std::string_view kEffectfulUnsupported = "core.EFFECTFUL_UNSUPPORTED";
 inline constexpr std::string_view kNullExpr = "core.NULL_EXPR";
+inline constexpr std::string_view kUnresolvedWorkflowTarget = "core.UNRESOLVED_WORKFLOW_TARGET";
+inline constexpr std::string_view kUnknownWorkflowDependency = "core.UNKNOWN_WORKFLOW_DEPENDENCY";
+inline constexpr std::string_view kWorkflowCycle = "core.WORKFLOW_CYCLE";
 } // namespace diag
 
 /// A structured lowering diagnostic (fail-closed: no throw, no Unknown node).

@@ -98,6 +98,29 @@ bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
            a.value_count == b.value_count && a.patterns == b.patterns && a.states == b.states;
 }
 
+namespace {
+[[nodiscard]] bool region_ptr_eq(const std::unique_ptr<CoreRegion> &x,
+                                  const std::unique_ptr<CoreRegion> &y) {
+    if (!x || !y) {
+        return x.get() == y.get();
+    }
+    return *x == *y;
+}
+} // namespace
+
+bool operator==(const CoreWorkflowNode &a, const CoreWorkflowNode &b) noexcept {
+    return a.id == b.id && a.target == b.target && a.node_name == b.node_name &&
+           symbol_ref_equal(a.target_ref, b.target_ref) && a.after == b.after &&
+           region_ptr_eq(a.input_region, b.input_region);
+}
+
+bool operator==(const CoreWorkflowDecl &a, const CoreWorkflowDecl &b) noexcept {
+    return a.id == b.id && a.name == b.name && symbol_ref_equal(a.symbol_ref, b.symbol_ref) &&
+           a.input_type == b.input_type && a.output_type == b.output_type && a.exprs == b.exprs &&
+           a.value_count == b.value_count && a.patterns == b.patterns && a.nodes == b.nodes &&
+           region_ptr_eq(a.return_region, b.return_region);
+}
+
 // The production builtin variant table — the SINGLE SOURCE OF TRUTH for the
 // well-known stdlib enum variant order. Both the lowerer (below) and the public
 // `builtin_enum_table()` (for the sync test) read this.
@@ -662,16 +685,41 @@ intern_state(std::vector<std::string> &names,
     }
 }
 
-[[nodiscard]] CorePathRoot map_path_root(PathRootKind kind, const std::string &root_name) {
-    switch (kind) {
-    case PathRootKind::Input: return CorePathRoot::Input;
-    case PathRootKind::Context: return CorePathRoot::Context;
-    default:
-        // An identifier root may name a local binding; the lowerer decides.
-        (void)root_name;
-        return CorePathRoot::Identifier;
+// Atomically-resolved identity of a NON-LOCAL path root: kind + type + optional
+// workflow-node id resolved together, so a root can never mix a kind from one
+// rule with a type/id from another.
+struct ResolvedExternalRoot {
+    CorePathRoot root{CorePathRoot::Identifier};
+    CoreTypeId root_type{};
+    CoreWorkflowNodeId workflow_node{};
+};
+
+// Non-owning refs to the arenas a lowered body owns (CoreFlowDecl OR CoreWorkflowDecl).
+struct CoreBodyStorageRef {
+    std::vector<CoreExpr> &exprs;
+    std::uint32_t &value_count;
+    std::vector<CorePattern> &patterns;
+};
+
+// Flow policy: input/ctx -> agent input/context struct types; others are identifier-like.
+class FlowRootPolicy {
+  public:
+    FlowRootPolicy(CoreTypeId input_type, CoreTypeId context_type)
+        : input_type_(input_type), context_type_(context_type) {}
+    [[nodiscard]] bool root_may_be_local(PathRootKind kind) const {
+        return kind != PathRootKind::Input && kind != PathRootKind::Context;
     }
-}
+    [[nodiscard]] ResolvedExternalRoot resolve_external_root(const Path &path) const {
+        switch (path.root_kind) {
+        case PathRootKind::Input:   return {CorePathRoot::Input, input_type_, {}};
+        case PathRootKind::Context: return {CorePathRoot::Context, context_type_, {}};
+        default:                    return {CorePathRoot::Identifier, CoreTypeId{}, {}};
+        }
+    }
+  private:
+    CoreTypeId input_type_;
+    CoreTypeId context_type_;
+};
 
 /// Human-readable source expression kind for unsupported-node diagnostics.
 [[nodiscard]] std::string expr_kind_name(const ExprNode &node) {
@@ -689,168 +737,46 @@ intern_state(std::vector<std::string> &names,
                       node);
 }
 
-/// Lowers one flow's handler bodies into ANF. Owns the per-flow expr arena,
-/// value counter, and (per-state) local scope. Accumulates diagnostics.
-class FlowLowerer {
+/// Reusable expression / pattern / match lowering machinery, parameterized on a
+/// `RootPolicy` that classifies path roots (a flow's input/ctx vs a workflow's
+/// input/node-output). Owns the lowered body's expr arena, value counter, and
+/// pattern arena (via `CoreBodyStorageRef`), plus the local scope. Accumulates
+/// diagnostics. A `FlowLowerer` (or a future `WorkflowLowerer`) composes one of
+/// these and adds the body's statement/region lowering on top.
+template <class RootPolicy> class ExprLowerer {
   public:
-    FlowLowerer(CoreFlowDecl &flow, const CapabilityIndex &caps, const StateIndex &states,
-                const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
-                std::vector<CoreLowerDiagnostic> &diags)
-        : flow_(flow), caps_(caps), states_(states), types_(types), input_type_(input_type),
-          context_type_(context_type), diags_(diags) {}
+    // A let-bound local: its SSA value id AND its type. Kept in ONE map so
+    // lower_if's snapshot/restore covers both (a branch-local shadow must not
+    // leak its value OR its type to the sibling branch or past the `if`).
+    struct LocalBinding {
+        CoreValueId value{};
+        std::optional<CoreTypeId> type; // the binding's struct type, if any
+    };
 
-    void lower_handler(const StateHandler &handler, CoreStateId state_id) {
-        CoreFlowState core_state;
-        core_state.state = state_id;
-        core_state.state_name = handler.state_name;
-        core_state.policy = lower_policy(handler.policy);
-        scope_.clear();
-        core_state.body = lower_block(handler.body);
-        flow_.states.push_back(std::move(core_state));
+    ExprLowerer(CoreBodyStorageRef storage, const CapabilityIndex &caps, const TypeEnv &types,
+                RootPolicy policy, std::vector<CoreLowerDiagnostic> &diags)
+        : storage_(storage), caps_(caps), types_(types), policy_(std::move(policy)),
+          diags_(diags) {}
+
+    [[nodiscard]] std::unordered_map<std::string, LocalBinding> &scope() {
+        return scope_;
+    }
+    [[nodiscard]] const TypeEnv &types() const {
+        return types_;
     }
 
-  private:
     // --- allocation helpers ---
     [[nodiscard]] CoreValueId fresh_value() {
-        return CoreValueId{flow_.value_count++};
+        return CoreValueId{storage_.value_count++};
     }
     [[nodiscard]] CoreExprId push_expr(CoreExprNode node, SourceRangeOpt range) {
-        const auto idx = static_cast<std::uint32_t>(flow_.exprs.size());
-        flow_.exprs.push_back(CoreExpr{std::move(node), std::move(range)});
+        const auto idx = static_cast<std::uint32_t>(storage_.exprs.size());
+        storage_.exprs.push_back(CoreExpr{std::move(node), std::move(range)});
         return CoreExprId{idx};
     }
     void error(std::string_view code, std::string message, SourceRangeOpt range) {
         diags_.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error, std::string(code),
                                              std::move(message), std::move(range)});
-    }
-
-    [[nodiscard]] CoreStatePolicy lower_policy(const std::vector<StatePolicyItem> &policy) {
-        CoreStatePolicy out;
-        for (const StatePolicyItem &item : policy) {
-            std::visit(Overloaded{
-                           [&](const RetryPolicy &r) { out.retry_limit = r.limit; },
-                           [&](const RetryOnPolicy &r) { out.retry_on = r.targets; },
-                           [&](const TimeoutPolicy &t) { out.timeout = t.duration; },
-                       },
-                       item);
-        }
-        return out;
-    }
-
-    // --- region / statement lowering ---
-    [[nodiscard]] CoreRegion lower_block(const Block &block) {
-        CoreRegion region;
-        for (const StatementPtr &stmt : block.statements) {
-            if (stmt) {
-                lower_statement(*stmt, region);
-            }
-        }
-        return region;
-    }
-
-    void lower_statement(const Statement &stmt, CoreRegion &region) {
-        std::visit(Overloaded{
-                       [&](const LetStatement &s) { lower_let(s, region); },
-                       [&](const AssignStatement &s) { lower_assign(s, stmt.source_range, region); },
-                       [&](const ExprStatement &s) {
-                           // An expression statement is evaluated for its effect;
-                           // the produced value id (if any) is discarded.
-                           static_cast<void>(lower_value(s.expr, region));
-                       },
-                       [&](const IfStatement &s) { lower_if(s, stmt.source_range, region); },
-                       [&](const IfLetStatement &s) { lower_if_let(s, stmt.source_range, region); },
-                       [&](const GotoStatement &s) { lower_goto(s, stmt.source_range, region); },
-                       [&](const ReturnStatement &s) { lower_return(s, stmt.source_range, region); },
-                       // Statements without an execution-layer form in this
-                       // slice (if-let / assert / requires / unwrap /
-                       // unreachable) are DEFERRED. Because dropping them would
-                       // change execution behaviour (e.g. `assert(false)` must
-                       // not silently become a no-op) and no Core-IR verifier
-                       // exists yet, this is an ERROR that marks the program
-                       // non-executable — never a silent Warning drop.
-                       [&](const auto &) {
-                           error(diag::kUnloweredStatement,
-                                 "statement kind is not yet lowered to Core-IR; the "
-                                 "program cannot be executed until this slice lands",
-                                 stmt.source_range);
-                       },
-                   },
-                   stmt.node);
-    }
-
-    void lower_let(const LetStatement &s, CoreRegion &region) {
-        const CoreValueId value = lower_value(s.initializer, region);
-        // Track the local's binding value id AND its type together, so later
-        // member projections through this local (`local.field`) can resolve
-        // field ids. The two travel as one binding, so branch scoping (see
-        // lower_if) can snapshot/restore them atomically.
-        scope_[s.name] = LocalBinding{value, types_.type_id_of(s.type_ref)};
-    }
-
-    void lower_assign(const AssignStatement &s, SourceRangeOpt range, CoreRegion &region) {
-        const CoreValueId value = lower_value(s.value, region);
-        CorePlace place;
-        place.root = map_path_root(s.target.root_kind, s.target.root_name);
-        place.root_name = s.target.root_name;
-        place.members = s.target.members;
-        // A store into a member PROJECTION (`ctx.field = …`) resolves each
-        // member to a typed CoreProjectionStep, same as a read. Set the
-        // self-contained root type first; fail closed otherwise (Principle 5).
-        const auto root_type = root_type_for(s.target.root_kind, s.target.root_name);
-        place.root_type = root_type.value_or(CoreTypeId{});
-        if (!s.target.members.empty()) {
-            resolve_member_chain(root_type, s.target.members, s.target.root_name, range,
-                                 place.projection, place.projection_resolved);
-        }
-        region.statements.push_back(
-            CoreStmt{CoreStoreStmt{std::move(place), value}, std::move(range)});
-    }
-
-    void lower_if(const IfStatement &s, SourceRangeOpt range, CoreRegion &region) {
-        const CoreValueId cond = lower_value(s.condition, region);
-        CoreIfStmt node;
-        node.condition = cond;
-        // Each branch is its own region: mutual exclusion is preserved (the two
-        // branches are NOT appended to one flat list). Each branch is lexically
-        // scoped: it starts from the SAME outer scope snapshot and its
-        // branch-local `let` bindings are discarded afterwards, so a binding in
-        // one branch cannot leak into the other branch or past the `if`. The
-        // snapshot restores the value id AND its type together (P0-1): a branch
-        // that shadows an outer local with a DIFFERENT nominal type must not
-        // corrupt the outer local's type after the `if`.
-        const auto outer_scope = scope_;
-        if (s.then_block) {
-            node.then_region = std::make_unique<CoreRegion>(lower_block(*s.then_block));
-        } else {
-            node.then_region = std::make_unique<CoreRegion>();
-        }
-        scope_ = outer_scope; // restore before the else branch
-        if (s.else_block) {
-            node.else_region = std::make_unique<CoreRegion>(lower_block(*s.else_block));
-        }
-        scope_ = outer_scope; // restore after the if
-        region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
-    }
-
-    void lower_goto(const GotoStatement &s, SourceRangeOpt range, CoreRegion &region) {
-        CoreGotoStmt node;
-        node.target_name = s.target_state;
-        if (const auto id = states_.lookup(s.target_state)) {
-            node.target = *id;
-        } else {
-            error(diag::kUnknownGotoTarget,
-                  "goto targets unknown state '" + s.target_state + "'", range);
-        }
-        region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
-    }
-
-    void lower_return(const ReturnStatement &s, SourceRangeOpt range, CoreRegion &region) {
-        CoreReturnStmt node;
-        if (s.value.ptr != nullptr) {
-            node.has_value = true;
-            node.value = lower_value(s.value, region);
-        }
-        region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
     }
 
     // --- value (ANF) lowering ---
@@ -920,53 +846,62 @@ class FlowLowerer {
 
     [[nodiscard]] CoreValueId lower_path_value(const PathExpr &e, SourceRangeOpt range,
                                                CoreRegion &region) {
+        const auto rr = resolve_path_root(e.path);
+        // A bare local reference lowers directly to its bound value id.
+        if (rr.is_local && e.path.members.empty()) {
+            return rr.local;
+        }
         CorePathExpr node;
-        node.root = map_path_root(e.path.root_kind, e.path.root_name);
+        node.root = rr.is_local ? CorePathRoot::Local : rr.external_root;
         node.root_name = e.path.root_name;
         node.members = e.path.members;
-        // A bare local reference lowers directly to its bound value id.
-        if (node.root == CorePathRoot::Identifier && e.path.members.empty()) {
-            if (const auto it = scope_.find(e.path.root_name); it != scope_.end()) {
-                return it->second.value;
-            }
-        }
-        if (node.root == CorePathRoot::Identifier) {
-            if (const auto it = scope_.find(e.path.root_name); it != scope_.end()) {
-                node.root = CorePathRoot::Local;
-                node.local = it->second.value;
-                node.has_local = true;
-            }
+        if (rr.is_local) {
+            node.local = rr.local;
+            node.has_local = true;
         }
         // Set the self-contained root type, then resolve the member chain into
         // typed projection steps. Fail closed (Principle 5) on any unknown
         // root / field / non-struct intermediate.
-        const auto root_type = root_type_for(e.path.root_kind, e.path.root_name);
-        node.root_type = root_type.value_or(CoreTypeId{});
+        node.root_type = rr.root_type;
+        node.workflow_node = rr.workflow_node;
         if (!e.path.members.empty()) {
+            const std::optional<CoreTypeId> root_type =
+                rr.root_type.value == CoreTypeId::kInvalid ? std::nullopt
+                                                           : std::optional<CoreTypeId>{rr.root_type};
             resolve_member_chain(root_type, e.path.members, e.path.root_name, range,
                                  node.projection, node.projection_resolved);
         }
         return bind_pure(std::move(node), range, region);
     }
 
-    /// The CoreTypeId a path root denotes: input/context from the agent, a local
-    /// from its tracked binding type. nullopt when unknown (fail-closed upstream).
-    [[nodiscard]] std::optional<CoreTypeId> root_type_for(PathRootKind root_kind,
-                                                          const std::string &root_name) {
-        const auto valid = [](CoreTypeId id) -> std::optional<CoreTypeId> {
-            return id.value == CoreTypeId::kInvalid ? std::nullopt : std::optional<CoreTypeId>{id};
-        };
-        switch (root_kind) {
-        case PathRootKind::Input:
-            return valid(input_type_);
-        case PathRootKind::Context:
-            return valid(context_type_);
-        default:
-            if (const auto it = scope_.find(root_name); it != scope_.end()) {
-                return it->second.type;
+    /// A path root resolved to its Core-IR root kind + type + optional local /
+    /// workflow-node identity, ALL AT ONCE. A local shadows an external root only
+    /// when the policy allows it (a flow's input/ctx are never local); the
+    /// external kind/type/workflow-node come from the policy as one atomic unit,
+    /// so a root can never mix a kind from one rule with a type/id from another.
+    struct PathRootResolution {
+        CorePathRoot external_root{CorePathRoot::Identifier};
+        CoreTypeId root_type{};
+        CoreWorkflowNodeId workflow_node{};
+        bool is_local{false};
+        CoreValueId local{};
+    };
+    [[nodiscard]] PathRootResolution resolve_path_root(const Path &path) {
+        PathRootResolution r;
+        if (policy_.root_may_be_local(path.root_kind)) {
+            if (const auto it = scope_.find(path.root_name); it != scope_.end()) {
+                r.is_local = true;
+                r.local = it->second.value;
+                r.root_type = it->second.type.value_or(CoreTypeId{});
+                r.external_root = CorePathRoot::Identifier;
+                return r;
             }
-            return std::nullopt;
         }
+        const ResolvedExternalRoot ext = policy_.resolve_external_root(path);
+        r.external_root = ext.root;
+        r.root_type = ext.root_type;
+        r.workflow_node = ext.workflow_node;
+        return r;
     }
 
     /// Walk `members` from `root_type`, appending a typed `CoreProjectionStep`
@@ -1381,8 +1316,8 @@ class FlowLowerer {
                 },
             },
             pattern.node);
-        const auto id = static_cast<std::uint32_t>(flow_.patterns.size());
-        flow_.patterns.push_back(CorePattern{std::move(node), range});
+        const auto id = static_cast<std::uint32_t>(storage_.patterns.size());
+        storage_.patterns.push_back(CorePattern{std::move(node), range});
         return CorePatternId{id};
     }
 
@@ -1500,8 +1435,8 @@ class FlowLowerer {
     }
 
     [[nodiscard]] CorePatternId add_wildcard(SourceRangeOpt range) {
-        const auto id = static_cast<std::uint32_t>(flow_.patterns.size());
-        flow_.patterns.push_back(CorePattern{CoreWildcardPat{}, range});
+        const auto id = static_cast<std::uint32_t>(storage_.patterns.size());
+        storage_.patterns.push_back(CorePattern{CoreWildcardPat{}, range});
         return CorePatternId{id};
     }
 
@@ -1541,46 +1476,6 @@ class FlowLowerer {
         region.statements.push_back(CoreStmt{std::move(stmt), range});
         static_cast<void>(ok); // per-arm errors already recorded; program marked non-executable
         return result;
-    }
-
-    // Statement-position if-let: one pattern arm (yields nothing) with the
-    // then-block as body; the fallback is the else block (or a trap when absent —
-    // an if-let with no else and a refutable pattern is a non-total match).
-    void lower_if_let(const IfLetStatement &s, SourceRangeOpt range, CoreRegion &region) {
-        const CoreValueId scrutinee = lower_value(s.scrutinee, region);
-        CoreMatchStmt stmt;
-        stmt.scrutinee = scrutinee;
-        stmt.has_result = false;
-        bool ok = true;
-        // The single arm: pattern + then-block, yielding no value (statement match).
-        ArmBindings bindings;
-        collect_arm_bindings(s.pattern, pattern_matched_type(s.pattern), bindings);
-        CoreMatchArm arm;
-        arm.pattern = lower_pattern(s.pattern, bindings, range, ok);
-        arm.body = std::make_unique<CoreRegion>();
-        // Both branches are lexically scoped from the SAME outer snapshot, exactly
-        // like lower_if: the then-branch sees the arm bindings (lower_block_scoped
-        // restores after), and the else-branch sees NEITHER the arm bindings nor
-        // the then-branch's locals. A branch-local `let` in either branch must not
-        // leak into the other branch or past the if-let (P0: the else previously
-        // used a bare lower_block with no restore, leaking its locals downstream).
-        const auto outer_scope = scope_;
-        if (s.then_block) {
-            *arm.body = lower_block_scoped(*s.then_block, bindings);
-        }
-        scope_ = outer_scope; // restore before the else branch
-        seal_statement_arm(*arm.body, range);
-        arm.bindings = std::move(bindings.values);
-        stmt.arms.push_back(std::move(arm));
-        // Fallback = else block, or a trap when the if-let has no else.
-        stmt.fallback_region = std::make_unique<CoreRegion>();
-        if (s.else_block) {
-            *stmt.fallback_region = lower_block(*s.else_block);
-        }
-        scope_ = outer_scope; // restore after the if-let
-        seal_statement_arm(*stmt.fallback_region, range);
-        region.statements.push_back(CoreStmt{std::move(stmt), range});
-        static_cast<void>(ok);
     }
 
     // Build a CoreMatchArm for the expression or statement position. The arm's
@@ -1633,20 +1528,6 @@ class FlowLowerer {
         if (core_region_may_fallthrough(region)) {
             region.statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, range});
         }
-    }
-
-    // Lower a block that begins in the CURRENT scope extended with the arm's
-    // pattern bindings (so `local`-rooted paths naming a binding resolve to its
-    // value id). Restores the scope afterwards.
-    [[nodiscard]] CoreRegion lower_block_scoped(const Block &block, const ArmBindings &bindings) {
-        const auto outer = scope_;
-        for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
-            scope_[bindings.names[i]] =
-                LocalBinding{bindings.values[i].value, binding_type_opt(bindings.values[i])};
-        }
-        CoreRegion region = lower_block(block);
-        scope_ = outer;
-        return region;
     }
 
     // A pattern binding's nominal type as a scope LocalBinding type (nullopt for
@@ -1817,21 +1698,232 @@ class FlowLowerer {
             expr.ptr->node);
     }
 
-    CoreFlowDecl &flow_;
+  private:
+    CoreBodyStorageRef storage_;
     const CapabilityIndex &caps_;
-    const StateIndex &states_;
     const TypeEnv &types_;
-    CoreTypeId input_type_;   // agent input struct type (root of `input`); kInvalid if none
-    CoreTypeId context_type_; // agent context struct type (root of `ctx`); kInvalid if none
+    RootPolicy policy_;
     std::vector<CoreLowerDiagnostic> &diags_;
-    // A let-bound local: its SSA value id AND its type. Kept in ONE map so
-    // lower_if's snapshot/restore covers both (a branch-local shadow must not
-    // leak its value OR its type to the sibling branch or past the `if`).
-    struct LocalBinding {
-        CoreValueId value{};
-        std::optional<CoreTypeId> type; // the binding's struct type, if any
-    };
     std::unordered_map<std::string, LocalBinding> scope_;
+};
+
+/// Lowers one flow's handler bodies into ANF. Owns a `CoreFlowDecl` and composes
+/// an `ExprLowerer<FlowRootPolicy>` (which owns the per-flow expr / value / pattern
+/// arenas and the per-state local scope) for all expression/pattern/match work;
+/// this class adds only the flow's statement/region lowering on top and resolves
+/// `goto` targets against the agent's state index. Accumulates diagnostics.
+class FlowLowerer {
+  public:
+    FlowLowerer(CoreFlowDecl &flow, const CapabilityIndex &caps, const StateIndex &states,
+                const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
+                std::vector<CoreLowerDiagnostic> &diags)
+        : ex_(CoreBodyStorageRef{flow.exprs, flow.value_count, flow.patterns}, caps, types,
+              FlowRootPolicy{input_type, context_type}, diags),
+          flow_(flow), states_(states) {}
+
+    void lower_handler(const StateHandler &handler, CoreStateId state_id) {
+        CoreFlowState core_state;
+        core_state.state = state_id;
+        core_state.state_name = handler.state_name;
+        core_state.policy = lower_policy(handler.policy);
+        ex_.scope().clear();
+        core_state.body = lower_block(handler.body);
+        flow_.states.push_back(std::move(core_state));
+    }
+
+  private:
+    using LocalBinding = ExprLowerer<FlowRootPolicy>::LocalBinding;
+    using ArmBindings = ExprLowerer<FlowRootPolicy>::ArmBindings;
+
+    [[nodiscard]] CoreStatePolicy lower_policy(const std::vector<StatePolicyItem> &policy) {
+        CoreStatePolicy out;
+        for (const StatePolicyItem &item : policy) {
+            std::visit(Overloaded{
+                           [&](const RetryPolicy &r) { out.retry_limit = r.limit; },
+                           [&](const RetryOnPolicy &r) { out.retry_on = r.targets; },
+                           [&](const TimeoutPolicy &t) { out.timeout = t.duration; },
+                       },
+                       item);
+        }
+        return out;
+    }
+
+    // --- region / statement lowering ---
+    [[nodiscard]] CoreRegion lower_block(const Block &block) {
+        CoreRegion region;
+        for (const StatementPtr &stmt : block.statements) {
+            if (stmt) {
+                lower_statement(*stmt, region);
+            }
+        }
+        return region;
+    }
+
+    void lower_statement(const Statement &stmt, CoreRegion &region) {
+        std::visit(Overloaded{
+                       [&](const LetStatement &s) { lower_let(s, region); },
+                       [&](const AssignStatement &s) { lower_assign(s, stmt.source_range, region); },
+                       [&](const ExprStatement &s) {
+                           // An expression statement is evaluated for its effect;
+                           // the produced value id (if any) is discarded.
+                           static_cast<void>(ex_.lower_value(s.expr, region));
+                       },
+                       [&](const IfStatement &s) { lower_if(s, stmt.source_range, region); },
+                       [&](const IfLetStatement &s) { lower_if_let(s, stmt.source_range, region); },
+                       [&](const GotoStatement &s) { lower_goto(s, stmt.source_range, region); },
+                       [&](const ReturnStatement &s) { lower_return(s, stmt.source_range, region); },
+                       // Statements without an execution-layer form in this
+                       // slice (if-let / assert / requires / unwrap /
+                       // unreachable) are DEFERRED. Because dropping them would
+                       // change execution behaviour (e.g. `assert(false)` must
+                       // not silently become a no-op) and no Core-IR verifier
+                       // exists yet, this is an ERROR that marks the program
+                       // non-executable — never a silent Warning drop.
+                       [&](const auto &) {
+                           ex_.error(diag::kUnloweredStatement,
+                                     "statement kind is not yet lowered to Core-IR; the "
+                                     "program cannot be executed until this slice lands",
+                                     stmt.source_range);
+                       },
+                   },
+                   stmt.node);
+    }
+
+    void lower_let(const LetStatement &s, CoreRegion &region) {
+        const CoreValueId value = ex_.lower_value(s.initializer, region);
+        // Track the local's binding value id AND its type together, so later
+        // member projections through this local (`local.field`) can resolve
+        // field ids. The two travel as one binding, so branch scoping (see
+        // lower_if) can snapshot/restore them atomically.
+        ex_.scope()[s.name] = LocalBinding{value, ex_.types().type_id_of(s.type_ref)};
+    }
+
+    void lower_assign(const AssignStatement &s, SourceRangeOpt range, CoreRegion &region) {
+        const CoreValueId value = ex_.lower_value(s.value, region);
+        CorePlace place;
+        const auto rr = ex_.resolve_path_root(s.target);
+        place.root = rr.external_root;
+        place.root_name = s.target.root_name;
+        place.members = s.target.members;
+        // A store into a member PROJECTION (`ctx.field = …`) resolves each
+        // member to a typed CoreProjectionStep, same as a read. Set the
+        // self-contained root type first; fail closed otherwise (Principle 5).
+        place.root_type = rr.root_type;
+        if (!s.target.members.empty()) {
+            const std::optional<CoreTypeId> root_type =
+                rr.root_type.value == CoreTypeId::kInvalid ? std::nullopt
+                                                           : std::optional<CoreTypeId>{rr.root_type};
+            ex_.resolve_member_chain(root_type, s.target.members, s.target.root_name, range,
+                                     place.projection, place.projection_resolved);
+        }
+        region.statements.push_back(
+            CoreStmt{CoreStoreStmt{std::move(place), value}, std::move(range)});
+    }
+
+    void lower_if(const IfStatement &s, SourceRangeOpt range, CoreRegion &region) {
+        const CoreValueId cond = ex_.lower_value(s.condition, region);
+        CoreIfStmt node;
+        node.condition = cond;
+        // Each branch is its own region: mutual exclusion is preserved (the two
+        // branches are NOT appended to one flat list). Each branch is lexically
+        // scoped: it starts from the SAME outer scope snapshot and its
+        // branch-local `let` bindings are discarded afterwards, so a binding in
+        // one branch cannot leak into the other branch or past the `if`. The
+        // snapshot restores the value id AND its type together (P0-1): a branch
+        // that shadows an outer local with a DIFFERENT nominal type must not
+        // corrupt the outer local's type after the `if`.
+        const auto outer_scope = ex_.scope();
+        if (s.then_block) {
+            node.then_region = std::make_unique<CoreRegion>(lower_block(*s.then_block));
+        } else {
+            node.then_region = std::make_unique<CoreRegion>();
+        }
+        ex_.scope() = outer_scope; // restore before the else branch
+        if (s.else_block) {
+            node.else_region = std::make_unique<CoreRegion>(lower_block(*s.else_block));
+        }
+        ex_.scope() = outer_scope; // restore after the if
+        region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
+    }
+
+    void lower_goto(const GotoStatement &s, SourceRangeOpt range, CoreRegion &region) {
+        CoreGotoStmt node;
+        node.target_name = s.target_state;
+        if (const auto id = states_.lookup(s.target_state)) {
+            node.target = *id;
+        } else {
+            ex_.error(diag::kUnknownGotoTarget,
+                      "goto targets unknown state '" + s.target_state + "'", range);
+        }
+        region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
+    }
+
+    void lower_return(const ReturnStatement &s, SourceRangeOpt range, CoreRegion &region) {
+        CoreReturnStmt node;
+        if (s.value.ptr != nullptr) {
+            node.has_value = true;
+            node.value = ex_.lower_value(s.value, region);
+        }
+        region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
+    }
+
+    // Statement-position if-let: one pattern arm (yields nothing) with the
+    // then-block as body; the fallback is the else block (or a trap when absent —
+    // an if-let with no else and a refutable pattern is a non-total match).
+    void lower_if_let(const IfLetStatement &s, SourceRangeOpt range, CoreRegion &region) {
+        const CoreValueId scrutinee = ex_.lower_value(s.scrutinee, region);
+        CoreMatchStmt stmt;
+        stmt.scrutinee = scrutinee;
+        stmt.has_result = false;
+        bool ok = true;
+        // The single arm: pattern + then-block, yielding no value (statement match).
+        ArmBindings bindings;
+        ex_.collect_arm_bindings(s.pattern, ex_.pattern_matched_type(s.pattern), bindings);
+        CoreMatchArm arm;
+        arm.pattern = ex_.lower_pattern(s.pattern, bindings, range, ok);
+        arm.body = std::make_unique<CoreRegion>();
+        // Both branches are lexically scoped from the SAME outer snapshot, exactly
+        // like lower_if: the then-branch sees the arm bindings (lower_block_scoped
+        // restores after), and the else-branch sees NEITHER the arm bindings nor
+        // the then-branch's locals. A branch-local `let` in either branch must not
+        // leak into the other branch or past the if-let (P0: the else previously
+        // used a bare lower_block with no restore, leaking its locals downstream).
+        const auto outer_scope = ex_.scope();
+        if (s.then_block) {
+            *arm.body = lower_block_scoped(*s.then_block, bindings);
+        }
+        ex_.scope() = outer_scope; // restore before the else branch
+        ex_.seal_statement_arm(*arm.body, range);
+        arm.bindings = std::move(bindings.values);
+        stmt.arms.push_back(std::move(arm));
+        // Fallback = else block, or a trap when the if-let has no else.
+        stmt.fallback_region = std::make_unique<CoreRegion>();
+        if (s.else_block) {
+            *stmt.fallback_region = lower_block(*s.else_block);
+        }
+        ex_.scope() = outer_scope; // restore after the if-let
+        ex_.seal_statement_arm(*stmt.fallback_region, range);
+        region.statements.push_back(CoreStmt{std::move(stmt), std::move(range)});
+        static_cast<void>(ok);
+    }
+
+    // Lower a block that begins in the CURRENT scope extended with the arm's
+    // pattern bindings (so `local`-rooted paths naming a binding resolve to its
+    // value id). Restores the scope afterwards.
+    [[nodiscard]] CoreRegion lower_block_scoped(const Block &block, const ArmBindings &bindings) {
+        const auto outer = ex_.scope();
+        for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
+            ex_.scope()[bindings.names[i]] =
+                LocalBinding{bindings.values[i].value, ex_.binding_type_opt(bindings.values[i])};
+        }
+        CoreRegion region = lower_block(block);
+        ex_.scope() = outer;
+        return region;
+    }
+
+    ExprLowerer<FlowRootPolicy> ex_;
+    CoreFlowDecl &flow_;
+    const StateIndex &states_;
 };
 
 } // namespace
