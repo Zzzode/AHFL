@@ -1327,6 +1327,51 @@ class TypedIrLowerer final {
 
     [[nodiscard]] std::optional<EnumVariantTarget>
     find_enum_variant_target(const TypedExpr &expr) const noexcept {
+        // Prefer the explicit enum-variant fact the type checker persisted on the
+        // expr (RFC 0026 KR6.4). It is authoritative: the checker's expected-type
+        // backfill may re-converge `expr.type` from EnumVariantT to the owner
+        // EnumT, so `type`-based recovery (below) can silently lose the variant
+        // for a struct-payload variant LITERAL. Resolving from the owner SymbolId
+        // + variant name avoids re-parsing source spelling.
+        if (expr.enum_variant_owner.has_value() && !expr.enum_variant_name.empty()) {
+            const auto resolve_from = [&](const TypedDecl &decl)
+                -> std::optional<EnumVariantTarget> {
+                const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
+                if (enum_info == nullptr) {
+                    return std::nullopt;
+                }
+                const auto variant = enum_info->find_variant(expr.enum_variant_name);
+                if (!variant.has_value()) {
+                    return std::nullopt;
+                }
+                return EnumVariantTarget{
+                    .owner = enum_info,
+                    .variant = &variant->get(),
+                    .source_id = decl.source_id,
+                };
+            };
+            // Prefer the owning enum's SymbolId; fall back to a canonical-name
+            // scan (the fact's owner symbol is the enum TYPE symbol, which may
+            // not be the same SymbolId as the enum DECL in every build).
+            if (const auto *decl = find_decl_by_symbol(*expr.enum_variant_owner); decl != nullptr) {
+                if (auto target = resolve_from(*decl); target.has_value()) {
+                    return target;
+                }
+            }
+            if (!expr.enum_variant_owner_name.empty()) {
+                for (const auto &decl : typed_program_->declarations) {
+                    const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
+                    if (enum_info == nullptr ||
+                        enum_info->canonical_name != expr.enum_variant_owner_name) {
+                        continue;
+                    }
+                    if (auto target = resolve_from(decl); target.has_value()) {
+                        return target;
+                    }
+                }
+            }
+        }
+
         if (expr.type != nullptr) {
             if (const auto *variant_type = expr.type->get_if<types::EnumVariantT>();
                 variant_type != nullptr) {

@@ -2290,6 +2290,10 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         // passes can read the selected impl+method directly.
         typed_expr->dispatch_target = typed.dispatch_target;
         typed_expr->effect_capability = typed.effect_capability;
+        typed_expr->enum_variant_owner = typed.enum_variant_owner;
+        typed_expr->enum_variant_owner_name = typed.enum_variant_owner_name;
+        typed_expr->enum_variant_name = typed.enum_variant_name;
+        typed_expr->enum_variant_payload_kind = typed.enum_variant_payload_kind;
         return;
     }
 
@@ -2319,6 +2323,10 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
                 typed.path_root_kind.value_or(AssignTargetRootKind::Identifier);
             typed_expr->dispatch_target = typed.dispatch_target;
             typed_expr->effect_capability = typed.effect_capability;
+            typed_expr->enum_variant_owner = typed.enum_variant_owner;
+            typed_expr->enum_variant_owner_name = typed.enum_variant_owner_name;
+            typed_expr->enum_variant_name = typed.enum_variant_name;
+            typed_expr->enum_variant_payload_kind = typed.enum_variant_payload_kind;
             return;
         }
     }
@@ -2353,6 +2361,10 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .quantifier_binder = quantifier_fields_for(expr).binder,
         .quantifier_value_binder = quantifier_fields_for(expr).value_binder,
         .const_value = std::nullopt,
+        .enum_variant_owner = typed.enum_variant_owner,
+        .enum_variant_owner_name = typed.enum_variant_owner_name,
+        .enum_variant_name = typed.enum_variant_name,
+        .enum_variant_payload_kind = typed.enum_variant_payload_kind,
     });
     if (expr.node_id != 0) {
         const auto index = static_cast<std::uint32_t>(result_.typed_program.expressions.size() - 1);

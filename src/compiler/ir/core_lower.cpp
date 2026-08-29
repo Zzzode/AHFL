@@ -1063,11 +1063,14 @@ class FlowLowerer {
                         CoreTypeDecl::VariantPayload::Kind::Struct) {
                     // Struct-payload variant: resolve the WRITTEN field name to
                     // its DECLARATION slot id (not source order), just like a
-                    // struct literal. The frontend has already materialized any
-                    // omitted defaulted field into `e.fields`, so every declared
-                    // slot appears here; we only assign identity. An unknown name
-                    // is fail-closed (e.g. a hand-built / deserialized IR that
-                    // dropped a slot). We do NOT re-evaluate a default.
+                    // struct literal. EXPECTED INVARIANT (upheld once the
+                    // frontend slice lands): Typed HIR -> AHFL-IR materializes
+                    // every omitted defaulted payload field into `e.fields`, so
+                    // every declared slot appears here and we only assign
+                    // identity. We do NOT re-evaluate a default. An unknown /
+                    // missing field is fail-closed (e.g. a hand-built or
+                    // deserialized IR that dropped a slot); the verifier's
+                    // materialized-complete check is the backstop.
                     if (const auto slot =
                             types_.variant_field_slot(*type_id, node.variant.value, field.name)) {
                         arg.field = CoreFieldId{*slot};

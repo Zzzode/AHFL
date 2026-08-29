@@ -457,6 +457,17 @@ struct TypedExpr {
     std::string quantifier_binder;
     std::string quantifier_value_binder;
     std::optional<ConstValue> const_value;
+    // RFC 0026 (KR6.4): enum-variant construction fact for a struct-payload
+    // variant LITERAL (`Enum::Variant { ... }`). Populated at type-check time by
+    // check_enum_struct_variant_constructor, where the owner enum + variant are
+    // known — because the checker may re-converge the expression's `type` from
+    // EnumVariantT back to the owner EnumT (expected-type backfill), the typed
+    // fact must be carried explicitly rather than recovered from `type` or the
+    // source spelling downstream. Empty for every non-variant-literal expr.
+    std::optional<SymbolId> enum_variant_owner;      // owning enum's SymbolId
+    std::string enum_variant_owner_name;             // owning enum's canonical name (scan fallback)
+    std::string enum_variant_name;                   // variant name (declaration-stable)
+    std::optional<EnumVariantPayloadKind> enum_variant_payload_kind;
     // KR3.5: flow-narrowing facts a boolean condition establishes on its
     // then / else branches (populated for if-conditions during type checking).
     // Empty for non-condition expressions.

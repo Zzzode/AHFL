@@ -13,6 +13,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -252,4 +253,116 @@ flow for Payer {
     CHECK(saw_none);
     CHECK(saw_verdict_approve);
     CHECK(saw_user_present);
+}
+
+// Slice ②b end-to-end (frontend fix): a struct-payload enum-variant literal that
+// OMITS a defaulted field must reach Core-IR marked is_enum_variant, with the
+// default materialized upstream and each field carrying its DECLARATION slot id.
+TEST_CASE("KR6.4 e2e: struct-payload variant literal is materialized-complete with declaration "
+          "slot identity") {
+    const auto root = make_temp_project("variant_materialize");
+    const auto main_path = root / "app" / "main.ahfl";
+    const std::string source = R"AHFL(
+module app::main;
+
+enum Ticket {
+    Open { id: Int, owner: String = "system" },
+    Closed { id: Int },
+}
+
+struct Req { n: Int; }
+struct Reply { ok: Bool = false; }
+
+agent A {
+    input: Req;
+    context: Unit;
+    output: Reply;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+
+    transition Init -> Done;
+}
+
+flow for A {
+    state Init {
+        // owner (slot 1) OMITTED here; id written. Reverse-order write below.
+        let defaulted: Ticket = Ticket::Open { id: input.n };
+        goto Done;
+    }
+    state Done {
+        let reversed: Ticket = Ticket::Open { owner: "boss", id: input.n };
+        return Reply { ok: false };
+    }
+}
+)AHFL";
+    write_file(main_path, source);
+
+    const Frontend frontend;
+    const auto parse_result = parse_project(
+        frontend,
+        test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
+    REQUIRE_FALSE(parse_result.has_errors());
+    const Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+    const TypeChecker checker;
+    const auto type_result = checker.check(parse_result.graph, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+    const auto ahfl_ir = lower_program_ir(parse_result.graph, resolve_result, type_result);
+
+    // Every Ticket::Open StructLiteralExpr in AHFL-IR must be marked as an enum
+    // variant AND carry both declared payload fields (owner materialized when
+    // the source omitted it).
+    bool saw_ahfl_open = false;
+    for (const auto *ref : ahfl_ir.all_exprs()) {
+        if (ref == nullptr) {
+            continue;
+        }
+        const auto *lit = std::get_if<ir::StructLiteralExpr>(&ref->node);
+        if (lit == nullptr || !lit->is_enum_variant || lit->variant_name != "Open") {
+            continue;
+        }
+        saw_ahfl_open = true;
+        bool has_id = false;
+        bool has_owner = false;
+        for (const auto &f : lit->fields) {
+            has_id = has_id || f.name == "id";
+            has_owner = has_owner || f.name == "owner";
+        }
+        CHECK(has_id);
+        CHECK(has_owner); // materialized even when the source omitted it
+    }
+    CHECK(saw_ahfl_open);
+
+    const auto result = ir::core::lower_ahfl_to_core(ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // Every Core Open construct carries both declaration slots (0=id, 1=owner),
+    // exactly once, order-independent.
+    bool saw_core_open = false;
+    for (const auto &flow : result.program.flows) {
+        for (const auto &expr : flow.exprs) {
+            const auto *c = std::get_if<ir::core::CoreConstructExpr>(&expr.node);
+            if (c == nullptr || !c->is_enum_variant || c->variant_name != "Open") {
+                continue;
+            }
+            saw_core_open = true;
+            CHECK(c->resolved);
+            CHECK(c->args.size() == 2);
+            std::unordered_map<std::uint32_t, int> per_slot;
+            for (const auto &arg : c->args) {
+                per_slot[arg.field.value]++;
+            }
+            CHECK(per_slot[0u] == 1); // id
+            CHECK(per_slot[1u] == 1); // owner
+        }
+    }
+    CHECK(saw_core_open);
 }

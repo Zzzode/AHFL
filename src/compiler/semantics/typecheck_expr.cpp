@@ -3788,6 +3788,24 @@ class ExpressionChecker final {
             owner_enum != nullptr ? owner_enum->canonical_name : std::string{};
         const auto result_type =
             services_.types().enum_variant_type(canonical_name, variant_name, enum_symbol, subst);
+        // Attach the struct-payload variant construction fact so lowering can
+        // mark is_enum_variant + resolve declaration slots WITHOUT recovering
+        // the variant from `type` (which the expected-type backfill below may
+        // re-converge to the owner EnumT) or from source spelling. Use the enum
+        // TYPE's own symbol (owner_enum->symbol) as the owner identity — the
+        // `enum_symbol` from the TypeName reference can resolve to the enclosing
+        // module rather than the enum decl, which would not map to EnumTypeInfo
+        // downstream.
+        const auto owner_symbol =
+            (owner_enum != nullptr && owner_enum->symbol.has_value()) ? *owner_enum->symbol
+                                                                      : enum_symbol;
+        const auto attach_variant_fact = [&](TypedValue value) {
+            value.enum_variant_owner = owner_symbol;
+            value.enum_variant_owner_name = canonical_name;
+            value.enum_variant_name = variant_name;
+            value.enum_variant_payload_kind = EnumVariantPayloadKind::Struct;
+            return value;
+        };
         if (expected_type_.has_value()) {
             const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
             if (expected_enum != nullptr && owner_enum != nullptr &&
@@ -3797,11 +3815,12 @@ class ExpressionChecker final {
                 // a TypeVar-bearing expected type must not clobber the
                 // field-inferred result type.
                 !contains_type_var(expected_type_->get())) {
-                return values_.typed_effect(expected_type_->get().clone(), effect);
+                return attach_variant_fact(
+                    values_.typed_effect(expected_type_->get().clone(), effect));
             }
         }
 
-        return values_.typed_effect(std::move(result_type), effect);
+        return attach_variant_fact(values_.typed_effect(std::move(result_type), effect));
     }
 
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr) const {

@@ -886,6 +886,11 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     object->set("quantifier_binder", Json::make_string(expr.quantifier_binder));
     object->set("quantifier_value_binder", Json::make_string(expr.quantifier_value_binder));
     object->set("const_value", j_optional_const_value(expr.const_value));
+    // RFC 0026 (KR6.4): struct-payload enum-variant construction fact.
+    object->set("enum_variant_owner", j_optional_symbol_id(expr.enum_variant_owner));
+    object->set("enum_variant_owner_name", Json::make_string(expr.enum_variant_owner_name));
+    object->set("enum_variant_name", Json::make_string(expr.enum_variant_name));
+    object->set("enum_variant_payload_kind", j_optional_enum(expr.enum_variant_payload_kind));
     return object;
 }
 
@@ -2127,6 +2132,12 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .quantifier_binder = reader.string_field(object, "quantifier_binder"),
         .quantifier_value_binder = reader.string_field(object, "quantifier_value_binder"),
         .const_value = read_optional_const_value(reader, object),
+        .enum_variant_owner = reader.optional_symbol_id_field(object, "enum_variant_owner"),
+        .enum_variant_owner_name = reader.string_field(object, "enum_variant_owner_name"),
+        .enum_variant_name = reader.string_field(object, "enum_variant_name"),
+        .enum_variant_payload_kind =
+            reader.template optional_enum_field<EnumVariantPayloadKind>(object,
+                                                                       "enum_variant_payload_kind"),
     };
 
     // C-5 (Wave-24): deserialize dispatch_target for MethodCall expressions.

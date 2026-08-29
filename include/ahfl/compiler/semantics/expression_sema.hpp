@@ -61,6 +61,16 @@ struct ExpressionValue {
     // against a body that calls that capability. std::nullopt for all other
     // expression kinds.
     std::optional<SymbolId> effect_capability{};
+    // RFC 0026 (KR6.4): for a struct-payload enum-variant LITERAL
+    // (`Enum::Variant { ... }`), the owning enum's SymbolId + variant name +
+    // payload kind. Set by check_enum_struct_variant_constructor and propagated
+    // to TypedExpr; the variant identity is captured HERE because the checker's
+    // expected-type backfill may re-converge `type` from EnumVariantT to the
+    // owner EnumT, which would otherwise lose the fact for lowering.
+    std::optional<SymbolId> enum_variant_owner{};
+    std::string enum_variant_owner_name{};
+    std::string enum_variant_name{};
+    std::optional<EnumVariantPayloadKind> enum_variant_payload_kind{};
 };
 
 struct ExpressionPatternLoweringResult {
