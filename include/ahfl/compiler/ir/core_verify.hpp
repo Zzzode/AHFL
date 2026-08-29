@@ -26,13 +26,25 @@
 //     is continuous (step[i].owner == step[i-1].result, step[0].owner == root),
 //     each field id is in range and its result_type equals the owner's declared
 //     field type, and a primitive/leaf step (kInvalid result) is the last step;
-//   * construct legality: resolved type/variant/field ids in range, no duplicate
-//     field ids;
+//   * value discipline: SSA single-definition is FLOW-GLOBAL (a value id is
+//     defined at most once across all states and branches), and def-before-use
+//     is region-local with branch-local scope (a value defined in one branch is
+//     not visible to a sibling branch or after the `if`);
+//   * the pure-expression arena is ACYCLIC (a self/mutually-referential expr
+//     would make recursive codegen diverge); ALL arena exprs are checked, not
+//     only statement-reachable ones;
+//   * construct legality (PARTIAL): resolved type/variant/field ids in range and
+//     no duplicate field ids. MISSING-field detection is deferred until the type
+//     table records per-field default/required metadata (a later type-table
+//     extension) — this verifier does NOT yet prove struct-literal completeness;
 //   * flow wiring: flow target agent, handler state, and goto targets in range;
 //   * capability-call arity matches the import signature;
 //   * an executable program contains NO CoreUnsupportedExpr;
 //   * no executable statement follows a terminator (goto/return) in a region;
-//   * the agent's typed shell (input/context/output) references real structs.
+//   * the agent typed shell: input/output must be a valid Struct; context is a
+//     valid Struct (context_is_struct) or the Unit default (kInvalid); any other
+//     combination — a required shell left kInvalid, or pointing at a non-struct
+//     — is an error.
 //
 // Diagnostics reuse `CoreLowerDiagnostic` (severity + stable code + range) and
 // carry `core.verify.*` codes from the `verify` catalogue below.
@@ -48,10 +60,11 @@ namespace ahfl::ir::core {
 /// the verifier and its tests share one source of truth (Principle 5).
 namespace verify {
 inline constexpr std::string_view kTypeIdOutOfRange = "core.verify.TYPE_ID_OUT_OF_RANGE";
-inline constexpr std::string_view kAgentIdOutOfRange = "core.verify.AGENT_ID_OUT_OF_RANGE";
+inline constexpr std::string_view kAgentStateInvalid = "core.verify.AGENT_STATE_INVALID";
 inline constexpr std::string_view kCapabilityIdOutOfRange = "core.verify.CAPABILITY_ID_OUT_OF_RANGE";
 inline constexpr std::string_view kStateIdOutOfRange = "core.verify.STATE_ID_OUT_OF_RANGE";
 inline constexpr std::string_view kExprIdOutOfRange = "core.verify.EXPR_ID_OUT_OF_RANGE";
+inline constexpr std::string_view kExprCycle = "core.verify.EXPR_CYCLE";
 inline constexpr std::string_view kValueIdOutOfRange = "core.verify.VALUE_ID_OUT_OF_RANGE";
 inline constexpr std::string_view kValueUseBeforeDef = "core.verify.VALUE_USE_BEFORE_DEF";
 inline constexpr std::string_view kValueRedefined = "core.verify.VALUE_REDEFINED";
@@ -73,7 +86,6 @@ inline constexpr std::string_view kGotoTargetInvalid = "core.verify.GOTO_TARGET_
 inline constexpr std::string_view kCapabilityArityMismatch = "core.verify.CAPABILITY_ARITY_MISMATCH";
 inline constexpr std::string_view kUnsupportedExpr = "core.verify.UNSUPPORTED_EXPR";
 inline constexpr std::string_view kStmtAfterTerminator = "core.verify.STMT_AFTER_TERMINATOR";
-inline constexpr std::string_view kAgentStateInvalid = "core.verify.AGENT_STATE_INVALID";
 inline constexpr std::string_view kTypedShellInvalid = "core.verify.TYPED_SHELL_INVALID";
 } // namespace verify
 

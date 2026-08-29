@@ -37,6 +37,29 @@ using namespace ahfl;
 // Hand-built AhflIr helpers (isolate the decl-level projection).
 // --------------------------------------------------------------------------
 
+// Append two minimal input/output structs to `program` and point `agent` at
+// them. Sema (and now the Core-IR verifier) require an agent's input/output to
+// be Struct types; hand-built fixtures that only exercise state-machine / body
+// lowering still need a valid typed shell to pass the auto-wired verifier.
+void give_shell_structs(ir::AhflIr &program, ir::AgentDecl &agent, const std::string &prefix) {
+    ir::StructDecl in;
+    in.name = prefix + "In";
+    in.symbol_ref.kind = ir::SymbolRefKind::Type;
+    in.symbol_ref.canonical_name = "app::" + prefix + "In";
+    program.declarations.emplace_back(std::move(in));
+
+    ir::StructDecl out;
+    out.name = prefix + "Out";
+    out.symbol_ref.kind = ir::SymbolRefKind::Type;
+    out.symbol_ref.canonical_name = "app::" + prefix + "Out";
+    program.declarations.emplace_back(std::move(out));
+
+    agent.input_type_ref.kind = ir::TypeRefKind::Struct;
+    agent.input_type_ref.canonical_name = "app::" + prefix + "In";
+    agent.output_type_ref.kind = ir::TypeRefKind::Struct;
+    agent.output_type_ref.canonical_name = "app::" + prefix + "Out";
+}
+
 ir::AhflIr make_single_agent_program() {
     ir::AhflIr program;
     ir::AgentDecl agent;
@@ -51,6 +74,7 @@ ir::AhflIr make_single_agent_program() {
     agent.quota = {ir::QuotaItem{"max_tool_calls", "10"}};
     agent.transitions = {ir::TransitionDecl{"Init", "Working"},
                          ir::TransitionDecl{"Working", "Done"}};
+    give_shell_structs(program, agent, "Cls");
     program.declarations.emplace_back(std::move(agent));
 
     ir::ContractDecl contract; // verification-only: must be erased
@@ -91,6 +115,7 @@ ir::AhflIr make_capability_program() {
     agent.initial_state = "Init";
     agent.final_states = {"Done"};
     agent.transitions = {ir::TransitionDecl{"Init", "Done"}};
+    give_shell_structs(program, agent, "Cap");
     program.declarations.emplace_back(std::move(agent));
     return program;
 }
@@ -448,6 +473,7 @@ TEST_CASE("flow lowering fails closed on an unresolved capability call") {
     agent.states = {"S"};
     agent.initial_state = "S";
     agent.final_states = {"S"};
+    give_shell_structs(program, agent, "Hnd");
     program.declarations.emplace_back(std::move(agent));
 
     ir::FlowDecl flow;
@@ -599,6 +625,7 @@ TEST_CASE("builtin enum variant resolves via the builtin path by symbol identity
     agent.states = {"S"};
     agent.initial_state = "S";
     agent.final_states = {"S"};
+    give_shell_structs(program, agent, "Hnd");
     program.declarations.emplace_back(std::move(agent));
 
     ir::FlowDecl flow;
@@ -663,6 +690,7 @@ ir::AhflIr make_single_handler_flow(
     agent.states = {"S"};
     agent.initial_state = "S";
     agent.final_states = {"S"};
+    give_shell_structs(program, agent, "Hnd");
     program.declarations.emplace_back(std::move(agent));
 
     ir::FlowDecl flow;
@@ -710,6 +738,7 @@ TEST_CASE("branch-local let bindings do not leak across branches or past the if 
     agent.states = {"S"};
     agent.initial_state = "S";
     agent.final_states = {"S"};
+    give_shell_structs(program, agent, "Hnd");
     program.declarations.emplace_back(std::move(agent));
 
     ir::FlowDecl flow;
@@ -842,6 +871,7 @@ TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the ou
     agent.final_states = {"S"};
     agent.context_type_ref.kind = ir::TypeRefKind::Struct;
     agent.context_type_ref.canonical_name = "app::Ctx";
+    give_shell_structs(program, agent, "Shd");
     program.declarations.emplace_back(std::move(agent));
 
     ir::FlowDecl flow;
@@ -1274,4 +1304,126 @@ TEST_CASE("member projection on an unknown field fails closed") {
     CHECK_FALSE(result.is_executable);
     REQUIRE_FALSE(result.diagnostics.empty());
     CHECK(result.diagnostics[0].code == ir::core::diag::kUnloweredFieldProjection);
+}
+
+// ==========================================================================
+// Auto-verify wiring: lower_ahfl_to_core runs the Core-IR verifier on a
+// lowering-clean candidate and merges verifier Errors; a lowering that already
+// errored is NOT re-verified (no duplicate core.verify.* noise).
+// ==========================================================================
+
+namespace {
+[[nodiscard]] bool has_verify_code(const ir::core::CoreLowerResult &r) {
+    for (const auto &d : r.diagnostics) {
+        if (d.code.rfind("core.verify.", 0) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+TEST_CASE("lowering-clean but verifier-rejected program merges verify errors and is not executable") {
+    // An agent whose INPUT type is an enum (not a struct). The lowerer does not
+    // enforce Sema's schema boundary, so lowering itself is clean; the auto-wired
+    // verifier must reject it (input shell must be a struct) and the merged
+    // result must be non-executable.
+    ir::AhflIr program;
+
+    ir::EnumDecl mode;
+    mode.name = "Mode";
+    mode.symbol_ref.kind = ir::SymbolRefKind::Type;
+    mode.symbol_ref.canonical_name = "app::Mode";
+    mode.symbol_ref.id = 70;
+    mode.variants.push_back(ir::EnumVariantDecl{"A", ir::EnumVariantPayloadKind::Unit, {}, {}, {}});
+    mode.variants.push_back(ir::EnumVariantDecl{"B", ir::EnumVariantPayloadKind::Unit, {}, {}, {}});
+    program.declarations.emplace_back(std::move(mode));
+
+    ir::StructDecl reply;
+    reply.name = "Reply";
+    reply.symbol_ref.kind = ir::SymbolRefKind::Type;
+    reply.symbol_ref.canonical_name = "app::Reply";
+    reply.symbol_ref.id = 71;
+    program.declarations.emplace_back(std::move(reply));
+
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    agent.input_type_ref.kind = ir::TypeRefKind::Enum; // <-- not a struct
+    agent.input_type_ref.canonical_name = "app::Mode";
+    agent.output_type_ref.kind = ir::TypeRefKind::Struct;
+    agent.output_type_ref.canonical_name = "app::Reply";
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    CHECK(has_verify_code(result)); // the verifier's TYPED_SHELL_INVALID merged in
+}
+
+TEST_CASE("a lowering-error program is NOT re-verified (no duplicate core.verify.* noise)") {
+    // A flow that calls an unresolved capability -> lowering Error. Because the
+    // program is already non-executable, the verifier must NOT run, so no
+    // core.verify.* diagnostics appear.
+    ir::AhflIr program;
+
+    ir::StructDecl req;
+    req.name = "Req";
+    req.symbol_ref.kind = ir::SymbolRefKind::Type;
+    req.symbol_ref.canonical_name = "app::Req";
+    req.symbol_ref.id = 80;
+    program.declarations.emplace_back(std::move(req));
+
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    agent.input_type_ref.kind = ir::TypeRefKind::Struct;
+    agent.input_type_ref.canonical_name = "app::Req";
+    agent.output_type_ref.kind = ir::TypeRefKind::Struct;
+    agent.output_type_ref.canonical_name = "app::Req";
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+    // return Ghost(); -- unresolved capability callee
+    ir::CallExpr call;
+    call.callee = "Ghost";
+    call.callee_ref.kind = ir::SymbolRefKind::Capability;
+    call.callee_ref.canonical_name = "app::Ghost";
+    ir::ExprRef cref = program.expr_arena.make(std::move(call), SourceRange{4, 9});
+    auto stmt = std::make_unique<ir::Statement>();
+    stmt->node = ir::ExprStatement{cref};
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    handler.body.statements.push_back(std::move(stmt));
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    CHECK(has_verify_code(result) == false); // verifier skipped on a partial program
 }

@@ -82,9 +82,26 @@ struct GoodProgram {
         flag.name = "Flag";
         flag.variants = {"On", "Off"};
         p.types.push_back(std::move(flag));
+
+        // input / output structs (Sema requires agent input/output to be Struct).
+        CoreTypeDecl req;
+        req.kind = CoreTypeDecl::Kind::Struct;
+        req.name = "Req";
+        req.fields = {"amount"};
+        req.field_types = {CoreTypeId{}}; // Int
+        p.types.push_back(std::move(req));
+
+        CoreTypeDecl reply;
+        reply.kind = CoreTypeDecl::Kind::Struct;
+        reply.name = "Reply";
+        reply.fields = {"ok"};
+        reply.field_types = {CoreTypeId{}}; // Bool
+        p.types.push_back(std::move(reply));
     }
     const CoreTypeId inner_ty{0};
     const CoreTypeId ctx_ty{1};
+    const CoreTypeId req_ty{3};
+    const CoreTypeId reply_ty{4};
 
     // capability Charge(Int) -> Bool
     {
@@ -105,7 +122,10 @@ struct GoodProgram {
         a.initial = CoreStateId{0};
         a.finals = {CoreStateId{1}};
         a.transitions = {CoreTransition{CoreStateId{0}, CoreStateId{1}}};
+        a.input_type = req_ty;
+        a.output_type = reply_ty;
         a.context_type = ctx_ty;
+        a.context_is_struct = true;
         p.agents.push_back(std::move(a));
     }
 
@@ -372,9 +392,52 @@ TEST_CASE("verifier fails closed on a statement after a terminator") {
     CHECK(has_code(result, verify::kStmtAfterTerminator));
 }
 
-TEST_CASE("verifier fails closed on a typed shell that is not a struct") {
+TEST_CASE("verifier fails closed on a typed shell that is an enum, not a struct") {
     GoodProgram g = make_good_program();
     g.program.agents[0].context_type = CoreTypeId{2}; // Flag is an enum, not a struct
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypedShellInvalid));
+}
+
+TEST_CASE("verifier fails closed on a required input shell left kInvalid") {
+    GoodProgram g = make_good_program();
+    g.program.agents[0].input_type = CoreTypeId{}; // missing required input struct
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypedShellInvalid));
+}
+
+TEST_CASE("verifier fails closed on a required output shell left kInvalid") {
+    GoodProgram g = make_good_program();
+    g.program.agents[0].output_type = CoreTypeId{}; // missing required output struct
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypedShellInvalid));
+}
+
+TEST_CASE("verifier accepts a Unit context (context_is_struct=false, kInvalid type)") {
+    GoodProgram g = make_good_program();
+    g.program.agents[0].context_is_struct = false;
+    g.program.agents[0].context_type = CoreTypeId{}; // Unit context: no struct
+    // The flow's Init handler reads/stores ctx.* — remove those so a Unit-context
+    // program is otherwise well-formed. Simplest: drop the whole Init body's ctx
+    // touches by clearing it to just a goto, and keep Done's return.
+    g.flow->states[0].body.statements.clear();
+    g.flow->states[0].body.statements.push_back(
+        CoreStmt{CoreGotoStmt{CoreStateId{1}, "Done"}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("verifier fails closed on a Unit context whose type id is nonetheless set") {
+    GoodProgram g = make_good_program();
+    g.program.agents[0].context_is_struct = false; // Unit context ...
+    g.program.agents[0].context_type = CoreTypeId{1}; // ... but a struct id is set (broken)
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kTypedShellInvalid));
@@ -387,3 +450,96 @@ TEST_CASE("verifier fails closed on an out-of-range agent state id") {
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kStateIdOutOfRange));
 }
+
+TEST_CASE("verifier fails closed on an agent with no states") {
+    GoodProgram g = make_good_program();
+    g.program.agents[0].states.clear();
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kAgentStateInvalid));
+}
+
+// --- P0-1: SSA single-definition is FLOW-GLOBAL, not scope-local ---
+
+TEST_CASE("verifier fails closed when the SAME value id is defined in both branches (P0-1)") {
+    GoodProgram g = make_good_program();
+    // Init's if defines %3 in the then-branch. Make the else-branch ALSO define
+    // %3 (before its goto). Flow-global single-definition must catch this even
+    // though the two definitions are in mutually-exclusive branches.
+    auto &init_body = g.flow->states[0].body;
+    for (auto &stmt : init_body.statements) {
+        if (auto *iff = std::get_if<CoreIfStmt>(&stmt.node)) {
+            // else region currently: [goto Done]. Prepend `%3 = lit2`.
+            auto redecl = CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{2}}, std::nullopt};
+            iff->else_region->statements.insert(iff->else_region->statements.begin(),
+                                                std::move(redecl));
+        }
+    }
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueRedefined));
+}
+
+TEST_CASE("verifier fails closed when the same value id is defined in two states (P0-1)") {
+    GoodProgram g = make_good_program();
+    // %2 is defined in Init (the nested path let). Define it again in Done.
+    g.flow->states[1].body.statements.insert(
+        g.flow->states[1].body.statements.begin(),
+        CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{0}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueRedefined));
+}
+
+// --- P0-2: expression reference graph must be acyclic, whole-arena checked ---
+
+TEST_CASE("verifier fails closed on a self-referential expression (P0-2)") {
+    GoodProgram g = make_good_program();
+    // Append a unary expr that references ITSELF: expr#N = Not(expr#N).
+    const auto self = CoreExprId{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, self}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kExprCycle));
+}
+
+TEST_CASE("verifier fails closed on a two-node expression cycle (P0-2)") {
+    GoodProgram g = make_good_program();
+    const auto a = CoreExprId{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    const auto b = CoreExprId{a.value + 1};
+    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, b}, std::nullopt}); // a -> b
+    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, a}, std::nullopt}); // b -> a
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kExprCycle));
+}
+
+TEST_CASE("verifier checks EVERY arena expr, even one no statement references (P0-2)") {
+    GoodProgram g = make_good_program();
+    // An unlowered expr that no statement binds must still be rejected.
+    g.flow->exprs.push_back(CoreExpr{CoreUnsupportedExpr{"LambdaExpr", std::nullopt}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kUnsupportedExpr));
+}
+
+TEST_CASE("verifier accepts a shared DAG expr node (revisit is not a cycle)") {
+    GoodProgram g = make_good_program();
+    // expr %lit1 (id 0) is referenced by two different unary exprs — a shared
+    // DAG node, NOT a cycle. Both must pass.
+    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{0}}, std::nullopt});
+    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Neg, CoreExprId{0}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK(result.ok());
+}
+
+// --- P2: parallel-vector length ---
+
+TEST_CASE("verifier fails closed when a struct's field_types length differs from fields") {
+    GoodProgram g = make_good_program();
+    g.program.types[1].field_types.pop_back(); // Ctx now has 2 fields, 1 field_type
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypeIdOutOfRange));
+}
+

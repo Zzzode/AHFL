@@ -431,10 +431,17 @@ intern_state(std::vector<std::string> &names,
     out.symbol_ref = agent.symbol_ref;
     // Typed shell (Principle 2): `input`/`ctx`/`output` resolve to these
     // CoreTypeIds, so a member projection through `input.`/`ctx.` walks a real
-    // struct type. kInvalid when the type is not a known nominal struct.
+    // struct type. Sema's schema boundary requires input/output to be Struct;
+    // context is either an explicit Struct or the default Unit (stateless
+    // agent). `context_is_struct` records which: a Unit context has no struct to
+    // project through, so its CoreTypeId stays kInvalid (NOT a broken ref). Both
+    // an omitted context and an explicit `context: Unit;` lower to Unit here.
     out.input_type = types.type_id_of(agent.input_type_ref).value_or(CoreTypeId{});
-    out.context_type = types.type_id_of(agent.context_type_ref).value_or(CoreTypeId{});
     out.output_type = types.type_id_of(agent.output_type_ref).value_or(CoreTypeId{});
+    out.context_is_struct = agent.context_type_ref.kind == TypeRefKind::Struct;
+    out.context_type =
+        out.context_is_struct ? types.type_id_of(agent.context_type_ref).value_or(CoreTypeId{})
+                              : CoreTypeId{};
 
     const SymbolId symbol{agent.symbol_ref.id.value_or(0)};
     const std::string canonical = agent.symbol_ref.canonical_name;

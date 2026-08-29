@@ -63,10 +63,20 @@ class Verifier {
     void verify_types() {
         for (std::uint32_t i = 0; i < program_.types.size(); ++i) {
             const CoreTypeDecl &t = program_.types[i];
-            // field_types is parallel to fields; each valid entry must be an
-            // in-range type id (it need not be a struct — an enum field type is
-            // legal, though it cannot be projected THROUGH; that is enforced at
-            // the projection site, not here).
+            // `field_types` is parallel to `fields` (one typed entry per field).
+            // A length mismatch means the fixup pass did not cover every field —
+            // a projection through a missing entry would silently read kInvalid.
+            if (t.kind == CoreTypeDecl::Kind::Struct &&
+                t.field_types.size() != t.fields.size()) {
+                error(verify::kTypeIdOutOfRange,
+                      "struct '" + t.name + "' has " + std::to_string(t.fields.size()) +
+                          " fields but " + std::to_string(t.field_types.size()) +
+                          " field types (parallel vectors must match)",
+                      std::nullopt);
+            }
+            // Each valid field_types entry must be an in-range type id (it need
+            // not be a struct — an enum field type is legal, though it cannot be
+            // projected THROUGH; that is enforced at the projection site).
             for (std::uint32_t f = 0; f < t.field_types.size(); ++f) {
                 const CoreTypeId ft = t.field_types[f];
                 if (ft.value != CoreTypeId::kInvalid && ft.value >= program_.types.size()) {
@@ -82,6 +92,12 @@ class Verifier {
     // --- agent state machine + typed shell ---
     void verify_agent(const CoreAgentDecl &agent) {
         const auto state_count = static_cast<std::uint32_t>(agent.states.size());
+        // A runnable agent has at least one state; an empty state table cannot
+        // host an initial/final state and is structurally invalid.
+        if (state_count == 0) {
+            error(verify::kAgentStateInvalid,
+                  "agent '" + agent.name + "' declares no states", std::nullopt);
+        }
         const auto check_state = [&](CoreStateId s, const char *what) {
             if (s.value >= state_count) {
                 error(verify::kStateIdOutOfRange,
@@ -91,9 +107,8 @@ class Verifier {
                       std::nullopt);
             }
         };
-        if (state_count != 0) {
-            check_state(agent.initial, "initial");
-        }
+        // The initial state is always required (unconditional bounds check).
+        check_state(agent.initial, "initial");
         for (const CoreStateId f : agent.finals) {
             check_state(f, "final");
         }
@@ -101,19 +116,29 @@ class Verifier {
             check_state(tr.from, "transition-from");
             check_state(tr.to, "transition-to");
         }
-        // Typed shell: a set (non-kInvalid) input/context/output must name a real
-        // struct — a projection roots on these, so a non-struct here is a bug.
-        const auto check_shell = [&](CoreTypeId t, const char *what) {
-            if (t.value != CoreTypeId::kInvalid && !is_struct(t)) {
+        // Typed shell (Sema schema boundary): input/output MUST be a valid
+        // Struct; a kInvalid or non-struct shell is a broken reference, never a
+        // legal "absent". Context is Struct when explicit (`has_context`), else
+        // the default Unit context — for which the type id MUST stay kInvalid
+        // (kInvalid must not double as "valid default" and "broken ref").
+        const auto require_struct = [&](CoreTypeId t, const char *what) {
+            if (!is_struct(t)) {
                 error(verify::kTypedShellInvalid,
                       "agent '" + agent.name + "' " + what +
-                          " type id is set but does not name a struct type",
+                          " type must be a valid struct type",
                       std::nullopt);
             }
         };
-        check_shell(agent.input_type, "input");
-        check_shell(agent.context_type, "context");
-        check_shell(agent.output_type, "output");
+        require_struct(agent.input_type, "input");
+        require_struct(agent.output_type, "output");
+        if (agent.context_is_struct) {
+            require_struct(agent.context_type, "context");
+        } else if (agent.context_type.value != CoreTypeId::kInvalid) {
+            error(verify::kTypedShellInvalid,
+                  "agent '" + agent.name +
+                      "' has a Unit context but its context type id is set",
+                  std::nullopt);
+        }
     }
 
     // --- capability import shell ---
@@ -205,8 +230,12 @@ class Verifier {
     // --- pure expression arena (static, order-independent checks) ---
     //
     // Bounds every CoreExprId reference, rejects any CoreUnsupportedExpr (an
-    // executable program has none), and checks typed identity + projection of
-    // path/construct/qualified nodes. Value-use ORDER is checked separately in
+    // executable program has none), checks typed identity + projection of
+    // path/construct/qualified nodes, AND proves the expr reference graph is
+    // acyclic (a self- or mutually-referential expr would make a backend's
+    // recursive codegen diverge). EVERY arena expr is checked, not only those a
+    // statement reaches, so an unused-but-malformed expr cannot slip past a
+    // consumption-boundary re-verify. Value-use ORDER is checked separately in
     // the per-state statement walk.
     void verify_expr_arena(const CoreFlowDecl &flow) {
         const auto expr_count = static_cast<std::uint32_t>(flow.exprs.size());
@@ -241,6 +270,60 @@ class Verifier {
                            },
                        },
                        expr.node);
+        }
+        verify_expr_arena_acyclic(flow);
+    }
+
+    // 3-color DFS (White/Gray/Black) over the expr reference graph. A back edge
+    // to a Gray node is a cycle (a node reachable from itself through operand
+    // edges); a Black node is a finished shared DAG node (legal, revisited
+    // cheaply). Only CoreUnaryExpr/CoreBinaryExpr carry intra-arena edges in
+    // this slice — the other nodes reference values, not exprs.
+    void verify_expr_arena_acyclic(const CoreFlowDecl &flow) {
+        enum class Color : std::uint8_t { White, Gray, Black };
+        const auto expr_count = static_cast<std::uint32_t>(flow.exprs.size());
+        std::vector<Color> color(expr_count, Color::White);
+        // Iterative DFS with an explicit stack so a deep chain cannot overflow
+        // the C++ stack while we are proving the IR itself is bounded.
+        for (std::uint32_t root = 0; root < expr_count; ++root) {
+            if (color[root] != Color::White) {
+                continue;
+            }
+            std::vector<std::uint32_t> stack{root};
+            while (!stack.empty()) {
+                const std::uint32_t id = stack.back();
+                if (color[id] == Color::White) {
+                    color[id] = Color::Gray;
+                    const auto push_edge = [&](CoreExprId e) {
+                        if (e.value >= expr_count) {
+                            return; // out-of-range already reported in verify_expr_arena
+                        }
+                        if (color[e.value] == Color::Gray) {
+                            error(verify::kExprCycle,
+                                  "expression #" + std::to_string(e.value) +
+                                      " participates in a reference cycle in flow '" +
+                                      flow.agent_name + "'",
+                                  flow.exprs[id].source_range);
+                        } else if (color[e.value] == Color::White) {
+                            stack.push_back(e.value);
+                        }
+                    };
+                    std::visit(Overloaded{
+                                   [&](const CoreUnaryExpr &u) { push_edge(u.operand); },
+                                   [&](const CoreBinaryExpr &b) {
+                                       push_edge(b.lhs);
+                                       push_edge(b.rhs);
+                                   },
+                                   [&](const auto &) {},
+                               },
+                               flow.exprs[id].node);
+                } else {
+                    if (color[id] == Color::Gray) {
+                        color[id] = Color::Black;
+                    }
+                    stack.pop_back();
+                }
+            }
         }
     }
 
@@ -322,6 +405,14 @@ class Verifier {
         }
         const CoreAgentDecl &agent = program_.agents[flow.target.value];
         const auto state_count = static_cast<std::uint32_t>(agent.states.size());
+        // SSA single-definition is a FLOW-GLOBAL property: a CoreValueId is
+        // allocated once from the flow's value counter, so it may be defined at
+        // most once across ALL states and ALL branches. `all_definitions` is
+        // shared for the whole flow and never rolled back — a second definition
+        // anywhere (sibling branch, later state) is a redefinition. Def-before-
+        // use / scope is a SEPARATE, region-local property handled by the
+        // `visible` set (copied per branch) in verify_region.
+        std::unordered_set<std::uint32_t> all_definitions;
         for (const CoreFlowState &state : flow.states) {
             if (state.state.value >= state_count) {
                 error(verify::kStateIdOutOfRange,
@@ -331,8 +422,8 @@ class Verifier {
                       std::nullopt);
                 continue;
             }
-            std::unordered_set<std::uint32_t> defined; // fresh per state (bodies are independent)
-            verify_region(flow, state_count, state.body, defined);
+            std::unordered_set<std::uint32_t> visible; // fresh scope per state body
+            verify_region(flow, state_count, state.body, all_definitions, visible);
         }
     }
 
@@ -367,11 +458,15 @@ class Verifier {
                    flow.exprs[id.value].node);
     }
 
-    // Verify one region's statements in order: def-before-use (branch-scoped),
-    // value-id bounds, capability arity, store-place projection, and the
-    // no-statement-after-terminator rule.
+    // Verify one region's statements in order. Two definition sets:
+    //   * `all_definitions` (flow-global, shared, never rolled back): SSA single
+    //     definition — a value defined twice ANYWHERE is a redefinition.
+    //   * `visible` (region-local, copied into each branch): def-before-use +
+    //     scope — a branch-local definition must not be visible to a sibling
+    //     branch or after the `if`.
     void verify_region(const CoreFlowDecl &flow, std::uint32_t state_count, const CoreRegion &region,
-                       std::unordered_set<std::uint32_t> &defined) {
+                       std::unordered_set<std::uint32_t> &all_definitions,
+                       std::unordered_set<std::uint32_t> &visible) {
         const auto use_value = [&](CoreValueId v, SourceRangeOpt range) {
             if (v.value >= flow.value_count) {
                 error(verify::kValueIdOutOfRange,
@@ -380,7 +475,7 @@ class Verifier {
                       range);
                 return;
             }
-            if (defined.find(v.value) == defined.end()) {
+            if (visible.find(v.value) == visible.end()) {
                 error(verify::kValueUseBeforeDef,
                       "value id " + std::to_string(v.value) +
                           " is used before it is defined (or is out of scope)",
@@ -395,10 +490,13 @@ class Verifier {
                       range);
                 return;
             }
-            if (!defined.insert(v.value).second) {
+            // Flow-global single definition: reject a second definition anywhere.
+            if (!all_definitions.insert(v.value).second) {
                 error(verify::kValueRedefined,
                       "value id " + std::to_string(v.value) + " is defined more than once", range);
             }
+            // Also mark it visible in the current scope for subsequent uses.
+            visible.insert(v.value);
         };
         const auto use_expr = [&](CoreExprId e, SourceRangeOpt range) {
             std::vector<CoreValueId> uses;
@@ -453,13 +551,20 @@ class Verifier {
                            },
                            [&](const CoreIfStmt &s) {
                                use_value(s.condition, stmt.source_range);
+                               // Branch-local definitions must not escape: each
+                               // branch gets its OWN copy of `visible` (rolled
+                               // back after), but SHARES `all_definitions` so a
+                               // value defined in both branches is still caught
+                               // as a flow-global redefinition.
                                if (s.then_region) {
-                                   auto branch = defined; // branch-local defs must not escape
-                                   verify_region(flow, state_count, *s.then_region, branch);
+                                   auto branch_visible = visible;
+                                   verify_region(flow, state_count, *s.then_region, all_definitions,
+                                                 branch_visible);
                                }
                                if (s.else_region) {
-                                   auto branch = defined;
-                                   verify_region(flow, state_count, *s.else_region, branch);
+                                   auto branch_visible = visible;
+                                   verify_region(flow, state_count, *s.else_region, all_definitions,
+                                                 branch_visible);
                                }
                            },
                            [&](const CoreGotoStmt &s) {
