@@ -842,3 +842,179 @@ TEST_CASE("verifier fails closed on an or-pattern with fewer than two alternativ
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternShapeInvalid));
 }
+
+// --- ③-2 CoreMatchStmt / CoreYieldStmt / CoreTrapStmt ---
+//
+// Build a statement match into the Done handler: define a fresh scrutinee value,
+// then `match %s { _ => <yield none> } fallback { trap }`. Helpers bump
+// value_count for the fresh ids these tests introduce.
+
+namespace {
+// Replace Done's body with: %sid = lit; <match>; (match provided by caller).
+// Returns a reference to the match for tampering.
+CoreMatchStmt make_wildcard_match(std::uint32_t scrutinee, bool trap_fallback) {
+    CoreMatchStmt m;
+    m.scrutinee = CoreValueId{scrutinee};
+    m.has_result = false;
+    // one wildcard arm whose body yields nothing (statement match)
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0}; // caller ensures pattern #0 is a wildcard
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    m.arms.push_back(std::move(arm));
+    m.fallback_region = std::make_unique<CoreRegion>();
+    if (trap_fallback) {
+        m.fallback_region->statements.push_back(
+            CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    } else {
+        m.fallback_region->statements.push_back(
+            CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    }
+    return m;
+}
+} // namespace
+
+TEST_CASE("verifier accepts a well-formed statement match") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->value_count; // fresh scrutinee id
+    g.flow->value_count += 1;
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(
+        CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt}); // %sid = lit1
+    done.statements.push_back(CoreStmt{make_wildcard_match(sid, /*trap_fallback=*/false), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("verifier fails closed on a yield in an ordinary flow region") {
+    GoodProgram g = make_good_program();
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kYieldOutsideMatchArm));
+}
+
+TEST_CASE("verifier fails closed on a match without a fallback region") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->value_count;
+    g.flow->value_count += 1;
+    auto match = make_wildcard_match(sid, /*trap_fallback=*/false);
+    match.fallback_region.reset(); // remove fallback
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kMatchNotTotal));
+}
+
+TEST_CASE("verifier fails closed on a statement match arm that falls through (no yield)") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->value_count;
+    g.flow->value_count += 1;
+    auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
+    match.arms[0].body->statements.clear(); // arm body no longer yields -> fallthrough
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kMatchArmYield));
+}
+
+TEST_CASE("verifier fails closed on a statement match arm that yields a value") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->value_count;
+    g.flow->value_count += 1;
+    auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
+    // statement match arm yields a VALUE (sid) — illegal for a unit arm.
+    match.arms[0].body->statements.clear();
+    match.arms[0].body->statements.push_back(
+        CoreStmt{CoreYieldStmt{true, CoreValueId{sid}}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kMatchArmYield));
+}
+
+TEST_CASE("verifier accepts an if-both-branches-yield arm body (per-path yield)") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->value_count;
+    g.flow->value_count += 1;
+    auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
+    // arm body: if %sid { yield } else { yield } — both paths yield unit.
+    match.arms[0].body->statements.clear();
+    CoreIfStmt iff;
+    iff.condition = CoreValueId{sid};
+    iff.then_region = std::make_unique<CoreRegion>();
+    iff.then_region->statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    iff.else_region = std::make_unique<CoreRegion>();
+    iff.else_region->statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    match.arms[0].body->statements.push_back(CoreStmt{std::move(iff), std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("verifier fails closed on a match arm binding defined more than once (flow-global SSA)") {
+    GoodProgram g = make_good_program();
+    // pattern #0 = binding pattern naming arm binding 0.
+    CoreBindingPat bp;
+    bp.binding = CorePatternBindingId{0};
+    g.flow->patterns.push_back(CorePattern{bp, std::nullopt});
+    const std::uint32_t sid = g.flow->value_count;
+    const std::uint32_t bind_v = sid + 1;
+    g.flow->value_count += 2;
+    CoreMatchStmt m;
+    m.scrutinee = CoreValueId{sid};
+    m.has_result = false;
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.bindings.push_back(CorePatternBinding{CoreValueId{bind_v}});
+    // The arm body defines bind_v AGAIN via a let -> flow-global redefinition.
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(
+        CoreStmt{CoreLetStmt{CoreValueId{bind_v}, CoreExprId{0}}, std::nullopt});
+    arm.body->statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    m.arms.push_back(std::move(arm));
+    m.fallback_region = std::make_unique<CoreRegion>();
+    m.fallback_region->statements.push_back(
+        CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(m), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueRedefined));
+}

@@ -600,12 +600,79 @@ struct CoreReturnStmt {
     [[nodiscard]] friend bool operator==(const CoreReturnStmt &, const CoreReturnStmt &) noexcept = default;
 };
 
+/// Yield a value out of a match ARM body or GUARD region (MLIR scf.yield style).
+/// A guard region yields the Bool guard result; an arm body yields the arm's
+/// value for an expression match (or no value for a statement match). It is the
+/// region's terminator INPUT to the enclosing match's result join — it does NOT
+/// itself write the match result id. Only legal inside a guard / match-arm
+/// region (the verifier rejects it in an ordinary flow region).
+struct CoreYieldStmt {
+    bool has_value{false};
+    CoreValueId value{};
+    [[nodiscard]] friend bool operator==(const CoreYieldStmt &, const CoreYieldStmt &) noexcept = default;
+};
+
+/// The kind of an unconditional runtime trap.
+enum class CoreTrapKind { NonExhaustiveMatch };
+
+/// An unconditional runtime trap — a diverging terminator. Used as a match's
+/// explicit fallback so a non-exhaustive match cannot structurally "fall
+/// through" (the verifier trusts this structure, not a mutable exhaustive flag).
+struct CoreTrapStmt {
+    CoreTrapKind kind{CoreTrapKind::NonExhaustiveMatch};
+    [[nodiscard]] friend bool operator==(const CoreTrapStmt &, const CoreTrapStmt &) noexcept = default;
+};
+
+/// One binding introduced by a match arm (`x` in `Some(x)`), shared across an
+/// or-pattern's alternatives. `value` is the fresh SSA value id it defines
+/// (flow-global single definition; visible only in the arm's guard + body).
+struct CorePatternBinding {
+    CoreValueId value{};
+    [[nodiscard]] friend bool operator==(const CorePatternBinding &,
+                                         const CorePatternBinding &) noexcept = default;
+};
+
+/// One arm of a match. `pattern` is the arena id of the arm's pattern;
+/// `bindings` are the arm-scoped SSA values its binding patterns introduce (a
+/// `CoreBindingPat` names one by index). `guard_region` (null when absent) runs
+/// after the pattern matches, in a scope where `bindings` are visible, and
+/// yields a Bool; a false guard falls to the next arm. `body` runs when the
+/// pattern matches and any guard passed, and yields the arm's value (expression
+/// match) or no value (statement match), or diverges (return/goto/trap).
+struct CoreMatchArm {
+    CorePatternId pattern{};
+    std::vector<CorePatternBinding> bindings;
+    std::unique_ptr<CoreRegion> guard_region; // null = no guard
+    std::unique_ptr<CoreRegion> body;
+    friend bool operator==(const CoreMatchArm &, const CoreMatchArm &) noexcept;
+};
+
+/// A structured match. `scrutinee` is the already-bound value matched. Arms are
+/// tried in order; the FIRST whose pattern matches (and whose guard, if any,
+/// passes) runs. `result` (set => expression match) is defined ONCE by the match
+/// in the enclosing scope from the arms' yielded values; unset => statement
+/// match. `fallback_region` (never null) runs when no arm matched — a
+/// non-exhaustive match lowers it to `CoreTrapStmt{NonExhaustiveMatch}`, an
+/// if-let to its `else`. It is a SEPARATE region (not a synthetic arm), so total
+/// coverage is a structural fact the verifier trusts — not a mutable flag.
+struct CoreMatchStmt {
+    CoreValueId scrutinee{};
+    bool has_result{false};
+    CoreValueId result{};
+    std::vector<CoreMatchArm> arms;
+    std::unique_ptr<CoreRegion> fallback_region; // never null in a well-formed program
+    friend bool operator==(const CoreMatchStmt &, const CoreMatchStmt &) noexcept;
+};
+
 using CoreStmtNode = std::variant<CoreLetStmt,
                                   CoreCapabilityCallStmt,
                                   CoreStoreStmt,
                                   CoreIfStmt,
                                   CoreGotoStmt,
-                                  CoreReturnStmt>;
+                                  CoreReturnStmt,
+                                  CoreYieldStmt,
+                                  CoreTrapStmt,
+                                  CoreMatchStmt>;
 
 struct CoreStmt {
     CoreStmtNode node;

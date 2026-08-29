@@ -57,6 +57,15 @@
 //   * capability-call arity matches the import signature;
 //   * an executable program contains NO CoreUnsupportedExpr;
 //   * no executable statement follows a terminator (goto/return) in a region;
+//   * match well-formedness: a CoreYieldStmt appears only in a guard / match-arm
+//     region; per CONTROL-FLOW PATH (merged across if-branches and nested
+//     matches, not by counting yield nodes) a guard region yields a value or
+//     traps, an expression arm yields a value or diverges, a statement arm
+//     yields nothing or diverges; a match has a mandatory fallback region
+//     (structural totality, not a mutable flag); arm bindings are flow-global
+//     single-def and visible only in the arm's guard + body; an or-pattern's
+//     alternatives bind the same variable set; the result is defined once in the
+//     parent scope for an expression match;
 //   * the agent typed shell: input/output must be a valid Struct; context is a
 //     valid Struct (context_is_struct) or the Unit default (kInvalid); any other
 //     combination — a required shell left kInvalid, or pointing at a non-struct
@@ -112,6 +121,11 @@ inline constexpr std::string_view kPatternVariantInvalid = "core.verify.PATTERN_
 inline constexpr std::string_view kPatternPayloadArity = "core.verify.PATTERN_PAYLOAD_ARITY";
 inline constexpr std::string_view kPatternFieldInvalid = "core.verify.PATTERN_FIELD_INVALID";
 inline constexpr std::string_view kPatternShapeInvalid = "core.verify.PATTERN_SHAPE_INVALID";
+inline constexpr std::string_view kYieldOutsideMatchArm = "core.verify.YIELD_OUTSIDE_MATCH_ARM";
+inline constexpr std::string_view kMatchArmYield = "core.verify.MATCH_ARM_YIELD";
+inline constexpr std::string_view kMatchNotTotal = "core.verify.MATCH_NOT_TOTAL";
+inline constexpr std::string_view kPatternBindingInvalid = "core.verify.PATTERN_BINDING_INVALID";
+inline constexpr std::string_view kOrBindingSetMismatch = "core.verify.OR_BINDING_SET_MISMATCH";
 } // namespace verify
 
 /// Result of verifying a Core-IR program: any structural violations, as

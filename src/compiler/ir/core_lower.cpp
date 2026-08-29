@@ -49,6 +49,30 @@ bool operator==(const CoreStmt &a, const CoreStmt &b) noexcept {
     return a.node == b.node && a.source_range == b.source_range;
 }
 
+bool operator==(const CoreMatchArm &a, const CoreMatchArm &b) noexcept {
+    const auto region_eq = [](const std::unique_ptr<CoreRegion> &x,
+                              const std::unique_ptr<CoreRegion> &y) {
+        if (!x || !y) {
+            return x.get() == y.get();
+        }
+        return *x == *y;
+    };
+    return a.pattern == b.pattern && a.bindings == b.bindings &&
+           region_eq(a.guard_region, b.guard_region) && region_eq(a.body, b.body);
+}
+
+bool operator==(const CoreMatchStmt &a, const CoreMatchStmt &b) noexcept {
+    const auto region_eq = [](const std::unique_ptr<CoreRegion> &x,
+                              const std::unique_ptr<CoreRegion> &y) {
+        if (!x || !y) {
+            return x.get() == y.get();
+        }
+        return *x == *y;
+    };
+    return a.scrutinee == b.scrutinee && a.has_result == b.has_result && a.result == b.result &&
+           a.arms == b.arms && region_eq(a.fallback_region, b.fallback_region);
+}
+
 bool operator==(const CoreRegion &a, const CoreRegion &b) noexcept {
     return a.statements == b.statements;
 }

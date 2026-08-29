@@ -12,6 +12,9 @@
 #include "ahfl/base/support/overloaded.hpp"
 
 #include <cstdint>
+#include <functional>
+#include <optional>
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <variant>
@@ -769,7 +772,7 @@ class Verifier {
                 continue;
             }
             std::unordered_set<std::uint32_t> visible; // fresh scope per state body
-            verify_region(flow, state_count, state.body, all_definitions, visible);
+            static_cast<void>(verify_region(flow, state_count, state.body, all_definitions, visible));
         }
     }
 
@@ -810,9 +813,48 @@ class Verifier {
     //   * `visible` (region-local, copied into each branch): def-before-use +
     //     scope — a branch-local definition must not be visible to a sibling
     //     branch or after the `if`.
-    void verify_region(const CoreFlowDecl &flow, std::uint32_t state_count, const CoreRegion &region,
-                       std::unordered_set<std::uint32_t> &all_definitions,
-                       std::unordered_set<std::uint32_t> &visible) {
+    //
+    // `ctx` is the region's role, which governs where a CoreYieldStmt is legal
+    // and its arity: Flow (ordinary handler body — no yield allowed), Guard and
+    // MatchArmValue (must yield a value), MatchArmUnit (must yield no value). An
+    // `if` branch inherits its parent's context (a yield nested in an `if` inside
+    // an arm body still yields from that arm). `terminated_out` (optional)
+    // reports whether the region ended in a terminator/yield, so a match arm can
+    // require its body/guard to end well.
+    enum class RegionContext { Flow, Guard, MatchArmValue, MatchArmUnit };
+
+    // A region's control-flow exit summary, MERGED across all paths. `fallthrough`
+    // = at least one path runs off the region end; the diverge/yield flags = at
+    // least one path exits that way. A well-formed match-arm value body, for
+    // instance, must have `!fallthrough && !yields_unit` and every path either
+    // yields_value or diverges.
+    struct RegionExit {
+        bool fallthrough{false};
+        bool yields_value{false};
+        bool yields_unit{false};
+        bool diverges_control{false}; // Return / Goto (escapes the handler)
+        bool diverges_trap{false};    // Trap (diverges but stays in-handler)
+        void merge(const RegionExit &o) {
+            fallthrough |= o.fallthrough;
+            yields_value |= o.yields_value;
+            yields_unit |= o.yields_unit;
+            diverges_control |= o.diverges_control;
+            diverges_trap |= o.diverges_trap;
+        }
+    };
+
+    // Verify one region's statements in order, returning its merged exit summary.
+    // Definition sets: `all_definitions` (flow-global, never rolled back — SSA
+    // single definition) and `visible` (region-local, copied into each branch —
+    // def-before-use + scope). `ctx` is the region's role (governs where a
+    // CoreYieldStmt is legal); yield/context legality is enforced by the CALLER
+    // from the returned RegionExit, except that a yield in a `Flow` region is an
+    // immediate error here.
+    [[nodiscard]] RegionExit verify_region(const CoreFlowDecl &flow, std::uint32_t state_count,
+                                           const CoreRegion &region,
+                                           std::unordered_set<std::uint32_t> &all_definitions,
+                                           std::unordered_set<std::uint32_t> &visible,
+                                           RegionContext ctx = RegionContext::Flow) {
         const auto use_value = [&](CoreValueId v, SourceRangeOpt range) {
             if (v.value >= flow.value_count) {
                 error(verify::kValueIdOutOfRange,
@@ -836,12 +878,10 @@ class Verifier {
                       range);
                 return;
             }
-            // Flow-global single definition: reject a second definition anywhere.
             if (!all_definitions.insert(v.value).second) {
                 error(verify::kValueRedefined,
                       "value id " + std::to_string(v.value) + " is defined more than once", range);
             }
-            // Also mark it visible in the current scope for subsequent uses.
             visible.insert(v.value);
         };
         const auto use_expr = [&](CoreExprId e, SourceRangeOpt range) {
@@ -853,12 +893,16 @@ class Verifier {
             }
         };
 
-        bool terminated = false;
+        // `live` tracks the current path; once it exits (yield/return/goto/trap)
+        // the following statements are unreachable. `exit` accumulates HOW the
+        // current straight-line path leaves; when `live` is still true at the end
+        // the region falls through.
+        bool live = true;
+        RegionExit exit;
         for (const CoreStmt &stmt : region.statements) {
-            if (terminated) {
+            if (!live) {
                 error(verify::kStmtAfterTerminator,
-                      "statement follows a terminator (goto/return) in flow '" + flow.agent_name +
-                          "'",
+                      "statement follows a terminator in flow '" + flow.agent_name + "'",
                       stmt.source_range);
             }
             std::visit(Overloaded{
@@ -897,21 +941,34 @@ class Verifier {
                            },
                            [&](const CoreIfStmt &s) {
                                use_value(s.condition, stmt.source_range);
-                               // Branch-local definitions must not escape: each
-                               // branch gets its OWN copy of `visible` (rolled
-                               // back after), but SHARES `all_definitions` so a
-                               // value defined in both branches is still caught
-                               // as a flow-global redefinition.
+                               // Each branch: own `visible` copy (defs don't
+                               // escape), shared `all_definitions`, same `ctx`.
+                               // The else-less branch is an implicit fallthrough.
+                               RegionExit then_exit;
+                               RegionExit else_exit;
+                               else_exit.fallthrough = true;
                                if (s.then_region) {
-                                   auto branch_visible = visible;
-                                   verify_region(flow, state_count, *s.then_region, all_definitions,
-                                                 branch_visible);
+                                   auto bv = visible;
+                                   then_exit = verify_region(flow, state_count, *s.then_region,
+                                                             all_definitions, bv, ctx);
+                               } else {
+                                   then_exit.fallthrough = true;
                                }
                                if (s.else_region) {
-                                   auto branch_visible = visible;
-                                   verify_region(flow, state_count, *s.else_region, all_definitions,
-                                                 branch_visible);
+                                   auto bv = visible;
+                                   else_exit = verify_region(flow, state_count, *s.else_region,
+                                                             all_definitions, bv, ctx);
                                }
+                               RegionExit merged;
+                               merged.merge(then_exit);
+                               merged.merge(else_exit);
+                               // The `if` yields/diverges only if BOTH branches
+                               // leave; it falls through if EITHER branch can.
+                               exit.yields_value |= merged.yields_value;
+                               exit.yields_unit |= merged.yields_unit;
+                               exit.diverges_control |= merged.diverges_control;
+                               exit.diverges_trap |= merged.diverges_trap;
+                               live = then_exit.fallthrough || else_exit.fallthrough;
                            },
                            [&](const CoreGotoStmt &s) {
                                if (s.target.value >= state_count) {
@@ -920,17 +977,265 @@ class Verifier {
                                              " is out of range in flow '" + flow.agent_name + "'",
                                          stmt.source_range);
                                }
-                               terminated = true;
+                               exit.diverges_control = true;
+                               live = false;
                            },
                            [&](const CoreReturnStmt &s) {
                                if (s.has_value) {
                                    use_value(s.value, stmt.source_range);
                                }
-                               terminated = true;
+                               exit.diverges_control = true;
+                               live = false;
+                           },
+                           [&](const CoreYieldStmt &s) {
+                               if (ctx == RegionContext::Flow) {
+                                   error(verify::kYieldOutsideMatchArm,
+                                         "yield outside a match arm / guard region in flow '" +
+                                             flow.agent_name + "'",
+                                         stmt.source_range);
+                               }
+                               if (s.has_value) {
+                                   use_value(s.value, stmt.source_range);
+                                   exit.yields_value = true;
+                               } else {
+                                   exit.yields_unit = true;
+                               }
+                               live = false;
+                           },
+                           [&](const CoreTrapStmt &) {
+                               exit.diverges_trap = true;
+                               live = false;
+                           },
+                           [&](const CoreMatchStmt &s) {
+                               const RegionExit m =
+                                   verify_match(flow, state_count, s, all_definitions, visible,
+                                                stmt.source_range);
+                               // A match consumes its arms' yields; only control /
+                               // trap divergence propagates to the parent, plus a
+                               // fallthrough when the match can normally complete.
+                               exit.diverges_control |= m.diverges_control;
+                               exit.diverges_trap |= m.diverges_trap;
+                               live = m.fallthrough;
                            },
                        },
                        stmt.node);
         }
+        if (live) {
+            exit.fallthrough = true;
+        }
+        return exit;
+    }
+
+    // Verify a match statement and return its exit summary for the PARENT region
+    // (arm yields are consumed here; control/trap divergence propagates up).
+    [[nodiscard]] RegionExit verify_match(const CoreFlowDecl &flow, std::uint32_t state_count,
+                                          const CoreMatchStmt &m,
+                                          std::unordered_set<std::uint32_t> &all_definitions,
+                                          std::unordered_set<std::uint32_t> &visible,
+                                          SourceRangeOpt range) {
+        const auto pat_count = static_cast<std::uint32_t>(flow.patterns.size());
+        // scrutinee in scope.
+        if (m.scrutinee.value >= flow.value_count) {
+            error(verify::kValueIdOutOfRange,
+                  "match scrutinee value id " + std::to_string(m.scrutinee.value) +
+                      " is out of range",
+                  range);
+        } else if (visible.find(m.scrutinee.value) == visible.end()) {
+            error(verify::kValueUseBeforeDef, "match scrutinee is used before it is defined", range);
+        }
+        const RegionContext body_ctx =
+            m.has_result ? RegionContext::MatchArmValue : RegionContext::MatchArmUnit;
+
+        RegionExit propagated; // what the match contributes to the parent region
+
+        const auto require_arm_region = [&](const CoreRegion &region, RegionContext ctx,
+                                            std::unordered_set<std::uint32_t> &vis, bool is_guard) {
+            const RegionExit e = verify_region(flow, state_count, region, all_definitions, vis, ctx);
+            // Per-path legality by context.
+            if (ctx == RegionContext::Guard) {
+                // Every path must yield a Bool value or trap; no fallthrough,
+                // no unit yield, no control escape (a source guard is pure).
+                if (e.fallthrough || e.yields_unit || e.diverges_control) {
+                    error(verify::kMatchArmYield,
+                          "guard region must yield a value on every path (no fallthrough / unit / "
+                          "return / goto)",
+                          range);
+                }
+            } else if (ctx == RegionContext::MatchArmValue) {
+                if (e.fallthrough || e.yields_unit) {
+                    error(verify::kMatchArmYield,
+                          "expression match arm must yield a value on every path (no fallthrough / "
+                          "unit yield)",
+                          range);
+                }
+            } else { // MatchArmUnit
+                if (e.fallthrough || e.yields_value) {
+                    error(verify::kMatchArmYield,
+                          "statement match arm must yield no value on every path (no fallthrough / "
+                          "value yield)",
+                          range);
+                }
+            }
+            static_cast<void>(is_guard);
+            return e;
+        };
+
+        for (const CoreMatchArm &arm : m.arms) {
+            // Pattern id in range.
+            if (arm.pattern.value >= pat_count) {
+                error(verify::kPatternIdOutOfRange,
+                      "match arm pattern id " + std::to_string(arm.pattern.value) +
+                          " is out of range",
+                      range);
+            }
+            // Arm bindings define fresh flow-global values, visible only in this
+            // arm's guard + body (a copy of the outer visible set).
+            auto arm_visible = visible;
+            for (const CorePatternBinding &b : arm.bindings) {
+                if (b.value.value >= flow.value_count) {
+                    error(verify::kValueIdOutOfRange,
+                          "arm binding value id " + std::to_string(b.value.value) +
+                              " is out of range",
+                          range);
+                    continue;
+                }
+                if (!all_definitions.insert(b.value.value).second) {
+                    error(verify::kValueRedefined,
+                          "arm binding value id " + std::to_string(b.value.value) +
+                              " is defined more than once",
+                          range);
+                }
+                arm_visible.insert(b.value.value);
+            }
+            // Pattern binding-references + or-alternative binding-set consistency.
+            verify_arm_pattern_bindings(flow, arm, range);
+
+            if (arm.guard_region) {
+                auto guard_visible = arm_visible;
+                require_arm_region(*arm.guard_region, RegionContext::Guard, guard_visible,
+                                   /*is_guard=*/true);
+            }
+            if (arm.body) {
+                auto body_visible = arm_visible;
+                const RegionExit be =
+                    require_arm_region(*arm.body, body_ctx, body_visible, /*is_guard=*/false);
+                propagated.diverges_control |= be.diverges_control;
+                propagated.diverges_trap |= be.diverges_trap;
+                if (be.yields_value || be.yields_unit) {
+                    propagated.fallthrough = true; // a completing arm => match completes
+                }
+            } else {
+                error(verify::kMatchArmYield, "match arm has no body region", range);
+            }
+        }
+
+        // Fallback region is mandatory (structural totality — not a mutable flag).
+        if (!m.fallback_region) {
+            error(verify::kMatchNotTotal,
+                  "match has no fallback region (must be exhaustive by construction)", range);
+        } else {
+            auto fb_visible = visible;
+            const RegionExit fe =
+                require_arm_region(*m.fallback_region, body_ctx, fb_visible, /*is_guard=*/false);
+            propagated.diverges_control |= fe.diverges_control;
+            propagated.diverges_trap |= fe.diverges_trap;
+            if (fe.yields_value || fe.yields_unit) {
+                propagated.fallthrough = true;
+            }
+        }
+
+        // The match result is defined ONCE, in the parent scope, iff expression.
+        if (m.has_result) {
+            if (m.result.value >= flow.value_count) {
+                error(verify::kValueIdOutOfRange,
+                      "match result value id " + std::to_string(m.result.value) +
+                          " is out of range",
+                      range);
+            } else if (!all_definitions.insert(m.result.value).second) {
+                error(verify::kValueRedefined,
+                      "match result value id " + std::to_string(m.result.value) +
+                          " is defined more than once",
+                      range);
+            } else {
+                visible.insert(m.result.value);
+            }
+        }
+        return propagated;
+    }
+
+    // Check that every CoreBindingPat in the arm's pattern names a valid arm
+    // binding, and that an or-pattern's alternatives bind the SAME binding set.
+    void verify_arm_pattern_bindings(const CoreFlowDecl &flow, const CoreMatchArm &arm,
+                                     SourceRangeOpt range) {
+        const auto pat_count = static_cast<std::uint32_t>(flow.patterns.size());
+        const auto binding_count = static_cast<std::uint32_t>(arm.bindings.size());
+        // Collect the binding-id set a pattern introduces (recursively).
+        std::function<std::optional<std::set<std::uint32_t>>(CorePatternId,
+                                                             std::unordered_set<std::uint32_t> &)>
+            collect;
+        collect = [&](CorePatternId pid, std::unordered_set<std::uint32_t> &visiting)
+            -> std::optional<std::set<std::uint32_t>> {
+            std::set<std::uint32_t> out;
+            if (pid.value >= pat_count || !visiting.insert(pid.value).second) {
+                return out; // out of range / cycle already reported elsewhere
+            }
+            std::visit(Overloaded{
+                           [&](const CoreWildcardPat &) {},
+                           [&](const CoreLiteralPat &) {},
+                           [&](const CoreBindingPat &b) {
+                               if (b.binding.value >= binding_count) {
+                                   error(verify::kPatternBindingInvalid,
+                                         "binding pattern references arm binding id " +
+                                             std::to_string(b.binding.value) + " out of range",
+                                         range);
+                               } else {
+                                   out.insert(b.binding.value);
+                               }
+                               if (b.has_nested) {
+                                   if (auto n = collect(b.nested, visiting)) {
+                                       out.insert(n->begin(), n->end());
+                                   }
+                               }
+                           },
+                           [&](const CoreVariantPat &v) {
+                               for (const CorePatternId s : v.tuple_subpatterns) {
+                                   if (auto n = collect(s, visiting)) {
+                                       out.insert(n->begin(), n->end());
+                                   }
+                               }
+                               for (const CoreVariantPatField &f : v.struct_fields) {
+                                   if (auto n = collect(f.pattern, visiting)) {
+                                       out.insert(n->begin(), n->end());
+                                   }
+                               }
+                           },
+                           [&](const CoreOrPat &o) {
+                               // Every alternative must bind the SAME set.
+                               std::optional<std::set<std::uint32_t>> common;
+                               for (const CorePatternId alt : o.alternatives) {
+                                   auto alt_set = collect(alt, visiting);
+                                   if (!alt_set) {
+                                       continue;
+                                   }
+                                   if (!common) {
+                                       common = *alt_set;
+                                   } else if (*common != *alt_set) {
+                                       error(verify::kOrBindingSetMismatch,
+                                             "or-pattern alternatives bind different variable sets",
+                                             range);
+                                   }
+                               }
+                               if (common) {
+                                   out.insert(common->begin(), common->end());
+                               }
+                           },
+                       },
+                       flow.patterns[pid.value].node);
+            visiting.erase(pid.value);
+            return out;
+        };
+        std::unordered_set<std::uint32_t> visiting;
+        static_cast<void>(collect(arm.pattern, visiting));
     }
 
     const CoreProgram &program_;
