@@ -1967,3 +1967,136 @@ TEST_CASE("(3)-3b P0-1: AST variant vs typed Literal kind mismatch fails closed"
     REQUIRE(corrupted);
     CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
 }
+
+// --- (3)-3b round-3: guard existence must agree with the AST arm ---
+
+// A match with a GUARDED first arm (Some(x) if <guard> => ...). Used to prove a
+// deleted guard child fails closed.
+const std::string kGuardedMatchProgram = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let mm: Maybe = Maybe::Some(input.id);
+        let r: Int = match mm {
+            Some(x) if x > 0 => x,
+            Some(y) => y,
+            None => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+
+TEST_CASE("(3)-3b P0-1: deleting a real MatchArmGuard child fails closed") {
+    auto st = frontend_state("del_guard", kGuardedMatchProgram);
+    REQUIRE(st.has_value());
+    auto &tp = st->typecheck->typed_program;
+    const auto mi = find_typed_match(tp);
+    REQUIRE(mi != UINT32_MAX);
+    // Drop the FIRST MatchArmGuard child: the AST arm still has an `if` guard, so
+    // the guard-existence check must reject the mismatch.
+    auto &children = tp.expressions[mi].children;
+    bool removed = false;
+    for (auto it = children.begin(); it != children.end(); ++it) {
+        if (it->role == ahfl::TypedExprChildRole::MatchArmGuard) {
+            children.erase(it);
+            removed = true;
+            break;
+        }
+    }
+    REQUIRE(removed);
+    CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
+}
+
+TEST_CASE("(3)-3b P0-1: injecting a guard child on a guardless arm fails closed") {
+    auto st = frontend_state("inject_guard", kMatchProgram); // no guards in source
+    REQUIRE(st.has_value());
+    auto &tp = st->typecheck->typed_program;
+    const auto mi = find_typed_match(tp);
+    REQUIRE(mi != UINT32_MAX);
+    // Inject a spurious MatchArmGuard child before the first body child, reusing
+    // an existing body child's expr index. The AST arm has no guard, so this must
+    // be rejected.
+    auto &children = tp.expressions[mi].children;
+    std::uint32_t some_body_expr = UINT32_MAX;
+    for (const auto &c : children) {
+        if (c.role == ahfl::TypedExprChildRole::MatchArmBody) {
+            some_body_expr = c.expr_index;
+            break;
+        }
+    }
+    REQUIRE(some_body_expr != UINT32_MAX);
+    ahfl::TypedExprChild guard_child;
+    guard_child.role = ahfl::TypedExprChildRole::MatchArmGuard;
+    guard_child.expr_index = some_body_expr;
+    children.insert(children.begin(), guard_child);
+    CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
+}
+
+// --- (3)-3b round-3 P0-2: if-let must resolve its AST pattern or fail closed ---
+
+const std::string kIfLetProgram = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { total: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let mm: Maybe = Maybe::Some(input.id);
+        if let Some(x) = mm {
+            ctx.total = x;
+        }
+        return Resp { id: ctx.total };
+    }
+}
+)AHFL";
+
+TEST_CASE("(3)-3b P0-2: an if-let whose AST lookup fails does NOT degrade to wildcard") {
+    auto st = frontend_state("iflet_lookup", kIfLetProgram);
+    REQUIRE(st.has_value());
+    auto &tp = st->typecheck->typed_program;
+    // Corrupt the if-let TypedStatement's range so find_ast_if_let_stmt (which
+    // matches by range) can no longer locate the AST statement. The lowerer must
+    // throw rather than lower the pattern as a wildcard.
+    bool corrupted = false;
+    for (auto &stmt : tp.statements) {
+        if (stmt.kind == ahfl::TypedStmtKind::IfLet) {
+            stmt.range = ahfl::SourceRange{999990, 999999};
+            corrupted = true;
+            break;
+        }
+    }
+    REQUIRE(corrupted);
+    CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
+}

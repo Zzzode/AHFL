@@ -1036,10 +1036,13 @@ class TypedIrLowerer final {
 
     [[nodiscard]] ir::MatchPattern lower_pattern(const ast::PatternSyntax *pattern,
                                                  const TypedPattern *typed) const {
+        // RFC 0026 (3)-3b P0-2: there is NO legal null-AST-pattern caller (a
+        // struct-payload `..` rest field never reaches here). A null pattern
+        // would previously degrade to a WildcardPattern, silently losing the
+        // source pattern; fail closed instead.
         if (pattern == nullptr) {
-            ir::MatchPattern empty{.node = ir::WildcardPattern{}, .source_range = std::nullopt};
-            empty.matched_enum = matched_enum_ref(typed);
-            return empty;
+            throw std::logic_error(
+                "lower_pattern called with a null AST pattern (would degrade to wildcard)");
         }
         // RFC 0026 (3)-3b P0-2: a real AST pattern MUST have an aligned typed
         // pattern, or its identity would silently degrade to AST spelling.
@@ -2196,6 +2199,7 @@ class TypedIrLowerer final {
 
             ir::ExprRef pending_guard = nullptr;
             bool have_pending_guard = false;
+            SourceRange pending_guard_range{};
             std::size_t arm_index = 0;
             // RFC 0026 (3)-3b P0-1/P0-2: the typed pattern index list, the AST
             // arms, and the MatchArmBody children must ALL be 1:1 BEFORE we lower
@@ -2242,15 +2246,37 @@ class TypedIrLowerer final {
                     }
                     pending_guard = self.lower_typed_expr(*target);
                     have_pending_guard = true;
+                    pending_guard_range = target->range;
                     continue;
                 }
 
                 // The AST arm + its pattern are guaranteed present by the count
                 // lock above; a null pattern slot is a structural defect.
+                const auto &ast_arm = ast_match->arms[arm_index];
                 const ast::PatternSyntax *pattern =
-                    ast_match->arms[arm_index] ? ast_match->arms[arm_index]->pattern.get() : nullptr;
+                    ast_arm ? ast_arm->pattern.get() : nullptr;
                 if (pattern == nullptr) {
                     throw std::logic_error("match AST arm has no pattern");
+                }
+                // RFC 0026 (3)-3b P0-1: guard EXISTENCE must agree with the AST
+                // arm — a typed guard child iff the source arm has an `if` guard.
+                // Otherwise a deleted / injected guard child silently changes the
+                // arm's semantics while passing the count locks above.
+                const bool ast_has_guard = ast_arm && ast_arm->guard != nullptr;
+                if (ast_has_guard != have_pending_guard) {
+                    throw std::logic_error(
+                        "match arm guard presence disagrees with the AST arm "
+                        "(a guard child was deleted or injected)");
+                }
+                // Range alignment locks arm order: the guard / body typed child
+                // ranges must match the AST arm's guard / body ranges, so a body
+                // child cannot be swapped with another arm's.
+                if (have_pending_guard && ast_arm->guard &&
+                    pending_guard_range != ast_arm->guard->range) {
+                    throw std::logic_error("match arm guard range does not match its AST arm");
+                }
+                if (ast_arm->body && target->range != ast_arm->body->range) {
+                    throw std::logic_error("match arm body range does not match its AST arm");
                 }
                 // The count is already locked 1:1 above; resolve this arm's
                 // TypedPattern by index (an out-of-range index is a structural
@@ -2268,6 +2294,7 @@ class TypedIrLowerer final {
                 });
                 pending_guard = nullptr;
                 have_pending_guard = false;
+                pending_guard_range = SourceRange{};
                 ++arm_index;
             }
             if (have_pending_guard) {
@@ -2680,10 +2707,17 @@ class TypedIrLowerer final {
                     "if-let statement pattern index is out of range of TypedProgram::patterns");
             }
             const TypedPattern *typed_pattern = &self.typed_program_->patterns[stmt.pattern_index];
+            // RFC 0026 (3)-3b P0-2: the AST if-let statement and its pattern MUST
+            // be present. A failed AST lookup / null pattern would make
+            // lower_pattern(nullptr, typed) degrade the source pattern to a
+            // wildcard while the typed index exists — fail closed instead.
+            if (syntax == nullptr || syntax->pattern == nullptr) {
+                throw std::logic_error(
+                    "if-let statement has no aligned AST pattern (would degrade to wildcard)");
+            }
             return self.make_statement(
                 ir::IfLetStatement{
-                    .pattern = self.lower_pattern(
-                        syntax != nullptr ? syntax->pattern.get() : nullptr, typed_pattern),
+                    .pattern = self.lower_pattern(syntax->pattern.get(), typed_pattern),
                     .scrutinee = scrutinee ? self.lower_typed_expr(*scrutinee) : nullptr,
                     .then_block = then_block
                                       ? make_owned<ir::Block>(self.lower_typed_block(*then_block))
