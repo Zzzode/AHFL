@@ -15,6 +15,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -2249,6 +2250,104 @@ flow for A {
     // The fallback is the `else` block (a store), NOT a trap.
     REQUIRE(m->fallback_region);
     CHECK_FALSE(region_ends_with_trap(m->fallback_region.get()));
+}
+
+// (3)-3c forward-fix P0-1: an if-let's ELSE branch is lexically scoped exactly
+// like its then branch — a branch-local `let` that SHADOWS an outer local must
+// NOT leak past the if-let. Previously the else used a bare lower_block with no
+// scope snapshot/restore, so the else-local shadow overwrote scope_ and a later
+// reference to the OUTER local resolved to the else-local's value id. That value
+// id is defined only inside the else region (the verifier's per-branch `visible`
+// set never propagates it to the parent), so the leak surfaces as a
+// use-before-def and the program is non-executable. The fix restores the outer
+// scope around BOTH branches, so the trailing reference resolves to the OUTER
+// binding and the program lowers clean.
+TEST_CASE("(3)-3c FF P0-1: an if-let else-branch shadow does not leak past the if-let") {
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { total: Int = 0; done: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let mm: Maybe = Maybe::Some(input.id);
+        let x: Int = input.id;
+        if let Some(y) = mm {
+            ctx.total = y;
+        } else {
+            let x: Int = 999;
+            ctx.total = x;
+        }
+        ctx.done = x;
+        return Resp { id: ctx.done };
+    }
+}
+)AHFL";
+    const auto ahfl_ir = lower_source_to_ahfl_ir("core_iflet_else_shadow", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    // With the leak, `ctx.done = x` would use the else-local value id (not
+    // visible in the parent) -> use-before-def -> not ok / not executable.
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // Structural: `ctx.done = x` after the if-let stores the OUTER `x` — a value
+    // defined at the TOP LEVEL before the match — never a value defined only
+    // inside the else region (which would be the leaked shadow). (is_executable
+    // already excludes the leak via use-before-def; this pins WHICH value flows.)
+    const ir::core::CoreFlowState *state = nullptr;
+    for (const auto &flow : result.program.flows) {
+        for (const auto &st : flow.states) {
+            for (const auto &stmt : st.body.statements) {
+                if (std::holds_alternative<ir::core::CoreMatchStmt>(stmt.node)) {
+                    state = &st;
+                }
+            }
+        }
+    }
+    REQUIRE(state != nullptr);
+    const auto &stmts = state->body.statements;
+
+    // Value ids defined at the top level BEFORE the match (the parent scope).
+    std::unordered_set<std::uint32_t> pre_match_defs;
+    const ir::core::CoreStoreStmt *done_store = nullptr;
+    const ir::core::CoreMatchStmt *iflet = nullptr;
+    for (const auto &stmt : stmts) {
+        if (const auto *m = std::get_if<ir::core::CoreMatchStmt>(&stmt.node)) {
+            iflet = m;
+            continue;
+        }
+        if (iflet == nullptr) {
+            if (const auto *l = std::get_if<ir::core::CoreLetStmt>(&stmt.node)) {
+                pre_match_defs.insert(l->result.value);
+            } else if (const auto *c =
+                           std::get_if<ir::core::CoreCapabilityCallStmt>(&stmt.node)) {
+                pre_match_defs.insert(c->result.value);
+            }
+        } else if (const auto *s = std::get_if<ir::core::CoreStoreStmt>(&stmt.node)) {
+            done_store = s; // first store AFTER the match is `ctx.done = x`
+            break;
+        }
+    }
+    REQUIRE(iflet != nullptr);
+    REQUIRE(done_store != nullptr);
+    // The stored value is an outer, pre-match binding — not the else-local shadow.
+    CHECK(pre_match_defs.count(done_store->value.value) == 1);
 }
 
 // --- (3)-3c forward-fix: payload binding types, none->variant, path fallthrough ---

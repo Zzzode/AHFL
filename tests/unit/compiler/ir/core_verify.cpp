@@ -1149,11 +1149,13 @@ TEST_CASE("verifier fails closed on two tuple slots reusing one arm binding id")
     CHECK(has_code(result, verify::kPatternBindingInvalid));
 }
 
-// --- (3)-3c forward-fix: shared structural may-fallthrough helper ---
+// --- (3)-3c forward-fix: shared structural exit summary ---
 //
-// core_region_may_fallthrough is the ONE definition the lowerer (seal) and the
-// verifier's per-path analysis both rely on. These fixtures lock its per-path
-// semantics so the two never drift.
+// core_region_exit / core_region_may_fallthrough is the ONE definition the
+// lowerer (seal) and the verifier's per-path analysis both follow. These
+// fixtures lock its per-path semantics so the two never drift — in particular
+// that a NESTED match / if whose arms YIELD *completes* (control returns to the
+// parent), it does NOT terminate the parent.
 namespace {
 CoreStmt let_stmt() { return CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt}; }
 CoreStmt return_stmt() { return CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt}; }
@@ -1244,4 +1246,64 @@ TEST_CASE("core_region_may_fallthrough: match terminates iff all arms + fallback
     CHECK_FALSE(core_region_may_fallthrough(make_match(true, true)));  // all terminate
     CHECK(core_region_may_fallthrough(make_match(false, true)));       // arm falls through
     CHECK(core_region_may_fallthrough(make_match(true, false)));       // fallback falls through
+}
+
+// P0-2 regression: a nested match / if whose arm bodies END IN A YIELD has
+// COMPLETED (its yields are consumed by that match), so control returns to the
+// parent region — the parent must FALL THROUGH, NOT be judged terminated. The
+// previous `core_stmt_terminates` treated an arm ending in yield as "terminates"
+// and so mis-marked the parent region as non-fallthrough, producing a spurious
+// STMT_AFTER_TERMINATOR when the lowerer appended the parent's trailing yield.
+TEST_CASE("core_region_exit: a match whose every arm+fallback YIELDS completes (parent falls through)") {
+    CoreMatchStmt m;
+    m.scrutinee = CoreValueId{0};
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.body = region_of(yield_stmt()); // arm completes by yielding
+    m.arms.push_back(std::move(arm));
+    m.fallback_region = region_of(yield_stmt()); // fallback completes by yielding
+    CoreRegion r;
+    r.statements.push_back(CoreStmt{std::move(m), std::nullopt});
+    const CoreRegionExit e = core_region_exit(r);
+    // The yields are consumed by the match; the parent region completes normally.
+    CHECK(e.fallthrough);
+    CHECK_FALSE(e.diverges);
+    CHECK(core_region_may_fallthrough(r));
+}
+
+TEST_CASE("core_region_exit: a match whose every arm+fallback DIVERGES terminates the parent") {
+    CoreMatchStmt m;
+    m.scrutinee = CoreValueId{0};
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.body = region_of(return_stmt()); // arm diverges (escapes handler)
+    m.arms.push_back(std::move(arm));
+    m.fallback_region = region_of(trap_stmt()); // fallback diverges (trap)
+    CoreRegion r;
+    r.statements.push_back(CoreStmt{std::move(m), std::nullopt});
+    const CoreRegionExit e = core_region_exit(r);
+    CHECK_FALSE(e.fallthrough); // no path completes -> parent terminates here
+    CHECK(e.diverges);
+    CHECK_FALSE(core_region_may_fallthrough(r));
+}
+
+// P0-2 regression, mixed: a match with ONE diverging arm and ONE yielding arm
+// still completes for the parent (the yielding arm returns control), so a
+// statement AFTER the match is reachable.
+TEST_CASE("core_region_exit: a match with a diverging arm AND a yielding arm still completes") {
+    CoreMatchStmt m;
+    m.scrutinee = CoreValueId{0};
+    CoreMatchArm diverging;
+    diverging.pattern = CorePatternId{0};
+    diverging.body = region_of(return_stmt());
+    m.arms.push_back(std::move(diverging));
+    CoreMatchArm yielding;
+    yielding.pattern = CorePatternId{1};
+    yielding.body = region_of(yield_stmt());
+    m.arms.push_back(std::move(yielding));
+    m.fallback_region = region_of(trap_stmt());
+    CoreRegion r;
+    r.statements.push_back(CoreStmt{std::move(m), std::nullopt});
+    r.statements.push_back(let_stmt()); // reachable: the yielding arm completes
+    CHECK(core_region_may_fallthrough(r));
 }

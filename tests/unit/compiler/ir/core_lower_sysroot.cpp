@@ -458,3 +458,100 @@ flow for Decider {
     CHECK(none_pat->variant.value != some_pat->variant.value);
     CHECK(none_pat->tuple_subpatterns.empty()); // None is unit
 }
+
+// (3)-3c forward-fix P0-3: a payload binding on a std GENERIC enum instantiated
+// with a NOMINAL type argument (`Option<User>`, `Result<User, E>`) must carry the
+// INSTANTIATED nominal type, so `Some(u) => u.id` / `Ok(u) => u.id` resolves the
+// member projection. The builtin generic Option/Result payload slot types are
+// unresolved type-parameter placeholders (kInvalid), so the binding type comes
+// from the pattern's own persisted matched-nominal identity, NOT the slot type.
+// Driven through the real sysroot so std Option / Result are the production ones.
+TEST_CASE("KR6.4 (3)-3c P0-3: Option<User>/Result<User,E> payload binding keeps the nominal type") {
+    const auto root = make_temp_project("match_generic_payload");
+    const auto main_path = root / "src" / "main.ahfl";
+    const std::string source = R"AHFL(
+module app;
+
+import std::option;
+import std::result;
+
+struct User { id: Int; }
+struct Req { amount: Int; }
+struct Ctx { seen: Int = 0; }
+struct Reply { ok: Bool; }
+
+enum Err { Boom }
+
+agent Decider {
+    input: Req;
+    context: Ctx;
+    output: Reply;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for Decider {
+    state Done {
+        let who: std::option::Option<User> = std::option::Option::Some(User { id: input.amount });
+        let from_opt: Int = match who {
+            none => 0,
+            Some(u) => u.id,
+        };
+        let res: std::result::Result<User, Err> = std::result::Result::Ok(User { id: from_opt });
+        let from_res: Int = match res {
+            Ok(u) => u.id,
+            Err(e) => 0,
+        };
+        return Reply { ok: from_res > 0 };
+    }
+}
+)AHFL";
+    write_file(main_path, source);
+
+    const Frontend frontend;
+    const auto parse_result = parse_project(
+        frontend,
+        test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
+    REQUIRE_FALSE(parse_result.has_errors());
+    const Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+    const TypeChecker checker;
+    const auto type_result = checker.check(parse_result.graph, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+    const auto ahfl_ir = lower_program_ir(parse_result.graph, resolve_result, type_result);
+    const auto result = ir::core::lower_ahfl_to_core(ahfl_ir);
+    // The whole point of P0-3: `u.id` on a generic-enum payload binding must
+    // resolve, so the program lowers WITHOUT UNLOWERED_FIELD_PROJECTION and stays
+    // executable. Any diagnostic here is a regression.
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // Assert the arm bodies actually carry a RESOLVED member projection on the
+    // payload binding (not merely that lowering produced no error). Find every
+    // `u.id`-shaped path read (a Local root with a resolved single-step
+    // projection) and require at least two (one per match).
+    int resolved_binding_projections = 0;
+    for (const auto &flow : result.program.flows) {
+        for (const auto &expr : flow.exprs) {
+            if (const auto *path = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
+                if (path->root == ir::core::CorePathRoot::Local && !path->projection.empty()) {
+                    CHECK(path->projection_resolved);
+                    // The binding's nominal type flowed: the first step's owner is
+                    // a real (valid) struct type, resolved from the pattern.
+                    CHECK(path->root_type.value != ir::core::CoreTypeId::kInvalid);
+                    CHECK(path->projection.front().owner_type.value !=
+                          ir::core::CoreTypeId::kInvalid);
+                    ++resolved_binding_projections;
+                }
+            }
+        }
+    }
+    CHECK(resolved_binding_projections >= 2); // Some(u).id AND Ok(u).id
+}

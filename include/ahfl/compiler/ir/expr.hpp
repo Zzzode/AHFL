@@ -168,13 +168,22 @@ struct MatchPattern {
     MatchPatternNode node;
     SourceRangeOpt source_range;
     std::string text{};
-    // The enum this pattern is matched AGAINST, persisted from Sema's
-    // TypedPattern.matched_type (RFC 0026 (3)-3b). Needed because a literal
+    // The NOMINAL type this pattern is matched AGAINST, persisted from Sema's
+    // TypedPattern.matched_type (RFC 0026 (3)-3b). Despite the historical name,
+    // this resolves ANY nominal type — an enum OR a struct — via
+    // matched_enum_ref() / TypeEnv::resolve(). It is needed because (a) a literal
     // pattern like `none` stays a LiteralPattern whose enum identity lives only
-    // in the scrutinee's matched type — so (3)-3c can lower `none` to the
-    // Option::None variant pattern by symbol identity, never by spelling.
+    // in the scrutinee's matched type, so (3)-3c can lower `none` to the
+    // Option::None variant pattern by symbol identity (never by spelling); and
+    // (b) a payload BINDING carries the INSTANTIATED nominal payload type here
+    // (e.g. `Some(u)` on `Option<User>` records `User`), which the Core lowerer
+    // uses so `u.field` resolves even though the builtin generic Option's payload
+    // slot type is an unresolved type-parameter placeholder.
     // `matched_enum.kind == Unknown` means the pattern is not matched against a
-    // (resolved) enum (e.g. an integer/bool scrutinee), which is fine.
+    // resolved nominal type (e.g. an integer/bool scrutinee), which is fine.
+    // TODO(rename): call this matched_nominal once the cross-file rename is worth
+    // its own churn-only commit; the semantics are "matched nominal type", not
+    // "enum".
     SymbolRef matched_enum{};
 };
 

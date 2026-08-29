@@ -1225,13 +1225,26 @@ class FlowLowerer {
                            // By (3)-3b, a bare identifier Sema resolved to a unit
                            // variant is already an ir::VariantPattern here, so a
                            // BindingPattern is always a genuine binding.
+                           //
+                           // Prefer the binding's OWN persisted matched-nominal
+                           // identity (pattern.matched_enum resolves StructT AND
+                           // EnumT, not just enums). Sema records the INSTANTIATED
+                           // payload type there, so `Some(u)` on `Option<User>`
+                           // binds `u : User` even though the builtin generic
+                           // Option's payload slot type is a kInvalid placeholder.
+                           // Fall back to the propagated slot type only when the
+                           // binding carries no nominal identity of its own.
+                           const CoreTypeId own =
+                               types_.resolve(pattern.matched_enum).value_or(CoreTypeId{});
+                           const CoreTypeId bind_type =
+                               own.value != CoreTypeId::kInvalid ? own : matched_type;
                            if (!b.name.empty()) {
-                               static_cast<void>(out.intern(b.name, fresh_value(), matched_type));
+                               static_cast<void>(out.intern(b.name, fresh_value(), bind_type));
                            }
                            if (b.nested) {
                                // `x @ nested`: the outer name binds the whole
                                // value; the nested pattern matches the same type.
-                               collect_arm_bindings(*b.nested, matched_type, out);
+                               collect_arm_bindings(*b.nested, bind_type, out);
                            }
                        },
                        [&](const ir::VariantPattern &v) {
@@ -1545,9 +1558,17 @@ class FlowLowerer {
         CoreMatchArm arm;
         arm.pattern = lower_pattern(s.pattern, bindings, range, ok);
         arm.body = std::make_unique<CoreRegion>();
+        // Both branches are lexically scoped from the SAME outer snapshot, exactly
+        // like lower_if: the then-branch sees the arm bindings (lower_block_scoped
+        // restores after), and the else-branch sees NEITHER the arm bindings nor
+        // the then-branch's locals. A branch-local `let` in either branch must not
+        // leak into the other branch or past the if-let (P0: the else previously
+        // used a bare lower_block with no restore, leaking its locals downstream).
+        const auto outer_scope = scope_;
         if (s.then_block) {
             *arm.body = lower_block_scoped(*s.then_block, bindings);
         }
+        scope_ = outer_scope; // restore before the else branch
         seal_statement_arm(*arm.body, range);
         arm.bindings = std::move(bindings.values);
         stmt.arms.push_back(std::move(arm));
@@ -1556,6 +1577,7 @@ class FlowLowerer {
         if (s.else_block) {
             *stmt.fallback_region = lower_block(*s.else_block);
         }
+        scope_ = outer_scope; // restore after the if-let
         seal_statement_arm(*stmt.fallback_region, range);
         region.statements.push_back(CoreStmt{std::move(stmt), range});
         static_cast<void>(ok);

@@ -720,66 +720,125 @@ struct CoreRegion {
     friend bool operator==(const CoreRegion &, const CoreRegion &) noexcept;
 };
 
-// --- structural may-fallthrough (single source of truth) ---
+// --- structural control-flow exit summary (single source of truth) ---
 //
-// Whether control can reach the END of a region (i.e. the region does NOT end on
-// every path in a terminator). This is the ONE recursive definition shared by
-// the lowerer (to decide whether a statement-position region needs a trailing
-// unit yield) and the verifier's per-path analysis, so the two never drift. A
-// statement TERMINATES every path iff:
-//   * Return / Goto / Yield / Trap        -> always terminates;
-//   * CoreIfStmt                          -> BOTH branches terminate (an
-//                                            else-less `if` never terminates);
-//   * CoreMatchStmt                       -> every arm body AND the fallback
-//                                            terminate;
-//   * Let / CapabilityCall / Store        -> never terminates (falls through).
-// A region falls through unless some statement terminates all paths before its
-// end.
-[[nodiscard]] bool core_region_may_fallthrough(const CoreRegion &region) noexcept;
-[[nodiscard]] bool core_stmt_terminates(const CoreStmt &stmt) noexcept;
+// `core_region_exit` computes, purely structurally, HOW a region leaves on its
+// paths. It is the ONE recursive definition the lowerer (to decide whether a
+// statement-position region needs a trailing unit yield) and the verifier's
+// per-path analysis both agree with, so the two never drift. Three exit modes,
+// each "some path leaves this way" (merged across paths):
+//   * fallthrough — a path runs off the region END with no explicit exit;
+//   * yields      — a path exits via a CoreYieldStmt (arm / guard completion);
+//   * diverges    — a path exits via Return / Goto / Trap.
+//
+// A region COMPLETES (returns control to an enclosing match, letting it
+// continue) on any path that falls through OR yields. The subtle, previously
+// mis-handled case (fixed here) is a NESTED match: its arms' yields are
+// CONSUMED by that match — a nested match whose arms end in `yield` means the
+// nested match COMPLETED NORMALLY and control returns to the parent region; it
+// does NOT terminate the parent. So a match lets its parent continue iff SOME
+// arm body or the fallback completes (fallthrough or yield); only when EVERY
+// arm + fallback diverges (Return / Goto / Trap) does the match terminate the
+// parent's straight-line path. Per-statement rules:
+//   * Return / Goto / Trap                -> diverges (path leaves);
+//   * Yield                               -> yields   (path leaves);
+//   * CoreIfStmt                          -> the parent continues past it iff
+//                                            EITHER branch can fall through (an
+//                                            else-less / absent branch is an
+//                                            implicit fallthrough);
+//   * CoreMatchStmt                       -> the parent continues past it iff
+//                                            SOME arm body / fallback completes;
+//   * Let / CapabilityCall / Store        -> fall through to the next statement.
+struct CoreRegionExit {
+    bool fallthrough{false}; // some path reaches the region end (no explicit exit)
+    bool yields{false};      // some path exits via a yield (arm / guard completion)
+    bool diverges{false};    // some path exits via return / goto / trap
+    // The region completes (control returns to an enclosing match) on any path
+    // that falls through or yields.
+    [[nodiscard]] bool completes() const noexcept { return fallthrough || yields; }
+};
 
-inline bool core_region_may_fallthrough(const CoreRegion &region) noexcept {
-    for (const CoreStmt &stmt : region.statements) {
-        if (core_stmt_terminates(stmt)) {
-            return false; // statements after a terminator are unreachable
-        }
-    }
-    return true;
+[[nodiscard]] CoreRegionExit core_region_exit(const CoreRegion &region) noexcept;
+
+// Whether control can reach the END of a region (i.e. some path runs off the
+// end without an explicit exit). Thin projection of `core_region_exit`; this is
+// what the lowerer's `seal_statement_arm` asks (append a trailing unit yield
+// iff the region can fall through).
+[[nodiscard]] inline bool core_region_may_fallthrough(const CoreRegion &region) noexcept {
+    return core_region_exit(region).fallthrough;
 }
 
-inline bool core_stmt_terminates(const CoreStmt &stmt) noexcept {
-    return std::visit(
-        [](const auto &node) -> bool {
-            using T = std::decay_t<decltype(node)>;
-            if constexpr (std::is_same_v<T, CoreReturnStmt> || std::is_same_v<T, CoreGotoStmt> ||
-                          std::is_same_v<T, CoreYieldStmt> || std::is_same_v<T, CoreTrapStmt>) {
-                return true;
-            } else if constexpr (std::is_same_v<T, CoreIfStmt>) {
-                // An else-less `if` can always skip the then-branch, so it never
-                // terminates. With both branches, it terminates iff NEITHER can
-                // fall through.
-                if (!node.then_region || !node.else_region) {
-                    return false;
-                }
-                return !core_region_may_fallthrough(*node.then_region) &&
-                       !core_region_may_fallthrough(*node.else_region);
-            } else if constexpr (std::is_same_v<T, CoreMatchStmt>) {
-                // A match terminates iff no arm body and no fallback can fall
-                // through (arm yields are consumed by the match, not fallthrough).
-                for (const auto &arm : node.arms) {
-                    if (!arm.body || core_region_may_fallthrough(*arm.body)) {
-                        return false;
+inline CoreRegionExit core_region_exit(const CoreRegion &region) noexcept {
+    CoreRegionExit exit;
+    bool live = true; // can control reach the NEXT statement on the straight line?
+    for (const CoreStmt &stmt : region.statements) {
+        if (!live) {
+            break; // statements after a terminator are unreachable
+        }
+        std::visit(
+            [&](const auto &node) {
+                using T = std::decay_t<decltype(node)>;
+                if constexpr (std::is_same_v<T, CoreReturnStmt> ||
+                              std::is_same_v<T, CoreGotoStmt> || std::is_same_v<T, CoreTrapStmt>) {
+                    exit.diverges = true;
+                    live = false;
+                } else if constexpr (std::is_same_v<T, CoreYieldStmt>) {
+                    exit.yields = true;
+                    live = false;
+                } else if constexpr (std::is_same_v<T, CoreIfStmt>) {
+                    CoreRegionExit then_exit;
+                    if (node.then_region) {
+                        then_exit = core_region_exit(*node.then_region);
+                    } else {
+                        then_exit.fallthrough = true; // absent then => implicit fallthrough
                     }
+                    CoreRegionExit else_exit;
+                    if (node.else_region) {
+                        else_exit = core_region_exit(*node.else_region);
+                    } else {
+                        else_exit.fallthrough = true; // else-less => implicit fallthrough
+                    }
+                    // Both branches' yields / divergences are possible outcomes.
+                    exit.yields |= then_exit.yields || else_exit.yields;
+                    exit.diverges |= then_exit.diverges || else_exit.diverges;
+                    // Control continues past the `if` iff EITHER branch can.
+                    live = then_exit.fallthrough || else_exit.fallthrough;
+                } else if constexpr (std::is_same_v<T, CoreMatchStmt>) {
+                    bool any_completes = false;
+                    bool any_diverges = false;
+                    for (const auto &arm : node.arms) {
+                        if (arm.body) {
+                            const CoreRegionExit ae = core_region_exit(*arm.body);
+                            any_completes |= ae.completes();
+                            any_diverges |= ae.diverges;
+                        } else {
+                            any_completes = true; // missing body: assume completion (verifier flags)
+                        }
+                    }
+                    if (node.fallback_region) {
+                        const CoreRegionExit fe = core_region_exit(*node.fallback_region);
+                        any_completes |= fe.completes();
+                        any_diverges |= fe.diverges;
+                    } else {
+                        any_completes = true; // missing fallback: assume completion (verifier flags)
+                    }
+                    // A nested match consumes its arms' yields (they are NOT the
+                    // parent's yield); only control / trap divergence propagates.
+                    exit.diverges |= any_diverges;
+                    // Control continues past the match iff SOME arm / fallback
+                    // completes; if every arm + fallback diverges, the match
+                    // terminates the parent's straight-line path.
+                    live = any_completes;
+                } else {
+                    // Let / CapabilityCall / Store: fall through to the next stmt.
                 }
-                if (!node.fallback_region || core_region_may_fallthrough(*node.fallback_region)) {
-                    return false;
-                }
-                return true;
-            } else {
-                return false; // Let / CapabilityCall / Store: fall through
-            }
-        },
-        stmt.node);
+            },
+            stmt.node);
+    }
+    if (live) {
+        exit.fallthrough = true;
+    }
+    return exit;
 }
 
 // --- flow (state handlers with executable bodies) ---
