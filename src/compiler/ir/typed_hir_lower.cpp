@@ -2268,6 +2268,11 @@ class TypedIrLowerer final {
                         "match arm guard presence disagrees with the AST arm "
                         "(a guard child was deleted or injected)");
                 }
+                // A match arm body is syntactically required; a null AST body is
+                // a structural defect (fail-closed).
+                if (ast_arm->body == nullptr) {
+                    throw std::logic_error("match AST arm has no body");
+                }
                 // Range alignment locks arm order: the guard / body typed child
                 // ranges must match the AST arm's guard / body ranges, so a body
                 // child cannot be swapped with another arm's.
@@ -2275,7 +2280,7 @@ class TypedIrLowerer final {
                     pending_guard_range != ast_arm->guard->range) {
                     throw std::logic_error("match arm guard range does not match its AST arm");
                 }
-                if (ast_arm->body && target->range != ast_arm->body->range) {
+                if (target->range != ast_arm->body->range) {
                     throw std::logic_error("match arm body range does not match its AST arm");
                 }
                 // The count is already locked 1:1 above; resolve this arm's

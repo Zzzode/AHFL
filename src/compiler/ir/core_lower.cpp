@@ -743,6 +743,7 @@ class FlowLowerer {
                            static_cast<void>(lower_value(s.expr, region));
                        },
                        [&](const IfStatement &s) { lower_if(s, stmt.source_range, region); },
+                       [&](const IfLetStatement &s) { lower_if_let(s, stmt.source_range, region); },
                        [&](const GotoStatement &s) { lower_goto(s, stmt.source_range, region); },
                        [&](const ReturnStatement &s) { lower_return(s, stmt.source_range, region); },
                        // Statements without an execution-layer form in this
@@ -880,6 +881,7 @@ class FlowLowerer {
                 [&](const UnaryExpr &e) { return lower_unary_value(e, range, region); },
                 [&](const BinaryExpr &e) { return lower_binary_value(e, range, region); },
                 [&](const StructLiteralExpr &e) { return lower_struct_value(e, range, region); },
+                [&](const MatchExpr &e) { return lower_match_value(e, range, region); },
                 // Effectful-or-complex shapes not yet lowered. CRITICAL: if the
                 // subtree contains a capability call we MUST fail closed (never
                 // hide an effect); otherwise a pure unsupported node is recorded
@@ -1156,6 +1158,357 @@ class FlowLowerer {
                   range);
         }
         return bind_pure(std::move(node), range, region);
+    }
+
+    // ------------------------------------------------------------------
+    // Match / if-let lowering (RFC 0026 P3 slice (3)-3c)
+    // ------------------------------------------------------------------
+    //
+    // A match arm's bindings are the arm-scoped SSA values its binding patterns
+    // name. We pre-scan the arm's pattern to collect binding NAMES in a stable
+    // order and allocate ONE CorePatternBindingId (and one fresh CoreValueId) per
+    // name; an or-pattern's alternatives that reuse a name share the same
+    // binding, so the (3)-2 arm-binding bijection is satisfied by construction.
+    struct ArmBindings {
+        std::vector<std::string> names;          // index == CorePatternBindingId
+        std::vector<CorePatternBinding> values;  // parallel: the fresh SSA value
+        std::unordered_map<std::string, std::uint32_t> index_of;
+
+        [[nodiscard]] std::uint32_t intern(const std::string &name, CoreValueId value) {
+            if (const auto it = index_of.find(name); it != index_of.end()) {
+                return it->second;
+            }
+            const auto id = static_cast<std::uint32_t>(names.size());
+            names.push_back(name);
+            values.push_back(CorePatternBinding{value});
+            index_of.emplace(name, id);
+            return id;
+        }
+    };
+
+    // Collect the binding names a pattern introduces, allocating a fresh value id
+    // per NEW name (shared by name across or-alternatives). Runs before pattern
+    // lowering so the CorePatternBindingId domain is fixed.
+    void collect_arm_bindings(const ir::MatchPattern &pattern, ArmBindings &out) {
+        std::visit(Overloaded{
+                       [&](const ir::BindingPattern &b) {
+                           // By (3)-3b, a bare identifier Sema resolved to a unit
+                           // variant is already an ir::VariantPattern here, so a
+                           // BindingPattern is always a genuine binding.
+                           if (!b.name.empty()) {
+                               static_cast<void>(out.intern(b.name, fresh_value()));
+                           }
+                           if (b.nested) {
+                               collect_arm_bindings(*b.nested, out);
+                           }
+                       },
+                       [&](const ir::VariantPattern &v) {
+                           for (const auto &sub : v.subpatterns) {
+                               if (sub) {
+                                   collect_arm_bindings(*sub, out);
+                               }
+                           }
+                           for (const auto &f : v.fields) {
+                               if (f.pattern) {
+                                   collect_arm_bindings(*f.pattern, out);
+                               }
+                           }
+                       },
+                       [&](const ir::TuplePattern &t) {
+                           for (const auto &e : t.elements) {
+                               if (e) {
+                                   collect_arm_bindings(*e, out);
+                               }
+                           }
+                       },
+                       [&](const ir::OrPattern &o) {
+                           // Alternatives share bindings BY NAME (intern dedups).
+                           for (const auto &alt : o.branches) {
+                               if (alt) {
+                                   collect_arm_bindings(*alt, out);
+                               }
+                           }
+                       },
+                       [&](const auto &) {}, // literal / int-range / wildcard bind nothing
+                   },
+                   pattern.node);
+    }
+
+    // Lower one AHFL-IR MatchPattern into the flow's CorePattern arena, returning
+    // its id. Variant identity is resolved by the persisted owner_enum SymbolRef
+    // ((3)-3b), never by parsing `path`. `ok` is cleared (fail-closed) on any
+    // unresolved variant / binding.
+    [[nodiscard]] CorePatternId lower_pattern(const ir::MatchPattern &pattern,
+                                              const ArmBindings &bindings, SourceRangeOpt range,
+                                              bool &ok) {
+        CorePatternNode node = std::visit(
+            Overloaded{
+                [&](const ir::LiteralPattern &lit) -> CorePatternNode {
+                    return CoreLiteralPat{literal_kind_of(lit.spelling), lit.spelling};
+                },
+                [&](const ir::IntRangePattern &r) -> CorePatternNode {
+                    return CoreIntRangePat{r.start, r.end};
+                },
+                [&](const ir::WildcardPattern &) -> CorePatternNode { return CoreWildcardPat{}; },
+                [&](const ir::BindingPattern &b) -> CorePatternNode {
+                    CoreBindingPat out;
+                    const auto it = bindings.index_of.find(b.name);
+                    if (it == bindings.index_of.end()) {
+                        ok = false;
+                        error(diag::kUnloweredExpression,
+                              "match binding '" + b.name +
+                                  "' was not allocated a binding slot (internal)",
+                              range);
+                    } else {
+                        out.binding = CorePatternBindingId{it->second};
+                    }
+                    if (b.nested) {
+                        out.has_nested = true;
+                        out.nested = lower_pattern(*b.nested, bindings, range, ok);
+                    }
+                    return out;
+                },
+                [&](const ir::VariantPattern &v) -> CorePatternNode {
+                    return lower_variant_pattern(v, bindings, range, ok);
+                },
+                [&](const ir::TuplePattern &t) -> CorePatternNode {
+                    CoreTuplePat out;
+                    out.elements.reserve(t.elements.size());
+                    for (const auto &e : t.elements) {
+                        if (e) {
+                            out.elements.push_back(lower_pattern(*e, bindings, range, ok));
+                        }
+                    }
+                    return out;
+                },
+                [&](const ir::OrPattern &o) -> CorePatternNode {
+                    CoreOrPat out;
+                    out.alternatives.reserve(o.branches.size());
+                    for (const auto &alt : o.branches) {
+                        if (alt) {
+                            out.alternatives.push_back(lower_pattern(*alt, bindings, range, ok));
+                        }
+                    }
+                    return out;
+                },
+            },
+            pattern.node);
+        const auto id = static_cast<std::uint32_t>(flow_.patterns.size());
+        flow_.patterns.push_back(CorePattern{std::move(node), range});
+        return CorePatternId{id};
+    }
+
+    [[nodiscard]] CorePatternNode lower_variant_pattern(const ir::VariantPattern &v,
+                                                        const ArmBindings &bindings,
+                                                        SourceRangeOpt range, bool &ok) {
+        CoreVariantPat out;
+        const auto type_id = types_.resolve(v.owner_enum);
+        if (!type_id) {
+            ok = false;
+            error(diag::kUnresolvedEnumVariant,
+                  "match variant pattern owner enum '" + v.owner_enum.canonical_name +
+                      "' could not be resolved to a Core-IR type id",
+                  range);
+            return out;
+        }
+        out.owner_enum = *type_id;
+        const auto vidx = types_.variant_index(*type_id, v.variant_name);
+        if (!vidx) {
+            ok = false;
+            error(diag::kUnresolvedEnumVariant,
+                  "match variant pattern '" + v.owner_enum.canonical_name + "::" + v.variant_name +
+                      "' could not be resolved to a declared variant index",
+                  range);
+            return out;
+        }
+        out.variant = CoreVariantId{*vidx};
+        // Struct payload: slot-identified fields (resolve each written name to its
+        // declaration slot). Tuple / unit payload: positional subpatterns.
+        if (types_.variant_payload_kind(*type_id, *vidx) ==
+            CoreTypeDecl::VariantPayload::Kind::Struct) {
+            for (const auto &f : v.fields) {
+                if (f.is_rest) {
+                    out.has_rest = true;
+                    continue;
+                }
+                const auto slot = types_.variant_field_slot(*type_id, *vidx, f.name);
+                if (!slot) {
+                    ok = false;
+                    error(diag::kUnresolvedStructField,
+                          "match variant pattern '" + v.variant_name +
+                              "' has no payload field named '" + f.name + "'",
+                          range);
+                    continue;
+                }
+                CoreVariantPatField cf;
+                cf.slot = CoreFieldId{*slot};
+                cf.pattern = f.pattern ? lower_pattern(*f.pattern, bindings, range, ok)
+                                       : add_wildcard(range);
+                out.struct_fields.push_back(cf);
+            }
+        } else {
+            for (const auto &sub : v.subpatterns) {
+                if (sub) {
+                    out.tuple_subpatterns.push_back(lower_pattern(*sub, bindings, range, ok));
+                }
+            }
+        }
+        return out;
+    }
+
+    [[nodiscard]] CorePatternId add_wildcard(SourceRangeOpt range) {
+        const auto id = static_cast<std::uint32_t>(flow_.patterns.size());
+        flow_.patterns.push_back(CorePattern{CoreWildcardPat{}, range});
+        return CorePatternId{id};
+    }
+
+    [[nodiscard]] static CoreLiteralKind literal_kind_of(const std::string &spelling) {
+        if (spelling == "true" || spelling == "false") {
+            return CoreLiteralKind::Bool;
+        }
+        if (!spelling.empty() && (spelling.front() == '"')) {
+            return CoreLiteralKind::String;
+        }
+        // Integer is the conservative default for a numeric literal pattern; the
+        // physical decode is a P4 concern (the spelling is preserved verbatim).
+        return CoreLiteralKind::Integer;
+    }
+
+    // Expression-position match: each arm body yields the arm value; the match
+    // defines a single result value in the parent scope (ANF). A non-exhaustive
+    // match's fallback traps.
+    [[nodiscard]] CoreValueId lower_match_value(const MatchExpr &m, SourceRangeOpt range,
+                                                CoreRegion &region) {
+        const CoreValueId scrutinee = lower_value(m.scrutinee, region);
+        CoreMatchStmt stmt;
+        stmt.scrutinee = scrutinee;
+        stmt.has_result = true;
+        stmt.result = fresh_value();
+        bool ok = true;
+        for (const MatchArmExpr &arm : m.arms) {
+            stmt.arms.push_back(lower_arm(arm.pattern, arm.guard, arm.body,
+                                          /*expression=*/true, range, ok));
+        }
+        // Non-exhaustive fallback: a trap (structural totality; the verifier
+        // trusts the region, not a flag).
+        stmt.fallback_region = std::make_unique<CoreRegion>();
+        stmt.fallback_region->statements.push_back(
+            CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, range});
+        const CoreValueId result = stmt.result;
+        region.statements.push_back(CoreStmt{std::move(stmt), range});
+        static_cast<void>(ok); // per-arm errors already recorded; program marked non-executable
+        return result;
+    }
+
+    // Statement-position if-let: one pattern arm (yields nothing) with the
+    // then-block as body; the fallback is the else block (or a trap when absent —
+    // an if-let with no else and a refutable pattern is a non-total match).
+    void lower_if_let(const IfLetStatement &s, SourceRangeOpt range, CoreRegion &region) {
+        const CoreValueId scrutinee = lower_value(s.scrutinee, region);
+        CoreMatchStmt stmt;
+        stmt.scrutinee = scrutinee;
+        stmt.has_result = false;
+        bool ok = true;
+        // The single arm: pattern + then-block, yielding no value (statement match).
+        ArmBindings bindings;
+        collect_arm_bindings(s.pattern, bindings);
+        CoreMatchArm arm;
+        arm.pattern = lower_pattern(s.pattern, bindings, range, ok);
+        arm.body = std::make_unique<CoreRegion>();
+        if (s.then_block) {
+            *arm.body = lower_block_scoped(*s.then_block, bindings);
+        }
+        seal_statement_arm(*arm.body, range);
+        arm.bindings = std::move(bindings.values);
+        stmt.arms.push_back(std::move(arm));
+        // Fallback = else block, or a trap when the if-let has no else.
+        stmt.fallback_region = std::make_unique<CoreRegion>();
+        if (s.else_block) {
+            *stmt.fallback_region = lower_block(*s.else_block);
+        }
+        seal_statement_arm(*stmt.fallback_region, range);
+        region.statements.push_back(CoreStmt{std::move(stmt), range});
+        static_cast<void>(ok);
+    }
+
+    // Build a CoreMatchArm for the expression or statement position. The arm's
+    // pattern binding domain is fixed by a pre-scan; the guard (if any) runs in a
+    // region that yields the Bool; the body yields the arm value (expression) or
+    // nothing (statement). The arm's pattern bindings are visible (by name) in
+    // both the guard and the body.
+    [[nodiscard]] CoreMatchArm lower_arm(const ir::MatchPattern &pattern, const ExprRef &guard,
+                                         const ExprRef &body, bool expression, SourceRangeOpt range,
+                                         bool &ok) {
+        ArmBindings bindings;
+        collect_arm_bindings(pattern, bindings);
+        CoreMatchArm arm;
+        arm.pattern = lower_pattern(pattern, bindings, range, ok);
+        // Extend the scope with the arm bindings for guard + body lowering, then
+        // restore (branch-local visibility, mirroring lower_if scoping).
+        const auto outer = scope_;
+        for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
+            scope_[bindings.names[i]] = LocalBinding{bindings.values[i].value, std::nullopt};
+        }
+        // Guard: a pure Bool region that yields its value.
+        if (guard.ptr != nullptr) {
+            arm.guard_region = std::make_unique<CoreRegion>();
+            const CoreValueId guard_val = lower_value(guard, *arm.guard_region);
+            arm.guard_region->statements.push_back(
+                CoreStmt{CoreYieldStmt{true, guard_val}, range});
+        }
+        // Body: expression arm yields the arm value; statement arm yields nothing.
+        arm.body = std::make_unique<CoreRegion>();
+        if (expression) {
+            const CoreValueId body_val = lower_value(body, *arm.body);
+            arm.body->statements.push_back(CoreStmt{CoreYieldStmt{true, body_val}, range});
+        } else if (body.ptr != nullptr) {
+            static_cast<void>(lower_value(body, *arm.body));
+            seal_statement_arm(*arm.body, range);
+        } else {
+            seal_statement_arm(*arm.body, range);
+        }
+        scope_ = outer;
+        arm.bindings = std::move(bindings.values);
+        return arm;
+    }
+
+    // A statement-position region must yield unit on every path that falls
+    // through (the verifier requires no fallthrough for a statement arm). Append
+    // a valueless yield when the region can complete normally.
+    void seal_statement_arm(CoreRegion &region, SourceRangeOpt range) {
+        if (region_falls_through(region)) {
+            region.statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, range});
+        }
+    }
+
+    // A region falls through unless its last statement is a terminator
+    // (return / goto / yield / trap). Structured `if` is conservatively treated
+    // as fallthrough (the verifier does the precise per-path merge).
+    [[nodiscard]] static bool region_falls_through(const CoreRegion &region) {
+        if (region.statements.empty()) {
+            return true;
+        }
+        return std::visit(Overloaded{
+                              [](const CoreReturnStmt &) { return false; },
+                              [](const CoreGotoStmt &) { return false; },
+                              [](const CoreYieldStmt &) { return false; },
+                              [](const CoreTrapStmt &) { return false; },
+                              [](const auto &) { return true; },
+                          },
+                          region.statements.back().node);
+    }
+
+    // Lower a block that begins in the CURRENT scope extended with the arm's
+    // pattern bindings (so `local`-rooted paths naming a binding resolve to its
+    // value id). Restores the scope afterwards.
+    [[nodiscard]] CoreRegion lower_block_scoped(const Block &block, const ArmBindings &bindings) {
+        const auto outer = scope_;
+        for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
+            scope_[bindings.names[i]] = LocalBinding{bindings.values[i].value, std::nullopt};
+        }
+        CoreRegion region = lower_block(block);
+        scope_ = outer;
+        return region;
     }
 
     /// The A-normalization core: a capability call becomes an ordered statement.

@@ -1106,17 +1106,19 @@ TEST_CASE("flow handler naming an unknown state fails closed, never defaults to 
 }
 
 TEST_CASE("pure unsupported expression makes the program non-executable (P0-1 round 3)") {
-    // A MatchExpr (no capability) is not yet lowered. Even without an effect,
-    // it must FAIL closed — a CoreUnsupportedExpr the backend cannot execute
-    // may never be reported as executable while no Core verifier exists.
+    // A MethodCallExpr (no capability) is not yet lowered to Core-IR. Even
+    // without an effect, it must FAIL closed — a CoreUnsupportedExpr the backend
+    // cannot execute may never be reported as executable.
     const auto program = make_single_handler_flow([](ir::AhflIr &p) {
-        // return match on a bare bool literal (unsupported, pure).
-        ir::ExprRef scrut = p.expr_arena.make(ir::BoolLiteralExpr{true});
-        ir::MatchExpr m;
-        m.scrutinee = scrut;
-        ir::ExprRef mref = p.expr_arena.make(std::move(m));
+        // return input.method() — a pure method call, still unsupported.
+        ir::ExprRef base = p.expr_arena.make(
+            ir::PathExpr{.path = ir::Path{.root_name = "input"}});
+        ir::MethodCallExpr call;
+        call.receiver = base;
+        call.method = "compute";
+        ir::ExprRef cref = p.expr_arena.make(std::move(call));
         auto stmt = std::make_unique<ir::Statement>();
-        stmt->node = ir::ReturnStatement{mref};
+        stmt->node = ir::ReturnStatement{cref};
         return stmt;
     });
     const auto result = ir::core::lower_ahfl_to_core(program);
@@ -2099,4 +2101,152 @@ TEST_CASE("(3)-3b P0-2: an if-let whose AST lookup fails does NOT degrade to wil
     }
     REQUIRE(corrupted);
     CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
+}
+
+// ---------------------------------------------------------------------------
+// (3)-3c CoreMatchStmt lowering: a real match / if-let program lowers into a
+// structured CoreMatchStmt (scrutinee + arms with typed patterns + fallback),
+// resolving variant identity by owner_enum symbol. The auto-wired Core verifier
+// accepting the program (result.ok()) already proves the (3)-2 invariants hold.
+// ---------------------------------------------------------------------------
+namespace {
+
+// The first CoreMatchStmt reachable in a flow state body (top-level only).
+const ir::core::CoreMatchStmt *find_core_match(const ir::core::CoreProgram &program) {
+    for (const auto &flow : program.flows) {
+        for (const auto &state : flow.states) {
+            for (const auto &stmt : state.body.statements) {
+                if (const auto *m = std::get_if<ir::core::CoreMatchStmt>(&stmt.node)) {
+                    return m;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+bool region_ends_with_trap(const ir::core::CoreRegion *region) {
+    if (region == nullptr || region->statements.empty()) {
+        return false;
+    }
+    return std::holds_alternative<ir::core::CoreTrapStmt>(region->statements.back().node);
+}
+
+} // namespace
+
+TEST_CASE("(3)-3c: an expression match lowers into a CoreMatchStmt with typed arms + trap fallback") {
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let mm: Maybe = Maybe::Some(input.id);
+        let r: Int = match mm {
+            Some(x) => x,
+            None => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+    const auto ahfl_ir = lower_source_to_ahfl_ir("core_match_expr", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const ir::core::CoreMatchStmt *m = find_core_match(result.program);
+    REQUIRE(m != nullptr);
+    // Expression match: defines a result value in the parent scope.
+    CHECK(m->has_result);
+    REQUIRE(m->arms.size() == 2);
+    // Fallback is a mandatory trap (non-exhaustive by construction).
+    CHECK(region_ends_with_trap(m->fallback_region.get()));
+
+    // Arm 0: Some(x) - a variant pattern with one tuple sub-pattern binding, one
+    // arm binding (x). Arm 1: None - a unit variant, no bindings.
+    const auto &pats = result.program.flows[0].patterns;
+    const auto &arm0 = m->arms[0];
+    REQUIRE(arm0.pattern.value < pats.size());
+    const auto *v0 = std::get_if<ir::core::CoreVariantPat>(&pats[arm0.pattern.value].node);
+    REQUIRE(v0 != nullptr);
+    CHECK(v0->tuple_subpatterns.size() == 1);
+    CHECK(arm0.bindings.size() == 1); // x
+    const auto &arm1 = m->arms[1];
+    REQUIRE(arm1.pattern.value < pats.size());
+    const auto *v1 = std::get_if<ir::core::CoreVariantPat>(&pats[arm1.pattern.value].node);
+    REQUIRE(v1 != nullptr);
+    CHECK(v1->tuple_subpatterns.empty());
+    CHECK(arm1.bindings.empty());
+    // The two arms name distinct variants of the same enum.
+    CHECK(v0->owner_enum.value == v1->owner_enum.value);
+    CHECK(v0->variant.value != v1->variant.value);
+}
+
+TEST_CASE("(3)-3c: an if-let lowers into a statement CoreMatchStmt with an else fallback") {
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { total: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let mm: Maybe = Maybe::Some(input.id);
+        let out: Int = 0;
+        if let Some(x) = mm {
+            ctx.total = x;
+        } else {
+            ctx.total = 0;
+        }
+        return Resp { id: ctx.total };
+    }
+}
+)AHFL";
+    const auto ahfl_ir = lower_source_to_ahfl_ir("core_if_let", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const ir::core::CoreMatchStmt *m = find_core_match(result.program);
+    REQUIRE(m != nullptr);
+    // Statement match: no result value.
+    CHECK_FALSE(m->has_result);
+    REQUIRE(m->arms.size() == 1);
+    CHECK(m->arms[0].bindings.size() == 1); // x
+    // The fallback is the `else` block (a store), NOT a trap.
+    REQUIRE(m->fallback_region);
+    CHECK_FALSE(region_ends_with_trap(m->fallback_region.get()));
 }
