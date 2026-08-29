@@ -473,6 +473,16 @@ struct TypedExpr {
     // Empty for non-condition expressions.
     std::vector<TypedNarrowingFact> narrowing_when_true{};
     std::vector<TypedNarrowingFact> narrowing_when_false{};
+    // RFC 0026 (3)-3b: for a Match expression, the TypedProgram::patterns index
+    // of each arm's root pattern, in SOURCE ARM ORDER. Meaningful ONLY when
+    // kind == Match; empty otherwise. Its length MUST equal the number of
+    // MatchArmBody children (one pattern per arm — an optional guard does not
+    // shift the alignment). This is the persistent link from a match TypedExpr
+    // to its arms' TypedPatterns (which check_match otherwise discards), so
+    // lowering reads typed pattern identity by index instead of re-deriving it
+    // from the AST. Monomorphization clones must REMAP each index into the
+    // instance's pattern store (never shallow-copy the pre-clone index).
+    std::vector<std::uint32_t> match_arm_pattern_indexes{};
 };
 
 struct TypedDecl {

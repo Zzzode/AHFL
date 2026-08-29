@@ -3315,6 +3315,76 @@ TEST_CASE("RFC 0011 monomorphization remaps statement pattern indexes") {
     CHECK(cloned_binding.bindings.front().name == "x");
 }
 
+TEST_CASE("RFC 0026 (3)-3b monomorphization remaps match expr arm pattern indexes") {
+    ahfl::TypeContext types;
+    const auto int_type = types.make(ahfl::TypeKind::Int);
+    const auto maybe_type = types.enum_type(
+        "typed::mono_match::Maybe", ahfl::SymbolId{1}, std::vector<ahfl::TypePtr>{int_type});
+
+    ahfl::TypedProgram program;
+    program.declarations.push_back(ahfl::TypedDecl{
+        .kind = ahfl::ast::NodeKind::FnDecl,
+        .symbol = ahfl::SymbolId{10},
+        .range = {},
+        .source_id = std::nullopt,
+        .associated_agent_symbol = std::nullopt,
+        .type = maybe_type,
+        .payload = std::monostate{},
+    });
+    // Two arm patterns: #0 Some (variant), #1 None (variant).
+    program.patterns.push_back(ahfl::TypedPattern{
+        .kind = ahfl::TypedPatternKind::Variant,
+        .range = {},
+        .source_id = std::nullopt,
+        .matched_type = maybe_type,
+        .irrefutable = false,
+        .enum_symbol = ahfl::SymbolId{1},
+        .enum_name = "typed::mono_match::Maybe",
+        .variant_name = "Some",
+        .variant_payload_kind = ahfl::EnumVariantPayloadKind::Tuple,
+    });
+    program.patterns.push_back(ahfl::TypedPattern{
+        .kind = ahfl::TypedPatternKind::Variant,
+        .range = {},
+        .source_id = std::nullopt,
+        .matched_type = maybe_type,
+        .irrefutable = false,
+        .enum_symbol = ahfl::SymbolId{1},
+        .enum_name = "typed::mono_match::Maybe",
+        .variant_name = "None",
+        .variant_payload_kind = ahfl::EnumVariantPayloadKind::Unit,
+    });
+    // A Match expression carrying the two arm pattern indexes in arm order.
+    ahfl::TypedExpr match_expr;
+    match_expr.kind = ahfl::ast::ExprSyntaxKind::Match;
+    match_expr.node_id = 9;
+    match_expr.type = int_type;
+    match_expr.match_arm_pattern_indexes = {0, 1};
+    program.expressions.push_back(std::move(match_expr));
+
+    const auto result = ahfl::monomorphize_decl(
+        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}});
+
+    REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
+    REQUIRE(result.instance_index < program.monomorphized_instances.size());
+    const auto &instance = program.monomorphized_instances[result.instance_index];
+    REQUIRE(instance.root_expr_indexes.size() == 1);
+    REQUIRE(instance.root_pattern_indexes.size() == 2);
+
+    const auto cloned_expr_index = instance.root_expr_indexes.front();
+    REQUIRE(cloned_expr_index < program.expressions.size());
+    const auto &cloned_match = program.expressions[cloned_expr_index];
+    REQUIRE(cloned_match.match_arm_pattern_indexes.size() == 2);
+    // Each arm index is remapped into the instance's pattern store, in order.
+    CHECK(cloned_match.match_arm_pattern_indexes[0] == instance.root_pattern_indexes[0]);
+    CHECK(cloned_match.match_arm_pattern_indexes[1] == instance.root_pattern_indexes[1]);
+    // And they point at the cloned Some / None variant patterns.
+    REQUIRE(cloned_match.match_arm_pattern_indexes[0] < program.patterns.size());
+    REQUIRE(cloned_match.match_arm_pattern_indexes[1] < program.patterns.size());
+    CHECK(program.patterns[cloned_match.match_arm_pattern_indexes[0]].variant_name == "Some");
+    CHECK(program.patterns[cloned_match.match_arm_pattern_indexes[1]].variant_name == "None");
+}
+
 TEST_CASE_FIXTURE(TypedHIRFixture, "RFC 0011 typed HIR records match pattern flat store") {
     const auto result = check(R"AHFL(
 module typed::match_patterns;

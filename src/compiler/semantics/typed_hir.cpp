@@ -537,6 +537,15 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
                                            work.target_first_expr,
                                            source_expr_count);
         }
+        // RFC 0026 (3)-3b: a match arm's root pattern index must resolve into
+        // THIS instance's pattern store, not the pre-clone slot.
+        for (auto &pi : clone.match_arm_pattern_indexes) {
+            pi = remap_index(work,
+                             pi,
+                             work.source_first_pattern,
+                             work.target_first_pattern,
+                             source_pattern_count);
+        }
     }
 
     for (std::uint32_t i = 0; i < source_block_count; ++i) {

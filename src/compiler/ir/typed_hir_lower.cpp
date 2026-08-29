@@ -945,9 +945,48 @@ class TypedIrLowerer final {
         return nullptr;
     }
 
-    [[nodiscard]] static ir::MatchPattern lower_pattern(const ast::PatternSyntax *pattern) {
+    // Resolve a TypedPattern's matched enum (from its `matched_type`) to a
+    // SymbolRef, or an empty ref when the pattern is not matched against a
+    // resolved enum. Used to persist the RFC 0026 (3)-3b matched-enum fact so a
+    // literal `none` (which stays a Literal in the TypedPattern) can still be
+    // lowered to Option::None by symbol identity downstream.
+    [[nodiscard]] ir::SymbolRef matched_enum_ref(const TypedPattern *typed) const {
+        if (typed == nullptr || typed->matched_type == nullptr) {
+            return ir::SymbolRef{};
+        }
+        const auto sym = nominal_symbol_of_type(*typed->matched_type);
+        if (!sym.has_value()) {
+            return ir::SymbolRef{};
+        }
+        if (const auto symbol = typed_program_->find_symbol(*sym); symbol.has_value()) {
+            return symbol_ref_from_symbol(symbol, "match pattern matched enum");
+        }
+        return ir::SymbolRef{};
+    }
+
+    // The TypedProgram child pattern a TypedPattern refers to under `name`
+    // (nullptr when absent / out of range). Lets pattern lowering descend the
+    // typed tree in parallel with the AST so each sub-pattern carries its own
+    // typed identity.
+    [[nodiscard]] const TypedPattern *typed_child(const TypedPattern *parent,
+                                                  std::string_view name) const {
+        if (parent == nullptr) {
+            return nullptr;
+        }
+        for (const TypedPatternChild &child : parent->children) {
+            if (child.name == name && child.pattern_index < typed_program_->patterns.size()) {
+                return &typed_program_->patterns[child.pattern_index];
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] ir::MatchPattern lower_pattern(const ast::PatternSyntax *pattern,
+                                                 const TypedPattern *typed) const {
         if (pattern == nullptr) {
-            return ir::MatchPattern{.node = ir::WildcardPattern{}, .source_range = std::nullopt};
+            ir::MatchPattern empty{.node = ir::WildcardPattern{}, .source_range = std::nullopt};
+            empty.matched_enum = matched_enum_ref(typed);
+            return empty;
         }
 
         ir::MatchPattern lowered{
@@ -955,6 +994,10 @@ class TypedIrLowerer final {
             .source_range = pattern->range,
             .text = pattern->text,
         };
+        // Persist the matched-enum fact (from TypedPattern.matched_type) on every
+        // pattern, so literal `none` / wildcard etc. keep the scrutinee enum
+        // identity for (3)-3c to resolve Option::None by symbol.
+        lowered.matched_enum = matched_enum_ref(typed);
         lowered.node = std::visit(
             Overloaded{
                 [](const ast::LiteralPattern &value) -> ir::MatchPatternNode {
@@ -963,7 +1006,7 @@ class TypedIrLowerer final {
                 [](const ast::IntRangePattern &value) -> ir::MatchPatternNode {
                     return ir::IntRangePattern{.start = value.start, .end = value.end};
                 },
-                [](const ast::VariantPattern &value) -> ir::MatchPatternNode {
+                [&](const ast::VariantPattern &value) -> ir::MatchPatternNode {
                     ir::VariantPattern variant{
                         .path = value.path ? value.path->spelling() : std::string{},
                         .kind = value.payload_kind == ast::EnumVariantPayloadKind::Tuple
@@ -974,10 +1017,29 @@ class TypedIrLowerer final {
                         .subpatterns = {},
                         .fields = {},
                     };
+                    // Typed identity (RFC 0026 (3)-3b): resolve the owning enum by
+                    // symbol and record the declaration-stable variant name, so a
+                    // Core lowerer never parses `path`. Prefer the variant's own
+                    // TypedPattern.enum_symbol; fall back to the matched enum.
+                    if (typed != nullptr) {
+                        std::optional<SymbolId> enum_sym = typed->enum_symbol;
+                        if (enum_sym.has_value()) {
+                            if (const auto symbol = typed_program_->find_symbol(*enum_sym);
+                                symbol.has_value()) {
+                                variant.owner_enum =
+                                    symbol_ref_from_symbol(symbol, "variant pattern owner enum");
+                            }
+                        }
+                        if (variant.owner_enum.kind == ir::SymbolRefKind::Unknown) {
+                            variant.owner_enum = matched_enum_ref(typed);
+                        }
+                        variant.variant_name = typed->variant_name;
+                    }
                     variant.subpatterns.reserve(value.subpatterns.size());
-                    for (const auto &subpattern : value.subpatterns) {
-                        variant.subpatterns.push_back(
-                            make_owned<ir::MatchPattern>(lower_pattern(subpattern.get())));
+                    for (std::size_t i = 0; i < value.subpatterns.size(); ++i) {
+                        const TypedPattern *sub_typed = typed_child(typed, std::to_string(i));
+                        variant.subpatterns.push_back(make_owned<ir::MatchPattern>(
+                            lower_pattern(value.subpatterns[i].get(), sub_typed)));
                     }
                     variant.fields.reserve(value.fields.size());
                     for (const auto &field : value.fields) {
@@ -990,8 +1052,9 @@ class TypedIrLowerer final {
                             .is_rest = field->is_rest,
                         };
                         if (field->pattern) {
-                            lowered_field.pattern =
-                                make_owned<ir::MatchPattern>(lower_pattern(field->pattern.get()));
+                            const TypedPattern *field_typed = typed_child(typed, field->name);
+                            lowered_field.pattern = make_owned<ir::MatchPattern>(
+                                lower_pattern(field->pattern.get(), field_typed));
                         }
                         variant.fields.push_back(std::move(lowered_field));
                     }
@@ -1000,33 +1063,63 @@ class TypedIrLowerer final {
                 [](const ast::WildcardPattern &) -> ir::MatchPatternNode {
                     return ir::WildcardPattern{};
                 },
-                [](const ast::BindingPattern &value) -> ir::MatchPatternNode {
+                [&](const ast::BindingPattern &value) -> ir::MatchPatternNode {
+                    // P1 disambiguation (mirrors Sema): a bare identifier that
+                    // names a UNIT variant of the scrutinee enum is a variant
+                    // pattern, not a binding. The AST cannot tell them apart, but
+                    // the TypedPattern was resolved to kind == Variant — honour
+                    // that so the Core lowerer sees a variant with typed identity.
+                    if (typed != nullptr && typed->kind == TypedPatternKind::Variant &&
+                        !value.nested) {
+                        ir::VariantPattern variant{
+                            .path = value.name,
+                            .kind = ir::VariantPatternKind::Unit,
+                            .subpatterns = {},
+                            .fields = {},
+                        };
+                        if (typed->enum_symbol.has_value()) {
+                            if (const auto symbol =
+                                    typed_program_->find_symbol(*typed->enum_symbol);
+                                symbol.has_value()) {
+                                variant.owner_enum = symbol_ref_from_symbol(
+                                    symbol, "variant pattern owner enum");
+                            }
+                        }
+                        if (variant.owner_enum.kind == ir::SymbolRefKind::Unknown) {
+                            variant.owner_enum = matched_enum_ref(typed);
+                        }
+                        variant.variant_name = typed->variant_name;
+                        return variant;
+                    }
                     ir::BindingPattern binding{
                         .name = value.name,
                         .is_mut = value.is_mut,
                         .nested = nullptr,
                     };
                     if (value.nested) {
-                        binding.nested =
-                            make_owned<ir::MatchPattern>(lower_pattern(value.nested.get()));
+                        const TypedPattern *nested_typed = typed_child(typed, "nested");
+                        binding.nested = make_owned<ir::MatchPattern>(
+                            lower_pattern(value.nested.get(), nested_typed));
                     }
                     return binding;
                 },
-                [](const ast::TuplePattern &value) -> ir::MatchPatternNode {
+                [&](const ast::TuplePattern &value) -> ir::MatchPatternNode {
                     ir::TuplePattern tuple;
                     tuple.elements.reserve(value.elements.size());
-                    for (const auto &element : value.elements) {
-                        tuple.elements.push_back(
-                            make_owned<ir::MatchPattern>(lower_pattern(element.get())));
+                    for (std::size_t i = 0; i < value.elements.size(); ++i) {
+                        const TypedPattern *elem_typed = typed_child(typed, std::to_string(i));
+                        tuple.elements.push_back(make_owned<ir::MatchPattern>(
+                            lower_pattern(value.elements[i].get(), elem_typed)));
                     }
                     return tuple;
                 },
-                [](const ast::OrPattern &value) -> ir::MatchPatternNode {
+                [&](const ast::OrPattern &value) -> ir::MatchPatternNode {
                     ir::OrPattern pattern_or;
                     pattern_or.branches.reserve(value.branches.size());
-                    for (const auto &branch : value.branches) {
-                        pattern_or.branches.push_back(
-                            make_owned<ir::MatchPattern>(lower_pattern(branch.get())));
+                    for (std::size_t i = 0; i < value.branches.size(); ++i) {
+                        const TypedPattern *branch_typed = typed_child(typed, std::to_string(i));
+                        pattern_or.branches.push_back(make_owned<ir::MatchPattern>(
+                            lower_pattern(value.branches[i].get(), branch_typed)));
                     }
                     return pattern_or;
                 },
@@ -2057,8 +2150,28 @@ class TypedIrLowerer final {
                     ast_match->arms[arm_index]) {
                     pattern = ast_match->arms[arm_index]->pattern.get();
                 }
+                // RFC 0026 (3)-3b: resolve this arm's TypedPattern by index (in
+                // source arm order) so lowering carries typed variant / matched
+                // enum identity, never the AST spelling. The index list MUST be
+                // present and aligned with the arms; a missing / out-of-range
+                // entry is a structural defect (fail-closed, never fall back to
+                // AST-derived identity).
+                if (e.match_arm_pattern_indexes.size() != 0 &&
+                    arm_index >= e.match_arm_pattern_indexes.size()) {
+                    throw std::logic_error(
+                        "match TypedExpr has fewer match_arm_pattern_indexes than arms");
+                }
+                const TypedPattern *arm_typed = nullptr;
+                if (arm_index < e.match_arm_pattern_indexes.size()) {
+                    const std::uint32_t pat_idx = e.match_arm_pattern_indexes[arm_index];
+                    if (pat_idx >= self.typed_program_->patterns.size()) {
+                        throw std::logic_error(
+                            "match arm pattern index is out of range of TypedProgram::patterns");
+                    }
+                    arm_typed = &self.typed_program_->patterns[pat_idx];
+                }
                 match.arms.push_back(ir::MatchArmExpr{
-                    .pattern = TypedIrLowerer::lower_pattern(pattern),
+                    .pattern = self.lower_pattern(pattern, arm_typed),
                     .guard = pending_guard,
                     .body = self.lower_typed_expr(*target),
                 });
@@ -2458,9 +2571,21 @@ class TypedIrLowerer final {
             auto else_ptr =
                 else_block ? make_owned<ir::Block>(self.lower_typed_block(*else_block)) : nullptr;
             const auto *syntax = self.find_ast_if_let_stmt(stmt);
+            // RFC 0026 (3)-3b: an if-let statement persists its root pattern in
+            // TypedStatement::pattern_index; resolve it so lowering carries typed
+            // identity. An out-of-range index is a structural defect (fail-closed).
+            const TypedPattern *typed_pattern = nullptr;
+            if (stmt.pattern_index != UINT32_MAX) {
+                if (stmt.pattern_index >= self.typed_program_->patterns.size()) {
+                    throw std::logic_error(
+                        "if-let statement pattern index is out of range of TypedProgram::patterns");
+                }
+                typed_pattern = &self.typed_program_->patterns[stmt.pattern_index];
+            }
             return self.make_statement(
                 ir::IfLetStatement{
-                    .pattern = lower_pattern(syntax != nullptr ? syntax->pattern.get() : nullptr),
+                    .pattern = self.lower_pattern(
+                        syntax != nullptr ? syntax->pattern.get() : nullptr, typed_pattern),
                     .scrutinee = scrutinee ? self.lower_typed_expr(*scrutinee) : nullptr,
                     .then_block = then_block
                                       ? make_owned<ir::Block>(self.lower_typed_block(*then_block))

@@ -2294,6 +2294,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         typed_expr->enum_variant_owner_name = typed.enum_variant_owner_name;
         typed_expr->enum_variant_name = typed.enum_variant_name;
         typed_expr->enum_variant_payload_kind = typed.enum_variant_payload_kind;
+        typed_expr->match_arm_pattern_indexes = typed.match_arm_pattern_indexes;
         return;
     }
 
@@ -2327,6 +2328,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             typed_expr->enum_variant_owner_name = typed.enum_variant_owner_name;
             typed_expr->enum_variant_name = typed.enum_variant_name;
             typed_expr->enum_variant_payload_kind = typed.enum_variant_payload_kind;
+            typed_expr->match_arm_pattern_indexes = typed.match_arm_pattern_indexes;
             return;
         }
     }
@@ -2365,6 +2367,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .enum_variant_owner_name = typed.enum_variant_owner_name,
         .enum_variant_name = typed.enum_variant_name,
         .enum_variant_payload_kind = typed.enum_variant_payload_kind,
+        .match_arm_pattern_indexes = typed.match_arm_pattern_indexes,
     });
     if (expr.node_id != 0) {
         const auto index = static_cast<std::uint32_t>(result_.typed_program.expressions.size() - 1);

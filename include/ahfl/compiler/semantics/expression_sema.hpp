@@ -71,6 +71,11 @@ struct ExpressionValue {
     std::string enum_variant_owner_name{};
     std::string enum_variant_name{};
     std::optional<EnumVariantPayloadKind> enum_variant_payload_kind{};
+    // RFC 0026 (3)-3b: for a Match expression, the TypedProgram::patterns index
+    // of each arm's root pattern in SOURCE ARM ORDER. Propagated to
+    // TypedExpr::match_arm_pattern_indexes by remember_expression_type. Empty
+    // for every non-match expression.
+    std::vector<std::uint32_t> match_arm_pattern_indexes{};
 };
 
 struct ExpressionPatternLoweringResult {

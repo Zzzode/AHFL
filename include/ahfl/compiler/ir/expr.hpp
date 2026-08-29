@@ -123,10 +123,17 @@ struct VariantPatternField {
 };
 
 struct VariantPattern {
-    std::string path;
+    std::string path; // display only; owner_enum + variant_name are identity
     VariantPatternKind kind{VariantPatternKind::Unit};
     std::vector<Owned<MatchPattern>> subpatterns;
     std::vector<VariantPatternField> fields;
+    // Typed identity persisted from Sema's TypedPattern (RFC 0026 (3)-3b): the
+    // owning enum's resolved symbol and the declaration-stable variant name.
+    // A Core lowerer resolves the variant by symbol identity, NEVER by parsing
+    // `path`. `owner_enum.kind == Unknown` means the fact was not resolved
+    // (fail-closed downstream).
+    SymbolRef owner_enum{};
+    std::string variant_name{};
 };
 
 /// Wildcard pattern: _.
@@ -161,6 +168,14 @@ struct MatchPattern {
     MatchPatternNode node;
     SourceRangeOpt source_range;
     std::string text{};
+    // The enum this pattern is matched AGAINST, persisted from Sema's
+    // TypedPattern.matched_type (RFC 0026 (3)-3b). Needed because a literal
+    // pattern like `none` stays a LiteralPattern whose enum identity lives only
+    // in the scrutinee's matched type — so (3)-3c can lower `none` to the
+    // Option::None variant pattern by symbol identity, never by spelling.
+    // `matched_enum.kind == Unknown` means the pattern is not matched against a
+    // (resolved) enum (e.g. an integer/bool scrutinee), which is fine.
+    SymbolRef matched_enum{};
 };
 
 /// Boolean literal: true / false

@@ -891,6 +891,8 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     object->set("enum_variant_owner_name", Json::make_string(expr.enum_variant_owner_name));
     object->set("enum_variant_name", Json::make_string(expr.enum_variant_name));
     object->set("enum_variant_payload_kind", j_optional_enum(expr.enum_variant_payload_kind));
+    // RFC 0026 (3)-3b: per-arm root pattern indexes for a Match expression.
+    object->set("match_arm_pattern_indexes", j_index_array(expr.match_arm_pattern_indexes));
     return object;
 }
 
@@ -2138,6 +2140,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .enum_variant_payload_kind =
             reader.template optional_enum_field<EnumVariantPayloadKind>(object,
                                                                        "enum_variant_payload_kind"),
+        .match_arm_pattern_indexes = reader.index_array_field(object, "match_arm_pattern_indexes"),
     };
 
     // C-5 (Wave-24): deserialize dispatch_target for MethodCall expressions.

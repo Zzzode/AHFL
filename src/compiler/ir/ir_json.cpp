@@ -732,6 +732,12 @@ class IrJsonPrinter final {
                                     int indent_level) {
         field("text", [&]() { write_string(pattern.text); });
         print_source_range_field(field, pattern.source_range, indent_level);
+        // RFC 0026 (3)-3b: matched-enum identity (present for every pattern
+        // matched against a resolved enum). Emitted only when set so a
+        // non-enum-matched pattern round-trips byte-exact.
+        if (has_symbol_ref(pattern.matched_enum)) {
+            field("matched_enum", [&]() { print_symbol_ref(pattern.matched_enum, indent_level); });
+        }
     }
 
     void print_match_pattern(const ir::MatchPattern &pattern, int indent_level) {
@@ -757,6 +763,16 @@ class IrJsonPrinter final {
                         field("kind", [&]() { write_string("variant"); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                         field("path", [&]() { write_string(value.path); });
+                        // RFC 0026 (3)-3b: typed variant identity. owner_enum is
+                        // emitted only when resolved so an unresolved-identity
+                        // pattern round-trips byte-exact.
+                        if (has_symbol_ref(value.owner_enum)) {
+                            field("owner_enum",
+                                  [&]() { print_symbol_ref(value.owner_enum, indent_level + 1); });
+                        }
+                        if (!value.variant_name.empty()) {
+                            field("variant_name", [&]() { write_string(value.variant_name); });
+                        }
                         field("payload_kind", [&]() {
                             switch (value.kind) {
                             case ir::VariantPatternKind::Unit:
@@ -2785,6 +2801,8 @@ class IrJsonReader final {
         const auto kind = req_string(obj, "kind");
         pattern.text = req_string(obj, "text");
         pattern.source_range = source_range(obj);
+        // RFC 0026 (3)-3b: matched-enum identity (absent => default empty ref).
+        pattern.matched_enum = opt_symbol_ref(obj, "matched_enum");
         pattern.node = build_pattern_node(obj, kind);
         return pattern;
     }
@@ -2816,6 +2834,9 @@ class IrJsonReader final {
         if (kind == "variant") {
             ir::VariantPattern variant;
             variant.path = req_string(obj, "path");
+            // RFC 0026 (3)-3b: typed variant identity (absent => empty / "").
+            variant.owner_enum = opt_symbol_ref(obj, "owner_enum");
+            variant.variant_name = opt_string(obj, "variant_name");
             const auto payload_kind = req_string(obj, "payload_kind");
             if (payload_kind == "unit") { variant.kind = ir::VariantPatternKind::Unit; }
             else if (payload_kind == "tuple") { variant.kind = ir::VariantPatternKind::Tuple; }

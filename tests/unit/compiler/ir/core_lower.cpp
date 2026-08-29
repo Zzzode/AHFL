@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstdio>
 #include <functional>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -1586,4 +1587,194 @@ TEST_CASE("enum struct-payload construct with a missing slot fails closed in the
     const auto result = ir::core::lower_ahfl_to_core(program);
     CHECK_FALSE(result.ok());
     CHECK(has_verify_code(result)); // missing struct-payload slot caught by verifier
+}
+
+// ---------------------------------------------------------------------------
+// (3)-3b typed pattern identity bridge: after lowering a real match program to
+// AHFL-IR, each variant pattern carries its owner-enum SymbolRef + declaration-
+// stable variant name (not just the `path` spelling), and EVERY pattern carries
+// the matched-enum fact from the scrutinee's type. This is what lets (3)-3c
+// resolve variant identity by symbol and turn a literal `none` into Option::None.
+// ---------------------------------------------------------------------------
+namespace {
+
+// The first MatchExpr reachable in the AHFL-IR expression arena, or nullptr.
+const ir::MatchExpr *find_match_expr(const ir::AhflIr &program) {
+    for (const ir::Expr *expr : program.all_exprs()) {
+        if (expr == nullptr) {
+            continue;
+        }
+        if (const auto *m = std::get_if<ir::MatchExpr>(&expr->node)) {
+            return m;
+        }
+    }
+    return nullptr;
+}
+
+const ir::VariantPattern *variant_of(const ir::MatchPattern &pattern) {
+    return std::get_if<ir::VariantPattern>(&pattern.node);
+}
+
+} // namespace
+
+TEST_CASE("(3)-3b: variant patterns carry typed owner-enum identity + variant name") {
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let m: Maybe = Maybe::Some(input.id);
+        let r: Int = match m {
+            Some(x) => x,
+            None => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+    const auto program = lower_source_to_ahfl_ir("match_identity", source);
+    REQUIRE(program.has_value());
+    const ir::MatchExpr *match = find_match_expr(*program);
+    REQUIRE(match != nullptr);
+    REQUIRE(match->arms.size() == 2);
+
+    // Arm 0: Some(x) — tuple-payload variant. Owner enum resolved by symbol,
+    // variant name declaration-stable, matched-enum fact present.
+    const ir::VariantPattern *some = variant_of(match->arms[0].pattern);
+    REQUIRE(some != nullptr);
+    CHECK(some->variant_name == "Some");
+    CHECK(some->owner_enum.kind == ir::SymbolRefKind::Type);
+    CHECK(some->owner_enum.canonical_name.find("Maybe") != std::string::npos);
+    CHECK(match->arms[0].pattern.matched_enum.canonical_name.find("Maybe") != std::string::npos);
+
+    // Arm 1: None — unit variant. Same typed identity.
+    const ir::VariantPattern *none = variant_of(match->arms[1].pattern);
+    REQUIRE(none != nullptr);
+    CHECK(none->variant_name == "None");
+    CHECK(none->owner_enum.kind == ir::SymbolRefKind::Type);
+    CHECK(none->owner_enum.canonical_name.find("Maybe") != std::string::npos);
+}
+
+TEST_CASE("(3)-3b: a non-variant (wildcard) arm still carries the matched-enum fact") {
+    // A wildcard / literal arm is NOT a variant, so it has no owner_enum of its
+    // own; its enum identity comes from the scrutinee's matched type. The
+    // matched_enum fact must be set on such a pattern so (3)-3c can still resolve
+    // the scrutinee enum (the same mechanism a literal `none` relies on).
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Colour { Red, Green, Blue, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let c: Colour = Colour::Red;
+        let r: Int = match c {
+            Red => 1,
+            _ => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+    const auto program = lower_source_to_ahfl_ir("match_wildcard_identity", source);
+    REQUIRE(program.has_value());
+    const ir::MatchExpr *match = find_match_expr(*program);
+    REQUIRE(match != nullptr);
+    REQUIRE(match->arms.size() == 2);
+    // Arm 1 is the wildcard `_` — a non-variant pattern that must still know its
+    // matched enum by symbol identity.
+    const ir::MatchPattern &wild = match->arms[1].pattern;
+    CHECK(std::holds_alternative<ir::WildcardPattern>(wild.node));
+    CHECK(wild.matched_enum.kind == ir::SymbolRefKind::Type);
+    CHECK(wild.matched_enum.canonical_name.find("Colour") != std::string::npos);
+}
+
+TEST_CASE("(3)-3b: variant pattern identity survives IR JSON round-trip byte-exact") {
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let m: Maybe = Maybe::Some(input.id);
+        let r: Int = match m {
+            Some(x) => x,
+            None => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+    const auto program = lower_source_to_ahfl_ir("match_roundtrip", source);
+    REQUIRE(program.has_value());
+
+    std::ostringstream first;
+    ahfl::print_program_ir_json(*program, first);
+    const std::string json1 = first.str();
+
+    const auto parsed = ahfl::parse_program_ir_json(json1);
+    REQUIRE(parsed.has_value());
+
+    std::ostringstream second;
+    ahfl::print_program_ir_json(*parsed, second);
+    const std::string json2 = second.str();
+
+    // Byte-exact: print -> parse -> print reproduces the JSON verbatim, so the
+    // owner_enum SymbolRef + variant_name + matched_enum fields survive.
+    CHECK(json1 == json2);
+
+    // And the parsed-back program still carries typed variant identity.
+    const ir::MatchExpr *match = find_match_expr(*parsed);
+    REQUIRE(match != nullptr);
+    REQUIRE(match->arms.size() == 2);
+    const ir::VariantPattern *some = variant_of(match->arms[0].pattern);
+    REQUIRE(some != nullptr);
+    CHECK(some->variant_name == "Some");
+    CHECK(some->owner_enum.canonical_name.find("Maybe") != std::string::npos);
+    CHECK(match->arms[0].pattern.matched_enum.canonical_name.find("Maybe") != std::string::npos);
 }

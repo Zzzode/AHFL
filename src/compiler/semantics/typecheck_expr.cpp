@@ -2423,7 +2423,16 @@ class ExpressionChecker final {
         TypePtr result_type = unified_body_type.has_value() && !unified_is_error
                                   ? *unified_body_type
                                   : values_.make_error_type();
-        return values_.typed_effect(std::move(result_type), joined);
+        auto match_value = values_.typed_effect(std::move(result_type), joined);
+        // RFC 0026 (3)-3b: persist each arm's root TypedPattern index in SOURCE
+        // ARM ORDER so lowering resolves pattern identity by index rather than
+        // re-deriving it from the AST. `match_pattern_rows` is built in arm
+        // order above (one row per arm, guard-independent).
+        match_value.match_arm_pattern_indexes.reserve(match_pattern_rows.size());
+        for (const auto &row : match_pattern_rows) {
+            match_value.match_arm_pattern_indexes.push_back(row.pattern_index);
+        }
+        return match_value;
     }
 
     // P4-02: `unwrap(e)` — operand must be an Option<T>; result type is T.
