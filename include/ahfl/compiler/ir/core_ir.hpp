@@ -117,6 +117,26 @@ struct CoreVariantId {
     [[nodiscard]] friend bool operator==(CoreVariantId, CoreVariantId) noexcept = default;
 };
 
+/// Index into a flow's pattern arena (`CoreFlowDecl::patterns`). A match arm's
+/// pattern tree lives flat (Principle 3): a variant/or/binding pattern refers to
+/// its children by `CorePatternId`, never by owning pointer.
+struct CorePatternId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CorePatternId, CorePatternId) noexcept = default;
+};
+
+/// Index into a match arm's binding list (`CoreMatchArm::bindings`). A binding
+/// pattern refers to the arm binding it names by this index, so an or-pattern's
+/// alternatives (`A(x) | B(x)`) share ONE arm binding rather than each defining
+/// its own (which would violate flow-global SSA single-definition).
+struct CorePatternBindingId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CorePatternBindingId,
+                                         CorePatternBindingId) noexcept = default;
+};
+
 // ----------------------------------------------------------------------------
 // State-machine node set (minimal orchestration skeleton)
 // ----------------------------------------------------------------------------
@@ -427,7 +447,90 @@ struct CoreExpr {
     [[nodiscard]] friend bool operator==(const CoreExpr &, const CoreExpr &) noexcept = default;
 };
 
-// --- assignment target (a place) ---
+// --- match patterns (flat arena; Principle 3/4) ---
+//
+// A match arm's pattern is a tree stored FLAT in the per-flow pattern arena
+// (`CoreFlowDecl::patterns`, addressed by `CorePatternId`): a variant / or /
+// binding pattern names its children by id, never by owning pointer. Binding
+// patterns do NOT define their own value — they name an arm binding
+// (`CorePatternBindingId` into `CoreMatchArm::bindings`), so an or-pattern's
+// alternatives (`A(x) | B(x)`) share ONE binding and flow-global SSA
+// single-definition is preserved. (The match statement / arm nodes land in the
+// next slice; this slice defines the pattern arena + its structural verifier.)
+
+/// `_` — matches anything, binds nothing.
+struct CoreWildcardPat {
+    [[nodiscard]] friend bool operator==(const CoreWildcardPat &,
+                                         const CoreWildcardPat &) noexcept = default;
+};
+
+/// A literal pattern (`0`, `"x"`, `true`, `none`). Kind + spelling mirror
+/// `CoreLiteralExpr`; physical encoding is deferred to P4.
+struct CoreLiteralPat {
+    CoreLiteralKind kind{CoreLiteralKind::Unit};
+    std::string spelling;
+    [[nodiscard]] friend bool operator==(const CoreLiteralPat &,
+                                         const CoreLiteralPat &) noexcept = default;
+};
+
+/// A binding pattern (`x` or `x @ nested`). `binding` names the arm binding this
+/// introduces (shared across or-alternatives). `nested` (optional) further
+/// matches the bound value.
+struct CoreBindingPat {
+    CorePatternBindingId binding{};
+    CorePatternId nested{}; // kInvalid when there is no `@ nested`
+    bool has_nested{false};
+    [[nodiscard]] friend bool operator==(const CoreBindingPat &,
+                                         const CoreBindingPat &) noexcept = default;
+};
+
+/// One field of a struct-payload variant pattern: the declared payload slot id
+/// plus the sub-pattern matched against it. Storing the slot (not relying on
+/// write order) keeps `{ owner: _, id }`, field reordering, and `..` (rest)
+/// field-identity-correct.
+struct CoreVariantPatField {
+    CoreFieldId slot{};
+    CorePatternId pattern{};
+    [[nodiscard]] friend bool operator==(const CoreVariantPatField &,
+                                         const CoreVariantPatField &) noexcept = default;
+};
+
+/// An enum-variant pattern (`Some(x)`, `Open { id, owner: _ }`, `None`). Typed
+/// identity: the owning `owner_enum` + `variant`. A Tuple payload uses
+/// `tuple_subpatterns` (positional, in declared slot order); a Struct payload
+/// uses `struct_fields` (slot-identified, order-independent) with `has_rest` for
+/// a `..` remainder. A Unit variant leaves both empty.
+struct CoreVariantPat {
+    CoreTypeId owner_enum{};
+    CoreVariantId variant{};
+    std::vector<CorePatternId> tuple_subpatterns;
+    std::vector<CoreVariantPatField> struct_fields;
+    bool has_rest{false};
+    [[nodiscard]] friend bool operator==(const CoreVariantPat &,
+                                         const CoreVariantPat &) noexcept = default;
+};
+
+/// An or-pattern (`A | B | …`). Every alternative must bind the SAME arm binding
+/// set (checked by the verifier), so a downstream arm body sees one consistent
+/// binding regardless of which alternative matched.
+struct CoreOrPat {
+    std::vector<CorePatternId> alternatives;
+    [[nodiscard]] friend bool operator==(const CoreOrPat &, const CoreOrPat &) noexcept = default;
+};
+
+using CorePatternNode = std::variant<CoreWildcardPat,
+                                     CoreLiteralPat,
+                                     CoreBindingPat,
+                                     CoreVariantPat,
+                                     CoreOrPat>;
+
+struct CorePattern {
+    CorePatternNode node;
+    SourceRangeOpt source_range;
+    [[nodiscard]] friend bool operator==(const CorePattern &, const CorePattern &) noexcept = default;
+};
+
+
 
 /// A storable place (`ctx.field`, `ctx.a.b`, a local, …). Self-contained like
 /// `CorePathExpr`: `root_type` + resolved `projection` step chain are the
@@ -545,6 +648,7 @@ struct CoreFlowDecl {
     ir::SymbolRef target_ref;           // provenance / display only
     std::vector<CoreExpr> exprs;        // pure-expression arena (Principle 3)
     std::uint32_t value_count{0};       // number of CoreValueIds allocated
+    std::vector<CorePattern> patterns;  // match-pattern arena (Principle 3)
     std::vector<CoreFlowState> states;
     friend bool operator==(const CoreFlowDecl &, const CoreFlowDecl &) noexcept;
 };

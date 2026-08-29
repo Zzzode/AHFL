@@ -404,6 +404,193 @@ class Verifier {
         }
     }
 
+    // --- match-pattern arena ---
+    //
+    // Every CorePattern in the flow's pattern arena is checked for id bounds,
+    // acyclicity (iterative 3-color DFS over child-pattern edges), and per-node
+    // shape: a variant pattern's owner enum + variant id are in range and its
+    // payload shape matches the declared variant (tuple arity; struct slot
+    // domain + no duplicate); an or-pattern has >= 2 alternatives. (Arm-binding
+    // reference validity and or-alternative binding-set consistency are checked
+    // with the match arm in the next slice, where the arm's binding list lives.)
+    void verify_pattern_arena(const CoreFlowDecl &flow) {
+        const auto pat_count = static_cast<std::uint32_t>(flow.patterns.size());
+        const auto check_id = [&](CorePatternId p, SourceRangeOpt range) {
+            if (p.value >= pat_count) {
+                error(verify::kPatternIdOutOfRange,
+                      "pattern id " + std::to_string(p.value) + " is out of range in flow '" +
+                          flow.agent_name + "'",
+                      range);
+            }
+        };
+        for (const CorePattern &pat : flow.patterns) {
+            std::visit(Overloaded{
+                           [&](const CoreWildcardPat &) {},
+                           [&](const CoreLiteralPat &) {},
+                           [&](const CoreBindingPat &b) {
+                               if (b.has_nested) {
+                                   check_id(b.nested, pat.source_range);
+                               }
+                           },
+                           [&](const CoreVariantPat &v) {
+                               verify_variant_pattern(v, pat_count, pat.source_range);
+                           },
+                           [&](const CoreOrPat &o) {
+                               if (o.alternatives.size() < 2) {
+                                   error(verify::kPatternShapeInvalid,
+                                         "or-pattern must have at least two alternatives", pat.source_range);
+                               }
+                               for (const CorePatternId alt : o.alternatives) {
+                                   check_id(alt, pat.source_range);
+                               }
+                           },
+                       },
+                       pat.node);
+        }
+        verify_pattern_arena_acyclic(flow);
+    }
+
+    void verify_variant_pattern(const CoreVariantPat &v, std::uint32_t pat_count,
+                                SourceRangeOpt range) {
+        const auto check_id = [&](CorePatternId p) {
+            if (p.value >= pat_count) {
+                error(verify::kPatternIdOutOfRange,
+                      "pattern id " + std::to_string(p.value) + " is out of range", range);
+            }
+        };
+        if (!is_enum(v.owner_enum)) {
+            error(verify::kPatternVariantInvalid,
+                  "variant pattern owner type id does not name an enum", range);
+            return;
+        }
+        const CoreTypeDecl &enum_decl = program_.types[v.owner_enum.value];
+        if (v.variant.value >= enum_decl.variants.size()) {
+            error(verify::kPatternVariantInvalid,
+                  "variant pattern variant id " + std::to_string(v.variant.value) +
+                      " is out of range for enum '" + enum_decl.name + "'",
+                  range);
+            return;
+        }
+        if (v.variant.value >= enum_decl.variant_payloads.size()) {
+            error(verify::kTypeTableShapeInvalid,
+                  "enum '" + enum_decl.name + "' variant #" + std::to_string(v.variant.value) +
+                      " has no payload metadata (table is malformed)",
+                  range);
+            return;
+        }
+        const auto &payload = enum_decl.variant_payloads[v.variant.value];
+        const auto arity = static_cast<std::uint32_t>(payload.slot_types.size());
+        using PK = CoreTypeDecl::VariantPayload::Kind;
+        if (payload.kind == PK::Struct) {
+            // Struct payload: slot-identified fields; slots in range, no
+            // duplicate, and (absent `..`) complete coverage.
+            std::unordered_set<std::uint32_t> seen;
+            for (const CoreVariantPatField &f : v.struct_fields) {
+                check_id(f.pattern);
+                if (f.slot.value >= arity) {
+                    error(verify::kPatternFieldInvalid,
+                          "struct-payload pattern slot id " + std::to_string(f.slot.value) +
+                              " is out of range",
+                          range);
+                } else if (!seen.insert(f.slot.value).second) {
+                    error(verify::kPatternFieldInvalid,
+                          "struct-payload pattern binds slot id " + std::to_string(f.slot.value) +
+                              " more than once",
+                          range);
+                }
+            }
+            if (!v.has_rest && seen.size() != arity) {
+                error(verify::kPatternPayloadArity,
+                      "struct-payload pattern without `..` must cover all " +
+                          std::to_string(arity) + " fields (covered " + std::to_string(seen.size()) +
+                          ")",
+                      range);
+            }
+            if (!v.tuple_subpatterns.empty()) {
+                error(verify::kPatternShapeInvalid,
+                      "struct-payload pattern must not use positional subpatterns", range);
+            }
+        } else {
+            // Tuple / unit payload: positional subpatterns, exact arity, no
+            // struct fields / rest.
+            if (!v.struct_fields.empty() || v.has_rest) {
+                error(verify::kPatternShapeInvalid,
+                      "non-struct-payload pattern must not use named fields or `..`", range);
+            }
+            if (v.tuple_subpatterns.size() != arity) {
+                error(verify::kPatternPayloadArity,
+                      "variant pattern has " + std::to_string(v.tuple_subpatterns.size()) +
+                          " subpatterns but the variant payload arity is " + std::to_string(arity),
+                      range);
+            }
+            for (const CorePatternId sub : v.tuple_subpatterns) {
+                check_id(sub);
+            }
+        }
+    }
+
+    // Iterative 3-color DFS over the pattern reference graph (binding.nested,
+    // variant tuple/struct children, or alternatives). A back edge to a Gray
+    // node is a cycle.
+    void verify_pattern_arena_acyclic(const CoreFlowDecl &flow) {
+        enum class Color : std::uint8_t { White, Gray, Black };
+        const auto count = static_cast<std::uint32_t>(flow.patterns.size());
+        std::vector<Color> color(count, Color::White);
+        for (std::uint32_t root = 0; root < count; ++root) {
+            if (color[root] != Color::White) {
+                continue;
+            }
+            std::vector<std::uint32_t> stack{root};
+            while (!stack.empty()) {
+                const std::uint32_t id = stack.back();
+                if (color[id] == Color::White) {
+                    color[id] = Color::Gray;
+                    const auto push = [&](CorePatternId e) {
+                        if (e.value >= count) {
+                            return; // out-of-range already reported
+                        }
+                        if (color[e.value] == Color::Gray) {
+                            error(verify::kPatternCycle,
+                                  "pattern #" + std::to_string(e.value) +
+                                      " participates in a reference cycle in flow '" +
+                                      flow.agent_name + "'",
+                                  flow.patterns[id].source_range);
+                        } else if (color[e.value] == Color::White) {
+                            stack.push_back(e.value);
+                        }
+                    };
+                    std::visit(Overloaded{
+                                   [&](const CoreBindingPat &b) {
+                                       if (b.has_nested) {
+                                           push(b.nested);
+                                       }
+                                   },
+                                   [&](const CoreVariantPat &v) {
+                                       for (const CorePatternId s : v.tuple_subpatterns) {
+                                           push(s);
+                                       }
+                                       for (const CoreVariantPatField &f : v.struct_fields) {
+                                           push(f.pattern);
+                                       }
+                                   },
+                                   [&](const CoreOrPat &o) {
+                                       for (const CorePatternId a : o.alternatives) {
+                                           push(a);
+                                       }
+                                   },
+                                   [&](const auto &) {},
+                               },
+                               flow.patterns[id].node);
+                } else {
+                    if (color[id] == Color::Gray) {
+                        color[id] = Color::Black;
+                    }
+                    stack.pop_back();
+                }
+            }
+        }
+    }
+
     void verify_qualified(const CoreQualifiedExpr &q, SourceRangeOpt range) {
         if (!q.resolved) {
             error(verify::kQualifiedUnresolved,
@@ -553,6 +740,7 @@ class Verifier {
     // --- flow wiring + per-state statement discipline ---
     void verify_flow(const CoreFlowDecl &flow) {
         verify_expr_arena(flow);
+        verify_pattern_arena(flow);
 
         if (flow.target.value >= program_.agents.size()) {
             error(verify::kFlowTargetInvalid,

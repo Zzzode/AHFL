@@ -37,6 +37,12 @@
 //   * the pure-expression arena is ACYCLIC (a self/mutually-referential expr
 //     would make recursive codegen diverge); ALL arena exprs are checked, not
 //     only statement-reachable ones;
+//   * the match-pattern arena is well-formed: every CorePatternId is in range,
+//     the pattern reference graph is ACYCLIC, a variant pattern's owner enum +
+//     variant id are in range and its payload shape matches the declared variant
+//     (tuple arity; struct field slots in range + no duplicate), and an
+//     or-pattern has at least two alternatives (binding-set consistency across
+//     alternatives is checked with the match arm in a later slice);
 //   * construct legality (TRANSITIONAL contract — see slice ②b): resolved
 //     type/variant/field ids in range, no duplicate field ids, every REQUIRED
 //     struct field (one with no source-level default) is assigned, and an
@@ -100,6 +106,12 @@ inline constexpr std::string_view kCapabilityArityMismatch = "core.verify.CAPABI
 inline constexpr std::string_view kUnsupportedExpr = "core.verify.UNSUPPORTED_EXPR";
 inline constexpr std::string_view kStmtAfterTerminator = "core.verify.STMT_AFTER_TERMINATOR";
 inline constexpr std::string_view kTypedShellInvalid = "core.verify.TYPED_SHELL_INVALID";
+inline constexpr std::string_view kPatternIdOutOfRange = "core.verify.PATTERN_ID_OUT_OF_RANGE";
+inline constexpr std::string_view kPatternCycle = "core.verify.PATTERN_CYCLE";
+inline constexpr std::string_view kPatternVariantInvalid = "core.verify.PATTERN_VARIANT_INVALID";
+inline constexpr std::string_view kPatternPayloadArity = "core.verify.PATTERN_PAYLOAD_ARITY";
+inline constexpr std::string_view kPatternFieldInvalid = "core.verify.PATTERN_FIELD_INVALID";
+inline constexpr std::string_view kPatternShapeInvalid = "core.verify.PATTERN_SHAPE_INVALID";
 } // namespace verify
 
 /// Result of verifying a Core-IR program: any structural violations, as

@@ -749,3 +749,96 @@ TEST_CASE("verifier fails closed on an enum-variant construct whose variant has 
     CHECK(has_code(result, verify::kTypeTableShapeInvalid));
 }
 
+
+// --- ③-1 match-pattern arena ---
+//
+// The good program's Flag enum has two Unit variants (On=0, Off=1, arity 0).
+// These build a pattern arena on the flow and tamper one invariant each.
+
+TEST_CASE("verifier accepts a well-formed pattern arena") {
+    GoodProgram g = make_good_program();
+    // patterns: [0] wildcard, [1] Flag::On (unit variant), [2] (On | wildcard)
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+    CoreVariantPat on;
+    on.owner_enum = CoreTypeId{2}; // Flag
+    on.variant = CoreVariantId{0}; // On (unit, arity 0)
+    g.flow->patterns.push_back(CorePattern{on, std::nullopt});
+    CoreOrPat orp;
+    orp.alternatives = {CorePatternId{1}, CorePatternId{0}};
+    g.flow->patterns.push_back(CorePattern{orp, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("verifier fails closed on an out-of-range pattern id") {
+    GoodProgram g = make_good_program();
+    CoreOrPat orp;
+    orp.alternatives = {CorePatternId{0}, CorePatternId{99}}; // 99 out of range
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+    g.flow->patterns.push_back(CorePattern{orp, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternIdOutOfRange));
+}
+
+TEST_CASE("verifier fails closed on a self-referential pattern (cycle)") {
+    GoodProgram g = make_good_program();
+    // pattern #0 = binding whose nested is itself.
+    CoreBindingPat b;
+    b.has_nested = true;
+    b.nested = CorePatternId{0};
+    g.flow->patterns.push_back(CorePattern{b, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternCycle));
+}
+
+TEST_CASE("verifier fails closed on a variant pattern whose owner is not an enum") {
+    GoodProgram g = make_good_program();
+    CoreVariantPat v;
+    v.owner_enum = CoreTypeId{1}; // Ctx is a struct, not an enum
+    v.variant = CoreVariantId{0};
+    g.flow->patterns.push_back(CorePattern{v, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternVariantInvalid));
+}
+
+TEST_CASE("verifier fails closed on a variant pattern with an out-of-range variant id") {
+    GoodProgram g = make_good_program();
+    CoreVariantPat v;
+    v.owner_enum = CoreTypeId{2}; // Flag
+    v.variant = CoreVariantId{7}; // Flag has 2 variants
+    g.flow->patterns.push_back(CorePattern{v, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternVariantInvalid));
+}
+
+TEST_CASE("verifier fails closed on a unit variant pattern given tuple subpatterns (arity)") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    CoreVariantPat v;
+    v.owner_enum = CoreTypeId{2};   // Flag
+    v.variant = CoreVariantId{0};   // On (arity 0)
+    v.tuple_subpatterns = {CorePatternId{0}}; // 1 subpattern vs arity 0
+    g.flow->patterns.push_back(CorePattern{v, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternPayloadArity));
+}
+
+TEST_CASE("verifier fails closed on an or-pattern with fewer than two alternatives") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    CoreOrPat orp;
+    orp.alternatives = {CorePatternId{0}}; // only one
+    g.flow->patterns.push_back(CorePattern{orp, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternShapeInvalid));
+}

@@ -71,7 +71,7 @@ namespace {
 bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
     return a.target == b.target && a.agent_name == b.agent_name &&
            symbol_ref_equal(a.target_ref, b.target_ref) && a.exprs == b.exprs &&
-           a.value_count == b.value_count && a.states == b.states;
+           a.value_count == b.value_count && a.patterns == b.patterns && a.states == b.states;
 }
 
 // The production builtin variant table — the SINGLE SOURCE OF TRUTH for the
