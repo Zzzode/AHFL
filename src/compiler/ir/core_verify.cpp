@@ -431,7 +431,18 @@ class Verifier {
             std::visit(Overloaded{
                            [&](const CoreWildcardPat &) {},
                            [&](const CoreLiteralPat &) {},
-                           [&](const CoreIntRangePat &) {},
+                           [&](const CoreIntRangePat &r) {
+                               // AHFL `..` is a closed interval [start, end]; a
+                               // reverse range is empty and never authored. Sema
+                               // rejects it, but the standalone verifier guards
+                               // the JSON / backend consumption boundary too.
+                               if (r.start > r.end) {
+                                   error(verify::kPatternShapeInvalid,
+                                         "int-range pattern has start (" + std::to_string(r.start) +
+                                             ") greater than end (" + std::to_string(r.end) + ")",
+                                         pat.source_range);
+                               }
+                           },
                            [&](const CoreBindingPat &b) {
                                if (b.has_nested) {
                                    check_id(b.nested, pat.source_range);

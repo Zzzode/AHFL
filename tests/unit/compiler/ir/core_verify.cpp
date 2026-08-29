@@ -861,6 +861,14 @@ TEST_CASE("verifier accepts a well-formed IntRange + Tuple pattern arena") {
     CHECK(result.ok());
 }
 
+TEST_CASE("verifier fails closed on a reverse int-range pattern (start > end)") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreIntRangePat{10, 1}, std::nullopt}); // reverse
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternShapeInvalid));
+}
+
 TEST_CASE("verifier fails closed on a tuple pattern with an out-of-range element id") {
     GoodProgram g = make_good_program();
     CoreTuplePat t;

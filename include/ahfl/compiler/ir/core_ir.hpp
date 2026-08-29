@@ -475,10 +475,11 @@ struct CoreLiteralPat {
                                          const CoreLiteralPat &) noexcept = default;
 };
 
-/// An integer range pattern (`start..end`). Bounds are the source-level integers
-/// (inclusive/exclusive semantics carried as-authored; physical match lowering
-/// is deferred to P4). Distinct from `CoreLiteralPat` so a backend never has to
-/// re-parse a range out of a spelling.
+/// An integer range pattern (`start..end`). AHFL `..` is a CLOSED interval:
+/// it matches an integer `v` iff `start <= v <= end`. The bounds are the
+/// source-level integers as typed i64, so a backend never re-parses a range out
+/// of a spelling. A reverse range (`start > end`) is rejected by the verifier
+/// (PATTERN_SHAPE_INVALID) — physical match lowering is deferred to P4.
 struct CoreIntRangePat {
     std::int64_t start{0};
     std::int64_t end{0};
