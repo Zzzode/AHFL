@@ -131,7 +131,7 @@ class Verifier {
         };
         require_struct(agent.input_type, "input");
         require_struct(agent.output_type, "output");
-        if (agent.context_is_struct) {
+        if (agent.context_kind == CoreAgentDecl::ContextKind::Struct) {
             require_struct(agent.context_type, "context");
         } else if (agent.context_type.value != CoreTypeId::kInvalid) {
             error(verify::kTypedShellInvalid,
@@ -247,11 +247,28 @@ class Verifier {
                       range);
             }
         };
+        // Static bounds on every CoreValueId EMBEDDED in an expr, independent of
+        // whether a statement reaches this expr. (Def-before-use / scope is a
+        // separate, statement-reachable check in verify_region.) Without this, a
+        // malformed but unreferenced arena node — e.g. CoreValueRefExpr{999} —
+        // would slip past a consumption-boundary re-verify.
+        const auto check_value_id = [&](CoreValueId v, SourceRangeOpt range) {
+            if (v.value >= flow.value_count) {
+                error(verify::kValueIdOutOfRange,
+                      "value id " + std::to_string(v.value) +
+                          " embedded in an expression is out of range in flow '" +
+                          flow.agent_name + "'",
+                      range);
+            }
+        };
         for (const CoreExpr &expr : flow.exprs) {
             std::visit(Overloaded{
                            [&](const CoreLiteralExpr &) {},
-                           [&](const CoreValueRefExpr &) {}, // value bounds in stmt walk
+                           [&](const CoreValueRefExpr &r) { check_value_id(r.value, expr.source_range); },
                            [&](const CorePathExpr &p) {
+                               if (p.has_local) {
+                                   check_value_id(p.local, expr.source_range);
+                               }
                                verify_projection(p.root_type, p.projection, p.projection_resolved,
                                                  p.root_name, expr.source_range);
                            },
@@ -261,7 +278,12 @@ class Verifier {
                                check_expr_id(b.lhs, expr.source_range);
                                check_expr_id(b.rhs, expr.source_range);
                            },
-                           [&](const CoreConstructExpr &c) { verify_construct(c, expr.source_range); },
+                           [&](const CoreConstructExpr &c) {
+                               for (const CoreConstructArg &arg : c.args) {
+                                   check_value_id(arg.value, expr.source_range);
+                               }
+                               verify_construct(c, expr.source_range);
+                           },
                            [&](const CoreUnsupportedExpr &u) {
                                error(verify::kUnsupportedExpr,
                                      "executable program contains an unlowered '" + u.source_kind +

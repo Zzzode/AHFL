@@ -174,17 +174,20 @@ struct CoreAgentDecl {
     /// `input`/`ctx` resolves to `input_type`/`context_type` here, so a backend
     /// never re-queries AHFL-IR. Sema's schema boundary REQUIRES input/output to
     /// be Struct types; context is either an explicit Struct or the default Unit
-    /// context (a stateless agent). `context_is_struct` distinguishes a Struct
-    /// context (then `context_type` is a valid Struct) from a Unit context (then
-    /// `context_type` is `kInvalid` — no context struct to project through).
-    /// Both an omitted `context` and an explicit `context: Unit;` lower to Unit,
-    /// so this is NOT "did the source write context"; it is "is the context a
-    /// struct". A required shell left `kInvalid`, or pointing at a non-struct, is
-    /// a verifier error — never a legal "absent".
+    /// context (a stateless agent). `context_kind` records which — a `Unit`
+    /// context has `context_type == kInvalid` (no struct to project through); a
+    /// `Struct` context has a valid Struct `context_type`. Both an omitted
+    /// `context` and an explicit `context: Unit;` lower to Unit. A `Struct`
+    /// context whose id fails to resolve (or an enum/primitive context, which
+    /// Sema forbids) is recorded as `Struct` with a broken id so the verifier
+    /// rejects it — a non-struct is NEVER silently folded into Unit. A required
+    /// shell left `kInvalid`, or pointing at a non-struct, is a verifier error.
     CoreTypeId input_type{};
     CoreTypeId context_type{};
     CoreTypeId output_type{};
-    bool context_is_struct{false};
+    /// Whether the agent's context is the Unit default or an explicit Struct.
+    enum class ContextKind { Unit, Struct };
+    ContextKind context_kind{ContextKind::Unit};
 };
 
 // ----------------------------------------------------------------------------

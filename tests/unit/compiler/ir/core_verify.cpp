@@ -125,7 +125,7 @@ struct GoodProgram {
         a.input_type = req_ty;
         a.output_type = reply_ty;
         a.context_type = ctx_ty;
-        a.context_is_struct = true;
+        a.context_kind = CoreAgentDecl::ContextKind::Struct;
         p.agents.push_back(std::move(a));
     }
 
@@ -416,9 +416,9 @@ TEST_CASE("verifier fails closed on a required output shell left kInvalid") {
     CHECK(has_code(result, verify::kTypedShellInvalid));
 }
 
-TEST_CASE("verifier accepts a Unit context (context_is_struct=false, kInvalid type)") {
+TEST_CASE("verifier accepts a Unit context (ContextKind::Unit, kInvalid type)") {
     GoodProgram g = make_good_program();
-    g.program.agents[0].context_is_struct = false;
+    g.program.agents[0].context_kind = CoreAgentDecl::ContextKind::Unit;
     g.program.agents[0].context_type = CoreTypeId{}; // Unit context: no struct
     // The flow's Init handler reads/stores ctx.* — remove those so a Unit-context
     // program is otherwise well-formed. Simplest: drop the whole Init body's ctx
@@ -436,7 +436,7 @@ TEST_CASE("verifier accepts a Unit context (context_is_struct=false, kInvalid ty
 
 TEST_CASE("verifier fails closed on a Unit context whose type id is nonetheless set") {
     GoodProgram g = make_good_program();
-    g.program.agents[0].context_is_struct = false; // Unit context ...
+    g.program.agents[0].context_kind = CoreAgentDecl::ContextKind::Unit; // Unit context ...
     g.program.agents[0].context_type = CoreTypeId{1}; // ... but a struct id is set (broken)
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
@@ -531,6 +531,41 @@ TEST_CASE("verifier accepts a shared DAG expr node (revisit is not a cycle)") {
     g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Neg, CoreExprId{0}}, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK(result.ok());
+}
+
+TEST_CASE("verifier fails closed on an out-of-range value embedded in an UNUSED arena expr") {
+    GoodProgram g = make_good_program();
+    // A CoreValueRefExpr that no statement references still embeds a value id;
+    // the static arena pass must bounds-check it (value_count is 4).
+    g.flow->exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{999}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueIdOutOfRange));
+}
+
+TEST_CASE("verifier fails closed on an out-of-range value in an UNUSED construct arg") {
+    GoodProgram g = make_good_program();
+    CoreConstructExpr ctor;
+    ctor.type_name = "Reply";
+    ctor.is_enum_variant = false;
+    ctor.type_id = CoreTypeId{4}; // Reply
+    ctor.resolved = true;
+    ctor.args = {CoreConstructArg{CoreFieldId{0}, CoreValueId{777}}}; // bad value id
+    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueIdOutOfRange));
+}
+
+TEST_CASE("verifier fails closed on an enum context (not folded into Unit)") {
+    GoodProgram g = make_good_program();
+    // A non-struct context must be recorded as ContextKind::Struct with a
+    // broken/enum id so the verifier rejects it — never silently folded to Unit.
+    g.program.agents[0].context_kind = CoreAgentDecl::ContextKind::Struct;
+    g.program.agents[0].context_type = CoreTypeId{2}; // Flag is an enum
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kTypedShellInvalid));
 }
 
 // --- P2: parallel-vector length ---

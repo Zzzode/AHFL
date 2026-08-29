@@ -58,6 +58,13 @@ void give_shell_structs(ir::AhflIr &program, ir::AgentDecl &agent, const std::st
     agent.input_type_ref.canonical_name = "app::" + prefix + "In";
     agent.output_type_ref.kind = ir::TypeRefKind::Struct;
     agent.output_type_ref.canonical_name = "app::" + prefix + "Out";
+    // A hand-built agent leaves context_type_ref defaulted (Unresolved), which
+    // the lowerer would treat as a broken (non-Unit) context. Unless a caller
+    // has already given an explicit context struct, mark it the Unit default so
+    // the (now Sema-aligned) verifier accepts a stateless agent.
+    if (agent.context_type_ref.kind == ir::TypeRefKind::Unresolved) {
+        agent.context_type_ref.kind = ir::TypeRefKind::Unit;
+    }
 }
 
 ir::AhflIr make_single_agent_program() {
