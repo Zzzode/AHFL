@@ -1,6 +1,7 @@
 add_library(ahfl_compiler_ir STATIC
     analysis.cpp
     core_lower.cpp
+    core_verify.cpp
     identity.cpp
     ir_equal.cpp
     ir_lower.cpp

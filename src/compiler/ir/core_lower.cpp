@@ -16,6 +16,7 @@
 #include "ahfl/compiler/ir/core_ir.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/mangling.hpp"
 
 #include <cctype>
@@ -1274,6 +1275,19 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         core.flows.push_back(std::move(core_flow));
     }
 
+    // Auto-verify the candidate program at the lowering boundary. When the
+    // lowering itself already produced an Error the program is a PARTIAL
+    // artifact (unresolved ids, unlowered nodes) — running the verifier on it
+    // would just echo those as structural violations, so we only verify a
+    // lowering-clean program. Verifier Errors merge into the same diagnostics
+    // channel, and executability requires BOTH passes clean (Codex wiring
+    // requirement): is_executable == lowering-clean && verify-clean.
+    if (!result.has_errors()) {
+        CoreVerifyResult verified = verify_core_program(core);
+        for (auto &d : verified.diagnostics) {
+            result.diagnostics.push_back(std::move(d));
+        }
+    }
     result.is_executable = !result.has_errors();
     return result;
 }
