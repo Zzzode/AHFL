@@ -1018,3 +1018,85 @@ TEST_CASE("verifier fails closed on a match arm binding defined more than once (
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kValueRedefined));
 }
+
+// --- ③-2 forward-fix: arm binding <-> pattern binding-site bijection ---
+
+TEST_CASE("verifier fails closed on an arm that declares a binding the pattern never binds") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0 wildcard binds nothing
+    const std::uint32_t sid = g.flow->value_count;
+    const std::uint32_t bind_v = sid + 1;
+    g.flow->value_count += 2;
+    CoreMatchStmt m;
+    m.scrutinee = CoreValueId{sid};
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.bindings.push_back(CorePatternBinding{CoreValueId{bind_v}}); // extra, unbound-by-pattern
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    m.arms.push_back(std::move(arm));
+    m.fallback_region = std::make_unique<CoreRegion>();
+    m.fallback_region->statements.push_back(
+        CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(m), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternBindingInvalid));
+}
+
+TEST_CASE("verifier fails closed on two tuple slots reusing one arm binding id") {
+    GoodProgram g = make_good_program();
+    // A struct-payload variant with 2 slots on Ctx? No — use a tuple: reuse the
+    // Flag enum's On variant but give it a synthetic 2-arity tuple payload here.
+    // Simpler: add a dedicated enum type with a 2-tuple variant.
+    CoreTypeDecl pair_enum;
+    pair_enum.kind = CoreTypeDecl::Kind::Enum;
+    pair_enum.name = "PairE";
+    pair_enum.variants = {"Both"};
+    CoreTypeDecl::VariantPayload pv;
+    pv.kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
+    pv.slot_types = {CoreTypeId{}, CoreTypeId{}}; // arity 2, primitive slots
+    pair_enum.variant_payloads = {pv};
+    g.program.types.push_back(std::move(pair_enum));
+    const auto pair_ty = static_cast<std::uint32_t>(g.program.types.size() - 1);
+
+    // patterns: #0,#1 binding patterns both naming arm binding 0; #2 = Both(#0,#1)
+    CoreBindingPat b0;
+    b0.binding = CorePatternBindingId{0};
+    g.flow->patterns.push_back(CorePattern{b0, std::nullopt}); // #0
+    CoreBindingPat b1;
+    b1.binding = CorePatternBindingId{0}; // SAME binding id -> ambiguous
+    g.flow->patterns.push_back(CorePattern{b1, std::nullopt}); // #1
+    CoreVariantPat both;
+    both.owner_enum = CoreTypeId{pair_ty};
+    both.variant = CoreVariantId{0};
+    both.tuple_subpatterns = {CorePatternId{0}, CorePatternId{1}};
+    g.flow->patterns.push_back(CorePattern{both, std::nullopt}); // #2
+
+    const std::uint32_t sid = g.flow->value_count;
+    const std::uint32_t bind_v = sid + 1;
+    g.flow->value_count += 2;
+    CoreMatchStmt m;
+    m.scrutinee = CoreValueId{sid};
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{2};
+    arm.bindings.push_back(CorePatternBinding{CoreValueId{bind_v}}); // one binding, referenced twice
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    m.arms.push_back(std::move(arm));
+    m.fallback_region = std::make_unique<CoreRegion>();
+    m.fallback_region->statements.push_back(
+        CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(m), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternBindingInvalid));
+}

@@ -63,9 +63,12 @@
 //     traps, an expression arm yields a value or diverges, a statement arm
 //     yields nothing or diverges; a match has a mandatory fallback region
 //     (structural totality, not a mutable flag); arm bindings are flow-global
-//     single-def and visible only in the arm's guard + body; an or-pattern's
-//     alternatives bind the same variable set; the result is defined once in the
-//     parent scope for an expression match;
+//     single-def and visible only in the arm's guard + body; the arm's declared
+//     `bindings` are in BIJECTION with the pattern's binding sites — each binding
+//     id is bound at exactly one position in a non-or tree, an or-pattern's
+//     alternatives each bind it once and bind the SAME id set, and every declared
+//     binding is bound (no unused declaration, none out of range); the result is
+//     defined once in the parent scope for an expression match;
 //   * the agent typed shell: input/output must be a valid Struct; context is a
 //     valid Struct (context_is_struct) or the Unit default (kInvalid); any other
 //     combination — a required shell left kInvalid, or pointing at a non-struct

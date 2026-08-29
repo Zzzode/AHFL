@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -1163,19 +1164,28 @@ class Verifier {
         return propagated;
     }
 
-    // Check that every CoreBindingPat in the arm's pattern names a valid arm
-    // binding, and that an or-pattern's alternatives bind the SAME binding set.
+    // Enforce the arm.bindings <-> pattern binding-site BIJECTION. `collect`
+    // returns the occurrence multiset (binding id -> count) a pattern introduces:
+    //   * within a single non-or pattern tree, each binding id must occur exactly
+    //     once (two payload slots naming one binding is ambiguous);
+    //   * an or-pattern's alternatives must each independently satisfy
+    //     occurrence==1 and bind the SAME id set (shared across alternatives);
+    //   * the root pattern's binding set must equal the arm binding domain
+    //     {0 .. bindings.size-1} exactly — no unused declared binding, none out
+    //     of range.
     void verify_arm_pattern_bindings(const CoreFlowDecl &flow, const CoreMatchArm &arm,
                                      SourceRangeOpt range) {
         const auto pat_count = static_cast<std::uint32_t>(flow.patterns.size());
         const auto binding_count = static_cast<std::uint32_t>(arm.bindings.size());
-        // Collect the binding-id set a pattern introduces (recursively).
-        std::function<std::optional<std::set<std::uint32_t>>(CorePatternId,
-                                                             std::unordered_set<std::uint32_t> &)>
-            collect;
-        collect = [&](CorePatternId pid, std::unordered_set<std::uint32_t> &visiting)
-            -> std::optional<std::set<std::uint32_t>> {
-            std::set<std::uint32_t> out;
+        using Occ = std::map<std::uint32_t, std::uint32_t>; // binding id -> count
+        const auto add = [&](Occ &into, const Occ &from) {
+            for (const auto &[id, n] : from) {
+                into[id] += n;
+            }
+        };
+        std::function<Occ(CorePatternId, std::unordered_set<std::uint32_t> &)> collect;
+        collect = [&](CorePatternId pid, std::unordered_set<std::uint32_t> &visiting) -> Occ {
+            Occ out;
             if (pid.value >= pat_count || !visiting.insert(pid.value).second) {
                 return out; // out of range / cycle already reported elsewhere
             }
@@ -1189,44 +1199,50 @@ class Verifier {
                                              std::to_string(b.binding.value) + " out of range",
                                          range);
                                } else {
-                                   out.insert(b.binding.value);
+                                   out[b.binding.value] += 1;
                                }
                                if (b.has_nested) {
-                                   if (auto n = collect(b.nested, visiting)) {
-                                       out.insert(n->begin(), n->end());
-                                   }
+                                   add(out, collect(b.nested, visiting));
                                }
                            },
                            [&](const CoreVariantPat &v) {
                                for (const CorePatternId s : v.tuple_subpatterns) {
-                                   if (auto n = collect(s, visiting)) {
-                                       out.insert(n->begin(), n->end());
-                                   }
+                                   add(out, collect(s, visiting));
                                }
                                for (const CoreVariantPatField &f : v.struct_fields) {
-                                   if (auto n = collect(f.pattern, visiting)) {
-                                       out.insert(n->begin(), n->end());
-                                   }
+                                   add(out, collect(f.pattern, visiting));
                                }
                            },
                            [&](const CoreOrPat &o) {
-                               // Every alternative must bind the SAME set.
+                               // Each alternative independently: occurrence == 1;
+                               // and all alternatives bind the SAME id set. The
+                               // or contributes each shared id ONCE (alternatives
+                               // are mutually exclusive at runtime).
                                std::optional<std::set<std::uint32_t>> common;
                                for (const CorePatternId alt : o.alternatives) {
-                                   auto alt_set = collect(alt, visiting);
-                                   if (!alt_set) {
-                                       continue;
+                                   const Occ alt_occ = collect(alt, visiting);
+                                   std::set<std::uint32_t> alt_set;
+                                   for (const auto &[id, n] : alt_occ) {
+                                       if (n != 1) {
+                                           error(verify::kPatternBindingInvalid,
+                                                 "binding id " + std::to_string(id) +
+                                                     " is bound more than once in one pattern",
+                                                 range);
+                                       }
+                                       alt_set.insert(id);
                                    }
                                    if (!common) {
-                                       common = *alt_set;
-                                   } else if (*common != *alt_set) {
+                                       common = alt_set;
+                                   } else if (*common != alt_set) {
                                        error(verify::kOrBindingSetMismatch,
                                              "or-pattern alternatives bind different variable sets",
                                              range);
                                    }
                                }
                                if (common) {
-                                   out.insert(common->begin(), common->end());
+                                   for (const std::uint32_t id : *common) {
+                                       out[id] += 1;
+                                   }
                                }
                            },
                        },
@@ -1235,7 +1251,27 @@ class Verifier {
             return out;
         };
         std::unordered_set<std::uint32_t> visiting;
-        static_cast<void>(collect(arm.pattern, visiting));
+        const Occ root = collect(arm.pattern, visiting);
+        // Occurrence == 1 across the whole (non-or-collapsed) tree.
+        std::set<std::uint32_t> bound;
+        for (const auto &[id, n] : root) {
+            if (n != 1) {
+                error(verify::kPatternBindingInvalid,
+                      "arm binding id " + std::to_string(id) +
+                          " is bound at more than one pattern position",
+                      range);
+            }
+            bound.insert(id);
+        }
+        // Bijection with the arm binding domain: every declared binding is bound.
+        for (std::uint32_t i = 0; i < binding_count; ++i) {
+            if (bound.find(i) == bound.end()) {
+                error(verify::kPatternBindingInvalid,
+                      "arm declares binding id " + std::to_string(i) +
+                          " but the pattern never binds it",
+                      range);
+            }
+        }
     }
 
     const CoreProgram &program_;
