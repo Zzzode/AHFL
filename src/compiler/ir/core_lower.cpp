@@ -357,6 +357,21 @@ class TypeEnv {
             types_[type.value].variant_payloads[variant].slot_types.size());
     }
 
+    /// The resolved CoreTypeId of a variant payload slot (kInvalid when OOR or
+    /// the slot type is a primitive / non-nominal placeholder). Lets a payload
+    /// binding carry its nominal struct/enum type for member projection.
+    [[nodiscard]] CoreTypeId variant_slot_type(CoreTypeId type, std::uint32_t variant,
+                                               std::uint32_t slot) const {
+        if (type.value >= types_.size() || variant >= types_[type.value].variant_payloads.size()) {
+            return CoreTypeId{};
+        }
+        const auto &slots = types_[type.value].variant_payloads[variant].slot_types;
+        if (slot >= slots.size()) {
+            return CoreTypeId{};
+        }
+        return slots[slot];
+    }
+
     /// Declaration slot index of a NAMED field in a struct-payload variant, by
     /// name (nullopt if OOR or no such field). Lets a struct-payload literal
     /// resolve `Open { owner: ... }` to the declared slot, not source order.
@@ -1174,13 +1189,24 @@ class FlowLowerer {
         std::vector<CorePatternBinding> values;  // parallel: the fresh SSA value
         std::unordered_map<std::string, std::uint32_t> index_of;
 
-        [[nodiscard]] std::uint32_t intern(const std::string &name, CoreValueId value) {
+        // Intern a binding by NAME. `type` is the binding's nominal struct/enum
+        // CoreTypeId (kInvalid for a primitive). Or-alternatives reuse the name;
+        // if a later alternative supplies a nominal type where the first had none
+        // (or vice versa), keep the nominal one so member projection resolves.
+        // (Full primitive value-type consistency across alternatives is a P4
+        // value-type gate proven by Sema, not the Core verifier.)
+        std::uint32_t intern(const std::string &name, CoreValueId value, CoreTypeId type) {
             if (const auto it = index_of.find(name); it != index_of.end()) {
+                CorePatternBinding &existing = values[it->second];
+                if (existing.binding_type.value == CoreTypeId::kInvalid &&
+                    type.value != CoreTypeId::kInvalid) {
+                    existing.binding_type = type;
+                }
                 return it->second;
             }
             const auto id = static_cast<std::uint32_t>(names.size());
             names.push_back(name);
-            values.push_back(CorePatternBinding{value});
+            values.push_back(CorePatternBinding{value, type});
             index_of.emplace(name, id);
             return id;
         }
@@ -1188,50 +1214,92 @@ class FlowLowerer {
 
     // Collect the binding names a pattern introduces, allocating a fresh value id
     // per NEW name (shared by name across or-alternatives). Runs before pattern
-    // lowering so the CorePatternBindingId domain is fixed.
-    void collect_arm_bindings(const ir::MatchPattern &pattern, ArmBindings &out) {
+    // lowering so the CorePatternBindingId domain is fixed. `matched_type` is the
+    // nominal type the pattern is matched against (kInvalid for primitive / no
+    // nominal type) — a binding at this position binds a value of that type, so
+    // `x.field` inside the arm resolves.
+    void collect_arm_bindings(const ir::MatchPattern &pattern, CoreTypeId matched_type,
+                              ArmBindings &out) {
         std::visit(Overloaded{
                        [&](const ir::BindingPattern &b) {
                            // By (3)-3b, a bare identifier Sema resolved to a unit
                            // variant is already an ir::VariantPattern here, so a
                            // BindingPattern is always a genuine binding.
                            if (!b.name.empty()) {
-                               static_cast<void>(out.intern(b.name, fresh_value()));
+                               static_cast<void>(out.intern(b.name, fresh_value(), matched_type));
                            }
                            if (b.nested) {
-                               collect_arm_bindings(*b.nested, out);
+                               // `x @ nested`: the outer name binds the whole
+                               // value; the nested pattern matches the same type.
+                               collect_arm_bindings(*b.nested, matched_type, out);
                            }
                        },
                        [&](const ir::VariantPattern &v) {
-                           for (const auto &sub : v.subpatterns) {
-                               if (sub) {
-                                   collect_arm_bindings(*sub, out);
+                           // Resolve the variant payload slot types so nested
+                           // bindings carry their nominal type.
+                           const auto owner = types_.resolve(v.owner_enum);
+                           const auto vidx =
+                               owner ? types_.variant_index(*owner, v.variant_name) : std::nullopt;
+                           for (std::uint32_t i = 0; i < v.subpatterns.size(); ++i) {
+                               if (v.subpatterns[i]) {
+                                   collect_arm_bindings(*v.subpatterns[i],
+                                                        slot_type_of(owner, vidx, i), out);
                                }
                            }
                            for (const auto &f : v.fields) {
                                if (f.pattern) {
-                                   collect_arm_bindings(*f.pattern, out);
+                                   const auto slot =
+                                       (owner && vidx)
+                                           ? types_.variant_field_slot(*owner, *vidx, f.name)
+                                           : std::nullopt;
+                                   collect_arm_bindings(*f.pattern,
+                                                        slot ? slot_type_of(owner, vidx, *slot)
+                                                             : CoreTypeId{},
+                                                        out);
                                }
                            }
                        },
                        [&](const ir::TuplePattern &t) {
+                           // Anonymous tuple element types are a P4 concern; no
+                           // nominal CoreTypeId is available per element yet.
                            for (const auto &e : t.elements) {
                                if (e) {
-                                   collect_arm_bindings(*e, out);
+                                   collect_arm_bindings(*e, CoreTypeId{}, out);
                                }
                            }
                        },
                        [&](const ir::OrPattern &o) {
-                           // Alternatives share bindings BY NAME (intern dedups).
+                           // Alternatives share bindings BY NAME (intern dedups);
+                           // each alternative matches the same type.
                            for (const auto &alt : o.branches) {
                                if (alt) {
-                                   collect_arm_bindings(*alt, out);
+                                   collect_arm_bindings(*alt, matched_type, out);
                                }
                            }
                        },
                        [&](const auto &) {}, // literal / int-range / wildcard bind nothing
                    },
                    pattern.node);
+    }
+
+    // The nominal CoreTypeId of a resolved variant's payload slot (kInvalid if
+    // the enum/variant is unresolved, the slot is out of range, or the slot type
+    // is a primitive / non-nominal placeholder).
+    [[nodiscard]] CoreTypeId slot_type_of(std::optional<CoreTypeId> owner,
+                                          std::optional<std::uint32_t> vidx,
+                                          std::uint32_t slot) const {
+        if (!owner || !vidx) {
+            return CoreTypeId{};
+        }
+        return types_.variant_slot_type(*owner, *vidx, slot);
+    }
+
+    // The nominal CoreTypeId a match arm / if-let ROOT pattern is matched
+    // against, from its persisted matched_enum ((3)-3b). kInvalid when the
+    // scrutinee is not a resolved nominal type (e.g. a primitive) — a binding
+    // there is a primitive binding (member projection does not apply).
+    [[nodiscard]] CoreTypeId pattern_matched_type(const ir::MatchPattern &pattern) const {
+        return types_.resolve(pattern.matched_enum).value_or(CoreTypeId{});
     }
 
     // Lower one AHFL-IR MatchPattern into the flow's CorePattern arena, returning
@@ -1244,6 +1312,13 @@ class FlowLowerer {
         CorePatternNode node = std::visit(
             Overloaded{
                 [&](const ir::LiteralPattern &lit) -> CorePatternNode {
+                    // RFC 0026 (3)-3a/3b: the source literal `none` is NOT a Unit
+                    // literal — it is the Option::None variant. Resolve it to a
+                    // unit CoreVariantPat by the pattern's matched-enum identity
+                    // (never a literal spelling); fail closed if unresolvable.
+                    if (lit.spelling == "none") {
+                        return lower_none_literal(pattern, range, ok);
+                    }
                     return CoreLiteralPat{literal_kind_of(lit.spelling), lit.spelling};
                 },
                 [&](const ir::IntRangePattern &r) -> CorePatternNode {
@@ -1298,6 +1373,35 @@ class FlowLowerer {
         return CorePatternId{id};
     }
 
+    // Lower the source literal `none` into the Option::None unit variant pattern
+    // by the pattern's matched-enum identity ((3)-3a/3b). Fail closed when the
+    // matched enum is unresolved or has no `None` variant — never fall back to a
+    // literal `none` a backend cannot match.
+    [[nodiscard]] CorePatternNode lower_none_literal(const ir::MatchPattern &pattern,
+                                                     SourceRangeOpt range, bool &ok) {
+        CoreVariantPat out;
+        const auto type_id = types_.resolve(pattern.matched_enum);
+        if (!type_id) {
+            ok = false;
+            error(diag::kUnresolvedEnumVariant,
+                  "literal `none` has no resolved matched-enum identity to lower to Option::None",
+                  range);
+            return out;
+        }
+        const auto vidx = types_.variant_index(*type_id, "None");
+        if (!vidx) {
+            ok = false;
+            error(diag::kUnresolvedEnumVariant,
+                  "literal `none` matched enum '" + pattern.matched_enum.canonical_name +
+                      "' has no `None` variant",
+                  range);
+            return out;
+        }
+        out.owner_enum = *type_id;
+        out.variant = CoreVariantId{*vidx};
+        return out; // unit variant: no tuple subpatterns / struct fields
+    }
+
     [[nodiscard]] CorePatternNode lower_variant_pattern(const ir::VariantPattern &v,
                                                         const ArmBindings &bindings,
                                                         SourceRangeOpt range, bool &ok) {
@@ -1322,10 +1426,36 @@ class FlowLowerer {
             return out;
         }
         out.variant = CoreVariantId{*vidx};
+        // RFC 0026 (3)-3c P1: the SOURCE variant-pattern shape must agree with
+        // the declared payload kind — a mismatched / malformed input (e.g. a Unit
+        // source shape carrying tuple subpatterns, or a Struct-kind pattern with
+        // positional subpatterns) is fail-closed, never silently normalized into
+        // a well-formed Core pattern by ignoring the "other" collection.
+        using PK = CoreTypeDecl::VariantPayload::Kind;
+        const PK meta_kind = types_.variant_payload_kind(*type_id, *vidx)
+                                 .value_or(PK::Unit);
+        const bool shape_ok = [&] {
+            switch (v.kind) {
+            case ir::VariantPatternKind::Unit:
+                return meta_kind == PK::Unit && v.subpatterns.empty() && v.fields.empty();
+            case ir::VariantPatternKind::Tuple:
+                return meta_kind == PK::Tuple && v.fields.empty();
+            case ir::VariantPatternKind::Struct:
+                return meta_kind == PK::Struct && v.subpatterns.empty();
+            }
+            return false;
+        }();
+        if (!shape_ok) {
+            ok = false;
+            error(diag::kUnresolvedEnumVariant,
+                  "match variant pattern '" + v.owner_enum.canonical_name + "::" + v.variant_name +
+                      "' source shape disagrees with the declared payload kind",
+                  range);
+            return out;
+        }
         // Struct payload: slot-identified fields (resolve each written name to its
         // declaration slot). Tuple / unit payload: positional subpatterns.
-        if (types_.variant_payload_kind(*type_id, *vidx) ==
-            CoreTypeDecl::VariantPayload::Kind::Struct) {
+        if (meta_kind == PK::Struct) {
             for (const auto &f : v.fields) {
                 if (f.is_rest) {
                     out.has_rest = true;
@@ -1411,7 +1541,7 @@ class FlowLowerer {
         bool ok = true;
         // The single arm: pattern + then-block, yielding no value (statement match).
         ArmBindings bindings;
-        collect_arm_bindings(s.pattern, bindings);
+        collect_arm_bindings(s.pattern, pattern_matched_type(s.pattern), bindings);
         CoreMatchArm arm;
         arm.pattern = lower_pattern(s.pattern, bindings, range, ok);
         arm.body = std::make_unique<CoreRegion>();
@@ -1440,14 +1570,15 @@ class FlowLowerer {
                                          const ExprRef &body, bool expression, SourceRangeOpt range,
                                          bool &ok) {
         ArmBindings bindings;
-        collect_arm_bindings(pattern, bindings);
+        collect_arm_bindings(pattern, pattern_matched_type(pattern), bindings);
         CoreMatchArm arm;
         arm.pattern = lower_pattern(pattern, bindings, range, ok);
         // Extend the scope with the arm bindings for guard + body lowering, then
         // restore (branch-local visibility, mirroring lower_if scoping).
         const auto outer = scope_;
         for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
-            scope_[bindings.names[i]] = LocalBinding{bindings.values[i].value, std::nullopt};
+            scope_[bindings.names[i]] =
+                LocalBinding{bindings.values[i].value, binding_type_opt(bindings.values[i])};
         }
         // Guard: a pure Bool region that yields its value.
         if (guard.ptr != nullptr) {
@@ -1474,28 +1605,12 @@ class FlowLowerer {
 
     // A statement-position region must yield unit on every path that falls
     // through (the verifier requires no fallthrough for a statement arm). Append
-    // a valueless yield when the region can complete normally.
+    // a valueless yield when the region can complete normally. Uses the shared
+    // `core_region_may_fallthrough` so the lowerer and verifier agree exactly.
     void seal_statement_arm(CoreRegion &region, SourceRangeOpt range) {
-        if (region_falls_through(region)) {
+        if (core_region_may_fallthrough(region)) {
             region.statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, range});
         }
-    }
-
-    // A region falls through unless its last statement is a terminator
-    // (return / goto / yield / trap). Structured `if` is conservatively treated
-    // as fallthrough (the verifier does the precise per-path merge).
-    [[nodiscard]] static bool region_falls_through(const CoreRegion &region) {
-        if (region.statements.empty()) {
-            return true;
-        }
-        return std::visit(Overloaded{
-                              [](const CoreReturnStmt &) { return false; },
-                              [](const CoreGotoStmt &) { return false; },
-                              [](const CoreYieldStmt &) { return false; },
-                              [](const CoreTrapStmt &) { return false; },
-                              [](const auto &) { return true; },
-                          },
-                          region.statements.back().node);
     }
 
     // Lower a block that begins in the CURRENT scope extended with the arm's
@@ -1504,11 +1619,22 @@ class FlowLowerer {
     [[nodiscard]] CoreRegion lower_block_scoped(const Block &block, const ArmBindings &bindings) {
         const auto outer = scope_;
         for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
-            scope_[bindings.names[i]] = LocalBinding{bindings.values[i].value, std::nullopt};
+            scope_[bindings.names[i]] =
+                LocalBinding{bindings.values[i].value, binding_type_opt(bindings.values[i])};
         }
         CoreRegion region = lower_block(block);
         scope_ = outer;
         return region;
+    }
+
+    // A pattern binding's nominal type as a scope LocalBinding type (nullopt for
+    // a primitive / kInvalid binding, so member projection is only attempted on a
+    // nominal struct/enum binding).
+    [[nodiscard]] static std::optional<CoreTypeId> binding_type_opt(const CorePatternBinding &b) {
+        if (b.binding_type.value == CoreTypeId::kInvalid) {
+            return std::nullopt;
+        }
+        return b.binding_type;
     }
 
     /// The A-normalization core: a capability call becomes an ordered statement.

@@ -1007,8 +1007,16 @@ class TypedIrLowerer final {
                                                          const TypedPattern &typed) {
         return std::visit(
             Overloaded{
-                [&](const ast::LiteralPattern &) {
-                    return typed.kind == TypedPatternKind::Literal;
+                [&](const ast::LiteralPattern &lit) {
+                    if (typed.kind == TypedPatternKind::Literal) {
+                        return true;
+                    }
+                    // Legal divergence: the literal `none` is parsed as a
+                    // LiteralPattern but Sema resolves it to the Option::None
+                    // UNIT variant. (3)-3c lowers this to a variant by the
+                    // matched-enum identity; the AHFL-IR keeps it as a literal
+                    // `none` node, so accept AST Literal `none` + typed Variant.
+                    return lit.spelling == "none" && typed.kind == TypedPatternKind::Variant;
                 },
                 [&](const ast::IntRangePattern &) {
                     return typed.kind == TypedPatternKind::IntRange;

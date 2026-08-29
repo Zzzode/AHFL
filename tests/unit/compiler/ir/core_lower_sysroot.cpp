@@ -366,3 +366,95 @@ flow for A {
     }
     CHECK(saw_core_open);
 }
+
+// (3)-3c forward-fix P0-2: the literal `none` in a match arm lowers to the
+// std::option::Option::None UNIT variant pattern by matched-enum identity, NOT a
+// CoreLiteralPat. Driven through the real sysroot so std Option is available.
+TEST_CASE("KR6.4 (3)-3c: literal none lowers to Option::None variant, Some(v) binds payload") {
+    const auto root = make_temp_project("match_none");
+    const auto main_path = root / "src" / "main.ahfl";
+    const std::string source = R"AHFL(
+module app;
+
+import std::option;
+
+struct Req { amount: Int; }
+struct Ctx { seen: Int = 0; }
+struct Reply { ok: Bool; }
+
+agent Decider {
+    input: Req;
+    context: Ctx;
+    output: Reply;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for Decider {
+    state Done {
+        let opt: std::option::Option<Int> = std::option::Option::Some(input.amount);
+        let picked: Int = match opt {
+            none => 0,
+            Some(v) => v,
+        };
+        return Reply { ok: picked > 0 };
+    }
+}
+)AHFL";
+    write_file(main_path, source);
+
+    const Frontend frontend;
+    const auto parse_result = parse_project(
+        frontend,
+        test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
+    REQUIRE_FALSE(parse_result.has_errors());
+    const Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+    const TypeChecker checker;
+    const auto type_result = checker.check(parse_result.graph, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+    const auto ahfl_ir = lower_program_ir(parse_result.graph, resolve_result, type_result);
+    const auto result = ir::core::lower_ahfl_to_core(ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // Find the match statement + its arena.
+    const ir::core::CoreMatchStmt *m = nullptr;
+    const ir::core::CoreFlowDecl *owner_flow = nullptr;
+    for (const auto &flow : result.program.flows) {
+        for (const auto &state : flow.states) {
+            for (const auto &stmt : state.body.statements) {
+                if (const auto *mm = std::get_if<ir::core::CoreMatchStmt>(&stmt.node)) {
+                    m = mm;
+                    owner_flow = &flow;
+                }
+            }
+        }
+    }
+    REQUIRE(m != nullptr);
+    REQUIRE(owner_flow != nullptr);
+    REQUIRE(m->arms.size() == 2);
+
+    // Arm 0 (`none`) is now a VARIANT pattern (Option::None), NOT a literal.
+    const auto &pats = owner_flow->patterns;
+    REQUIRE(m->arms[0].pattern.value < pats.size());
+    const auto *none_pat =
+        std::get_if<ir::core::CoreVariantPat>(&pats[m->arms[0].pattern.value].node);
+    REQUIRE(none_pat != nullptr);
+    CHECK_FALSE(std::holds_alternative<ir::core::CoreLiteralPat>(pats[m->arms[0].pattern.value].node));
+    // Arm 1 (`Some(v)`) is a variant of the SAME owner enum, distinct variant.
+    REQUIRE(m->arms[1].pattern.value < pats.size());
+    const auto *some_pat =
+        std::get_if<ir::core::CoreVariantPat>(&pats[m->arms[1].pattern.value].node);
+    REQUIRE(some_pat != nullptr);
+    CHECK(none_pat->owner_enum.value == some_pat->owner_enum.value);
+    CHECK(none_pat->variant.value != some_pat->variant.value);
+    CHECK(none_pat->tuple_subpatterns.empty()); // None is unit
+}

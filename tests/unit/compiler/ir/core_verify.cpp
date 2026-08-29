@@ -1148,3 +1148,100 @@ TEST_CASE("verifier fails closed on two tuple slots reusing one arm binding id")
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternBindingInvalid));
 }
+
+// --- (3)-3c forward-fix: shared structural may-fallthrough helper ---
+//
+// core_region_may_fallthrough is the ONE definition the lowerer (seal) and the
+// verifier's per-path analysis both rely on. These fixtures lock its per-path
+// semantics so the two never drift.
+namespace {
+CoreStmt let_stmt() { return CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt}; }
+CoreStmt return_stmt() { return CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt}; }
+CoreStmt goto_stmt() { return CoreStmt{CoreGotoStmt{CoreStateId{0}, ""}, std::nullopt}; }
+CoreStmt yield_stmt() { return CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt}; }
+CoreStmt trap_stmt() {
+    return CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt};
+}
+std::unique_ptr<CoreRegion> region_of(CoreStmt stmt) {
+    auto r = std::make_unique<CoreRegion>();
+    r->statements.push_back(std::move(stmt));
+    return r;
+}
+} // namespace
+
+TEST_CASE("core_region_may_fallthrough: straight-line + terminators") {
+    CoreRegion empty;
+    CHECK(core_region_may_fallthrough(empty)); // empty region falls through
+    CoreRegion only_let;
+    only_let.statements.push_back(let_stmt());
+    CHECK(core_region_may_fallthrough(only_let)); // let falls through
+    {
+        CoreRegion r;
+        r.statements.push_back(return_stmt());
+        CHECK_FALSE(core_region_may_fallthrough(r));
+    }
+    {
+        CoreRegion r;
+        r.statements.push_back(goto_stmt());
+        CHECK_FALSE(core_region_may_fallthrough(r));
+    }
+    {
+        CoreRegion r;
+        r.statements.push_back(yield_stmt());
+        CHECK_FALSE(core_region_may_fallthrough(r));
+    }
+    {
+        CoreRegion r;
+        r.statements.push_back(trap_stmt());
+        CHECK_FALSE(core_region_may_fallthrough(r));
+    }
+}
+
+TEST_CASE("core_region_may_fallthrough: if terminates iff BOTH branches terminate") {
+    // if { return } else { return } -> both terminate -> region does NOT fall through.
+    CoreIfStmt both;
+    both.condition = CoreValueId{0};
+    both.then_region = region_of(return_stmt());
+    both.else_region = region_of(goto_stmt());
+    CoreRegion r_both;
+    r_both.statements.push_back(CoreStmt{std::move(both), std::nullopt});
+    CHECK_FALSE(core_region_may_fallthrough(r_both));
+
+    // if { return } else { let } -> else falls through -> region falls through.
+    CoreIfStmt one;
+    one.condition = CoreValueId{0};
+    one.then_region = region_of(return_stmt());
+    one.else_region = region_of(let_stmt());
+    CoreRegion r_one;
+    r_one.statements.push_back(CoreStmt{std::move(one), std::nullopt});
+    CHECK(core_region_may_fallthrough(r_one));
+
+    // else-less if { return } -> can skip the then-branch -> falls through.
+    CoreIfStmt no_else;
+    no_else.condition = CoreValueId{0};
+    no_else.then_region = region_of(return_stmt());
+    CoreRegion r_no_else;
+    r_no_else.statements.push_back(CoreStmt{std::move(no_else), std::nullopt});
+    CHECK(core_region_may_fallthrough(r_no_else));
+}
+
+TEST_CASE("core_region_may_fallthrough: match terminates iff all arms + fallback terminate") {
+    const auto make_match = [](bool arm_terminates, bool fallback_terminates) {
+        CoreMatchStmt m;
+        m.scrutinee = CoreValueId{0};
+        CoreMatchArm arm;
+        arm.pattern = CorePatternId{0};
+        // A "terminating" arm body ends in goto; a "falls through" arm body is
+        // let-only (a yield would also terminate, but this keeps intent clear).
+        arm.body = arm_terminates ? region_of(goto_stmt()) : region_of(let_stmt());
+        m.arms.push_back(std::move(arm));
+        m.fallback_region =
+            fallback_terminates ? region_of(trap_stmt()) : region_of(let_stmt());
+        CoreRegion r;
+        r.statements.push_back(CoreStmt{std::move(m), std::nullopt});
+        return r;
+    };
+    CHECK_FALSE(core_region_may_fallthrough(make_match(true, true)));  // all terminate
+    CHECK(core_region_may_fallthrough(make_match(false, true)));       // arm falls through
+    CHECK(core_region_may_fallthrough(make_match(true, false)));       // fallback falls through
+}

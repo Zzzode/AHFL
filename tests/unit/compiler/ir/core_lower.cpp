@@ -2250,3 +2250,162 @@ flow for A {
     REQUIRE(m->fallback_region);
     CHECK_FALSE(region_ends_with_trap(m->fallback_region.get()));
 }
+
+// --- (3)-3c forward-fix: payload binding types, none->variant, path fallthrough ---
+
+TEST_CASE("(3)-3c FF P0-1: a struct-payload binding carries its type so u.field resolves") {
+    // enum with a struct-typed payload; the arm binds `u: User` and projects
+    // `u.id`. Without the binding's typed CoreTypeId this fails with
+    // UNLOWERED_FIELD_PROJECTION.
+    const std::string source = R"AHFL(
+module m;
+
+struct User { id: Int; }
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum MaybeUser { Some(User), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let mu: MaybeUser = MaybeUser::Some(User { id: input.id });
+        let r: Int = match mu {
+            Some(u) => u.id,
+            None => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+    const auto ahfl_ir = lower_source_to_ahfl_ir("core_struct_binding", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    REQUIRE(result.ok()); // u.id member projection resolved via the binding type
+    CHECK(result.is_executable);
+    const ir::core::CoreMatchStmt *m = find_core_match(result.program);
+    REQUIRE(m != nullptr);
+    REQUIRE(m->arms.size() == 2);
+    // The Some(u) arm's binding carries a nominal (non-kInvalid) type.
+    REQUIRE(m->arms[0].bindings.size() == 1);
+    CHECK(m->arms[0].bindings[0].binding_type.value != ir::core::CoreTypeId::kInvalid);
+}
+
+TEST_CASE("(3)-3c FF P0-3: a match arm whose both if-branches terminate needs no trailing yield") {
+    // An if-let then-block whose only statement is an if/else where BOTH branches
+    // goto must NOT get a trailing Yield (that would be a stmt-after-terminator).
+    // result.ok() proves the auto-wired verifier accepts it (no STMT_AFTER_TERMINATOR).
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Start, Left, Right];
+    initial: Start;
+    final: [Left, Right];
+    capabilities: [];
+
+    transition Start -> Left;
+    transition Start -> Right;
+}
+
+flow for A {
+    state Start {
+        let mm: Maybe = Maybe::Some(input.id);
+        if let Some(x) = mm {
+            if x > 0 { goto Left; } else { goto Right; }
+        } else {
+            goto Right;
+        }
+    }
+    state Left { return Resp { id: 1 }; }
+    state Right { return Resp { id: 2 }; }
+}
+)AHFL";
+    const auto ahfl_ir = lower_source_to_ahfl_ir("core_both_terminate", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    REQUIRE(result.ok()); // no STMT_AFTER_TERMINATOR: the then-arm did NOT get a trailing yield
+    CHECK(result.is_executable);
+}
+
+TEST_CASE("(3)-3c FF P1: a variant pattern whose source shape disagrees with metadata fails closed") {
+    // Lower a real match to AHFL-IR, then corrupt the `Some(x)` arm's variant
+    // pattern kind from Tuple to Unit (a shape that disagrees with the declared
+    // tuple payload). The Core lowerer must fail closed, not normalize it.
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { id: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { id: Int; }
+
+enum Maybe { Some(Int), None, }
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let mm: Maybe = Maybe::Some(input.id);
+        let r: Int = match mm {
+            Some(x) => x,
+            None => 0,
+        };
+        return Resp { id: r };
+    }
+}
+)AHFL";
+    auto ahfl_ir = lower_source_to_ahfl_ir("core_shape_mismatch", source);
+    REQUIRE(ahfl_ir.has_value());
+    // Find the MatchExpr (non-const) and corrupt the first variant arm's kind.
+    bool corrupted = false;
+    for (ir::Expr *expr : ahfl_ir->all_exprs()) {
+        if (expr == nullptr) {
+            continue;
+        }
+        if (auto *mtch = std::get_if<ir::MatchExpr>(&expr->node)) {
+            for (auto &arm : mtch->arms) {
+                if (auto *v = std::get_if<ir::VariantPattern>(&arm.pattern.node);
+                    v != nullptr && v->kind == ir::VariantPatternKind::Tuple) {
+                    v->kind = ir::VariantPatternKind::Unit; // disagrees with metadata
+                    corrupted = true;
+                    break;
+                }
+            }
+        }
+        if (corrupted) {
+            break;
+        }
+    }
+    REQUIRE(corrupted);
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    CHECK_FALSE(result.ok()); // shape mismatch is fail-closed, not normalized
+}

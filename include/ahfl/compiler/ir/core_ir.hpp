@@ -47,6 +47,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <type_traits>
 #include <vector>
 
 #include "ahfl/compiler/ir/program.hpp"
@@ -652,8 +653,15 @@ struct CoreTrapStmt {
 /// One binding introduced by a match arm (`x` in `Some(x)`), shared across an
 /// or-pattern's alternatives. `value` is the fresh SSA value id it defines
 /// (flow-global single definition; visible only in the arm's guard + body).
+/// `binding_type` is the NOMINAL struct/enum type of the bound value (from the
+/// matched payload slot), so a member projection `x.field` inside the arm body /
+/// guard can resolve. It is `kInvalid` for a primitive (Int/String/…) binding —
+/// full primitive value-type identity is a P4 value-type concern, and same-name
+/// primitive binding consistency across or-alternatives is proven by Sema, NOT
+/// by the Core verifier at this stage.
 struct CorePatternBinding {
     CoreValueId value{};
+    CoreTypeId binding_type{}; // kInvalid = primitive / non-nominal
     [[nodiscard]] friend bool operator==(const CorePatternBinding &,
                                          const CorePatternBinding &) noexcept = default;
 };
@@ -711,6 +719,68 @@ struct CoreRegion {
     std::vector<CoreStmt> statements;
     friend bool operator==(const CoreRegion &, const CoreRegion &) noexcept;
 };
+
+// --- structural may-fallthrough (single source of truth) ---
+//
+// Whether control can reach the END of a region (i.e. the region does NOT end on
+// every path in a terminator). This is the ONE recursive definition shared by
+// the lowerer (to decide whether a statement-position region needs a trailing
+// unit yield) and the verifier's per-path analysis, so the two never drift. A
+// statement TERMINATES every path iff:
+//   * Return / Goto / Yield / Trap        -> always terminates;
+//   * CoreIfStmt                          -> BOTH branches terminate (an
+//                                            else-less `if` never terminates);
+//   * CoreMatchStmt                       -> every arm body AND the fallback
+//                                            terminate;
+//   * Let / CapabilityCall / Store        -> never terminates (falls through).
+// A region falls through unless some statement terminates all paths before its
+// end.
+[[nodiscard]] bool core_region_may_fallthrough(const CoreRegion &region) noexcept;
+[[nodiscard]] bool core_stmt_terminates(const CoreStmt &stmt) noexcept;
+
+inline bool core_region_may_fallthrough(const CoreRegion &region) noexcept {
+    for (const CoreStmt &stmt : region.statements) {
+        if (core_stmt_terminates(stmt)) {
+            return false; // statements after a terminator are unreachable
+        }
+    }
+    return true;
+}
+
+inline bool core_stmt_terminates(const CoreStmt &stmt) noexcept {
+    return std::visit(
+        [](const auto &node) -> bool {
+            using T = std::decay_t<decltype(node)>;
+            if constexpr (std::is_same_v<T, CoreReturnStmt> || std::is_same_v<T, CoreGotoStmt> ||
+                          std::is_same_v<T, CoreYieldStmt> || std::is_same_v<T, CoreTrapStmt>) {
+                return true;
+            } else if constexpr (std::is_same_v<T, CoreIfStmt>) {
+                // An else-less `if` can always skip the then-branch, so it never
+                // terminates. With both branches, it terminates iff NEITHER can
+                // fall through.
+                if (!node.then_region || !node.else_region) {
+                    return false;
+                }
+                return !core_region_may_fallthrough(*node.then_region) &&
+                       !core_region_may_fallthrough(*node.else_region);
+            } else if constexpr (std::is_same_v<T, CoreMatchStmt>) {
+                // A match terminates iff no arm body and no fallback can fall
+                // through (arm yields are consumed by the match, not fallthrough).
+                for (const auto &arm : node.arms) {
+                    if (!arm.body || core_region_may_fallthrough(*arm.body)) {
+                        return false;
+                    }
+                }
+                if (!node.fallback_region || core_region_may_fallthrough(*node.fallback_region)) {
+                    return false;
+                }
+                return true;
+            } else {
+                return false; // Let / CapabilityCall / Store: fall through
+            }
+        },
+        stmt.node);
+}
 
 // --- flow (state handlers with executable bodies) ---
 
