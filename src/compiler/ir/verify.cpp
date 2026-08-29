@@ -761,14 +761,17 @@ class ProgramVerifier {
                           "(BackendReady requires a typed scrutinee enum)");
             }
         }
-        std::visit([this, &path](const auto &node) { verify_match_pattern_node(node, path); },
+        std::visit([this, &path, &pattern](
+                       const auto &node) { verify_match_pattern_node(node, path, pattern.matched_enum); },
                    pattern.node);
     }
 
     template <typename PatternT>
-    void verify_match_pattern_node(const PatternT & /*pattern*/, const std::string & /*path*/) {}
+    void verify_match_pattern_node(const PatternT & /*pattern*/, const std::string & /*path*/,
+                                   const SymbolRef & /*matched_enum*/) {}
 
-    void verify_match_pattern_node(const VariantPattern &pattern, const std::string &path) {
+    void verify_match_pattern_node(const VariantPattern &pattern, const std::string &path,
+                                   const SymbolRef &matched_enum) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.path)) {
             add_error(path, "variant pattern contains sentinel path");
         }
@@ -783,6 +786,18 @@ class ProgramVerifier {
             }
             if (pattern.variant_name.empty()) {
                 add_error(path, "variant pattern has an empty variant name");
+            }
+            // The variant's owner enum must be the SAME enum the pattern is
+            // matched against — otherwise a "matched enum A, variant owner B"
+            // pair could both be resolved yet inconsistent. A nested variant with
+            // no matched_enum (primitive context) is exempt.
+            if (matched_enum.kind == SymbolRefKind::Type &&
+                pattern.owner_enum.kind == SymbolRefKind::Type &&
+                matched_enum.canonical_name != pattern.owner_enum.canonical_name) {
+                add_error(path,
+                          "variant pattern owner enum '" + pattern.owner_enum.canonical_name +
+                              "' does not match the scrutinee enum '" + matched_enum.canonical_name +
+                              "'");
             }
         }
         for (std::uint32_t index = 0; index < pattern.subpatterns.size(); ++index) {
@@ -803,7 +818,8 @@ class ProgramVerifier {
         }
     }
 
-    void verify_match_pattern_node(const BindingPattern &pattern, const std::string &path) {
+    void verify_match_pattern_node(const BindingPattern &pattern, const std::string &path,
+                                   const SymbolRef & /*matched_enum*/) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.name)) {
             add_error(path, "binding pattern contains sentinel name");
         }
@@ -812,7 +828,8 @@ class ProgramVerifier {
         }
     }
 
-    void verify_match_pattern_node(const TuplePattern &pattern, const std::string &path) {
+    void verify_match_pattern_node(const TuplePattern &pattern, const std::string &path,
+                                   const SymbolRef & /*matched_enum*/) {
         for (std::uint32_t index = 0; index < pattern.elements.size(); ++index) {
             const auto element_path = path + ".elements[" + std::to_string(index) + "]";
             if (!pattern.elements[index]) {
@@ -823,7 +840,8 @@ class ProgramVerifier {
         }
     }
 
-    void verify_match_pattern_node(const OrPattern &pattern, const std::string &path) {
+    void verify_match_pattern_node(const OrPattern &pattern, const std::string &path,
+                                   const SymbolRef & /*matched_enum*/) {
         for (std::uint32_t index = 0; index < pattern.branches.size(); ++index) {
             const auto branch_path = path + ".branches[" + std::to_string(index) + "]";
             if (!pattern.branches[index]) {

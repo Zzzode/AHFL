@@ -2215,3 +2215,31 @@ TEST_CASE("Semantic IR backend-ready verifier rejects a match root pattern missi
     CHECK(has_ir_diagnostic_containing(backend_ready, ahfl::ir::VerificationSeverity::Error,
                                        "match root pattern has no resolved matched-enum identity"));
 }
+
+TEST_CASE("Semantic IR backend-ready verifier rejects a variant whose owner enum differs from the scrutinee") {
+    // Both matched_enum and owner_enum resolve, but to DIFFERENT enums — a
+    // corrupted pairing that the presence-only check would miss.
+    auto ir = lower_match_identity_program();
+    bool corrupted = false;
+    for (ahfl::ir::Expr *expr : ir.all_exprs()) {
+        if (expr == nullptr) {
+            continue;
+        }
+        if (auto *m = std::get_if<ahfl::ir::MatchExpr>(&expr->node)) {
+            for (auto &arm : m->arms) {
+                if (auto *v = std::get_if<ahfl::ir::VariantPattern>(&arm.pattern.node)) {
+                    // Keep it a resolved Type ref, but point at a different enum.
+                    v->owner_enum.kind = ahfl::ir::SymbolRefKind::Type;
+                    v->owner_enum.canonical_name = "m::SomeOtherEnum";
+                    corrupted = true;
+                }
+            }
+        }
+    }
+    REQUIRE(corrupted);
+    const auto backend_ready =
+        ahfl::ir::verify_ir_program(ir, ahfl::ir::IrVerificationMode::BackendReady);
+    CHECK(backend_ready.has_errors());
+    CHECK(has_ir_diagnostic_containing(backend_ready, ahfl::ir::VerificationSeverity::Error,
+                                       "does not match the scrutinee enum"));
+}

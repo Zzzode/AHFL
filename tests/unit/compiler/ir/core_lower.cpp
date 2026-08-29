@@ -1930,3 +1930,40 @@ TEST_CASE("(3)-3b P0-2: deleting a nested TypedPatternChild fails closed") {
     REQUIRE(corrupted);
     CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
 }
+
+TEST_CASE("(3)-3b P0-1: AST variant vs typed Wildcard kind mismatch fails closed") {
+    // Corrupt a variant arm's TypedPattern to Wildcard: the AST node is still a
+    // VariantPattern, so the AST-vs-typed kind check must fail closed (never
+    // lower an AST variant shape with a non-variant typed identity).
+    auto st = frontend_state("kind_mismatch_v", kMatchProgram);
+    REQUIRE(st.has_value());
+    auto &tp = st->typecheck->typed_program;
+    bool corrupted = false;
+    for (auto &pat : tp.patterns) {
+        if (pat.kind == ahfl::TypedPatternKind::Variant) {
+            pat.kind = ahfl::TypedPatternKind::Wildcard;
+            corrupted = true;
+            break;
+        }
+    }
+    REQUIRE(corrupted);
+    CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
+}
+
+TEST_CASE("(3)-3b P0-1: AST variant vs typed Literal kind mismatch fails closed") {
+    // A different mismatch: an AST VariantPattern resolved (corrupted) to a
+    // Literal typed kind. This is NOT the legal binding->unit-variant divergence.
+    auto st = frontend_state("kind_mismatch_l", kMatchProgram);
+    REQUIRE(st.has_value());
+    auto &tp = st->typecheck->typed_program;
+    bool corrupted = false;
+    for (auto &pat : tp.patterns) {
+        if (pat.kind == ahfl::TypedPatternKind::Variant) {
+            pat.kind = ahfl::TypedPatternKind::Literal;
+            corrupted = true;
+            break;
+        }
+    }
+    REQUIRE(corrupted);
+    CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
+}

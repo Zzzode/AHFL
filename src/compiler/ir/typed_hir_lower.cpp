@@ -997,6 +997,43 @@ class TypedIrLowerer final {
         return child;
     }
 
+    // RFC 0026 (3)-3b P0-1: the AST pattern node kind and the resolved
+    // TypedPattern.kind must agree, so a corrupted/mismatched typed snapshot can
+    // never produce AHFL-IR that mixes an AST shape with the wrong typed
+    // identity. The ONE legal divergence is Sema's variant disambiguation: a bare
+    // AST BindingPattern (no nested) that names a UNIT enum variant becomes a
+    // TypedPatternKind::Variant. Every other mismatch is a structural defect.
+    [[nodiscard]] static bool ast_typed_kinds_compatible(const ast::PatternSyntax &pattern,
+                                                         const TypedPattern &typed) {
+        return std::visit(
+            Overloaded{
+                [&](const ast::LiteralPattern &) {
+                    return typed.kind == TypedPatternKind::Literal;
+                },
+                [&](const ast::IntRangePattern &) {
+                    return typed.kind == TypedPatternKind::IntRange;
+                },
+                [&](const ast::VariantPattern &) {
+                    return typed.kind == TypedPatternKind::Variant;
+                },
+                [&](const ast::WildcardPattern &) {
+                    return typed.kind == TypedPatternKind::Wildcard;
+                },
+                [&](const ast::BindingPattern &b) {
+                    if (typed.kind == TypedPatternKind::Binding) {
+                        return true;
+                    }
+                    // The sole legal divergence: bare identifier, no nested,
+                    // resolved to a UNIT variant.
+                    return typed.kind == TypedPatternKind::Variant && !b.nested &&
+                           typed.variant_payload_kind == EnumVariantPayloadKind::Unit;
+                },
+                [&](const ast::TuplePattern &) { return typed.kind == TypedPatternKind::Tuple; },
+                [&](const ast::OrPattern &) { return typed.kind == TypedPatternKind::Or; },
+            },
+            pattern.node);
+    }
+
     [[nodiscard]] ir::MatchPattern lower_pattern(const ast::PatternSyntax *pattern,
                                                  const TypedPattern *typed) const {
         if (pattern == nullptr) {
@@ -1009,6 +1046,12 @@ class TypedIrLowerer final {
         if (typed == nullptr) {
             throw std::logic_error(
                 "match pattern has no aligned TypedPattern (typed identity missing)");
+        }
+        // RFC 0026 (3)-3b P0-1: the AST and typed kinds must agree (modulo the
+        // one legal binding->unit-variant disambiguation).
+        if (!ast_typed_kinds_compatible(*pattern, *typed)) {
+            throw std::logic_error(
+                "match pattern AST kind does not agree with its resolved TypedPattern kind");
         }
 
         ir::MatchPattern lowered{
@@ -2152,12 +2195,13 @@ class TypedIrLowerer final {
             }
 
             ir::ExprRef pending_guard = nullptr;
+            bool have_pending_guard = false;
             std::size_t arm_index = 0;
-            // RFC 0026 (3)-3b P0-1: the typed pattern index list MUST be present
-            // and 1:1 with the arms BEFORE we lower any arm — an empty / short /
-            // long list means the typed identity was not persisted, and silently
-            // falling back to AST-derived identity is exactly the string-guessing
-            // this slice removes. Lock the count up front (fail-closed).
+            // RFC 0026 (3)-3b P0-1/P0-2: the typed pattern index list, the AST
+            // arms, and the MatchArmBody children must ALL be 1:1 BEFORE we lower
+            // any arm — otherwise a null AST pattern degrades to a wildcard or an
+            // arm is silently dropped, losing the source pattern structure. Lock
+            // every alignment up front (fail-closed).
             std::size_t body_child_count = 0;
             for (const auto &child : e.children) {
                 if (child.role == TypedExprChildRole::MatchArmBody) {
@@ -2170,6 +2214,15 @@ class TypedIrLowerer final {
                     std::to_string(e.match_arm_pattern_indexes.size()) +
                     ") does not match its arm count (" + std::to_string(body_child_count) + ")");
             }
+            if (ast_match == nullptr) {
+                throw std::logic_error("match TypedExpr has no aligned AST MatchExpr");
+            }
+            if (ast_match->arms.size() != body_child_count) {
+                throw std::logic_error(
+                    "match AST arm count (" + std::to_string(ast_match->arms.size()) +
+                    ") does not match the typed body child count (" +
+                    std::to_string(body_child_count) + ")");
+            }
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::MatchArmGuard &&
                     child.role != TypedExprChildRole::MatchArmBody) {
@@ -2177,17 +2230,27 @@ class TypedIrLowerer final {
                 }
                 const TypedExpr *target = resolve_child(*self.typed_program_, child);
                 if (target == nullptr) {
-                    continue;
+                    // A guard/body child that cannot be resolved is a structural
+                    // defect (dropping it would desync the arm sequence).
+                    throw std::logic_error("match arm child expression could not be resolved");
                 }
                 if (child.role == TypedExprChildRole::MatchArmGuard) {
+                    // At most one guard per arm, and it must attach to the arm's
+                    // body (a second orphan guard before a body is malformed).
+                    if (have_pending_guard) {
+                        throw std::logic_error("match arm has more than one guard child");
+                    }
                     pending_guard = self.lower_typed_expr(*target);
+                    have_pending_guard = true;
                     continue;
                 }
 
-                const ast::PatternSyntax *pattern = nullptr;
-                if (ast_match != nullptr && arm_index < ast_match->arms.size() &&
-                    ast_match->arms[arm_index]) {
-                    pattern = ast_match->arms[arm_index]->pattern.get();
+                // The AST arm + its pattern are guaranteed present by the count
+                // lock above; a null pattern slot is a structural defect.
+                const ast::PatternSyntax *pattern =
+                    ast_match->arms[arm_index] ? ast_match->arms[arm_index]->pattern.get() : nullptr;
+                if (pattern == nullptr) {
+                    throw std::logic_error("match AST arm has no pattern");
                 }
                 // The count is already locked 1:1 above; resolve this arm's
                 // TypedPattern by index (an out-of-range index is a structural
@@ -2204,7 +2267,11 @@ class TypedIrLowerer final {
                     .body = self.lower_typed_expr(*target),
                 });
                 pending_guard = nullptr;
+                have_pending_guard = false;
                 ++arm_index;
+            }
+            if (have_pending_guard) {
+                throw std::logic_error("match has a trailing guard with no arm body");
             }
 
             return self.make_expr(std::move(match), range);
