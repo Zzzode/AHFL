@@ -78,9 +78,12 @@ bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
 // well-known stdlib enum variant order. Both the lowerer (below) and the public
 // `builtin_enum_table()` (for the sync test) read this.
 const std::vector<BuiltinEnumDescriptor> &builtin_enum_table() {
+    using PK = CoreTypeDecl::VariantPayload::Kind;
     static const std::vector<BuiltinEnumDescriptor> table = {
-        {"Option", {"Some", "None"}}, // std/option.ahfl: Some(T) then None
-        {"Result", {"Ok", "Err"}},    // std/result.ahfl: Ok(T) then Err(E)
+        // std/option.ahfl: Some(T) [Tuple arity 1] then None [Unit]
+        {"Option", {{"Some", PK::Tuple, 1}, {"None", PK::Unit, 0}}},
+        // std/result.ahfl: Ok(T) [Tuple arity 1] then Err(E) [Tuple arity 1]
+        {"Result", {{"Ok", PK::Tuple, 1}, {"Err", PK::Tuple, 1}}},
     };
     return table;
 }
@@ -127,8 +130,13 @@ namespace {
 // ---------------------------------------------------------------------------
 
 struct BuiltinEnum {
-    std::string name;                    // unqualified enum name
-    std::vector<std::string> variants;   // declaration order
+    struct Variant {
+        std::string name;
+        CoreTypeDecl::VariantPayload::Kind payload_kind{CoreTypeDecl::VariantPayload::Kind::Unit};
+        std::uint32_t payload_arity{0};
+    };
+    std::string name;                  // unqualified enum name
+    std::vector<Variant> variants;     // declaration order
 };
 
 /// The lowerer's view of the builtin enums, derived from the single public SSOT
@@ -140,8 +148,9 @@ struct BuiltinEnum {
         for (const BuiltinEnumDescriptor &d : builtin_enum_table()) {
             BuiltinEnum e;
             e.name = std::string(d.name);
-            for (std::string_view v : d.variants) {
-                e.variants.emplace_back(v);
+            for (const BuiltinEnumDescriptor::Variant &v : d.variants) {
+                e.variants.push_back(
+                    BuiltinEnum::Variant{std::string(v.name), v.payload_kind, v.payload_arity});
             }
             out.push_back(std::move(e));
         }
@@ -173,6 +182,9 @@ class TypeEnv {
         for (const FieldDecl &f : decl.fields) {
             t.fields.push_back(f.name);
             t.field_types.push_back(CoreTypeId{}); // resolved in fixup_field_types()
+            // A field with an initializer is optional in a struct literal; one
+            // without is REQUIRED (the verifier proves completeness).
+            t.field_has_default.push_back(f.default_value.ptr != nullptr);
             field_type_names.push_back(nominal_type_name(f.type_ref));
         }
         const auto id = register_type(std::move(t), decl.symbol_ref);
@@ -183,10 +195,38 @@ class TypeEnv {
         t.kind = CoreTypeDecl::Kind::Enum;
         t.name = decl.symbol_ref.canonical_name.empty() ? decl.name
                                                        : decl.symbol_ref.canonical_name;
+        // Per-variant payload metadata (arity + slot field names), plus the slot
+        // type NAMES pending resolution in the fixup pass.
+        std::vector<std::vector<std::string>> pending_slot_names;
         for (const EnumVariantDecl &v : decl.variants) {
             t.variants.push_back(v.name);
+            CoreTypeDecl::VariantPayload payload;
+            std::vector<std::string> slot_names;
+            switch (v.payload_kind) {
+            case EnumVariantPayloadKind::Unit:
+                payload.kind = CoreTypeDecl::VariantPayload::Kind::Unit;
+                break;
+            case EnumVariantPayloadKind::Tuple:
+                payload.kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
+                for (const TypeRef &slot : v.payload) {
+                    payload.slot_types.push_back(CoreTypeId{}); // resolved in fixup
+                    slot_names.push_back(nominal_type_name(slot));
+                }
+                break;
+            case EnumVariantPayloadKind::Struct:
+                payload.kind = CoreTypeDecl::VariantPayload::Kind::Struct;
+                for (const EnumVariantFieldDecl &field : v.fields) {
+                    payload.slot_types.push_back(CoreTypeId{}); // resolved in fixup
+                    payload.field_names.push_back(field.name);
+                    slot_names.push_back(nominal_type_name(field.type_ref));
+                }
+                break;
+            }
+            t.variant_payloads.push_back(std::move(payload));
+            pending_slot_names.push_back(std::move(slot_names));
         }
-        static_cast<void>(register_type(std::move(t), decl.symbol_ref));
+        const auto id = register_type(std::move(t), decl.symbol_ref);
+        pending_variant_slot_names_.emplace(id.value, std::move(pending_slot_names));
     }
 
     /// Register the well-known stdlib enums as synthetic types (only if a user
@@ -200,7 +240,17 @@ class TypeEnv {
             CoreTypeDecl t;
             t.kind = CoreTypeDecl::Kind::Enum;
             t.name = canonical;
-            t.variants = b.variants;
+            // Names + payload metadata come from the SSOT so std Option/Result
+            // construct/pattern arity is not a verifier blind spot. Generic slot
+            // types are unknown here (type parameters), so slot_types holds
+            // kInvalid placeholders of the right ARITY.
+            for (const BuiltinEnum::Variant &v : b.variants) {
+                t.variants.push_back(v.name);
+                CoreTypeDecl::VariantPayload payload;
+                payload.kind = v.payload_kind;
+                payload.slot_types.assign(v.payload_arity, CoreTypeId{});
+                t.variant_payloads.push_back(std::move(payload));
+            }
             const auto id = CoreTypeId{static_cast<std::uint32_t>(types_.size())};
             by_name_.emplace(canonical, id);
             types_.push_back(std::move(t));
@@ -314,6 +364,23 @@ class TypeEnv {
             }
         }
         pending_field_type_names_.clear();
+        // Resolve each enum variant's payload slot type NAMES to CoreTypeIds.
+        for (const auto &[type_index, per_variant] : pending_variant_slot_names_) {
+            CoreTypeDecl &decl = types_[type_index];
+            for (std::size_t v = 0; v < per_variant.size() && v < decl.variant_payloads.size();
+                 ++v) {
+                auto &slot_types = decl.variant_payloads[v].slot_types;
+                const auto &slot_names = per_variant[v];
+                for (std::size_t s = 0; s < slot_names.size() && s < slot_types.size(); ++s) {
+                    if (!slot_names[s].empty()) {
+                        if (const auto id = resolve_by_name(slot_names[s])) {
+                            slot_types[s] = *id;
+                        }
+                    }
+                }
+            }
+        }
+        pending_variant_slot_names_.clear();
     }
 
   private:
@@ -348,6 +415,10 @@ class TypeEnv {
     // struct CoreTypeId -> its field type NAMES, pending resolution to typed
     // CoreTypeIds in fixup_field_types() (after all types are registered).
     std::unordered_map<std::uint32_t, std::vector<std::string>> pending_field_type_names_;
+    // enum CoreTypeId -> per-variant payload slot type NAMES (parallel to the
+    // variant's slot_types), pending resolution in fixup_field_types().
+    std::unordered_map<std::uint32_t, std::vector<std::vector<std::string>>>
+        pending_variant_slot_names_;
 };
 
 // ---------------------------------------------------------------------------

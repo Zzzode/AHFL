@@ -68,6 +68,7 @@ struct GoodProgram {
         inner.name = "Inner";
         inner.fields = {"n"};
         inner.field_types = {CoreTypeId{}}; // Int -> primitive
+        inner.field_has_default = {false};
         p.types.push_back(std::move(inner));
 
         CoreTypeDecl ctx;
@@ -75,12 +76,14 @@ struct GoodProgram {
         ctx.name = "Ctx";
         ctx.fields = {"saved", "nested"};
         ctx.field_types = {CoreTypeId{}, CoreTypeId{0}}; // saved: Int, nested: Inner (type 0)
+        ctx.field_has_default = {true, true};            // both default (stateless-friendly)
         p.types.push_back(std::move(ctx));
 
         CoreTypeDecl flag;
         flag.kind = CoreTypeDecl::Kind::Enum;
         flag.name = "Flag";
         flag.variants = {"On", "Off"};
+        flag.variant_payloads = {CoreTypeDecl::VariantPayload{}, CoreTypeDecl::VariantPayload{}};
         p.types.push_back(std::move(flag));
 
         // input / output structs (Sema requires agent input/output to be Struct).
@@ -89,6 +92,7 @@ struct GoodProgram {
         req.name = "Req";
         req.fields = {"amount"};
         req.field_types = {CoreTypeId{}}; // Int
+        req.field_has_default = {false};   // required
         p.types.push_back(std::move(req));
 
         CoreTypeDecl reply;
@@ -96,6 +100,7 @@ struct GoodProgram {
         reply.name = "Reply";
         reply.fields = {"ok"};
         reply.field_types = {CoreTypeId{}}; // Bool
+        reply.field_has_default = {false};   // required
         p.types.push_back(std::move(reply));
     }
     const CoreTypeId inner_ty{0};
@@ -372,6 +377,59 @@ TEST_CASE("verifier fails closed on a construct with a duplicated field id") {
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kConstructFieldDuplicated));
+}
+
+// --- ② construct completeness (missing required field / payload arity) ---
+
+TEST_CASE("verifier fails closed on a struct literal missing a required field") {
+    GoodProgram g = make_good_program();
+    // Reply has one REQUIRED field `ok` (no default). A Reply{} literal that
+    // assigns nothing must fail completeness.
+    CoreConstructExpr ctor;
+    ctor.type_name = "Reply";
+    ctor.is_enum_variant = false;
+    ctor.type_id = CoreTypeId{4}; // Reply
+    ctor.resolved = true;
+    ctor.args = {}; // assigns nothing
+    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kConstructFieldMissing));
+}
+
+TEST_CASE("verifier accepts a struct literal that omits only DEFAULTED fields") {
+    GoodProgram g = make_good_program();
+    // Ctx's fields are both defaulted, so a Ctx{} literal is complete.
+    CoreConstructExpr ctor;
+    ctor.type_name = "Ctx";
+    ctor.is_enum_variant = false;
+    ctor.type_id = CoreTypeId{1}; // Ctx
+    ctor.resolved = true;
+    ctor.args = {}; // omits both defaulted fields — legal
+    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    const auto result = verify_core_program(g.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("verifier fails closed on an enum-variant construct with the wrong payload arity") {
+    GoodProgram g = make_good_program();
+    // Flag::On is a Unit variant (arity 0). Passing a payload slot must fail.
+    CoreConstructExpr ctor;
+    ctor.type_name = "Flag";
+    ctor.variant_name = "On";
+    ctor.is_enum_variant = true;
+    ctor.type_id = CoreTypeId{2}; // Flag
+    ctor.variant = CoreVariantId{0}; // On
+    ctor.resolved = true;
+    ctor.args = {CoreConstructArg{CoreFieldId{0}, CoreValueId{0}}}; // 1 slot, expected 0
+    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kConstructPayloadArity));
 }
 
 TEST_CASE("verifier fails closed on an unlowered expression in an executable program") {

@@ -33,10 +33,16 @@
 //   * the pure-expression arena is ACYCLIC (a self/mutually-referential expr
 //     would make recursive codegen diverge); ALL arena exprs are checked, not
 //     only statement-reachable ones;
-//   * construct legality (PARTIAL): resolved type/variant/field ids in range and
-//     no duplicate field ids. MISSING-field detection is deferred until the type
-//     table records per-field default/required metadata (a later type-table
-//     extension) — this verifier does NOT yet prove struct-literal completeness;
+//   * construct legality (TRANSITIONAL contract — see slice ②b): resolved
+//     type/variant/field ids in range, no duplicate field ids, every REQUIRED
+//     struct field (one with no source-level default) is assigned, and an
+//     enum-variant constructor's payload-slot count matches the variant's
+//     declared arity. A defaulted field MAY currently be omitted (the lowerer
+//     does not yet materialize omitted defaults). Slice ②b will materialize
+//     defaults at each construct site and tighten this to "every materialized
+//     field/slot exactly once", after which a backend never understands
+//     defaults. (Builtin enums registered by fallback carry payload arity from
+//     the SSOT, so std Option/Result are not a blind spot.)
 //   * flow wiring: flow target agent, handler state, and goto targets in range;
 //   * capability-call arity matches the import signature;
 //   * an executable program contains NO CoreUnsupportedExpr;
@@ -79,6 +85,8 @@ inline constexpr std::string_view kConstructTypeInvalid = "core.verify.CONSTRUCT
 inline constexpr std::string_view kConstructVariantInvalid = "core.verify.CONSTRUCT_VARIANT_INVALID";
 inline constexpr std::string_view kConstructFieldInvalid = "core.verify.CONSTRUCT_FIELD_INVALID";
 inline constexpr std::string_view kConstructFieldDuplicated = "core.verify.CONSTRUCT_FIELD_DUPLICATED";
+inline constexpr std::string_view kConstructFieldMissing = "core.verify.CONSTRUCT_FIELD_MISSING";
+inline constexpr std::string_view kConstructPayloadArity = "core.verify.CONSTRUCT_PAYLOAD_ARITY";
 inline constexpr std::string_view kQualifiedUnresolved = "core.verify.QUALIFIED_UNRESOLVED";
 inline constexpr std::string_view kQualifiedVariantInvalid = "core.verify.QUALIFIED_VARIANT_INVALID";
 inline constexpr std::string_view kFlowTargetInvalid = "core.verify.FLOW_TARGET_INVALID";

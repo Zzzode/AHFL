@@ -387,9 +387,31 @@ class Verifier {
                       "constructor '" + c.type_name + "::" + c.variant_name + "' variant id " +
                           std::to_string(c.variant.value) + " is out of range",
                       range);
+            } else if (c.variant.value < type.variant_payloads.size()) {
+                // Enum-variant payload args are positional slots; their count
+                // must match the declared payload arity. (When the enum carries
+                // NO payload metadata — e.g. a builtin registered by fallback —
+                // arity is unknown and this check is skipped, never falsely
+                // rejected.)
+                const auto arity = type.variant_payloads[c.variant.value].slot_types.size();
+                if (c.args.size() != arity) {
+                    error(verify::kConstructPayloadArity,
+                          "constructor '" + c.type_name + "::" + c.variant_name + "' passes " +
+                              std::to_string(c.args.size()) + " payload slots but the variant has " +
+                              std::to_string(arity),
+                          range);
+                }
+                // A slot id must address a real payload slot.
+                for (const CoreConstructArg &arg : c.args) {
+                    if (arg.field.value >= arity) {
+                        error(verify::kConstructFieldInvalid,
+                              "constructor '" + c.type_name + "::" + c.variant_name +
+                                  "' payload slot id " + std::to_string(arg.field.value) +
+                                  " is out of range",
+                              range);
+                    }
+                }
             }
-            // Enum-variant payload args are positional slots; the type table does
-            // not record payload arity, so only duplicate slots are checked below.
         } else {
             // Struct literal: each arg's field id must be a real field of `type`.
             for (const CoreConstructArg &arg : c.args) {
@@ -397,6 +419,21 @@ class Verifier {
                     error(verify::kConstructFieldInvalid,
                           "constructor '" + c.type_name + "' field id " +
                               std::to_string(arg.field.value) + " is out of range",
+                          range);
+                }
+            }
+            // Completeness: every REQUIRED field (no default) must be assigned.
+            std::unordered_set<std::uint32_t> assigned;
+            for (const CoreConstructArg &arg : c.args) {
+                assigned.insert(arg.field.value);
+            }
+            for (std::uint32_t f = 0; f < type.fields.size(); ++f) {
+                const bool has_default =
+                    f < type.field_has_default.size() && type.field_has_default[f];
+                if (!has_default && assigned.find(f) == assigned.end()) {
+                    error(verify::kConstructFieldMissing,
+                          "constructor '" + c.type_name + "' does not assign required field '" +
+                              type.fields[f] + "'",
                           range);
                 }
             }

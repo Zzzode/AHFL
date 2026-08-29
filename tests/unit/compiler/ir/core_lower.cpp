@@ -612,9 +612,36 @@ TEST_CASE("builtin variant table matches stdlib declaration order (production vs
         REQUIRE(sysroot_order.size() >= desc.variants.size());
         for (std::size_t i = 0; i < desc.variants.size(); ++i) {
             INFO("enum " << name << " variant #" << i);
-            CHECK(std::string(desc.variants[i]) == sysroot_order[i]);
+            CHECK(std::string(desc.variants[i].name) == sysroot_order[i]);
         }
     }
+    // The SSOT also locks each builtin variant's payload kind + arity, so std
+    // Option/Result construct/pattern arity cannot silently drift (Codex).
+    const auto find = [&](std::string_view enum_name) -> const ir::core::BuiltinEnumDescriptor * {
+        for (const auto &d : table) {
+            if (d.name == enum_name) {
+                return &d;
+            }
+        }
+        return nullptr;
+    };
+    using PK = ir::core::CoreTypeDecl::VariantPayload::Kind;
+    const auto *option = find("Option");
+    REQUIRE(option != nullptr);
+    REQUIRE(option->variants.size() == 2);
+    CHECK(option->variants[0].name == "Some");
+    CHECK(option->variants[0].payload_kind == PK::Tuple);
+    CHECK(option->variants[0].payload_arity == 1u);
+    CHECK(option->variants[1].name == "None");
+    CHECK(option->variants[1].payload_kind == PK::Unit);
+    CHECK(option->variants[1].payload_arity == 0u);
+    const auto *result = find("Result");
+    REQUIRE(result != nullptr);
+    REQUIRE(result->variants.size() == 2);
+    CHECK(result->variants[0].payload_kind == PK::Tuple);
+    CHECK(result->variants[0].payload_arity == 1u); // Ok(T)
+    CHECK(result->variants[1].payload_kind == PK::Tuple);
+    CHECK(result->variants[1].payload_arity == 1u); // Err(E)
 }
 
 TEST_CASE("builtin enum variant resolves via the builtin path by symbol identity") {

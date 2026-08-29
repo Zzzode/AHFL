@@ -568,7 +568,27 @@ struct CoreTypeDecl {
     /// leaking to a backend. Populated by a fixup pass after the type table is
     /// built (so forward references resolve).
     std::vector<CoreTypeId> field_types;
+    /// Whether each struct field has a default value (parallel to `fields`). A
+    /// field WITHOUT a default is REQUIRED: a struct-literal constructor must
+    /// assign it. Lets the verifier prove struct-literal completeness.
+    std::vector<bool> field_has_default;
     std::vector<std::string> variants;      // enum variant names; index == variant id
+    /// Per-variant payload metadata (parallel to `variants`; empty for a struct).
+    /// The verifier bounds a variant constructor's / pattern's payload against
+    /// the declared arity, and a backend reads the payload types for layout.
+    struct VariantPayload {
+        enum class Kind { Unit, Tuple, Struct };
+        Kind kind{Kind::Unit};
+        /// Payload slot types in declaration order (index == payload slot). For a
+        /// Struct-payload variant, parallel to `field_names`. A slot's CoreTypeId
+        /// is the slot's own struct/enum type, or `kInvalid` for a primitive.
+        std::vector<CoreTypeId> slot_types;
+        /// Struct-payload field names (index == slot); empty for Unit/Tuple.
+        std::vector<std::string> field_names;
+        [[nodiscard]] friend bool operator==(const VariantPayload &,
+                                             const VariantPayload &) noexcept = default;
+    };
+    std::vector<VariantPayload> variant_payloads;
     [[nodiscard]] friend bool operator==(const CoreTypeDecl &,
                                          const CoreTypeDecl &) noexcept = default;
 };
@@ -665,8 +685,18 @@ struct CoreLowerResult {
 /// A well-known stdlib enum the lowerer resolves via a builtin variant table
 /// (its EnumDecl lives in the sysroot and may not be inlined in a program).
 struct BuiltinEnumDescriptor {
-    std::string_view name;                       // unqualified enum name
-    std::vector<std::string_view> variants;      // declaration order
+    /// One variant: its name plus payload shape. `Option::Some` / `Result::Ok` /
+    /// `Result::Err` are Tuple payloads of arity 1; `None` is Unit (arity 0). The
+    /// generic slot's concrete CoreTypeId is not known here (it is a type
+    /// parameter), but the KIND + ARITY are — and must be, so std Option/Result
+    /// construct/pattern arity is not a verifier blind spot.
+    struct Variant {
+        std::string_view name;
+        CoreTypeDecl::VariantPayload::Kind payload_kind{CoreTypeDecl::VariantPayload::Kind::Unit};
+        std::uint32_t payload_arity{0};
+    };
+    std::string_view name;               // unqualified enum name
+    std::vector<Variant> variants;       // declaration order
 };
 
 /// The production builtin variant order. Exposed so a sync test can compare it
