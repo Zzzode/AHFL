@@ -2703,6 +2703,9 @@ TEST_CASE("KR6.4 mono Slice 1: a generic fn instance is consumed into CoreProgra
             }
         }
     }
+    // The frontend MUST emit exactly one Fn instance for `id<Int>` — if it ever
+    // regressed to zero, the consumption assertions below would pass vacuously.
+    REQUIRE(ahfl_fn_instances == 1);
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     for (const auto &diag : result.diagnostics) {
         INFO("unexpected core diagnostic: " << diag.code << " — " << diag.message);

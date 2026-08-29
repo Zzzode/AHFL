@@ -272,8 +272,10 @@ struct GoodWorkflow {
     const CoreTypeId wmid_ty{1};
     const CoreTypeId wout_ty{2};
 
-    const auto make_agent = [&](std::string name, CoreTypeId in, CoreTypeId out) {
+    const auto make_agent = [&](std::string name, CoreTypeId in, CoreTypeId out,
+                                std::size_t sym_id) {
         CoreAgentDecl a;
+        a.symbol_ref = ir::SymbolRef{ir::SymbolRefKind::Agent, name, name, "", sym_id};
         a.name = std::move(name);
         a.states = {"Done"};
         a.initial = CoreStateId{0};
@@ -283,8 +285,8 @@ struct GoodWorkflow {
         a.context_kind = CoreAgentDecl::ContextKind::Unit;
         p.agents.push_back(std::move(a));
     };
-    make_agent("First", win_ty, wmid_ty);   // agent 0
-    make_agent("Second", wmid_ty, wout_ty);  // agent 1
+    make_agent("First", win_ty, wmid_ty, 100);   // agent 0
+    make_agent("Second", wmid_ty, wout_ty, 101);  // agent 1
 
     CoreWorkflowDecl wf;
     wf.id = CoreWorkflowId{0};
@@ -329,12 +331,28 @@ struct GoodWorkflow {
     };
 
     // Two concrete agent invocation instances (index == CoreInstanceId), each
-    // with a shell matching its nominal agent. Workflow nodes invoke THESE.
+    // with a shell matching its nominal agent. Workflow nodes invoke THESE. The
+    // dispatch descriptor is the mangler's [input, context, output] vector, so it
+    // must align with the payload shell (a Unit context slot is a Unit TypeRef).
+    const auto nominal_ref = [](const char *name) {
+        ir::TypeRef t;
+        t.kind = ir::TypeRefKind::Struct;
+        t.canonical_name = name;
+        return t;
+    };
+    const auto unit_ref = []() {
+        ir::TypeRef t;
+        t.kind = ir::TypeRefKind::Unit;
+        return t;
+    };
     {
         CoreInstanceDecl first_inst;
         first_inst.id = CoreInstanceId{0};
         first_inst.instance_key = "_inst_first_First";
         first_inst.origin = ir::SymbolRef{ir::SymbolRefKind::Agent, "First", "First", "", 100};
+        first_inst.dispatch_types.push_back(nominal_ref("WIn"));
+        first_inst.dispatch_types.push_back(unit_ref());
+        first_inst.dispatch_types.push_back(nominal_ref("WMid"));
         first_inst.payload = CoreAgentInstance{CoreAgentId{0}, win_ty,
                                                CoreAgentDecl::ContextKind::Unit, CoreTypeId{},
                                                wmid_ty};
@@ -344,6 +362,9 @@ struct GoodWorkflow {
         second_inst.id = CoreInstanceId{1};
         second_inst.instance_key = "_inst_second_Second";
         second_inst.origin = ir::SymbolRef{ir::SymbolRefKind::Agent, "Second", "Second", "", 101};
+        second_inst.dispatch_types.push_back(nominal_ref("WMid"));
+        second_inst.dispatch_types.push_back(unit_ref());
+        second_inst.dispatch_types.push_back(nominal_ref("WOut"));
         second_inst.payload = CoreAgentInstance{CoreAgentId{1}, wmid_ty,
                                                 CoreAgentDecl::ContextKind::Unit, CoreTypeId{},
                                                 wout_ty};
@@ -1675,4 +1696,85 @@ TEST_CASE("workflow verifier P1: an UNREFERENCED bad WorkflowNodeOutput is still
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kWorkflowNodeRefInvalid));
+}
+
+// --- mono Slice 1 forward-fix (Codex re-review: 2 P0 + 1 P1) ---
+
+TEST_CASE("mono verifier P0-1: a NESTED non-concrete dispatch type is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // Append an instance whose dispatch type is Option<Unresolved> — concrete at
+    // the top level (Enum) but non-concrete in a nested param.
+    CoreInstanceDecl bad;
+    bad.id = CoreInstanceId{static_cast<std::uint32_t>(g.program.instances.size())};
+    bad.instance_key = "_inst_nested_bad";
+    bad.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "f", "f", "", 500};
+    ir::TypeRef outer;
+    outer.kind = ir::TypeRefKind::Enum;
+    outer.canonical_name = "std::option::Option";
+    outer.params.push_back(std::make_unique<ir::TypeRef>()); // nested kind == Unresolved
+    bad.dispatch_types.push_back(std::move(outer));
+    bad.payload = CoreFnInstance{};
+    g.program.instances.push_back(std::move(bad));
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
+}
+
+TEST_CASE("mono verifier P0-1: a nested Fn dispatch type missing its return is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    CoreInstanceDecl bad;
+    bad.id = CoreInstanceId{static_cast<std::uint32_t>(g.program.instances.size())};
+    bad.instance_key = "_inst_fn_shape_bad";
+    bad.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g", "g", "", 501};
+    ir::TypeRef fn;
+    fn.kind = ir::TypeRefKind::Fn; // no `second` (return) -> malformed
+    bad.dispatch_types.push_back(std::move(fn));
+    bad.payload = CoreFnInstance{};
+    g.program.instances.push_back(std::move(bad));
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
+}
+
+TEST_CASE("mono verifier P0-2: payload kind not matching origin kind is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // An Agent origin with a Fn payload (kind mismatch).
+    CoreInstanceDecl bad;
+    bad.id = CoreInstanceId{static_cast<std::uint32_t>(g.program.instances.size())};
+    bad.instance_key = "_inst_kind_mismatch";
+    bad.origin = ir::SymbolRef{ir::SymbolRefKind::Agent, "First", "First", "", 100};
+    bad.payload = CoreFnInstance{};
+    g.program.instances.push_back(std::move(bad));
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceOriginInvalid));
+}
+
+TEST_CASE("mono verifier P0-2: an agent instance whose origin != base symbol is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // instance 0's payload base is agent 0 (First), but corrupt its origin to
+    // agent 1 (Second)'s symbol — a cross-base identity mismatch.
+    g.program.instances[0].origin =
+        ir::SymbolRef{ir::SymbolRefKind::Agent, "Second", "Second", "", 101};
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceOriginInvalid));
+}
+
+TEST_CASE("mono verifier P1: an agent instance with a wrong-shell dispatch descriptor is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // instance 0 (First) outputs WMid; corrupt its output dispatch slot to name a
+    // different type (WOut) so the descriptor no longer aligns with the shell.
+    g.program.instances[0].dispatch_types[2].canonical_name = "WOut";
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceShellMismatch));
+}
+
+TEST_CASE("mono verifier P1: an agent instance with an empty dispatch descriptor is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    g.program.instances[0].dispatch_types.clear(); // must be exactly 3
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceShellMismatch));
 }

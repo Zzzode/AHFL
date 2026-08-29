@@ -145,6 +145,7 @@ inline constexpr std::string_view kInstanceKeyDuplicated = "core.verify.INSTANCE
 inline constexpr std::string_view kInstanceKeyEmpty = "core.verify.INSTANCE_KEY_EMPTY";
 inline constexpr std::string_view kInstanceDispatchTypeInvalid = "core.verify.INSTANCE_DISPATCH_TYPE_INVALID";
 inline constexpr std::string_view kInstanceBaseInvalid = "core.verify.INSTANCE_BASE_INVALID";
+inline constexpr std::string_view kInstanceOriginInvalid = "core.verify.INSTANCE_ORIGIN_INVALID";
 inline constexpr std::string_view kInstanceShellMismatch = "core.verify.INSTANCE_SHELL_MISMATCH";
 inline constexpr std::string_view kWorkflowInvocationInvalid = "core.verify.WORKFLOW_INVOCATION_INVALID";
 } // namespace verify

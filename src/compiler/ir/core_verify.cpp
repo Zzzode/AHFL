@@ -1844,21 +1844,50 @@ class Verifier {
                 if (!type_ref_is_concrete(t)) {
                     error(verify::kInstanceDispatchTypeInvalid,
                           "instance '" + inst.instance_key +
-                              "' has a non-concrete dispatch type (Unresolved / Any / Never)",
+                              "' has a non-concrete dispatch type (Unresolved / Any / Never, at any "
+                              "depth) or a malformed structural shape",
                           std::nullopt);
                 }
             }
+            // origin.kind must match the payload variant, and (where a Core base
+            // table exists) origin must be the SAME nominal symbol as the base.
+            const auto require_origin_kind = [&](ir::SymbolRefKind want, const char *what) {
+                if (inst.origin.kind != want || (inst.origin.canonical_name.empty() &&
+                                                 !inst.origin.id.has_value())) {
+                    error(verify::kInstanceOriginInvalid,
+                          "instance '" + inst.instance_key + "' origin is not a valid " + what +
+                              " symbol",
+                          std::nullopt);
+                    return false;
+                }
+                return true;
+            };
+            const auto require_origin_is = [&](const ir::SymbolRef &base_sym, const char *what) {
+                if (!symbol_refs_identify_same(inst.origin, base_sym)) {
+                    error(verify::kInstanceOriginInvalid,
+                          "instance '" + inst.instance_key + "' origin does not match its base " +
+                              what + " symbol",
+                          std::nullopt);
+                }
+            };
             std::visit(Overloaded{
                            [&](const CoreCapabilityInstance &p) {
+                               require_origin_kind(ir::SymbolRefKind::Capability, "capability");
                                if (p.base.value >= program_.capabilities.size()) {
                                    error(verify::kInstanceBaseInvalid,
                                          "capability instance '" + inst.instance_key +
                                              "' base id is out of range",
                                          std::nullopt);
+                                   return;
                                }
+                               require_origin_is(program_.capabilities[p.base.value].symbol_ref,
+                                                 "capability");
                            },
-                           [&](const CorePredicateInstance &) {},
+                           [&](const CorePredicateInstance &) {
+                               require_origin_kind(ir::SymbolRefKind::Predicate, "predicate");
+                           },
                            [&](const CoreAgentInstance &p) {
+                               require_origin_kind(ir::SymbolRefKind::Agent, "agent");
                                if (p.base.value >= program_.agents.size()) {
                                    error(verify::kInstanceBaseInvalid,
                                          "agent instance '" + inst.instance_key +
@@ -1867,6 +1896,7 @@ class Verifier {
                                    return;
                                }
                                const CoreAgentDecl &base = program_.agents[p.base.value];
+                               require_origin_is(base.symbol_ref, "agent");
                                if (!(p.input_type == base.input_type) ||
                                    p.context_kind != base.context_kind ||
                                    !(p.context_type == base.context_type) ||
@@ -1877,8 +1907,14 @@ class Verifier {
                                              base.name + "'",
                                          std::nullopt);
                                }
+                               // The mangle dispatch descriptor for an agent is
+                               // exactly [input, context, output] — it must align
+                               // with the concrete shell (a descriptor for shell A
+                               // with a payload/link for shell B is malformed).
+                               check_agent_dispatch_shape(inst, p);
                            },
                            [&](const CoreWorkflowInstance &p) {
+                               require_origin_kind(ir::SymbolRefKind::Workflow, "workflow");
                                if (p.base.value >= program_.workflows.size()) {
                                    error(verify::kInstanceBaseInvalid,
                                          "workflow instance '" + inst.instance_key +
@@ -1887,6 +1923,7 @@ class Verifier {
                                    return;
                                }
                                const CoreWorkflowDecl &base = program_.workflows[p.base.value];
+                               require_origin_is(base.symbol_ref, "workflow");
                                if (!(p.input_type == base.input_type) ||
                                    !(p.output_type == base.output_type)) {
                                    error(verify::kInstanceShellMismatch,
@@ -1895,20 +1932,119 @@ class Verifier {
                                              base.name + "'",
                                          std::nullopt);
                                }
+                               check_workflow_dispatch_shape(inst, p);
                            },
-                           [&](const CoreFnInstance &) {},
+                           [&](const CoreFnInstance &) {
+                               require_origin_kind(ir::SymbolRefKind::Function, "function");
+                           },
                        },
                        inst.payload);
         }
     }
 
-    // A dispatch type must be a CONCRETE structural type: not Unresolved / Any /
-    // Never. (Deep structural well-formedness of nested container/Fn params is a
-    // P4 value-type-arena concern; here we reject the top-level non-concrete
-    // shapes the mangler should never have emitted for a real instance.)
-    [[nodiscard]] static bool type_ref_is_concrete(const ir::TypeRef &t) {
-        return t.kind != ir::TypeRefKind::Unresolved && t.kind != ir::TypeRefKind::Any &&
-               t.kind != ir::TypeRefKind::Never;
+    // Two SymbolRefs identify the SAME nominal declaration: id-first (both set +
+    // equal), else non-empty canonical name equal.
+    [[nodiscard]] static bool symbol_refs_identify_same(const ir::SymbolRef &a,
+                                                        const ir::SymbolRef &b) {
+        if (a.id.has_value() && b.id.has_value()) {
+            return *a.id == *b.id;
+        }
+        return !a.canonical_name.empty() && a.canonical_name == b.canonical_name;
+    }
+
+    // The nominal type name a concrete dispatch descriptor slot must carry to
+    // match a resolved CoreTypeId shell (canonical name of the base type). For a
+    // Unit context the descriptor slot must be the Unit type. Returns the expected
+    // canonical name, or empty for Unit (matched by kind).
+    [[nodiscard]] std::string type_id_canonical_name(CoreTypeId id) const {
+        if (id.value == CoreTypeId::kInvalid || id.value >= program_.types.size()) {
+            return {};
+        }
+        return program_.types[id.value].name;
+    }
+
+    // Agent dispatch descriptor is exactly [input, context, output]; each slot's
+    // concrete TypeRef must name the same nominal type as the corresponding shell
+    // CoreTypeId (a Unit context slot must be the Unit type kind). A descriptor of
+    // the wrong length or naming a different type than the payload shell is
+    // malformed (the opaque key would then describe a different shell than it runs).
+    void check_agent_dispatch_shape(const CoreInstanceDecl &inst, const CoreAgentInstance &p) {
+        if (inst.dispatch_types.size() != 3) {
+            error(verify::kInstanceShellMismatch,
+                  "agent instance '" + inst.instance_key + "' dispatch descriptor must be exactly "
+                  "[input, context, output] (3 types)",
+                  std::nullopt);
+            return;
+        }
+        const auto slot_matches = [&](const ir::TypeRef &slot, CoreTypeId shell,
+                                      const CoreAgentDecl::ContextKind *ck) -> bool {
+            if (ck != nullptr && *ck == CoreAgentDecl::ContextKind::Unit) {
+                return slot.kind == ir::TypeRefKind::Unit;
+            }
+            return slot.canonical_name == type_id_canonical_name(shell);
+        };
+        if (!slot_matches(inst.dispatch_types[0], p.input_type, nullptr) ||
+            !slot_matches(inst.dispatch_types[1], p.context_type, &p.context_kind) ||
+            !slot_matches(inst.dispatch_types[2], p.output_type, nullptr)) {
+            error(verify::kInstanceShellMismatch,
+                  "agent instance '" + inst.instance_key +
+                      "' dispatch descriptor does not align with its [input, context, output] shell",
+                  std::nullopt);
+        }
+    }
+
+    // Workflow dispatch descriptor is [input, output]; each slot must name the
+    // corresponding shell type.
+    void check_workflow_dispatch_shape(const CoreInstanceDecl &inst, const CoreWorkflowInstance &p) {
+        if (inst.dispatch_types.size() != 2) {
+            error(verify::kInstanceShellMismatch,
+                  "workflow instance '" + inst.instance_key +
+                      "' dispatch descriptor must be exactly [input, output] (2 types)",
+                  std::nullopt);
+            return;
+        }
+        if (inst.dispatch_types[0].canonical_name != type_id_canonical_name(p.input_type) ||
+            inst.dispatch_types[1].canonical_name != type_id_canonical_name(p.output_type)) {
+            error(verify::kInstanceShellMismatch,
+                  "workflow instance '" + inst.instance_key +
+                      "' dispatch descriptor does not align with its [input, output] shell",
+                  std::nullopt);
+        }
+    }
+
+    // A dispatch type must be CONCRETE at EVERY depth: no Unresolved / Any / Never
+    // anywhere in the structural tree (first / second / params), and each kind's
+    // required children must be present. Iterative worklist so a deep TypeRef can
+    // never recurse the native stack.
+    [[nodiscard]] static bool type_ref_is_concrete(const ir::TypeRef &root) {
+        std::vector<const ir::TypeRef *> stack{&root};
+        while (!stack.empty()) {
+            const ir::TypeRef *t = stack.back();
+            stack.pop_back();
+            if (t == nullptr) {
+                return false; // a required child slot is null -> malformed
+            }
+            if (t->kind == ir::TypeRefKind::Unresolved || t->kind == ir::TypeRefKind::Any ||
+                t->kind == ir::TypeRefKind::Never) {
+                return false;
+            }
+            if (t->kind == ir::TypeRefKind::Fn) {
+                // A function type must carry its parameter + return structure.
+                if (!t->second) {
+                    return false; // missing return type
+                }
+            }
+            if (t->first) {
+                stack.push_back(t->first.get());
+            }
+            if (t->second) {
+                stack.push_back(t->second.get());
+            }
+            for (const auto &param : t->params) {
+                stack.push_back(param.get()); // null param slot -> caught above
+            }
+        }
+        return true;
     }
 
     const CoreProgram &program_;
