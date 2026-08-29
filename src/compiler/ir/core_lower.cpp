@@ -315,6 +315,41 @@ class TypeEnv {
         return std::nullopt;
     }
 
+    /// Payload kind of a variant within an enum type (nullopt if OOR).
+    [[nodiscard]] std::optional<CoreTypeDecl::VariantPayload::Kind>
+    variant_payload_kind(CoreTypeId type, std::uint32_t variant) const {
+        if (type.value >= types_.size() || variant >= types_[type.value].variant_payloads.size()) {
+            return std::nullopt;
+        }
+        return types_[type.value].variant_payloads[variant].kind;
+    }
+
+    /// Number of payload slots of a variant (0 if OOR / no metadata).
+    [[nodiscard]] std::uint32_t variant_payload_arity(CoreTypeId type, std::uint32_t variant) const {
+        if (type.value >= types_.size() || variant >= types_[type.value].variant_payloads.size()) {
+            return 0;
+        }
+        return static_cast<std::uint32_t>(
+            types_[type.value].variant_payloads[variant].slot_types.size());
+    }
+
+    /// Declaration slot index of a NAMED field in a struct-payload variant, by
+    /// name (nullopt if OOR or no such field). Lets a struct-payload literal
+    /// resolve `Open { owner: ... }` to the declared slot, not source order.
+    [[nodiscard]] std::optional<std::uint32_t>
+    variant_field_slot(CoreTypeId type, std::uint32_t variant, const std::string &field) const {
+        if (type.value >= types_.size() || variant >= types_[type.value].variant_payloads.size()) {
+            return std::nullopt;
+        }
+        const auto &names = types_[type.value].variant_payloads[variant].field_names;
+        for (std::uint32_t i = 0; i < names.size(); ++i) {
+            if (names[i] == field) {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+
     /// Result of advancing one member step through a struct type.
     struct FieldStep {
         CoreFieldId field{};                 // typed field id within the owning struct
@@ -1023,8 +1058,31 @@ class FlowLowerer {
             CoreConstructArg arg;
             arg.value = lower_value(field.value, region);
             if (node.is_enum_variant) {
-                // Enum payload: positional slot identity (0-based) in source order.
-                arg.field = CoreFieldId{positional++};
+                if (type_id && node.resolved &&
+                    types_.variant_payload_kind(*type_id, node.variant.value) ==
+                        CoreTypeDecl::VariantPayload::Kind::Struct) {
+                    // Struct-payload variant: resolve the WRITTEN field name to
+                    // its DECLARATION slot id (not source order), just like a
+                    // struct literal. The frontend has already materialized any
+                    // omitted defaulted field into `e.fields`, so every declared
+                    // slot appears here; we only assign identity. An unknown name
+                    // is fail-closed (e.g. a hand-built / deserialized IR that
+                    // dropped a slot). We do NOT re-evaluate a default.
+                    if (const auto slot =
+                            types_.variant_field_slot(*type_id, node.variant.value, field.name)) {
+                        arg.field = CoreFieldId{*slot};
+                    } else {
+                        node.resolved = false;
+                        error(diag::kUnresolvedStructField,
+                              "enum variant '" + node.type_name + "::" + node.variant_name +
+                                  "' has no payload field named '" + field.name + "'",
+                              range);
+                    }
+                } else {
+                    // Tuple (or metadata-less) payload: positional slot identity
+                    // (0-based) in source order.
+                    arg.field = CoreFieldId{positional++};
+                }
             } else if (type_id) {
                 // Struct literal: resolve the WRITTEN field name to its typed
                 // CoreFieldId so write order is irrelevant. Unresolvable field

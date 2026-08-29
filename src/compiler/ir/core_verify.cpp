@@ -472,7 +472,8 @@ class Verifier {
             } else {
                 // Enum-variant payload args are positional slots; their count
                 // must match the declared payload arity.
-                const auto arity = type.variant_payloads[c.variant.value].slot_types.size();
+                const auto &payload = type.variant_payloads[c.variant.value];
+                const auto arity = payload.slot_types.size();
                 if (c.args.size() != arity) {
                     error(verify::kConstructPayloadArity,
                           "constructor '" + c.type_name + "::" + c.variant_name + "' passes " +
@@ -488,6 +489,25 @@ class Verifier {
                                   "' payload slot id " + std::to_string(arg.field.value) +
                                   " is out of range",
                               range);
+                    }
+                }
+                // A struct-payload variant is MATERIALIZED-COMPLETE: every
+                // declared slot must be assigned exactly once (the frontend
+                // materialized omitted defaults). Missing/duplicate slots would
+                // leave a field undefined or ambiguous.
+                if (payload.kind == CoreTypeDecl::VariantPayload::Kind::Struct) {
+                    std::unordered_set<std::uint32_t> assigned;
+                    for (const CoreConstructArg &arg : c.args) {
+                        assigned.insert(arg.field.value);
+                    }
+                    for (std::uint32_t s = 0; s < arity; ++s) {
+                        if (assigned.find(s) == assigned.end()) {
+                            error(verify::kConstructFieldMissing,
+                                  "constructor '" + c.type_name + "::" + c.variant_name +
+                                      "' does not assign struct-payload slot #" + std::to_string(s) +
+                                      " (must be materialized-complete)",
+                                  range);
+                        }
                     }
                 }
             }

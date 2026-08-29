@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1517,4 +1518,72 @@ TEST_CASE("a lowering-error program is NOT re-verified (no duplicate core.verify
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.is_executable);
     CHECK(has_verify_code(result) == false); // verifier skipped on a partial program
+}
+
+TEST_CASE("enum struct-payload construct with a missing slot fails closed in the verifier (2b)") {
+    // Hand-built AHFL-IR: an Open{ id } literal with NO owner (as if a
+    // deserialized IR dropped the materialized default). The Core lowerer must
+    // NOT re-materialize; the verifier reports the missing struct-payload slot.
+    ir::AhflIr program;
+
+    ir::EnumDecl ticket;
+    ticket.name = "Ticket";
+    ticket.symbol_ref.kind = ir::SymbolRefKind::Type;
+    ticket.symbol_ref.canonical_name = "app::Ticket";
+    ticket.symbol_ref.id = 90;
+    ir::EnumVariantDecl open;
+    open.name = "Open";
+    open.payload_kind = ir::EnumVariantPayloadKind::Struct;
+    ir::EnumVariantFieldDecl f_id;
+    f_id.name = "id";
+    f_id.type_ref.kind = ir::TypeRefKind::Int;
+    ir::EnumVariantFieldDecl f_owner;
+    f_owner.name = "owner";
+    f_owner.type_ref.kind = ir::TypeRefKind::String;
+    open.fields.push_back(std::move(f_id));
+    open.fields.push_back(std::move(f_owner));
+    ticket.variants.push_back(std::move(open));
+    program.declarations.emplace_back(std::move(ticket));
+
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    give_shell_structs(program, agent, "Mv");
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+    // let t = Ticket::Open { id: 1 };  (owner deliberately omitted, not materialized)
+    ir::StructLiteralExpr lit;
+    lit.is_enum_variant = true;
+    lit.enum_name = "app::Ticket";
+    lit.variant_name = "Open";
+    lit.type_name = "app::Ticket::Open";
+    ir::ExprRef id_val = program.expr_arena.make(ir::IntegerLiteralExpr{"1"});
+    lit.fields.push_back(ir::StructFieldInit{"id", id_val});
+    ir::ExprRef lit_ref = program.expr_arena.make(std::move(lit), SourceRange{5, 9});
+    auto let = std::make_unique<ir::Statement>();
+    ir::LetStatement let_stmt;
+    let_stmt.name = "t";
+    let_stmt.type_ref.kind = ir::TypeRefKind::Enum;
+    let_stmt.type_ref.canonical_name = "app::Ticket";
+    let_stmt.initializer = lit_ref;
+    let->node = std::move(let_stmt);
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    handler.body.statements.push_back(std::move(let));
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_verify_code(result)); // missing struct-payload slot caught by verifier
 }
