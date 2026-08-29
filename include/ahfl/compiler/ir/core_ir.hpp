@@ -465,12 +465,25 @@ struct CoreWildcardPat {
 };
 
 /// A literal pattern (`0`, `"x"`, `true`, `none`). Kind + spelling mirror
-/// `CoreLiteralExpr`; physical encoding is deferred to P4.
+/// `CoreLiteralExpr`; physical encoding is deferred to P4. Note: the source
+/// literal `none` is NOT a `Unit` literal — it lowers to an `Option::None`
+/// variant pattern (typed identity), never a `CoreLiteralPat`.
 struct CoreLiteralPat {
     CoreLiteralKind kind{CoreLiteralKind::Unit};
     std::string spelling;
     [[nodiscard]] friend bool operator==(const CoreLiteralPat &,
                                          const CoreLiteralPat &) noexcept = default;
+};
+
+/// An integer range pattern (`start..end`). Bounds are the source-level integers
+/// (inclusive/exclusive semantics carried as-authored; physical match lowering
+/// is deferred to P4). Distinct from `CoreLiteralPat` so a backend never has to
+/// re-parse a range out of a spelling.
+struct CoreIntRangePat {
+    std::int64_t start{0};
+    std::int64_t end{0};
+    [[nodiscard]] friend bool operator==(const CoreIntRangePat &,
+                                         const CoreIntRangePat &) noexcept = default;
 };
 
 /// A binding pattern (`x` or `x @ nested`). `binding` names the arm binding this
@@ -518,10 +531,22 @@ struct CoreOrPat {
     [[nodiscard]] friend bool operator==(const CoreOrPat &, const CoreOrPat &) noexcept = default;
 };
 
+/// A tuple pattern (`(a, b, c)`) — positional element sub-patterns. Distinct from
+/// a tuple-payload VARIANT pattern (which carries a typed `owner_enum`/`variant`):
+/// this is the anonymous structural tuple. Physical shape/arity checking against
+/// the scrutinee tuple type is deferred to P4 (Core-IR types have no tuple type
+/// yet); the arena verifier only checks each element id is in range.
+struct CoreTuplePat {
+    std::vector<CorePatternId> elements;
+    [[nodiscard]] friend bool operator==(const CoreTuplePat &, const CoreTuplePat &) noexcept = default;
+};
+
 using CorePatternNode = std::variant<CoreWildcardPat,
                                      CoreLiteralPat,
+                                     CoreIntRangePat,
                                      CoreBindingPat,
                                      CoreVariantPat,
+                                     CoreTuplePat,
                                      CoreOrPat>;
 
 struct CorePattern {

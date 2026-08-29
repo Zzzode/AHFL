@@ -431,6 +431,7 @@ class Verifier {
             std::visit(Overloaded{
                            [&](const CoreWildcardPat &) {},
                            [&](const CoreLiteralPat &) {},
+                           [&](const CoreIntRangePat &) {},
                            [&](const CoreBindingPat &b) {
                                if (b.has_nested) {
                                    check_id(b.nested, pat.source_range);
@@ -438,6 +439,11 @@ class Verifier {
                            },
                            [&](const CoreVariantPat &v) {
                                verify_variant_pattern(v, pat_count, pat.source_range);
+                           },
+                           [&](const CoreTuplePat &t) {
+                               for (const CorePatternId e : t.elements) {
+                                   check_id(e, pat.source_range);
+                               }
                            },
                            [&](const CoreOrPat &o) {
                                if (o.alternatives.size() < 2) {
@@ -575,6 +581,11 @@ class Verifier {
                                        }
                                        for (const CoreVariantPatField &f : v.struct_fields) {
                                            push(f.pattern);
+                                       }
+                                   },
+                                   [&](const CoreTuplePat &t) {
+                                       for (const CorePatternId e : t.elements) {
+                                           push(e);
                                        }
                                    },
                                    [&](const CoreOrPat &o) {
@@ -1192,6 +1203,7 @@ class Verifier {
             std::visit(Overloaded{
                            [&](const CoreWildcardPat &) {},
                            [&](const CoreLiteralPat &) {},
+                           [&](const CoreIntRangePat &) {},
                            [&](const CoreBindingPat &b) {
                                if (b.binding.value >= binding_count) {
                                    error(verify::kPatternBindingInvalid,
@@ -1211,6 +1223,11 @@ class Verifier {
                                }
                                for (const CoreVariantPatField &f : v.struct_fields) {
                                    add(out, collect(f.pattern, visiting));
+                               }
+                           },
+                           [&](const CoreTuplePat &t) {
+                               for (const CorePatternId e : t.elements) {
+                                   add(out, collect(e, visiting));
                                }
                            },
                            [&](const CoreOrPat &o) {

@@ -843,6 +843,46 @@ TEST_CASE("verifier fails closed on an or-pattern with fewer than two alternativ
     CHECK(has_code(result, verify::kPatternShapeInvalid));
 }
 
+// --- ③-3a pattern-kind completeness: IntRange + Tuple ---
+
+TEST_CASE("verifier accepts a well-formed IntRange + Tuple pattern arena") {
+    GoodProgram g = make_good_program();
+    // #0 int-range 1..10, #1 wildcard, #2 tuple (int-range, wildcard)
+    g.flow->patterns.push_back(CorePattern{CoreIntRangePat{1, 10}, std::nullopt});
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+    CoreTuplePat t;
+    t.elements = {CorePatternId{0}, CorePatternId{1}};
+    g.flow->patterns.push_back(CorePattern{t, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("verifier fails closed on a tuple pattern with an out-of-range element id") {
+    GoodProgram g = make_good_program();
+    CoreTuplePat t;
+    t.elements = {CorePatternId{0}, CorePatternId{99}}; // 99 out of range
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    g.flow->patterns.push_back(CorePattern{t, std::nullopt});                 // #1
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternIdOutOfRange));
+}
+
+TEST_CASE("verifier fails closed on a self-referential tuple pattern (cycle)") {
+    GoodProgram g = make_good_program();
+    // pattern #0 = tuple whose only element is itself.
+    CoreTuplePat t;
+    t.elements = {CorePatternId{0}};
+    g.flow->patterns.push_back(CorePattern{t, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kPatternCycle));
+}
+
 // --- ③-2 CoreMatchStmt / CoreYieldStmt / CoreTrapStmt ---
 //
 // Build a statement match into the Done handler: define a fresh scrutinee value,

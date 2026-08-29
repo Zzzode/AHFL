@@ -40,9 +40,10 @@
 //   * the match-pattern arena is well-formed: every CorePatternId is in range,
 //     the pattern reference graph is ACYCLIC, a variant pattern's owner enum +
 //     variant id are in range and its payload shape matches the declared variant
-//     (tuple arity; struct field slots in range + no duplicate), and an
-//     or-pattern has at least two alternatives (binding-set consistency across
-//     alternatives is checked with the match arm in a later slice);
+//     (tuple arity; struct field slots in range + no duplicate), a tuple
+//     pattern's element ids are in range, and an or-pattern has at least two
+//     alternatives (binding-set consistency across alternatives is checked with
+//     the match arm in a later slice);
 //   * construct legality (TRANSITIONAL contract — see slice ②b): resolved
 //     type/variant/field ids in range, no duplicate field ids, every REQUIRED
 //     struct field (one with no source-level default) is assigned, and an
