@@ -1720,17 +1720,69 @@ TEST_CASE("mono verifier P0-1: a NESTED non-concrete dispatch type is fail-close
     CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
 }
 
-TEST_CASE("mono verifier P0-1: a nested Fn dispatch type missing its return is fail-closed") {
-    GoodWorkflow g = make_good_workflow();
-    CoreInstanceDecl bad;
-    bad.id = CoreInstanceId{static_cast<std::uint32_t>(g.program.instances.size())};
-    bad.instance_key = "_inst_fn_shape_bad";
-    bad.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g", "g", "", 501};
+// A Fn TypeRef built per the production encoding (typed_hir_lower.cpp): params
+// in `params`, RETURN in `first`, `second` unused.
+namespace {
+[[nodiscard]] ir::TypeRef make_fn_type_ref(std::vector<ir::TypeRefKind> params,
+                                           ir::TypeRefKind ret) {
     ir::TypeRef fn;
-    fn.kind = ir::TypeRefKind::Fn; // no `second` (return) -> malformed
-    bad.dispatch_types.push_back(std::move(fn));
-    bad.payload = CoreFnInstance{};
-    g.program.instances.push_back(std::move(bad));
+    fn.kind = ir::TypeRefKind::Fn;
+    for (ir::TypeRefKind pk : params) {
+        auto p = std::make_unique<ir::TypeRef>();
+        p->kind = pk;
+        fn.params.push_back(std::move(p));
+    }
+    auto r = std::make_unique<ir::TypeRef>();
+    r->kind = ret;
+    fn.first = std::move(r); // return lives in `first`
+    return fn;
+}
+[[nodiscard]] CoreInstanceDecl make_fn_instance(std::uint32_t id, std::string key,
+                                                ir::TypeRef dispatch) {
+    CoreInstanceDecl inst;
+    inst.id = CoreInstanceId{id};
+    inst.instance_key = std::move(key);
+    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g", "g", "", 501};
+    inst.dispatch_types.push_back(std::move(dispatch));
+    inst.payload = CoreFnInstance{};
+    return inst;
+}
+} // namespace
+
+TEST_CASE("mono verifier P0-1: a production-shape Fn(params, first=return) dispatch type is accepted") {
+    GoodWorkflow g = make_good_workflow();
+    // Fn(Int) -> Int per the real encoding (params=[Int], first=Int, second=null).
+    g.program.instances.push_back(make_fn_instance(
+        static_cast<std::uint32_t>(g.program.instances.size()), "_inst_fn_ok",
+        make_fn_type_ref({ir::TypeRefKind::Int}, ir::TypeRefKind::Int)));
+    const auto result = verify_core_program(g.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("mono verifier P0-1: a Fn dispatch type missing its return (first) is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    ir::TypeRef fn;
+    fn.kind = ir::TypeRefKind::Fn; // no `first` (return) -> malformed
+    auto p = std::make_unique<ir::TypeRef>();
+    p->kind = ir::TypeRefKind::Int;
+    fn.params.push_back(std::move(p));
+    g.program.instances.push_back(make_fn_instance(
+        static_cast<std::uint32_t>(g.program.instances.size()), "_inst_fn_no_ret", std::move(fn)));
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
+}
+
+TEST_CASE("mono verifier P0-1: a Fn dispatch type with a non-concrete return is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // Fn(Int) -> Unresolved: concrete Fn shell, non-concrete nested return.
+    g.program.instances.push_back(make_fn_instance(
+        static_cast<std::uint32_t>(g.program.instances.size()), "_inst_fn_bad_ret",
+        make_fn_type_ref({ir::TypeRefKind::Int}, ir::TypeRefKind::Unresolved)));
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
@@ -1774,6 +1826,27 @@ TEST_CASE("mono verifier P1: an agent instance with a wrong-shell dispatch descr
 TEST_CASE("mono verifier P1: an agent instance with an empty dispatch descriptor is fail-closed") {
     GoodWorkflow g = make_good_workflow();
     g.program.instances[0].dispatch_types.clear(); // must be exactly 3
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceShellMismatch));
+}
+
+TEST_CASE("mono verifier P1: a same-name but wrong-KIND dispatch slot is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // instance 0's input slot is Struct "WIn"; corrupt only the KIND to Bool while
+    // keeping canonical_name "WIn". A string-only check would pass; a structural
+    // check rejects it (Bool is not the Struct WIn).
+    g.program.instances[0].dispatch_types[0].kind = ir::TypeRefKind::Bool;
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceShellMismatch));
+}
+
+TEST_CASE("mono verifier P1: a malformed Unit context slot carrying a nominal name is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
+    // instance 0 has a Unit context; its context slot must be a BARE Unit. Attach
+    // a stray nominal name -> malformed Unit.
+    g.program.instances[0].dispatch_types[1].canonical_name = "Sneaky";
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kInstanceShellMismatch));

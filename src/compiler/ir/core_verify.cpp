@@ -1952,22 +1952,37 @@ class Verifier {
         return !a.canonical_name.empty() && a.canonical_name == b.canonical_name;
     }
 
-    // The nominal type name a concrete dispatch descriptor slot must carry to
-    // match a resolved CoreTypeId shell (canonical name of the base type). For a
-    // Unit context the descriptor slot must be the Unit type. Returns the expected
-    // canonical name, or empty for Unit (matched by kind).
-    [[nodiscard]] std::string type_id_canonical_name(CoreTypeId id) const {
-        if (id.value == CoreTypeId::kInvalid || id.value >= program_.types.size()) {
-            return {};
+    // Whether a concrete dispatch descriptor slot represents the SAME type as a
+    // resolved CoreTypeId shell. A structural check, NOT a string compare: a
+    // Struct/Enum shell requires the slot's TypeRefKind to match the
+    // CoreTypeDecl::Kind (Struct<->Struct, Enum<->Enum) AND a non-empty equal
+    // canonical name (so e.g. `Bool` carrying canonical_name "WIn" is rejected). A
+    // shell that does not resolve to a nominal type falls back to a non-empty
+    // canonical-name match (best available until the P4 value-type arena).
+    [[nodiscard]] bool dispatch_slot_matches_core_type(const ir::TypeRef &slot,
+                                                       CoreTypeId shell) const {
+        if (shell.value == CoreTypeId::kInvalid || shell.value >= program_.types.size()) {
+            return false;
         }
-        return program_.types[id.value].name;
+        const CoreTypeDecl &decl = program_.types[shell.value];
+        const bool kind_ok = decl.kind == CoreTypeDecl::Kind::Struct
+                                 ? slot.kind == ir::TypeRefKind::Struct
+                                 : slot.kind == ir::TypeRefKind::Enum;
+        return kind_ok && !slot.canonical_name.empty() && slot.canonical_name == decl.name;
     }
 
-    // Agent dispatch descriptor is exactly [input, context, output]; each slot's
-    // concrete TypeRef must name the same nominal type as the corresponding shell
-    // CoreTypeId (a Unit context slot must be the Unit type kind). A descriptor of
-    // the wrong length or naming a different type than the payload shell is
-    // malformed (the opaque key would then describe a different shell than it runs).
+    // A Unit context descriptor slot must be a bare Unit TypeRef — no nominal name
+    // or structural children (a malformed "Unit" carrying a name/child is rejected).
+    [[nodiscard]] static bool dispatch_slot_is_unit(const ir::TypeRef &slot) {
+        return slot.kind == ir::TypeRefKind::Unit && slot.canonical_name.empty() && !slot.first &&
+               !slot.second && slot.params.empty();
+    }
+
+    // Agent dispatch descriptor is exactly [input, context, output]; each slot must
+    // STRUCTURALLY match the corresponding shell (kind + canonical name, or a bare
+    // Unit for a Unit context). A wrong length or a slot that does not match the
+    // payload shell is malformed (the opaque key would describe a different shell
+    // than it runs).
     void check_agent_dispatch_shape(const CoreInstanceDecl &inst, const CoreAgentInstance &p) {
         if (inst.dispatch_types.size() != 3) {
             error(verify::kInstanceShellMismatch,
@@ -1976,16 +1991,12 @@ class Verifier {
                   std::nullopt);
             return;
         }
-        const auto slot_matches = [&](const ir::TypeRef &slot, CoreTypeId shell,
-                                      const CoreAgentDecl::ContextKind *ck) -> bool {
-            if (ck != nullptr && *ck == CoreAgentDecl::ContextKind::Unit) {
-                return slot.kind == ir::TypeRefKind::Unit;
-            }
-            return slot.canonical_name == type_id_canonical_name(shell);
-        };
-        if (!slot_matches(inst.dispatch_types[0], p.input_type, nullptr) ||
-            !slot_matches(inst.dispatch_types[1], p.context_type, &p.context_kind) ||
-            !slot_matches(inst.dispatch_types[2], p.output_type, nullptr)) {
+        const bool ctx_ok = p.context_kind == CoreAgentDecl::ContextKind::Unit
+                                ? dispatch_slot_is_unit(inst.dispatch_types[1])
+                                : dispatch_slot_matches_core_type(inst.dispatch_types[1],
+                                                                  p.context_type);
+        if (!dispatch_slot_matches_core_type(inst.dispatch_types[0], p.input_type) || !ctx_ok ||
+            !dispatch_slot_matches_core_type(inst.dispatch_types[2], p.output_type)) {
             error(verify::kInstanceShellMismatch,
                   "agent instance '" + inst.instance_key +
                       "' dispatch descriptor does not align with its [input, context, output] shell",
@@ -1993,8 +2004,8 @@ class Verifier {
         }
     }
 
-    // Workflow dispatch descriptor is [input, output]; each slot must name the
-    // corresponding shell type.
+    // Workflow dispatch descriptor is [input, output]; each slot must structurally
+    // match the corresponding shell type.
     void check_workflow_dispatch_shape(const CoreInstanceDecl &inst, const CoreWorkflowInstance &p) {
         if (inst.dispatch_types.size() != 2) {
             error(verify::kInstanceShellMismatch,
@@ -2003,8 +2014,8 @@ class Verifier {
                   std::nullopt);
             return;
         }
-        if (inst.dispatch_types[0].canonical_name != type_id_canonical_name(p.input_type) ||
-            inst.dispatch_types[1].canonical_name != type_id_canonical_name(p.output_type)) {
+        if (!dispatch_slot_matches_core_type(inst.dispatch_types[0], p.input_type) ||
+            !dispatch_slot_matches_core_type(inst.dispatch_types[1], p.output_type)) {
             error(verify::kInstanceShellMismatch,
                   "workflow instance '" + inst.instance_key +
                       "' dispatch descriptor does not align with its [input, output] shell",
@@ -2029,9 +2040,15 @@ class Verifier {
                 return false;
             }
             if (t->kind == ir::TypeRefKind::Fn) {
-                // A function type must carry its parameter + return structure.
-                if (!t->second) {
+                // ir::TypeRef Fn encoding SSOT (typed_hir_lower.cpp): params live
+                // in `params`, the RETURN type is `first`, and `second` is unused.
+                // A Fn dispatch type must carry its return; a stray `second` is a
+                // malformed shape.
+                if (!t->first) {
                     return false; // missing return type
+                }
+                if (t->second) {
+                    return false; // `second` is never meaningful for a Fn
                 }
             }
             if (t->first) {
