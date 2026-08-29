@@ -474,7 +474,8 @@ class IrJsonPrinter final {
                !ref.canonical_name.empty() || !ref.variant_name.empty() ||
                ref.int_bounds.has_value() || ref.string_bounds.has_value() ||
                ref.decimal_scale.has_value() || ref.collection_capacity.has_value() || ref.first ||
-               ref.second || !ref.params.empty() || has_source_range(ref.source_range);
+               ref.second || !ref.params.empty() || has_source_range(ref.source_range) ||
+               ref.nominal_ref.kind != ir::SymbolRefKind::Unknown;
     }
 
     void print_symbol_ref(const ir::SymbolRef &ref, int indent_level) {
@@ -526,6 +527,10 @@ class IrJsonPrinter final {
             if (ref.collection_capacity.has_value()) {
                 field("collection_capacity",
                       [&]() { write_i64(static_cast<std::int64_t>(*ref.collection_capacity)); });
+            }
+            // RFC 0026 P4: resolved nominal identity of a Struct/Enum type ref.
+            if (ref.nominal_ref.kind != ir::SymbolRefKind::Unknown) {
+                field("nominal_ref", [&]() { print_symbol_ref(ref.nominal_ref, indent_level + 1); });
             }
             if (ref.first) {
                 const auto first_name = "element_type";
@@ -2571,6 +2576,8 @@ class IrJsonReader final {
                 ref.collection_capacity = static_cast<std::uint64_t>(*value);
             }
         }
+        // RFC 0026 P4: resolved nominal identity of a Struct/Enum type ref.
+        ref.nominal_ref = opt_symbol_ref(obj, "nominal_ref");
         if (const auto *first = obj.get("element_type"); first != nullptr) {
             ref.first = make_owned<ir::TypeRef>(type_ref(*first));
         }

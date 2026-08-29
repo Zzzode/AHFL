@@ -1253,6 +1253,26 @@ class TypedIrLowerer final {
         };
     }
 
+    // The resolved nominal SymbolRef a Struct/Enum ir::TypeRef should carry
+    // (RFC 0026 P4 nominal-identity bridge). Resolves `symbol` through the typed
+    // program when present; otherwise falls back to a name-only ref (id absent)
+    // so the canonical name is still transported. Kind is forced to Type — a
+    // nominal type ref always denotes a type declaration.
+    [[nodiscard]] ir::SymbolRef nominal_ref_from(std::optional<SymbolId> symbol,
+                                                 const std::string &canonical_name) const {
+        if (symbol.has_value()) {
+            if (const auto resolved = typed_program_->find_symbol(*symbol); resolved.has_value()) {
+                ir::SymbolRef ref = symbol_ref_from_symbol(resolved, "nominal type ref");
+                ref.kind = ir::SymbolRefKind::Type;
+                return ref;
+            }
+        }
+        ir::SymbolRef ref;
+        ref.kind = ir::SymbolRefKind::Type;
+        ref.canonical_name = canonical_name;
+        return ref;
+    }
+
     [[nodiscard]] static std::size_t
     synthetic_impl_method_symbol_id(const ImplTypeInfo &impl,
                                     std::string_view method_name) noexcept {
@@ -1352,6 +1372,7 @@ class TypedIrLowerer final {
             [&](const types::StructT &value) {
                 auto ref = make_type_ref_value(ir::TypeRefKind::Struct, type.describe());
                 ref.canonical_name = value.canonical_name;
+                ref.nominal_ref = nominal_ref_from(value.symbol, value.canonical_name);
                 append_type_args(ref, value.type_args);
                 // RFC 0025: carry the bounded collection capacity into the IR
                 // type ref so the formal backend can read the static bound.
@@ -1361,12 +1382,14 @@ class TypedIrLowerer final {
             [&](const types::EnumT &value) {
                 auto ref = make_type_ref_value(ir::TypeRefKind::Enum, type.describe());
                 ref.canonical_name = value.canonical_name;
+                ref.nominal_ref = nominal_ref_from(value.symbol, value.canonical_name);
                 append_type_args(ref, value.type_args);
                 return ref;
             },
             [&](const types::EnumVariantT &value) {
                 auto ref = make_type_ref_value(ir::TypeRefKind::Enum, type.describe());
                 ref.canonical_name = value.canonical_name;
+                ref.nominal_ref = nominal_ref_from(value.symbol, value.canonical_name);
                 ref.variant_name = value.variant_name;
                 append_type_args(ref, value.type_args);
                 return ref;

@@ -1,8 +1,9 @@
 # Core-IR P4: Value Representation & Memory Layout — Design
 
-> Status: **DESIGN PROPOSAL v2** (RFC 0026 P4 / KR6.4). Revised per @Codex design
-> review. Awaiting re-review before any code. Absorbs the deferred
-> "monomorphization Slice 2" as P4's first consumer-driven vertical slice.
+> Status: **APPROVED** (RFC 0026 P4 / KR6.4). Design acceptance point `dc1b38a1`
+> (@Codex final sign-off). Absorbs the deferred "monomorphization Slice 2" as
+> P4's first consumer-driven vertical slice. Implementation follows the P4-A→D
+> migration series (§6).
 
 ## 0. Problem & non-goals
 
@@ -39,9 +40,13 @@ emission (KR6.5, the eventual layout consumer).
 
 ## 2. `CoreValueType` node set (Codex boundary 1 & 5)
 
-`std::variant` (Principle 4), interned in a flat arena (Principle 3), mirroring
+`std::variant` (Principle 4), interned in a flat arena (Principle 3). It COVERS
 `types::Type` (19 nodes) **minus TypeVar/Any/Error** (cannot survive
-monomorphization → fail-closed verifier error if seen).
+monomorphization → fail-closed verifier error if seen), but is NOT a strict 1:1
+mirror: `EnumVariant` is normalized into its parent `CoreVtNominal` (an enum
+value's type is the enum, not a per-variant type), and `CoreVtClosure` is a
+Core-IR-only execution type with no `types::Type` counterpart (the typed layer
+has only `FnT`).
 
 ```cpp
 struct CoreValueTypeId { uint32 value{kInvalid}; };  // index into CoreProgram::value_types
@@ -207,20 +212,24 @@ whole-program enumeration (e.g. P4-D emitting one layout per distinct type).
 ## 5. Worked examples
 
 ```
-Option<User>        → Nominal{ base=Sym(Option), args=[Vt(User)], cap=∅ }
+Option<User>        → Nominal{ base=CoreTypeId(Option), args=[Vt(User)], cap=∅ }
                        Some slot template = Param{0} → substitutes Vt(User)
-Result<User,Err>    → Nominal{ base=Sym(Result), args=[Vt(User),Vt(Err)] }; Ok=Param{0}, Err=Param{1}
-List<User>(4)       → Nominal{ base=Sym(List), args=[Vt(User)], cap=4 }
-Map<Int,User>(8)    → Nominal{ base=Sym(Map), args=[Vt(Int),Vt(User)], cap=8 }
-struct Pair{a:Int,b:String} → Nominal{ base=Sym(Pair), args=[] }
+Result<User,Err>    → Nominal{ base=CoreTypeId(Result), args=[Vt(User),Vt(Err)] }; Ok=Param{0}, Err=Param{1}
+List<User>(4)       → Nominal{ base=CoreTypeId(List), args=[Vt(User)], cap=4 }
+Map<Int,User>(8)    → Nominal{ base=CoreTypeId(Map), args=[Vt(Int),Vt(User)], cap=8 }
+struct Pair{a:Int,b:String} → Nominal{ base=CoreTypeId(Pair), args=[] }
   layout (P4-D,wasm32) → struct: a i64 @0, b PtrLen @8; size=16 align=8; field_layouts=[i64, ptrlen]
 (Int,String)        → Tuple{ elements=[Vt(Int),Vt(String)] }
 fn(Int)->Bool       → Fn{ params=[Vt(Int)], ret=Vt(Bool) }               (signature; effect erased)
-closure |x|…capturing y:User → Closure{ signature=Vt(fn…), captures=[Vt(User)] }
+closure |x|…capturing y:User → Closure{ signature=Vt(fn…), captures=[{type=Vt(User), mode=ByValue}] }
   layout → (func_index i32, env_ptr i32) inline 8B; env_layout = struct{User}
 id<Int> instance dispatch_types → [ Vt(Int) ]                            (P4-A first consumer)
 id<Fn(Int)->Bool>   → [ Fn{[Vt(Int)],Vt(Bool)} ]
 ```
+
+(The nominal `base` above is a `CoreTypeId`; the resolved nominal `SymbolRef`
+lives only on the input `ir::TypeRef` bridge — `lower_value_type` resolves it to
+the `CoreTypeId` once, per §1/§4.)
 
 ## 6. Migration series (Codex-locked)
 
@@ -229,7 +238,14 @@ leaves an unread table. **`CoreValueId` stays a pure index**; type is looked up
 in a per-body `value_types[CoreValueId]` table (P4-B), never embedded in the id.
 
 - **P4-A — logical types (FIRST slice).** (a) persist resolved nominal SymbolRef
-  on Struct/Enum `ir::TypeRef` (full chain); (b) `CoreProgram::value_types` arena
+  on Struct/Enum `ir::TypeRef` (full chain); **(a0, prereq)** the resolved
+  `nominal_ref` must survive every `TypeRef` duplication — so consolidate the
+  three divergent hand-rolled clones (`core_lower`, `opt_lower`, `workflow_run`)
+  onto a single SSOT `ir::clone_type_ref` in `types.{hpp,cpp}` that copies ALL
+  fields. This also forward-fixes two latent silent-drop bugs the divergence hid:
+  `opt_lower` dropped `collection_capacity`; `workflow_run` dropped `params`
+  (collection element types) → runtime response-schema element validation was
+  silently skipped for `List/Set/Map` capabilities. (b) `CoreProgram::value_types` arena
   + interner + `verify_value_types`; (c) unique `lower_value_type`; (d)
   `CoreTypeDecl.type_param_count` + arity check; (e) migrate
   **`CoreInstanceDecl.dispatch_types: vector<ir::TypeRef>` → `vector<CoreValueTypeId>`**

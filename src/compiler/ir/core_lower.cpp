@@ -121,7 +121,8 @@ namespace {
     if (a.kind != b.kind || a.canonical_name != b.canonical_name ||
         a.display_name != b.display_name || a.variant_name != b.variant_name ||
         a.int_bounds != b.int_bounds || a.string_bounds != b.string_bounds ||
-        a.decimal_scale != b.decimal_scale || a.collection_capacity != b.collection_capacity) {
+        a.decimal_scale != b.decimal_scale || a.collection_capacity != b.collection_capacity ||
+        !symbol_ref_equal(a.nominal_ref, b.nominal_ref)) {
         return false;
     }
     if (!type_ref_ptr_equal(a.first, b.first) || !type_ref_ptr_equal(a.second, b.second)) {
