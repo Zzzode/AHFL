@@ -168,13 +168,14 @@ class TypeEnv {
         t.kind = CoreTypeDecl::Kind::Struct;
         t.name = decl.symbol_ref.canonical_name.empty() ? decl.name
                                                         : decl.symbol_ref.canonical_name;
+        std::vector<std::string> field_type_names;
         for (const FieldDecl &f : decl.fields) {
             t.fields.push_back(f.name);
-            // Record each field's nominal type name (empty for a non-struct
-            // field) so a member chain can advance from one struct to the next.
-            t.field_type_names.push_back(nominal_type_name(f.type_ref));
+            t.field_types.push_back(CoreTypeId{}); // resolved in fixup_field_types()
+            field_type_names.push_back(nominal_type_name(f.type_ref));
         }
-        register_type(std::move(t), decl.symbol_ref);
+        const auto id = register_type(std::move(t), decl.symbol_ref);
+        pending_field_type_names_.emplace(id.value, std::move(field_type_names));
     }
     void add_enum(const EnumDecl &decl) {
         CoreTypeDecl t;
@@ -184,7 +185,7 @@ class TypeEnv {
         for (const EnumVariantDecl &v : decl.variants) {
             t.variants.push_back(v.name);
         }
-        register_type(std::move(t), decl.symbol_ref);
+        static_cast<void>(register_type(std::move(t), decl.symbol_ref));
     }
 
     /// Register the well-known stdlib enums as synthetic types (only if a user
@@ -284,8 +285,12 @@ class TypeEnv {
             if (decl.fields[i] == field) {
                 FieldStep step;
                 step.field = CoreFieldId{i};
-                if (i < decl.field_type_names.size() && !decl.field_type_names[i].empty()) {
-                    step.next_type = resolve_by_name(decl.field_type_names[i]);
+                // A valid field_types entry (non-kInvalid) is the field's own
+                // struct type; invalid means primitive/collection/P4 (no further
+                // projection possible).
+                if (i < decl.field_types.size() &&
+                    decl.field_types[i].value != CoreTypeId::kInvalid) {
+                    step.next_type = decl.field_types[i];
                 }
                 return step;
             }
@@ -293,8 +298,25 @@ class TypeEnv {
         return std::nullopt;
     }
 
+    /// Second pass: resolve each struct field's recorded type NAME to a typed
+    /// CoreTypeId, so no canonical-name strings survive for a backend. Run once
+    /// after ALL types are registered (forward references resolve).
+    void fixup_field_types() {
+        for (const auto &[type_index, names] : pending_field_type_names_) {
+            CoreTypeDecl &decl = types_[type_index];
+            for (std::size_t i = 0; i < names.size() && i < decl.field_types.size(); ++i) {
+                if (!names[i].empty()) {
+                    if (const auto id = resolve_by_name(names[i])) {
+                        decl.field_types[i] = *id;
+                    }
+                }
+            }
+        }
+        pending_field_type_names_.clear();
+    }
+
   private:
-    void register_type(CoreTypeDecl t, const SymbolRef &ref) {
+    [[nodiscard]] CoreTypeId register_type(CoreTypeDecl t, const SymbolRef &ref) {
         const auto id = CoreTypeId{static_cast<std::uint32_t>(types_.size())};
         if (ref.id.has_value()) {
             by_id_.emplace(*ref.id, id);
@@ -303,6 +325,7 @@ class TypeEnv {
             by_name_.emplace(t.name, id);
         }
         types_.push_back(std::move(t));
+        return id;
     }
     /// Canonical nominal name of a struct/enum TypeRef, else empty (primitive,
     /// collection, fn, unresolved — none of which support field projection here).
@@ -321,6 +344,9 @@ class TypeEnv {
     std::vector<CoreTypeDecl> &types_;
     std::unordered_map<std::size_t, CoreTypeId> by_id_;
     std::unordered_map<std::string, CoreTypeId> by_name_;
+    // struct CoreTypeId -> its field type NAMES, pending resolution to typed
+    // CoreTypeIds in fixup_field_types() (after all types are registered).
+    std::unordered_map<std::uint32_t, std::vector<std::string>> pending_field_type_names_;
 };
 
 // ---------------------------------------------------------------------------
@@ -398,10 +424,16 @@ intern_state(std::vector<std::string> &names,
     return CoreStateId{id};
 }
 
-[[nodiscard]] CoreAgentDecl lower_agent(const AgentDecl &agent) {
+[[nodiscard]] CoreAgentDecl lower_agent(const AgentDecl &agent, const TypeEnv &types) {
     CoreAgentDecl out;
     out.name = agent.name;
     out.symbol_ref = agent.symbol_ref;
+    // Typed shell (Principle 2): `input`/`ctx`/`output` resolve to these
+    // CoreTypeIds, so a member projection through `input.`/`ctx.` walks a real
+    // struct type. kInvalid when the type is not a known nominal struct.
+    out.input_type = types.type_id_of(agent.input_type_ref).value_or(CoreTypeId{});
+    out.context_type = types.type_id_of(agent.context_type_ref).value_or(CoreTypeId{});
+    out.output_type = types.type_id_of(agent.output_type_ref).value_or(CoreTypeId{});
 
     const SymbolId symbol{agent.symbol_ref.id.value_or(0)};
     const std::string canonical = agent.symbol_ref.canonical_name;
@@ -504,8 +536,7 @@ intern_state(std::vector<std::string> &names,
 class FlowLowerer {
   public:
     FlowLowerer(CoreFlowDecl &flow, const CapabilityIndex &caps, const StateIndex &states,
-                const TypeEnv &types, std::optional<CoreTypeId> input_type,
-                std::optional<CoreTypeId> context_type,
+                const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
                 std::vector<CoreLowerDiagnostic> &diags)
         : flow_(flow), caps_(caps), states_(states), types_(types), input_type_(input_type),
           context_type_(context_type), diags_(diags) {}
@@ -515,8 +546,7 @@ class FlowLowerer {
         core_state.state = state_id;
         core_state.state_name = handler.state_name;
         core_state.policy = lower_policy(handler.policy);
-        locals_.clear();
-        local_types_.clear();
+        scope_.clear();
         core_state.body = lower_block(handler.body);
         flow_.states.push_back(std::move(core_state));
     }
@@ -591,10 +621,11 @@ class FlowLowerer {
 
     void lower_let(const LetStatement &s, CoreRegion &region) {
         const CoreValueId value = lower_value(s.initializer, region);
-        // Track the local's binding value id AND its type, so later member
-        // projections through this local (`local.field`) can resolve field ids.
-        locals_[s.name] = value;
-        local_types_[s.name] = types_.type_id_of(s.type_ref);
+        // Track the local's binding value id AND its type together, so later
+        // member projections through this local (`local.field`) can resolve
+        // field ids. The two travel as one binding, so branch scoping (see
+        // lower_if) can snapshot/restore them atomically.
+        scope_[s.name] = LocalBinding{value, types_.type_id_of(s.type_ref)};
     }
 
     void lower_assign(const AssignStatement &s, SourceRangeOpt range, CoreRegion &region) {
@@ -604,11 +635,13 @@ class FlowLowerer {
         place.root_name = s.target.root_name;
         place.members = s.target.members;
         // A store into a member PROJECTION (`ctx.field = …`) resolves each
-        // member to a typed CoreFieldId, same as a read. Fail closed otherwise.
+        // member to a typed CoreProjectionStep, same as a read. Set the
+        // self-contained root type first; fail closed otherwise (Principle 5).
+        const auto root_type = root_type_for(s.target.root_kind, s.target.root_name);
+        place.root_type = root_type.value_or(CoreTypeId{});
         if (!s.target.members.empty()) {
-            resolve_member_chain(root_type_for(s.target.root_kind, s.target.root_name),
-                                 s.target.members, s.target.root_name, range, place.member_fields,
-                                 place.members_resolved);
+            resolve_member_chain(root_type, s.target.members, s.target.root_name, range,
+                                 place.projection, place.projection_resolved);
         }
         region.statements.push_back(
             CoreStmt{CoreStoreStmt{std::move(place), value}, std::move(range)});
@@ -620,20 +653,23 @@ class FlowLowerer {
         node.condition = cond;
         // Each branch is its own region: mutual exclusion is preserved (the two
         // branches are NOT appended to one flat list). Each branch is lexically
-        // scoped: it starts from the SAME outer local snapshot and its
+        // scoped: it starts from the SAME outer scope snapshot and its
         // branch-local `let` bindings are discarded afterwards, so a binding in
-        // one branch cannot leak into the other branch or past the `if`.
-        const auto outer_locals = locals_;
+        // one branch cannot leak into the other branch or past the `if`. The
+        // snapshot restores the value id AND its type together (P0-1): a branch
+        // that shadows an outer local with a DIFFERENT nominal type must not
+        // corrupt the outer local's type after the `if`.
+        const auto outer_scope = scope_;
         if (s.then_block) {
             node.then_region = std::make_unique<CoreRegion>(lower_block(*s.then_block));
         } else {
             node.then_region = std::make_unique<CoreRegion>();
         }
-        locals_ = outer_locals; // restore before the else branch
+        scope_ = outer_scope; // restore before the else branch
         if (s.else_block) {
             node.else_region = std::make_unique<CoreRegion>(lower_block(*s.else_block));
         }
-        locals_ = outer_locals; // restore after the if
+        scope_ = outer_scope; // restore after the if
         region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
     }
 
@@ -730,25 +766,25 @@ class FlowLowerer {
         node.members = e.path.members;
         // A bare local reference lowers directly to its bound value id.
         if (node.root == CorePathRoot::Identifier && e.path.members.empty()) {
-            if (const auto it = locals_.find(e.path.root_name); it != locals_.end()) {
-                return it->second;
+            if (const auto it = scope_.find(e.path.root_name); it != scope_.end()) {
+                return it->second.value;
             }
         }
         if (node.root == CorePathRoot::Identifier) {
-            if (const auto it = locals_.find(e.path.root_name); it != locals_.end()) {
+            if (const auto it = scope_.find(e.path.root_name); it != scope_.end()) {
                 node.root = CorePathRoot::Local;
-                node.local = it->second;
+                node.local = it->second.value;
                 node.has_local = true;
             }
         }
-        // Member PROJECTIONS (`input.x`, `ctx.y.z`, `local.field`) resolve each
-        // member to a typed `CoreFieldId` by walking the root's struct type.
-        // Fail closed (Principle 5) if the root type is unknown or any member
-        // does not name a field of the current struct.
+        // Set the self-contained root type, then resolve the member chain into
+        // typed projection steps. Fail closed (Principle 5) on any unknown
+        // root / field / non-struct intermediate.
+        const auto root_type = root_type_for(e.path.root_kind, e.path.root_name);
+        node.root_type = root_type.value_or(CoreTypeId{});
         if (!e.path.members.empty()) {
-            resolve_member_chain(root_type_for(e.path.root_kind, e.path.root_name), e.path.members,
-                                 e.path.root_name, range, node.member_fields,
-                                 node.members_resolved);
+            resolve_member_chain(root_type, e.path.members, e.path.root_name, range,
+                                 node.projection, node.projection_resolved);
         }
         return bind_pure(std::move(node), range, region);
     }
@@ -757,27 +793,31 @@ class FlowLowerer {
     /// from its tracked binding type. nullopt when unknown (fail-closed upstream).
     [[nodiscard]] std::optional<CoreTypeId> root_type_for(PathRootKind root_kind,
                                                           const std::string &root_name) {
+        const auto valid = [](CoreTypeId id) -> std::optional<CoreTypeId> {
+            return id.value == CoreTypeId::kInvalid ? std::nullopt : std::optional<CoreTypeId>{id};
+        };
         switch (root_kind) {
         case PathRootKind::Input:
-            return input_type_;
+            return valid(input_type_);
         case PathRootKind::Context:
-            return context_type_;
+            return valid(context_type_);
         default:
-            if (const auto it = local_types_.find(root_name); it != local_types_.end()) {
-                return it->second;
+            if (const auto it = scope_.find(root_name); it != scope_.end()) {
+                return it->second.type;
             }
             return std::nullopt;
         }
     }
 
-    /// Walk `members` from `root_type`, appending each member's typed CoreFieldId
-    /// to `out_fields`. Sets `resolved=false` and emits a fail-closed diagnostic
-    /// if the root type is unknown or a member is not a field of the current
-    /// struct (or an intermediate member is not itself a struct).
+    /// Walk `members` from `root_type`, appending a typed `CoreProjectionStep`
+    /// per member (owner_type / field / result_type). Enforces the structural
+    /// invariants (each step's owner is the previous step's result_type; a step
+    /// with no result_type must be last). Sets `resolved=false` + fail-closed
+    /// diagnostic on unknown root / unknown field / non-struct intermediate.
     void resolve_member_chain(std::optional<CoreTypeId> root_type,
                               const std::vector<std::string> &members,
                               const std::string &root_name, SourceRangeOpt range,
-                              std::vector<CoreFieldId> &out_fields, bool &resolved) {
+                              std::vector<CoreProjectionStep> &out_steps, bool &resolved) {
         if (!root_type) {
             resolved = false;
             error(diag::kUnloweredFieldProjection,
@@ -789,6 +829,8 @@ class FlowLowerer {
         std::optional<CoreTypeId> current = root_type;
         for (std::size_t i = 0; i < members.size(); ++i) {
             if (!current) {
+                // Previous member was a primitive/non-struct but more members
+                // follow — the chain cannot continue (invariant #2).
                 resolved = false;
                 error(diag::kUnloweredFieldProjection,
                       "cannot resolve member '" + members[i] + "' of '" + root_name +
@@ -805,8 +847,12 @@ class FlowLowerer {
                       range);
                 return;
             }
-            out_fields.push_back(step->field);
-            current = step->next_type; // may be nullopt if this member is the last / non-struct
+            CoreProjectionStep out;
+            out.owner_type = *current;
+            out.field = step->field;
+            out.result_type = step->next_type.value_or(CoreTypeId{}); // kInvalid if last/non-struct
+            out_steps.push_back(out);
+            current = step->next_type;
         }
     }
 
@@ -1105,11 +1151,17 @@ class FlowLowerer {
     const CapabilityIndex &caps_;
     const StateIndex &states_;
     const TypeEnv &types_;
-    std::optional<CoreTypeId> input_type_;   // agent input struct type (root of `input`)
-    std::optional<CoreTypeId> context_type_; // agent context struct type (root of `ctx`)
+    CoreTypeId input_type_;   // agent input struct type (root of `input`); kInvalid if none
+    CoreTypeId context_type_; // agent context struct type (root of `ctx`); kInvalid if none
     std::vector<CoreLowerDiagnostic> &diags_;
-    std::unordered_map<std::string, CoreValueId> locals_;
-    std::unordered_map<std::string, std::optional<CoreTypeId>> local_types_; // local -> its type
+    // A let-bound local: its SSA value id AND its type. Kept in ONE map so
+    // lower_if's snapshot/restore covers both (a branch-local shadow must not
+    // leak its value OR its type to the sibling branch or past the `if`).
+    struct LocalBinding {
+        CoreValueId value{};
+        std::optional<CoreTypeId> type; // the binding's struct type, if any
+    };
+    std::unordered_map<std::string, LocalBinding> scope_;
 };
 
 } // namespace
@@ -1128,6 +1180,12 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         }
     }
     types.add_builtins();
+    // Now that every struct/enum (and the builtin stdlib enums) has a CoreTypeId,
+    // resolve each struct field's recorded type NAME to a typed CoreTypeId so
+    // member-projection chains advance struct-to-struct without re-querying
+    // AHFL-IR. Must run after ALL types are registered (fields can reference a
+    // type declared later in the module).
+    types.fixup_field_types();
 
     // Capability table.
     CapabilityIndex cap_index;
@@ -1143,9 +1201,6 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     // so a flow's target resolves by identity rather than a linear string scan.
     std::unordered_map<std::size_t, CoreAgentId> agent_by_id;
     std::unordered_map<std::string, CoreAgentId> agent_by_name;
-    // Parallel to core.agents: the source AgentDecl, so a flow can resolve its
-    // target agent's input/context struct types for member-projection typing.
-    std::vector<const AgentDecl *> agent_sources;
     for (const Decl &decl : ahfl_ir.declarations) {
         if (const auto *agent = std::get_if<AgentDecl>(&decl)) {
             const auto id = CoreAgentId{static_cast<std::uint32_t>(core.agents.size())};
@@ -1155,8 +1210,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             if (!agent->symbol_ref.canonical_name.empty()) {
                 agent_by_name.emplace(agent->symbol_ref.canonical_name, id);
             }
-            core.agents.push_back(lower_agent(*agent));
-            agent_sources.push_back(agent);
+            core.agents.push_back(lower_agent(*agent, types));
         }
     }
 
@@ -1200,15 +1254,11 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         const CoreAgentDecl &target_agent = core.agents[target->value];
         StateIndex state_index(target_agent.states);
 
-        // Resolve the target agent's input/context struct types so member
-        // projections through `input.` / `ctx.` get typed CoreFieldIds.
-        const AgentDecl *agent_src = agent_sources[target->value];
-        const std::optional<CoreTypeId> input_type = types.type_id_of(agent_src->input_type_ref);
-        const std::optional<CoreTypeId> context_type =
-            types.type_id_of(agent_src->context_type_ref);
-
-        FlowLowerer lowerer(core_flow, cap_index, state_index, types, input_type, context_type,
-                            result.diagnostics);
+        // The target agent's input/context struct types are already resolved on
+        // its CoreAgentDecl (typed shell), so member projections through
+        // `input.` / `ctx.` get typed CoreFieldIds without re-querying AHFL-IR.
+        FlowLowerer lowerer(core_flow, cap_index, state_index, types, target_agent.input_type,
+                            target_agent.context_type, result.diagnostics);
         for (const StateHandler &handler : flow->state_handlers) {
             const auto state_id = state_index.lookup(handler.state_name);
             if (!state_id) {

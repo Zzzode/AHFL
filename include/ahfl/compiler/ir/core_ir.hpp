@@ -60,6 +60,64 @@ namespace ahfl::ir::core {
 inline constexpr std::string_view kCoreFormatVersion = "ahfl.core.v1";
 
 // ----------------------------------------------------------------------------
+// Typed identities (Principle 2: index-based, never strings). Defined up front
+// because agent / type / projection decls below reference them.
+// ----------------------------------------------------------------------------
+
+/// SSA-like value produced by a pure `CoreExpr` or a capability call result.
+struct CoreValueId {
+    std::uint32_t value{0};
+    [[nodiscard]] friend bool operator==(CoreValueId, CoreValueId) noexcept = default;
+};
+
+/// Index into a flow's pure-expression arena (`CoreFlowDecl::exprs`).
+struct CoreExprId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreExprId, CoreExprId) noexcept = default;
+};
+
+/// Index into the program's capability table (`CoreProgram::capabilities`).
+struct CoreCapabilityId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreCapabilityId, CoreCapabilityId) noexcept = default;
+};
+
+/// Nominal type identity (Principle 2): index into `CoreProgram::types`. A
+/// variant index is only meaningful together with the enum's `CoreTypeId`, so
+/// `Option::Some#0` and `Result::Ok#0` are distinguishable by type id, not by a
+/// display string.
+struct CoreTypeId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreTypeId, CoreTypeId) noexcept = default;
+};
+
+/// Index into the program's agent table (`CoreProgram::agents`).
+struct CoreAgentId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreAgentId, CoreAgentId) noexcept = default;
+};
+
+/// Declaration-order index of a field WITHIN its owning struct `CoreTypeId`.
+/// A distinct type so a field index cannot be confused with a variant index or
+/// a raw integer (Principle 2: no bare uint32 identity).
+struct CoreFieldId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreFieldId, CoreFieldId) noexcept = default;
+};
+
+/// Declaration-order index of a variant WITHIN its owning enum `CoreTypeId`.
+struct CoreVariantId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreVariantId, CoreVariantId) noexcept = default;
+};
+
+// ----------------------------------------------------------------------------
 // State-machine node set (minimal orchestration skeleton)
 // ----------------------------------------------------------------------------
 
@@ -111,6 +169,13 @@ struct CoreAgentDecl {
     std::vector<CoreStateId> finals;
     /// Legal transitions between states.
     std::vector<CoreTransition> transitions;
+    /// Typed identities of the agent's input / context / output nominal types
+    /// (Principle 2). These make a path projection self-contained: a root of
+    /// `input`/`ctx` resolves to `input_type`/`context_type` here, so a backend
+    /// never re-queries AHFL-IR. `kInvalid` when the type is not a known struct.
+    CoreTypeId input_type{};
+    CoreTypeId context_type{};
+    CoreTypeId output_type{};
 };
 
 // ----------------------------------------------------------------------------
@@ -190,58 +255,10 @@ using CoreDecl = std::variant<CoreAgentDecl, CoreCapabilityDecl>;
 // `CoreCapabilityId`, states `CoreStateId`, expressions `CoreExprId` — never
 // strings. Principle 3 (flat stores): expressions live in a per-flow arena.
 
-/// SSA-like value produced by a pure `CoreExpr` or a capability call result.
-struct CoreValueId {
-    std::uint32_t value{0};
-    [[nodiscard]] friend bool operator==(CoreValueId, CoreValueId) noexcept = default;
-};
-
-/// Index into a flow's pure-expression arena (`CoreFlowDecl::exprs`).
-struct CoreExprId {
-    static constexpr std::uint32_t kInvalid = UINT32_MAX;
-    std::uint32_t value{kInvalid};
-    [[nodiscard]] friend bool operator==(CoreExprId, CoreExprId) noexcept = default;
-};
-
-/// Index into the program's capability table (`CoreProgram::capabilities`).
-struct CoreCapabilityId {
-    static constexpr std::uint32_t kInvalid = UINT32_MAX;
-    std::uint32_t value{kInvalid};
-    [[nodiscard]] friend bool operator==(CoreCapabilityId, CoreCapabilityId) noexcept = default;
-};
-
-/// Nominal type identity (Principle 2): index into `CoreProgram::types`. A
-/// variant index is only meaningful together with the enum's `CoreTypeId`, so
-/// `Option::Some#0` and `Result::Ok#0` are distinguishable by type id, not by a
-/// display string.
-struct CoreTypeId {
-    static constexpr std::uint32_t kInvalid = UINT32_MAX;
-    std::uint32_t value{kInvalid};
-    [[nodiscard]] friend bool operator==(CoreTypeId, CoreTypeId) noexcept = default;
-};
-
-/// Index into the program's agent table (`CoreProgram::agents`).
-struct CoreAgentId {
-    static constexpr std::uint32_t kInvalid = UINT32_MAX;
-    std::uint32_t value{kInvalid};
-    [[nodiscard]] friend bool operator==(CoreAgentId, CoreAgentId) noexcept = default;
-};
-
-/// Declaration-order index of a field WITHIN its owning struct `CoreTypeId`.
-/// A distinct type so a field index cannot be confused with a variant index or
-/// a raw integer (Principle 2: no bare uint32 identity).
-struct CoreFieldId {
-    static constexpr std::uint32_t kInvalid = UINT32_MAX;
-    std::uint32_t value{kInvalid};
-    [[nodiscard]] friend bool operator==(CoreFieldId, CoreFieldId) noexcept = default;
-};
-
-/// Declaration-order index of a variant WITHIN its owning enum `CoreTypeId`.
-struct CoreVariantId {
-    static constexpr std::uint32_t kInvalid = UINT32_MAX;
-    std::uint32_t value{kInvalid};
-    [[nodiscard]] friend bool operator==(CoreVariantId, CoreVariantId) noexcept = default;
-};
+// (Typed-ID definitions — CoreValueId / CoreExprId / CoreCapabilityId /
+// CoreTypeId / CoreAgentId / CoreFieldId / CoreVariantId — are defined near the
+// top of this header, before CoreAgentDecl, since several decls now reference
+// them.)
 
 /// Root of a path read, mirroring `ir::PathRootKind` structurally (Principle 2:
 /// we keep the kind, we do NOT flatten the path to a dotted string).
@@ -267,19 +284,38 @@ struct CoreValueRefExpr {
                                          const CoreValueRefExpr &) noexcept = default;
 };
 
-/// A path read (`input.x`, `ctx.y`, a local, or a free identifier). The member
-/// chain is kept structured (display), but each member is ALSO resolved to a
-/// typed `CoreFieldId` in `member_fields` (parallel to `members`), computed by
-/// walking the root's struct type. A `Local` root additionally resolves to the
-/// binding's `CoreValueId`. `members_resolved` is false when a member could not
-/// be resolved to a field id (fail-closed: the lowering emits a diagnostic).
+/// One resolved step of a member projection (`.field`), fully self-contained:
+/// the `owner_type` the field belongs to, the typed `field` id within it, and
+/// the field's own `result_type` when it is a struct (so the next step's
+/// `owner_type` equals this `result_type`). `result_type` is invalid (kInvalid)
+/// for a primitive/collection/P4 field, which may only appear as the LAST step.
+struct CoreProjectionStep {
+    CoreTypeId owner_type{}; // struct that declares `field`
+    CoreFieldId field{};     // typed field index within `owner_type`
+    CoreTypeId result_type{}; // field's own struct type, or kInvalid (last step only)
+    [[nodiscard]] friend bool operator==(const CoreProjectionStep &,
+                                         const CoreProjectionStep &) noexcept = default;
+};
+
+/// A path read (`input.x`, `ctx.y.z`, a local, or a free identifier). It is
+/// SELF-CONTAINED for a backend: `root_type` is the CoreTypeId the root
+/// denotes, and `projection` is the resolved step chain (each step carries its
+/// owner/field/result type). Invariants (checked at lowering): `projection[0]
+/// .owner_type == root_type`; `projection[i].owner_type == projection[i-1]
+/// .result_type`; a step with invalid `result_type` is the last. The `members`
+/// strings are DISPLAY-ONLY (diagnostics) — canonical data is `projection`.
+/// A `Local` root additionally resolves to the binding's `CoreValueId`.
+/// `projection_resolved` is false when a member could not be resolved
+/// (fail-closed: the lowering emits a diagnostic and the program is not
+/// executable).
 struct CorePathExpr {
     CorePathRoot root{CorePathRoot::Identifier};
-    std::string root_name;             // display / identifier root
-    std::vector<std::string> members;  // structured member chain (display)
-    std::vector<CoreFieldId> member_fields; // typed field id per member (Principle 2)
-    bool members_resolved{true};       // false => a member could not be resolved
-    CoreValueId local{};               // valid iff root == Local (resolved binding)
+    std::string root_name;                  // display / identifier root
+    std::vector<std::string> members;       // display-only member chain
+    CoreTypeId root_type{};                 // typed identity of the root (kInvalid if unknown)
+    std::vector<CoreProjectionStep> projection; // resolved typed steps (canonical)
+    bool projection_resolved{true};         // false => a member could not be resolved
+    CoreValueId local{};                    // valid iff root == Local (resolved binding)
     bool has_local{false};
     [[nodiscard]] friend bool operator==(const CorePathExpr &,
                                          const CorePathExpr &) noexcept = default;
@@ -381,15 +417,17 @@ struct CoreExpr {
 
 // --- assignment target (a place) ---
 
-/// A storable place (`ctx.field`, a local, …). Structured, not a dotted string.
-/// Each member is resolved to a typed `CoreFieldId` (parallel to `members`);
-/// `members_resolved` is false when resolution failed (fail-closed).
+/// A storable place (`ctx.field`, `ctx.a.b`, a local, …). Self-contained like
+/// `CorePathExpr`: `root_type` + resolved `projection` step chain are the
+/// canonical data; `members` strings are display-only. `projection_resolved`
+/// is false when resolution failed (fail-closed).
 struct CorePlace {
     CorePathRoot root{CorePathRoot::Context};
     std::string root_name;
-    std::vector<std::string> members;
-    std::vector<CoreFieldId> member_fields; // typed field id per member (Principle 2)
-    bool members_resolved{true};
+    std::vector<std::string> members;       // display-only
+    CoreTypeId root_type{};
+    std::vector<CoreProjectionStep> projection; // resolved typed steps (canonical)
+    bool projection_resolved{true};
     [[nodiscard]] friend bool operator==(const CorePlace &, const CorePlace &) noexcept = default;
 };
 
@@ -511,11 +549,13 @@ struct CoreTypeDecl {
     Kind kind{Kind::Struct};
     std::string name;                       // canonical name (display + provenance)
     std::vector<std::string> fields;        // struct field names; index == CoreFieldId
-    /// Canonical type name of each struct field (parallel to `fields`), empty
-    /// for a non-nominal/primitive field type. Lets a member chain (`a.b.c`)
-    /// advance from one struct's CoreTypeId to the next during projection
-    /// resolution, without re-querying AHFL-IR.
-    std::vector<std::string> field_type_names;
+    /// Typed type of each struct field (parallel to `fields`): the field's own
+    /// CoreTypeId when it is a struct/enum, or `kInvalid` for a primitive /
+    /// collection / P4 type. Lets a member chain (`a.b.c`) advance from one
+    /// struct's CoreTypeId to the next without any canonical-name strings
+    /// leaking to a backend. Populated by a fixup pass after the type table is
+    /// built (so forward references resolve).
+    std::vector<CoreTypeId> field_types;
     std::vector<std::string> variants;      // enum variant names; index == variant id
     [[nodiscard]] friend bool operator==(const CoreTypeDecl &,
                                          const CoreTypeDecl &) noexcept = default;

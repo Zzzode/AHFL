@@ -790,6 +790,144 @@ TEST_CASE("branch-local let bindings do not leak across branches or past the if 
     CHECK(*returned == *outer_x); // returns OUTER x, branch shadows discarded
 }
 
+TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the outer local's "
+          "type (P0-1)") {
+    // let x: AType;  (AType has field `a`)
+    // if true { let x: BType = …; }  (BType has field `b`, NOT `a`)
+    // ctx.out = x.a;  -- after the if, x must STILL be AType, so `x.a` resolves.
+    //
+    // If lower_if snapshot/restored only the value id (not the type), the
+    // branch-local `x: BType` would leave the outer `x`'s tracked type as BType,
+    // and `x.a` would fail-closed (BType has no `a`). This asserts the merged
+    // scope snapshot restores value AND type together.
+    ir::AhflIr program;
+
+    const auto make_struct = [&](const std::string &name, const std::string &canonical,
+                                 std::size_t id, const std::string &field) {
+        ir::StructDecl s;
+        s.name = name;
+        s.symbol_ref.kind = ir::SymbolRefKind::Type;
+        s.symbol_ref.canonical_name = canonical;
+        s.symbol_ref.id = id;
+        ir::FieldDecl f;
+        f.name = field;
+        f.type_ref.kind = ir::TypeRefKind::Int;
+        s.fields.push_back(std::move(f));
+        program.declarations.emplace_back(std::move(s));
+    };
+    make_struct("AType", "app::AType", 60, "a");
+    make_struct("BType", "app::BType", 61, "b");
+
+    // Ctx has a single Int field `out` (the store target).
+    {
+        ir::StructDecl ctx;
+        ctx.name = "Ctx";
+        ctx.symbol_ref.kind = ir::SymbolRefKind::Type;
+        ctx.symbol_ref.canonical_name = "app::Ctx";
+        ctx.symbol_ref.id = 62;
+        ir::FieldDecl f;
+        f.name = "out";
+        f.type_ref.kind = ir::TypeRefKind::Int;
+        ctx.fields.push_back(std::move(f));
+        program.declarations.emplace_back(std::move(ctx));
+    }
+
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    agent.context_type_ref.kind = ir::TypeRefKind::Struct;
+    agent.context_type_ref.canonical_name = "app::Ctx";
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+
+    ir::StateHandler handler;
+    handler.state_name = "S";
+
+    const auto make_typed_let = [&](const std::string &name, const std::string &type_canonical) {
+        ir::ExprRef init = program.expr_arena.make(ir::IntegerLiteralExpr{"0"});
+        auto s = std::make_unique<ir::Statement>();
+        ir::LetStatement let;
+        let.name = name;
+        let.type_ref.kind = ir::TypeRefKind::Struct;
+        let.type_ref.canonical_name = type_canonical;
+        let.initializer = init;
+        s->node = std::move(let);
+        return s;
+    };
+    // let x: AType = 0;
+    handler.body.statements.push_back(make_typed_let("x", "app::AType"));
+    // if true { let x: BType = 0; }
+    {
+        ir::ExprRef cond = program.expr_arena.make(ir::BoolLiteralExpr{true});
+        ir::IfStatement if_stmt;
+        if_stmt.condition = cond;
+        auto then_block = std::make_unique<ir::Block>();
+        then_block->statements.push_back(make_typed_let("x", "app::BType"));
+        if_stmt.then_block = std::move(then_block);
+        auto s = std::make_unique<ir::Statement>();
+        s->node = std::move(if_stmt);
+        handler.body.statements.push_back(std::move(s));
+    }
+    // ctx.out = x.a;
+    {
+        ir::PathExpr xa;
+        xa.path.root_name = "x";
+        xa.path.members = {"a"};
+        ir::ExprRef xaref = program.expr_arena.make(std::move(xa));
+        ir::AssignStatement assign;
+        assign.target.root_kind = ir::PathRootKind::Context;
+        assign.target.root_name = "ctx";
+        assign.target.members = {"out"};
+        assign.value = xaref;
+        auto s = std::make_unique<ir::Statement>();
+        s->node = std::move(assign);
+        handler.body.statements.push_back(std::move(s));
+    }
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    // `x.a` must resolve against AType (field `a`), NOT the branch-local BType.
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // The AType CoreTypeId, to compare the resolved read's owner against.
+    std::optional<ir::core::CoreTypeId> atype_id;
+    for (std::uint32_t i = 0; i < result.program.types.size(); ++i) {
+        if (result.program.types[i].name == "app::AType") {
+            atype_id = ir::core::CoreTypeId{i};
+        }
+    }
+    REQUIRE(atype_id.has_value());
+
+    bool saw_x_a = false;
+    for (const auto &expr : result.program.flows[0].exprs) {
+        if (const auto *p = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
+            if (p->root == ir::core::CorePathRoot::Local && p->members.size() == 1 &&
+                p->members[0] == "a") {
+                saw_x_a = true;
+                CHECK(p->projection_resolved);
+                CHECK(p->root_type == *atype_id);  // outer AType, not branch BType
+                REQUIRE(p->projection.size() == 1);
+                CHECK(p->projection[0].owner_type == *atype_id);
+                CHECK(p->projection[0].field.value == 0u); // AType.a is field 0
+            }
+        }
+    }
+    CHECK(saw_x_a);
+}
+
 TEST_CASE("flow with an unresolved target agent fails closed (P1-1)") {
     ir::AhflIr program;
     ir::FlowDecl flow;
@@ -1025,17 +1163,26 @@ TEST_CASE("member projection resolves reads and stores to typed CoreFieldId (fai
             if (p->root == ir::core::CorePathRoot::Input && p->members.size() == 1 &&
                 p->members[0] == "top") {
                 saw_input_top_read = true;
-                CHECK(p->members_resolved);
-                REQUIRE(p->member_fields.size() == 1);
-                CHECK(p->member_fields[0].value == 0u); // Req.top is field 0
+                CHECK(p->projection_resolved);
+                CHECK(p->root_type.value != ir::core::CoreTypeId::kInvalid);
+                REQUIRE(p->projection.size() == 1);
+                CHECK(p->projection[0].owner_type == p->root_type); // step owner == root
+                CHECK(p->projection[0].field.value == 0u); // Req.top is field 0
             }
             if (p->root == ir::core::CorePathRoot::Input && p->members.size() == 2 &&
                 p->members[0] == "inner" && p->members[1] == "n") {
                 saw_input_inner_n_read = true;
-                CHECK(p->members_resolved);
-                REQUIRE(p->member_fields.size() == 2);
-                CHECK(p->member_fields[0].value == 1u); // Req.inner is field 1
-                CHECK(p->member_fields[1].value == 0u); // Inner.n is field 0
+                CHECK(p->projection_resolved);
+                CHECK(p->root_type.value != ir::core::CoreTypeId::kInvalid);
+                REQUIRE(p->projection.size() == 2);
+                CHECK(p->projection[0].owner_type == p->root_type); // Req
+                CHECK(p->projection[0].field.value == 1u);          // Req.inner is field 1
+                // Step continuity: step 1's owner is step 0's result (Inner).
+                CHECK(p->projection[1].owner_type == p->projection[0].result_type);
+                CHECK(p->projection[1].owner_type.value != ir::core::CoreTypeId::kInvalid);
+                CHECK(p->projection[1].field.value == 0u); // Inner.n is field 0
+                // Terminal step reaches a primitive (Int): no result type.
+                CHECK(p->projection[1].result_type.value == ir::core::CoreTypeId::kInvalid);
             }
         }
     }
@@ -1050,17 +1197,23 @@ TEST_CASE("member projection resolves reads and stores to typed CoreFieldId (fai
             if (pl.root == ir::core::CorePathRoot::Context && pl.members.size() == 1 &&
                 pl.members[0] == "saved") {
                 saw_ctx_saved_store = true;
-                CHECK(pl.members_resolved);
-                REQUIRE(pl.member_fields.size() == 1);
-                CHECK(pl.member_fields[0].value == 0u); // Ctx.saved is field 0
+                CHECK(pl.projection_resolved);
+                CHECK(pl.root_type.value != ir::core::CoreTypeId::kInvalid);
+                REQUIRE(pl.projection.size() == 1);
+                CHECK(pl.projection[0].owner_type == pl.root_type);
+                CHECK(pl.projection[0].field.value == 0u); // Ctx.saved is field 0
             }
             if (pl.root == ir::core::CorePathRoot::Context && pl.members.size() == 2 &&
                 pl.members[0] == "nested" && pl.members[1] == "n") {
                 saw_ctx_nested_n_store = true;
-                CHECK(pl.members_resolved);
-                REQUIRE(pl.member_fields.size() == 2);
-                CHECK(pl.member_fields[0].value == 1u); // Ctx.nested is field 1
-                CHECK(pl.member_fields[1].value == 0u); // Inner.n is field 0
+                CHECK(pl.projection_resolved);
+                CHECK(pl.root_type.value != ir::core::CoreTypeId::kInvalid);
+                REQUIRE(pl.projection.size() == 2);
+                CHECK(pl.projection[0].owner_type == pl.root_type);  // Ctx
+                CHECK(pl.projection[0].field.value == 1u);           // Ctx.nested is field 1
+                CHECK(pl.projection[1].owner_type == pl.projection[0].result_type); // Inner
+                CHECK(pl.projection[1].field.value == 0u);           // Inner.n is field 0
+                CHECK(pl.projection[1].result_type.value == ir::core::CoreTypeId::kInvalid);
             }
         }
     }
