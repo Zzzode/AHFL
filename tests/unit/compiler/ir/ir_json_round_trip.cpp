@@ -6,8 +6,10 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -69,4 +71,96 @@ TEST_CASE("IR JSON deserializer rejects malformed input") {
     CHECK_FALSE(ahfl::parse_program_ir_json("not json").has_value());
     CHECK_FALSE(ahfl::parse_program_ir_json("{}").has_value()); // missing declarations
     CHECK_FALSE(ahfl::parse_program_ir_json("[]").has_value()); // not an object
+}
+
+namespace {
+
+// A deliberately field-complete TypeRef: a bounded generic collection
+// (`collection_capacity` + `nominal_ref` + `params`) whose element is itself a
+// nominal struct carrying its own `nominal_ref`, plus a null param slot and an
+// Fn return in `first`. Exercises every field `clone_type_ref` /
+// `type_refs_equal` must carry, at depth and across a null child.
+[[nodiscard]] ahfl::ir::TypeRef make_full_type_ref() {
+    using namespace ahfl::ir;
+    TypeRef inner;
+    inner.kind = TypeRefKind::Struct;
+    inner.display_name = "User";
+    inner.canonical_name = "app::User";
+    inner.nominal_ref = SymbolRef{.kind = SymbolRefKind::Type,
+                                  .canonical_name = "app::User",
+                                  .local_name = "User",
+                                  .module_name = "app",
+                                  .id = std::size_t{7}};
+
+    TypeRef root;
+    root.kind = TypeRefKind::Struct;
+    root.display_name = "List<User>(4)";
+    root.canonical_name = "std::collections::List";
+    root.collection_capacity = std::uint64_t{4};
+    root.nominal_ref = SymbolRef{.kind = SymbolRefKind::Type,
+                                 .canonical_name = "std::collections::List",
+                                 .local_name = "List",
+                                 .module_name = "std::collections",
+                                 .id = std::size_t{3}};
+    root.first = ahfl::make_owned<TypeRef>(TypeRef{.kind = TypeRefKind::Bool,
+                                                   .display_name = "Bool"});
+    root.params.push_back(ahfl::make_owned<TypeRef>(std::move(inner)));
+    root.params.push_back(nullptr); // null param slot must survive clone/equality
+    return root;
+}
+
+} // namespace
+
+TEST_CASE("clone_type_ref preserves every field including nominal_ref, capacity, nested + null") {
+    const auto original = make_full_type_ref();
+    const auto cloned = ahfl::ir::clone_type_ref(original);
+
+    // A full deep clone is structurally equal to its source.
+    CHECK(ahfl::ir::type_refs_equal(original, cloned));
+
+    // Spot-check the fields the divergent clones used to drop.
+    CHECK(cloned.collection_capacity == original.collection_capacity);
+    CHECK(cloned.nominal_ref.kind == ahfl::ir::SymbolRefKind::Type);
+    CHECK(cloned.nominal_ref.canonical_name == "std::collections::List");
+    CHECK(cloned.nominal_ref.id == std::size_t{3});
+    REQUIRE(cloned.params.size() == 2);
+    REQUIRE(cloned.params[0] != nullptr);
+    CHECK(cloned.params[1] == nullptr); // null slot preserved
+    CHECK(cloned.params[0]->nominal_ref.canonical_name == "app::User");
+    REQUIRE(cloned.first != nullptr);
+    CHECK(cloned.first->kind == ahfl::ir::TypeRefKind::Bool);
+
+    // Deep clone, not a shallow alias.
+    CHECK(cloned.params[0].get() != original.params[0].get());
+    CHECK(cloned.first.get() != original.first.get());
+}
+
+TEST_CASE("type_refs_equal distinguishes on nominal_ref, capacity, and nested params") {
+    const auto base = make_full_type_ref();
+
+    SUBCASE("nominal_ref identity difference is observed") {
+        auto other = ahfl::ir::clone_type_ref(base);
+        other.nominal_ref.canonical_name = "std::collections::Set";
+        other.nominal_ref.id = std::size_t{99};
+        CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
+    }
+    SUBCASE("collection_capacity difference is observed") {
+        auto other = ahfl::ir::clone_type_ref(base);
+        other.collection_capacity = std::uint64_t{8};
+        CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
+    }
+    SUBCASE("nested param nominal_ref difference is observed") {
+        auto other = ahfl::ir::clone_type_ref(base);
+        other.params[0]->nominal_ref.canonical_name = "app::Admin";
+        CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
+    }
+    SUBCASE("null vs non-null param slot is observed") {
+        auto other = ahfl::ir::clone_type_ref(base);
+        other.params[1] = ahfl::make_owned<ahfl::ir::TypeRef>(
+            ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Int});
+        CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
+    }
+    SUBCASE("identical rebuild compares equal") {
+        CHECK(ahfl::ir::type_refs_equal(base, make_full_type_ref()));
+    }
 }

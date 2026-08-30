@@ -60,6 +60,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Request",
             "canonical_name": "formal::flow_workflow::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Request",
+              "local_name": "Request",
+              "module_name": "formal::flow_workflow",
+              "id": 0
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -75,6 +82,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Context",
             "canonical_name": "formal::flow_workflow::Context",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Context",
+              "local_name": "Context",
+              "module_name": "formal::flow_workflow",
+              "id": 1
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -90,6 +104,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -415,6 +436,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Request",
             "canonical_name": "formal::flow_workflow::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Request",
+              "local_name": "Request",
+              "module_name": "formal::flow_workflow",
+              "id": 0
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -430,6 +458,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Context",
             "canonical_name": "formal::flow_workflow::Context",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Context",
+              "local_name": "Context",
+              "module_name": "formal::flow_workflow",
+              "id": 1
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -445,6 +480,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -561,6 +603,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Request",
             "canonical_name": "formal::flow_workflow::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Request",
+              "local_name": "Request",
+              "module_name": "formal::flow_workflow",
+              "id": 0
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -576,6 +625,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Context",
             "canonical_name": "formal::flow_workflow::Context",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Context",
+              "local_name": "Context",
+              "module_name": "formal::flow_workflow",
+              "id": 1
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -591,6 +647,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -707,6 +770,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Request",
             "canonical_name": "formal::flow_workflow::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Request",
+              "local_name": "Request",
+              "module_name": "formal::flow_workflow",
+              "id": 0
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -722,6 +792,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Context",
             "canonical_name": "formal::flow_workflow::Context",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Context",
+              "local_name": "Context",
+              "module_name": "formal::flow_workflow",
+              "id": 1
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -737,6 +814,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -765,7 +849,14 @@
           "type": {
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
-            "canonical_name": "formal::flow_workflow::Response"
+            "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            }
           },
           "is_temp": true,
           "source_range": {
@@ -779,7 +870,14 @@
           "type": {
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
-            "canonical_name": "formal::flow_workflow::Response"
+            "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            }
           },
           "is_temp": true,
           "source_range": {
@@ -839,7 +937,14 @@
                 "result_type": {
                   "kind": "struct",
                   "display_name": "formal::flow_workflow::Response",
-                  "canonical_name": "formal::flow_workflow::Response"
+                  "canonical_name": "formal::flow_workflow::Response",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "formal::flow_workflow::Response",
+                    "local_name": "Response",
+                    "module_name": "formal::flow_workflow",
+                    "id": 2
+                  }
                 }
               },
               "source_range": {
@@ -866,7 +971,14 @@
                 "result_type": {
                   "kind": "struct",
                   "display_name": "formal::flow_workflow::Response",
-                  "canonical_name": "formal::flow_workflow::Response"
+                  "canonical_name": "formal::flow_workflow::Response",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "formal::flow_workflow::Response",
+                    "local_name": "Response",
+                    "module_name": "formal::flow_workflow",
+                    "id": 2
+                  }
                 }
               },
               "source_range": {
@@ -921,7 +1033,14 @@
       "return_type": {
         "kind": "struct",
         "display_name": "formal::flow_workflow::Request",
-        "canonical_name": "formal::flow_workflow::Request"
+        "canonical_name": "formal::flow_workflow::Request",
+        "nominal_ref": {
+          "kind": "type",
+          "canonical_name": "formal::flow_workflow::Request",
+          "local_name": "Request",
+          "module_name": "formal::flow_workflow",
+          "id": 0
+        }
       },
       "source_range": {
         "begin": 932,
@@ -935,6 +1054,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Request",
             "canonical_name": "formal::flow_workflow::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Request",
+              "local_name": "Request",
+              "module_name": "formal::flow_workflow",
+              "id": 0
+            },
             "source_range": {
               "begin": 859,
               "end": 1217
@@ -953,6 +1079,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -968,6 +1101,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -1007,7 +1147,14 @@
       "return_type": {
         "kind": "struct",
         "display_name": "formal::flow_workflow::Request",
-        "canonical_name": "formal::flow_workflow::Request"
+        "canonical_name": "formal::flow_workflow::Request",
+        "nominal_ref": {
+          "kind": "type",
+          "canonical_name": "formal::flow_workflow::Request",
+          "local_name": "Request",
+          "module_name": "formal::flow_workflow",
+          "id": 0
+        }
       },
       "source_range": {
         "begin": 968,
@@ -1021,6 +1168,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Request",
             "canonical_name": "formal::flow_workflow::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Request",
+              "local_name": "Request",
+              "module_name": "formal::flow_workflow",
+              "id": 0
+            },
             "source_range": {
               "begin": 859,
               "end": 1217
@@ -1039,6 +1193,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -1054,6 +1215,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -1093,7 +1261,14 @@
       "return_type": {
         "kind": "struct",
         "display_name": "formal::flow_workflow::Response",
-        "canonical_name": "formal::flow_workflow::Response"
+        "canonical_name": "formal::flow_workflow::Response",
+        "nominal_ref": {
+          "kind": "type",
+          "canonical_name": "formal::flow_workflow::Response",
+          "local_name": "Response",
+          "module_name": "formal::flow_workflow",
+          "id": 2
+        }
       },
       "source_range": {
         "begin": 1208,
@@ -1107,6 +1282,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Request",
             "canonical_name": "formal::flow_workflow::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Request",
+              "local_name": "Request",
+              "module_name": "formal::flow_workflow",
+              "id": 0
+            },
             "source_range": {
               "begin": 859,
               "end": 1217
@@ -1122,6 +1304,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -1137,6 +1326,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -1193,6 +1389,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Request",
             "canonical_name": "formal::flow_workflow::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Request",
+              "local_name": "Request",
+              "module_name": "formal::flow_workflow",
+              "id": 0
+            },
             "source_range": {
               "begin": 859,
               "end": 1217
@@ -1208,6 +1411,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512
@@ -1223,6 +1433,13 @@
             "kind": "struct",
             "display_name": "formal::flow_workflow::Response",
             "canonical_name": "formal::flow_workflow::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "formal::flow_workflow::Response",
+              "local_name": "Response",
+              "module_name": "formal::flow_workflow",
+              "id": 2
+            },
             "source_range": {
               "begin": 163,
               "end": 512

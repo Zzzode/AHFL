@@ -1021,6 +1021,7 @@ class ProgramVerifier {
                 add_error(path, "nominal type reference is missing canonical name");
             }
         }
+        verify_nominal_ref(type, path);
         switch (type.kind) {
         default:
             if (type.first) {
@@ -1038,6 +1039,61 @@ class ProgramVerifier {
                 continue;
             }
             verify_type_ref(*type.params[index], path + ".params[" + std::to_string(index) + "]");
+        }
+    }
+
+    // RFC 0026 P4 nominal-identity bridge: the resolved nominal SymbolRef a
+    // Struct/Enum TypeRef must carry. This is the BackendReady gate that turns
+    // the string-only nominal boundary into a symbol-identity one. Only enforced
+    // in BackendReady mode (a partially-lowered program may legitimately lack
+    // the bridge). Rules:
+    //   - Struct/Enum: nominal_ref must be a resolved Type ref whose canonical
+    //     name matches the type's; id-present refs are cross-checked against the
+    //     symbol-identity map by verify_symbol_ref; a name-only ref (no id) is
+    //     permitted per the lowering boundary.
+    //   - every other kind: nominal_ref must be Unknown/empty (no stray identity
+    //     smuggled onto a primitive / Fn / Unit / ... ref).
+    void verify_nominal_ref(const TypeRef &type, const std::string &path) {
+        if (!is_backend_ready_mode(mode_)) {
+            return;
+        }
+        const bool is_nominal =
+            type.kind == TypeRefKind::Struct || type.kind == TypeRefKind::Enum;
+        const auto &nominal = type.nominal_ref;
+        if (!is_nominal) {
+            if (nominal.kind != SymbolRefKind::Unknown || !nominal.canonical_name.empty() ||
+                !nominal.local_name.empty() || !nominal.module_name.empty() ||
+                nominal.id.has_value()) {
+                add_error(path + ".nominal_ref",
+                          "non-nominal type reference carries a stray nominal identity");
+            }
+            return;
+        }
+        // Nominal (Struct/Enum) TypeRef.
+        if (nominal.kind == SymbolRefKind::Unknown) {
+            add_error(path + ".nominal_ref",
+                      "nominal type reference is missing its resolved nominal identity");
+            return;
+        }
+        if (nominal.kind != SymbolRefKind::Type) {
+            add_error(path + ".nominal_ref",
+                      "nominal identity has kind " +
+                          std::string(symbol_ref_kind_name(nominal.kind)) + ", expected Type");
+            return;
+        }
+        if (nominal.canonical_name.empty()) {
+            add_error(path + ".nominal_ref", "nominal identity is missing canonical name");
+        } else if (!type.canonical_name.empty() &&
+                   nominal.canonical_name != type.canonical_name) {
+            add_error(path + ".nominal_ref",
+                      "nominal identity canonical '" + nominal.canonical_name +
+                          "' drifts from type canonical '" + type.canonical_name + "'");
+        }
+        // When the ref carries an id, run the full symbol-identity cross-check
+        // (kind + id->identity map) shared with every other SymbolRef consumer.
+        // A name-only fallback (no id) is allowed by the lowering boundary.
+        if (nominal.id.has_value()) {
+            verify_symbol_ref(nominal, path + ".nominal_ref", SymbolRefKind::Type);
         }
     }
 

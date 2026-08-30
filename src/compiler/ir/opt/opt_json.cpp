@@ -81,6 +81,62 @@ void write_string(std::ostream &out, std::string_view value) {
     return "unresolved";
 }
 
+[[nodiscard]] std::string_view symbol_ref_kind_name(SymbolRefKind kind) {
+    switch (kind) {
+    case SymbolRefKind::Unknown:
+        return "unknown";
+    case SymbolRefKind::Type:
+        return "type";
+    case SymbolRefKind::Const:
+        return "const";
+    case SymbolRefKind::Capability:
+        return "capability";
+    case SymbolRefKind::Predicate:
+        return "predicate";
+    case SymbolRefKind::Agent:
+        return "agent";
+    case SymbolRefKind::Workflow:
+        return "workflow";
+    case SymbolRefKind::Function:
+        return "function";
+    }
+    return "invalid";
+}
+
+// Mirrors ir_json's symbol-ref shape so a nominal_ref renders identically in the
+// optimized-IR diagnostic dump (RFC 0026 P4). Write-only, like the rest of this
+// serializer.
+void print_symbol_ref(const SymbolRef &ref, std::ostream &out, int level) {
+    out << "{\n";
+    indent(out, level + 1);
+    out << "\"kind\": ";
+    write_string(out, symbol_ref_kind_name(ref.kind));
+    out << ",\n";
+    indent(out, level + 1);
+    out << "\"canonical_name\": ";
+    write_string(out, ref.canonical_name);
+    if (!ref.local_name.empty()) {
+        out << ",\n";
+        indent(out, level + 1);
+        out << "\"local_name\": ";
+        write_string(out, ref.local_name);
+    }
+    if (!ref.module_name.empty()) {
+        out << ",\n";
+        indent(out, level + 1);
+        out << "\"module_name\": ";
+        write_string(out, ref.module_name);
+    }
+    if (ref.id.has_value()) {
+        out << ",\n";
+        indent(out, level + 1);
+        out << "\"id\": " << *ref.id;
+    }
+    out << '\n';
+    indent(out, level);
+    out << '}';
+}
+
 void print_source_range(const std::optional<SourceRange> &range, std::ostream &out, int level) {
     if (!range.has_value()) {
         out << "null";
@@ -130,6 +186,17 @@ void print_type_ref(const TypeRef &type, std::ostream &out, int level) {
         indent(out, level + 1);
         out << "\"string_bounds\": {\"min\": " << type.string_bounds->first
             << ", \"max\": " << type.string_bounds->second << '}';
+    }
+    if (type.collection_capacity.has_value()) {
+        out << ",\n";
+        indent(out, level + 1);
+        out << "\"collection_capacity\": " << *type.collection_capacity;
+    }
+    if (type.nominal_ref.kind != SymbolRefKind::Unknown) {
+        out << ",\n";
+        indent(out, level + 1);
+        out << "\"nominal_ref\": ";
+        print_symbol_ref(type.nominal_ref, out, level + 1);
     }
     if (type.first) {
         out << ",\n";

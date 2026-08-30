@@ -109,34 +109,12 @@ namespace {
 
 // Structural equality of two ir::TypeRef (recursive over first/second/params).
 // Used by CoreInstanceDecl equality — dispatch_types are kept as concrete
-// structural TypeRefs until the P4 value-type arena lands.
-[[nodiscard]] bool type_ref_equal(const TypeRef &a, const TypeRef &b);
-[[nodiscard]] bool type_ref_ptr_equal(const TypeRefPtr &x, const TypeRefPtr &y) {
-    if (!x || !y) {
-        return x.get() == y.get();
-    }
-    return type_ref_equal(*x, *y);
-}
+// structural TypeRefs until the P4 value-type arena lands. Delegates to the
+// public `ir::type_refs_equal` SSOT so every structural field (incl.
+// collection_capacity + nominal_ref) is compared without a second hand-rolled
+// field sweep.
 [[nodiscard]] bool type_ref_equal(const TypeRef &a, const TypeRef &b) {
-    if (a.kind != b.kind || a.canonical_name != b.canonical_name ||
-        a.display_name != b.display_name || a.variant_name != b.variant_name ||
-        a.int_bounds != b.int_bounds || a.string_bounds != b.string_bounds ||
-        a.decimal_scale != b.decimal_scale || a.collection_capacity != b.collection_capacity ||
-        !symbol_ref_equal(a.nominal_ref, b.nominal_ref)) {
-        return false;
-    }
-    if (!type_ref_ptr_equal(a.first, b.first) || !type_ref_ptr_equal(a.second, b.second)) {
-        return false;
-    }
-    if (a.params.size() != b.params.size()) {
-        return false;
-    }
-    for (std::size_t i = 0; i < a.params.size(); ++i) {
-        if (!type_ref_ptr_equal(a.params[i], b.params[i])) {
-            return false;
-        }
-    }
-    return true;
+    return type_refs_equal(a, b);
 }
 } // namespace
 

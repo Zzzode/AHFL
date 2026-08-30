@@ -208,4 +208,19 @@ struct TypeRef {
 /// `clone(ptr.get())` shape.
 [[nodiscard]] TypeRefPtr clone_type_ref(const TypeRef *type);
 
+/// Structural equality of two `TypeRef`s: the SINGLE source of truth for
+/// comparing resolved type references. Recurses through `first`/`second`/
+/// `params` and compares EVERY structural field — kind, names, refinements
+/// (`int_bounds`/`string_bounds`/`decimal_scale`), `collection_capacity`
+/// (RFC 0025) and `nominal_ref` (RFC 0026 P4). Mirrors `clone_type_ref`: any
+/// field carried by a clone participates in equality, so a field is never
+/// silently ignored. `nominal_ref` compares by kind + canonical name (the
+/// stable resolved-symbol identity), matching how other SymbolRef consumers
+/// judge identity. Do NOT hand-roll a local TypeRef comparison.
+[[nodiscard]] bool type_refs_equal(const TypeRef &a, const TypeRef &b);
+
+/// Pointer-aware variant: two null refs are equal; a null and a non-null are
+/// not; otherwise deep-compares.
+[[nodiscard]] bool type_refs_equal(const TypeRef *a, const TypeRef *b);
+
 } // namespace ahfl::ir

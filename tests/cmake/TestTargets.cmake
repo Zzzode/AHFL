@@ -41,6 +41,7 @@ add_executable(ahfl_compiler_ir_tests
     unit/compiler/ir/core_verify.cpp
     unit/compiler/ir/identity_visitor.cpp
     unit/compiler/ir/mangling.cpp
+    unit/compiler/ir/nominal_ref_bridge.cpp
     unit/compiler/ir/tower.cpp
     unit/compiler/ir/typed_hir_instance.cpp
 )

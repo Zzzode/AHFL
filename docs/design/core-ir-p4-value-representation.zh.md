@@ -245,7 +245,21 @@ in a per-body `value_types[CoreValueId]` table (P4-B), never embedded in the id.
   fields. This also forward-fixes two latent silent-drop bugs the divergence hid:
   `opt_lower` dropped `collection_capacity`; `workflow_run` dropped `params`
   (collection element types) → runtime response-schema element validation was
-  silently skipped for `List/Set/Map` capabilities. (b) `CoreProgram::value_types` arena
+  silently skipped for `List/Set/Map` capabilities. **(a, closed at review round 2)**
+  the bridge is FAIL-CLOSED, not best-effort: `nominal_ref_from` (typed_hir_lower)
+  throws on a symbol id that fails to resolve / resolves to a non-Type kind /
+  canonical-drifts from the type — a name-only ref is emitted ONLY when the source
+  type carries no symbol at all. The BackendReady verifier (`verify_type_ref` →
+  `verify_nominal_ref`) is the observable backend gate: Struct/Enum MUST carry a
+  resolved Type identity with matching canonical (id-present refs cross-checked via
+  the shared `verify_symbol_ref` identity map); every non-nominal ref MUST carry an
+  empty/Unknown `nominal_ref` (no stray identity). Structural equality is a public
+  `ir::type_refs_equal` SSOT (mirrors the clone; `core_lower`'s `type_ref_equal`
+  delegates — no second field sweep). `opt_json::print_type_ref` also emits
+  `nominal_ref` + `collection_capacity` (optimized-IR diagnostic dump keeps the two
+  nominal identities distinguishable; write-only, no reader). Fidelity + fail-closed
+  tests: all-field clone/equality fixture (nested + null param) + real-frontend
+  BackendReady positive + 4 single-field tamper negatives. (b) `CoreProgram::value_types` arena
   + interner + `verify_value_types`; (c) unique `lower_value_type`; (d)
   `CoreTypeDecl.type_param_count` + arity check; (e) migrate
   **`CoreInstanceDecl.dispatch_types: vector<ir::TypeRef>` → `vector<CoreValueTypeId>`**

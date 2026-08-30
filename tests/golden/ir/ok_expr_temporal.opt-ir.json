@@ -60,6 +60,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
             "canonical_name": "ir::expr_temporal::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Request",
+              "local_name": "Request",
+              "module_name": "ir::expr_temporal",
+              "id": 1
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -78,6 +85,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Context",
             "canonical_name": "ir::expr_temporal::Context",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Context",
+              "local_name": "Context",
+              "module_name": "ir::expr_temporal",
+              "id": 2
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -93,6 +107,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
             "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -107,7 +128,14 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            }
           },
           "is_temp": true,
           "source_range": {
@@ -121,7 +149,14 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            }
           },
           "is_temp": false,
           "source_range": {
@@ -135,7 +170,14 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            }
           },
           "is_temp": true,
           "source_range": {
@@ -192,6 +234,13 @@
             "kind": "struct",
             "display_name": "std::collections::List<Int>",
             "canonical_name": "std::collections::List",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::collections::List",
+              "local_name": "List",
+              "module_name": "std::collections",
+              "id": 9
+            },
             "type_args": [
 {
                 "kind": "int",
@@ -366,7 +415,14 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            }
           },
           "is_temp": true,
           "source_range": {
@@ -427,7 +483,14 @@
                 "result_type": {
                   "kind": "struct",
                   "display_name": "ir::expr_temporal::Response",
-                  "canonical_name": "ir::expr_temporal::Response"
+                  "canonical_name": "ir::expr_temporal::Response",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "ir::expr_temporal::Response",
+                    "local_name": "Response",
+                    "module_name": "ir::expr_temporal",
+                    "id": 3
+                  }
                 }
               },
               "source_range": {
@@ -454,7 +517,14 @@
                 "result_type": {
                   "kind": "struct",
                   "display_name": "ir::expr_temporal::Response",
-                  "canonical_name": "ir::expr_temporal::Response"
+                  "canonical_name": "ir::expr_temporal::Response",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "ir::expr_temporal::Response",
+                    "local_name": "Response",
+                    "module_name": "ir::expr_temporal",
+                    "id": 3
+                  }
                 }
               },
               "source_range": {
@@ -487,7 +557,14 @@
                 "result_type": {
                   "kind": "struct",
                   "display_name": "ir::expr_temporal::Response",
-                  "canonical_name": "ir::expr_temporal::Response"
+                  "canonical_name": "ir::expr_temporal::Response",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "ir::expr_temporal::Response",
+                    "local_name": "Response",
+                    "module_name": "ir::expr_temporal",
+                    "id": 3
+                  }
                 }
               },
               "source_range": {
@@ -624,6 +701,13 @@
                   "kind": "struct",
                   "display_name": "std::collections::List<Int>",
                   "canonical_name": "std::collections::List",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "std::collections::List",
+                    "local_name": "List",
+                    "module_name": "std::collections",
+                    "id": 9
+                  },
                   "type_args": [
 {
                       "kind": "int",
@@ -1034,7 +1118,14 @@
                 "result_type": {
                   "kind": "struct",
                   "display_name": "ir::expr_temporal::Response",
-                  "canonical_name": "ir::expr_temporal::Response"
+                  "canonical_name": "ir::expr_temporal::Response",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "ir::expr_temporal::Response",
+                    "local_name": "Response",
+                    "module_name": "ir::expr_temporal",
+                    "id": 3
+                  }
                 }
               },
               "source_range": {
@@ -1226,6 +1317,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
             "canonical_name": "ir::expr_temporal::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Request",
+              "local_name": "Request",
+              "module_name": "ir::expr_temporal",
+              "id": 1
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1241,6 +1339,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Context",
             "canonical_name": "ir::expr_temporal::Context",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Context",
+              "local_name": "Context",
+              "module_name": "ir::expr_temporal",
+              "id": 2
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1256,6 +1361,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
             "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1284,7 +1396,14 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            }
           },
           "is_temp": true,
           "source_range": {
@@ -1298,7 +1417,14 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            }
           },
           "is_temp": true,
           "source_range": {
@@ -1364,7 +1490,14 @@
                 "result_type": {
                   "kind": "struct",
                   "display_name": "ir::expr_temporal::Response",
-                  "canonical_name": "ir::expr_temporal::Response"
+                  "canonical_name": "ir::expr_temporal::Response",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "ir::expr_temporal::Response",
+                    "local_name": "Response",
+                    "module_name": "ir::expr_temporal",
+                    "id": 3
+                  }
                 }
               },
               "source_range": {
@@ -1391,7 +1524,14 @@
                 "result_type": {
                   "kind": "struct",
                   "display_name": "ir::expr_temporal::Response",
-                  "canonical_name": "ir::expr_temporal::Response"
+                  "canonical_name": "ir::expr_temporal::Response",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "ir::expr_temporal::Response",
+                    "local_name": "Response",
+                    "module_name": "ir::expr_temporal",
+                    "id": 3
+                  }
                 }
               },
               "source_range": {
@@ -1460,6 +1600,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
             "canonical_name": "ir::expr_temporal::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Request",
+              "local_name": "Request",
+              "module_name": "ir::expr_temporal",
+              "id": 1
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1475,6 +1622,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Context",
             "canonical_name": "ir::expr_temporal::Context",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Context",
+              "local_name": "Context",
+              "module_name": "ir::expr_temporal",
+              "id": 2
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1490,6 +1644,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
             "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1505,6 +1666,13 @@
             "kind": "struct",
             "display_name": "std::collections::Map<String, String>",
             "canonical_name": "std::collections::Map",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::collections::Map",
+              "local_name": "Map",
+              "module_name": "std::collections",
+              "id": 11
+            },
             "type_args": [
 {
                 "kind": "string",
@@ -1578,6 +1746,13 @@
                   "kind": "struct",
                   "display_name": "std::collections::Map<String, String>",
                   "canonical_name": "std::collections::Map",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "std::collections::Map",
+                    "local_name": "Map",
+                    "module_name": "std::collections",
+                    "id": 11
+                  },
                   "type_args": [
 {
                       "kind": "string",
@@ -1697,6 +1872,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
             "canonical_name": "ir::expr_temporal::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Request",
+              "local_name": "Request",
+              "module_name": "ir::expr_temporal",
+              "id": 1
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1712,6 +1894,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Context",
             "canonical_name": "ir::expr_temporal::Context",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Context",
+              "local_name": "Context",
+              "module_name": "ir::expr_temporal",
+              "id": 2
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1727,6 +1916,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
             "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1742,6 +1938,13 @@
             "kind": "struct",
             "display_name": "std::collections::Map<String, String>",
             "canonical_name": "std::collections::Map",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::collections::Map",
+              "local_name": "Map",
+              "module_name": "std::collections",
+              "id": 11
+            },
             "type_args": [
 {
                 "kind": "string",
@@ -1815,6 +2018,13 @@
                   "kind": "struct",
                   "display_name": "std::collections::Map<String, String>",
                   "canonical_name": "std::collections::Map",
+                  "nominal_ref": {
+                    "kind": "type",
+                    "canonical_name": "std::collections::Map",
+                    "local_name": "Map",
+                    "module_name": "std::collections",
+                    "id": 11
+                  },
                   "type_args": [
 {
                       "kind": "string",
@@ -1920,7 +2130,14 @@
       "return_type": {
         "kind": "struct",
         "display_name": "ir::expr_temporal::Request",
-        "canonical_name": "ir::expr_temporal::Request"
+        "canonical_name": "ir::expr_temporal::Request",
+        "nominal_ref": {
+          "kind": "type",
+          "canonical_name": "ir::expr_temporal::Request",
+          "local_name": "Request",
+          "module_name": "ir::expr_temporal",
+          "id": 1
+        }
       },
       "source_range": {
         "begin": 2343,
@@ -1934,6 +2151,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
             "canonical_name": "ir::expr_temporal::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Request",
+              "local_name": "Request",
+              "module_name": "ir::expr_temporal",
+              "id": 1
+            },
             "source_range": {
               "begin": 2273,
               "end": 2510
@@ -1952,6 +2176,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
             "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431
@@ -1991,7 +2222,14 @@
       "return_type": {
         "kind": "struct",
         "display_name": "ir::expr_temporal::Response",
-        "canonical_name": "ir::expr_temporal::Response"
+        "canonical_name": "ir::expr_temporal::Response",
+        "nominal_ref": {
+          "kind": "type",
+          "canonical_name": "ir::expr_temporal::Response",
+          "local_name": "Response",
+          "module_name": "ir::expr_temporal",
+          "id": 3
+        }
       },
       "source_range": {
         "begin": 2504,
@@ -2005,6 +2243,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
             "canonical_name": "ir::expr_temporal::Request",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Request",
+              "local_name": "Request",
+              "module_name": "ir::expr_temporal",
+              "id": 1
+            },
             "source_range": {
               "begin": 2273,
               "end": 2510
@@ -2020,6 +2265,13 @@
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
             "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            },
             "source_range": {
               "begin": 1227,
               "end": 1431

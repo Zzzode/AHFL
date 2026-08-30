@@ -1254,18 +1254,38 @@ class TypedIrLowerer final {
     }
 
     // The resolved nominal SymbolRef a Struct/Enum ir::TypeRef should carry
-    // (RFC 0026 P4 nominal-identity bridge). Resolves `symbol` through the typed
-    // program when present; otherwise falls back to a name-only ref (id absent)
-    // so the canonical name is still transported. Kind is forced to Type — a
-    // nominal type ref always denotes a type declaration.
+    // (RFC 0026 P4 nominal-identity bridge). This is a FAIL-CLOSED boundary: a
+    // Struct/Enum type carrying a symbol id MUST resolve to a genuine Type
+    // declaration whose canonical name matches, otherwise the TypedProgram is
+    // structurally corrupt and we throw rather than transport a forged identity
+    // that Core P4-A would later trust.
+    //   - symbol present but unresolvable  -> throw (structural defect);
+    //   - symbol resolves to a non-Type kind -> throw (no force-cast: an
+    //     Agent/Fn/etc. symbol must never masquerade as a nominal type ref);
+    //   - resolved canonical_name disagrees with the type's canonical_name
+    //     -> throw (id<->name drift);
+    //   - ONLY when the source type carries no symbol at all do we emit a
+    //     fully-qualified name-only Type ref (id absent) so the canonical name
+    //     is still transported.
     [[nodiscard]] ir::SymbolRef nominal_ref_from(std::optional<SymbolId> symbol,
                                                  const std::string &canonical_name) const {
         if (symbol.has_value()) {
-            if (const auto resolved = typed_program_->find_symbol(*symbol); resolved.has_value()) {
-                ir::SymbolRef ref = symbol_ref_from_symbol(resolved, "nominal type ref");
-                ref.kind = ir::SymbolRefKind::Type;
-                return ref;
+            const auto resolved = typed_program_->find_symbol(*symbol);
+            if (!resolved.has_value()) {
+                throw std::logic_error(
+                    "TypedProgram nominal type ref has an unresolvable symbol id for '" +
+                    canonical_name + "'");
             }
+            ir::SymbolRef ref = symbol_ref_from_symbol(resolved, "nominal type ref");
+            if (ref.kind != ir::SymbolRefKind::Type) {
+                throw std::logic_error("TypedProgram nominal type ref '" + canonical_name +
+                                       "' resolves to a non-type symbol");
+            }
+            if (ref.canonical_name != canonical_name) {
+                throw std::logic_error("TypedProgram nominal type ref canonical mismatch: type '" +
+                                       canonical_name + "' vs symbol '" + ref.canonical_name + "'");
+            }
+            return ref;
         }
         ir::SymbolRef ref;
         ref.kind = ir::SymbolRefKind::Type;
