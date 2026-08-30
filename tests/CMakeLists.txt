@@ -82,6 +82,55 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution"
     )
+
+    # Supplemental E2 execution evidence. Node is an embedded host that can
+    # allocate/write the target module's private memory, so it covers the OK
+    # result-frame ownership path that a separate wasmtime --preload module
+    # cannot. It is not real-wasmtime evidence and is visibly skipped when Node
+    # is unavailable.
+    add_test(NAME ahfl.wasm.e2_node_embedded_host
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e2_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_e2_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.e2_node_embedded_host PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "E2 Node embedded-host execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
+    add_test(NAME ahfl.wasm.e2_same_frontend_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/e2_same_frontend_probe.wasm"
+    )
+    set_tests_properties(ahfl.wasm.e2_same_frontend_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "final_state_id=0 transition_count=1 capability_calls=1 symbol_id=[0-9]+"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # Real-wasmtime CLI can link a separate ahfl_cap provider for the no-frame
+    # ERROR/PENDING paths. It cannot produce a conforming OK frame in the
+    # target module's private memory, so that claim remains with an embedded
+    # host and future release evidence.
+    add_test(NAME ahfl.wasm.e2_wasmtime_error_pending
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e2_wasmtime_conformance.py"
+                --ahflc $<TARGET_FILE:ahflc>
+                --source
+                    "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"
+                --explicit-wasmtime "${AHFL_WASMTIME}"
+                --detected-wasmtime "${_ahfl_detected_wasmtime}"
+    )
+    set_tests_properties(ahfl.wasm.e2_wasmtime_error_pending PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "real-wasmtime preload ERROR/PENDING execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;wasmtime"
+    )
 endif()
 
 add_test(NAME ahfl.runtime.native_grpc_gate

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -79,6 +80,96 @@ static ahfl::ir::core::CoreProgram make_e1_core_program() {
     return program;
 }
 
+static ahfl::ir::core::CoreProgram make_e2_core_program() {
+    using namespace ahfl::ir::core;
+    CoreProgram program;
+
+    CoreTypeDecl input;
+    input.kind = CoreTypeDecl::Kind::Struct;
+    input.name = "app::Input";
+    input.symbol_ref = {ahfl::ir::SymbolRefKind::Type,
+                        "app::Input",
+                        "Input",
+                        "app",
+                        100};
+    program.types.push_back(std::move(input));
+    CoreTypeDecl output;
+    output.kind = CoreTypeDecl::Kind::Struct;
+    output.name = "app::Output";
+    output.symbol_ref = {ahfl::ir::SymbolRefKind::Type,
+                         "app::Output",
+                         "Output",
+                         "app",
+                         101};
+    program.types.push_back(std::move(output));
+    program.value_types.push_back(
+        CoreValueType{CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}});
+    program.value_types.push_back(
+        CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}});
+
+    CoreCapabilityDecl capability;
+    capability.name = "Echo";
+    capability.symbol_ref = {ahfl::ir::SymbolRefKind::Capability,
+                             "app::Echo",
+                             "Echo",
+                             "app",
+                             42};
+    capability.param_types = {CoreValueTypeId{0}};
+    capability.return_type = CoreValueTypeId{1};
+    program.capabilities.push_back(std::move(capability));
+
+    CoreAgentDecl agent;
+    agent.name = "Runner";
+    agent.states = {"Done", "Start"};
+    agent.initial = CoreStateId{1};
+    agent.finals = {CoreStateId{0}};
+    agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+    agent.input_type = CoreTypeId{0};
+    agent.output_type = CoreTypeId{1};
+    agent.context_kind = CoreAgentDecl::ContextKind::Unit;
+    agent.capabilities = {CoreCapabilityId{0}};
+    program.agents.push_back(std::move(agent));
+
+    CoreFlowDecl flow;
+    flow.target = CoreAgentId{0};
+    flow.agent_name = "Runner";
+    flow.exprs.push_back(CoreExpr{CorePathExpr{CorePathRoot::Input,
+                                               "input",
+                                               {},
+                                               CoreTypeId{0},
+                                               {},
+                                               true,
+                                               {},
+                                               false,
+                                               {}},
+                                  std::nullopt,
+                                  CoreValueTypeId{0}});
+    flow.value_count = 2;
+    flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+    CoreFlowState done;
+    done.state = CoreStateId{0};
+    done.state_name = "Done";
+    done.body.statements.push_back(
+        CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+    done.body.statements.push_back(
+        CoreStmt{CoreCapabilityCallStmt{CoreValueId{1},
+                                        CoreCapabilityId{0},
+                                        "Echo",
+                                        {CoreValueId{0}}},
+                 std::nullopt});
+    done.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    flow.states.push_back(std::move(done));
+    CoreFlowState start;
+    start.state = CoreStateId{1};
+    start.state_name = "Start";
+    start.body.statements.push_back(
+        CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+    flow.states.push_back(std::move(start));
+    program.flows.push_back(std::move(flow));
+    return program;
+}
+
 static bool has_codegen_code(const ahfl::backends::CoreWasmCodegenResult &result,
                              std::string_view code) {
     for (const auto &diagnostic : result.diagnostics) {
@@ -138,6 +229,30 @@ static std::optional<std::vector<std::uint8_t>> wasm_function_body(
     return std::nullopt;
 }
 
+static std::optional<std::vector<std::uint8_t>> wasm_section(
+    const std::vector<std::uint8_t> &bytes, std::uint8_t wanted) {
+    std::size_t offset = 8;
+    while (offset < bytes.size()) {
+        const auto section = bytes[offset++];
+        const auto size = read_u32_leb(bytes, offset);
+        if (!size || *size > bytes.size() - offset) {
+            return std::nullopt;
+        }
+        if (section == wanted) {
+            return std::vector<std::uint8_t>(
+                bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+                bytes.begin() + static_cast<std::ptrdiff_t>(offset + *size));
+        }
+        offset += *size;
+    }
+    return std::nullopt;
+}
+
+static bool contains_bytes(const std::vector<std::uint8_t> &bytes,
+                           std::initializer_list<std::uint8_t> needle) {
+    return std::search(bytes.begin(), bytes.end(), needle.begin(), needle.end()) != bytes.end();
+}
+
 static bool rejects_as_unsupported(const ahfl::ir::core::CoreProgram &program) {
     const auto verified = ahfl::ir::core::verify_core_program(program);
     const auto layout = ahfl::ir::core::compute_core_layouts(program);
@@ -151,6 +266,22 @@ static bool rejects_as_unsupported(const ahfl::ir::core::CoreProgram &program) {
     return !emitted.artifact.has_value() &&
            has_codegen_code(emitted,
                             ahfl::backends::core_wasm_diag::kUnsupportedOrchestration);
+}
+
+static bool rejects_capability_frame(const ahfl::ir::core::CoreProgram &program) {
+    const auto verified = ahfl::ir::core::verify_core_program(program);
+    const auto layout = ahfl::ir::core::compute_core_layouts(program);
+    if (!verified.ok() || !layout.ok() || !layout.table.has_value()) {
+        return false;
+    }
+    const auto emitted = ahfl::backends::emit_core_wasm(
+        program,
+        *layout.table,
+        {{0}, ahfl::backends::WasmProfileKind::Wasi});
+    return !emitted.artifact.has_value() &&
+           has_codegen_code(
+               emitted,
+               ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame);
 }
 
 static bool same_e1_program(const ahfl::ir::core::CoreProgram &lhs,
@@ -436,6 +567,22 @@ int main() {
             check(returns_arg_zero && !has_frame_memory_op,
                   "E1 run identity alias is structurally local.get 0 with no frame memory op");
 
+            const auto run2_body = first.ok()
+                                       ? wasm_function_body(first.artifact->bytes, 6)
+                                       : std::optional<std::vector<std::uint8_t>>{};
+            const bool run2_identity =
+                run2_body && contains_bytes(*run2_body,
+                                            {0x41, 0x00, 0x20, 0x00,
+                                             0x20, 0x01, 0x0f});
+            const bool run2_has_frame_memory_op =
+                run2_body && std::any_of(run2_body->begin(),
+                                         run2_body->end(),
+                                         [](std::uint8_t op) {
+                                             return op >= 0x28 && op <= 0x3e;
+                                         });
+            check(run2_identity && !run2_has_frame_memory_op,
+                  "E2 run2 identity path returns OK,input_ptr,input_len without frame access");
+
             auto tampered = *layout.table;
             tampered.target.pointer_size = 8;
             const auto bad_layout = ahfl::backends::emit_core_wasm(
@@ -542,7 +689,287 @@ int main() {
               "E1 rejects a non-canonical return with no artifact");
     }
 
-    // Test 11: entry selection and deterministic termination fail closed.
+    // Test 11 (RFC 0026 KR6.5 E2): the canonical capability final emits the
+    // exact ahfl_cap import and append-only run2 ABI. These checks are binary /
+    // structural evidence, not host execution evidence.
+    {
+        using namespace ahfl::ir::core;
+        const auto program = make_e2_core_program();
+        const auto snapshot = make_e2_core_program();
+        const auto verified = verify_core_program(program);
+        const auto layout = compute_core_layouts(program);
+        check(verified.ok() && layout.ok(),
+              "E2 fixture is verified Core + P4-D layout");
+        if (layout.table.has_value()) {
+            const auto layout_snapshot = *layout.table;
+            const auto first = ahfl::backends::emit_core_wasm(
+                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Wasi});
+            const auto second = ahfl::backends::emit_core_wasm(
+                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Wasi});
+            const auto browser = ahfl::backends::emit_core_wasm(
+                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Browser});
+            check(first.ok() && second.ok() && browser.ok() &&
+                      first.artifact->bytes == second.artifact->bytes &&
+                      first.artifact->bytes == browser.artifact->bytes,
+                  "E2 import emission is deterministic and profile-independent");
+            check(first.ok() && first.artifact->imports ==
+                                    std::vector<std::string>{"ahfl_cap.cap_42"},
+                  "E2 artifact registers the exact SymbolId-based import");
+            const auto import_section =
+                first.ok() ? wasm_section(first.artifact->bytes, 2)
+                           : std::optional<std::vector<std::uint8_t>>{};
+            check(import_section &&
+                      contains_bytes(*import_section,
+                                     {0x01, 0x08, 'a', 'h', 'f', 'l', '_', 'c', 'a', 'p',
+                                      0x06, 'c', 'a', 'p', '_', '4', '2', 0x00, 0x04}) &&
+                      contains_bytes(first.artifact->bytes,
+                                     {0x60, 0x02, 0x7f, 0x7f,
+                                      0x03, 0x7f, 0x7f, 0x7f}),
+                  "E2 binary encodes exact ahfl_cap module/field/multi-value type");
+            check(first.ok() &&
+                      std::find(first.artifact->exports.begin(),
+                                first.artifact->exports.end(),
+                                "run2") != first.artifact->exports.end(),
+                  "E2 appends run2 without removing legacy exports");
+
+            const auto legacy_run = first.ok()
+                                        ? wasm_function_body(first.artifact->bytes, 5)
+                                        : std::optional<std::vector<std::uint8_t>>{};
+            const auto run2 = first.ok()
+                                  ? wasm_function_body(first.artifact->bytes, 6)
+                                  : std::optional<std::vector<std::uint8_t>>{};
+            check(legacy_run == std::optional<std::vector<std::uint8_t>>{
+                                    std::vector<std::uint8_t>{0x00, 0x00, 0x0b}},
+                  "E2 capability artifact legacy run traps before every effect");
+            check(run2 && contains_bytes(*run2, {0x23, 0x04, 0x04, 0x40, 0x00, 0x0b}) &&
+                      contains_bytes(*run2, {0x20, 0x00, 0x20, 0x01, 0x10, 0x00}) &&
+                      contains_bytes(*run2, {0x41, 0x01, 0x24, 0x04}) &&
+                      contains_bytes(*run2, {0x41, 0x02, 0x41, 0x00, 0x41, 0x00, 0x0f}),
+                  "E2 run2 checks pending latch first, calls import once, and latches PENDING");
+            check(same_e1_program(program, snapshot) && *layout.table == layout_snapshot,
+                  "E2 emission does not mutate Core or the P4-D side artifact");
+
+            auto least_privilege = make_e2_core_program();
+            CoreCapabilityDecl unused_capability;
+            unused_capability.name = "Unused";
+            unused_capability.symbol_ref = {ahfl::ir::SymbolRefKind::Capability,
+                                            "app::Unused",
+                                            "Unused",
+                                            "app",
+                                            7};
+            unused_capability.param_types = {CoreValueTypeId{0}};
+            unused_capability.return_type = CoreValueTypeId{1};
+            least_privilege.capabilities.push_back(std::move(unused_capability));
+            least_privilege.agents[0].capabilities.push_back(CoreCapabilityId{1});
+            least_privilege.agents[0].states.push_back("Unused");
+            least_privilege.agents[0].finals.push_back(CoreStateId{2});
+            auto &least_flow = least_privilege.flows[0];
+            least_flow.exprs.push_back(least_flow.exprs[0]);
+            least_flow.value_count = 4;
+            least_flow.value_types.insert(least_flow.value_types.end(),
+                                          {CoreValueTypeId{0}, CoreValueTypeId{1}});
+            CoreFlowState unused;
+            unused.state = CoreStateId{2};
+            unused.state_name = "Unused";
+            unused.body.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{1}}, std::nullopt});
+            unused.body.statements.push_back(
+                CoreStmt{CoreCapabilityCallStmt{CoreValueId{3},
+                                                CoreCapabilityId{1},
+                                                "Unused",
+                                                {CoreValueId{2}}},
+                         std::nullopt});
+            unused.body.statements.push_back(
+                CoreStmt{CoreReturnStmt{true, CoreValueId{3}}, std::nullopt});
+            least_flow.states.push_back(std::move(unused));
+            const auto least_layout = compute_core_layouts(least_privilege);
+            const auto least = least_layout.table.has_value()
+                                   ? ahfl::backends::emit_core_wasm(
+                                         least_privilege,
+                                         *least_layout.table,
+                                         {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                                   : ahfl::backends::CoreWasmCodegenResult{};
+            check(least.ok() && least.artifact->imports ==
+                                    std::vector<std::string>{"ahfl_cap.cap_42"},
+                  "E2 omits an unreachable final capability from the import authority set");
+        }
+    }
+
+    // Test 12: capability ABI and frame-subset failures publish no artifact.
+    {
+        using namespace ahfl::ir::core;
+        auto wide_symbol = make_e2_core_program();
+        wide_symbol.capabilities[0].symbol_ref.id =
+            static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1u;
+        const auto wide_layout = compute_core_layouts(wide_symbol);
+        const auto wide = wide_layout.table.has_value()
+                              ? ahfl::backends::emit_core_wasm(
+                                    wide_symbol,
+                                    *wide_layout.table,
+                                    {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                              : ahfl::backends::CoreWasmCodegenResult{};
+        check(!wide.artifact.has_value() &&
+                  has_codegen_code(wide,
+                                   ahfl::backends::core_wasm_diag::kInvalidCapabilityAbi),
+              "E2 rejects a SymbolId outside the uint32 import ABI domain");
+
+        auto hidden_expr = make_e2_core_program();
+        hidden_expr.flows[0].exprs.push_back(hidden_expr.flows[0].exprs[0]);
+        const auto hidden_layout = compute_core_layouts(hidden_expr);
+        const auto hidden = hidden_layout.table.has_value()
+                                ? ahfl::backends::emit_core_wasm(
+                                      hidden_expr,
+                                      *hidden_layout.table,
+                                      {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                                : ahfl::backends::CoreWasmCodegenResult{};
+        check(!hidden.artifact.has_value() &&
+                  has_codegen_code(
+                      hidden,
+                      ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame),
+              "E2 rejects a hidden capability-frame expression with no artifact");
+
+        auto construction = make_e2_core_program();
+        CoreConstructExpr construct_input;
+        construct_input.type_name = "app::Input";
+        construct_input.type_id = CoreTypeId{0};
+        construct_input.resolved = true;
+        construction.flows[0].exprs[0].node = std::move(construct_input);
+        check(rejects_capability_frame(construction),
+              "E2 rejects a constructed capability argument with no artifact");
+
+        auto literal = make_e2_core_program();
+        literal.value_types.push_back(CoreValueType{CoreVtInt{
+            std::make_pair<std::int64_t, std::int64_t>(1, 1)}});
+        literal.flows[0].exprs[0].node =
+            CoreLiteralExpr{CoreLiteralKind::Integer, "1"};
+        literal.flows[0].exprs[0].result_type = CoreValueTypeId{2};
+        literal.flows[0].value_types[0] = CoreValueTypeId{2};
+        literal.capabilities[0].param_types[0] = CoreValueTypeId{2};
+        check(rejects_capability_frame(literal),
+              "E2 rejects a literal capability argument with no artifact");
+
+        auto projection = make_e2_core_program();
+        CoreTypeDecl nested;
+        nested.kind = CoreTypeDecl::Kind::Struct;
+        nested.name = "app::Nested";
+        projection.types.push_back(std::move(nested));
+        projection.value_types.push_back(
+            CoreValueType{CoreVtNominal{CoreTypeId{2}, {}, std::nullopt}});
+        auto &projection_input = projection.types[0];
+        projection_input.fields = {"nested"};
+        projection_input.field_nominal_types = {CoreTypeId{2}};
+        projection_input.field_has_default = {false};
+        CoreMemberTypeTemplateNode nested_template;
+        nested_template.kind = CoreMemberTypeTemplateKind::Concrete;
+        nested_template.concrete = CoreValueTypeId{2};
+        projection_input.member_type_templates = {nested_template};
+        projection_input.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+        auto &projection_expr = projection.flows[0].exprs[0];
+        auto &projection_path = std::get<CorePathExpr>(projection_expr.node);
+        projection_path.members = {"nested"};
+        projection_path.projection = {
+            CoreProjectionStep{CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{2}}};
+        projection_expr.result_type = CoreValueTypeId{2};
+        projection.flows[0].value_types[0] = CoreValueTypeId{2};
+        projection.capabilities[0].param_types[0] = CoreValueTypeId{2};
+        check(rejects_capability_frame(projection),
+              "E2 rejects a projected capability argument with no artifact");
+
+        auto coercion = make_e2_core_program();
+        coercion.value_types.push_back(CoreValueType{CoreVtInt{
+            std::make_pair<std::int64_t, std::int64_t>(0, 0)}});
+        coercion.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}});
+        auto &coercion_flow = coercion.flows[0];
+        coercion_flow.exprs[0].node = CoreLiteralExpr{CoreLiteralKind::Integer, "0"};
+        coercion_flow.exprs[0].result_type = CoreValueTypeId{2};
+        coercion_flow.exprs.push_back(
+            CoreExpr{CoreCoerceExpr{CoreValueId{0}, CoreCoercionPlanId{0}},
+                     std::nullopt,
+                     CoreValueTypeId{3}});
+        coercion_flow.value_count = 3;
+        coercion_flow.value_types = {
+            CoreValueTypeId{2}, CoreValueTypeId{3}, CoreValueTypeId{1}};
+        CoreCoercionOp widen;
+        widen.kind = CoreCoercionOpKind::IntWiden;
+        widen.child = CoreCoercionPlanId{CoreCoercionPlanId::kInvalid};
+        coercion_flow.coercion_plans = {
+            CoreCoercionPlanNode{CoreValueTypeId{2}, CoreValueTypeId{3}, {widen}}};
+        coercion.capabilities[0].param_types[0] = CoreValueTypeId{3};
+        auto &coercion_statements = coercion_flow.states[0].body.statements;
+        coercion_statements.clear();
+        coercion_statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+        coercion_statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+        coercion_statements.push_back(
+            CoreStmt{CoreCapabilityCallStmt{CoreValueId{2},
+                                            CoreCapabilityId{0},
+                                            "Echo",
+                                            {CoreValueId{1}}},
+                     std::nullopt});
+        coercion_statements.push_back(
+            CoreStmt{CoreReturnStmt{true, CoreValueId{2}}, std::nullopt});
+        check(rejects_capability_frame(coercion),
+              "E2 rejects a coerced capability argument with no artifact");
+
+        auto nested_if = make_e2_core_program();
+        nested_if.value_types.push_back(CoreValueType{CoreVtBool{}});
+        auto &nested_flow = nested_if.flows[0];
+        nested_flow.exprs.push_back(
+            CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
+                     std::nullopt,
+                     CoreValueTypeId{2}});
+        nested_flow.value_count = 4;
+        nested_flow.value_types = {CoreValueTypeId{0},
+                                   CoreValueTypeId{1},
+                                   CoreValueTypeId{2},
+                                   CoreValueTypeId{1}};
+        CoreIfStmt nested_capability;
+        nested_capability.condition = CoreValueId{2};
+        nested_capability.then_region = std::make_unique<CoreRegion>();
+        nested_capability.then_region->statements.push_back(
+            CoreStmt{CoreCapabilityCallStmt{CoreValueId{1},
+                                            CoreCapabilityId{0},
+                                            "Echo",
+                                            {CoreValueId{0}}},
+                     std::nullopt});
+        nested_capability.then_region->statements.push_back(
+            CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+        nested_capability.else_region = std::make_unique<CoreRegion>();
+        nested_capability.else_region->statements.push_back(
+            CoreStmt{CoreCapabilityCallStmt{CoreValueId{3},
+                                            CoreCapabilityId{0},
+                                            "Echo",
+                                            {CoreValueId{0}}},
+                     std::nullopt});
+        nested_capability.else_region->statements.push_back(
+            CoreStmt{CoreReturnStmt{true, CoreValueId{3}}, std::nullopt});
+        auto &nested_statements = nested_flow.states[0].body.statements;
+        nested_statements.clear();
+        nested_statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+        nested_statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{1}}, std::nullopt});
+        nested_statements.push_back(CoreStmt{std::move(nested_capability), std::nullopt});
+        const auto nested_layout = compute_core_layouts(nested_if);
+        const auto nested_emitted = nested_layout.table.has_value()
+                                ? ahfl::backends::emit_core_wasm(
+                                      nested_if,
+                                      *nested_layout.table,
+                                      {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                                : ahfl::backends::CoreWasmCodegenResult{};
+        check(verify_core_program(nested_if).ok() &&
+                  !nested_emitted.artifact.has_value() &&
+                  has_codegen_code(
+                      nested_emitted,
+                      ahfl::backends::core_wasm_diag::kUnsupportedCapabilityFrame) &&
+                  !has_codegen_code(
+                      nested_emitted,
+                      ahfl::backends::core_wasm_diag::kUnsupportedOrchestration),
+              "E2 classifies a capability nested in CoreIf as unsupported frame, not generic orchestration");
+    }
+
+    // Test 13: entry selection and deterministic termination fail closed.
     {
         using namespace ahfl::ir::core;
         auto cycle = make_e1_core_program();

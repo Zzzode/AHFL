@@ -1,0 +1,32 @@
+module wasm::e2_capability;
+
+pub struct InputFrame {
+    value: String;
+}
+
+pub struct OutputFrame {
+    value: String;
+}
+
+capability Echo(request: InputFrame) -> OutputFrame;
+
+pub agent CapabilityAgent {
+    input: InputFrame;
+    context: Unit;
+    output: OutputFrame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for CapabilityAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}

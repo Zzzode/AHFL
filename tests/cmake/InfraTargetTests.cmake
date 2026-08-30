@@ -40,6 +40,20 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;target"
     )
 
+    # KR6.5 E2: exact ahfl_cap import + run2 binary contract. This gate parses
+    # bytes but does not claim execution evidence.
+    add_test(NAME ahflc.emit_wasm.e2_binary_gate
+        COMMAND ${Python3_EXECUTABLE}
+                "${AHFL_TESTS_DIR}/scripts/wasm_e2_binary_gate.py"
+                $<TARGET_FILE:ahflc>
+                "${AHFL_TESTS_DIR}"
+    )
+    set_tests_properties(ahflc.emit_wasm.e2_binary_gate PROPERTIES
+        PASS_REGULAR_EXPRESSION "all KR6.5 E2 binary/structural gates passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC"
+        LABELS "wasm;backend;target;structural"
+    )
+
     add_test(NAME ahflc.emit_wasm.profile_unknown
         COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile bogus
                 "${AHFL_TESTS_DIR}/golden/wasm/e1_identity_agent.ahfl"

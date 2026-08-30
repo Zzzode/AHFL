@@ -19,6 +19,10 @@ inline constexpr std::string_view kEntryAmbiguous = "wasm.ENTRY_AMBIGUOUS";
 inline constexpr std::string_view kUnsupportedOrchestration =
     "wasm.UNSUPPORTED_ORCHESTRATION";
 inline constexpr std::string_view kNonterminatingE1Run = "wasm.NONTERMINATING_E1_RUN";
+inline constexpr std::string_view kInvalidCapabilityAbi =
+    "wasm.INVALID_CAPABILITY_ABI";
+inline constexpr std::string_view kUnsupportedCapabilityFrame =
+    "wasm.UNSUPPORTED_CAPABILITY_FRAME";
 inline constexpr std::string_view kBinaryOverflow = "wasm.BINARY_OVERFLOW";
 inline constexpr std::string_view kInternalInvalid = "wasm.INTERNAL_INVALID";
 } // namespace core_wasm_diag
@@ -50,7 +54,7 @@ struct CoreWasmCodegenResult {
     }
 };
 
-/// Emit the KR6.5 E1 orchestration subset as a deterministic wasm32 binary.
+/// Emit the KR6.5 E1/E2 orchestration subset as a deterministic wasm32 binary.
 /// Pure: neither the verified Core program nor its P4-D layout side artifact is
 /// mutated. Unsupported Core nodes fail closed with no partial artifact.
 [[nodiscard]] CoreWasmCodegenResult

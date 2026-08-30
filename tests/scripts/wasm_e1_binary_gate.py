@@ -115,7 +115,10 @@ def expect_unsupported(ahflc: Path, source: Path) -> None:
     if (
         proc.returncode == 0
         or proc.stdout
-        or "wasm.UNSUPPORTED_ORCHESTRATION" not in stderr
+        or (
+            "wasm.UNSUPPORTED_ORCHESTRATION" not in stderr
+            and "wasm.UNSUPPORTED_CAPABILITY_FRAME" not in stderr
+        )
     ):
         fail(
             f"unsupported CLI fixture did not fail closed ({source.name}): "
@@ -146,6 +149,7 @@ def main(argv: list[str]) -> int:
         "alloc",
         "dealloc",
         "run",
+        "run2",
         "step",
         "current_state",
         "transition_count",
@@ -156,7 +160,7 @@ def main(argv: list[str]) -> int:
     # Fixture declaration order is [Done, Start] with initial Start (id 1).
     # The first global must therefore initialize to i32.const 1, proving the
     # encoder did not silently assume state zero.
-    if not parsed[6].startswith(b"\x04\x7f\x01\x41\x01\x0b"):
+    if not parsed[6].startswith(b"\x05\x7f\x01\x41\x01\x0b"):
         fail("current_state global does not use the non-zero Core initial state id")
 
     # Fixed E1 function index 5 is run. This is deliberately structural proof,
