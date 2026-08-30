@@ -13,6 +13,7 @@
 #include <cassert>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -1619,6 +1620,123 @@ class TypedIrLowerer final {
         auto ref = type_ref_from_type(*type);
         ref.source_range = source_range;
         return ref;
+    }
+
+    // RFC 0026 P4-C sourcing pin: member templates are built HERE, while the
+    // semantics-layer TypePtr still exposes TypeVarT::index. They must never be
+    // reconstructed from FieldDecl::type_ref / EnumVariantDecl TypeRefs: the
+    // general bridge above intentionally erases TypeVarT to Any.
+    [[nodiscard]] bool member_template_contains_type_var(const Type &type) const {
+        const auto any_child_contains = [&](const std::vector<TypePtr> &children) {
+            return std::ranges::any_of(children, [&](const TypePtr child) {
+                return child != nullptr && member_template_contains_type_var(*child);
+            });
+        };
+        return type.visit(types::Overloads{
+            [](const types::TypeVarT &) { return true; },
+            [&](const types::StructT &value) { return any_child_contains(value.type_args); },
+            [&](const types::EnumT &value) { return any_child_contains(value.type_args); },
+            [&](const types::EnumVariantT &value) { return any_child_contains(value.type_args); },
+            [&](const types::FnT &value) {
+                return any_child_contains(value.params) ||
+                       (value.return_type != nullptr &&
+                        member_template_contains_type_var(*value.return_type));
+            },
+            [](const auto &) { return false; },
+        });
+    }
+
+    [[nodiscard]] std::uint32_t
+    append_member_type_template(const Type &type,
+                                std::uint32_t type_param_count,
+                                std::vector<ir::MemberTypeTemplateNode> &arena) const {
+        const auto append_node = [&](ir::MemberTypeTemplateNode node) {
+            if (arena.size() >= ir::kInvalidMemberTypeTemplateNode) {
+                throw std::logic_error("member type template arena exceeds u32 index space");
+            }
+            const auto id = static_cast<std::uint32_t>(arena.size());
+            arena.push_back(std::move(node));
+            return id;
+        };
+
+        // A subtree with no declaration type parameter is already a complete
+        // type. Collapse it to one Concrete node rather than needlessly
+        // decomposing every primitive/monomorphic nominal.
+        if (!member_template_contains_type_var(type)) {
+            ir::MemberTypeTemplateNode node;
+            node.kind = ir::MemberTypeTemplateKind::Concrete;
+            node.type_ref = type_ref_from_type(type);
+            return append_node(std::move(node));
+        }
+
+        return type.visit(types::Overloads{
+            [&](const types::TypeVarT &value) {
+                if (value.index >= type_param_count) {
+                    throw std::logic_error("member type template TypeVar index is out of range");
+                }
+                ir::MemberTypeTemplateNode node;
+                node.kind = ir::MemberTypeTemplateKind::Param;
+                node.param_index = value.index;
+                return append_node(std::move(node));
+            },
+            [&](const types::StructT &value) {
+                ir::MemberTypeTemplateNode node;
+                node.kind = ir::MemberTypeTemplateKind::Nominal;
+                node.children.reserve(value.type_args.size());
+                for (const TypePtr arg : value.type_args) {
+                    if (arg == nullptr) {
+                        throw std::logic_error("member nominal template has a null type argument");
+                    }
+                    node.children.push_back(
+                        append_member_type_template(*arg, type_param_count, arena));
+                }
+                node.type_ref = type_ref_from_type(type);
+                node.type_ref.params.clear();
+                return append_node(std::move(node));
+            },
+            [&](const types::EnumT &value) {
+                ir::MemberTypeTemplateNode node;
+                node.kind = ir::MemberTypeTemplateKind::Nominal;
+                node.children.reserve(value.type_args.size());
+                for (const TypePtr arg : value.type_args) {
+                    if (arg == nullptr) {
+                        throw std::logic_error("member nominal template has a null type argument");
+                    }
+                    node.children.push_back(
+                        append_member_type_template(*arg, type_param_count, arena));
+                }
+                node.type_ref = type_ref_from_type(type);
+                node.type_ref.params.clear();
+                return append_node(std::move(node));
+            },
+            [&](const types::EnumVariantT &) -> std::uint32_t {
+                // The four-kind template schema deliberately models nominal
+                // value types, not the flow-sensitive EnumVariantT subtype.
+                throw std::logic_error("generic member type cannot be an enum-variant refinement");
+            },
+            [&](const types::FnT &value) {
+                if (value.return_type == nullptr) {
+                    throw std::logic_error("member function template is missing return type");
+                }
+                ir::MemberTypeTemplateNode node;
+                node.kind = ir::MemberTypeTemplateKind::Fn;
+                node.children.reserve(value.params.size());
+                for (const TypePtr param : value.params) {
+                    if (param == nullptr) {
+                        throw std::logic_error("member function template has a null parameter");
+                    }
+                    node.children.push_back(
+                        append_member_type_template(*param, type_param_count, arena));
+                }
+                node.fn_return =
+                    append_member_type_template(*value.return_type, type_param_count, arena);
+                return append_node(std::move(node));
+            },
+            [&](const auto &) -> std::uint32_t {
+                throw std::logic_error(
+                    "member template contains a type variable in an unsupported type shape");
+            },
+        });
     }
 
     [[nodiscard]] static ir::EnumVariantPayloadKind
@@ -3487,9 +3605,12 @@ class TypedIrLowerer final {
                 .symbol_ref = symbol_ref_from_decl(decl, "struct declaration"),
                 .type_param_count = static_cast<std::uint32_t>(info.type_param_names.size()),
                 .type_param_variances = ir_variances_of(info.type_param_variances),
+                .member_type_templates = {},
+                .field_type_template_roots = {},
             },
             info.declaration_range);
         lowered.fields.reserve(info.fields.size());
+        lowered.field_type_template_roots.reserve(info.fields.size());
         for (const auto &field : info.fields) {
             lowered.fields.push_back(ir::FieldDecl{
                 .name = field.name,
@@ -3499,6 +3620,8 @@ class TypedIrLowerer final {
                     type_ref_from_required_type(field.type, field.declaration_range, "field type"),
                 .source_range = field.declaration_range,
             });
+            lowered.field_type_template_roots.push_back(append_member_type_template(
+                *field.type, lowered.type_param_count, lowered.member_type_templates));
         }
         return lowered;
     }
@@ -3514,6 +3637,7 @@ class TypedIrLowerer final {
                 .symbol_ref = symbol_ref_from_decl(decl, "enum declaration"),
                 .type_param_count = static_cast<std::uint32_t>(info.type_param_names.size()),
                 .type_param_variances = ir_variances_of(info.type_param_variances),
+                .member_type_templates = {},
             },
             info.declaration_range);
         lowered.variants.reserve(info.variants.size());
@@ -3525,10 +3649,16 @@ class TypedIrLowerer final {
                 .fields = {},
                 .source_range = variant.declaration_range,
             };
+            lowered_variant.payload_type_template_roots.reserve(
+                variant.payload_kind == EnumVariantPayloadKind::Tuple ? variant.payload.size()
+                                                                       : variant.fields.size());
             lowered_variant.payload.reserve(variant.payload.size());
             for (const auto payload : variant.payload) {
                 lowered_variant.payload.push_back(type_ref_from_required_type(
                     payload, variant.declaration_range, "enum variant payload type"));
+                lowered_variant.payload_type_template_roots.push_back(
+                    append_member_type_template(
+                        *payload, lowered.type_param_count, lowered.member_type_templates));
             }
             lowered_variant.fields.reserve(variant.fields.size());
             for (const auto &field : variant.fields) {
@@ -3540,6 +3670,9 @@ class TypedIrLowerer final {
                         field.has_default ? lower_expr_range(field.default_value_range) : nullptr,
                     .source_range = field.declaration_range,
                 });
+                lowered_variant.payload_type_template_roots.push_back(
+                    append_member_type_template(
+                        *field.type, lowered.type_param_count, lowered.member_type_templates));
             }
             lowered.variants.push_back(std::move(lowered_variant));
         }

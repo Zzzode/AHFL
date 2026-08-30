@@ -22,6 +22,40 @@ enum class Variance {
     Contravariant,
 };
 
+// RFC 0026 P4-C: declaration-owned, recursively compositional member-type
+// templates. Generic declaration members cannot use TypeRef as their source of
+// truth because the general Typed HIR -> AHFL-IR type-ref bridge intentionally
+// erases TypeVarT to Any. The lowering bridge therefore builds this flat arena
+// directly from semantics TypePtr values while their declaration-order
+// TypeVarT::index is still available.
+//
+// Nodes are emitted in postorder: every child id is smaller than its parent id.
+// Struct field roots and enum-variant slot roots index the declaration-owned
+// arena. The arena is proof data for later Core materialization; it is inert in
+// AHFL-IR execution and does not duplicate variance metadata.
+enum class MemberTypeTemplateKind {
+    Concrete,
+    Param,
+    Nominal,
+    Fn,
+};
+
+inline constexpr std::uint32_t kInvalidMemberTypeTemplateNode{0xFFFFFFFFu};
+
+struct MemberTypeTemplateNode {
+    MemberTypeTemplateKind kind{MemberTypeTemplateKind::Concrete};
+    // Concrete: the complete member type. Nominal: the resolved Struct/Enum
+    // base with no TypeRef params; `children` carries its type arguments.
+    // Param/Fn: must remain an empty (Unresolved) TypeRef.
+    TypeRef type_ref{};
+    // Param only. This is declaration-order identity, never a name lookup.
+    std::uint32_t param_index{0};
+    // Nominal: argument template ids. Fn: parameter template ids.
+    std::vector<std::uint32_t> children{};
+    // Fn only: return template id. All other kinds use the invalid sentinel.
+    std::uint32_t fn_return{kInvalidMemberTypeTemplateNode};
+};
+
 // ----------------------------------------------------------------------------
 // Declaration Provenance
 // ----------------------------------------------------------------------------
@@ -87,6 +121,9 @@ struct StructDecl {
     // type_param_count once populated). 0 / empty for a monomorphic struct.
     std::uint32_t type_param_count{0};
     std::vector<Variance> type_param_variances;
+    std::vector<MemberTypeTemplateNode> member_type_templates;
+    // Parallel to `fields`; each entry is a root in member_type_templates.
+    std::vector<std::uint32_t> field_type_template_roots;
 };
 
 enum class EnumVariantPayloadKind {
@@ -108,6 +145,8 @@ struct EnumVariantDecl {
     std::vector<TypeRef> payload{};
     std::vector<EnumVariantFieldDecl> fields{};
     SourceRangeOpt source_range{};
+    // Parallel to tuple `payload` or struct `fields`; empty for Unit.
+    std::vector<std::uint32_t> payload_type_template_roots{};
 };
 
 /// Enum declaration: enum Name { Unit, Tuple(T), Struct { field: T } }
@@ -119,6 +158,8 @@ struct EnumDecl {
     // RFC 0026 P4 (coercion): see StructDecl::type_param_count/variances.
     std::uint32_t type_param_count{0};
     std::vector<Variance> type_param_variances;
+    // Shared by every variant; roots live on each EnumVariantDecl.
+    std::vector<MemberTypeTemplateNode> member_type_templates;
 };
 
 /// Parameter declaration

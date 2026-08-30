@@ -238,6 +238,20 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     return "invalid";
 }
 
+[[nodiscard]] std::string_view member_type_template_kind_name(ir::MemberTypeTemplateKind kind) {
+    switch (kind) {
+    case ir::MemberTypeTemplateKind::Concrete:
+        return "concrete";
+    case ir::MemberTypeTemplateKind::Param:
+        return "param";
+    case ir::MemberTypeTemplateKind::Nominal:
+        return "nominal";
+    case ir::MemberTypeTemplateKind::Fn:
+        return "fn";
+    }
+    return "invalid";
+}
+
 [[nodiscard]] std::string type_name(const ir::TypeRef &ref) {
     return std::string(ir::type_display_name(ref, "Any"));
 }
@@ -433,6 +447,44 @@ class IrJsonPrinter final {
         print_array(indent_level, [&](const auto &item) {
             for (const auto v : values) {
                 item([&]() { write_string(variance_json_name(v)); });
+            }
+        });
+    }
+
+    void print_u32_array(const std::vector<std::uint32_t> &values, int indent_level) {
+        print_array(indent_level, [&](const auto &item) {
+            for (const auto value : values) {
+                item([&]() { write_index(value); });
+            }
+        });
+    }
+
+    void print_member_type_templates(const std::vector<ir::MemberTypeTemplateNode> &nodes,
+                                     int indent_level) {
+        print_array(indent_level, [&](const auto &item) {
+            for (const auto &node : nodes) {
+                item([&]() {
+                    print_object(indent_level + 1, [&](const auto &field) {
+                        field("kind",
+                              [&]() { write_string(member_type_template_kind_name(node.kind)); });
+                        if (node.kind == ir::MemberTypeTemplateKind::Concrete ||
+                            node.kind == ir::MemberTypeTemplateKind::Nominal) {
+                            field("type_ref",
+                                  [&]() { print_type_ref(node.type_ref, indent_level + 2); });
+                        }
+                        if (node.kind == ir::MemberTypeTemplateKind::Param) {
+                            field("param_index", [&]() { write_index(node.param_index); });
+                        }
+                        if (node.kind == ir::MemberTypeTemplateKind::Nominal ||
+                            node.kind == ir::MemberTypeTemplateKind::Fn) {
+                            field("children",
+                                  [&]() { print_u32_array(node.children, indent_level + 2); });
+                        }
+                        if (node.kind == ir::MemberTypeTemplateKind::Fn) {
+                            field("return", [&]() { write_index(node.fn_return); });
+                        }
+                    });
+                });
             }
         });
     }
@@ -1625,6 +1677,17 @@ class IrJsonPrinter final {
                                 print_variances(value.type_param_variances, indent_level + 1);
                             });
                         }
+                        if (!value.member_type_templates.empty() ||
+                            !value.field_type_template_roots.empty()) {
+                            field("member_type_templates", [&]() {
+                                print_member_type_templates(
+                                    value.member_type_templates, indent_level + 1);
+                            });
+                            field("field_type_template_roots", [&]() {
+                                print_u32_array(
+                                    value.field_type_template_roots, indent_level + 1);
+                            });
+                        }
                         field("fields", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
                                 for (const auto &struct_field : value.fields) {
@@ -1677,6 +1740,12 @@ class IrJsonPrinter final {
                                 print_variances(value.type_param_variances, indent_level + 1);
                             });
                         }
+                        if (!value.member_type_templates.empty()) {
+                            field("member_type_templates", [&]() {
+                                print_member_type_templates(
+                                    value.member_type_templates, indent_level + 1);
+                            });
+                        }
                         field("variants", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
                                 for (const auto &variant : value.variants) {
@@ -1689,6 +1758,13 @@ class IrJsonPrinter final {
                                             });
                                             print_source_range_field(
                                                 entry, variant.source_range, indent_level + 3);
+                                            if (!variant.payload_type_template_roots.empty()) {
+                                                entry("payload_type_template_roots", [&]() {
+                                                    print_u32_array(
+                                                        variant.payload_type_template_roots,
+                                                        indent_level + 3);
+                                                });
+                                            }
                                             entry("payload", [&]() {
                                                 print_array(
                                                     indent_level + 3,
@@ -2533,6 +2609,27 @@ using ahfl::json::JsonValue;
     return false;
 }
 
+[[nodiscard]] bool parse_member_type_template_kind(std::string_view s,
+                                                   ir::MemberTypeTemplateKind &out) {
+    if (s == "concrete") {
+        out = ir::MemberTypeTemplateKind::Concrete;
+        return true;
+    }
+    if (s == "param") {
+        out = ir::MemberTypeTemplateKind::Param;
+        return true;
+    }
+    if (s == "nominal") {
+        out = ir::MemberTypeTemplateKind::Nominal;
+        return true;
+    }
+    if (s == "fn") {
+        out = ir::MemberTypeTemplateKind::Fn;
+        return true;
+    }
+    return false;
+}
+
 [[nodiscard]] bool parse_capability_effect_kind(std::string_view s, ir::CapabilityEffectKind &out) {
     if (s == "unknown") { out = ir::CapabilityEffectKind::Unknown; return true; }
     if (s == "read") { out = ir::CapabilityEffectKind::Read; return true; }
@@ -2669,6 +2766,67 @@ class IrJsonReader final {
             ir::Variance variance{};
             if (!parse_variance(*name, variance)) { fail(); return result; }
             result.push_back(variance);
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::vector<std::uint32_t> parse_u32_array(const JsonValue &obj,
+                                                             std::string_view key) {
+        std::vector<std::uint32_t> result;
+        const auto *field = obj.get(key);
+        if (field == nullptr) {
+            return result;
+        }
+        if (!field->is_array()) {
+            fail();
+            return result;
+        }
+        result.reserve(field->array_items.size());
+        for (const auto &item : field->array_items) {
+            const auto value = item->as_int();
+            if (!value.has_value() || *value < 0 ||
+                *value > static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
+                fail();
+                return result;
+            }
+            result.push_back(static_cast<std::uint32_t>(*value));
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::vector<ir::MemberTypeTemplateNode>
+    parse_member_type_templates(const JsonValue &obj) {
+        std::vector<ir::MemberTypeTemplateNode> result;
+        const auto *field = obj.get("member_type_templates");
+        if (field == nullptr) {
+            return result;
+        }
+        if (!field->is_array()) {
+            fail();
+            return result;
+        }
+        result.reserve(field->array_items.size());
+        for (const auto &item : field->array_items) {
+            if (!item->is_object()) {
+                fail();
+                return result;
+            }
+            ir::MemberTypeTemplateNode node;
+            if (!parse_member_type_template_kind(req_string(*item, "kind"), node.kind)) {
+                fail();
+                return result;
+            }
+            if (const auto *type_ref = item->get("type_ref"); type_ref != nullptr) {
+                if (!type_ref->is_object()) {
+                    fail();
+                    return result;
+                }
+                node.type_ref = this->type_ref(*type_ref);
+            }
+            node.param_index = opt_u32(*item, "param_index", 0);
+            node.children = parse_u32_array(*item, "children");
+            node.fn_return = opt_u32(*item, "return", ir::kInvalidMemberTypeTemplateNode);
+            result.push_back(std::move(node));
         }
         return result;
     }
@@ -3309,6 +3467,9 @@ class IrJsonReader final {
             d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
             d.type_param_count = opt_u32(obj, "type_param_count", 0);
             d.type_param_variances = parse_variances(obj, "type_param_variances");
+            d.member_type_templates = parse_member_type_templates(obj);
+            d.field_type_template_roots =
+                parse_u32_array(obj, "field_type_template_roots");
             const auto *fields = obj.get("fields");
             if (fields != nullptr && fields->is_array()) {
                 for (const auto &item : fields->array_items) {
@@ -3408,6 +3569,7 @@ class IrJsonReader final {
         d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
         d.type_param_count = opt_u32(obj, "type_param_count", 0);
         d.type_param_variances = parse_variances(obj, "type_param_variances");
+        d.member_type_templates = parse_member_type_templates(obj);
         const auto *variants = obj.get("variants");
         if (variants != nullptr && variants->is_array()) {
             for (const auto &item : variants->array_items) {
@@ -3418,6 +3580,8 @@ class IrJsonReader final {
                     fail();
                 }
                 variant.source_range = source_range(*item);
+                variant.payload_type_template_roots =
+                    parse_u32_array(*item, "payload_type_template_roots");
                 const auto *payload = item->get("payload");
                 if (payload != nullptr && payload->is_array()) {
                     for (const auto &slot : payload->array_items) {

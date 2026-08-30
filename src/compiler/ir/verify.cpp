@@ -293,9 +293,193 @@ class ProgramVerifier {
         }
     }
 
+    [[nodiscard]] std::optional<std::uint32_t> member_nominal_arity(const TypeRef &base) const {
+        const auto same_identity = [](const SymbolRef &lhs, const SymbolRef &rhs) {
+            if (lhs.kind != rhs.kind) {
+                return false;
+            }
+            if (lhs.id.has_value() && rhs.id.has_value()) {
+                return *lhs.id == *rhs.id;
+            }
+            return !lhs.canonical_name.empty() && lhs.canonical_name == rhs.canonical_name;
+        };
+        for (const auto &declaration : program_.declarations) {
+            if (base.kind == TypeRefKind::Struct) {
+                if (const auto *decl = std::get_if<StructDecl>(&declaration);
+                    decl != nullptr && same_identity(base.nominal_ref, decl->symbol_ref)) {
+                    return decl->type_param_count;
+                }
+            } else if (base.kind == TypeRefKind::Enum) {
+                if (const auto *decl = std::get_if<EnumDecl>(&declaration);
+                    decl != nullptr && same_identity(base.nominal_ref, decl->symbol_ref)) {
+                    return decl->type_param_count;
+                }
+            }
+        }
+        // A resolved stdlib nominal may be referenced while its declaration is
+        // intentionally not inlined into this Program. Core's builtin SSOT gate
+        // performs the authoritative arity check for that case.
+        return std::nullopt;
+    }
+
+    void verify_member_type_templates(const std::vector<MemberTypeTemplateNode> &nodes,
+                                      const std::vector<std::uint32_t> &roots,
+                                      std::uint32_t type_param_count,
+                                      const std::string &path) {
+        if (!is_backend_ready_mode(mode_)) {
+            return;
+        }
+
+        std::vector<bool> reachable(nodes.size(), false);
+        std::vector<std::uint32_t> worklist;
+        const auto add_reference = [&](std::uint32_t child,
+                                       std::uint32_t parent,
+                                       const std::string &child_path) {
+            if (child >= nodes.size()) {
+                add_error(child_path,
+                          "member template node id " + std::to_string(child) +
+                              " is out of range for arena size " + std::to_string(nodes.size()));
+                return;
+            }
+            if (child >= parent) {
+                add_error(child_path,
+                          "member template children must precede their parent in postorder");
+            }
+        };
+
+        for (std::uint32_t index = 0; index < roots.size(); ++index) {
+            const auto root = roots[index];
+            const auto root_path = path + ".roots[" + std::to_string(index) + "]";
+            if (root >= nodes.size()) {
+                add_error(root_path,
+                          "member template root " + std::to_string(root) +
+                              " is out of range for arena size " + std::to_string(nodes.size()));
+            } else {
+                worklist.push_back(root);
+            }
+        }
+
+        while (!worklist.empty()) {
+            const auto id = worklist.back();
+            worklist.pop_back();
+            if (reachable[id]) {
+                continue;
+            }
+            reachable[id] = true;
+            const auto &node = nodes[id];
+            for (const auto child : node.children) {
+                if (child < nodes.size()) {
+                    worklist.push_back(child);
+                }
+            }
+            if (node.fn_return < nodes.size()) {
+                worklist.push_back(node.fn_return);
+            }
+        }
+
+        const TypeRef empty_type_ref{};
+        for (std::uint32_t index = 0; index < nodes.size(); ++index) {
+            const auto &node = nodes[index];
+            const auto node_path = path + ".nodes[" + std::to_string(index) + "]";
+            const auto raw = static_cast<std::underlying_type_t<MemberTypeTemplateKind>>(node.kind);
+            const bool legal = node.kind == MemberTypeTemplateKind::Concrete ||
+                               node.kind == MemberTypeTemplateKind::Param ||
+                               node.kind == MemberTypeTemplateKind::Nominal ||
+                               node.kind == MemberTypeTemplateKind::Fn;
+            if (!legal) {
+                add_error(node_path + ".kind",
+                          "illegal member template kind value " + std::to_string(raw));
+                continue;
+            }
+            if (!reachable[index]) {
+                add_error(node_path, "orphan member template node is not reachable from any root");
+            }
+
+            switch (node.kind) {
+            case MemberTypeTemplateKind::Concrete:
+                verify_type_ref(node.type_ref, node_path + ".type_ref");
+                if (node.type_ref.kind == TypeRefKind::Unresolved) {
+                    add_error(node_path + ".type_ref", "concrete template type is unresolved");
+                }
+                if (node.param_index != 0 || !node.children.empty() ||
+                    node.fn_return != kInvalidMemberTypeTemplateNode) {
+                    add_error(node_path, "concrete template carries fields for another kind");
+                }
+                break;
+            case MemberTypeTemplateKind::Param:
+                if (!type_refs_equal(node.type_ref, empty_type_ref) || !node.children.empty() ||
+                    node.fn_return != kInvalidMemberTypeTemplateNode) {
+                    add_error(node_path, "parameter template carries fields for another kind");
+                }
+                if (node.param_index >= type_param_count) {
+                    add_error(node_path + ".param_index",
+                              "parameter index " + std::to_string(node.param_index) +
+                                  " is out of range for declaration arity " +
+                                  std::to_string(type_param_count));
+                }
+                break;
+            case MemberTypeTemplateKind::Nominal:
+                verify_type_ref(node.type_ref, node_path + ".type_ref");
+                if ((node.type_ref.kind != TypeRefKind::Struct &&
+                     node.type_ref.kind != TypeRefKind::Enum) ||
+                    !node.type_ref.variant_name.empty() || !node.type_ref.params.empty() ||
+                    node.type_ref.first != nullptr || node.type_ref.second != nullptr) {
+                    add_error(node_path + ".type_ref",
+                              "nominal template base must be a resolved Struct/Enum without "
+                              "embedded type arguments");
+                }
+                if (node.param_index != 0 || node.fn_return != kInvalidMemberTypeTemplateNode) {
+                    add_error(node_path, "nominal template carries fields for another kind");
+                }
+                if (const auto arity = member_nominal_arity(node.type_ref);
+                    arity.has_value() && node.children.size() != *arity) {
+                    add_error(node_path + ".children",
+                              "nominal template argument count (" +
+                                  std::to_string(node.children.size()) +
+                                  ") must equal referenced declaration arity (" +
+                                  std::to_string(*arity) + ")");
+                }
+                for (std::uint32_t child_index = 0; child_index < node.children.size();
+                     ++child_index) {
+                    add_reference(node.children[child_index],
+                                  index,
+                                  node_path + ".children[" + std::to_string(child_index) + "]");
+                }
+                break;
+            case MemberTypeTemplateKind::Fn:
+                if (!type_refs_equal(node.type_ref, empty_type_ref) || node.param_index != 0) {
+                    add_error(node_path, "function template carries fields for another kind");
+                }
+                for (std::uint32_t child_index = 0; child_index < node.children.size();
+                     ++child_index) {
+                    add_reference(node.children[child_index],
+                                  index,
+                                  node_path + ".children[" + std::to_string(child_index) + "]");
+                }
+                if (node.fn_return == kInvalidMemberTypeTemplateNode) {
+                    add_error(node_path + ".return", "function template is missing return node");
+                } else {
+                    add_reference(node.fn_return, index, node_path + ".return");
+                }
+                break;
+            }
+        }
+    }
+
     void verify_decl(const StructDecl &decl, const std::string &path) {
         verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Type, decl.name);
         verify_variance_metadata(decl.type_param_count, decl.type_param_variances, path);
+        if (is_backend_ready_mode(mode_) &&
+            decl.field_type_template_roots.size() != decl.fields.size()) {
+            add_error(path + ".field_type_template_roots",
+                      "field template root count (" +
+                          std::to_string(decl.field_type_template_roots.size()) +
+                          ") must equal field count (" + std::to_string(decl.fields.size()) + ")");
+        }
+        verify_member_type_templates(decl.member_type_templates,
+                                     decl.field_type_template_roots,
+                                     decl.type_param_count,
+                                     path + ".member_type_templates");
         for (std::uint32_t index = 0; index < decl.fields.size(); ++index) {
             const auto field_path = path + ".fields[" + std::to_string(index) + "]";
             verify_optional_expr_ref(decl.fields[index].default_value, field_path + ".default");
@@ -307,6 +491,7 @@ class ProgramVerifier {
     void verify_decl(const EnumDecl &decl, const std::string &path) {
         verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Type, decl.name);
         verify_variance_metadata(decl.type_param_count, decl.type_param_variances, path);
+        std::vector<std::uint32_t> template_roots;
         for (std::uint32_t index = 0; index < decl.variants.size(); ++index) {
             const auto &variant = decl.variants[index];
             const auto variant_path = path + ".variants[" + std::to_string(index) + "](" +
@@ -341,6 +526,23 @@ class ProgramVerifier {
                 }
                 break;
             }
+            const auto expected_template_roots =
+                variant.payload_kind == EnumVariantPayloadKind::Tuple
+                    ? variant.payload.size()
+                    : (variant.payload_kind == EnumVariantPayloadKind::Struct
+                           ? variant.fields.size()
+                           : 0);
+            if (is_backend_ready_mode(mode_) &&
+                variant.payload_type_template_roots.size() != expected_template_roots) {
+                add_error(variant_path + ".payload_type_template_roots",
+                          "payload template root count (" +
+                              std::to_string(variant.payload_type_template_roots.size()) +
+                              ") must equal active payload slot count (" +
+                              std::to_string(expected_template_roots) + ")");
+            }
+            template_roots.insert(template_roots.end(),
+                                  variant.payload_type_template_roots.begin(),
+                                  variant.payload_type_template_roots.end());
             for (std::uint32_t payload_index = 0; payload_index < variant.payload.size();
                  ++payload_index) {
                 verify_type_ref(variant.payload[payload_index],
@@ -360,6 +562,10 @@ class ProgramVerifier {
                 verify_source_range(field.source_range, field_path, "source range");
             }
         }
+        verify_member_type_templates(decl.member_type_templates,
+                                     template_roots,
+                                     decl.type_param_count,
+                                     path + ".member_type_templates");
     }
 
     void verify_decl(const CapabilityDecl &decl, const std::string &path) {

@@ -73,6 +73,168 @@ TEST_CASE("IR JSON deserializer rejects malformed input") {
     CHECK_FALSE(ahfl::parse_program_ir_json("[]").has_value()); // not an object
 }
 
+namespace {
+[[nodiscard]] ahfl::ir::Program member_template_json_program() {
+    using namespace ahfl::ir;
+    Program program;
+    StructDecl box;
+    box.name = "Box";
+    box.symbol_ref = SymbolRef{.kind = SymbolRefKind::Type, .canonical_name = "app::Box", .id = 7};
+    box.type_param_count = 1;
+    box.type_param_variances = {Variance::Covariant};
+    FieldDecl field;
+    field.name = "value";
+    field.type_ref.kind = TypeRefKind::Any; // general prototype bridge shape
+    box.fields.push_back(std::move(field));
+    MemberTypeTemplateNode param;
+    param.kind = MemberTypeTemplateKind::Param;
+    param.param_index = 0;
+    box.member_type_templates.push_back(std::move(param));
+    box.field_type_template_roots = {0};
+    program.declarations.emplace_back(std::move(box));
+
+    EnumDecl packet;
+    packet.name = "Packet";
+    packet.symbol_ref = SymbolRef{.kind = SymbolRefKind::Type,
+                                  .canonical_name = "app::Packet",
+                                  .id = 8};
+    packet.type_param_count = 1;
+    packet.type_param_variances = {Variance::Covariant};
+    EnumVariantDecl one;
+    one.name = "One";
+    one.payload_kind = EnumVariantPayloadKind::Tuple;
+    TypeRef erased_payload;
+    erased_payload.kind = TypeRefKind::Any;
+    one.payload.push_back(std::move(erased_payload));
+    one.payload_type_template_roots = {0};
+    packet.variants.push_back(std::move(one));
+    MemberTypeTemplateNode enum_param;
+    enum_param.kind = MemberTypeTemplateKind::Param;
+    enum_param.param_index = 0;
+    packet.member_type_templates.push_back(std::move(enum_param));
+    program.declarations.emplace_back(std::move(packet));
+    return program;
+}
+
+[[nodiscard]] std::string print_json(const ahfl::ir::Program &program) {
+    std::ostringstream out;
+    ahfl::print_program_ir_json(program, out);
+    return out.str();
+}
+
+[[nodiscard]] std::string
+replace_json_array(std::string json, std::string_view key, std::string_view replacement) {
+    const auto key_pos = json.find(std::string{"\""} + std::string(key) + "\"");
+    if (key_pos == std::string::npos) {
+        return {};
+    }
+    const auto begin = json.find('[', key_pos);
+    if (begin == std::string::npos) {
+        return {};
+    }
+    std::size_t depth = 0;
+    for (std::size_t pos = begin; pos < json.size(); ++pos) {
+        if (json[pos] == '[') {
+            ++depth;
+        } else if (json[pos] == ']' && --depth == 0) {
+            json.replace(begin, pos - begin + 1, replacement);
+            return json;
+        }
+    }
+    return {};
+}
+} // namespace
+
+TEST_CASE("IR JSON round-trips declaration member type templates") {
+    using namespace ahfl::ir;
+    const auto first = print_json(member_template_json_program());
+    const auto reparsed = ahfl::parse_program_ir_json(first);
+    REQUIRE(reparsed.has_value());
+    CHECK(print_json(*reparsed) == first);
+    REQUIRE(reparsed->declarations.size() == 2);
+    const auto *box = std::get_if<StructDecl>(&reparsed->declarations[0]);
+    REQUIRE(box != nullptr);
+    REQUIRE(box->member_type_templates.size() == 1);
+    CHECK(box->member_type_templates[0].kind == MemberTypeTemplateKind::Param);
+    CHECK(box->member_type_templates[0].param_index == 0);
+    CHECK(box->field_type_template_roots == std::vector<std::uint32_t>{0});
+    const auto *packet = std::get_if<EnumDecl>(&reparsed->declarations[1]);
+    REQUIRE(packet != nullptr);
+    REQUIRE(packet->member_type_templates.size() == 1);
+    REQUIRE(packet->variants.size() == 1);
+    CHECK(packet->variants[0].payload_type_template_roots ==
+          std::vector<std::uint32_t>{0});
+}
+
+TEST_CASE("IR JSON member template wire format fails closed") {
+    const auto valid = print_json(member_template_json_program());
+
+    SUBCASE("unknown kind") {
+        auto malformed = valid;
+        const auto pos = malformed.find("\"kind\": \"param\"");
+        REQUIRE(pos != std::string::npos);
+        malformed.replace(
+            pos, std::string_view{"\"kind\": \"param\""}.size(), "\"kind\": \"future\"");
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("templates must be an array") {
+        const auto malformed = replace_json_array(valid, "member_type_templates", "{}");
+        REQUIRE_FALSE(malformed.empty());
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("template items must be objects") {
+        const auto malformed = replace_json_array(valid, "member_type_templates", "[1]");
+        REQUIRE_FALSE(malformed.empty());
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("template children must be an array") {
+        auto malformed = valid;
+        const auto pos = malformed.find("\"param_index\": 0");
+        REQUIRE(pos != std::string::npos);
+        malformed.insert(pos, "\"children\": {},\n          ");
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("template type_ref must be an object") {
+        auto malformed = valid;
+        const auto pos = malformed.find("\"param_index\": 0");
+        REQUIRE(pos != std::string::npos);
+        malformed.insert(pos, "\"type_ref\": 1,\n          ");
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("param indices reject negative numbers") {
+        auto malformed = valid;
+        const auto pos = malformed.find("\"param_index\": 0");
+        REQUIRE(pos != std::string::npos);
+        malformed.replace(pos, std::string_view{"\"param_index\": 0"}.size(),
+                          "\"param_index\": -1");
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("param indices reject values above u32") {
+        auto malformed = valid;
+        const auto pos = malformed.find("\"param_index\": 0");
+        REQUIRE(pos != std::string::npos);
+        malformed.replace(pos, std::string_view{"\"param_index\": 0"}.size(),
+                          "\"param_index\": 4294967296");
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("root ids reject negative numbers") {
+        const auto malformed = replace_json_array(valid, "field_type_template_roots", "[-1]");
+        REQUIRE_FALSE(malformed.empty());
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("root ids reject values above u32") {
+        const auto malformed =
+            replace_json_array(valid, "field_type_template_roots", "[4294967296]");
+        REQUIRE_FALSE(malformed.empty());
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+    SUBCASE("root ids must be an array") {
+        const auto malformed = replace_json_array(valid, "field_type_template_roots", "{}");
+        REQUIRE_FALSE(malformed.empty());
+        CHECK_FALSE(ahfl::parse_program_ir_json(malformed).has_value());
+    }
+}
+
 // RFC 0026 P4 (coercion) F1: a NON-EMPTY LetStatement adjustment plan must
 // round-trip through IR JSON byte-for-byte (a public IR field must never
 // silent-drop). Builds a program

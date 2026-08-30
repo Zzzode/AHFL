@@ -6,12 +6,15 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <variant>
+#include <vector>
 
 // RFC 0026 P4-A nominal-identity bridge fidelity + fail-closed battery.
 //
@@ -341,5 +344,236 @@ TEST_CASE("BackendReady verifier rejects a generic nominal missing its variance 
         program.declarations.emplace_back(make_generic_struct(0, {}));
         CHECK_FALSE(has_variance_length_error(
             ir::verify_ir_program(program, ir::IrVerificationMode::BackendReady)));
+    }
+}
+
+// RFC 0026 P4-C C1: member templates must be sourced from semantics TypePtr,
+// before the general TypeRef bridge erases TypeVarT to Any. This real frontend
+// probe covers all four recursive template kinds and both struct/enum root
+// shapes, including nested collection and function templates.
+namespace {
+constexpr std::string_view kMemberTemplateSource = R"AHFL(
+module std::collections;
+
+struct List<T> {}
+struct Map<K, V> {}
+struct Box<T> {
+    value: T;
+    nested: List<T>(4);
+    transform: Fn(T) -> List<T>(4);
+}
+
+enum Packet<T> {
+    Empty,
+    One(T),
+    Named { table: Map<String, T>(8) },
+}
+)AHFL";
+
+[[nodiscard]] std::optional<ir::Program> lower_member_templates() {
+    const Frontend frontend;
+    auto parse =
+        frontend.parse_text("member_type_templates.ahfl", std::string(kMemberTemplateSource));
+    if (parse.has_errors() || parse.program == nullptr) {
+        return std::nullopt;
+    }
+    const Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    if (resolve.has_errors()) {
+        return std::nullopt;
+    }
+    const TypeChecker checker;
+    const auto type_result = checker.check(*parse.program, resolve);
+    if (type_result.has_errors()) {
+        return std::nullopt;
+    }
+    return lower_typed_program(type_result.typed_program, *parse.program);
+}
+
+template <typename T> T *find_decl(ir::Program &program, std::string_view name) {
+    for (auto &decl : program.declarations) {
+        if (auto *value = std::get_if<T>(&decl); value != nullptr && value->name == name) {
+            return value;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] bool has_member_template_error(const ir::VerificationResult &result,
+                                             std::string_view text) {
+    return std::ranges::any_of(result.diagnostics, [&](const auto &diagnostic) {
+        return diagnostic.severity == ir::VerificationSeverity::Error &&
+               (diagnostic.path.find(text) != std::string::npos ||
+                diagnostic.message.find(text) != std::string::npos);
+    });
+}
+} // namespace
+
+TEST_CASE("member template bridge preserves TypeVar indices in a recursive flat arena") {
+    auto program = lower_member_templates();
+    REQUIRE(program.has_value());
+    const auto verified = ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady);
+    CHECK_FALSE(verified.has_errors());
+
+    auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+    REQUIRE(box != nullptr);
+    REQUIRE(box->field_type_template_roots == std::vector<std::uint32_t>{0, 2, 6});
+    REQUIRE(box->member_type_templates.size() == 7);
+
+    // The ordinary field TypeRef is still the legacy erased prototype shape.
+    CHECK(box->fields[0].type_ref.kind == ir::TypeRefKind::Any);
+    // The template is the durable SSOT and retains declaration position 0.
+    CHECK(box->member_type_templates[0].kind == ir::MemberTypeTemplateKind::Param);
+    CHECK(box->member_type_templates[0].param_index == 0);
+
+    const auto &nested_list = box->member_type_templates[2];
+    CHECK(nested_list.kind == ir::MemberTypeTemplateKind::Nominal);
+    CHECK(nested_list.type_ref.kind == ir::TypeRefKind::Struct);
+    CHECK(nested_list.type_ref.params.empty());
+    CHECK(nested_list.type_ref.collection_capacity == std::optional<std::uint64_t>{4});
+    CHECK(nested_list.children == std::vector<std::uint32_t>{1});
+
+    const auto &list = box->member_type_templates[5];
+    CHECK(list.kind == ir::MemberTypeTemplateKind::Nominal);
+    CHECK(list.type_ref.kind == ir::TypeRefKind::Struct);
+    CHECK(list.type_ref.collection_capacity == std::optional<std::uint64_t>{4});
+    CHECK(list.children == std::vector<std::uint32_t>{4});
+
+    const auto &fn = box->member_type_templates[6];
+    CHECK(fn.kind == ir::MemberTypeTemplateKind::Fn);
+    CHECK(fn.children == std::vector<std::uint32_t>{3});
+    CHECK(fn.fn_return == 5);
+
+    auto *packet = find_decl<ir::EnumDecl>(*program, "std::collections::Packet");
+    REQUIRE(packet != nullptr);
+    REQUIRE(packet->variants.size() == 3);
+    CHECK(packet->variants[0].payload_type_template_roots.empty());
+    CHECK(packet->variants[1].payload_type_template_roots == std::vector<std::uint32_t>{0});
+    CHECK(packet->variants[2].payload_type_template_roots == std::vector<std::uint32_t>{3});
+    REQUIRE(packet->member_type_templates.size() == 4);
+    CHECK(packet->member_type_templates[1].kind == ir::MemberTypeTemplateKind::Concrete); // String
+    CHECK(packet->member_type_templates[2].kind == ir::MemberTypeTemplateKind::Param);
+    CHECK(packet->member_type_templates[3].kind == ir::MemberTypeTemplateKind::Nominal);
+    CHECK(packet->member_type_templates[3].children == std::vector<std::uint32_t>{1, 2});
+}
+
+TEST_CASE("member template BackendReady verifier fails closed on malformed arenas") {
+    SUBCASE("field roots are parallel to fields") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        box->field_type_template_roots.pop_back();
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "field_type_template_roots"));
+    }
+    SUBCASE("enum payload roots are parallel to active slots") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *packet = find_decl<ir::EnumDecl>(*program, "std::collections::Packet");
+        REQUIRE(packet != nullptr);
+        packet->variants[1].payload_type_template_roots.clear();
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "payload_type_template_roots"));
+    }
+    SUBCASE("root ids are arena-bounded") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        box->field_type_template_roots[0] = 999;
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "out of range for arena"));
+    }
+    SUBCASE("template kind enumerators are closed") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        box->member_type_templates[0].kind =
+            static_cast<ir::MemberTypeTemplateKind>(99);
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "illegal member template kind"));
+    }
+    SUBCASE("kind-specific field masks are enforced") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        box->member_type_templates[0].type_ref.kind = ir::TypeRefKind::Bool;
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "parameter template carries fields"));
+    }
+    SUBCASE("parameter index is declaration-bounded") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        box->member_type_templates[0].param_index = 1;
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "parameter index"));
+    }
+    SUBCASE("children precede parent") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        box->member_type_templates[2].children[0] = 2;
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady), "postorder"));
+    }
+    SUBCASE("function templates require a postorder return node") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        box->member_type_templates[6].fn_return = ir::kInvalidMemberTypeTemplateNode;
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "missing return node"));
+    }
+    SUBCASE("all arena nodes are root-reachable") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        ir::MemberTypeTemplateNode orphan;
+        orphan.kind = ir::MemberTypeTemplateKind::Concrete;
+        orphan.type_ref.kind = ir::TypeRefKind::Bool;
+        box->member_type_templates.push_back(std::move(orphan));
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "orphan member template"));
+    }
+    SUBCASE("nominal template arity matches an in-program declaration") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *packet = find_decl<ir::EnumDecl>(*program, "std::collections::Packet");
+        REQUIRE(packet != nullptr);
+        // Rewrite Map's nominal identity to Packet (arity 1), while leaving its
+        // two children. The declaration-local arity gate must reject it.
+        packet->member_type_templates[3].type_ref.kind = ir::TypeRefKind::Enum;
+        packet->member_type_templates[3].type_ref.canonical_name =
+            packet->symbol_ref.canonical_name;
+        packet->member_type_templates[3].type_ref.nominal_ref = packet->symbol_ref;
+        CHECK(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady),
+            "referenced declaration arity"));
+    }
+    SUBCASE("Structural mode remains permissive") {
+        auto program = lower_member_templates();
+        REQUIRE(program.has_value());
+        auto *box = find_decl<ir::StructDecl>(*program, "std::collections::Box");
+        REQUIRE(box != nullptr);
+        box->field_type_template_roots.clear();
+        CHECK_FALSE(has_member_template_error(
+            ir::verify_ir_program(*program, ir::IrVerificationMode::Structural),
+            "field template root"));
     }
 }
