@@ -18,6 +18,10 @@
 
 namespace ahfl {
 
+// Hash-consing type arena (defined in type_context.hpp). Forward-declared here
+// because monomorphize_decl needs a TypeContext & to intern substituted types.
+class TypeContext;
+
 // ----------------------------------------------------------------------------
 // AssertionKind — typed classifier for statements that produce ExecAssertFailed
 // at runtime (P4-01 / Wave-20 N-5). Replaces the legacy `std::string
@@ -1022,9 +1026,17 @@ decltype(auto) typed_visit(const TypedStatement &stmt, Visitor &&visitor) {
 // index. If `source_decl_index` is out of range, returns `instance_index` ==
 // UINT32_MAX (error path; callers should detect this as an invariant
 // violation). No exceptions.
+//
+// RFC 0026 P4 (coercion): `types` is the TypeContext used to intern any
+// substituted body types. Type arguments from `key.type_args` are bound in
+// source-declaration order and substituted into each cloned statement's
+// `let_type` AND its `let_adjustment` plan TypePtrs, so a generic annotated
+// `let` carries fully-substituted (not pre-substitution) types in the instance.
 struct TypedDecl;
 
-[[nodiscard]] MonomorphizeResult
-monomorphize_decl(TypedProgram &program, std::uint32_t source_decl_index, InstanceKey key) noexcept;
+[[nodiscard]] MonomorphizeResult monomorphize_decl(TypedProgram &program,
+                                                   std::uint32_t source_decl_index,
+                                                   InstanceKey key,
+                                                   TypeContext &types) noexcept;
 
 } // namespace ahfl

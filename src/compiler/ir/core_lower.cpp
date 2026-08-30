@@ -232,7 +232,9 @@ class TypeEnv {
             t.field_has_default.push_back(f.default_value.ptr != nullptr);
             field_type_names.push_back(nominal_type_name(f.type_ref));
         }
-        const auto id = register_type(std::move(t), decl.symbol_ref);
+        const auto id = register_type(std::move(t), decl.symbol_ref,
+                                      RegistrationOrigin::RealIrDecl,
+                                      decl.provenance.source_range);
         pending_field_type_names_.emplace(id.value, std::move(field_type_names));
     }
     void add_enum(const EnumDecl &decl) {
@@ -273,7 +275,9 @@ class TypeEnv {
             t.variant_payloads.push_back(std::move(payload));
             pending_slot_names.push_back(std::move(slot_names));
         }
-        const auto id = register_type(std::move(t), decl.symbol_ref);
+        const auto id = register_type(std::move(t), decl.symbol_ref,
+                                      RegistrationOrigin::RealIrDecl,
+                                      decl.provenance.source_range);
         pending_variant_slot_names_.emplace(id.value, std::move(pending_slot_names));
     }
 
@@ -303,11 +307,12 @@ class TypeEnv {
             }
             // Synthetic std base: a NAME-ONLY resolved-Type ref (no symbol id; the
             // sysroot decl is not inlined). register_type stamps role + arity from
-            // the same SSOT via decorate_from_builtin_ssot.
+            // the same SSOT via decorate_from_builtin_ssot (SyntheticBuiltin origin).
             SymbolRef name_only;
             name_only.kind = SymbolRefKind::Type;
             name_only.canonical_name = canonical;
-            (void)register_type(std::move(t), name_only);
+            (void)register_type(std::move(t), name_only,
+                                RegistrationOrigin::SyntheticBuiltin);
         }
     }
 
@@ -488,7 +493,19 @@ class TypeEnv {
     }
 
   private:
-    [[nodiscard]] CoreTypeId register_type(CoreTypeDecl t, const SymbolRef &ref) {
+    // Where a CoreTypeDecl entered `register_type`. This is an EXPLICIT provenance
+    // flag, never inferred from the decl's metadata shape (Codex P0-1): a real std
+    // decl that happens to arrive with `type_param_count == 0 && variances.empty()`
+    // — e.g. a legacy / deserialized / hand-built AHFL-IR StructDecl that predates
+    // the variance fields — must NOT be silently mistaken for a synthetic base and
+    // stamped past the drift gate. Only `add_builtins` (which fabricates the base
+    // from the descriptor SSOT) is SyntheticBuiltin; every real AHFL-IR decl is
+    // RealIrDecl and is cross-checked exactly.
+    enum class RegistrationOrigin { RealIrDecl, SyntheticBuiltin };
+
+    [[nodiscard]] CoreTypeId register_type(CoreTypeDecl t, const SymbolRef &ref,
+                                           RegistrationOrigin origin,
+                                           SourceRangeOpt source_range = std::nullopt) {
         const auto id = CoreTypeId{static_cast<std::uint32_t>(types_.size())};
         if (ref.id.has_value()) {
             by_id_.emplace(*ref.id, id);
@@ -498,31 +515,34 @@ class TypeEnv {
         }
         t.symbol_ref = ref; // Principle 2: persist resolved-symbol provenance.
         // Decorate role + generic arity + variance from the single builtin nominal
-        // SSOT. Three-way (Codex P1-3): a SYNTHETIC std base (add_builtins, carries
-        // no incoming metadata) is stamped from the descriptor; a REAL std decl
-        // (include_stdlib / inlined / deserialized, carries incoming metadata) is
-        // cross-checked EXACTLY against the descriptor and fail-closed on drift; a
-        // user nominal keeps its incoming count/variance verbatim.
-        decorate_from_builtin_ssot(t);
+        // SSOT. Three-way (Codex P0-1): a SYNTHETIC std base (add_builtins, carries
+        // no real decl) is stamped from the descriptor; a REAL std decl
+        // (include_stdlib / inlined / deserialized, RealIrDecl) is cross-checked
+        // EXACTLY against the descriptor and fail-closed on drift; a user nominal
+        // keeps its incoming count/variance verbatim.
+        decorate_from_builtin_ssot(t, origin, source_range);
         types_.push_back(std::move(t));
         return id;
     }
 
     // If `t.name` matches a builtin nominal descriptor, reconcile its role /
-    // arity / variance against that single SSOT (three-way — see register_type).
-    // A synthetic base arrives with type_param_count == 0 and empty variances
-    // (add_builtins does not set them) and is STAMPED; a real std decl arrives
-    // with its own metadata and must MATCH exactly or is fail-closed. A non-std
-    // nominal matches no descriptor and keeps its incoming (user) metadata.
-    void decorate_from_builtin_ssot(CoreTypeDecl &t) {
+    // arity / variance against that single SSOT, keyed on the EXPLICIT
+    // RegistrationOrigin (Codex P0-1) — never on the decl's metadata shape.
+    // A SyntheticBuiltin base is STAMPED from the descriptor; a RealIrDecl std
+    // decl must MATCH the descriptor exactly (arity AND variance) or is
+    // fail-closed, including the case where it arrives missing both new fields
+    // (count 0 / empty variance), which a shape-based guess would have mistaken
+    // for a synthetic base. A non-std nominal matches no descriptor and keeps its
+    // incoming (user) metadata.
+    void decorate_from_builtin_ssot(CoreTypeDecl &t, RegistrationOrigin origin,
+                                    SourceRangeOpt source_range) {
         for (const BuiltinNominalDescriptor &d : builtin_nominal_table()) {
             if (t.name != d.canonical_name) {
                 continue;
             }
             t.role = d.role;
             const auto descriptor_variances = core_variances_of(d);
-            const bool synthetic = t.type_param_count == 0 && t.variances.empty();
-            if (synthetic) {
+            if (origin == RegistrationOrigin::SyntheticBuiltin) {
                 // Synthetic base: stamp arity + variance from the descriptor.
                 t.type_param_count = d.type_param_count;
                 t.variances = descriptor_variances;
@@ -530,12 +550,13 @@ class TypeEnv {
                        t.variances != descriptor_variances) {
                 // Real std decl whose metadata disagrees with the SSOT: fail-closed
                 // (a stable core lowering diagnostic; the program is not executable).
+                // Principle 5: carry the decl's own source range when it has one.
                 diags_.push_back(CoreLowerDiagnostic{
                     CoreDiagnosticSeverity::Error, std::string(diag::kBuiltinMetadataDrift),
                     "builtin nominal '" + t.name +
                         "' declaration metadata (arity/variance) disagrees with the builtin "
                         "descriptor SSOT",
-                    std::nullopt});
+                    source_range});
                 // Keep the authoritative descriptor values so downstream arity /
                 // variance checks reflect the SSOT, not the corrupt decl.
                 t.type_param_count = d.type_param_count;

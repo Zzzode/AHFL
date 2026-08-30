@@ -3234,3 +3234,99 @@ TEST_CASE("F1: a synthetic builtin base (no real decl) is stamped from the SSOT,
     CHECK(list->type_param_count == 1);
     CHECK(list->variances == std::vector<ir::core::CoreVariance>{ir::core::CoreVariance::Covariant});
 }
+
+TEST_CASE("F1 forward-fix (P0-1): a REAL std List decl missing BOTH new fields still drifts") {
+    // The exact fail-open the shape-based guess allowed: a real std decl that
+    // arrives with type_param_count == 0 AND variances == [] (e.g. legacy /
+    // deserialized IR predating the variance fields). The OLD heuristic
+    // (`count == 0 && variances.empty()`) would misclassify this as a synthetic
+    // base and STAMP it from the descriptor, silently bypassing the drift gate.
+    // With explicit RegistrationOrigin::RealIrDecl it must fail closed instead.
+    ir::AhflIr program;
+    ir::StructDecl list;
+    list.name = "List";
+    list.symbol_ref.kind = ir::SymbolRefKind::Type;
+    list.symbol_ref.canonical_name = "std::collections::List";
+    list.symbol_ref.id = 4242;                      // a REAL resolved symbol
+    list.provenance.source_range = ahfl::SourceRange{.begin_offset = 5, .end_offset = 9};
+    list.type_param_count = 0;                       // BOTH new fields absent —
+    list.type_param_variances = {};                  // the old shape guess's blind spot
+    program.declarations.emplace_back(std::move(list));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_lower_code(result, ir::core::diag::kBuiltinMetadataDrift));
+    CHECK_FALSE(result.is_executable);
+    // Principle 5: the drift diagnostic carries the decl's own source range.
+    bool ranged = false;
+    for (const auto &d : result.diagnostics) {
+        if (d.code == ir::core::diag::kBuiltinMetadataDrift && d.source_range.has_value()) {
+            CHECK(d.source_range->begin_offset == 5);
+            CHECK(d.source_range->end_offset == 9);
+            ranged = true;
+        }
+    }
+    CHECK(ranged);
+}
+
+namespace {
+// A real user generic struct `Box<T> { value: T }` plus a monomorphic consumer
+// so the frontend emits + resolves it. Exercises the true vertical bridge:
+// Sema variance materialization -> TypedDecl -> AHFL StructDecl -> CoreTypeDecl.
+const std::string kUserGenericSource = R"AHFL(
+module bx;
+
+struct Box<T> { value: T; }
+
+fn identity(b: Box<Int>) -> Box<Int> effect Pure decreases 0 { return b; }
+)AHFL";
+} // namespace
+
+TEST_CASE("F1 forward-fix (P1-3): a real frontend Box<T> lowers to Core with its arity + variance") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("user_generic_box", kUserGenericSource);
+    REQUIRE(ahfl_ir.has_value());
+
+    // The AHFL-IR StructDecl for Box carries the materialized generic metadata
+    // (arity 1, one variance entry) computed by the real Sema variance pass — NOT
+    // a hand-set vector. `value: T` is covariant, so T's variance is Covariant.
+    const ir::StructDecl *ahfl_box = nullptr;
+    for (const auto &d : ahfl_ir->declarations) {
+        if (const auto *s = std::get_if<ir::StructDecl>(&d);
+            s != nullptr && (s->name == "Box" || s->symbol_ref.canonical_name == "bx::Box")) {
+            ahfl_box = s;
+        }
+    }
+    REQUIRE(ahfl_box != nullptr);
+    CHECK(ahfl_box->type_param_count == 1);
+    REQUIRE(ahfl_box->type_param_variances.size() == 1);
+    CHECK(ahfl_box->type_param_variances[0] == ir::Variance::Covariant);
+
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &diag : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << diag.code << " — " << diag.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+
+    // Box lowers to a CoreTypeDecl preserving arity + variance verbatim (a user
+    // nominal is consumed as-is, never cross-checked against the builtin SSOT).
+    const ir::core::CoreTypeDecl *core_box = nullptr;
+    for (const auto &t : result.program.types) {
+        if (t.name == "bx::Box" || t.name == "Box") {
+            core_box = &t;
+        }
+    }
+    REQUIRE(core_box != nullptr);
+    CHECK(core_box->role == ir::core::CoreNominalRole::Ordinary);
+    CHECK(core_box->type_param_count == 1);
+    REQUIRE(core_box->variances.size() == 1);
+    CHECK(core_box->variances[0] == ir::core::CoreVariance::Covariant);
+    // The struct's real field `value` exists (a real field, not a guessed slot),
+    // but its generic member TEMPLATE type is NOT materialized into a concrete
+    // CoreTypeId here — P4-C boundary: `value`'s field type stays unresolved
+    // (kInvalid) because `T` has no monomorphic Core type at the template level.
+    REQUIRE(core_box->fields.size() == 1);
+    CHECK(core_box->fields[0] == "value");
+    REQUIRE(core_box->field_types.size() == 1);
+    CHECK(core_box->field_types[0].value == ir::core::CoreTypeId::kInvalid);
+}

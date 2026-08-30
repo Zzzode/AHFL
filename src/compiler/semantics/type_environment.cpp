@@ -658,23 +658,39 @@ void TypeEnvironment::mark_agent_context_struct(SymbolId id) {
     agent_context_struct_ids_.insert(id.value);
 }
 
-void TypeEnvironment::materialize_nominal_variances(
+TypeEnvironment::NominalVarianceTable TypeEnvironment::materialize_nominal_variances(
     const std::function<std::vector<Variance>(std::string_view)> &infer) {
     // RFC 0026 P4 (coercion): run the variance inference once per generic
-    // nominal and stamp the result into its type info. Idempotent: skip a
-    // nominal whose variance is already materialized (or that is monomorphic).
+    // nominal, stamp the result into its type info, AND record it in the single
+    // returned SSOT table (Codex P1-2) so the declaration-update payloads and the
+    // relation variance provider read the SAME vectors rather than re-inferring.
+    // Idempotent for the env type info: skip a nominal whose variance is already
+    // materialized (or that is monomorphic), but always populate the table entry.
+    NominalVarianceTable table;
+    const auto record = [&](std::size_t id, const std::string &canonical,
+                            std::vector<Variance> variances) {
+        table.by_symbol.emplace(id, variances);
+        table.by_canonical.emplace(canonical, std::move(variances));
+    };
     for (auto &[id, info] : structs_) {
-        if (info.type_param_names.empty() || !info.type_param_variances.empty()) {
+        if (info.type_param_names.empty()) {
             continue;
         }
-        info.type_param_variances = infer(info.canonical_name);
+        if (info.type_param_variances.empty()) {
+            info.type_param_variances = infer(info.canonical_name);
+        }
+        record(id, info.canonical_name, info.type_param_variances);
     }
     for (auto &[id, info] : enums_) {
-        if (info.type_param_names.empty() || !info.type_param_variances.empty()) {
+        if (info.type_param_names.empty()) {
             continue;
         }
-        info.type_param_variances = infer(info.canonical_name);
+        if (info.type_param_variances.empty()) {
+            info.type_param_variances = infer(info.canonical_name);
+        }
+        record(id, info.canonical_name, info.type_param_variances);
     }
+    return table;
 }
 
 void dump_type_environment(const TypeEnvironment &environment,

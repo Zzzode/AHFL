@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -2563,6 +2564,31 @@ using ahfl::json::JsonValue;
     return false;
 }
 
+// RFC 0026 P4 (coercion): variance wire name -> enum. Mirror of
+// variance_json_name; an unknown spelling is a HARD parse failure (Codex P0-2),
+// never a silent downgrade to Invariant (which could sneak a corrupt decl past
+// the metadata-drift gate by matching the descriptor).
+[[nodiscard]] bool parse_variance(std::string_view s, ir::Variance &out) {
+    if (s == "invariant") { out = ir::Variance::Invariant; return true; }
+    if (s == "covariant") { out = ir::Variance::Covariant; return true; }
+    if (s == "contravariant") { out = ir::Variance::Contravariant; return true; }
+    return false;
+}
+
+// RFC 0026 P4 (coercion): adjustment-plan op-kind wire name -> enum. Mirror of
+// adjustment_op_kind_name; an unknown spelling is a HARD parse failure (Codex
+// P0-2), never a silent downgrade to IntWiden.
+[[nodiscard]] bool parse_adjustment_op_kind(std::string_view s, ir::AdjustmentOpKind &out) {
+    if (s == "int_widen") { out = ir::AdjustmentOpKind::IntWiden; return true; }
+    if (s == "string_widen") { out = ir::AdjustmentOpKind::StringWiden; return true; }
+    if (s == "capacity_widen") { out = ir::AdjustmentOpKind::CapacityWiden; return true; }
+    if (s == "type_arg") { out = ir::AdjustmentOpKind::TypeArg; return true; }
+    if (s == "fn_param") { out = ir::AdjustmentOpKind::FnParam; return true; }
+    if (s == "fn_return") { out = ir::AdjustmentOpKind::FnReturn; return true; }
+    if (s == "variant_to_enum") { out = ir::AdjustmentOpKind::VariantToEnum; return true; }
+    return false;
+}
+
 class IrJsonReader final {
   public:
     explicit IrJsonReader(ir::Program &program) : program_(&program) {}
@@ -2606,17 +2632,25 @@ class IrJsonReader final {
         return *value;
     }
 
-    // RFC 0026 P4 (coercion): optional unsigned field (missing = fallback).
+    // RFC 0026 P4 (coercion): optional unsigned field (missing/null = fallback).
+    // A present value must be an integer in the u32 range; a negative value or one
+    // above UINT32_MAX is a HARD failure (Codex P0-2), never a silent signed cast.
     [[nodiscard]] std::uint32_t
     opt_u32(const JsonValue &obj, std::string_view key, std::uint32_t fallback) {
         const auto *field = obj.get(key);
-        if (field == nullptr) { return fallback; }
+        if (field == nullptr || field->is_null()) { return fallback; }
         const auto value = field->as_int();
-        if (!value.has_value()) { fail(); return fallback; }
+        if (!value.has_value() || *value < 0 ||
+            *value > static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
+            fail();
+            return fallback;
+        }
         return static_cast<std::uint32_t>(*value);
     }
 
     // RFC 0026 P4 (coercion): declaration-order variance array (missing = empty).
+    // Every element must be a known variance spelling; an unknown string or a
+    // non-string element is a HARD failure (Codex P0-2), not a silent Invariant.
     [[nodiscard]] std::vector<ir::Variance>
     parse_variances(const JsonValue &obj, std::string_view key) {
         std::vector<ir::Variance> result;
@@ -2625,14 +2659,10 @@ class IrJsonReader final {
         if (!field->is_array()) { fail(); return result; }
         for (const auto &item : field->array_items) {
             const auto name = item->as_string();
-            if (!name.has_value()) { fail(); result.push_back(ir::Variance::Invariant); continue; }
-            if (*name == "covariant") {
-                result.push_back(ir::Variance::Covariant);
-            } else if (*name == "contravariant") {
-                result.push_back(ir::Variance::Contravariant);
-            } else {
-                result.push_back(ir::Variance::Invariant);
-            }
+            if (!name.has_value()) { fail(); return result; }
+            ir::Variance variance{};
+            if (!parse_variance(*name, variance)) { fail(); return result; }
+            result.push_back(variance);
         }
         return result;
     }
@@ -2769,41 +2799,40 @@ class IrJsonReader final {
         return ref;
     }
 
-    // RFC 0026 P4 (coercion): adjustment-plan op-kind from its wire name.
-    [[nodiscard]] static ir::AdjustmentOpKind adjustment_op_kind_from_name(std::string_view name) {
-        if (name == "string_widen") { return ir::AdjustmentOpKind::StringWiden; }
-        if (name == "capacity_widen") { return ir::AdjustmentOpKind::CapacityWiden; }
-        if (name == "type_arg") { return ir::AdjustmentOpKind::TypeArg; }
-        if (name == "fn_param") { return ir::AdjustmentOpKind::FnParam; }
-        if (name == "fn_return") { return ir::AdjustmentOpKind::FnReturn; }
-        if (name == "variant_to_enum") { return ir::AdjustmentOpKind::VariantToEnum; }
-        return ir::AdjustmentOpKind::IntWiden;
-    }
-
     // RFC 0026 P4 (coercion): parse a LetStatement adjustment plan (mirror of
-    // print_adjustment_plan). Present only when the writer emitted it.
+    // print_adjustment_plan). An OPTIONAL field: only a missing key or JSON null
+    // means "absent" (nullopt). A present value of the WRONG kind (not an object)
+    // is a HARD failure (Codex P0-2) — it must never be silently dropped to
+    // nullopt, which would erase a real plan on read. Inner arrays (nodes/ops) and
+    // each op's `kind` are likewise strict.
     [[nodiscard]] std::optional<ir::AdjustmentPlan> opt_adjustment_plan(const JsonValue &obj) {
         const auto *field = obj.get("adjustment");
-        if (field == nullptr || !field->is_object()) { return std::nullopt; }
+        if (field == nullptr || field->is_null()) { return std::nullopt; }
+        if (!field->is_object()) { fail(); return std::nullopt; }
         ir::AdjustmentPlan plan;
         plan.source = opt_type_ref(*field, "source", "");
         plan.target = opt_type_ref(*field, "target", "");
         plan.root = opt_u32(*field, "root", 0);
-        const auto *nodes = field->get("nodes");
-        if (nodes != nullptr && nodes->is_array()) {
+        if (const auto *nodes = field->get("nodes"); nodes != nullptr) {
+            if (!nodes->is_array()) { fail(); return std::nullopt; }
             for (const auto &node_item : nodes->array_items) {
+                if (!node_item->is_object()) { fail(); return std::nullopt; }
                 ir::AdjustmentNode node;
                 node.source = opt_type_ref(*node_item, "source", "");
                 node.target = opt_type_ref(*node_item, "target", "");
-                const auto *ops = node_item->get("ops");
-                if (ops != nullptr && ops->is_array()) {
+                if (const auto *ops = node_item->get("ops"); ops != nullptr) {
+                    if (!ops->is_array()) { fail(); return std::nullopt; }
                     for (const auto &op_item : ops->array_items) {
+                        if (!op_item->is_object()) { fail(); return std::nullopt; }
                         ir::AdjustmentOp op;
+                        // `kind` is required and must be a known op-kind spelling;
+                        // an unknown/absent/non-string kind fails closed.
                         const auto *kind = op_item->get("kind");
-                        if (kind != nullptr) {
-                            if (const auto k = kind->as_string(); k.has_value()) {
-                                op.kind = adjustment_op_kind_from_name(*k);
-                            }
+                        const auto kind_str = kind != nullptr ? kind->as_string() : std::nullopt;
+                        if (!kind_str.has_value() ||
+                            !parse_adjustment_op_kind(*kind_str, op.kind)) {
+                            fail();
+                            return std::nullopt;
                         }
                         op.arg_index = opt_u32(*op_item, "arg_index", 0);
                         op.child = opt_u32(*op_item, "child", 0xFFFFFFFFu);

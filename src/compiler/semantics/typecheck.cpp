@@ -1374,44 +1374,54 @@ TypeCheckResult TypeCheckPass::run() {
     auto environment_result = DeclarationSema(*this).run();
     result_.environment = std::move(environment_result.environment);
 
-    // KR5.4 (RFC 0013 P5-02): install the user-generic variance provider now
-    // that the environment (struct/enum type info) is populated. Variance is
-    // inferred structurally from field/payload usage and memoized per nominal.
-    relations_.set_variance_provider(
-        [this, cache = std::make_shared<std::unordered_map<std::string, std::vector<Variance>>>()](
-            std::string_view canonical_name) -> std::vector<Variance> {
-            const std::string key{canonical_name};
-            if (const auto it = cache->find(key); it != cache->end()) {
-                return it->second;
-            }
-            std::unordered_set<std::string> visited;
-            auto variance = infer_nominal_variance(environment(), canonical_name, visited);
-            auto [it, _] = cache->emplace(key, std::move(variance));
-            return it->second;
-        });
-
-    // RFC 0026 P4 (coercion): materialize per-nominal variance into a single
-    // SSOT now that the environment is complete. The declaration_updates payloads
-    // were copied out of the environment by DeclarationSema BEFORE the variance
-    // provider was installed above, so they carry empty type_param_variances;
-    // stamp both the durable environment type info AND those already-built
-    // update payloads so the Typed HIR consumed by lowering sees the variance.
-    // This is why the write-back happens here (after the environment is built)
-    // rather than at DeclarationSema time or via a lower-time provider query.
+    // RFC 0026 P4 (coercion): materialize per-nominal variance into a SINGLE
+    // SSOT now that the environment is complete, then feed that ONE table to
+    // every consumer (Codex P1-2): the durable environment type info, the
+    // declaration_update payloads (which DeclarationSema copied out of the
+    // environment BEFORE variance existed, so they still carry empty
+    // type_param_variances), and the relation variance provider. No consumer
+    // re-infers or keeps a private cache; they all read the same vectors. This is
+    // why the write-back happens here (after the environment is built) rather than
+    // at DeclarationSema time or via a lower-time provider query.
     {
         const auto infer = [this](std::string_view canonical_name) -> std::vector<Variance> {
             std::unordered_set<std::string> visited;
             return infer_nominal_variance(environment(), canonical_name, visited);
         };
-        result_.environment.materialize_nominal_variances(infer);
+        // The one owned table. Held by shared_ptr so the relation provider closure
+        // can read it for the rest of the pass without referencing a temporary
+        // (Codex: capture a stable owned table, never a map that is later
+        // moved / rehashed).
+        auto variance_table = std::make_shared<const TypeEnvironment::NominalVarianceTable>(
+            result_.environment.materialize_nominal_variances(infer));
+
+        // KR5.4 (RFC 0013 P5-02): the user-generic variance provider now reads the
+        // materialized SSOT directly (canonical-name projection) instead of
+        // inferring + caching its own second copy. Queried only during
+        // flow/contract checking below, so the table is fully populated first.
+        relations_.set_variance_provider(
+            [variance_table](std::string_view canonical_name) -> std::vector<Variance> {
+                const auto it = variance_table->by_canonical.find(std::string{canonical_name});
+                if (it == variance_table->by_canonical.end()) {
+                    return {};
+                }
+                return it->second;
+            });
+
         for (auto &update : environment_result.declaration_updates) {
             if (auto *s = std::get_if<StructTypeInfo>(&update.payload)) {
                 if (!s->type_param_names.empty() && s->type_param_variances.empty()) {
-                    s->type_param_variances = infer(s->canonical_name);
+                    if (const auto it = variance_table->by_symbol.find(s->symbol.value);
+                        it != variance_table->by_symbol.end()) {
+                        s->type_param_variances = it->second;
+                    }
                 }
             } else if (auto *e = std::get_if<EnumTypeInfo>(&update.payload)) {
                 if (!e->type_param_names.empty() && e->type_param_variances.empty()) {
-                    e->type_param_variances = infer(e->canonical_name);
+                    if (const auto it = variance_table->by_symbol.find(e->symbol.value);
+                        it != variance_table->by_symbol.end()) {
+                        e->type_param_variances = it->second;
+                    }
                 }
             }
         }

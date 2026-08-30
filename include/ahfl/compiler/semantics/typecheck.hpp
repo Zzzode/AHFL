@@ -257,12 +257,27 @@ class TypeEnvironment {
     friend class DeclarationSema;
 
   public:
-    // RFC 0026 P4 (coercion): stamp declaration-order variance into every
-    // generic struct/enum's `type_param_variances`, computed once after the
-    // environment is complete. `infer` returns the inferred variance vector for
-    // a nominal by canonical name (empty for a monomorphic / unknown nominal).
-    // Idempotent; only fills nominals whose variance is not yet materialized.
-    void materialize_nominal_variances(
+    // RFC 0026 P4 (coercion): the single materialized per-nominal variance SSOT.
+    // Computed ONCE after the environment is complete (Codex P1-2). Keyed
+    // primarily by SymbolId (`by_symbol`, the canonical identity), with a
+    // `by_canonical` projection so the canonical-name-keyed relation provider
+    // reads the SAME vectors rather than re-inferring. Every generic struct/enum
+    // in the environment has exactly one entry in both maps; a monomorphic /
+    // unknown nominal is absent (its variance vector is empty).
+    struct NominalVarianceTable {
+        std::unordered_map<std::size_t, std::vector<Variance>> by_symbol;
+        std::unordered_map<std::string, std::vector<Variance>> by_canonical;
+    };
+
+    // Stamp declaration-order variance into every generic struct/enum's
+    // `type_param_variances`, computed once from `infer` (which returns the
+    // inferred variance vector for a nominal by canonical name; empty for a
+    // monomorphic / unknown nominal), and RETURN that single materialized table
+    // so the same vectors can also feed the declaration-update payloads and the
+    // relation variance provider. Idempotent for env type info; only fills
+    // nominals whose variance is not yet materialized, but the returned table
+    // always reflects every generic nominal.
+    [[nodiscard]] NominalVarianceTable materialize_nominal_variances(
         const std::function<std::vector<Variance>(std::string_view)> &infer);
 
   private:

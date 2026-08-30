@@ -835,6 +835,91 @@ fn id<T>(x: T) -> T effect Pure decreases 0 {
     CHECK(orig_has_typevar);
 }
 
+// RFC 0026 P4 (coercion) F1 forward-fix (Codex P1-3): the map-based cloner
+// (clone_stmt, reached via instantiate_fn_body) must substitute every TypePtr in
+// a let_adjustment plan. Real source does not yet PRODUCE plans (that is F2), so
+// we inject a TypeVar-carrying plan onto the generic body's first statement, then
+// instantiate with T -> Int and assert the cloned statement's plan is fully
+// concrete (List<Int>), while the original still carries List<T>.
+TEST_CASE("instantiate_fn_body substitutes TypeVars inside a let_adjustment plan") {
+    const std::string source = R"AHFL(
+fn id<T>(x: T) -> T effect Pure decreases 0 {
+    return x;
+}
+)AHFL";
+
+    auto result = typecheck_source("fn_id_adj_plan.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *symbol = find_function_symbol(result, "id");
+    REQUIRE(symbol != nullptr);
+    const auto fn_info = result.environment.get_fn(symbol->id);
+    REQUIRE(fn_info.has_value());
+    const auto scope_id = fn_info->get().type_param_scope_id;
+    const auto orig_body_idx = fn_info->get().body_block_index;
+    REQUIRE(orig_body_idx != UINT32_MAX);
+    REQUIRE_FALSE(result.typed_program.blocks[orig_body_idx].statement_indexes.empty());
+
+    auto &types = ahfl::TypeContext::global();
+    const auto t_var = types.type_var(0, scope_id, "T");
+    const auto list_t = types.struct_type("std::collections::List", std::nullopt,
+                                          std::vector<ahfl::TypePtr>{t_var},
+                                          std::optional<std::uint64_t>{4});
+    const auto list_t8 = types.struct_type("std::collections::List", std::nullopt,
+                                           std::vector<ahfl::TypePtr>{t_var},
+                                           std::optional<std::uint64_t>{8});
+
+    // Inject a List<T>(4) -> List<T>(8) CapacityWiden plan onto the first stmt.
+    const auto inject_idx = result.typed_program.blocks[orig_body_idx].statement_indexes.front();
+    {
+        ahfl::TypedAdjustmentPlan plan;
+        plan.source = list_t;
+        plan.target = list_t8;
+        plan.root = 0;
+        ahfl::TypedAdjustmentNode node;
+        node.source = list_t;
+        node.target = list_t8;
+        node.ops.push_back(
+            ahfl::TypedAdjustmentOp{.kind = ahfl::TypedAdjustmentOpKind::CapacityWiden});
+        plan.nodes.push_back(std::move(node));
+        result.typed_program.statements[inject_idx].let_adjustment = std::move(plan);
+    }
+
+    ahfl::TypeSubstitutionMap subst;
+    subst.push_back(types.make(ahfl::TypeKind::Int));
+    const auto inst = ahfl::instantiate_fn_body(
+        result.typed_program, orig_body_idx, subst, scope_id, types);
+    REQUIRE(inst.body_block_index != UINT32_MAX);
+
+    const auto list_int8 = types.struct_type("std::collections::List", std::nullopt,
+                                             std::vector<ahfl::TypePtr>{types.make(ahfl::TypeKind::Int)},
+                                             std::optional<std::uint64_t>{8});
+    const auto list_int4 = types.struct_type("std::collections::List", std::nullopt,
+                                             std::vector<ahfl::TypePtr>{types.make(ahfl::TypeKind::Int)},
+                                             std::optional<std::uint64_t>{4});
+
+    // Locate the cloned statement carrying a plan and assert full substitution.
+    bool checked_clone = false;
+    for (const auto idx : result.typed_program.blocks[inst.body_block_index].statement_indexes) {
+        const auto &stmt = result.typed_program.statements[idx];
+        if (!stmt.let_adjustment.has_value()) {
+            continue;
+        }
+        const auto &plan = *stmt.let_adjustment;
+        CHECK(plan.source == list_int4);
+        CHECK(plan.target == list_int8);
+        REQUIRE(plan.nodes.size() == 1);
+        CHECK(plan.nodes[0].source == list_int4);
+        CHECK(plan.nodes[0].target == list_int8);
+        checked_clone = true;
+    }
+    CHECK(checked_clone);
+
+    // Original injected plan is untouched (still List<T>).
+    REQUIRE(result.typed_program.statements[inject_idx].let_adjustment.has_value());
+    CHECK(result.typed_program.statements[inject_idx].let_adjustment->source == list_t);
+}
+
 // ---------------------------------------------------------------------------
 // TC18 (P2d): Repeated instantiations with the same substitution are not
 // deduped at the instantiate_fn_body level — dedup happens at the

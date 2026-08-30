@@ -17,6 +17,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <unordered_set>
 #include <variant>
 #include <vector>
@@ -228,6 +229,20 @@ class Verifier {
         if (t.variances.size() != t.type_param_count) {
             shape_error("nominal variance vector length " + std::to_string(t.variances.size()) +
                         " does not equal type_param_count " + std::to_string(t.type_param_count));
+        }
+        // Every entry must be a legal CoreVariance enumerator (Codex P1-1): a
+        // deserialized / hand-built decl could carry an out-of-range underlying
+        // value that later switch coverage would silently mishandle.
+        for (std::size_t index = 0; index < t.variances.size(); ++index) {
+            const auto v = t.variances[index];
+            const bool legal = v == CoreVariance::Invariant || v == CoreVariance::Covariant ||
+                               v == CoreVariance::Contravariant;
+            if (!legal) {
+                shape_error(
+                    "nominal variance[" + std::to_string(index) +
+                    "] is an illegal CoreVariance enumerator value " +
+                    std::to_string(static_cast<std::underlying_type_t<CoreVariance>>(v)));
+            }
         }
         if (by_role != nullptr) {
             require_matches(*by_role, "nominal role");

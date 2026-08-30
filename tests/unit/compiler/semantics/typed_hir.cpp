@@ -3293,7 +3293,8 @@ TEST_CASE("RFC 0011 monomorphization remaps statement pattern indexes") {
     });
 
     const auto result = ahfl::monomorphize_decl(
-        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}});
+        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
+        types);
 
     REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
     REQUIRE(result.instance_index < program.monomorphized_instances.size());
@@ -3364,7 +3365,8 @@ TEST_CASE("RFC 0026 (3)-3b monomorphization remaps match expr arm pattern indexe
     program.expressions.push_back(std::move(match_expr));
 
     const auto result = ahfl::monomorphize_decl(
-        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}});
+        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
+        types);
 
     REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
     REQUIRE(result.instance_index < program.monomorphized_instances.size());
@@ -3384,6 +3386,86 @@ TEST_CASE("RFC 0026 (3)-3b monomorphization remaps match expr arm pattern indexe
     REQUIRE(cloned_match.match_arm_pattern_indexes[1] < program.patterns.size());
     CHECK(program.patterns[cloned_match.match_arm_pattern_indexes[0]].variant_name == "Some");
     CHECK(program.patterns[cloned_match.match_arm_pattern_indexes[1]].variant_name == "None");
+}
+
+// RFC 0026 P4 (coercion) F1 forward-fix (Codex P1-3): the map-free
+// monomorphize_decl cloner must substitute the let annotation AND every TypePtr
+// inside a let_adjustment plan (boundary + per-node source/target), so a generic
+// annotated `let` carries substituted (not pre-substitution TypeVar) types in the
+// instance. Fn payload declares one type param T in scope 7; the plan is a
+// List<T>(4) -> List<T>(8) CapacityWiden keyed to that scope; instantiating with
+// T = Int must rewrite every T to Int.
+TEST_CASE("RFC 0026 P4 monomorphize_decl substitutes let_adjustment plan TypePtrs") {
+    ahfl::TypeContext types;
+    constexpr std::uint32_t kScope = 7;
+    const auto int_type = types.make(ahfl::TypeKind::Int);
+    const auto t_var = types.type_var(0, kScope, "T");
+    const auto list_t4 = types.struct_type("std::collections::List", std::nullopt,
+                                           std::vector<ahfl::TypePtr>{t_var},
+                                           std::optional<std::uint64_t>{4});
+    const auto list_t8 = types.struct_type("std::collections::List", std::nullopt,
+                                           std::vector<ahfl::TypePtr>{t_var},
+                                           std::optional<std::uint64_t>{8});
+    const auto list_int8 = types.struct_type("std::collections::List", std::nullopt,
+                                             std::vector<ahfl::TypePtr>{int_type},
+                                             std::optional<std::uint64_t>{8});
+
+    ahfl::TypedProgram program;
+    ahfl::FnTypeInfo fn_payload;
+    fn_payload.symbol = ahfl::SymbolId{10};
+    fn_payload.canonical_name = "typed::mono_adj::widen";
+    fn_payload.type_param_names = {"T"};
+    fn_payload.type_param_scope_id = kScope;
+    program.declarations.push_back(ahfl::TypedDecl{
+        .kind = ahfl::ast::NodeKind::FnDecl,
+        .symbol = ahfl::SymbolId{10},
+        .range = {},
+        .source_id = std::nullopt,
+        .associated_agent_symbol = std::nullopt,
+        .type = t_var,
+        .payload = std::move(fn_payload),
+    });
+
+    ahfl::TypedAdjustmentPlan plan;
+    plan.source = list_t4;
+    plan.target = list_t8;
+    plan.root = 0;
+    ahfl::TypedAdjustmentNode node;
+    node.source = list_t4;
+    node.target = list_t8;
+    node.ops.push_back(ahfl::TypedAdjustmentOp{.kind = ahfl::TypedAdjustmentOpKind::CapacityWiden});
+    plan.nodes.push_back(std::move(node));
+
+    ahfl::TypedStatement let;
+    let.kind = ahfl::TypedStmtKind::Let;
+    let.node_id = 3;
+    let.target_name = "xs";
+    let.let_type = list_t8;
+    let.let_adjustment = std::move(plan);
+    program.statements.push_back(std::move(let));
+
+    const auto result = ahfl::monomorphize_decl(
+        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}},
+        types);
+    REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
+    const auto &instance = program.monomorphized_instances[result.instance_index];
+    REQUIRE(instance.root_stmt_indexes.size() == 1);
+    const auto &cloned = program.statements[instance.root_stmt_indexes.front()];
+
+    // The annotation and every plan TypePtr are now List<Int>(8) / List<Int>(4),
+    // not the pre-substitution List<T> — pointer equality against the interned
+    // concrete types proves the TypeVar was replaced.
+    CHECK(cloned.let_type == list_int8);
+    REQUIRE(cloned.let_adjustment.has_value());
+    const auto &out_plan = *cloned.let_adjustment;
+    CHECK(out_plan.target == list_int8);
+    REQUIRE(out_plan.nodes.size() == 1);
+    CHECK(out_plan.nodes[0].target == list_int8);
+    // And no residual TypeVar survives at the boundary source.
+    const auto list_int4 = types.struct_type("std::collections::List", std::nullopt,
+                                             std::vector<ahfl::TypePtr>{int_type},
+                                             std::optional<std::uint64_t>{4});
+    CHECK(out_plan.source == list_int4);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "RFC 0011 typed HIR records match pattern flat store") {

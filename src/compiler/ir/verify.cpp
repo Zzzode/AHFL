@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -252,8 +253,39 @@ class ProgramVerifier {
         verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Type, decl.name);
     }
 
+    // RFC 0026 P4 (coercion): a generic nominal declaration's variance metadata
+    // must be internally consistent BEFORE Core lowering (Codex P1-1): the
+    // per-parameter variance vector is either empty (legacy / not yet materialized)
+    // or exactly `type_param_count` long, and every entry is a legal Variance
+    // enumerator. This is a lower-neutral structural check ONLY; builtin
+    // descriptor exact-match (arity/variance vs the std SSOT) is intentionally NOT
+    // duplicated here — that lives in the Core consumption gate so the AHFL-IR
+    // verifier never takes a reverse dependency on the execution-layer
+    // `ir::core::builtin_nominal_table()`.
+    void verify_variance_metadata(std::uint32_t type_param_count,
+                                  const std::vector<Variance> &variances,
+                                  const std::string &path) {
+        if (!variances.empty() && variances.size() != type_param_count) {
+            add_error(path + ".type_param_variances",
+                      "variance vector length (" + std::to_string(variances.size()) +
+                          ") must equal type_param_count (" + std::to_string(type_param_count) +
+                          ")");
+        }
+        for (std::uint32_t index = 0; index < variances.size(); ++index) {
+            const auto raw = static_cast<std::underlying_type_t<Variance>>(variances[index]);
+            const bool legal = variances[index] == Variance::Invariant ||
+                               variances[index] == Variance::Covariant ||
+                               variances[index] == Variance::Contravariant;
+            if (!legal) {
+                add_error(path + ".type_param_variances[" + std::to_string(index) + "]",
+                          "illegal variance enumerator value " + std::to_string(raw));
+            }
+        }
+    }
+
     void verify_decl(const StructDecl &decl, const std::string &path) {
         verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Type, decl.name);
+        verify_variance_metadata(decl.type_param_count, decl.type_param_variances, path);
         for (std::uint32_t index = 0; index < decl.fields.size(); ++index) {
             const auto field_path = path + ".fields[" + std::to_string(index) + "]";
             verify_optional_expr_ref(decl.fields[index].default_value, field_path + ".default");
@@ -264,6 +296,7 @@ class ProgramVerifier {
 
     void verify_decl(const EnumDecl &decl, const std::string &path) {
         verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Type, decl.name);
+        verify_variance_metadata(decl.type_param_count, decl.type_param_variances, path);
         for (std::uint32_t index = 0; index < decl.variants.size(); ++index) {
             const auto &variant = decl.variants[index];
             const auto variant_path = path + ".variants[" + std::to_string(index) + "](" +

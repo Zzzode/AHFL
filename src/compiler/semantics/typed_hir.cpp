@@ -1,5 +1,6 @@
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 
+#include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include <cstdint>
@@ -425,7 +426,8 @@ struct MonoWork {
 
 MonomorphizeResult monomorphize_decl(TypedProgram &program,
                                      const std::uint32_t source_decl_index,
-                                     InstanceKey key) noexcept {
+                                     InstanceKey key,
+                                     TypeContext &types) noexcept {
     if (source_decl_index >= program.declarations.size()) {
         return {MonomorphizeStatus::Created, UINT32_MAX};
     }
@@ -441,8 +443,22 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
 
     const TypedDecl &source_decl = program.declarations[source_decl_index];
 
-    // --------------------------
-    // Step 2: capture owned footprint.
+    // RFC 0026 P4 (coercion): build the body type substitution ONCE. `key.type_args`
+    // binds in source-declaration order to the callable's own TypeVar scope, so a
+    // generic annotated `let`'s type AND its adjustment plan can be substituted into
+    // this instance rather than left at their pre-substitution (TypeVar) form. Only
+    // FnTypeInfo exposes a body TypeVar scope; other payloads carry no generic body
+    // here, so their subst stays empty and substitute_type passes types through.
+    std::uint32_t subst_scope_id = kUnknownTypeVarScopeId;
+    if (const auto *fn = std::get_if<FnTypeInfo>(&source_decl.payload)) {
+        subst_scope_id = fn->type_param_scope_id;
+    }
+    TypeSubstitutionMap body_subst;
+    body_subst.reserve(key.type_args.size());
+    for (const auto *arg : key.type_args) {
+        body_subst.push_back(arg); // may be null; substitute_type treats it as identity
+    }
+
     // --------------------------
     // For simplicity, the instance is considered to own every record in the
     // flat stores appended AFTER the source decl was typechecked. Because we
@@ -501,6 +517,21 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
         TypedStatement clone = program.statements[i];
         if (clone.node_id != 0) {
             clone.node_id = program.next_instance_node_id++;
+        }
+        // RFC 0026 P4 (coercion): substitute the let annotation AND every TypePtr
+        // inside the let adjustment plan (boundary source/target + each node's
+        // source/target) so a generic annotated `let` carries substituted (not
+        // pre-substitution) types. The plan stores only TypePtrs and flat node
+        // indexes, so no index remap is needed here — only type substitution.
+        clone.let_type = substitute_type(clone.let_type, body_subst, subst_scope_id, types);
+        if (clone.let_adjustment.has_value()) {
+            auto &plan = *clone.let_adjustment;
+            plan.source = substitute_type(plan.source, body_subst, subst_scope_id, types);
+            plan.target = substitute_type(plan.target, body_subst, subst_scope_id, types);
+            for (auto &node : plan.nodes) {
+                node.source = substitute_type(node.source, body_subst, subst_scope_id, types);
+                node.target = substitute_type(node.target, body_subst, subst_scope_id, types);
+            }
         }
         program.statements.push_back(std::move(clone));
         work.cost += kMonoBudgetPerStmt;

@@ -23,6 +23,7 @@
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
@@ -356,6 +357,74 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     const auto &last = back2->statements.back();
     CHECK(last.kind == ahfl::TypedStmtKind::None);
     CHECK(last.node_id == 9999);
+}
+
+// RFC 0026 P4 (coercion) F1 forward-fix (Codex P1-3 / P0-2): a NON-EMPTY
+// TypedAdjustmentPlan must survive a typed-HIR JSON round-trip with full fidelity
+// (every op kind + arg_index + child + node source/target), and a corrupted op
+// kind on the wire must FAIL the deserialize closed rather than downgrade to
+// IntWiden. Builds a List<Int(0,0)>(4) -> List<Int>(8) plan (root: CapacityWiden +
+// TypeArg{0->child IntWiden}).
+TEST_CASE("Typed-HIR round-trips a non-empty let_adjustment plan and rejects a bad op") {
+    ahfl::TypeContext types;
+    const auto int_ty = types.make(ahfl::TypeKind::Int);
+    const auto bounded = types.bounded_int(0, 0);
+    const auto list_bounded = types.struct_type("std::collections::List", std::nullopt,
+                                                std::vector<ahfl::TypePtr>{bounded},
+                                                std::optional<std::uint64_t>{4});
+    const auto list_int = types.struct_type("std::collections::List", std::nullopt,
+                                            std::vector<ahfl::TypePtr>{int_ty},
+                                            std::optional<std::uint64_t>{8});
+
+    ahfl::TypedAdjustmentPlan plan;
+    plan.source = list_bounded;
+    plan.target = list_int;
+    plan.root = 0;
+    ahfl::TypedAdjustmentNode root_node;
+    root_node.source = list_bounded;
+    root_node.target = list_int;
+    root_node.ops.push_back(ahfl::TypedAdjustmentOp{.kind = ahfl::TypedAdjustmentOpKind::CapacityWiden});
+    root_node.ops.push_back(ahfl::TypedAdjustmentOp{
+        .kind = ahfl::TypedAdjustmentOpKind::TypeArg, .arg_index = 0, .child = 1});
+    ahfl::TypedAdjustmentNode elem_node;
+    elem_node.source = bounded;
+    elem_node.target = int_ty;
+    elem_node.ops.push_back(ahfl::TypedAdjustmentOp{.kind = ahfl::TypedAdjustmentOpKind::IntWiden});
+    plan.nodes.push_back(std::move(root_node));
+    plan.nodes.push_back(std::move(elem_node));
+
+    ahfl::TypedProgram program;
+    ahfl::TypedStatement let;
+    let.kind = ahfl::TypedStmtKind::Let;
+    let.node_id = 4242;
+    let.target_name = "xs";
+    let.let_type = list_int;
+    let.let_adjustment = std::move(plan);
+    program.statements.push_back(std::move(let));
+
+    const auto json = ahfl::serialize_typed_program_json(program);
+    const auto back = ahfl::deserialize_typed_program_json(json);
+    REQUIRE(back.has_value());
+    REQUIRE_FALSE(back->statements.empty());
+    const auto &out_let = back->statements.back();
+    REQUIRE(out_let.let_adjustment.has_value());
+    const auto &out_plan = *out_let.let_adjustment;
+    CHECK(out_plan.root == 0);
+    REQUIRE(out_plan.nodes.size() == 2);
+    REQUIRE(out_plan.nodes[0].ops.size() == 2);
+    CHECK(out_plan.nodes[0].ops[0].kind == ahfl::TypedAdjustmentOpKind::CapacityWiden);
+    CHECK(out_plan.nodes[0].ops[1].kind == ahfl::TypedAdjustmentOpKind::TypeArg);
+    CHECK(out_plan.nodes[0].ops[1].arg_index == 0);
+    CHECK(out_plan.nodes[0].ops[1].child == 1);
+    REQUIRE(out_plan.nodes[1].ops.size() == 1);
+    CHECK(out_plan.nodes[1].ops[0].kind == ahfl::TypedAdjustmentOpKind::IntWiden);
+
+    // An unknown op-kind spelling on the wire fails closed (no silent IntWiden).
+    auto corrupt = json;
+    const auto pos = corrupt.find("\"capacity_widen\"");
+    REQUIRE(pos != std::string::npos);
+    corrupt.replace(pos, std::string("\"capacity_widen\"").size(), "\"bogus_op\"");
+    CHECK_FALSE(ahfl::deserialize_typed_program_json(corrupt).has_value());
 }
 
 // ---------------------------------------------------------------------------

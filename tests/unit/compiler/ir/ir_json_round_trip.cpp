@@ -169,6 +169,116 @@ TEST_CASE("IR JSON round-trips a non-empty LetStatement adjustment plan") {
 
 namespace {
 
+// Build a minimal program whose single `let` carries a compositional adjustment
+// plan (root List boundary with CapacityWiden + TypeArg{0->child IntWiden}), and
+// return its `print_program_ir_json` text. Used by the P0-2 parser-negative tests
+// below to prove that corrupting a wire enum / shape makes the deserializer FAIL
+// CLOSED rather than silently downgrade.
+[[nodiscard]] std::string plan_program_json() {
+    using namespace ahfl::ir;
+    const auto int_type = [](std::optional<std::pair<std::int64_t, std::int64_t>> bounds) {
+        TypeRef t;
+        t.kind = bounds.has_value() ? TypeRefKind::BoundedInt : TypeRefKind::Int;
+        t.int_bounds = bounds;
+        return t;
+    };
+    const auto list_of = [](TypeRef elem, std::optional<std::uint64_t> cap) {
+        TypeRef t;
+        t.kind = TypeRefKind::Struct;
+        t.canonical_name = "std::collections::List";
+        t.nominal_ref = SymbolRef{.kind = SymbolRefKind::Type,
+                                  .canonical_name = "std::collections::List"};
+        t.collection_capacity = cap;
+        t.params.push_back(std::make_unique<TypeRef>(std::move(elem)));
+        return t;
+    };
+
+    Program program;
+    ExprRef init = program.expr_arena.make(IntegerLiteralExpr{"0"});
+    AdjustmentPlan plan;
+    plan.source = list_of(int_type(std::pair<std::int64_t, std::int64_t>{0, 0}), std::uint64_t{4});
+    plan.target = list_of(int_type(std::nullopt), std::uint64_t{8});
+    plan.root = 0;
+    AdjustmentNode root_node;
+    root_node.source = list_of(int_type(std::pair<std::int64_t, std::int64_t>{0, 0}), std::uint64_t{4});
+    root_node.target = list_of(int_type(std::nullopt), std::uint64_t{8});
+    root_node.ops.push_back(AdjustmentOp{.kind = AdjustmentOpKind::CapacityWiden});
+    root_node.ops.push_back(AdjustmentOp{.kind = AdjustmentOpKind::TypeArg, .arg_index = 0, .child = 1});
+    AdjustmentNode elem_node;
+    elem_node.source = int_type(std::pair<std::int64_t, std::int64_t>{0, 0});
+    elem_node.target = int_type(std::nullopt);
+    elem_node.ops.push_back(AdjustmentOp{.kind = AdjustmentOpKind::IntWiden});
+    plan.nodes.push_back(std::move(root_node));
+    plan.nodes.push_back(std::move(elem_node));
+
+    LetStatement let;
+    let.name = "xs";
+    let.type_ref = list_of(int_type(std::nullopt), std::uint64_t{8});
+    let.initializer = init;
+    let.adjustment = std::move(plan);
+
+    auto stmt = std::make_unique<Statement>();
+    stmt->node = std::move(let);
+    StateHandler handler;
+    handler.state_name = "S";
+    handler.body.statements.push_back(std::move(stmt));
+    FlowDecl flow;
+    flow.target_ref.kind = SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    std::ostringstream out;
+    ahfl::print_program_ir_json(program, out);
+    return out.str();
+}
+
+// Replace the first occurrence of `needle` with `replacement`; REQUIRE it existed.
+[[nodiscard]] std::string replace_first(std::string text, std::string_view needle,
+                                        std::string_view replacement) {
+    const auto pos = text.find(needle);
+    REQUIRE(pos != std::string::npos);
+    text.replace(pos, needle.size(), replacement);
+    return text;
+}
+
+} // namespace
+
+// RFC 0026 P4 (coercion) F1 forward-fix (Codex P0-2): every wire enum in an
+// adjustment plan must FAIL CLOSED on an unknown spelling — the deserializer must
+// never silently downgrade an unknown adjustment op to IntWiden (which would let a
+// corrupt plan masquerade as a legal one). The baseline plan program parses; each
+// corruption below must make `parse_program_ir_json` return nullopt.
+TEST_CASE("IR JSON deserializer fails closed on a malformed adjustment op kind") {
+    const std::string base = plan_program_json();
+    REQUIRE(ahfl::parse_program_ir_json(base).has_value());
+
+    // An unknown op-kind spelling is rejected (not coerced to int_widen).
+    const auto bad_op = replace_first(base, "\"capacity_widen\"", "\"totally_bogus_op\"");
+    CHECK_FALSE(ahfl::parse_program_ir_json(bad_op).has_value());
+}
+
+TEST_CASE("IR JSON deserializer fails closed on a non-object adjustment field") {
+    const std::string base = plan_program_json();
+    REQUIRE(ahfl::parse_program_ir_json(base).has_value());
+
+    // A present-but-wrong-kind `adjustment` (array instead of object) must FAIL,
+    // not be silently dropped to nullopt — that would erase a real plan on read.
+    const auto bad_shape = replace_first(base, "\"adjustment\": {", "\"adjustment\": [");
+    CHECK_FALSE(ahfl::parse_program_ir_json(bad_shape).has_value());
+}
+
+TEST_CASE("IR JSON deserializer fails closed on a negative adjustment child index") {
+    const std::string base = plan_program_json();
+    REQUIRE(ahfl::parse_program_ir_json(base).has_value());
+
+    // `child` is a u32; a negative value must be rejected, not signed-cast.
+    const auto bad_child = replace_first(base, "\"child\": 1", "\"child\": -1");
+    CHECK_FALSE(ahfl::parse_program_ir_json(bad_child).has_value());
+}
+
+namespace {
+
 // A deliberately field-complete TypeRef: a bounded generic collection
 // (`collection_capacity` + `nominal_ref` + `params`) whose element is itself a
 // nominal struct carrying its own `nominal_ref`, plus a null param slot and an

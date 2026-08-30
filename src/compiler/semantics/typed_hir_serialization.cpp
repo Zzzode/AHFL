@@ -95,14 +95,24 @@ template <typename E> [[nodiscard]] std::unique_ptr<Json> j_optional_enum(std::o
     return "invariant";
 }
 
-[[nodiscard]] Variance variance_from_name(std::string_view name) noexcept {
+// RFC 0026 P4 (coercion): variance wire name -> enum. Mirror of variance_name.
+// An unknown spelling is a HARD failure (Codex P0-2), reported via the out-param
+// bool so the caller can fail the whole parse rather than silently coerce to
+// Invariant (which could mask a corrupt decl by matching a descriptor).
+[[nodiscard]] bool variance_from_name(std::string_view name, Variance &out) noexcept {
+    if (name == "invariant") {
+        out = Variance::Invariant;
+        return true;
+    }
     if (name == "covariant") {
-        return Variance::Covariant;
+        out = Variance::Covariant;
+        return true;
     }
     if (name == "contravariant") {
-        return Variance::Contravariant;
+        out = Variance::Contravariant;
+        return true;
     }
-    return Variance::Invariant;
+    return false;
 }
 
 [[nodiscard]] std::unique_ptr<Json> j_variance_array(const std::vector<Variance> &values) {
@@ -1497,44 +1507,68 @@ class Reader {
     };
 }
 
-// RFC 0026 P4 (coercion): read a declaration-order variance vector (absent /
-// legacy = empty; unknown string = Invariant).
+// RFC 0026 P4 (coercion): read a declaration-order variance vector. Only a
+// missing key or JSON null is "absent" (empty / legacy). A present value that is
+// not an array, or any element that is not a known variance spelling, is a HARD
+// parse failure (Codex P0-2), not a silent Invariant.
 [[nodiscard]] std::vector<Variance>
 read_variance_array(Reader &reader, const Json &object, std::string_view key) {
     std::vector<Variance> values;
-    const auto *array = reader.field(object, key);
-    if (array == nullptr || array->kind != json::Kind::Array) {
+    const auto *array = object.get(key);
+    if (array == nullptr || array->is_null()) {
+        return values;
+    }
+    if (array->kind != json::Kind::Array) {
+        reader.fail();
         return values;
     }
     values.reserve(array->array_items.size());
     for (const auto &item : array->array_items) {
         const auto text = item->as_string();
-        values.push_back(text.has_value() ? variance_from_name(*text) : Variance::Invariant);
+        Variance variance{};
+        if (!text.has_value() || !variance_from_name(*text, variance)) {
+            reader.fail();
+            return values;
+        }
+        values.push_back(variance);
     }
     return values;
 }
 
-// RFC 0026 P4 (coercion): mirror of j_adjustment_plan.
-[[nodiscard]] TypedAdjustmentOpKind adjustment_op_kind_from_name(std::string_view name) noexcept {
+// RFC 0026 P4 (coercion): adjustment op-kind wire name -> enum. Mirror of
+// adjustment_op_kind_name. An unknown spelling is a HARD failure (Codex P0-2),
+// reported via the out-param bool, never a silent downgrade to IntWiden.
+[[nodiscard]] bool adjustment_op_kind_from_name(std::string_view name,
+                                                TypedAdjustmentOpKind &out) noexcept {
+    if (name == "int_widen") {
+        out = TypedAdjustmentOpKind::IntWiden;
+        return true;
+    }
     if (name == "string_widen") {
-        return TypedAdjustmentOpKind::StringWiden;
+        out = TypedAdjustmentOpKind::StringWiden;
+        return true;
     }
     if (name == "capacity_widen") {
-        return TypedAdjustmentOpKind::CapacityWiden;
+        out = TypedAdjustmentOpKind::CapacityWiden;
+        return true;
     }
     if (name == "type_arg") {
-        return TypedAdjustmentOpKind::TypeArg;
+        out = TypedAdjustmentOpKind::TypeArg;
+        return true;
     }
     if (name == "fn_param") {
-        return TypedAdjustmentOpKind::FnParam;
+        out = TypedAdjustmentOpKind::FnParam;
+        return true;
     }
     if (name == "fn_return") {
-        return TypedAdjustmentOpKind::FnReturn;
+        out = TypedAdjustmentOpKind::FnReturn;
+        return true;
     }
     if (name == "variant_to_enum") {
-        return TypedAdjustmentOpKind::VariantToEnum;
+        out = TypedAdjustmentOpKind::VariantToEnum;
+        return true;
     }
-    return TypedAdjustmentOpKind::IntWiden;
+    return false;
 }
 
 [[nodiscard]] TypedAdjustmentPlan read_adjustment_plan(Reader &reader, const Json &object) {
@@ -1554,7 +1588,12 @@ read_variance_array(Reader &reader, const Json &object, std::string_view key) {
                 node.ops.reserve(ops->array_items.size());
                 for (const auto &op_item : ops->array_items) {
                     TypedAdjustmentOp op;
-                    op.kind = adjustment_op_kind_from_name(reader.string_field(*op_item, "kind"));
+                    // `kind` is required and must be a known op-kind spelling; an
+                    // unknown/absent/non-string kind fails the parse closed.
+                    if (!adjustment_op_kind_from_name(reader.string_field(*op_item, "kind"),
+                                                      op.kind)) {
+                        reader.fail();
+                    }
                     op.arg_index = reader.u32_field(*op_item, "arg_index");
                     op.child = reader.u32_field(*op_item, "child");
                     node.ops.push_back(op);
@@ -2419,8 +2458,15 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .pattern_index = reader.optional_u32_field(object, "pattern_index", UINT32_MAX),
         .let_adjustment =
             [&]() -> std::optional<TypedAdjustmentPlan> {
-                const auto *plan = reader.field(object, "let_adjustment");
-                if (plan == nullptr || plan->kind != json::Kind::Object) {
+                // Optional (Codex P0-2): only a missing key or JSON null is
+                // "absent". A present value of the wrong kind (not an object) is a
+                // hard failure, never a silent nullopt drop of a real plan.
+                const auto *plan = object.get("let_adjustment");
+                if (plan == nullptr || plan->is_null()) {
+                    return std::nullopt;
+                }
+                if (plan->kind != json::Kind::Object) {
+                    reader.fail();
                     return std::nullopt;
                 }
                 return read_adjustment_plan(reader, *plan);
