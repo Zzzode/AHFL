@@ -964,6 +964,19 @@ class TypedIrLowerer final {
         return ir::SymbolRef{};
     }
 
+    // RFC 0026 P4-B: the FULL resolved TypeRef a TypedPattern is matched against
+    // (from its `matched_type`), or an Unresolved ref when Sema had no resolved
+    // type. Unlike matched_enum_ref (nominal-only), this carries any type incl.
+    // primitives + bounds, so a payload binding recovers its exact type. Reuses
+    // type_ref_from_type so the nominal_ref bridge + refinements are populated
+    // consistently with every other TypeRef.
+    [[nodiscard]] ir::TypeRef matched_type_ref_of(const TypedPattern *typed) const {
+        if (typed == nullptr || typed->matched_type == nullptr) {
+            return ir::TypeRef{}; // kind == Unresolved
+        }
+        return type_ref_from_type(*typed->matched_type);
+    }
+
     // The TypedProgram child pattern a TypedPattern refers to under `name`
     // (nullptr when absent / out of range). Lets pattern lowering descend the
     // typed tree in parallel with the AST so each sub-pattern carries its own
@@ -1074,6 +1087,7 @@ class TypedIrLowerer final {
         // pattern, so literal `none` / wildcard etc. keep the scrutinee enum
         // identity for (3)-3c to resolve Option::None by symbol.
         lowered.matched_enum = matched_enum_ref(typed);
+        lowered.matched_type_ref = matched_type_ref_of(typed);
         lowered.node = std::visit(
             Overloaded{
                 [](const ast::LiteralPattern &value) -> ir::MatchPatternNode {

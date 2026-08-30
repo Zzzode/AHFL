@@ -43,6 +43,12 @@ namespace {
     if (!symbol_ref_equal(lhs.matched_enum, rhs.matched_enum)) {
         return false;
     }
+    // RFC 0026 P4-B: the full resolved matched type is likewise part of identity
+    // (two `Some(v)` patterns matched against Option<Int> vs Option<String> are
+    // distinct). Uses the public TypeRef equality SSOT.
+    if (!type_refs_equal(lhs.matched_type_ref, rhs.matched_type_ref)) {
+        return false;
+    }
     return std::visit(
         Overloaded{
             [&](const LiteralPattern &a) {

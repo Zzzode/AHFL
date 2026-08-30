@@ -1796,6 +1796,16 @@ flow for A {
     CHECK(some->variant_name == "Some");
     CHECK(some->owner_enum.canonical_name.find("Maybe") != std::string::npos);
     CHECK(match->arms[0].pattern.matched_enum.canonical_name.find("Maybe") != std::string::npos);
+
+    // RFC 0026 P4-B: the resolved matched_type_ref bridge is populated and
+    // survives the round-trip. The root arm matches against the enum `Maybe`, so
+    // its matched_type_ref is a nominal Enum whose nominal_ref agrees with
+    // matched_enum (the BackendReady consistency the verifier locks).
+    const ir::TypeRef &some_mt = match->arms[0].pattern.matched_type_ref;
+    CHECK(some_mt.kind == ir::TypeRefKind::Enum);
+    CHECK(some_mt.canonical_name.find("Maybe") != std::string::npos);
+    CHECK(some_mt.nominal_ref.canonical_name ==
+          match->arms[0].pattern.matched_enum.canonical_name);
 }
 
 // ---------------------------------------------------------------------------

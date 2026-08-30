@@ -185,6 +185,19 @@ struct MatchPattern {
     // its own churn-only commit; the semantics are "matched nominal type", not
     // "enum".
     SymbolRef matched_enum{};
+    // RFC 0026 P4-B: the FULL resolved type this pattern node is matched against,
+    // persisted from Sema's TypedPattern.matched_type. Unlike `matched_enum`
+    // (nominal-only SymbolRef), this carries ANY type — primitive / bounded /
+    // Fn / nominal-generic — so a payload binding like `Some(v)` on `Option<Int>`
+    // recovers `Int` (and its bounds), which the nominal-only symbol cannot
+    // express. Each MatchPattern node is 1:1 with a Sema TypedPattern, so this is
+    // that node's exact matched type. `kind == Unresolved` when Sema had no
+    // resolved type for the node (e.g. a wildcard against an unresolved scrutinee);
+    // a Core consumer that needs the type fails closed on Unresolved rather than
+    // guessing. BackendReady invariant: when this is a nominal (Struct/Enum) type
+    // its `nominal_ref` agrees with `matched_enum`; when it is a primitive,
+    // `matched_enum` is Unknown.
+    TypeRef matched_type_ref{};
 };
 
 /// Boolean literal: true / false

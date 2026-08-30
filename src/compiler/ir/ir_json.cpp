@@ -743,6 +743,13 @@ class IrJsonPrinter final {
         if (has_symbol_ref(pattern.matched_enum)) {
             field("matched_enum", [&]() { print_symbol_ref(pattern.matched_enum, indent_level); });
         }
+        // RFC 0026 P4-B: the full resolved matched TypeRef (present when Sema had a
+        // resolved type). Emitted only when set so a pattern with no resolved type
+        // round-trips byte-exact.
+        if (has_type_ref(pattern.matched_type_ref)) {
+            field("matched_type_ref",
+                  [&]() { print_type_ref(pattern.matched_type_ref, indent_level + 1); });
+        }
     }
 
     void print_match_pattern(const ir::MatchPattern &pattern, int indent_level) {
@@ -2810,6 +2817,8 @@ class IrJsonReader final {
         pattern.source_range = source_range(obj);
         // RFC 0026 (3)-3b: matched-enum identity (absent => default empty ref).
         pattern.matched_enum = opt_symbol_ref(obj, "matched_enum");
+        // RFC 0026 P4-B: full resolved matched TypeRef (absent => Unresolved).
+        pattern.matched_type_ref = opt_type_ref(obj, "matched_type_ref", "matched_type");
         pattern.node = build_pattern_node(obj, kind);
         return pattern;
     }

@@ -761,6 +761,39 @@ class ProgramVerifier {
                           "(BackendReady requires a typed scrutinee enum)");
             }
         }
+        // RFC 0026 P4-B: the resolved `matched_type_ref` must be CONSISTENT with
+        // the nominal-only `matched_enum` (the two are separate persisted facts
+        // until every consumer migrates off `matched_enum`). BackendReady:
+        //   - matched_type_ref is a nominal (Struct/Enum) -> its nominal_ref must
+        //     name the SAME symbol as matched_enum;
+        //   - matched_type_ref is a resolved NON-nominal (primitive/Fn/...) ->
+        //     matched_enum must be Unknown (a primitive scrutinee has no enum).
+        // An Unresolved matched_type_ref (Sema had no type) is not constrained here.
+        if (is_backend_ready_mode(mode_) &&
+            pattern.matched_type_ref.kind != TypeRefKind::Unresolved) {
+            const auto &mt = pattern.matched_type_ref;
+            const bool is_nominal =
+                mt.kind == TypeRefKind::Struct || mt.kind == TypeRefKind::Enum;
+            if (is_nominal) {
+                // Same-symbol identity: id-first (both ids present -> must match),
+                // else non-empty canonical-name equality; kinds must both be Type.
+                const auto &a = mt.nominal_ref;
+                const auto &b = pattern.matched_enum;
+                const bool same = a.kind == SymbolRefKind::Type &&
+                                  b.kind == SymbolRefKind::Type &&
+                                  (a.id.has_value() && b.id.has_value()
+                                       ? *a.id == *b.id
+                                       : (!a.canonical_name.empty() &&
+                                          a.canonical_name == b.canonical_name));
+                if (!same) {
+                    add_error(path + ".matched_type_ref",
+                              "resolved matched type nominal identity disagrees with matched_enum");
+                }
+            } else if (pattern.matched_enum.kind != SymbolRefKind::Unknown) {
+                add_error(path + ".matched_type_ref",
+                          "non-nominal matched type must not carry a matched_enum identity");
+            }
+        }
         std::visit([this, &path, &pattern](
                        const auto &node) { verify_match_pattern_node(node, path, pattern.matched_enum); },
                    pattern.node);
