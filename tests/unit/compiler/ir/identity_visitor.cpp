@@ -2212,8 +2212,11 @@ TEST_CASE("Semantic IR backend-ready verifier rejects a match root pattern missi
     const auto backend_ready =
         ahfl::ir::verify_ir_program(ir, ahfl::ir::IrVerificationMode::BackendReady);
     CHECK(backend_ready.has_errors());
+    // RFC 0026 P4-B: stripping matched_enum while the resolved matched_type_ref is
+    // still a nominal (Enum) trips the bridge consistency lock — the nominal
+    // matched type's identity no longer agrees with the (now Unknown) matched_enum.
     CHECK(has_ir_diagnostic_containing(backend_ready, ahfl::ir::VerificationSeverity::Error,
-                                       "match root pattern has no resolved matched-enum identity"));
+                                       "resolved matched type nominal identity disagrees with matched_enum"));
 }
 
 TEST_CASE("Semantic IR backend-ready verifier rejects a variant whose owner enum differs from the scrutinee") {

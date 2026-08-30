@@ -1354,6 +1354,11 @@ inline constexpr std::string_view kDuplicateInstanceKey = "core.DUPLICATE_INSTAN
 inline constexpr std::string_view kUnresolvedInstanceBase = "core.UNRESOLVED_INSTANCE_BASE";
 inline constexpr std::string_view kUnknownInstanceKind = "core.UNKNOWN_INSTANCE_KIND";
 inline constexpr std::string_view kUnresolvedWorkflowInvocation = "core.UNRESOLVED_WORKFLOW_INVOCATION";
+// RFC 0026 P4-B: a source `let x: T = <init>` whose declared annotation T does
+// not intern to the SAME logical value type as its initializer value. Sema
+// guarantees agreement on the normal path; the lowerer fails closed here so a
+// hand-built / deserialized AHFL-IR cannot smuggle a mistyped local past it.
+inline constexpr std::string_view kLetTypeMismatch = "core.LET_TYPE_MISMATCH";
 } // namespace diag
 
 /// A structured lowering diagnostic (fail-closed: no throw, no Unknown node).

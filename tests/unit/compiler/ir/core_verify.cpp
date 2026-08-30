@@ -55,6 +55,12 @@ struct GoodProgram {
     CoreProgram program;
     // handles for tampering
     CoreFlowDecl *flow{nullptr};
+    // The interned Int value type (RFC 0026 P4-B): a valid result_type any extra
+    // hand-built arena expr can carry so it passes the per-expr result_type gate.
+    CoreValueTypeId vt_int{};
+    // The interned Bool value type: for a value used as an if-condition / guard
+    // result (the verifier's P1 condition type-check requires Bool).
+    CoreValueTypeId vt_bool{};
 };
 
 [[nodiscard]] GoodProgram make_good_program() {
@@ -145,6 +151,10 @@ struct GoodProgram {
     // Let/expr result-type consistency).
     const CoreValueTypeId vt_int{static_cast<std::uint32_t>(p.value_types.size())};
     p.value_types.push_back(CoreValueType{CoreVtInt{}});
+    // RFC 0026 P4-B (P1): the if-condition value (%1, the capability result) must
+    // be Bool for the verifier's condition type-check, so intern a Bool too.
+    const CoreValueTypeId vt_bool{static_cast<std::uint32_t>(p.value_types.size())};
+    p.value_types.push_back(CoreValueType{CoreVtBool{}});
 
     // expr arena. Every CoreExpr carries a valid result_type (P4-B).
     // %lit1 spelling "1"
@@ -171,7 +181,8 @@ struct GoodProgram {
     flow.value_count = 4;
     // Dense value_types table (P4-B): size == value_count, each a valid slot; the
     // Let-bound values (%0, %2, %3) match their expr result_type (all vt_int).
-    flow.value_types = {vt_int, vt_int, vt_int, vt_int};
+    // %1 is the capability (Charge) result used as the if-condition, so Bool.
+    flow.value_types = {vt_int, vt_bool, vt_int, vt_int};
     const CoreValueId v0{0};
     const CoreValueId v1{1};
     const CoreValueId v2{2};
@@ -229,6 +240,8 @@ struct GoodProgram {
 
     p.flows.push_back(std::move(flow));
     g.flow = &p.flows.back();
+    g.vt_int = vt_int;
+    g.vt_bool = vt_bool;
     return g;
 }
 
@@ -614,7 +627,7 @@ TEST_CASE("verifier accepts a struct literal that omits only DEFAULTED fields") 
     ctor.type_id = CoreTypeId{1}; // Ctx
     ctor.resolved = true;
     ctor.args = {}; // omits both defaulted fields — legal
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt, g.vt_int});
     const auto result = verify_core_program(g.program);
     for (const auto &d : result.diagnostics) {
         INFO("unexpected diagnostic: " << d.code << " — " << d.message);
@@ -827,8 +840,8 @@ TEST_CASE("verifier accepts a shared DAG expr node (revisit is not a cycle)") {
     GoodProgram g = make_good_program();
     // expr %lit1 (id 0) is referenced by two different unary exprs — a shared
     // DAG node, NOT a cycle. Both must pass.
-    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{0}}, std::nullopt});
-    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Neg, CoreExprId{0}}, std::nullopt});
+    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{0}}, std::nullopt, g.vt_int});
+    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Neg, CoreExprId{0}}, std::nullopt, g.vt_int});
     const auto result = verify_core_program(g.program);
     CHECK(result.ok());
 }
@@ -855,6 +868,44 @@ TEST_CASE("verifier fails closed on an out-of-range value in an UNUSED construct
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kValueIdOutOfRange));
+}
+
+TEST_CASE("verifier fails closed on an out-of-range result type in an UNUSED arena expr (P4-B P0-2)") {
+    GoodProgram g = make_good_program();
+    // CoreExpr.result_type is REQUIRED on EVERY arena node. An unreferenced
+    // literal whose result_type points past the value-type pool must fail closed
+    // at the static arena pass, not slip past because no statement reads it.
+    const auto oor = CoreValueTypeId{static_cast<std::uint32_t>(g.program.value_types.size()) + 5};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "9"}, std::nullopt, oor});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeSlotInvalid));
+}
+
+TEST_CASE("verifier fails closed on a Never result type in an UNUSED arena expr (P4-B P0-2)") {
+    GoodProgram g = make_good_program();
+    // `Never` is uninhabited: it can never be a materialized value's type. An
+    // unreferenced expr whose result_type resolves to CoreVtNever must fail closed.
+    const auto never_id = CoreValueTypeId{static_cast<std::uint32_t>(g.program.value_types.size())};
+    g.program.value_types.push_back(CoreValueType{CoreVtNever{}});
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "9"}, std::nullopt, never_id});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeSlotInvalid));
+}
+
+TEST_CASE("verifier fails closed on a kInvalid result type in an UNUSED arena expr (P4-B P0-2)") {
+    GoodProgram g = make_good_program();
+    // The default kInvalid result_type is only legal on a lowering-ERROR partial
+    // artifact (the verifier is not run on those); a supposedly clean program
+    // carrying it must fail closed.
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "9"}, std::nullopt, CoreValueTypeId{}});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeSlotInvalid));
 }
 
 TEST_CASE("verifier fails closed on an enum context (not folded into Unit)") {
@@ -1222,7 +1273,13 @@ TEST_CASE("verifier accepts an if-both-branches-yield arm body (per-path yield)"
     g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     const std::uint32_t sid = g.flow->value_count;
     g.flow->value_count += 1;
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    // P4-B (P1): this value doubles as the if-condition below, so it must be Bool.
+    g.flow->value_types.push_back(g.vt_bool);
+    // A Bool-typed expr to bind %sid from (its result_type must match %sid's Bool
+    // recorded type — the Let-consistency check).
+    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, g.vt_bool});
     auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
     // arm body: if %sid { yield } else { yield } — both paths yield unit.
     match.arms[0].body->statements.clear();
@@ -1235,7 +1292,7 @@ TEST_CASE("verifier accepts an if-both-branches-yield arm body (per-path yield)"
     match.arms[0].body->statements.push_back(CoreStmt{std::move(iff), std::nullopt});
     auto &done = g.flow->states[1].body;
     done.statements.clear();
-    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, CoreExprId{0}}, std::nullopt});
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, e_bool}, std::nullopt});
     done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
     done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
     const auto result = verify_core_program(g.program);
@@ -1244,6 +1301,93 @@ TEST_CASE("verifier accepts an if-both-branches-yield arm body (per-path yield)"
         CHECK(false);
     }
     CHECK(result.ok());
+}
+
+TEST_CASE("verifier fails closed on a non-Bool if condition (P4-B P1)") {
+    GoodProgram g = make_good_program();
+    // %1 is the if-condition (see make_good_program). Retype it to Int: the
+    // condition type-check must fail closed.
+    g.flow->value_types[1] = g.vt_int;
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeMismatch));
+}
+
+TEST_CASE("verifier fails closed on a guard that yields a non-Bool value (P4-B P1)") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    // scrutinee value (Int) + a guard result value that we deliberately type Int.
+    const std::uint32_t sid = g.flow->value_count;
+    const std::uint32_t guard_v = sid + 1;
+    g.flow->value_count += 2;
+    g.flow->value_types.push_back(g.vt_int); // scrutinee
+    g.flow->value_types.push_back(g.vt_int); // guard result — WRONG (must be Bool)
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
+    // An expression match with a guard region that yields the Int guard value.
+    CoreMatchStmt match;
+    match.scrutinee = CoreValueId{sid};
+    match.has_result = true;
+    match.result = CoreValueId{sid}; // reuse: result typed Int, arm yields Int (consistent)
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.guard_region = std::make_unique<CoreRegion>();
+    arm.guard_region->statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{guard_v}, e_int}, std::nullopt});
+    arm.guard_region->statements.push_back(
+        CoreStmt{CoreYieldStmt{true, CoreValueId{guard_v}}, std::nullopt}); // yields Int, not Bool
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(CoreStmt{CoreYieldStmt{true, CoreValueId{sid}}, std::nullopt});
+    match.arms.push_back(std::move(arm));
+    match.fallback_region = std::make_unique<CoreRegion>();
+    match.fallback_region->statements.push_back(
+        CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, e_int}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeMismatch));
+}
+
+TEST_CASE("verifier fails closed on an expression arm yielding the wrong value type (P4-B P1)") {
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->value_count;    // scrutinee/result (Int)
+    const std::uint32_t arm_v = sid + 1;              // arm-yielded value (Bool — WRONG)
+    g.flow->value_count += 2;
+    g.flow->value_types.push_back(g.vt_int);  // result: Int
+    g.flow->value_types.push_back(g.vt_bool); // arm yields Bool — mismatches Int result
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
+    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, g.vt_bool});
+    CoreMatchStmt match;
+    match.scrutinee = CoreValueId{sid};
+    match.has_result = true;
+    match.result = CoreValueId{sid}; // result typed Int
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{arm_v}, e_bool}, std::nullopt});
+    arm.body->statements.push_back(
+        CoreStmt{CoreYieldStmt{true, CoreValueId{arm_v}}, std::nullopt}); // yields Bool != Int result
+    match.arms.push_back(std::move(arm));
+    match.fallback_region = std::make_unique<CoreRegion>();
+    match.fallback_region->statements.push_back(
+        CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, e_int}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeMismatch));
 }
 
 TEST_CASE("verifier fails closed on a match arm binding defined more than once (flow-global SSA)") {

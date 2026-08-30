@@ -2361,11 +2361,27 @@ class FlowLowerer {
     void lower_let(const LetStatement &s, CoreRegion &region) {
         const CoreValueId value = ex_.lower_value(s.initializer, region);
         // A source `let` REUSES the initializer value (does NOT allocate a fresh
-        // one), so the local's logical type is exactly the value's already-recorded
-        // body-table entry (single source of truth — RFC 0026 P4-B). Both travel as
-        // one binding, so branch scoping (see lower_if) snapshots/restores them
+        // one), so the local's logical type is the value's already-recorded
+        // body-table entry (single source of truth - RFC 0026 P4-B). Both travel
+        // as one binding, so branch scoping (see lower_if) snapshots/restores them
         // atomically.
-        ex_.scope()[s.name] = LocalBinding{value, ex_.value_type_of(value)};
+        const CoreValueTypeId init_type = ex_.value_type_of(value);
+        // P4-B fail-closed (Codex P0-3): the DECLARED annotation `let x: T = ...`
+        // must intern to the SAME logical value type as the initializer value.
+        // Sema guarantees this on the normal path; a hand-built / deserialized
+        // AHFL-IR whose annotation disagrees (e.g. `let x: Bool = <Int>`) must be
+        // rejected here, never silently adopt one side. A fully inferred `let`
+        // carries the initializer's own type_ref, so it trivially agrees.
+        const CoreValueTypeId declared_type =
+            ex_.intern_value_type(s.type_ref, s.initializer.ptr ? s.initializer.ptr->source_range
+                                                                : std::nullopt);
+        if (!(declared_type == init_type)) {
+            ex_.error(diag::kLetTypeMismatch,
+                      "let binding '" + s.name +
+                          "' declared type does not match its initializer's value type",
+                      s.initializer.ptr ? s.initializer.ptr->source_range : std::nullopt);
+        }
+        ex_.scope()[s.name] = LocalBinding{value, init_type};
     }
 
     void lower_assign(const AssignStatement &s, SourceRangeOpt range, CoreRegion &region) {

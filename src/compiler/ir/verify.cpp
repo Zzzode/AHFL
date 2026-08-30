@@ -585,7 +585,7 @@ class ProgramVerifier {
     }
 
     void verify_statement_node(const IfLetStatement &stmt, const std::string &path) {
-        verify_match_pattern(stmt.pattern, path + ".pattern", /*is_root=*/true);
+        verify_match_pattern(stmt.pattern, path + ".pattern");
         verify_required_expr_ref(stmt.scrutinee, path + ".scrutinee");
         if (stmt.then_block) {
             verify_block(*stmt.then_block, path + ".then");
@@ -724,7 +724,7 @@ class ProgramVerifier {
         verify_required_expr_ref(expr.scrutinee, path + ".scrutinee");
         for (std::uint32_t index = 0; index < expr.arms.size(); ++index) {
             const auto arm_path = path + ".arms[" + std::to_string(index) + "]";
-            verify_match_pattern(expr.arms[index].pattern, arm_path + ".pattern", /*is_root=*/true);
+            verify_match_pattern(expr.arms[index].pattern, arm_path + ".pattern");
             verify_optional_expr_ref(expr.arms[index].guard, arm_path + ".guard");
             verify_required_expr_ref(expr.arms[index].body, arm_path + ".body");
         }
@@ -744,56 +744,59 @@ class ProgramVerifier {
         verify_required_expr_ref(expr.body, path + ".body");
     }
 
-    void verify_match_pattern(const MatchPattern &pattern, const std::string &path,
-                              bool is_root = false) {
+    void verify_match_pattern(const MatchPattern &pattern, const std::string &path) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.text)) {
             add_error(path, "match pattern contains sentinel text");
         }
-        // RFC 0026 (3)-3b: a ROOT arm / if-let pattern is matched against the
-        // scrutinee enum; its typed matched_enum identity must be resolved (a
-        // Type SymbolRef), so a backend never recovers it from the `path`
-        // spelling. Nested primitive-payload patterns need not carry it.
-        if (is_root && is_backend_ready_mode(mode_)) {
-            if (pattern.matched_enum.kind != SymbolRefKind::Type ||
-                pattern.matched_enum.canonical_name.empty()) {
-                add_error(path,
-                          "match root pattern has no resolved matched-enum identity "
-                          "(BackendReady requires a typed scrutinee enum)");
+        // RFC 0026 P4-B: the resolved `matched_type_ref` is the bridge a backend
+        // consumes to type every match binding. It must be present + fully valid
+        // on EVERY pattern node (BackendReady), so "AHFL BackendReady" and
+        // "Core-consumable" cannot diverge (a missing bridge must fail here, not
+        // only later at Core lowering).
+        //   - it must be resolved (not Unresolved) and pass the full type-ref gate
+        //     (nominal_ref identity / shape), the same one every other TypeRef
+        //     goes through;
+        //   - a nominal (Struct/Enum) matched type's nominal_ref must name the
+        //     SAME symbol as the nominal-only `matched_enum`; a resolved
+        //     NON-nominal (primitive/Fn/...) matched type requires matched_enum to
+        //     be Unknown (a primitive scrutinee has no enum).
+        // Structural (non-BackendReady) mode stays permissive for partial/legacy
+        // programs; the type-ref shape recursion below still runs there.
+        if (is_backend_ready_mode(mode_)) {
+            if (pattern.matched_type_ref.kind == TypeRefKind::Unresolved) {
+                add_error(path + ".matched_type_ref",
+                          "match pattern has no resolved matched type "
+                          "(BackendReady requires the P4-B typed bridge on every node)");
             }
-        }
-        // RFC 0026 P4-B: the resolved `matched_type_ref` must be CONSISTENT with
-        // the nominal-only `matched_enum` (the two are separate persisted facts
-        // until every consumer migrates off `matched_enum`). BackendReady:
-        //   - matched_type_ref is a nominal (Struct/Enum) -> its nominal_ref must
-        //     name the SAME symbol as matched_enum;
-        //   - matched_type_ref is a resolved NON-nominal (primitive/Fn/...) ->
-        //     matched_enum must be Unknown (a primitive scrutinee has no enum).
-        // An Unresolved matched_type_ref (Sema had no type) is not constrained here.
-        if (is_backend_ready_mode(mode_) &&
-            pattern.matched_type_ref.kind != TypeRefKind::Unresolved) {
             const auto &mt = pattern.matched_type_ref;
             const bool is_nominal =
                 mt.kind == TypeRefKind::Struct || mt.kind == TypeRefKind::Enum;
-            if (is_nominal) {
-                // Same-symbol identity: id-first (both ids present -> must match),
-                // else non-empty canonical-name equality; kinds must both be Type.
-                const auto &a = mt.nominal_ref;
-                const auto &b = pattern.matched_enum;
-                const bool same = a.kind == SymbolRefKind::Type &&
-                                  b.kind == SymbolRefKind::Type &&
-                                  (a.id.has_value() && b.id.has_value()
-                                       ? *a.id == *b.id
-                                       : (!a.canonical_name.empty() &&
-                                          a.canonical_name == b.canonical_name));
-                if (!same) {
+            if (mt.kind != TypeRefKind::Unresolved) {
+                if (is_nominal) {
+                    // Same-symbol identity: id-first (both ids present -> must
+                    // match), else non-empty canonical-name equality; both Type.
+                    const auto &a = mt.nominal_ref;
+                    const auto &b = pattern.matched_enum;
+                    const bool same = a.kind == SymbolRefKind::Type &&
+                                      b.kind == SymbolRefKind::Type &&
+                                      (a.id.has_value() && b.id.has_value()
+                                           ? *a.id == *b.id
+                                           : (!a.canonical_name.empty() &&
+                                              a.canonical_name == b.canonical_name));
+                    if (!same) {
+                        add_error(path + ".matched_type_ref",
+                                  "resolved matched type nominal identity disagrees with matched_enum");
+                    }
+                } else if (pattern.matched_enum.kind != SymbolRefKind::Unknown) {
                     add_error(path + ".matched_type_ref",
-                              "resolved matched type nominal identity disagrees with matched_enum");
+                              "non-nominal matched type must not carry a matched_enum identity");
                 }
-            } else if (pattern.matched_enum.kind != SymbolRefKind::Unknown) {
-                add_error(path + ".matched_type_ref",
-                          "non-nominal matched type must not carry a matched_enum identity");
             }
         }
+        // The matched type goes through the SAME full shape/identity gate as every
+        // other TypeRef (nominal_ref, refinements, nested params). Runs in every
+        // mode; BackendReady adds the resolved-nominal-identity checks inside.
+        verify_type_ref(pattern.matched_type_ref, path + ".matched_type_ref");
         std::visit([this, &path, &pattern](
                        const auto &node) { verify_match_pattern_node(node, path, pattern.matched_enum); },
                    pattern.node);

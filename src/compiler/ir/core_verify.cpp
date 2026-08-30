@@ -420,6 +420,26 @@ class Verifier {
         return !std::holds_alternative<CoreVtNever>(program_.value_types[id.value].node);
     }
 
+    // Whether a logical value-type id is the boolean type (RFC 0026 P4-B): used
+    // to type-check a condition value and a guard's yielded value.
+    [[nodiscard]] bool is_bool_value_type(CoreValueTypeId id) const {
+        return id.value != CoreValueTypeId::kInvalid && id.value < program_.value_types.size() &&
+               std::holds_alternative<CoreVtBool>(program_.value_types[id.value].node);
+    }
+
+    // The interned Bool value-type id, or kInvalid when the pool has none (a body
+    // with a guard always interns Bool for the guard result, so a real guarded
+    // match has it; kInvalid disables the per-yield type check rather than
+    // producing a false positive against a missing Bool).
+    [[nodiscard]] CoreValueTypeId find_bool_value_type() const {
+        for (std::uint32_t i = 0; i < program_.value_types.size(); ++i) {
+            if (std::holds_alternative<CoreVtBool>(program_.value_types[i].node)) {
+                return CoreValueTypeId{i};
+            }
+        }
+        return CoreValueTypeId{};
+    }
+
     // RFC 0026 P4-B: the body's per-value type table must be DENSE (one entry per
     // allocated value id) and every entry a valid, in-range, non-Never value type.
     void verify_body_value_types(const ArenaView &flow) {
@@ -482,6 +502,18 @@ class Verifier {
             }
         };
         for (const CoreExpr &expr : flow.exprs) {
+            // RFC 0026 P4-B: CoreExpr.result_type is REQUIRED on every arena node
+            // (a lowering-clean program). Check it for EVERY expr here, not only
+            // where a Let/ValueRef consistency rule happens to read it — an
+            // unreferenced node with an out-of-range / kInvalid / Never result
+            // type must fail closed at the consumption boundary too.
+            if (!value_type_slot_ok(expr.result_type)) {
+                error(verify::kValueTypeSlotInvalid,
+                      "expression in '" + flow.label +
+                          "' has an invalid result type (out-of-range id, kInvalid, or a `Never`, "
+                          "which cannot be a materialized value type)",
+                      expr.source_range);
+            }
             std::visit(Overloaded{
                            [&](const CoreLiteralExpr &) {},
                            [&](const CoreValueRefExpr &r) {
@@ -1174,7 +1206,8 @@ class Verifier {
                                            const CoreRegion &region,
                                            std::unordered_set<std::uint32_t> &all_definitions,
                                            std::unordered_set<std::uint32_t> &visible,
-                                           RegionContext ctx = RegionContext::Flow) {
+                                           RegionContext ctx = RegionContext::Flow,
+                                           CoreValueTypeId expected_yield_type = {}) {
         const auto use_value = [&](CoreValueId v, SourceRangeOpt range) {
             if (v.value >= flow.value_count) {
                 error(verify::kValueIdOutOfRange,
@@ -1276,6 +1309,16 @@ class Verifier {
                            },
                            [&](const CoreIfStmt &s) {
                                use_value(s.condition, stmt.source_range);
+                               // RFC 0026 P4-B (P1): the branch condition must be a
+                               // Bool value (the dense value table now lets the
+                               // standalone verifier prove this instead of trusting
+                               // Sema).
+                               if (s.condition.value < flow.value_count &&
+                                   !is_bool_value_type(body_value_type(flow, s.condition))) {
+                                   error(verify::kValueTypeMismatch,
+                                         "if condition value must be Bool in '" + flow.label + "'",
+                                         stmt.source_range);
+                               }
                                // Each branch: own `visible` copy (defs don't
                                // escape), shared `all_definitions`, same `ctx`.
                                // The else-less branch is an implicit fallthrough.
@@ -1345,6 +1388,20 @@ class Verifier {
                                if (s.has_value) {
                                    use_value(s.value, stmt.source_range);
                                    exit.yields_value = true;
+                                   // RFC 0026 P4-B (P1): when the caller specified
+                                   // an expected yield type (a guard yields Bool; an
+                                   // expression match arm yields the match result
+                                   // type), the yielded value's recorded type must
+                                   // equal it.
+                                   if (expected_yield_type.value != CoreValueTypeId::kInvalid &&
+                                       s.value.value < flow.value_count &&
+                                       !(body_value_type(flow, s.value) == expected_yield_type)) {
+                                       error(verify::kValueTypeMismatch,
+                                             "yielded value type does not match the region's "
+                                             "expected type in '" +
+                                                 flow.label + "'",
+                                             stmt.source_range);
+                                   }
                                } else {
                                    exit.yields_unit = true;
                                }
@@ -1398,7 +1455,18 @@ class Verifier {
 
         const auto require_arm_region = [&](const CoreRegion &region, RegionContext ctx,
                                             std::unordered_set<std::uint32_t> &vis, bool is_guard) {
-            const RegionExit e = verify_region(flow, state_count, region, all_definitions, vis, ctx);
+            // RFC 0026 P4-B (P1): a guard yields Bool; an expression match arm
+            // yields the match result's type. Pass that expected type so the
+            // yield sites are type-checked (kInvalid = no per-yield type check,
+            // e.g. a statement arm yields nothing).
+            CoreValueTypeId expected{};
+            if (ctx == RegionContext::Guard) {
+                expected = find_bool_value_type();
+            } else if (ctx == RegionContext::MatchArmValue && m.has_result) {
+                expected = body_value_type(flow, m.result);
+            }
+            const RegionExit e =
+                verify_region(flow, state_count, region, all_definitions, vis, ctx, expected);
             // Per-path legality by context.
             if (ctx == RegionContext::Guard) {
                 // Every path must yield a Bool value or trap; no fallthrough,

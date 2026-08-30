@@ -5,6 +5,7 @@
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program.hpp"
 #include "ahfl/compiler/ir/typed_hir_lower.hpp"
+#include "ahfl/compiler/ir/verify.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
@@ -80,6 +81,11 @@ void give_shell_structs(ir::AhflIr &program, ir::AgentDecl &agent, const std::st
 ir::TypeRef int_type() {
     ir::TypeRef t;
     t.kind = ir::TypeRefKind::Int;
+    return t;
+}
+ir::TypeRef bool_type_ref() {
+    ir::TypeRef t;
+    t.kind = ir::TypeRefKind::Bool;
     return t;
 }
 // An enum-typed value (e.g. the result of an `Option::Some(_)` constructor).
@@ -901,13 +907,14 @@ TEST_CASE("branch-local let bindings do not leak across branches or past the if 
     handler.state_name = "S";
 
     const auto make_let = [&](const std::string &name, const std::string &val) {
-        ir::TypeRef int_ty;
-        int_ty.kind = ir::TypeRefKind::Int;
         ir::ExprRef init = program.expr_arena.make(ir::IntegerLiteralExpr{val}, std::nullopt,
-                                                   std::move(int_ty));
+                                                   int_type());
         auto s = std::make_unique<ir::Statement>();
         ir::LetStatement let;
         let.name = name;
+        // An inferred `let x = <Int>` carries the initializer's type in type_ref
+        // (Sema's FromInitializerType strategy), so declared == initializer type.
+        let.type_ref = int_type();
         let.initializer = init;
         s->node = std::move(let);
         return s;
@@ -1040,20 +1047,24 @@ TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the ou
     handler.state_name = "S";
 
     const auto make_typed_let = [&](const std::string &name, const std::string &type_canonical) {
-        // A realistic `let x: T = <init>` has the initializer resolved to T (Sema
-        // coerces/checks), so P4-B records the local's value type as the nominal T.
-        ir::TypeRef init_ty;
-        init_ty.kind = ir::TypeRefKind::Struct;
-        init_ty.canonical_name = type_canonical;
-        init_ty.nominal_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
-                                            .canonical_name = type_canonical};
+        // A realistic `let x: T = <init>` has BOTH the declared annotation and the
+        // initializer resolved to the SAME nominal T (Sema coerces/checks), so
+        // P4-B records the local's value type as the nominal T and the declared
+        // type matches the initializer type (P0-3 lower_let check).
+        const auto struct_ty = [&] {
+            ir::TypeRef t;
+            t.kind = ir::TypeRefKind::Struct;
+            t.canonical_name = type_canonical;
+            t.nominal_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                          .canonical_name = type_canonical};
+            return t;
+        };
         ir::ExprRef init = program.expr_arena.make(ir::IntegerLiteralExpr{"0"}, std::nullopt,
-                                                   std::move(init_ty));
+                                                   struct_ty());
         auto s = std::make_unique<ir::Statement>();
         ir::LetStatement let;
         let.name = name;
-        let.type_ref.kind = ir::TypeRefKind::Struct;
-        let.type_ref.canonical_name = type_canonical;
+        let.type_ref = struct_ty();
         let.initializer = init;
         s->node = std::move(let);
         return s;
@@ -1653,8 +1664,9 @@ TEST_CASE("enum struct-payload construct with a missing slot fails closed in the
     auto let = std::make_unique<ir::Statement>();
     ir::LetStatement let_stmt;
     let_stmt.name = "t";
-    let_stmt.type_ref.kind = ir::TypeRefKind::Enum;
-    let_stmt.type_ref.canonical_name = "app::Ticket";
+    // Declared annotation matches the initializer's resolved enum type (P0-3
+    // lower_let requires declared == initializer value type).
+    let_stmt.type_ref = enum_type("app::Ticket");
     let_stmt.initializer = lit_ref;
     let->node = std::move(let_stmt);
     ir::StateHandler handler;
@@ -1669,7 +1681,78 @@ TEST_CASE("enum struct-payload construct with a missing slot fails closed in the
 }
 
 // ---------------------------------------------------------------------------
-// (3)-3b typed pattern identity bridge: after lowering a real match program to
+// RFC 0026 P4-B P0-3: a source `let x: T = <init>` whose DECLARED annotation
+// disagrees with the initializer's value type must fail closed at lowering. Sema
+// guarantees agreement on the normal path; a hand-built / deserialized AHFL-IR
+// must not smuggle a mistyped local past the lowerer.
+// ---------------------------------------------------------------------------
+
+// Build a single-handler flow whose only statement is `let <name>: <decl> =
+// <init literal typed `init`>`, then a `return`. `decl` and `init` are the
+// declared annotation and the initializer's resolved type.
+ir::AhflIr make_let_annotation_program(const std::string &name, ir::TypeRef decl_type,
+                                       ir::TypeRef init_type) {
+    ir::AhflIr program;
+    ir::AgentDecl agent;
+    agent.name = "A";
+    agent.symbol_ref.kind = ir::SymbolRefKind::Agent;
+    agent.symbol_ref.canonical_name = "app::A";
+    agent.symbol_ref.id = 1;
+    agent.states = {"S"};
+    agent.initial_state = "S";
+    agent.final_states = {"S"};
+    give_shell_structs(program, agent, "La");
+    program.declarations.emplace_back(std::move(agent));
+
+    ir::FlowDecl flow;
+    flow.target_ref.kind = ir::SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.target_ref.local_name = "A";
+    flow.target_ref.id = 1;
+
+    ir::StateHandler handler;
+    handler.state_name = "S";
+    ir::ExprRef init =
+        program.expr_arena.make(ir::IntegerLiteralExpr{"0"}, std::nullopt, std::move(init_type));
+    ir::LetStatement let;
+    let.name = name;
+    let.type_ref = std::move(decl_type);
+    let.initializer = init;
+    auto s = std::make_unique<ir::Statement>();
+    s->node = std::move(let);
+    handler.body.statements.push_back(std::move(s));
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+    return program;
+}
+
+TEST_CASE("P4-B P0-3: a let whose declared type matches the initializer lowers clean") {
+    const auto program = make_let_annotation_program("x", int_type(), int_type());
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    CHECK(result.ok());
+}
+
+TEST_CASE("P4-B P0-3: an inferred-style let (declared == initializer nominal) lowers clean") {
+    const auto program =
+        make_let_annotation_program("x", enum_type("std::option::Option", int_type()),
+                                    enum_type("std::option::Option", int_type()));
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    CHECK(result.ok());
+}
+
+TEST_CASE("P4-B P0-3: a let whose declared type disagrees with the initializer fails closed") {
+    // `let x: Bool = <Int>` — declared Bool, initializer Int. Lowering must emit
+    // core.LET_TYPE_MISMATCH and the program is not executable.
+    const auto program = make_let_annotation_program("x", bool_type_ref(), int_type());
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_lower_code(result, ir::core::diag::kLetTypeMismatch));
+    CHECK_FALSE(result.is_executable);
+}
+
+
 // AHFL-IR, each variant pattern carries its owner-enum SymbolRef + declaration-
 // stable variant name (not just the `path` spelling), and EVERY pattern carries
 // the matched-enum fact from the scrutinee's type. This is what lets (3)-3c
@@ -2056,7 +2139,83 @@ TEST_CASE("(3)-3b P0-1: AST variant vs typed Literal kind mismatch fails closed"
     CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)), std::logic_error);
 }
 
-// --- (3)-3b round-3: guard existence must agree with the AST arm ---
+// --- (3)-3b / P4-B: matched_type_ref bridge fidelity + BindingPattern cross-check ---
+
+TEST_CASE("P4-B: a primitive-payload binding carries its resolved primitive matched type") {
+    // Some(x) binds x : Int. The bridge must record a RESOLVED, non-nominal
+    // matched_type_ref on the `x` binding node (not just the root enum), so a
+    // backend types the binding from it. Drives the real typed-HIR lowering.
+    auto st = frontend_state("prim_child_bridge", kMatchProgram);
+    REQUIRE(st.has_value());
+    const auto program = ahfl::lower_typed_program(st->typecheck->typed_program, *st->parse.program);
+    // BackendReady is now a hard gate on matched_type_ref for EVERY node.
+    CHECK_FALSE(
+        ir::verify_ir_program(program, ir::IrVerificationMode::BackendReady).has_errors());
+    // Locate the Some(x) arm's inner binding pattern and assert its matched type
+    // is the resolved primitive Int (non-nominal, no stray matched_enum).
+    const ir::MatchExpr *match = nullptr;
+    for (const ir::Expr *expr : program.expr_arena.span()) {
+        if (expr != nullptr) {
+            if (auto *m = std::get_if<ir::MatchExpr>(&expr->node)) {
+                match = m;
+                break;
+            }
+        }
+    }
+    REQUIRE(match != nullptr);
+    REQUIRE(match->arms.size() == 2);
+    const auto *variant = std::get_if<ir::VariantPattern>(&match->arms[0].pattern.node);
+    REQUIRE(variant != nullptr);
+    REQUIRE(variant->subpatterns.size() == 1);
+    REQUIRE(variant->subpatterns[0] != nullptr);
+    const ir::MatchPattern &binding = *variant->subpatterns[0];
+    CHECK(binding.matched_type_ref.kind == ir::TypeRefKind::Int);
+    CHECK(binding.matched_type_ref.nominal_ref.kind == ir::SymbolRefKind::Unknown);
+    CHECK(binding.matched_enum.kind == ir::SymbolRefKind::Unknown);
+}
+
+TEST_CASE("P4-B: a binding whose recorded type disagrees with matched_type fails closed") {
+    // Corrupt the `x` binding's TypedPattern so its matched_type no longer equals
+    // the type recorded for the binding in `bindings` (here: drop matched_type to
+    // null while the binding record keeps its Int type). The bridge cross-check
+    // must fail closed rather than silently adopt a mismatched type downstream.
+    auto st = frontend_state("binding_bridge_mismatch", kMatchProgram);
+    REQUIRE(st.has_value());
+    auto &tp = st->typecheck->typed_program;
+    bool corrupted = false;
+    for (auto &pat : tp.patterns) {
+        if (pat.kind == ahfl::TypedPatternKind::Binding && !pat.bindings.empty() &&
+            pat.bindings.front().type != nullptr) {
+            // matched_type disagrees with the still-present binding record type.
+            pat.matched_type = nullptr;
+            corrupted = true;
+            break;
+        }
+    }
+    REQUIRE(corrupted);
+    CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)),
+                    std::logic_error);
+}
+
+TEST_CASE("P4-B: a binding recorded more than once in the TypedPattern fails closed") {
+    // Duplicate the binding record for the `x` binding: the cross-check requires
+    // the binding NAME to resolve to exactly one TypedPatternBinding.
+    auto st = frontend_state("binding_bridge_dup", kMatchProgram);
+    REQUIRE(st.has_value());
+    auto &tp = st->typecheck->typed_program;
+    bool corrupted = false;
+    for (auto &pat : tp.patterns) {
+        if (pat.kind == ahfl::TypedPatternKind::Binding && !pat.bindings.empty()) {
+            pat.bindings.push_back(pat.bindings.front()); // same name twice
+            corrupted = true;
+            break;
+        }
+    }
+    REQUIRE(corrupted);
+    CHECK_THROWS_AS(static_cast<void>(ahfl::lower_typed_program(tp, *st->parse.program)),
+                    std::logic_error);
+}
+
 
 // A match with a GUARDED first arm (Some(x) if <guard> => ...). Used to prove a
 // deleted guard child fails closed.

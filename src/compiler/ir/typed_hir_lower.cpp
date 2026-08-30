@@ -977,6 +977,44 @@ class TypedIrLowerer final {
         return type_ref_from_type(*typed->matched_type);
     }
 
+    // RFC 0026 P4-B cross-check: a BindingPattern node's persisted
+    // `matched_type` (which the bridge lowers into `matched_type_ref` and a
+    // backend uses to type the bound value) must agree with the binding's OWN
+    // recorded type in `typed->bindings`. The binding NAME must resolve to
+    // exactly one `TypedPatternBinding`, and its `type` must be the SAME
+    // hash-consed Type as `matched_type` (Type is interned, so pointer equality
+    // == structural equality). Fail closed on a corrupt TypedPattern where the
+    // two disagree (e.g. `Some(x): Int` whose matched_type was tampered to Bool
+    // while the binding record still says Int) rather than silently adopting the
+    // wrong type downstream.
+    void verify_binding_bridge_consistency(const TypedPattern &typed,
+                                           const std::string &name) const {
+        std::size_t matches = 0;
+        const Type *binding_type = nullptr;
+        for (const auto &b : typed.bindings) {
+            if (b.name == name) {
+                ++matches;
+                binding_type = b.type;
+            }
+        }
+        if (matches != 1) {
+            throw std::logic_error(
+                "match binding '" + name +
+                "' is not recorded exactly once in the TypedPattern bindings "
+                "(P4-B bridge consistency)");
+        }
+        // Both null is a legitimate "no resolved type" state (the verifier's
+        // BackendReady gate rejects an Unresolved matched_type_ref separately);
+        // a mismatch between a present binding type and matched_type is the
+        // corruption we fail closed on.
+        if (binding_type != typed.matched_type) {
+            throw std::logic_error(
+                "match binding '" + name +
+                "' recorded type disagrees with the pattern's matched type "
+                "(P4-B bridge consistency)");
+        }
+    }
+
     // The TypedProgram child pattern a TypedPattern refers to under `name`
     // (nullptr when absent / out of range). Lets pattern lowering descend the
     // typed tree in parallel with the AST so each sub-pattern carries its own
@@ -1186,6 +1224,18 @@ class TypedIrLowerer final {
                         .is_mut = value.is_mut,
                         .nested = nullptr,
                     };
+                    // RFC 0026 P4-B cross-check: the bridge writes this node's
+                    // `matched_type_ref` from `typed->matched_type`, so a backend
+                    // types the binding `value.name` from it. Guard against a
+                    // corrupt TypedPattern whose matched_type disagrees with the
+                    // binding's own recorded type: the binding NAME must appear
+                    // exactly once in `typed->bindings`, and that binding's type
+                    // must be the SAME hash-consed Type as `matched_type` (pointer
+                    // equality == structural equality). A `_ @ nested` outer bind
+                    // is exempt only when it carries no name.
+                    if (typed != nullptr && !value.name.empty()) {
+                        verify_binding_bridge_consistency(*typed, value.name);
+                    }
                     if (value.nested) {
                         const TypedPattern *nested_typed = require_typed_child(typed, "nested");
                         binding.nested = make_owned<ir::MatchPattern>(
