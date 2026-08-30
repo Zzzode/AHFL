@@ -7,6 +7,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -76,6 +77,40 @@ flow for Worker {
         return std::nullopt;
     }
     return lower_typed_program(type_result.typed_program, *parse.program);
+}
+
+// Produce a mutable TypedProgram from a clean front-end run so a test can
+// surgically corrupt one symbol-table entry and prove `lower_typed_program`
+// fails closed. Returns nullopt if any stage errors.
+[[nodiscard]] std::optional<TypedProgram> typed_program_for_mutation() {
+    const Frontend frontend;
+    auto parse = frontend.parse_text("nominal_ref_bridge_neg.ahfl", std::string(kSource));
+    if (parse.has_errors() || parse.program == nullptr) {
+        return std::nullopt;
+    }
+    const Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    if (resolve.has_errors()) {
+        return std::nullopt;
+    }
+    const TypeChecker checker;
+    auto type_result = checker.check(*parse.program, resolve);
+    if (type_result.has_errors()) {
+        return std::nullopt;
+    }
+    return std::move(type_result.typed_program);
+}
+
+// Index of the first Type-kind symbol with the given canonical name, if any.
+[[nodiscard]] std::optional<std::size_t> find_symbol_index(const TypedProgram &program,
+                                                          std::string_view canonical) {
+    for (std::size_t i = 0; i < program.symbols.size(); ++i) {
+        const auto &sym = program.symbols[i];
+        if (sym.kind == SymbolKind::Struct && sym.canonical_name == canonical) {
+            return i;
+        }
+    }
+    return std::nullopt;
 }
 
 // Find the first Struct/Enum TypeRef anywhere in a program's declarations and
@@ -181,5 +216,43 @@ TEST_CASE("nominal_ref bridge: verifier fails closed on tampered nominal identit
         nominal->canonical_name.clear();
         // nominal_ref still populated -> stray identity on a non-nominal ref.
         CHECK(ir::verify_ir_program(*program, ir::IrVerificationMode::BackendReady).has_errors());
+    }
+}
+
+TEST_CASE("nominal_ref bridge: lower_typed_program fails closed on a corrupt symbol table") {
+    // These target nominal_ref_from's THREE lower-time throw branches directly,
+    // by surgically corrupting the resolved symbol a Struct type points at and
+    // re-lowering. Without these, the throws could silently degrade under a
+    // future symbol-table refactor. (Mirrors the match-bridge negative style.)
+
+    SUBCASE("resolved symbol has the wrong kind (not Type)") {
+        auto typed = typed_program_for_mutation();
+        REQUIRE(typed.has_value());
+        const auto index = find_symbol_index(*typed, "app::Request");
+        REQUIRE(index.has_value());
+        typed->symbols[*index].kind = ahfl::SymbolKind::Agent; // was Struct
+        typed->rebuild_resolver_indices();
+        CHECK_THROWS_AS((void)ahfl::lower_typed_program(*typed), std::logic_error);
+    }
+    SUBCASE("resolved symbol canonical name drifts from the type") {
+        auto typed = typed_program_for_mutation();
+        REQUIRE(typed.has_value());
+        const auto index = find_symbol_index(*typed, "app::Request");
+        REQUIRE(index.has_value());
+        typed->symbols[*index].canonical_name = "app::RequestRenamed";
+        typed->rebuild_resolver_indices();
+        CHECK_THROWS_AS((void)ahfl::lower_typed_program(*typed), std::logic_error);
+    }
+    SUBCASE("resolved symbol id no longer exists (unresolvable)") {
+        auto typed = typed_program_for_mutation();
+        REQUIRE(typed.has_value());
+        const auto index = find_symbol_index(*typed, "app::Request");
+        REQUIRE(index.has_value());
+        // Erase the symbol the Request type ref resolves to, then rebuild the
+        // id index so find_symbol(id) misses -> lowering must throw.
+        typed->symbols.erase(typed->symbols.begin() +
+                             static_cast<std::ptrdiff_t>(*index));
+        typed->rebuild_resolver_indices();
+        CHECK_THROWS_AS((void)ahfl::lower_typed_program(*typed), std::logic_error);
     }
 }

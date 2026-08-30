@@ -135,23 +135,52 @@ TEST_CASE("clone_type_ref preserves every field including nominal_ref, capacity,
     CHECK(cloned.first.get() != original.first.get());
 }
 
-TEST_CASE("type_refs_equal distinguishes on nominal_ref, capacity, and nested params") {
+TEST_CASE("type_refs_equal uses id-first nominal identity") {
     const auto base = make_full_type_ref();
 
-    SUBCASE("nominal_ref identity difference is observed") {
+    SUBCASE("same canonical, DIFFERENT resolved id -> not equal (P0 identity)") {
+        // The core probe: identical spelling, different resolved declaration.
         auto other = ahfl::ir::clone_type_ref(base);
-        other.nominal_ref.canonical_name = "std::collections::Set";
-        other.nominal_ref.id = std::size_t{99};
+        other.nominal_ref.id = std::size_t{4}; // base has id 3, canonical unchanged
+        CHECK(other.nominal_ref.canonical_name == base.nominal_ref.canonical_name);
+        CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
+    }
+    SUBCASE("same id, differing local/module display -> identity equal") {
+        // Identity is the id; incidental display names do not split it.
+        auto other = ahfl::ir::clone_type_ref(base);
+        other.nominal_ref.local_name = "ListAlias";
+        other.nominal_ref.module_name = "std::alias";
+        CHECK(ahfl::ir::type_refs_equal(base, other));
+    }
+    SUBCASE("name-only refs: same canonical -> equal, different -> not equal") {
+        auto a = ahfl::ir::clone_type_ref(base);
+        auto b = ahfl::ir::clone_type_ref(base);
+        a.nominal_ref.id.reset();
+        b.nominal_ref.id.reset();
+        CHECK(ahfl::ir::type_refs_equal(a, b));
+        b.nominal_ref.canonical_name = "std::collections::Set";
+        CHECK_FALSE(ahfl::ir::type_refs_equal(a, b));
+    }
+    SUBCASE("nested param: same canonical different id -> not equal") {
+        auto other = ahfl::ir::clone_type_ref(base);
+        other.params[0]->nominal_ref.id = std::size_t{42}; // inner base id is 7
+        CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
+    }
+}
+
+TEST_CASE("type_refs_equal distinguishes on nominal kind, capacity, and nested params") {
+    const auto base = make_full_type_ref();
+
+    SUBCASE("nominal_ref kind difference is observed") {
+        auto other = ahfl::ir::clone_type_ref(base);
+        // base's nominal_ref kind is Type; a differing kind is a differing
+        // identity even at the same id/canonical.
+        other.nominal_ref.kind = ahfl::ir::SymbolRefKind::Const;
         CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
     }
     SUBCASE("collection_capacity difference is observed") {
         auto other = ahfl::ir::clone_type_ref(base);
         other.collection_capacity = std::uint64_t{8};
-        CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
-    }
-    SUBCASE("nested param nominal_ref difference is observed") {
-        auto other = ahfl::ir::clone_type_ref(base);
-        other.params[0]->nominal_ref.canonical_name = "app::Admin";
         CHECK_FALSE(ahfl::ir::type_refs_equal(base, other));
     }
     SUBCASE("null vs non-null param slot is observed") {

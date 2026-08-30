@@ -37,8 +37,25 @@ namespace {
 // guards a name that coincides across namespaces. (Matches ir_equal.cpp's and
 // core_lower.cpp's symbol_ref_equal so the SSOT does not diverge from existing
 // SymbolRef comparisons.)
+// Two nominal SymbolRefs denote the same resolved declaration by an ID-FIRST
+// rule (RFC 0026 P4 / Principle 2), NOT canonical-only:
+//   - different kind -> not equal;
+//   - BOTH carry an id -> equal iff the ids match (a differing id is a
+//     different resolved declaration even at identical spelling; canonical
+//     drift at equal id is a separate concern the verifier rejects);
+//   - at least one lacks an id -> fall back to non-empty canonical-name
+//     equality (the name-only lowering boundary);
+//   - two Unknown/empty refs are equal (absent identity).
+// This is the SSOT identity used by CoreInstanceDecl equality and P4-A
+// interning, so "same spelling, different resolved declaration" must NOT merge.
 [[nodiscard]] bool nominal_ref_equal(const SymbolRef &a, const SymbolRef &b) {
-    return a.kind == b.kind && a.canonical_name == b.canonical_name;
+    if (a.kind != b.kind) {
+        return false;
+    }
+    if (a.id.has_value() && b.id.has_value()) {
+        return *a.id == *b.id;
+    }
+    return a.canonical_name == b.canonical_name;
 }
 
 } // namespace
