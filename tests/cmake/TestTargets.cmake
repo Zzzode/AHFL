@@ -1208,6 +1208,17 @@ if(AHFL_ENABLE_BACKEND_INFRA)
             ahfl_compiler_backend_infra_wasm
     )
     ahfl_apply_project_warnings(ahfl_wasm_backend_tests)
+
+    add_executable(ahfl_core_wasm_e1_probe
+        integration/core_wasm_e1_probe.cpp
+    )
+    target_link_libraries(ahfl_core_wasm_e1_probe
+        PRIVATE
+            ahfl_compiler_backend_infra_wasm
+            ahfl_runtime_engine
+    )
+    target_include_directories(ahfl_core_wasm_e1_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    ahfl_apply_project_warnings(ahfl_core_wasm_e1_probe)
 endif()
 
 add_executable(ahfl_compiler_backends_registry_tests

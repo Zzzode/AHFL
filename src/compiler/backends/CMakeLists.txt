@@ -79,11 +79,16 @@ endif()
 # --- Infrastructure backends ---
 if(AHFL_ENABLE_BACKEND_INFRA)
     add_library(ahfl_compiler_backend_infra_wasm STATIC
+        infra/core_wasm_codegen.cpp
         infra/wasm_backend.cpp
         infra/wasm_runtime.cpp
     )
 
-    target_link_libraries(ahfl_compiler_backend_infra_wasm PUBLIC ahfl_base_support)
+    target_link_libraries(ahfl_compiler_backend_infra_wasm
+        PUBLIC
+            ahfl_base_support
+            ahfl_compiler_ir
+    )
 
     ahfl_apply_project_warnings(ahfl_compiler_backend_infra_wasm)
 

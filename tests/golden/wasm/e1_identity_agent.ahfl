@@ -1,0 +1,26 @@
+module wasm::e1_identity;
+
+pub struct Frame {
+    value: String;
+}
+
+pub agent IdentityAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for IdentityAgent {
+    state Done {
+        return input;
+    }
+
+    state Start {
+        goto Done;
+    }
+}

@@ -49,6 +49,41 @@ add_test(NAME ahfl.wasm.preflight_execution
 )
 set_tests_properties(ahfl.wasm.preflight_execution PROPERTIES SKIP_RETURN_CODE 77)
 
+if(AHFL_ENABLE_BACKEND_INFRA)
+    # KR6.5 E1: this producer always runs one checked frontend program through
+    # native AgentRuntime and AHFL->Core->layout->wasm. It is a semantic/binary
+    # probe but not, by itself, real wasm execution evidence.
+    add_test(NAME ahfl.wasm.e1_same_frontend_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_e1_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e1_identity_agent.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/e1_same_frontend_probe.wasm"
+    )
+    set_tests_properties(ahfl.wasm.e1_same_frontend_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "final_state_id=0 transition_count=1 identity_output=1"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # The same producer feeds real wasmtime when present. It is always
+    # registered: absence is a visible SKIP (77), while a usable runtime that
+    # rejects/misexecutes the artifact is a hard conformance failure.
+    add_test(NAME ahfl.wasm.e1_execution_differential
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e1_conformance.py"
+                --probe $<TARGET_FILE:ahfl_core_wasm_e1_probe>
+                --source
+                    "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e1_identity_agent.ahfl"
+                --explicit-wasmtime "${AHFL_WASMTIME}"
+                --detected-wasmtime "${_ahfl_detected_wasmtime}"
+    )
+    set_tests_properties(ahfl.wasm.e1_execution_differential PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "real-wasmtime execution differential passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution"
+    )
+endif()
+
 add_test(NAME ahfl.runtime.native_grpc_gate
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-native-grpc-gate.py"
 )

@@ -8,6 +8,9 @@
 
 namespace ahfl::backends {
 
+// Legacy RFC 0019 textual-WAT contract helper. KR6.5 executable emission uses
+// emit_core_wasm(CoreProgram, CoreLayoutTable) and the CLI never calls this
+// projection path. Retained temporarily for ABI catalogue/unit compatibility.
 struct WasmModule {
     std::string module_name;
     std::string wat_source;

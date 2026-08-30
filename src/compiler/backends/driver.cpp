@@ -11,13 +11,18 @@
 #endif
 
 #include "ahfl/compiler/ir/analysis.hpp"
+#include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "compiler/backends/pipeline/summary.hpp"
 
 #ifdef AHFL_ENABLE_BACKEND_INFRA
+#include "compiler/backends/infra/core_wasm_codegen.hpp"
 #include "compiler/backends/infra/lower.hpp"
 #endif
+
+#include <limits>
 
 namespace ahfl {
 
@@ -152,34 +157,54 @@ void initialize_builtin_backends(BackendRegistry &registry) {
 
     registry.register_builtin_backend({BackendKind::InfraWasm,
                                        "wasm",
-                                       "WebAssembly WAT per agent",
+                                       "WebAssembly binary from Core-IR",
                                        [](const EmitContext &ctx) -> EmitResult {
-                                           auto configs = backends::lower_wasm(ctx.program);
-                                           if (configs.empty()) {
+                                           auto core = ir::core::lower_ahfl_to_core(ctx.program);
+                                           if (!core.ok()) {
+                                               const auto &diag = core.diagnostics.front();
                                                return std::unexpected<std::string>(
-                                                   "no agents found in program");
+                                                   diag.code + ": " + diag.message);
+                                           }
+                                           auto layouts =
+                                               ir::core::compute_core_layouts(core.program);
+                                           if (!layouts.ok()) {
+                                               const auto &diag = layouts.diagnostics.front();
+                                               return std::unexpected<std::string>(
+                                                   diag.code + ": " + diag.message);
+                                           }
+                                           if (!layouts.table.has_value()) {
+                                               return std::unexpected<std::string>(
+                                                   "wasm.INVALID_LAYOUT: layout builder returned "
+                                                   "no table without a diagnostic");
                                            }
                                            const auto profile =
                                                ctx.wasm_profile == WasmProfile::Browser
                                                    ? backends::WasmProfileKind::Browser
                                                    : backends::WasmProfileKind::Wasi;
-                                           for (const auto &c : configs) {
-                                               // RFC 0019 slice 4: browser profile rejects
-                                               // capabilities with no browser equivalent
-                                               // (e.g. filesystem) at emit time.
-                                               if (auto rejected =
-                                                       backends::browser_rejected_capabilities(c);
-                                                   profile == backends::WasmProfileKind::Browser &&
-                                                   !rejected.empty()) {
-                                                   return std::unexpected<std::string>(
-                                                       "capability '" + rejected.front() +
-                                                       "' on agent '" + c.agent_name +
-                                                       "' has no browser-profile equivalent "
-                                                       "(filesystem/env access is unavailable in "
-                                                       "the browser)");
-                                               }
-                                               ctx.out
-                                                   << backends::generate_wasm(c, profile).wat_source;
+                                           const auto emitted = backends::emit_core_wasm(
+                                               core.program,
+                                               *layouts.table,
+                                               {ir::core::CoreAgentId{0}, profile});
+                                           if (!emitted.ok()) {
+                                               const auto &diag = emitted.diagnostics.front();
+                                               return std::unexpected<std::string>(
+                                                   diag.code + ": " + diag.message);
+                                           }
+                                           const auto &bytes = emitted.artifact->bytes;
+                                           if (bytes.size() > static_cast<std::size_t>(
+                                                                  std::numeric_limits<
+                                                                      std::streamsize>::max())) {
+                                               return std::unexpected<std::string>(
+                                                   "wasm.BINARY_OVERFLOW: artifact exceeds "
+                                                   "ostream write domain");
+                                           }
+                                           ctx.out.write(
+                                               reinterpret_cast<const char *>(bytes.data()),
+                                               static_cast<std::streamsize>(bytes.size()));
+                                           if (!ctx.out) {
+                                               return std::unexpected<std::string>(
+                                                   "wasm.INTERNAL_INVALID: failed to write "
+                                                   "complete artifact");
                                            }
                                            return {};
                                        }});

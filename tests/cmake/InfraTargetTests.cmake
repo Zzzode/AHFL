@@ -25,30 +25,24 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "infra;golden;backend;target"
     )
 
-    # RFC 0019 slice 4/5: emit wasm --profile wasi|browser. The wasi (default)
-    # and browser profiles both emit the shared module ABI + ahfl_cap imports;
-    # an unknown profile is a usage error.
-    add_test(NAME ahflc.emit_wasm.profile_wasi
-        COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile wasi
-                "${AHFL_TESTS_DIR}/golden/formal/ok_smt_encoding.ahfl"
+    # RFC 0026 KR6.5 E1: CLI now emits one deterministic Core-IR-derived wasm
+    # binary, not textual WAT. This always-on gate is explicitly structural;
+    # the optional wasmtime differential below owns real-execution evidence.
+    add_test(NAME ahflc.emit_wasm.e1_binary_gate
+        COMMAND ${Python3_EXECUTABLE}
+                "${AHFL_TESTS_DIR}/scripts/wasm_e1_binary_gate.py"
+                $<TARGET_FILE:ahflc>
+                "${AHFL_TESTS_DIR}"
     )
-    set_tests_properties(ahflc.emit_wasm.profile_wasi PROPERTIES
-        PASS_REGULAR_EXPRESSION "\\(export \"run\"\\)"
-        LABELS "wasm;backend;target"
-    )
-
-    add_test(NAME ahflc.emit_wasm.profile_browser
-        COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile browser
-                "${AHFL_TESTS_DIR}/golden/formal/ok_smt_encoding.ahfl"
-    )
-    set_tests_properties(ahflc.emit_wasm.profile_browser PROPERTIES
-        PASS_REGULAR_EXPRESSION "\\(export \"run\"\\)"
+    set_tests_properties(ahflc.emit_wasm.e1_binary_gate PROPERTIES
+        PASS_REGULAR_EXPRESSION "all KR6.5 E1 binary/structural gates passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC"
         LABELS "wasm;backend;target"
     )
 
     add_test(NAME ahflc.emit_wasm.profile_unknown
         COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile bogus
-                "${AHFL_TESTS_DIR}/golden/formal/ok_smt_encoding.ahfl"
+                "${AHFL_TESTS_DIR}/golden/wasm/e1_identity_agent.ahfl"
     )
     set_tests_properties(ahflc.emit_wasm.profile_unknown PROPERTIES
         PASS_REGULAR_EXPRESSION "unknown --wasm-profile"

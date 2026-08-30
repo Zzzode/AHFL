@@ -107,7 +107,13 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
         };
     }
 
-    // Inject input: assume input is a StructValue, set its fields one by one into input_scope
+    // Preserve the aggregate under the reserved `input` root as well as its
+    // field scope. The frontend accepts a bare `return input;`; without this
+    // binding the evaluator treated that canonical identity path as an
+    // unresolved local even though `input.field` worked.
+    exec_ctx.eval_ctx.bind_local("input", evaluator::clone_value(input));
+
+    // Inject input fields for the existing input.field lookup path.
     if (auto *sv = std::get_if<evaluator::StructValue>(&input.node)) {
         for (auto &[field_name, field_value] : sv->fields) {
             if (field_value) {
