@@ -256,3 +256,90 @@ TEST_CASE("nominal_ref bridge: lower_typed_program fails closed on a corrupt sym
         CHECK_THROWS_AS((void)ahfl::lower_typed_program(*typed), std::logic_error);
     }
 }
+
+// RFC 0026 P4 (coercion) F1 re-review fix (Codex P0): a generic nominal decl
+// whose type_param_variances vector length does not equal type_param_count is
+// rejected by the BackendReady verifier UNCONDITIONALLY - including the
+// count>0 / empty-vector case a coercion consumer cannot index by position.
+// Structural mode stays permissive (partial/legacy IR). The negatives use
+// mode=BackendReady explicitly and assert on the variance-specific diagnostic
+// (a hand-built decl may carry other unrelated diagnostics, so a bare
+// has_errors() would not prove the variance gate fired).
+namespace {
+[[nodiscard]] bool has_variance_length_error(const ir::VerificationResult &result) {
+    for (const auto &d : result.diagnostics) {
+        if (d.severity == ir::VerificationSeverity::Error &&
+            d.path.find(".type_param_variances") != std::string::npos &&
+            d.message.find("must equal type_param_count") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] ir::StructDecl make_generic_struct(std::uint32_t count,
+                                                 std::vector<ir::Variance> variances) {
+    ir::StructDecl s;
+    s.name = "Box";
+    s.symbol_ref.kind = ir::SymbolRefKind::Type;
+    s.symbol_ref.canonical_name = "app::Box";
+    s.symbol_ref.id = 1;
+    s.type_param_count = count;
+    s.type_param_variances = std::move(variances);
+    return s;
+}
+
+[[nodiscard]] ir::EnumDecl make_generic_enum(std::uint32_t count,
+                                             std::vector<ir::Variance> variances) {
+    ir::EnumDecl e;
+    e.name = "Maybe";
+    e.symbol_ref.kind = ir::SymbolRefKind::Type;
+    e.symbol_ref.canonical_name = "app::Maybe";
+    e.symbol_ref.id = 2;
+    e.type_param_count = count;
+    e.type_param_variances = std::move(variances);
+    ir::EnumVariantDecl v;
+    v.name = "Just";
+    v.payload_kind = ir::EnumVariantPayloadKind::Unit;
+    e.variants.push_back(std::move(v));
+    return e;
+}
+} // namespace
+
+TEST_CASE("BackendReady verifier rejects a generic nominal missing its variance vector") {
+    SUBCASE("struct: count=1 empty variance vector -> variance error in BackendReady, none in Structural") {
+        ir::Program program;
+        program.declarations.emplace_back(make_generic_struct(1, {}));
+        CHECK(has_variance_length_error(
+            ir::verify_ir_program(program, ir::IrVerificationMode::BackendReady)));
+        // Structural mode stays permissive for not-yet-materialized variance.
+        CHECK_FALSE(has_variance_length_error(
+            ir::verify_ir_program(program, ir::IrVerificationMode::Structural)));
+    }
+    SUBCASE("enum: count=1 empty variance vector -> variance error in BackendReady, none in Structural") {
+        ir::Program program;
+        program.declarations.emplace_back(make_generic_enum(1, {}));
+        CHECK(has_variance_length_error(
+            ir::verify_ir_program(program, ir::IrVerificationMode::BackendReady)));
+        CHECK_FALSE(has_variance_length_error(
+            ir::verify_ir_program(program, ir::IrVerificationMode::Structural)));
+    }
+    SUBCASE("struct: count matching variance vector -> no variance error") {
+        ir::Program program;
+        program.declarations.emplace_back(make_generic_struct(1, {ir::Variance::Covariant}));
+        CHECK_FALSE(has_variance_length_error(
+            ir::verify_ir_program(program, ir::IrVerificationMode::BackendReady)));
+    }
+    SUBCASE("enum: count matching variance vector -> no variance error") {
+        ir::Program program;
+        program.declarations.emplace_back(make_generic_enum(1, {ir::Variance::Covariant}));
+        CHECK_FALSE(has_variance_length_error(
+            ir::verify_ir_program(program, ir::IrVerificationMode::BackendReady)));
+    }
+    SUBCASE("monomorphic count=0 empty vector -> no variance error (0 == 0)") {
+        ir::Program program;
+        program.declarations.emplace_back(make_generic_struct(0, {}));
+        CHECK_FALSE(has_variance_length_error(
+            ir::verify_ir_program(program, ir::IrVerificationMode::BackendReady)));
+    }
+}

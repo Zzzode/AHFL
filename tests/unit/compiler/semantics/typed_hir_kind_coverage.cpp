@@ -427,6 +427,90 @@ TEST_CASE("Typed-HIR round-trips a non-empty let_adjustment plan and rejects a b
     CHECK_FALSE(ahfl::deserialize_typed_program_json(corrupt).has_value());
 }
 
+// RFC 0026 P4 (coercion) F1 re-review fix (Codex P1): the typed-HIR plan reader
+// must fail the WHOLE deserialize closed when an inner structural field is the
+// wrong JSON kind (nodes/ops not an array, a node/op item not an object, an
+// unknown variance spelling, or a non-object let_adjustment) - typed-HIR has no
+// later plan verifier, so a silent downgrade would let a malformed cache load.
+// Each corruption below must make deserialize_typed_program_json return nullopt.
+TEST_CASE("Typed-HIR plan deserialize fails closed on malformed inner structure") {
+    ahfl::TypeContext types;
+    const auto int_ty = types.make(ahfl::TypeKind::Int);
+    const auto bounded = types.bounded_int(0, 0);
+
+    ahfl::TypedAdjustmentPlan plan;
+    plan.source = bounded;
+    plan.target = int_ty;
+    plan.root = 0;
+    ahfl::TypedAdjustmentNode node;
+    node.source = bounded;
+    node.target = int_ty;
+    node.ops.push_back(ahfl::TypedAdjustmentOp{.kind = ahfl::TypedAdjustmentOpKind::IntWiden});
+    plan.nodes.push_back(std::move(node));
+
+    ahfl::TypedProgram program;
+    ahfl::TypedStatement let;
+    let.kind = ahfl::TypedStmtKind::Let;
+    let.node_id = 7;
+    let.target_name = "x";
+    let.let_type = int_ty;
+    let.let_adjustment = std::move(plan);
+    program.statements.push_back(std::move(let));
+
+    const auto json = ahfl::serialize_typed_program_json(program);
+    REQUIRE(ahfl::deserialize_typed_program_json(json).has_value()); // baseline parses
+
+    const auto corrupt_with = [&](std::string_view needle, std::string_view replacement) {
+        auto text = json;
+        const auto pos = text.find(needle);
+        REQUIRE(pos != std::string::npos);
+        text.replace(pos, needle.size(), replacement);
+        return text;
+    };
+
+    SUBCASE("nodes is present but not an array") {
+        CHECK_FALSE(
+            ahfl::deserialize_typed_program_json(corrupt_with("\"nodes\":[", "\"nodes\":{"))
+                .has_value());
+    }
+    SUBCASE("ops is present but not an array") {
+        CHECK_FALSE(
+            ahfl::deserialize_typed_program_json(corrupt_with("\"ops\":[", "\"ops\":{"))
+                .has_value());
+    }
+    SUBCASE("let_adjustment is present but not an object") {
+        CHECK_FALSE(ahfl::deserialize_typed_program_json(
+                        corrupt_with("\"let_adjustment\":{", "\"let_adjustment\":["))
+                        .has_value());
+    }
+    SUBCASE("unknown adjustment op kind") {
+        CHECK_FALSE(
+            ahfl::deserialize_typed_program_json(corrupt_with("\"int_widen\"", "\"not_a_kind\""))
+                .has_value());
+    }
+}
+
+// RFC 0026 P4 (coercion) F1 re-review fix (Codex P1): an unknown variance
+// spelling in a struct/enum decl's type_param_variances fails the typed-HIR
+// deserialize closed (not a silent Invariant). Round-trips a real generic decl,
+// then corrupts its variance token.
+TEST_CASE_FIXTURE(TypedHIRFixture, "Typed-HIR deserialize fails closed on unknown variance") {
+    const auto root = make_temp_project("variance_unknown");
+    const auto source_path = module_source_path(root, "vr::u");
+    const auto source = std::string("module vr::u;\n") + "struct Box<T> { value: T; }\n" +
+                        "fn keep(b: Box<Int>) -> Box<Int> effect Pure decreases 0 { return b; }\n";
+    write_file(source_path, source);
+    const auto result = check_project(root, {source_path});
+    const auto json = ahfl::serialize_typed_program_json(result.typed_program);
+    REQUIRE(ahfl::deserialize_typed_program_json(json).has_value());
+    // The generic Box carries a "covariant" entry; corrupting it must fail closed.
+    const auto pos = json.find("\"covariant\"");
+    REQUIRE(pos != std::string::npos);
+    auto corrupt = json;
+    corrupt.replace(pos, std::string("\"covariant\"").size(), "\"sideways\"");
+    CHECK_FALSE(ahfl::deserialize_typed_program_json(corrupt).has_value());
+}
+
 // ---------------------------------------------------------------------------
 // Axis (b) — typed_visit dispatch counters.
 // ---------------------------------------------------------------------------

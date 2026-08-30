@@ -255,17 +255,27 @@ class ProgramVerifier {
 
     // RFC 0026 P4 (coercion): a generic nominal declaration's variance metadata
     // must be internally consistent BEFORE Core lowering (Codex P1-1): the
-    // per-parameter variance vector is either empty (legacy / not yet materialized)
-    // or exactly `type_param_count` long, and every entry is a legal Variance
-    // enumerator. This is a lower-neutral structural check ONLY; builtin
-    // descriptor exact-match (arity/variance vs the std SSOT) is intentionally NOT
-    // duplicated here — that lives in the Core consumption gate so the AHFL-IR
-    // verifier never takes a reverse dependency on the execution-layer
-    // `ir::core::builtin_nominal_table()`.
+    // per-parameter variance vector MUST be exactly `type_param_count` long, and
+    // every entry must be a legal Variance enumerator. The length check is
+    // UNCONDITIONAL (Codex re-review P0): `type_param_count == 0` with an empty
+    // vector is naturally legal (0 == 0), so a monomorphic legacy artifact still
+    // passes, but a generic nominal (`type_param_count > 0`) with an empty vector
+    // is REJECTED - the coercion verifier indexes variances by parameter position
+    // and cannot accept a missing vector. This is a lower-neutral structural check
+    // ONLY; builtin descriptor exact-match (arity/variance vs the std SSOT) is
+    // intentionally NOT duplicated here - that lives in the Core consumption gate
+    // so the AHFL-IR verifier never takes a reverse dependency on the
+    // execution-layer `ir::core::builtin_nominal_table()`.
     void verify_variance_metadata(std::uint32_t type_param_count,
                                   const std::vector<Variance> &variances,
                                   const std::string &path) {
-        if (!variances.empty() && variances.size() != type_param_count) {
+        // BackendReady-only: Structural mode stays permissive for partial / legacy
+        // IR whose variance vectors are not yet materialized. A backend consuming
+        // the IR (coercion verifier / Core lowering) requires the vector present.
+        if (!is_backend_ready_mode(mode_)) {
+            return;
+        }
+        if (variances.size() != type_param_count) {
             add_error(path + ".type_param_variances",
                       "variance vector length (" + std::to_string(variances.size()) +
                           ") must equal type_param_count (" + std::to_string(type_param_count) +

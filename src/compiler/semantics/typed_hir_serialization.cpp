@@ -1576,31 +1576,47 @@ read_variance_array(Reader &reader, const Json &object, std::string_view key) {
     plan.source = reader.type_field(object, "source");
     plan.target = reader.type_field(object, "target");
     plan.root = reader.u32_field(object, "root");
+    // Codex re-review P1: `nodes` is required and must be an array; a present
+    // value of the wrong kind (object/string/...) is a HARD failure, never a
+    // silent empty-nodes downgrade (typed-HIR has no later plan verifier, so a
+    // malformed cache would otherwise deserialize successfully).
     const auto *nodes = reader.field(object, "nodes");
-    if (nodes != nullptr && nodes->kind == json::Kind::Array) {
-        plan.nodes.reserve(nodes->array_items.size());
-        for (const auto &node_item : nodes->array_items) {
-            TypedAdjustmentNode node;
-            node.source = reader.type_field(*node_item, "source");
-            node.target = reader.type_field(*node_item, "target");
-            const auto *ops = reader.field(*node_item, "ops");
-            if (ops != nullptr && ops->kind == json::Kind::Array) {
-                node.ops.reserve(ops->array_items.size());
-                for (const auto &op_item : ops->array_items) {
-                    TypedAdjustmentOp op;
-                    // `kind` is required and must be a known op-kind spelling; an
-                    // unknown/absent/non-string kind fails the parse closed.
-                    if (!adjustment_op_kind_from_name(reader.string_field(*op_item, "kind"),
-                                                      op.kind)) {
-                        reader.fail();
-                    }
-                    op.arg_index = reader.u32_field(*op_item, "arg_index");
-                    op.child = reader.u32_field(*op_item, "child");
-                    node.ops.push_back(op);
-                }
-            }
-            plan.nodes.push_back(std::move(node));
+    if (nodes == nullptr || nodes->kind != json::Kind::Array) {
+        reader.fail();
+        return plan;
+    }
+    plan.nodes.reserve(nodes->array_items.size());
+    for (const auto &node_item : nodes->array_items) {
+        if (node_item == nullptr || node_item->kind != json::Kind::Object) {
+            reader.fail();
+            return plan;
         }
+        TypedAdjustmentNode node;
+        node.source = reader.type_field(*node_item, "source");
+        node.target = reader.type_field(*node_item, "target");
+        // `ops` is required and must be an array (same fail-closed rule).
+        const auto *ops = reader.field(*node_item, "ops");
+        if (ops == nullptr || ops->kind != json::Kind::Array) {
+            reader.fail();
+            return plan;
+        }
+        node.ops.reserve(ops->array_items.size());
+        for (const auto &op_item : ops->array_items) {
+            if (op_item == nullptr || op_item->kind != json::Kind::Object) {
+                reader.fail();
+                return plan;
+            }
+            TypedAdjustmentOp op;
+            // `kind` is required and must be a known op-kind spelling; an
+            // unknown/absent/non-string kind fails the parse closed.
+            if (!adjustment_op_kind_from_name(reader.string_field(*op_item, "kind"), op.kind)) {
+                reader.fail();
+            }
+            op.arg_index = reader.u32_field(*op_item, "arg_index");
+            op.child = reader.u32_field(*op_item, "child");
+            node.ops.push_back(op);
+        }
+        plan.nodes.push_back(std::move(node));
     }
     return plan;
 }
