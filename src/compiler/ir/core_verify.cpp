@@ -2075,12 +2075,12 @@ class Verifier {
                       "instance key '" + inst.instance_key + "' is defined more than once",
                       std::nullopt);
             }
-            for (const ir::TypeRef &t : inst.dispatch_types) {
-                if (!type_ref_is_concrete(t)) {
+            for (const CoreValueTypeId &t : inst.dispatch_types) {
+                if (!dispatch_value_type_ok(t)) {
                     error(verify::kInstanceDispatchTypeInvalid,
                           "instance '" + inst.instance_key +
-                              "' has a non-concrete dispatch type (Unresolved / Any / Never, at any "
-                              "depth) or a malformed structural shape",
+                              "' has an invalid dispatch type (out-of-range value-type id or a "
+                              "`Never`, which cannot be a materialized dispatch type)",
                           std::nullopt);
                 }
             }
@@ -2187,30 +2187,41 @@ class Verifier {
         return !a.canonical_name.empty() && a.canonical_name == b.canonical_name;
     }
 
-    // Whether a concrete dispatch descriptor slot represents the SAME type as a
-    // resolved CoreTypeId shell. A structural check, NOT a string compare: a
-    // Struct/Enum shell requires the slot's TypeRefKind to match the
-    // CoreTypeDecl::Kind (Struct<->Struct, Enum<->Enum) AND a non-empty equal
-    // canonical name (so e.g. `Bool` carrying canonical_name "WIn" is rejected). A
-    // shell that does not resolve to a nominal type falls back to a non-empty
-    // canonical-name match (best available until the P4 value-type arena).
-    [[nodiscard]] bool dispatch_slot_matches_core_type(const ir::TypeRef &slot,
+    // A dispatch value-type id must be in range AND not resolve to a CoreVtNever
+    // (uninhabited types cannot be a materialized dispatch descriptor slot — RFC
+    // 0026 P4, Codex invariant 1). Concreteness at every depth is guaranteed by
+    // construction (lower_value_type fails closed on Unresolved/Any/Never) and
+    // re-checked structurally by verify_value_types; here we only add the
+    // consumer-context Never rejection.
+    [[nodiscard]] bool dispatch_value_type_ok(CoreValueTypeId id) const {
+        if (id.value == CoreValueTypeId::kInvalid || id.value >= program_.value_types.size()) {
+            return false;
+        }
+        return !std::holds_alternative<CoreVtNever>(program_.value_types[id.value].node);
+    }
+
+    // Whether a dispatch value-type slot is the nominal `shell`. Resolves the
+    // slot's interned node: it must be a `CoreVtNominal` whose `base` equals the
+    // shell CoreTypeId (Principle 2 — identity by id, not by string).
+    [[nodiscard]] bool dispatch_slot_matches_core_type(CoreValueTypeId slot,
                                                        CoreTypeId shell) const {
         if (shell.value == CoreTypeId::kInvalid || shell.value >= program_.types.size()) {
             return false;
         }
-        const CoreTypeDecl &decl = program_.types[shell.value];
-        const bool kind_ok = decl.kind == CoreTypeDecl::Kind::Struct
-                                 ? slot.kind == ir::TypeRefKind::Struct
-                                 : slot.kind == ir::TypeRefKind::Enum;
-        return kind_ok && !slot.canonical_name.empty() && slot.canonical_name == decl.name;
+        if (slot.value == CoreValueTypeId::kInvalid || slot.value >= program_.value_types.size()) {
+            return false;
+        }
+        const auto *nominal =
+            std::get_if<CoreVtNominal>(&program_.value_types[slot.value].node);
+        return nominal != nullptr && nominal->base == shell;
     }
 
-    // A Unit context descriptor slot must be a bare Unit TypeRef — no nominal name
-    // or structural children (a malformed "Unit" carrying a name/child is rejected).
-    [[nodiscard]] static bool dispatch_slot_is_unit(const ir::TypeRef &slot) {
-        return slot.kind == ir::TypeRefKind::Unit && slot.canonical_name.empty() && !slot.first &&
-               !slot.second && slot.params.empty();
+    // A Unit context descriptor slot must resolve to a `CoreVtUnit`.
+    [[nodiscard]] bool dispatch_slot_is_unit(CoreValueTypeId slot) const {
+        if (slot.value == CoreValueTypeId::kInvalid || slot.value >= program_.value_types.size()) {
+            return false;
+        }
+        return std::holds_alternative<CoreVtUnit>(program_.value_types[slot.value].node);
     }
 
     // Agent dispatch descriptor is exactly [input, context, output]; each slot must
@@ -2256,47 +2267,6 @@ class Verifier {
                       "' dispatch descriptor does not align with its [input, output] shell",
                   std::nullopt);
         }
-    }
-
-    // A dispatch type must be CONCRETE at EVERY depth: no Unresolved / Any / Never
-    // anywhere in the structural tree (first / second / params), and each kind's
-    // required children must be present. Iterative worklist so a deep TypeRef can
-    // never recurse the native stack.
-    [[nodiscard]] static bool type_ref_is_concrete(const ir::TypeRef &root) {
-        std::vector<const ir::TypeRef *> stack{&root};
-        while (!stack.empty()) {
-            const ir::TypeRef *t = stack.back();
-            stack.pop_back();
-            if (t == nullptr) {
-                return false; // a required child slot is null -> malformed
-            }
-            if (t->kind == ir::TypeRefKind::Unresolved || t->kind == ir::TypeRefKind::Any ||
-                t->kind == ir::TypeRefKind::Never) {
-                return false;
-            }
-            if (t->kind == ir::TypeRefKind::Fn) {
-                // ir::TypeRef Fn encoding SSOT (typed_hir_lower.cpp): params live
-                // in `params`, the RETURN type is `first`, and `second` is unused.
-                // A Fn dispatch type must carry its return; a stray `second` is a
-                // malformed shape.
-                if (!t->first) {
-                    return false; // missing return type
-                }
-                if (t->second) {
-                    return false; // `second` is never meaningful for a Fn
-                }
-            }
-            if (t->first) {
-                stack.push_back(t->first.get());
-            }
-            if (t->second) {
-                stack.push_back(t->second.get());
-            }
-            for (const auto &param : t->params) {
-                stack.push_back(param.get()); // null param slot -> caught above
-            }
-        }
-        return true;
     }
 
     const CoreProgram &program_;

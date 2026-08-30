@@ -1217,8 +1217,17 @@ struct CoreInstanceDecl {
     CoreInstanceId id{};
     std::string instance_key;                // == ir::InstanceDecl::name (byte-exact)
     ir::SymbolRef origin;                    // nominal symbol that was instantiated
-    std::vector<ir::TypeRef> dispatch_types; // mangle dispatch descriptor (concrete)
+    /// The mangle dispatch descriptor as interned logical value types (RFC 0026
+    /// P4). Each id indexes THIS program's `value_types` arena; a
+    /// structurally-concrete type by construction (`lower_value_type` fails closed
+    /// otherwise). See `operator==`: because these ids are arena-relative, instance
+    /// equality is SAME-OWNER-ARENA equality.
+    std::vector<CoreValueTypeId> dispatch_types;
     CoreInstancePayload payload;
+    /// SAME-OWNER-ARENA equality: `dispatch_types` are compared as raw
+    /// `CoreValueTypeId`s, which are only meaningful within one program's
+    /// `value_types` arena. Two instances from different programs must NOT be
+    /// compared with this operator (use a future arena-aware comparator).
     friend bool operator==(const CoreInstanceDecl &, const CoreInstanceDecl &) noexcept;
 };
 

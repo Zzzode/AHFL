@@ -2736,6 +2736,24 @@ TEST_CASE("KR6.4 mono Slice 1: a generic fn instance is consumed into CoreProgra
             CHECK(found);
         }
     }
+    // P4-A2: the Fn instance's dispatch descriptor is now interned into the
+    // program's value_types arena. `id<Int>` dispatches on Int, so at least one
+    // dispatch id must resolve to a CoreVtInt, and every dispatch id must be a
+    // valid arena index.
+    bool saw_int_dispatch = false;
+    for (const auto &inst : result.program.instances) {
+        if (!std::holds_alternative<ir::core::CoreFnInstance>(inst.payload)) {
+            continue;
+        }
+        for (const auto &vt : inst.dispatch_types) {
+            REQUIRE(vt.value < result.program.value_types.size());
+            if (std::holds_alternative<ir::core::CoreVtInt>(
+                    result.program.value_types[vt.value].node)) {
+                saw_int_dispatch = true;
+            }
+        }
+    }
+    CHECK(saw_int_dispatch);
 }
 
 // --- mono Slice 1 verifier negatives (hand-built Core instance table) ---
@@ -2769,13 +2787,14 @@ TEST_CASE("mono verifier: an empty instance key is fail-closed") {
     CHECK(has_verify_code(result, ir::core::verify::kInstanceKeyEmpty));
 }
 
-TEST_CASE("mono verifier: a non-concrete dispatch type is fail-closed") {
+TEST_CASE("mono verifier: an out-of-range dispatch value-type id is fail-closed") {
+    // Concreteness is enforced at lowering time (lower_value_type); the verifier's
+    // consumer-context check rejects a dispatch id with no arena entry.
     ir::core::CoreProgram p;
     ir::core::CoreInstanceDecl a;
     a.id = ir::core::CoreInstanceId{0};
     a.instance_key = "_inst_bad_dispatch";
-    ir::TypeRef unresolved; // kind defaults to Unresolved
-    a.dispatch_types.push_back(std::move(unresolved));
+    a.dispatch_types.push_back(ir::core::CoreValueTypeId{7}); // empty arena -> out of range
     a.payload = ir::core::CoreFnInstance{};
     p.instances.push_back(std::move(a));
     const auto result = ir::core::verify_core_program(p);

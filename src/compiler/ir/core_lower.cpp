@@ -107,16 +107,6 @@ namespace {
     }
     return *x == *y;
 }
-
-// Structural equality of two ir::TypeRef (recursive over first/second/params).
-// Used by CoreInstanceDecl equality — dispatch_types are kept as concrete
-// structural TypeRefs until the P4 value-type arena lands. Delegates to the
-// public `ir::type_refs_equal` SSOT so every structural field (incl.
-// collection_capacity + nominal_ref) is compared without a second hand-rolled
-// field sweep.
-[[nodiscard]] bool type_ref_equal(const TypeRef &a, const TypeRef &b) {
-    return type_refs_equal(a, b);
-}
 } // namespace
 
 bool operator==(const CoreWorkflowNode &a, const CoreWorkflowNode &b) noexcept {
@@ -137,15 +127,11 @@ bool operator==(const CoreInstanceDecl &a, const CoreInstanceDecl &b) noexcept {
         !symbol_ref_equal(a.origin, b.origin) || !(a.payload == b.payload)) {
         return false;
     }
-    if (a.dispatch_types.size() != b.dispatch_types.size()) {
-        return false;
-    }
-    for (std::size_t i = 0; i < a.dispatch_types.size(); ++i) {
-        if (!type_ref_equal(a.dispatch_types[i], b.dispatch_types[i])) {
-            return false;
-        }
-    }
-    return true;
+    // SAME-OWNER-ARENA equality (RFC 0026 P4): dispatch_types are interned
+    // CoreValueTypeIds, so a direct id-vector compare IS structural equality
+    // within one program's value_types arena (index eq <=> structural eq). This
+    // is NOT a cross-program comparison — see the header contract.
+    return a.dispatch_types == b.dispatch_types;
 }
 
 // The SINGLE builtin nominal descriptor SSOT (RFC 0026 P4). Every well-known
@@ -2526,6 +2512,13 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     // NOT yet wired to this SSOT — we consume emit_instantiated_declarations'
     // InstanceDecls; unifying the two is a later slice.
     std::unordered_set<std::string> seen_instance_keys;
+    // Interns each instance's concrete dispatch type into the program's logical
+    // value-type arena (RFC 0026 P4). Resolves nominal bases through the SAME
+    // TypeEnv used to build core.types (id-first via nominal_ref, then canonical),
+    // so a dispatch type carrying a resolved symbol id resolves precisely.
+    ValueTypeArena dispatch_arena(
+        core.value_types, core.types,
+        [&types](const SymbolRef &ref) { return types.resolve(ref); });
     for (const Decl &decl : ahfl_ir.declarations) {
         const auto *inst = std::get_if<InstanceDecl>(&decl);
         if (inst == nullptr) {
@@ -2538,7 +2531,17 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         out.origin = inst->symbol_ref;
         out.dispatch_types.reserve(inst->type_args.size());
         for (const TypeRef &t : inst->type_args) {
-            out.dispatch_types.push_back(clone_type_ref(t));
+            std::string reason;
+            const auto vt = dispatch_arena.lower(t, &reason);
+            if (!vt) {
+                result.diagnostics.push_back(CoreLowerDiagnostic{
+                    CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedType),
+                    "instance '" + inst->name + "' has a non-materializable dispatch type: " +
+                        reason,
+                    inst->provenance.source_range});
+                continue;
+            }
+            out.dispatch_types.push_back(*vt);
         }
         if (!seen_instance_keys.insert(inst->name).second) {
             result.diagnostics.push_back(CoreLowerDiagnostic{

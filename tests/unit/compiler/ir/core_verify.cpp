@@ -334,17 +334,30 @@ struct GoodWorkflow {
     // with a shell matching its nominal agent. Workflow nodes invoke THESE. The
     // dispatch descriptor is the mangler's [input, context, output] vector, so it
     // must align with the payload shell (a Unit context slot is a Unit TypeRef).
-    const auto nominal_ref = [](const char *name) {
-        ir::TypeRef t;
-        t.kind = ir::TypeRefKind::Struct;
-        t.canonical_name = name;
-        return t;
+    // Intern a value type into p.value_types (dedup by structural equality), the
+    // shape the migrated dispatch descriptor consumes (RFC 0026 P4). `nominal_ref`
+    // resolves a struct name to its CoreTypeId base; `unit_ref` is CoreVtUnit.
+    const auto intern_vt = [&p](CoreValueType vt) {
+        for (std::uint32_t i = 0; i < p.value_types.size(); ++i) {
+            if (p.value_types[i] == vt) {
+                return CoreValueTypeId{i};
+            }
+        }
+        const auto id = CoreValueTypeId{static_cast<std::uint32_t>(p.value_types.size())};
+        p.value_types.push_back(std::move(vt));
+        return id;
     };
-    const auto unit_ref = []() {
-        ir::TypeRef t;
-        t.kind = ir::TypeRefKind::Unit;
-        return t;
+    const auto nominal_ref = [&](const char *name) {
+        CoreTypeId base{};
+        for (std::uint32_t i = 0; i < p.types.size(); ++i) {
+            if (p.types[i].name == name) {
+                base = CoreTypeId{i};
+                break;
+            }
+        }
+        return intern_vt(CoreValueType{CoreVtNominal{base, {}, std::nullopt}});
     };
+    const auto unit_ref = [&]() { return intern_vt(CoreValueType{CoreVtUnit{}}); };
     {
         CoreInstanceDecl first_inst;
         first_inst.id = CoreInstanceId{0};
@@ -1698,21 +1711,59 @@ TEST_CASE("workflow verifier P1: an UNREFERENCED bad WorkflowNodeOutput is still
     CHECK(has_code(result, verify::kWorkflowNodeRefInvalid));
 }
 
-// --- mono Slice 1 forward-fix (Codex re-review: 2 P0 + 1 P1) ---
+// --- mono Slice 1 forward-fix (Codex re-review) + P4-A2 dispatch migration ---
+//
+// dispatch_types are now interned CoreValueTypeIds (RFC 0026 P4-A2). Concreteness
+// at every depth is enforced at LOWERING time (lower_value_type fails closed —
+// covered by value_type_arena.cpp) and structurally re-checked by
+// verify_value_types; the instance dispatch verifier adds only the
+// consumer-context rules: a dispatch id must be in range and must NOT point at a
+// CoreVtNever, and (for Agent/Workflow) the slots must align with the shell.
 
-TEST_CASE("mono verifier P0-1: a NESTED non-concrete dispatch type is fail-closed") {
+namespace {
+// Intern a value type into a program's arena (dedup), returning its id.
+[[nodiscard]] CoreValueTypeId intern_program_vt(CoreProgram &p, CoreValueType vt) {
+    for (std::uint32_t i = 0; i < p.value_types.size(); ++i) {
+        if (p.value_types[i] == vt) {
+            return CoreValueTypeId{i};
+        }
+    }
+    const auto id = CoreValueTypeId{static_cast<std::uint32_t>(p.value_types.size())};
+    p.value_types.push_back(std::move(vt));
+    return id;
+}
+[[nodiscard]] CoreInstanceDecl make_fn_instance(CoreProgram &p, std::uint32_t id, std::string key,
+                                                CoreValueTypeId dispatch) {
+    CoreInstanceDecl inst;
+    inst.id = CoreInstanceId{id};
+    inst.instance_key = std::move(key);
+    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g", "g", "", 501};
+    inst.dispatch_types.push_back(dispatch);
+    inst.payload = CoreFnInstance{};
+    (void)p;
+    return inst;
+}
+} // namespace
+
+TEST_CASE("mono verifier: a dispatch id pointing at CoreVtNever is fail-closed (P4 invariant 1)") {
     GoodWorkflow g = make_good_workflow();
-    // Append an instance whose dispatch type is Option<Unresolved> — concrete at
-    // the top level (Enum) but non-concrete in a nested param.
+    // A Never is a legal ARENA node but must not be a materialized dispatch type.
+    const auto never_id = intern_program_vt(g.program, CoreValueType{CoreVtNever{}});
+    g.program.instances.push_back(
+        make_fn_instance(g.program, static_cast<std::uint32_t>(g.program.instances.size()),
+                         "_inst_never", never_id));
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
+}
+
+TEST_CASE("mono verifier: an out-of-range dispatch id is fail-closed") {
+    GoodWorkflow g = make_good_workflow();
     CoreInstanceDecl bad;
     bad.id = CoreInstanceId{static_cast<std::uint32_t>(g.program.instances.size())};
-    bad.instance_key = "_inst_nested_bad";
+    bad.instance_key = "_inst_oob";
     bad.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "f", "f", "", 500};
-    ir::TypeRef outer;
-    outer.kind = ir::TypeRefKind::Enum;
-    outer.canonical_name = "std::option::Option";
-    outer.params.push_back(std::make_unique<ir::TypeRef>()); // nested kind == Unresolved
-    bad.dispatch_types.push_back(std::move(outer));
+    bad.dispatch_types.push_back(CoreValueTypeId{9999}); // no such arena entry
     bad.payload = CoreFnInstance{};
     g.program.instances.push_back(std::move(bad));
     const auto result = verify_core_program(g.program);
@@ -1720,72 +1771,20 @@ TEST_CASE("mono verifier P0-1: a NESTED non-concrete dispatch type is fail-close
     CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
 }
 
-// A Fn TypeRef built per the production encoding (typed_hir_lower.cpp): params
-// in `params`, RETURN in `first`, `second` unused.
-namespace {
-[[nodiscard]] ir::TypeRef make_fn_type_ref(std::vector<ir::TypeRefKind> params,
-                                           ir::TypeRefKind ret) {
-    ir::TypeRef fn;
-    fn.kind = ir::TypeRefKind::Fn;
-    for (ir::TypeRefKind pk : params) {
-        auto p = std::make_unique<ir::TypeRef>();
-        p->kind = pk;
-        fn.params.push_back(std::move(p));
-    }
-    auto r = std::make_unique<ir::TypeRef>();
-    r->kind = ret;
-    fn.first = std::move(r); // return lives in `first`
-    return fn;
-}
-[[nodiscard]] CoreInstanceDecl make_fn_instance(std::uint32_t id, std::string key,
-                                                ir::TypeRef dispatch) {
-    CoreInstanceDecl inst;
-    inst.id = CoreInstanceId{id};
-    inst.instance_key = std::move(key);
-    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g", "g", "", 501};
-    inst.dispatch_types.push_back(std::move(dispatch));
-    inst.payload = CoreFnInstance{};
-    return inst;
-}
-} // namespace
-
-TEST_CASE("mono verifier P0-1: a production-shape Fn(params, first=return) dispatch type is accepted") {
+TEST_CASE("mono verifier: a concrete Fn dispatch value type is accepted") {
     GoodWorkflow g = make_good_workflow();
-    // Fn(Int) -> Int per the real encoding (params=[Int], first=Int, second=null).
+    // Fn(Int) -> Int, interned as a real value type (params=[Int], ret=Int).
+    const auto int_id = intern_program_vt(g.program, CoreValueType{CoreVtInt{}});
+    const auto fn_id =
+        intern_program_vt(g.program, CoreValueType{CoreVtFn{{int_id}, int_id}});
     g.program.instances.push_back(make_fn_instance(
-        static_cast<std::uint32_t>(g.program.instances.size()), "_inst_fn_ok",
-        make_fn_type_ref({ir::TypeRefKind::Int}, ir::TypeRefKind::Int)));
+        g.program, static_cast<std::uint32_t>(g.program.instances.size()), "_inst_fn_ok", fn_id));
     const auto result = verify_core_program(g.program);
     for (const auto &d : result.diagnostics) {
-        INFO("unexpected: " << d.code << " — " << d.message);
+        INFO("unexpected: " << d.code << " - " << d.message);
         CHECK(false);
     }
     CHECK(result.ok());
-}
-
-TEST_CASE("mono verifier P0-1: a Fn dispatch type missing its return (first) is fail-closed") {
-    GoodWorkflow g = make_good_workflow();
-    ir::TypeRef fn;
-    fn.kind = ir::TypeRefKind::Fn; // no `first` (return) -> malformed
-    auto p = std::make_unique<ir::TypeRef>();
-    p->kind = ir::TypeRefKind::Int;
-    fn.params.push_back(std::move(p));
-    g.program.instances.push_back(make_fn_instance(
-        static_cast<std::uint32_t>(g.program.instances.size()), "_inst_fn_no_ret", std::move(fn)));
-    const auto result = verify_core_program(g.program);
-    CHECK_FALSE(result.ok());
-    CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
-}
-
-TEST_CASE("mono verifier P0-1: a Fn dispatch type with a non-concrete return is fail-closed") {
-    GoodWorkflow g = make_good_workflow();
-    // Fn(Int) -> Unresolved: concrete Fn shell, non-concrete nested return.
-    g.program.instances.push_back(make_fn_instance(
-        static_cast<std::uint32_t>(g.program.instances.size()), "_inst_fn_bad_ret",
-        make_fn_type_ref({ir::TypeRefKind::Int}, ir::TypeRefKind::Unresolved)));
-    const auto result = verify_core_program(g.program);
-    CHECK_FALSE(result.ok());
-    CHECK(has_code(result, verify::kInstanceDispatchTypeInvalid));
 }
 
 TEST_CASE("mono verifier P0-2: payload kind not matching origin kind is fail-closed") {
@@ -1815,9 +1814,12 @@ TEST_CASE("mono verifier P0-2: an agent instance whose origin != base symbol is 
 
 TEST_CASE("mono verifier P1: an agent instance with a wrong-shell dispatch descriptor is fail-closed") {
     GoodWorkflow g = make_good_workflow();
-    // instance 0 (First) outputs WMid; corrupt its output dispatch slot to name a
-    // different type (WOut) so the descriptor no longer aligns with the shell.
-    g.program.instances[0].dispatch_types[2].canonical_name = "WOut";
+    // instance 0 (First) outputs WMid (type id 1); corrupt its output dispatch
+    // slot to a nominal value type over WOut (type id 2) so the descriptor no
+    // longer aligns with the shell.
+    const auto wout_vt =
+        intern_program_vt(g.program, CoreValueType{CoreVtNominal{CoreTypeId{2}, {}, std::nullopt}});
+    g.program.instances[0].dispatch_types[2] = wout_vt;
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kInstanceShellMismatch));
@@ -1831,22 +1833,25 @@ TEST_CASE("mono verifier P1: an agent instance with an empty dispatch descriptor
     CHECK(has_code(result, verify::kInstanceShellMismatch));
 }
 
-TEST_CASE("mono verifier P1: a same-name but wrong-KIND dispatch slot is fail-closed") {
+TEST_CASE("mono verifier P1: an input slot naming a DIFFERENT nominal is fail-closed") {
     GoodWorkflow g = make_good_workflow();
-    // instance 0's input slot is Struct "WIn"; corrupt only the KIND to Bool while
-    // keeping canonical_name "WIn". A string-only check would pass; a structural
-    // check rejects it (Bool is not the Struct WIn).
-    g.program.instances[0].dispatch_types[0].kind = ir::TypeRefKind::Bool;
+    // instance 0's input slot is nominal WIn (type id 0); retarget it to a nominal
+    // over WMid (type id 1) so it no longer matches the input shell.
+    const auto wmid_vt =
+        intern_program_vt(g.program, CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}});
+    g.program.instances[0].dispatch_types[0] = wmid_vt;
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kInstanceShellMismatch));
 }
 
-TEST_CASE("mono verifier P1: a malformed Unit context slot carrying a nominal name is fail-closed") {
+TEST_CASE("mono verifier P1: a non-Unit context slot for a Unit-context agent is fail-closed") {
     GoodWorkflow g = make_good_workflow();
-    // instance 0 has a Unit context; its context slot must be a BARE Unit. Attach
-    // a stray nominal name -> malformed Unit.
-    g.program.instances[0].dispatch_types[1].canonical_name = "Sneaky";
+    // instance 0 has a Unit context; its context slot must resolve to CoreVtUnit.
+    // Retarget it to a nominal value type -> malformed.
+    const auto win_vt =
+        intern_program_vt(g.program, CoreValueType{CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}});
+    g.program.instances[0].dispatch_types[1] = win_vt;
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kInstanceShellMismatch));
