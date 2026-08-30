@@ -117,22 +117,28 @@ only. The verifier accepts only `ByValue` today; `ByRef` (with its
 lifetime/region-promotion rules) is a future addition that does NOT change the
 node shape.
 
-**Substitution model (gap-3 member templates).** `type_param_count` alone can't
-materialize a payload. Each generic nominal's field/variant-slot type is a
-*template*:
+**Substitution model (P4-C member templates).** `type_param_count` alone can't
+materialize a payload. Each generic nominal's field/variant-slot type is a root
+in a declaration-owned, postordered, compositional template arena:
 
 ```cpp
-struct CoreTypeTemplateRef {
-    enum class Kind { Concrete, Param } kind;
-    CoreValueTypeId concrete;   // Kind::Concrete
-    uint32 param_index;         // Kind::Param  (position into CoreVtNominal.args)
+enum class CoreMemberTypeTemplateKind { Concrete, Param, Nominal, Fn };
+struct CoreMemberTypeTemplateNode {
+    CoreMemberTypeTemplateKind kind;
+    CoreValueTypeId concrete;                     // Concrete
+    uint32 param_index;                           // Param
+    CoreTypeId nominal;                           // Nominal
+    std::optional<uint64> capacity;               // Nominal collection refinement
+    std::vector<CoreMemberTypeTemplateNodeId> children; // Nominal args / Fn params
+    CoreMemberTypeTemplateNodeId fn_return;       // Fn
 };
 ```
 
 `Option::Some`'s slot is `Param{0}`; materializing `Option<User>` substitutes
-`args[0] = Vt(User)`. Builtin descriptors and user generics use the identical
-representation — no builtin special-case. (Templates land in **P4-C**;
-`type_param_count` lands in P4-A for the arity check.)
+`args[0] = Vt(User)`. `Nominal` and `Fn` make `Option<T>`, `Map<String,T>` and
+`fn(T)->List<T>(4)` representable without reconstructing types from erased
+`ir::TypeRef`s. Builtin descriptors and user generics use the identical arena;
+`instantiate_member_template` is the single substitution/materialization path.
 
 **Interning.** Mirror `TypeContext`: `vector<CoreValueType> storage_` +
 `unordered_map<StructuralKey, CoreValueTypeId> pool_`. First *interned* Core-IR
@@ -141,48 +147,170 @@ hash-consing here. The lowerer's interner guarantees canonical ids; the
 standalone verifier (§"arena verifier") re-proves canonicity at the
 deserialization boundary.
 
-## 3. Layout (Codex boundary 2 — deferred to P4-D, shapes fixed now)
+## 3. Layout (P4-D D0 contract)
 
-Greenfield (no existing layout machinery: WASM backend is a WAT skeleton,
-evaluator is a tagged `std::variant`). **Not** in `CoreProgram`; a side artifact:
+Greenfield (the WASM backend is still a WAT skeleton and the evaluator uses a
+tagged `std::variant`). Layout is a deterministic, target-specific **side
+artifact**. It is never embedded in or used to mutate `CoreProgram`:
 
 ```cpp
-struct TargetDataLayoutId { uint32 value; };     // initially one: wasm32
+enum class TargetDataLayoutId { Wasm32 };
+struct TargetDataLayout {
+    TargetDataLayoutId id{TargetDataLayoutId::Wasm32};
+    uint32 pointer_size{4};
+    uint32 pointer_align{4};
+    uint32 function_index_size{4};
+    uint32 function_index_align{4};
+};
+
 struct CoreLayoutId { uint32 value{kInvalid}; };
 struct CoreLayoutTable {
-    TargetDataLayoutId target;
-    std::vector<CoreLayout> layouts;             // index == CoreLayoutId
-    // key: (CoreValueTypeId, target) -> CoreLayoutId
+    TargetDataLayout target;
+    std::vector<CoreLayout> layouts;       // index == CoreLayoutId
+    std::vector<CoreLayoutId> value_layouts; // parallel to CoreProgram::value_types
 };
 
-enum class CoreScalarRepr { I32, I64, F64 };     // PtrLen is an aggregate, not a scalar (gap 3)
+enum class CoreScalarRepr { I32, I64, F64 };
 
 struct CoreLayout {
-    uint32 size; uint32 align; bool is_zero_sized;
+    uint64 size;
+    uint32 align;
+    bool is_zero_sized;
     CoreLayoutShape shape;
 };
-struct CoreLayoutScalar    { CoreScalarRepr repr; };
-struct CoreLayoutPtrLen    { /* (i32 ptr, i32 len) aggregate: String / container header */ };
-struct CoreLayoutStruct    { std::vector<uint32> field_offsets;      // index == CoreFieldId (decl order)
-                             std::vector<CoreLayoutId> field_layouts; };  // SSOT: carried, not re-derived
-struct CoreLayoutEnum      { uint32 tag_size; uint32 payload_offset;
-                             // per-variant: index == variant id
-                             std::vector<CoreLayoutId> variant_payload_layouts;
-                             std::vector<uint32> variant_payload_sizes; }; // payload_offset aligned to max
-struct CoreLayoutContainer { CoreLayoutId element;                    // List/Set element
-                             std::optional<CoreLayoutId> value;       // Map value (element = key)
-                             uint64 capacity; uint32 stride;          // bounded dynamic length (ptr,len<=cap)
-                             /* header is inline PtrLen (8B); backing bytes = stride*capacity, bump-arena allocated */ };
-struct CoreLayoutClosure   { CoreLayoutId env_layout; /* region class */ };  // (func_index i32, env_ptr i32) inline
-struct CoreLayoutUninhabited {};   // Never: no runtime value, not a loadable size-0
+struct CoreLayoutPending {}; // builder-only reserved slot; forbidden in a successful table
+struct CoreLayoutScalar { CoreScalarRepr repr; };
+struct CoreLayoutBytes { uint64 byte_count; }; // UUID: opaque inline bytes
+struct CoreLayoutPtrLen {};                   // (i32 ptr, i32 len)
+struct CoreLayoutFnRef {};                    // wasm32 table index i32
+struct CoreLayoutStruct {
+    std::vector<uint64> field_offsets;         // declaration order
+    std::vector<CoreLayoutId> field_layouts;   // INLINE edges
+};
+struct CoreLayoutEnum {
+    uint32 tag_size;
+    uint64 payload_offset;
+    std::vector<CoreLayoutId> variant_payload_layouts; // INLINE aggregate edges
+    std::vector<uint64> variant_payload_sizes;
+};
+struct CoreLayoutContainer {
+    CoreLayoutId element;                      // INDIRECT backing edge
+    std::optional<CoreLayoutId> value;         // Map value, INDIRECT backing edge
+    uint64 capacity;
+    uint64 stride;
+    uint64 value_offset;                       // 0 except Map entry layout
+    uint64 backing_size;                       // checked stride * capacity
+};
+struct CoreLayoutUninhabited {};              // Never: not a loadable ZST
 ```
 
-Per RFC value-rep table: Bool/narrow-Int→i32, wide-Int→i64, Float→f64,
-Decimal/Duration→i64, String→PtrLen, enum→(tag i32, payload aligned to largest
-variant, per-variant layouts recorded), struct→**declaration-order** fields (NOT
-the evaluator's name-sorted `FieldMap`), bounded container→PtrLen header + bump-
-arena backing (`stride*capacity`), closure→(func_index,env_ptr) + separate env
-layout, capability result→opaque `(ptr,len)` host frame.
+`CoreLayoutShape` is the variant of the shapes above. `CoreLayoutPending` exists
+only so the builder can reserve a stable `CoreLayoutId` before descending; both
+successful construction and standalone verification reject a table containing
+one. Every `CoreValueTypeId` in the input program has exactly one entry in
+`value_layouts`. Layout roots are deliberately **not hash-consed**: distinct
+logical types may have different ids while still being physically equivalent.
+
+### 3.1 Representation table and arithmetic
+
+- Unit is a size-0/alignment-1 struct; `Never` is `CoreLayoutUninhabited`, not a
+  loadable size-0 value. Bool and a bounded Int wholly contained in signed i32
+  use i32; every other Int uses i64; Float uses f64.
+- `Decimal(scale)` is a signed i64 **unscaled mantissa** representing
+  `mantissa / 10^scale`; `scale` is logical type metadata and is not stored in
+  each value. This is not an arbitrary-precision decimal or a handle. Literal /
+  const conversion must fail closed when the mantissa is not representable;
+  dynamic construction, rescaling and arithmetic use checked i64 operations and
+  trap/report a runtime error on overflow. Silent truncation and wraparound are
+  forbidden. The evaluator's spelling-backed `DecimalValue` is a reference
+  representation, not the Core ABI; its `decimal_raw_*` path already parses an
+  i64 mantissa and reports rescale/arithmetic overflow.
+- Duration and Timestamp use i64. UUID is 16 opaque inline bytes with alignment
+  1: Core never loads it as an i32 lane, so stronger alignment would introduce
+  padding without an ABI or access requirement.
+- String is `(ptr:i32,len:i32)` (size/alignment 8/4). `CoreVtFn` is a wasm32
+  table index i32 (size/alignment 4/4). `CoreVtClosure` is an explicit
+  `core.layout.UNSUPPORTED` in D1, including when reached through a member
+  template; `(func_index,env_ptr)` plus environment layout is deferred to D2.
+- Tuple elements and struct fields are inline in index/declaration order (never
+  evaluator `FieldMap` name order). Enum is `(tag:i32,payload)` with one
+  deterministic payload aggregate per variant and payload aligned to the
+  maximum variant alignment.
+- Bounded List/Set/Map is an inline `(ptr,len)` header. The element/entry backing
+  storage is indirect bump-arena memory, but the shape records element/value
+  layouts, Map value offset, stride, capacity and checked `backing_size` so
+  representation comparison cannot confuse equal headers with different
+  backing contracts. An unbounded collection fails `core.layout.UNBOUNDED` for
+  this bounded target. All align-up, aggregate addition and
+  `stride * capacity` operations are checked; overflow fails
+  `core.layout.OVERFLOW` rather than wrapping or invoking host UB.
+
+### 3.2 Pure type closure and deterministic publication
+
+`compute_core_layouts(const CoreProgram&, TargetDataLayout)` is pure: no
+wall-clock, pid, host path, allocator address or mutation of `CoreProgram`
+enters the result. D1 accepts only the exact wasm32 constants shown above; an
+unknown target id or inconsistent target fields fails `core.layout.UNSUPPORTED`
+rather than silently inventing an ABI. P4-C's
+`instantiate_member_template(CoreProgram&,...)` currently interns into the
+program arena, so D1 factors its implementation over a supplied
+`ValueTypeArena` and reuses that **same** template evaluator in two wrappers:
+
+1. the existing mutating P4-C API, preserving its behavior; and
+2. a layout-private arena seeded with a copy of `program.value_types`.
+
+The second wrapper computes the concrete member-type closure without publishing
+new logical types back into `CoreProgram` and without implementing a second
+template/subtyping engine. Layouts for closure-only materialized types may be
+referenced by layout nodes but are not appended to `value_layouts`, whose domain
+remains exactly the original program arena.
+
+The builder first reserves one `Pending` root slot for each input value type in
+source order (`value_layouts[i]` is therefore stable), then visits roots in that
+same order. Layout-private materialized types and enum payload aggregates append
+in deterministic discovery/declaration/variant order. A temporary table is
+published only after every reserved or appended placeholder has finalized;
+failure returns a structured diagnostic with source provenance and no partial
+table. Recomputing a fixed `(program,target)` yields structurally equal tables.
+
+### 3.3 Recursive layout and physical equivalence
+
+Layout dependencies are classified by the shape field that carries them:
+
+- struct fields and enum variant payload aggregates are **Inline** size edges;
+- collection element/key/value references are **Indirect** backing edges;
+- the future closure environment reference is Indirect.
+
+On first visit the builder reserves a stable placeholder id. Re-entering a
+`Visiting` value through an Inline edge is
+`core.layout.INFINITE_RECURSION` (`struct A { a: A }`, a direct enum payload, or
+mutual equivalents). Re-entry through an Indirect edge returns the stable
+placeholder, so `struct Node { children: List<Node>(N) }` is finite. The final
+verifier runs three-color cycle detection over Inline edges only, permits cycles
+only when every cycle is broken by an Indirect edge, and separately rejects any
+dangling/unfinalized placeholder.
+
+Raw `CoreLayoutId` equality is not physical-layout equality. The public query is
+`value_layouts_equivalent(table, source_type, target_type)`: equal
+`CoreValueTypeId`s are the fast path; otherwise it calls cycle-safe
+`layouts_equivalent` on their roots. The latter memoizes pairs with
+`Visiting/Equivalent/Different`, compares size/alignment/shape and all scalar
+metadata, offsets, capacity/stride/backing facts, then recursively compares both
+Inline and Indirect child pairs. A re-entered Visiting **pair** is provisionally
+equal; any later local mismatch makes the enclosing comparison different. This
+is structural bisimulation of two finalized finite layout graphs, not cyclic
+layout hash-consing.
+
+### 3.4 D1 diagnostics and probes
+
+D1 introduces `core.layout.UNSUPPORTED`, `core.layout.UNBOUNDED`,
+`core.layout.OVERFLOW`, `core.layout.INFINITE_RECURSION` and
+`core.layout.INVALID`. Focused probes cover every scalar/atom representation;
+declaration-order struct offsets; enum tag/payload alignment; bounded
+List/Set/Map stride and backing size; generic/nested member materialization;
+same-id and distinct-id physical equivalence; indirect `Node` recursion;
+deterministic second computation; and fail-closed Closure, unbounded collection,
+overflow, direct struct/enum recursion and deliberately unfinished placeholder.
 
 ## 4. Lowering boundary + resolved nominal identity (gap 1)
 
@@ -286,16 +414,17 @@ in a per-body `value_types[CoreValueId]` table (P4-B), never embedded in the id.
   (this is exactly why the binding is NOT the first consumer). `CoreExpr` may
   carry a result value type; verifier locks Let-result-table == expr-result.
   `CorePatternBinding.binding_type` is then DELETED.
-- **P4-C — nominal member templates.** `CoreTypeTemplateRef{Concrete|Param}` on
-  struct field / enum payload slots; materialize Option/Result/List/Map,
-  eliminating the kInvalid `slot_types`.
+- **P4-C — nominal member templates (landed).** Declaration-owned flat
+  `CoreMemberTypeTemplateNode{Concrete|Param|Nominal|Fn}` arena on struct fields /
+  enum payload slots; `instantiate_member_template` substitutes through the
+  shared `CoreValueType` hash-cons arena. Primitive/generic slot kInvalid holes
+  are gone; `field_nominal_types` remains explicitly navigation-only.
 - **P4-D — layout pass.** `TargetDataLayout` + side `CoreLayoutTable`; scalar /
-  struct / enum / container golden first, then closure env. Recursion decision
-  (gap 4): direct inline recursion (`struct A{a:A}`) is infinite layout →
-  fail-closed; cycles break only through an explicit indirection boundary
-  (String/container ptr, future Box, closure env ptr); layout DFS maintains a
-  visiting set; logical `CoreVtNominal` shares via base+args (never expands decl
-  fields into the type node).
+  struct / enum / bounded-container D1, then closure env D2. D1 uses stable
+  placeholders and explicit Inline/Indirect dependency semantics (§3.3): direct
+  inline recursion is infinite layout and fails closed; collection backing
+  breaks a cycle. The pass uses a layout-private value-type closure backed by
+  the P4-C materializer and never mutates `CoreProgram` (§3.2).
 - **Then** migrate projection result_type / construct / capability signatures /
   remaining kInvalid.
 

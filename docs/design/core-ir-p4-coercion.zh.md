@@ -10,6 +10,9 @@
 - statement-boundary fact(挂 `TypedStatement`,非通用 `TypedExpr` 字段)。
 - Core 产 **fresh** CoreValueId(result_type=target),source id/类型不动。
 - physical 语义 layout-dependent(P4-D 才判 no-op vs 实体转换,本 RFC 不声明 no-op)。
+  判等 API 为:同一 `CoreValueTypeId` 先走快路径,否则调用 P4-D
+  `layouts_equivalent` 对 finalized layout graph 做 cycle-safe 结构等价；绝不以
+  原始 `CoreLayoutId` 相等冒充物理等价。
 - `collect_expr_uses` 收 CoreCoerceExpr.operand。
 - 两 commit review series。
 
