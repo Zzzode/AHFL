@@ -2365,23 +2365,20 @@ class FlowLowerer {
         // body-table entry (single source of truth - RFC 0026 P4-B). Both travel
         // as one binding, so branch scoping (see lower_if) snapshots/restores them
         // atomically.
-        const CoreValueTypeId init_type = ex_.value_type_of(value);
-        // P4-B fail-closed (Codex P0-3): the DECLARED annotation `let x: T = ...`
-        // must intern to the SAME logical value type as the initializer value.
-        // Sema guarantees this on the normal path; a hand-built / deserialized
-        // AHFL-IR whose annotation disagrees (e.g. `let x: Bool = <Int>`) must be
-        // rejected here, never silently adopt one side. A fully inferred `let`
-        // carries the initializer's own type_ref, so it trivially agrees.
-        const CoreValueTypeId declared_type =
-            ex_.intern_value_type(s.type_ref, s.initializer.ptr ? s.initializer.ptr->source_range
-                                                                : std::nullopt);
-        if (!(declared_type == init_type)) {
-            ex_.error(diag::kLetTypeMismatch,
-                      "let binding '" + s.name +
-                          "' declared type does not match its initializer's value type",
-                      s.initializer.ptr ? s.initializer.ptr->source_range : std::nullopt);
-        }
-        ex_.scope()[s.name] = LocalBinding{value, init_type};
+        //
+        // DEFERRED (P4-B coercion slice): the declared annotation `let x: T = e`
+        // is NOT compared here. AHFL `let` semantics are ASSIGNABLE / SUBTYPE, not
+        // structural equality (Sema builds the value at the initializer's actual
+        // type, then check_assignable(actual, declared) allows e.g.
+        // `let x: Int(0,2) = 1` where the literal is Int(1,1)). Recording the
+        // declared type as the local's type would require an explicit typed
+        // coercion (a CoreCoerceExpr producing a fresh CoreValueId: source=actual,
+        // result=declared) so a widening (which layout may realize as i32->i64) is
+        // never faked by re-labelling an existing value id. Until that coercion
+        // slice lands, the local carries the initializer's actual value type (a
+        // valid subtype of the declared type), and the declared-vs-initializer
+        // gate is deferred rather than enforced with a wrong exact-equality rule.
+        ex_.scope()[s.name] = LocalBinding{value, ex_.value_type_of(value)};
     }
 
     void lower_assign(const AssignStatement &s, SourceRangeOpt range, CoreRegion &region) {

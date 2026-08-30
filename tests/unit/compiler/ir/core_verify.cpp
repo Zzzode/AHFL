@@ -1390,6 +1390,146 @@ TEST_CASE("verifier fails closed on an expression arm yielding the wrong value t
     CHECK(has_code(result, verify::kValueTypeMismatch));
 }
 
+TEST_CASE("verifier fails closed on a guard whose NESTED if yields non-Bool (P4-B P0-2)") {
+    // The expected-yield constraint must thread THROUGH a nested `if` in a guard:
+    // `if c { yield Int } else { yield Int }` inside a guard must fail even though
+    // both paths yield (the type is wrong).
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->value_count;   // scrutinee (Bool, doubles as if-cond)
+    const std::uint32_t gi = sid + 1;                // guard-yielded Int value
+    g.flow->value_count += 2;
+    g.flow->value_types.push_back(g.vt_bool);
+    g.flow->value_types.push_back(g.vt_int);
+    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, g.vt_bool});
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
+    CoreMatchStmt match;
+    match.scrutinee = CoreValueId{sid};
+    match.has_result = true;
+    match.result = CoreValueId{sid}; // result Bool; arm yields Bool (consistent)
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.guard_region = std::make_unique<CoreRegion>();
+    arm.guard_region->statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{gi}, e_int}, std::nullopt});
+    {
+        CoreIfStmt iff;
+        iff.condition = CoreValueId{sid}; // Bool condition (fine)
+        iff.then_region = std::make_unique<CoreRegion>();
+        iff.then_region->statements.push_back(
+            CoreStmt{CoreYieldStmt{true, CoreValueId{gi}}, std::nullopt}); // yields Int — WRONG in a guard
+        iff.else_region = std::make_unique<CoreRegion>();
+        iff.else_region->statements.push_back(
+            CoreStmt{CoreYieldStmt{true, CoreValueId{gi}}, std::nullopt});
+        arm.guard_region->statements.push_back(CoreStmt{std::move(iff), std::nullopt});
+    }
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(CoreStmt{CoreYieldStmt{true, CoreValueId{sid}}, std::nullopt});
+    match.arms.push_back(std::move(arm));
+    match.fallback_region = std::make_unique<CoreRegion>();
+    match.fallback_region->statements.push_back(
+        CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, e_bool}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeMismatch));
+}
+
+TEST_CASE("verifier fails closed on an expression arm whose NESTED if yields the wrong type (P4-B P0-2)") {
+    // The Exact(result type) constraint must thread through a nested `if` in an
+    // expression arm body: result is Int, both branches yield Bool.
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->value_count;   // scrutinee/result (Int)
+    const std::uint32_t bv = sid + 1;                // Bool value the arm yields
+    g.flow->value_count += 2;
+    g.flow->value_types.push_back(g.vt_int);
+    g.flow->value_types.push_back(g.vt_bool);
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
+    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, g.vt_bool});
+    CoreMatchStmt match;
+    match.scrutinee = CoreValueId{sid};
+    match.has_result = true;
+    match.result = CoreValueId{sid}; // result Int
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{bv}, e_bool}, std::nullopt});
+    {
+        CoreIfStmt iff;
+        iff.condition = CoreValueId{bv}; // Bool condition (fine)
+        iff.then_region = std::make_unique<CoreRegion>();
+        iff.then_region->statements.push_back(
+            CoreStmt{CoreYieldStmt{true, CoreValueId{bv}}, std::nullopt}); // yields Bool != Int result
+        iff.else_region = std::make_unique<CoreRegion>();
+        iff.else_region->statements.push_back(
+            CoreStmt{CoreYieldStmt{true, CoreValueId{bv}}, std::nullopt});
+        arm.body->statements.push_back(CoreStmt{std::move(iff), std::nullopt});
+    }
+    match.arms.push_back(std::move(arm));
+    match.fallback_region = std::make_unique<CoreRegion>();
+    match.fallback_region->statements.push_back(
+        CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, e_int}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeMismatch));
+}
+
+TEST_CASE("verifier fails closed on a guard yielding non-Bool even when the pool has NO Bool (P4-B P0-2)") {
+    // The Bool expectation must not be silently disabled when the value-type pool
+    // lacks a Bool node: a guard yielding Int still fails closed.
+    GoodProgram g = make_good_program();
+    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    // Deliberately do NOT use g.vt_bool anywhere; keep only Int-typed values.
+    const std::uint32_t sid = g.flow->value_count;   // scrutinee (Int)
+    const std::uint32_t gi = sid + 1;                // guard-yielded Int value
+    g.flow->value_count += 2;
+    g.flow->value_types.push_back(g.vt_int);
+    g.flow->value_types.push_back(g.vt_int);
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
+    CoreMatchStmt match;
+    match.scrutinee = CoreValueId{sid};
+    match.has_result = false; // statement match: no per-arm result-type constraint
+    CoreMatchArm arm;
+    arm.pattern = CorePatternId{0};
+    arm.guard_region = std::make_unique<CoreRegion>();
+    arm.guard_region->statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{gi}, e_int}, std::nullopt});
+    arm.guard_region->statements.push_back(
+        CoreStmt{CoreYieldStmt{true, CoreValueId{gi}}, std::nullopt}); // guard yields Int, not Bool
+    arm.body = std::make_unique<CoreRegion>();
+    arm.body->statements.push_back(CoreStmt{CoreYieldStmt{false, CoreValueId{}}, std::nullopt});
+    match.arms.push_back(std::move(arm));
+    match.fallback_region = std::make_unique<CoreRegion>();
+    match.fallback_region->statements.push_back(
+        CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+    auto &done = g.flow->states[1].body;
+    done.statements.clear();
+    done.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{sid}, e_int}, std::nullopt});
+    done.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+    done.statements.push_back(CoreStmt{CoreReturnStmt{false, CoreValueId{}}, std::nullopt});
+    const auto result = verify_core_program(g.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueTypeMismatch));
+}
+
 TEST_CASE("verifier fails closed on a match arm binding defined more than once (flow-global SSA)") {
     GoodProgram g = make_good_program();
     // pattern #0 = binding pattern naming arm binding 0.

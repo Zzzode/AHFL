@@ -25,6 +25,19 @@ namespace ahfl::ir::core {
 
 namespace {
 
+// RFC 0026 P4-B (P1): the type a value-yielding region's yields must have.
+// Threaded THROUGH nested `if` branches so `if { yield W } else { yield W }`
+// inside a guard / expression arm is type-checked, not just the top-level yield.
+// `Bool` (a guard result) and `Exact` (an expression match arm ==
+// value_types[match.result]) are both HARD: an unexpected type fails closed even
+// when the value-type pool lacks a Bool node (a missing expected node must not
+// silently disable the rule). `None` = no per-yield type constraint (statement
+// arm / workflow region — those are gated by arity elsewhere).
+struct ExpectedYield {
+    enum class Kind { None, Bool, Exact } kind{Kind::None};
+    CoreValueTypeId exact{}; // meaningful only when kind == Exact
+};
+
 /// One flow's verification context: the program (for cross-table lookups), the
 /// flow being checked, and its resolved target agent (for state bounds).
 class Verifier {
@@ -425,19 +438,6 @@ class Verifier {
     [[nodiscard]] bool is_bool_value_type(CoreValueTypeId id) const {
         return id.value != CoreValueTypeId::kInvalid && id.value < program_.value_types.size() &&
                std::holds_alternative<CoreVtBool>(program_.value_types[id.value].node);
-    }
-
-    // The interned Bool value-type id, or kInvalid when the pool has none (a body
-    // with a guard always interns Bool for the guard result, so a real guarded
-    // match has it; kInvalid disables the per-yield type check rather than
-    // producing a false positive against a missing Bool).
-    [[nodiscard]] CoreValueTypeId find_bool_value_type() const {
-        for (std::uint32_t i = 0; i < program_.value_types.size(); ++i) {
-            if (std::holds_alternative<CoreVtBool>(program_.value_types[i].node)) {
-                return CoreValueTypeId{i};
-            }
-        }
-        return CoreValueTypeId{};
     }
 
     // RFC 0026 P4-B: the body's per-value type table must be DENSE (one entry per
@@ -1207,7 +1207,7 @@ class Verifier {
                                            std::unordered_set<std::uint32_t> &all_definitions,
                                            std::unordered_set<std::uint32_t> &visible,
                                            RegionContext ctx = RegionContext::Flow,
-                                           CoreValueTypeId expected_yield_type = {}) {
+                                           ExpectedYield expected = ExpectedYield{}) {
         const auto use_value = [&](CoreValueId v, SourceRangeOpt range) {
             if (v.value >= flow.value_count) {
                 error(verify::kValueIdOutOfRange,
@@ -1328,14 +1328,14 @@ class Verifier {
                                if (s.then_region) {
                                    auto bv = visible;
                                    then_exit = verify_region(flow, state_count, *s.then_region,
-                                                             all_definitions, bv, ctx);
+                                                             all_definitions, bv, ctx, expected);
                                } else {
                                    then_exit.fallthrough = true;
                                }
                                if (s.else_region) {
                                    auto bv = visible;
                                    else_exit = verify_region(flow, state_count, *s.else_region,
-                                                             all_definitions, bv, ctx);
+                                                             all_definitions, bv, ctx, expected);
                                }
                                RegionExit merged;
                                merged.merge(then_exit);
@@ -1388,19 +1388,29 @@ class Verifier {
                                if (s.has_value) {
                                    use_value(s.value, stmt.source_range);
                                    exit.yields_value = true;
-                                   // RFC 0026 P4-B (P1): when the caller specified
-                                   // an expected yield type (a guard yields Bool; an
-                                   // expression match arm yields the match result
-                                   // type), the yielded value's recorded type must
-                                   // equal it.
-                                   if (expected_yield_type.value != CoreValueTypeId::kInvalid &&
-                                       s.value.value < flow.value_count &&
-                                       !(body_value_type(flow, s.value) == expected_yield_type)) {
-                                       error(verify::kValueTypeMismatch,
-                                             "yielded value type does not match the region's "
-                                             "expected type in '" +
-                                                 flow.label + "'",
-                                             stmt.source_range);
+                                   // RFC 0026 P4-B (P1): the yielded value's type
+                                   // must satisfy the region's expected-yield
+                                   // constraint (a guard yields Bool; an expression
+                                   // match arm yields the match result type). HARD:
+                                   // a mismatch (or a Bool expectation that a
+                                   // non-Bool value cannot meet) fails closed even
+                                   // when the pool lacks the expected node.
+                                   if (s.value.value < flow.value_count) {
+                                       const CoreValueTypeId vt = body_value_type(flow, s.value);
+                                       if (expected.kind == ExpectedYield::Kind::Bool &&
+                                           !is_bool_value_type(vt)) {
+                                           error(verify::kValueTypeMismatch,
+                                                 "guard region must yield a Bool value in '" +
+                                                     flow.label + "'",
+                                                 stmt.source_range);
+                                       } else if (expected.kind == ExpectedYield::Kind::Exact &&
+                                                  !(vt == expected.exact)) {
+                                           error(verify::kValueTypeMismatch,
+                                                 "yielded value type does not match the match "
+                                                 "result type in '" +
+                                                     flow.label + "'",
+                                                 stmt.source_range);
+                                       }
                                    }
                                } else {
                                    exit.yields_unit = true;
@@ -1456,14 +1466,15 @@ class Verifier {
         const auto require_arm_region = [&](const CoreRegion &region, RegionContext ctx,
                                             std::unordered_set<std::uint32_t> &vis, bool is_guard) {
             // RFC 0026 P4-B (P1): a guard yields Bool; an expression match arm
-            // yields the match result's type. Pass that expected type so the
-            // yield sites are type-checked (kInvalid = no per-yield type check,
-            // e.g. a statement arm yields nothing).
-            CoreValueTypeId expected{};
+            // yields the match result's type. Threaded through nested `if`
+            // branches so every value-yield path is type-checked, not just the
+            // top-level one. A statement arm has no per-yield type constraint.
+            ExpectedYield expected;
             if (ctx == RegionContext::Guard) {
-                expected = find_bool_value_type();
+                expected.kind = ExpectedYield::Kind::Bool;
             } else if (ctx == RegionContext::MatchArmValue && m.has_result) {
-                expected = body_value_type(flow, m.result);
+                expected.kind = ExpectedYield::Kind::Exact;
+                expected.exact = body_value_type(flow, m.result);
             }
             const RegionExit e =
                 verify_region(flow, state_count, region, all_definitions, vis, ctx, expected);
