@@ -181,10 +181,17 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                                ctx.wasm_profile == WasmProfile::Browser
                                                    ? backends::WasmProfileKind::Browser
                                                    : backends::WasmProfileKind::Wasi;
+                                           const auto entry = backends::resolve_core_wasm_entry(
+                                               core.program, ctx.package_metadata);
+                                           if (!entry.has_value()) {
+                                               return std::unexpected<std::string>(
+                                                   entry.error().code + ": " +
+                                                   entry.error().message);
+                                           }
                                            const auto emitted = backends::emit_core_wasm(
                                                core.program,
                                                *layouts.table,
-                                               {ir::core::CoreAgentId{0}, profile});
+                                               {*entry, profile});
                                            if (!emitted.ok()) {
                                                const auto &diag = emitted.diagnostics.front();
                                                return std::unexpected<std::string>(

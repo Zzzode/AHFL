@@ -18,10 +18,12 @@ namespace {
 
 using ir::core::CoreAgentDecl;
 using ir::core::CoreAgentId;
+using ir::core::CoreAgentInstance;
 using ir::core::CoreCapabilityCallStmt;
 using ir::core::CoreCapabilityId;
 using ir::core::CoreFlowDecl;
 using ir::core::CoreGotoStmt;
+using ir::core::CoreInstanceId;
 using ir::core::CoreLetStmt;
 using ir::core::CorePathExpr;
 using ir::core::CoreProgram;
@@ -30,6 +32,10 @@ using ir::core::CoreStateId;
 using ir::core::CoreValueId;
 using ir::core::CoreValueTypeId;
 using ir::core::CoreVtNominal;
+using ir::core::CoreWorkflowDecl;
+using ir::core::CoreWorkflowId;
+using ir::core::CoreWorkflowNodeId;
+using ir::core::CoreYieldStmt;
 
 constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kEmptyBlock = 0x40;
@@ -107,11 +113,40 @@ struct CapabilityAction {
 };
 using StateAction = std::variant<GotoAction, IdentityAction, CapabilityAction>;
 
-struct E2Plan {
+struct AgentPlan {
     CoreAgentId agent{};
     CoreStateId initial{};
     std::vector<StateAction> actions;
     std::vector<CoreCapabilityId> imports;
+};
+
+struct AgentPlanPolicy {
+    std::string_view unsupported_code{core_wasm_diag::kUnsupportedOrchestration};
+    bool allow_capability{true};
+    std::string_view slice{"E2"};
+};
+
+enum class WorkflowFrameSourceKind { Input, NodeOutput };
+
+struct WorkflowFrameSource {
+    WorkflowFrameSourceKind kind{WorkflowFrameSourceKind::Input};
+    CoreWorkflowNodeId node{};
+    CoreValueTypeId type{};
+};
+
+struct WorkflowNodePlan {
+    CoreWorkflowNodeId node{};
+    CoreInstanceId target_instance{};
+    WorkflowFrameSource input;
+};
+
+struct WorkflowPlan {
+    CoreWorkflowId workflow{};
+    std::vector<CoreWorkflowNodeId> schedule;
+    std::vector<CoreInstanceId> packaged_instances;
+    std::vector<AgentPlan> agent_plans;
+    std::vector<WorkflowNodePlan> nodes;
+    WorkflowFrameSource output;
 };
 
 struct FunctionTable {
@@ -270,11 +305,12 @@ validate_canonical_input_let(const CoreProgram &program,
                                            const ir::core::CoreFlowState &handler,
                                            std::vector<bool> &used_exprs,
                                            std::vector<bool> &used_values,
+                                           std::string_view unsupported_code,
                                            CoreWasmCodegenResult &result) {
     const auto &statements = handler.body.statements;
     if (statements.size() != 2) {
         add_diag(result,
-                 core_wasm_diag::kUnsupportedOrchestration,
+                 unsupported_code,
                  "KR6.5 identity final must contain canonical input and return",
                  statements.empty() ? ir::SourceRangeOpt{}
                                     : statements.front().source_range);
@@ -287,7 +323,7 @@ validate_canonical_input_let(const CoreProgram &program,
         statements[0],
         used_exprs,
         used_values,
-        core_wasm_diag::kUnsupportedOrchestration,
+        unsupported_code,
         result);
     if (!input.has_value()) {
         return false;
@@ -296,7 +332,7 @@ validate_canonical_input_let(const CoreProgram &program,
     if (ret == nullptr || !ret->has_value || ret->value != *input ||
         agent.input_type != agent.output_type) {
         add_diag(result,
-                 core_wasm_diag::kUnsupportedOrchestration,
+                 unsupported_code,
                  "KR6.5 identity final is not the canonical input passthrough",
                  statements[1].source_range);
         return false;
@@ -405,36 +441,25 @@ validate_capability_final(const CoreProgram &program,
     return CapabilityAction{call->capability};
 }
 
-[[nodiscard]] std::optional<E2Plan>
-build_e2_plan(const CoreProgram &program,
-              const ir::core::CoreLayoutTable &layouts,
-              CoreAgentId target,
-              CoreWasmCodegenResult &result) {
-    if (!program.workflows.empty()) {
+[[nodiscard]] std::optional<AgentPlan>
+build_agent_plan(const CoreProgram &program,
+                 const ir::core::CoreLayoutTable &layouts,
+                 CoreAgentId target,
+                 CoreWasmCodegenResult &result,
+                 AgentPlanPolicy policy = {}) {
+    if (target.value >= program.agents.size()) {
         add_diag(result,
-                 core_wasm_diag::kUnsupportedOrchestration,
-                 "KR6.5 E2 does not support workflow declarations");
-        return std::nullopt;
-    }
-    if (program.agents.size() != 1 || target.value >= program.agents.size()) {
-        add_diag(result,
-                 core_wasm_diag::kEntryAmbiguous,
-                 "KR6.5 E2 requires exactly one agent and an in-range explicit target");
-        return std::nullopt;
-    }
-    if (program.flows.size() != 1) {
-        add_diag(result,
-                 core_wasm_diag::kEntryAmbiguous,
-                 "KR6.5 E2 requires exactly one flow for the target agent");
+                 core_wasm_diag::kEntryNotFound,
+                 "explicit Core agent entry is out of range");
         return std::nullopt;
     }
 
     const auto &agent = program.agents[target.value];
     const auto *flow = unique_target_flow(program, target);
-    if (flow == nullptr || flow != &program.flows.front()) {
+    if (flow == nullptr) {
         add_diag(result,
                  core_wasm_diag::kEntryAmbiguous,
-                 "KR6.5 E2 could not resolve one unique flow for the target agent");
+                 "explicit Core agent entry does not have one unique target flow");
         return std::nullopt;
     }
     if (!flow->patterns.empty() || !flow->coercion_plans.empty()) {
@@ -445,17 +470,19 @@ build_e2_plan(const CoreProgram &program,
                             return region_contains_capability(state.body);
                         });
         add_diag(result,
-                 contains_capability && !flow->coercion_plans.empty()
-                     ? core_wasm_diag::kUnsupportedCapabilityFrame
-                     : core_wasm_diag::kUnsupportedOrchestration,
-                 "KR6.5 E2 rejects hidden pattern or coercion arenas");
+                 contains_capability
+                     ? (policy.allow_capability ? core_wasm_diag::kUnsupportedCapabilityFrame
+                                                : policy.unsupported_code)
+                     : policy.unsupported_code,
+                 "KR6.5 " + std::string(policy.slice) +
+                     " rejects hidden pattern or coercion arenas");
         return std::nullopt;
     }
     if (agent.states.size() >=
         static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
         add_diag(result,
                  core_wasm_diag::kBinaryOverflow,
-                 "agent state count exceeds the E2 wasm32 signed-immediate domain");
+                 "agent state count exceeds the wasm32 signed-immediate domain");
         return std::nullopt;
     }
 
@@ -470,7 +497,7 @@ build_e2_plan(const CoreProgram &program,
         handlers[handler.state.value] = &handler;
     }
 
-    E2Plan plan;
+    AgentPlan plan;
     plan.agent = target;
     plan.initial = agent.initial;
     plan.actions.resize(agent.states.size(), IdentityAction{});
@@ -496,11 +523,22 @@ build_e2_plan(const CoreProgram &program,
                                              *handler,
                                              used_exprs,
                                              used_values,
+                                             policy.unsupported_code,
                                              result)) {
                     return std::nullopt;
                 }
                 plan.actions[state] = IdentityAction{};
             } else {
+                if (!policy.allow_capability) {
+                    add_diag(result,
+                             policy.unsupported_code,
+                             "KR6.5 " + std::string(policy.slice) +
+                                 " does not compose a capability-bearing agent in a workflow",
+                             handler->body.statements.empty()
+                                 ? ir::SourceRangeOpt{}
+                                 : handler->body.statements.front().source_range);
+                    return std::nullopt;
+                }
                 auto action = validate_capability_final(program,
                                                         layouts,
                                                         agent,
@@ -521,9 +559,11 @@ build_e2_plan(const CoreProgram &program,
             const bool contains_capability = region_contains_capability(handler->body);
             add_diag(result,
                      contains_capability
-                         ? core_wasm_diag::kUnsupportedCapabilityFrame
-                         : core_wasm_diag::kUnsupportedOrchestration,
-                     "KR6.5 E2 requires a non-final handler to contain exactly one goto",
+                         ? (policy.allow_capability ? core_wasm_diag::kUnsupportedCapabilityFrame
+                                                    : policy.unsupported_code)
+                         : policy.unsupported_code,
+                     "KR6.5 " + std::string(policy.slice) +
+                         " requires a non-final handler to contain exactly one goto",
                      statements.empty() ? ir::SourceRangeOpt{}
                                         : statements.front().source_range);
             return std::nullopt;
@@ -532,9 +572,11 @@ build_e2_plan(const CoreProgram &program,
         if (go == nullptr) {
             add_diag(result,
                      region_contains_capability(handler->body)
-                         ? core_wasm_diag::kUnsupportedCapabilityFrame
-                         : core_wasm_diag::kUnsupportedOrchestration,
-                     "KR6.5 E2 supports only CoreGotoStmt in a non-final handler",
+                         ? (policy.allow_capability ? core_wasm_diag::kUnsupportedCapabilityFrame
+                                                    : policy.unsupported_code)
+                         : policy.unsupported_code,
+                     "KR6.5 " + std::string(policy.slice) +
+                         " supports only CoreGotoStmt in a non-final handler",
                      statements.front().source_range);
             return std::nullopt;
         }
@@ -559,9 +601,12 @@ build_e2_plan(const CoreProgram &program,
                 return std::holds_alternative<CapabilityAction>(action);
             });
         add_diag(result,
-                 contains_capability ? core_wasm_diag::kUnsupportedCapabilityFrame
-                                     : core_wasm_diag::kUnsupportedOrchestration,
-                 "KR6.5 E2 rejects hidden/orphan expressions or SSA values");
+                 contains_capability
+                     ? (policy.allow_capability ? core_wasm_diag::kUnsupportedCapabilityFrame
+                                                : policy.unsupported_code)
+                     : policy.unsupported_code,
+                 "KR6.5 " + std::string(policy.slice) +
+                     " rejects hidden/orphan expressions or SSA values");
         return std::nullopt;
     }
 
@@ -584,7 +629,8 @@ build_e2_plan(const CoreProgram &program,
         if (!is_final_action(plan.actions[current]) && color[current] == 1) {
             add_diag(result,
                      core_wasm_diag::kNonterminatingE1Run,
-                     "KR6.5 E2 deterministic goto graph contains a cycle");
+                     "KR6.5 " + std::string(policy.slice) +
+                         " deterministic goto graph contains a cycle");
             return std::nullopt;
         }
         for (const auto state : path) {
@@ -625,6 +671,383 @@ build_e2_plan(const CoreProgram &program,
                      capability.source_range);
             return std::nullopt;
         }
+    }
+    return plan;
+}
+
+[[nodiscard]] const ir::core::CoreInstanceDecl *
+agent_instance(const CoreProgram &program, CoreInstanceId id) {
+    if (id.value >= program.instances.size()) {
+        return nullptr;
+    }
+    return std::get_if<CoreAgentInstance>(&program.instances[id.value].payload) != nullptr
+               ? &program.instances[id.value]
+               : nullptr;
+}
+
+[[nodiscard]] const CoreAgentInstance *
+agent_instance_payload(const CoreProgram &program, CoreInstanceId id) {
+    const auto *instance = agent_instance(program, id);
+    return instance == nullptr ? nullptr : std::get_if<CoreAgentInstance>(&instance->payload);
+}
+
+[[nodiscard]] bool workflow_node_is_ancestor(const CoreWorkflowDecl &workflow,
+                                             CoreWorkflowNodeId node,
+                                             CoreWorkflowNodeId possible_ancestor) {
+    if (node.value >= workflow.nodes.size() || possible_ancestor.value >= workflow.nodes.size()) {
+        return false;
+    }
+    std::vector<bool> seen(workflow.nodes.size(), false);
+    std::vector<CoreWorkflowNodeId> pending = workflow.nodes[node.value].after;
+    while (!pending.empty()) {
+        const auto current = pending.back();
+        pending.pop_back();
+        if (current.value >= workflow.nodes.size() || seen[current.value]) {
+            continue;
+        }
+        if (current == possible_ancestor) {
+            return true;
+        }
+        seen[current.value] = true;
+        pending.insert(pending.end(),
+                       workflow.nodes[current.value].after.begin(),
+                       workflow.nodes[current.value].after.end());
+    }
+    return false;
+}
+
+[[nodiscard]] std::optional<WorkflowFrameSource>
+validate_workflow_frame_region(const CoreProgram &program,
+                               const CoreWorkflowDecl &workflow,
+                               const ir::core::CoreRegion *region,
+                               CoreValueTypeId expected_type,
+                               std::optional<CoreWorkflowNodeId> owner_node,
+                               const std::vector<std::uint32_t> &schedule_position,
+                               std::vector<bool> &used_exprs,
+                               std::vector<bool> &used_values,
+                               CoreWasmCodegenResult &result) {
+    if (region == nullptr || region->statements.size() != 2) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "KR6.5 E3 workflow frame region must contain one path let and one yield");
+        return std::nullopt;
+    }
+    const auto &let_statement = region->statements[0];
+    const auto &yield_statement = region->statements[1];
+    const auto *let = std::get_if<CoreLetStmt>(&let_statement.node);
+    const auto *yield = std::get_if<CoreYieldStmt>(&yield_statement.node);
+    if (let == nullptr || yield == nullptr || !yield->has_value || yield->value != let->result ||
+        let->expr.value >= workflow.exprs.size() ||
+        let->result.value >= workflow.value_types.size() ||
+        let->result.value >= used_values.size()) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "KR6.5 E3 workflow frame region is not canonical path-let/yield ANF",
+                 let_statement.source_range);
+        return std::nullopt;
+    }
+    if (used_exprs[let->expr.value] || used_values[let->result.value]) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "KR6.5 E3 workflow frame expression/value is reused across regions",
+                 let_statement.source_range);
+        return std::nullopt;
+    }
+
+    const auto &expr = workflow.exprs[let->expr.value];
+    const auto *path = std::get_if<CorePathExpr>(&expr.node);
+    if (path == nullptr || !path->members.empty() || !path->projection.empty() ||
+        !path->projection_resolved || path->has_local ||
+        expr.result_type.value >= program.value_types.size() ||
+        workflow.value_types[let->result.value] != expr.result_type ||
+        expr.result_type != expected_type) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "KR6.5 E3 accepts only an exact unprojected opaque workflow frame",
+                 expr.source_range);
+        return std::nullopt;
+    }
+
+    WorkflowFrameSource source;
+    source.type = expr.result_type;
+    if (path->root == ir::core::CorePathRoot::WorkflowInput) {
+        if (path->root_type != workflow.input_type) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedWorkflowFrame,
+                     "workflow input path does not identify the declared workflow input shell",
+                     expr.source_range);
+            return std::nullopt;
+        }
+        const auto *nominal = std::get_if<CoreVtNominal>(
+            &program.value_types[expr.result_type.value].node);
+        if (nominal == nullptr || nominal->base != workflow.input_type) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedWorkflowFrame,
+                     "workflow input frame is not the exact input nominal value type",
+                     expr.source_range);
+            return std::nullopt;
+        }
+        source.kind = WorkflowFrameSourceKind::Input;
+    } else if (path->root == ir::core::CorePathRoot::WorkflowNodeOutput) {
+        if (path->workflow_node.value >= workflow.nodes.size()) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "workflow frame references an out-of-range node output",
+                     expr.source_range);
+            return std::nullopt;
+        }
+        const auto &source_node = workflow.nodes[path->workflow_node.value];
+        const auto *source_instance = agent_instance(program, source_node.target_instance);
+        const auto *source_payload =
+            agent_instance_payload(program, source_node.target_instance);
+        if (source_instance == nullptr || source_payload == nullptr ||
+            source_instance->dispatch_types.size() != 3 ||
+            path->root_type != source_payload->output_type ||
+            expr.result_type != source_instance->dispatch_types[2]) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedWorkflowFrame,
+                     "workflow node-output frame does not match its target instance output",
+                     expr.source_range);
+            return std::nullopt;
+        }
+        if (owner_node.has_value() &&
+            (!workflow_node_is_ancestor(workflow, *owner_node, path->workflow_node) ||
+             schedule_position[path->workflow_node.value] >=
+                 schedule_position[owner_node->value])) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedWorkflowFrame,
+                     "workflow node input reads an output that is not a scheduled ancestor",
+                     expr.source_range);
+            return std::nullopt;
+        }
+        source.kind = WorkflowFrameSourceKind::NodeOutput;
+        source.node = path->workflow_node;
+    } else {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "workflow frame root is neither workflow input nor node output",
+                 expr.source_range);
+        return std::nullopt;
+    }
+
+    used_exprs[let->expr.value] = true;
+    used_values[let->result.value] = true;
+    return source;
+}
+
+[[nodiscard]] std::optional<WorkflowPlan>
+build_workflow_plan(const CoreProgram &program,
+                    const ir::core::CoreLayoutTable &layouts,
+                    CoreWorkflowId target,
+                    CoreWasmCodegenResult &result) {
+    if (target.value >= program.workflows.size()) {
+        add_diag(result,
+                 core_wasm_diag::kEntryNotFound,
+                 "explicit Core workflow entry is out of range");
+        return std::nullopt;
+    }
+    const auto &workflow = program.workflows[target.value];
+    if (!workflow.patterns.empty() || !workflow.coercion_plans.empty()) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "KR6.5 E3 rejects hidden workflow pattern or coercion arenas");
+        return std::nullopt;
+    }
+    if (workflow.nodes.size() >=
+        static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+        add_diag(result,
+                 core_wasm_diag::kBinaryOverflow,
+                 "workflow node count exceeds the wasm32 signed-immediate domain");
+        return std::nullopt;
+    }
+
+    WorkflowPlan plan;
+    plan.workflow = target;
+    plan.nodes.resize(workflow.nodes.size());
+
+    std::vector<std::uint32_t> remaining(workflow.nodes.size(), 0);
+    std::vector<std::vector<CoreWorkflowNodeId>> successors(workflow.nodes.size());
+    for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+        remaining[id] = static_cast<std::uint32_t>(workflow.nodes[id].after.size());
+        for (const auto dependency : workflow.nodes[id].after) {
+            if (dependency.value >= workflow.nodes.size()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCore,
+                         "verified workflow contains an out-of-range dependency edge");
+                return std::nullopt;
+            }
+            successors[dependency.value].push_back(CoreWorkflowNodeId{id});
+        }
+    }
+    std::vector<CoreWorkflowNodeId> ready;
+    ready.reserve(workflow.nodes.size());
+    for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+        if (remaining[id] == 0) {
+            ready.push_back(CoreWorkflowNodeId{id});
+        }
+    }
+    for (std::size_t cursor = 0; cursor < ready.size(); ++cursor) {
+        const auto id = ready[cursor];
+        plan.schedule.push_back(id);
+        for (const auto successor : successors[id.value]) {
+            auto &count = remaining[successor.value];
+            if (count == 0) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCore,
+                         "verified workflow dependency count underflowed during scheduling");
+                return std::nullopt;
+            }
+            --count;
+            if (count == 0) {
+                ready.push_back(successor);
+            }
+        }
+    }
+    if (plan.schedule.size() != workflow.nodes.size()) {
+        add_diag(result,
+                 core_wasm_diag::kInvalidCore,
+                 "verified workflow did not produce a complete deterministic DAG schedule");
+        return std::nullopt;
+    }
+    std::vector<std::uint32_t> schedule_position(workflow.nodes.size(), 0);
+    for (std::uint32_t position = 0; position < plan.schedule.size(); ++position) {
+        schedule_position[plan.schedule[position].value] = position;
+    }
+
+    for (const auto &node : workflow.nodes) {
+        if (agent_instance(program, node.target_instance) == nullptr) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "workflow node target is not a materialized agent instance");
+            return std::nullopt;
+        }
+        plan.packaged_instances.push_back(node.target_instance);
+    }
+    std::sort(plan.packaged_instances.begin(),
+              plan.packaged_instances.end(),
+              [](auto lhs, auto rhs) { return lhs.value < rhs.value; });
+    plan.packaged_instances.erase(
+        std::unique(plan.packaged_instances.begin(), plan.packaged_instances.end()),
+        plan.packaged_instances.end());
+
+    for (const auto instance_id : plan.packaged_instances) {
+        const auto *payload = agent_instance_payload(program, instance_id);
+        if (payload == nullptr) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "packaged workflow target is not an agent instance");
+            return std::nullopt;
+        }
+        auto agent_plan = build_agent_plan(
+            program,
+            layouts,
+            payload->base,
+            result,
+            AgentPlanPolicy{core_wasm_diag::kUnsupportedWorkflowFrame, false, "E3"});
+        if (!agent_plan.has_value()) {
+            return std::nullopt;
+        }
+        if (std::any_of(agent_plan->actions.begin(),
+                        agent_plan->actions.end(),
+                        [](const StateAction &action) {
+                            return !std::holds_alternative<GotoAction>(action) &&
+                                   !std::holds_alternative<IdentityAction>(action);
+                        })) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedWorkflowFrame,
+                     "workflow packages only identity-returning agent instances");
+            return std::nullopt;
+        }
+        plan.agent_plans.push_back(std::move(*agent_plan));
+    }
+
+    std::vector<bool> used_exprs(workflow.exprs.size(), false);
+    std::vector<bool> used_values(workflow.value_count, false);
+    for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+        const auto &node = workflow.nodes[id];
+        const auto *instance = agent_instance(program, node.target_instance);
+        if (instance == nullptr || instance->dispatch_types.size() != 3) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "workflow target instance has no exact input/context/output descriptor");
+            return std::nullopt;
+        }
+        auto source = validate_workflow_frame_region(program,
+                                                     workflow,
+                                                     node.input_region.get(),
+                                                     instance->dispatch_types[0],
+                                                     CoreWorkflowNodeId{id},
+                                                     schedule_position,
+                                                     used_exprs,
+                                                     used_values,
+                                                     result);
+        if (!source.has_value() || !has_finalized_layout(layouts, source->type) ||
+            !has_finalized_layout(layouts, instance->dispatch_types[2])) {
+            if (source.has_value()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidLayout,
+                         "workflow target boundary has no finalized P4-D layout");
+            }
+            return std::nullopt;
+        }
+        plan.nodes[id] = WorkflowNodePlan{CoreWorkflowNodeId{id}, node.target_instance, *source};
+    }
+
+    // The return region's exact logical type is its source type. Its nominal base
+    // must be the declared workflow output shell; no second type reconstruction is
+    // permitted in codegen.
+    if (workflow.return_region == nullptr || workflow.return_region->statements.empty()) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "workflow return region is absent");
+        return std::nullopt;
+    }
+    const auto *return_let =
+        std::get_if<CoreLetStmt>(&workflow.return_region->statements.front().node);
+    if (return_let == nullptr || return_let->expr.value >= workflow.exprs.size()) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "workflow return is not a canonical path let");
+        return std::nullopt;
+    }
+    const auto output_type = workflow.exprs[return_let->expr.value].result_type;
+    if (output_type.value >= program.value_types.size()) {
+        add_diag(result, core_wasm_diag::kInvalidCore, "workflow return type is out of range");
+        return std::nullopt;
+    }
+    const auto *output_nominal =
+        std::get_if<CoreVtNominal>(&program.value_types[output_type.value].node);
+    if (output_nominal == nullptr || output_nominal->base != workflow.output_type) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "workflow return frame is not the exact declared output nominal type");
+        return std::nullopt;
+    }
+    auto output = validate_workflow_frame_region(program,
+                                                 workflow,
+                                                 workflow.return_region.get(),
+                                                 output_type,
+                                                 std::nullopt,
+                                                 schedule_position,
+                                                 used_exprs,
+                                                 used_values,
+                                                 result);
+    if (!output.has_value() || !has_finalized_layout(layouts, output->type)) {
+        if (output.has_value()) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidLayout,
+                     "workflow output has no finalized P4-D layout");
+        }
+        return std::nullopt;
+    }
+    plan.output = *output;
+
+    if (std::any_of(used_exprs.begin(), used_exprs.end(), [](bool used) { return !used; }) ||
+        std::any_of(used_values.begin(), used_values.end(), [](bool used) { return !used; })) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "KR6.5 E3 rejects hidden/orphan workflow expressions or SSA values");
+        return std::nullopt;
     }
     return plan;
 }
@@ -749,7 +1172,7 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
     body.byte(kOpEnd);
     return body;
 }
-[[nodiscard]] ByteBuffer make_is_final_body(const E2Plan &plan) {
+[[nodiscard]] ByteBuffer make_is_final_body(const AgentPlan &plan) {
     ByteBuffer body;
     body.u32(0);
     append_const(body, 0);
@@ -765,7 +1188,7 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
     body.byte(kOpEnd);
     return body;
 }
-[[nodiscard]] ByteBuffer make_step_body(const E2Plan &plan) {
+[[nodiscard]] ByteBuffer make_step_body(const AgentPlan &plan) {
     ByteBuffer body;
     body.u32(0);
     for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
@@ -798,7 +1221,7 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
 }
 
 void append_run_to_final(ByteBuffer &body,
-                         const E2Plan &plan,
+                         const AgentPlan &plan,
                          const FunctionTable &functions,
                          std::uint32_t fuel_local) {
     append_const(body, plan.initial.value);
@@ -831,11 +1254,11 @@ void append_run_to_final(ByteBuffer &body,
     body.byte(kOpEnd);
 }
 
-[[nodiscard]] bool has_capability_action(const E2Plan &plan) {
+[[nodiscard]] bool has_capability_action(const AgentPlan &plan) {
     return !plan.imports.empty();
 }
 
-[[nodiscard]] ByteBuffer make_run_body(const E2Plan &plan,
+[[nodiscard]] ByteBuffer make_run_body(const AgentPlan &plan,
                                        const FunctionTable &functions) {
     ByteBuffer body;
     if (has_capability_action(plan)) {
@@ -863,7 +1286,7 @@ void append_error_return(ByteBuffer &body) {
 }
 
 [[nodiscard]] std::optional<std::uint32_t>
-import_function_index(const E2Plan &plan, CoreCapabilityId capability) {
+import_function_index(const AgentPlan &plan, CoreCapabilityId capability) {
     const auto it = std::lower_bound(plan.imports.begin(),
                                      plan.imports.end(),
                                      capability,
@@ -875,7 +1298,7 @@ import_function_index(const E2Plan &plan, CoreCapabilityId capability) {
 }
 
 void append_capability_return(ByteBuffer &body,
-                              const E2Plan &plan,
+                              const AgentPlan &plan,
                               const CapabilityAction &action) {
     const auto function = import_function_index(plan, action.capability);
     if (!function.has_value()) {
@@ -933,7 +1356,7 @@ void append_capability_return(ByteBuffer &body,
     append_error_return(body);
 }
 
-[[nodiscard]] ByteBuffer make_run2_body(const E2Plan &plan,
+[[nodiscard]] ByteBuffer make_run2_body(const AgentPlan &plan,
                                         const FunctionTable &functions) {
     ByteBuffer body;
     body.u32(1);
@@ -974,7 +1397,7 @@ void append_capability_return(ByteBuffer &body,
 }
 
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
-encode_module(const CoreProgram &program, const E2Plan &plan) {
+encode_module(const CoreProgram &program, const AgentPlan &plan) {
     const FunctionTable functions{static_cast<std::uint32_t>(plan.imports.size())};
     ByteBuffer module;
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
@@ -1085,6 +1508,69 @@ encode_module(const CoreProgram &program, const E2Plan &plan) {
 
 } // namespace
 
+std::expected<CoreWasmEntry, CoreWasmDiagnostic>
+resolve_core_wasm_entry(const CoreProgram &program,
+                        const handoff::PackageMetadata *package_metadata) {
+    const auto fail = [](std::string_view code, std::string message) {
+        return std::unexpected<CoreWasmDiagnostic>(
+            CoreWasmDiagnostic{std::string(code), std::move(message), std::nullopt});
+    };
+    if (package_metadata == nullptr) {
+        if (program.agents.size() == 1 && program.workflows.empty()) {
+            return CoreWasmEntry{CoreAgentId{0}};
+        }
+        return fail(core_wasm_diag::kEntryAmbiguous,
+                    "emit wasm requires an explicit package entry for workflow or "
+                    "multi-agent programs");
+    }
+    if (!package_metadata->entry_target.has_value()) {
+        return fail(core_wasm_diag::kEntryAmbiguous,
+                    "package metadata has no executable entry target");
+    }
+
+    const auto &entry = *package_metadata->entry_target;
+    if (entry.kind != handoff::ExecutableKind::Agent &&
+        entry.kind != handoff::ExecutableKind::Workflow) {
+        return fail(core_wasm_diag::kEntryNotFound,
+                    "explicit package entry has an unknown executable kind");
+    }
+    if (entry.kind == handoff::ExecutableKind::Agent) {
+        std::optional<CoreAgentId> found;
+        for (std::uint32_t i = 0; i < program.agents.size(); ++i) {
+            if (program.agents[i].symbol_ref.canonical_name != entry.canonical_name) {
+                continue;
+            }
+            if (found.has_value()) {
+                return fail(core_wasm_diag::kEntryNotFound,
+                            "explicit agent entry resolves more than once");
+            }
+            found = CoreAgentId{i};
+        }
+        if (!found.has_value()) {
+            return fail(core_wasm_diag::kEntryNotFound,
+                        "explicit agent entry did not resolve by exact canonical name");
+        }
+        return CoreWasmEntry{*found};
+    }
+
+    std::optional<CoreWorkflowId> found;
+    for (std::uint32_t i = 0; i < program.workflows.size(); ++i) {
+        if (program.workflows[i].symbol_ref.canonical_name != entry.canonical_name) {
+            continue;
+        }
+        if (found.has_value()) {
+            return fail(core_wasm_diag::kEntryNotFound,
+                        "explicit workflow entry resolves more than once");
+        }
+        found = CoreWorkflowId{i};
+    }
+    if (!found.has_value()) {
+        return fail(core_wasm_diag::kEntryNotFound,
+                    "explicit workflow entry did not resolve by exact canonical name");
+    }
+    return CoreWasmEntry{*found};
+}
+
 CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
                                      const ir::core::CoreLayoutTable &layouts,
                                      CoreWasmTarget target) {
@@ -1123,7 +1609,22 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         return result;
     }
 
-    auto plan = build_e2_plan(program, layouts, target.agent, result);
+    if (const auto *workflow = std::get_if<CoreWorkflowId>(&target.entry)) {
+        auto plan = build_workflow_plan(program, layouts, *workflow, result);
+        if (!plan.has_value()) {
+            return result;
+        }
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedOrchestration,
+                 "KR6.5 E3-C1 validated the workflow plan; workflow byte emission lands in E3-C2");
+        return result;
+    }
+    const auto *agent = std::get_if<CoreAgentId>(&target.entry);
+    if (agent == nullptr) {
+        add_diag(result, core_wasm_diag::kEntryNotFound, "unknown Core WASM entry variant");
+        return result;
+    }
+    auto plan = build_agent_plan(program, layouts, *agent, result);
     if (!plan.has_value()) {
         return result;
     }
@@ -1137,7 +1638,7 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
 
     CoreWasmArtifact artifact;
     artifact.bytes = std::move(*bytes);
-    artifact.agent = target.agent;
+    artifact.entry = target.entry;
     artifact.exports = {"memory",
                         "alloc",
                         "dealloc",

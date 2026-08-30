@@ -118,6 +118,7 @@ def expect_unsupported(ahflc: Path, source: Path) -> None:
         or (
             "wasm.UNSUPPORTED_ORCHESTRATION" not in stderr
             and "wasm.UNSUPPORTED_CAPABILITY_FRAME" not in stderr
+            and "wasm.ENTRY_AMBIGUOUS" not in stderr
         )
     ):
         fail(

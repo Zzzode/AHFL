@@ -170,6 +170,138 @@ static ahfl::ir::core::CoreProgram make_e2_core_program() {
     return program;
 }
 
+static ahfl::ir::core::CoreProgram make_e3_workflow_program() {
+    using namespace ahfl::ir;
+    using namespace ahfl::ir::core;
+    CoreProgram program;
+
+    CoreTypeDecl frame;
+    frame.kind = CoreTypeDecl::Kind::Struct;
+    frame.name = "app::Frame";
+    frame.symbol_ref = {SymbolRefKind::Type, "app::Frame", "Frame", "app", 200};
+    program.types.push_back(std::move(frame));
+    const CoreValueTypeId frame_value{0};
+    const CoreValueTypeId unit_value{1};
+    program.value_types.push_back(
+        CoreValueType{CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}});
+    program.value_types.push_back(CoreValueType{CoreVtUnit{}});
+
+    const auto add_identity_agent = [&](std::string name, std::size_t symbol_id) {
+        const auto agent_id = CoreAgentId{static_cast<std::uint32_t>(program.agents.size())};
+        CoreAgentDecl agent;
+        agent.name = name;
+        agent.symbol_ref = {SymbolRefKind::Agent,
+                            "app::" + name,
+                            name,
+                            "app",
+                            symbol_id};
+        agent.states = {"Done", "Start"};
+        agent.initial = CoreStateId{1};
+        agent.finals = {CoreStateId{0}};
+        agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+        agent.input_type = CoreTypeId{0};
+        agent.output_type = CoreTypeId{0};
+        agent.context_kind = CoreAgentDecl::ContextKind::Unit;
+        program.agents.push_back(std::move(agent));
+
+        CoreFlowDecl flow;
+        flow.target = agent_id;
+        flow.agent_name = name;
+        CorePathExpr input;
+        input.root = CorePathRoot::Input;
+        input.root_name = "input";
+        input.root_type = CoreTypeId{0};
+        flow.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
+        flow.value_count = 1;
+        flow.value_types = {frame_value};
+        CoreFlowState done;
+        done.state = CoreStateId{0};
+        done.state_name = "Done";
+        done.body.statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+        done.body.statements.push_back(
+            CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+        flow.states.push_back(std::move(done));
+        CoreFlowState start;
+        start.state = CoreStateId{1};
+        start.state_name = "Start";
+        start.body.statements.push_back(
+            CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+        flow.states.push_back(std::move(start));
+        program.flows.push_back(std::move(flow));
+
+        CoreInstanceDecl instance;
+        instance.id = CoreInstanceId{static_cast<std::uint32_t>(program.instances.size())};
+        instance.instance_key = "_inst_" + name;
+        instance.origin = program.agents[agent_id.value].symbol_ref;
+        instance.dispatch_types = {frame_value, unit_value, frame_value};
+        instance.payload = CoreAgentInstance{agent_id,
+                                             CoreTypeId{0},
+                                             CoreAgentDecl::ContextKind::Unit,
+                                             CoreTypeId{},
+                                             CoreTypeId{0}};
+        program.instances.push_back(std::move(instance));
+    };
+    add_identity_agent("First", 201);
+    add_identity_agent("Second", 202);
+
+    CoreWorkflowDecl workflow;
+    workflow.id = CoreWorkflowId{0};
+    workflow.name = "IdentityPipeline";
+    workflow.symbol_ref = {SymbolRefKind::Workflow,
+                           "app::IdentityPipeline",
+                           "IdentityPipeline",
+                           "app",
+                           203};
+    workflow.input_type = CoreTypeId{0};
+    workflow.output_type = CoreTypeId{0};
+    workflow.value_count = 3;
+    workflow.value_types = {frame_value, frame_value, frame_value};
+
+    CorePathExpr input;
+    input.root = CorePathRoot::WorkflowInput;
+    input.root_name = "input";
+    input.root_type = CoreTypeId{0};
+    workflow.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
+    CorePathExpr first_output;
+    first_output.root = CorePathRoot::WorkflowNodeOutput;
+    first_output.root_name = "first";
+    first_output.root_type = CoreTypeId{0};
+    first_output.workflow_node = CoreWorkflowNodeId{0};
+    workflow.exprs.push_back(
+        CoreExpr{std::move(first_output), std::nullopt, frame_value});
+    CorePathExpr second_output;
+    second_output.root = CorePathRoot::WorkflowNodeOutput;
+    second_output.root_name = "second";
+    second_output.root_type = CoreTypeId{0};
+    second_output.workflow_node = CoreWorkflowNodeId{1};
+    workflow.exprs.push_back(
+        CoreExpr{std::move(second_output), std::nullopt, frame_value});
+
+    const auto yielding_region = [](CoreExprId expr, CoreValueId value) {
+        auto region = std::make_unique<CoreRegion>();
+        region->statements.push_back(CoreStmt{CoreLetStmt{value, expr}, std::nullopt});
+        region->statements.push_back(CoreStmt{CoreYieldStmt{true, value}, std::nullopt});
+        return region;
+    };
+    CoreWorkflowNode first;
+    first.id = CoreWorkflowNodeId{0};
+    first.node_name = "first";
+    first.target_instance = CoreInstanceId{0};
+    first.input_region = yielding_region(CoreExprId{0}, CoreValueId{0});
+    workflow.nodes.push_back(std::move(first));
+    CoreWorkflowNode second;
+    second.id = CoreWorkflowNodeId{1};
+    second.node_name = "second";
+    second.target_instance = CoreInstanceId{1};
+    second.after = {CoreWorkflowNodeId{0}};
+    second.input_region = yielding_region(CoreExprId{1}, CoreValueId{1});
+    workflow.nodes.push_back(std::move(second));
+    workflow.return_region = yielding_region(CoreExprId{2}, CoreValueId{2});
+    program.workflows.push_back(std::move(workflow));
+    return program;
+}
+
 static bool has_codegen_code(const ahfl::backends::CoreWasmCodegenResult &result,
                              std::string_view code) {
     for (const auto &diagnostic : result.diagnostics) {
@@ -262,7 +394,7 @@ static bool rejects_as_unsupported(const ahfl::ir::core::CoreProgram &program) {
     const auto emitted = ahfl::backends::emit_core_wasm(
         program,
         *layout.table,
-        {{0}, ahfl::backends::WasmProfileKind::Wasi});
+        {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
     return !emitted.artifact.has_value() &&
            has_codegen_code(emitted,
                             ahfl::backends::core_wasm_diag::kUnsupportedOrchestration);
@@ -277,7 +409,7 @@ static bool rejects_capability_frame(const ahfl::ir::core::CoreProgram &program)
     const auto emitted = ahfl::backends::emit_core_wasm(
         program,
         *layout.table,
-        {{0}, ahfl::backends::WasmProfileKind::Wasi});
+        {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
     return !emitted.artifact.has_value() &&
            has_codegen_code(
                emitted,
@@ -528,11 +660,11 @@ int main() {
         if (layout.table.has_value()) {
             const auto layout_snapshot = *layout.table;
             const auto first = ahfl::backends::emit_core_wasm(
-                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Wasi});
+                program, *layout.table, {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
             const auto second = ahfl::backends::emit_core_wasm(
-                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Wasi});
+                program, *layout.table, {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
             const auto browser = ahfl::backends::emit_core_wasm(
-                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Browser});
+                program, *layout.table, {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Browser});
             const bool magic = first.ok() && first.artifact->bytes.size() >= 8 &&
                                first.artifact->bytes[0] == 0x00 &&
                                first.artifact->bytes[1] == 0x61 &&
@@ -586,7 +718,7 @@ int main() {
             auto tampered = *layout.table;
             tampered.target.pointer_size = 8;
             const auto bad_layout = ahfl::backends::emit_core_wasm(
-                program, tampered, {{0}, ahfl::backends::WasmProfileKind::Wasi});
+                program, tampered, {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
             check(!bad_layout.ok() &&
                       has_codegen_code(bad_layout,
                                        ahfl::backends::core_wasm_diag::kInvalidLayout),
@@ -703,11 +835,11 @@ int main() {
         if (layout.table.has_value()) {
             const auto layout_snapshot = *layout.table;
             const auto first = ahfl::backends::emit_core_wasm(
-                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Wasi});
+                program, *layout.table, {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
             const auto second = ahfl::backends::emit_core_wasm(
-                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Wasi});
+                program, *layout.table, {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
             const auto browser = ahfl::backends::emit_core_wasm(
-                program, *layout.table, {{0}, ahfl::backends::WasmProfileKind::Browser});
+                program, *layout.table, {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Browser});
             check(first.ok() && second.ok() && browser.ok() &&
                       first.artifact->bytes == second.artifact->bytes &&
                       first.artifact->bytes == browser.artifact->bytes,
@@ -787,7 +919,7 @@ int main() {
                                    ? ahfl::backends::emit_core_wasm(
                                          least_privilege,
                                          *least_layout.table,
-                                         {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                                         {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi})
                                    : ahfl::backends::CoreWasmCodegenResult{};
             check(least.ok() && least.artifact->imports ==
                                     std::vector<std::string>{"ahfl_cap.cap_42"},
@@ -806,7 +938,7 @@ int main() {
                               ? ahfl::backends::emit_core_wasm(
                                     wide_symbol,
                                     *wide_layout.table,
-                                    {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                                    {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi})
                               : ahfl::backends::CoreWasmCodegenResult{};
         check(!wide.artifact.has_value() &&
                   has_codegen_code(wide,
@@ -820,7 +952,7 @@ int main() {
                                 ? ahfl::backends::emit_core_wasm(
                                       hidden_expr,
                                       *hidden_layout.table,
-                                      {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                                      {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi})
                                 : ahfl::backends::CoreWasmCodegenResult{};
         check(!hidden.artifact.has_value() &&
                   has_codegen_code(
@@ -956,7 +1088,7 @@ int main() {
                                 ? ahfl::backends::emit_core_wasm(
                                       nested_if,
                                       *nested_layout.table,
-                                      {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                                      {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi})
                                 : ahfl::backends::CoreWasmCodegenResult{};
         check(verify_core_program(nested_if).ok() &&
                   !nested_emitted.artifact.has_value() &&
@@ -985,13 +1117,22 @@ int main() {
                 ? ahfl::backends::emit_core_wasm(
                       cycle,
                       *cycle_layout.table,
-                      {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                      {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi})
                 : ahfl::backends::CoreWasmCodegenResult{};
         check(!cycle_result.artifact.has_value() &&
                   has_codegen_code(cycle_result,
                                    ahfl::backends::core_wasm_diag::kNonterminatingE1Run),
               "E1 rejects a deterministic goto cycle with no artifact");
 
+        const auto single = make_e1_core_program();
+        const auto single_layout = compute_core_layouts(single);
+        const auto single_result = single_layout.table.has_value()
+                                       ? ahfl::backends::emit_core_wasm(
+                                             single,
+                                             *single_layout.table,
+                                             {CoreAgentId{0},
+                                              ahfl::backends::WasmProfileKind::Wasi})
+                                       : ahfl::backends::CoreWasmCodegenResult{};
         auto multiple = make_e1_core_program();
         auto second = make_e1_core_program();
         multiple.agents.push_back(std::move(second.agents[0]));
@@ -1003,12 +1144,289 @@ int main() {
                 ? ahfl::backends::emit_core_wasm(
                       multiple,
                       *multiple_layout.table,
-                      {{0}, ahfl::backends::WasmProfileKind::Wasi})
+                      {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi})
                 : ahfl::backends::CoreWasmCodegenResult{};
-        check(!multiple_result.artifact.has_value() &&
-                  has_codegen_code(multiple_result,
-                                   ahfl::backends::core_wasm_diag::kEntryAmbiguous),
-              "E1 rejects multiple agents instead of selecting/concatenating");
+        check(single_result.ok() && multiple_result.ok() &&
+                  single_result.artifact->bytes == multiple_result.artifact->bytes &&
+                  std::holds_alternative<CoreAgentId>(multiple_result.artifact->entry),
+              "explicit agent entry ignores unrelated agents without changing E1 bytes");
+    }
+
+    // Test 14 (KR6.5 E3-C1): one typed entry resolves strictly. Package metadata
+    // never falls back to declaration zero or a display/local name.
+    {
+        using namespace ahfl;
+        using namespace ahfl::ir::core;
+        auto single = make_e1_core_program();
+        single.agents[0].symbol_ref = {ir::SymbolRefKind::Agent,
+                                       "app::Runner",
+                                       "Runner",
+                                       "app",
+                                       301};
+        const auto legacy = backends::resolve_core_wasm_entry(single, nullptr);
+        check(legacy.has_value() &&
+                  std::get_if<CoreAgentId>(&*legacy) != nullptr &&
+                  std::get<CoreAgentId>(*legacy) == CoreAgentId{0},
+              "metadata-free single-agent E1 compatibility resolves typed agent zero");
+
+        auto multiple = make_e1_core_program();
+        multiple.agents[0].symbol_ref = single.agents[0].symbol_ref;
+        multiple.agents.push_back(single.agents[0]);
+        multiple.agents[1].name = "Other";
+        multiple.agents[1].symbol_ref.canonical_name = "app::Other";
+        check(!backends::resolve_core_wasm_entry(multiple, nullptr).has_value() &&
+                  backends::resolve_core_wasm_entry(multiple, nullptr).error().code ==
+                      backends::core_wasm_diag::kEntryAmbiguous,
+              "metadata-free multi-agent program is ambiguous, never first-selected");
+
+        handoff::PackageMetadata agent_metadata;
+        agent_metadata.entry_target =
+            handoff::ExecutableRef{handoff::ExecutableKind::Agent, "app::Runner"};
+        const auto explicit_agent =
+            backends::resolve_core_wasm_entry(multiple, &agent_metadata);
+        check(explicit_agent.has_value() &&
+                  std::get_if<CoreAgentId>(&*explicit_agent) != nullptr &&
+                  std::get<CoreAgentId>(*explicit_agent) == CoreAgentId{0},
+              "explicit canonical agent entry resolves exactly in a multi-agent program");
+
+        agent_metadata.entry_target->canonical_name = "Runner";
+        const auto local_name_miss =
+            backends::resolve_core_wasm_entry(multiple, &agent_metadata);
+        check(!local_name_miss.has_value() &&
+                  local_name_miss.error().code == backends::core_wasm_diag::kEntryNotFound,
+              "explicit agent miss does not fall back from canonical to local name");
+
+        agent_metadata.entry_target =
+            handoff::ExecutableRef{handoff::ExecutableKind::Workflow, "app::Runner"};
+        const auto wrong_kind = backends::resolve_core_wasm_entry(multiple, &agent_metadata);
+        check(!wrong_kind.has_value() &&
+                  wrong_kind.error().code == backends::core_wasm_diag::kEntryNotFound,
+              "explicit entry kind is structural and cannot cross-resolve an agent");
+
+        agent_metadata.entry_target->kind =
+            static_cast<handoff::ExecutableKind>(std::numeric_limits<int>::max());
+        const auto unknown_kind =
+            backends::resolve_core_wasm_entry(multiple, &agent_metadata);
+        check(!unknown_kind.has_value() &&
+                  unknown_kind.error().code == backends::core_wasm_diag::kEntryNotFound,
+              "unknown explicit executable kind fails closed");
+
+        multiple.agents[1].symbol_ref.canonical_name = "app::Runner";
+        agent_metadata.entry_target =
+            handoff::ExecutableRef{handoff::ExecutableKind::Agent, "app::Runner"};
+        const auto duplicate = backends::resolve_core_wasm_entry(multiple, &agent_metadata);
+        check(!duplicate.has_value() &&
+                  duplicate.error().code == backends::core_wasm_diag::kEntryNotFound,
+              "duplicate explicit canonical agent entry fails closed");
+
+        handoff::PackageMetadata empty_metadata;
+        const auto missing = backends::resolve_core_wasm_entry(single, &empty_metadata);
+        check(!missing.has_value() &&
+                  missing.error().code == backends::core_wasm_diag::kEntryAmbiguous,
+              "present package metadata without an entry never uses legacy fallback");
+    }
+
+    // Test 15: E3-C1 validates a real multi-agent workflow plan but publishes no
+    // workflow bytes until C2. Subset violations are classified at the narrow
+    // workflow-frame seam.
+    {
+        using namespace ahfl;
+        using namespace ahfl::ir::core;
+        const auto emit_workflow = [](const CoreProgram &program) {
+            const auto layouts = compute_core_layouts(program);
+            return layouts.table.has_value()
+                       ? backends::emit_core_wasm(
+                             program,
+                             *layouts.table,
+                             {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi})
+                       : backends::CoreWasmCodegenResult{};
+        };
+
+        const auto valid = make_e3_workflow_program();
+        const auto valid_result = emit_workflow(valid);
+        check(verify_core_program(valid).ok() && !valid_result.artifact.has_value() &&
+                  has_codegen_code(valid_result,
+                                   backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                  !has_codegen_code(valid_result,
+                                    backends::core_wasm_diag::kUnsupportedWorkflowFrame),
+              "E3-C1 accepts the complete identity DAG plan but does not emit workflow bytes");
+
+        handoff::PackageMetadata workflow_metadata;
+        workflow_metadata.entry_target = handoff::ExecutableRef{
+            handoff::ExecutableKind::Workflow, "app::IdentityPipeline"};
+        const auto workflow_entry =
+            backends::resolve_core_wasm_entry(valid, &workflow_metadata);
+        check(workflow_entry.has_value() &&
+                  std::get_if<CoreWorkflowId>(&*workflow_entry) != nullptr &&
+                  std::get<CoreWorkflowId>(*workflow_entry) == CoreWorkflowId{0} &&
+                  !backends::resolve_core_wasm_entry(valid, nullptr).has_value(),
+              "workflow entry resolves only through explicit package identity");
+
+        auto duplicate_workflow = make_e3_workflow_program();
+        CoreWorkflowDecl duplicate_decl;
+        duplicate_decl.id = CoreWorkflowId{1};
+        duplicate_decl.name = "DuplicatePipeline";
+        duplicate_decl.symbol_ref = duplicate_workflow.workflows[0].symbol_ref;
+        duplicate_workflow.workflows.push_back(std::move(duplicate_decl));
+        const auto duplicate_workflow_entry =
+            backends::resolve_core_wasm_entry(duplicate_workflow, &workflow_metadata);
+        check(!duplicate_workflow_entry.has_value() &&
+                  duplicate_workflow_entry.error().code ==
+                      backends::core_wasm_diag::kEntryNotFound,
+              "duplicate explicit canonical workflow entry fails closed");
+
+        const auto invalid_typed_entry_layout = compute_core_layouts(valid);
+        const auto invalid_typed_entry = invalid_typed_entry_layout.table.has_value()
+                                             ? backends::emit_core_wasm(
+                                                   valid,
+                                                   *invalid_typed_entry_layout.table,
+                                                   {CoreWorkflowId{9},
+                                                    backends::WasmProfileKind::Wasi})
+                                             : backends::CoreWasmCodegenResult{};
+        check(!invalid_typed_entry.artifact.has_value() &&
+                  has_codegen_code(invalid_typed_entry,
+                                   backends::core_wasm_diag::kEntryNotFound),
+              "out-of-range typed workflow entry fails closed without fallback");
+
+        auto branch_join = make_e3_workflow_program();
+        auto &branch_workflow = branch_join.workflows[0];
+        auto &parallel_input = std::get<CorePathExpr>(branch_workflow.exprs[1].node);
+        parallel_input.root = CorePathRoot::WorkflowInput;
+        parallel_input.root_name = "input";
+        parallel_input.workflow_node = CoreWorkflowNodeId{};
+        branch_workflow.nodes[1].after.clear();
+        CorePathExpr join_input;
+        join_input.root = CorePathRoot::WorkflowNodeOutput;
+        join_input.root_name = "first";
+        join_input.root_type = CoreTypeId{0};
+        join_input.workflow_node = CoreWorkflowNodeId{0};
+        branch_workflow.exprs.push_back(
+            CoreExpr{std::move(join_input), std::nullopt, CoreValueTypeId{0}});
+        const CoreValueId join_value{branch_workflow.value_count++};
+        branch_workflow.value_types.push_back(CoreValueTypeId{0});
+        CoreWorkflowNode join;
+        join.id = CoreWorkflowNodeId{2};
+        join.node_name = "join";
+        join.target_instance = CoreInstanceId{0};
+        join.after = {CoreWorkflowNodeId{0}, CoreWorkflowNodeId{1}};
+        join.input_region = std::make_unique<CoreRegion>();
+        join.input_region->statements.push_back(
+            CoreStmt{CoreLetStmt{join_value, CoreExprId{3}}, std::nullopt});
+        join.input_region->statements.push_back(
+            CoreStmt{CoreYieldStmt{true, join_value}, std::nullopt});
+        branch_workflow.nodes.push_back(std::move(join));
+        const auto branch_join_result = emit_workflow(branch_join);
+        check(verify_core_program(branch_join).ok() &&
+                  !branch_join_result.artifact.has_value() &&
+                  has_codegen_code(branch_join_result,
+                                   backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                  !has_codegen_code(branch_join_result,
+                                    backends::core_wasm_diag::kUnsupportedWorkflowFrame),
+              "E3-C1 validates declaration-order parallel roots plus a join and dedups instances");
+
+        auto wrong_type = make_e3_workflow_program();
+        CoreTypeDecl other;
+        other.kind = CoreTypeDecl::Kind::Struct;
+        other.name = "app::OtherFrame";
+        wrong_type.types.push_back(std::move(other));
+        const CoreValueTypeId other_value{
+            static_cast<std::uint32_t>(wrong_type.value_types.size())};
+        wrong_type.value_types.push_back(
+            CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}});
+        wrong_type.agents[1].input_type = CoreTypeId{1};
+        auto &second_instance =
+            std::get<CoreAgentInstance>(wrong_type.instances[1].payload);
+        second_instance.input_type = CoreTypeId{1};
+        wrong_type.instances[1].dispatch_types[0] = other_value;
+        wrong_type.flows[1].exprs[0].result_type = other_value;
+        wrong_type.flows[1].value_types[0] = other_value;
+        auto &agent_input = std::get<CorePathExpr>(wrong_type.flows[1].exprs[0].node);
+        agent_input.root_type = CoreTypeId{1};
+        const auto wrong_type_result = emit_workflow(wrong_type);
+        check(verify_core_program(wrong_type).ok() &&
+                  !wrong_type_result.artifact.has_value() &&
+                  has_codegen_code(wrong_type_result,
+                                   backends::core_wasm_diag::kUnsupportedWorkflowFrame),
+              "E3-C1 rejects a workflow frame that does not match target input type");
+
+        auto capability_agent = make_e3_workflow_program();
+        CoreCapabilityDecl cap;
+        cap.name = "Echo";
+        cap.symbol_ref = {ir::SymbolRefKind::Capability,
+                          "app::Echo",
+                          "Echo",
+                          "app",
+                          350};
+        cap.param_types = {CoreValueTypeId{0}};
+        cap.return_type = CoreValueTypeId{0};
+        capability_agent.capabilities.push_back(std::move(cap));
+        capability_agent.agents[0].capabilities = {CoreCapabilityId{0}};
+        auto &cap_flow = capability_agent.flows[0];
+        cap_flow.value_count = 2;
+        cap_flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{0}};
+        auto &cap_statements = cap_flow.states[0].body.statements;
+        cap_statements.clear();
+        cap_statements.push_back(
+            CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+        cap_statements.push_back(
+            CoreStmt{CoreCapabilityCallStmt{CoreValueId{1},
+                                            CoreCapabilityId{0},
+                                            "Echo",
+                                            {CoreValueId{0}}},
+                     std::nullopt});
+        cap_statements.push_back(
+            CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+        const auto capability_result = emit_workflow(capability_agent);
+        check(verify_core_program(capability_agent).ok() &&
+                  !capability_result.artifact.has_value() &&
+                  has_codegen_code(capability_result,
+                                   backends::core_wasm_diag::kUnsupportedWorkflowFrame),
+              "E3-C1 rejects a reachable capability-bearing agent before byte emission");
+
+        auto workflow_capability = make_e3_workflow_program();
+        CoreCapabilityDecl workflow_cap;
+        workflow_cap.name = "WorkflowEcho";
+        workflow_cap.symbol_ref = {ir::SymbolRefKind::Capability,
+                                   "app::WorkflowEcho",
+                                   "WorkflowEcho",
+                                   "app",
+                                   351};
+        workflow_cap.param_types = {CoreValueTypeId{0}};
+        workflow_cap.return_type = CoreValueTypeId{0};
+        workflow_capability.capabilities.push_back(std::move(workflow_cap));
+        auto &workflow_cap_region = *workflow_capability.workflows[0].nodes[0].input_region;
+        const CoreValueId workflow_cap_value{
+            workflow_capability.workflows[0].value_count++};
+        workflow_capability.workflows[0].value_types.push_back(CoreValueTypeId{0});
+        workflow_cap_region.statements.insert(
+            workflow_cap_region.statements.begin() + 1,
+            CoreStmt{CoreCapabilityCallStmt{workflow_cap_value,
+                                            CoreCapabilityId{0},
+                                            "WorkflowEcho",
+                                            {CoreValueId{0}}},
+                     std::nullopt});
+        const auto workflow_cap_verified = verify_core_program(workflow_capability);
+        const auto workflow_cap_result = emit_workflow(workflow_capability);
+        const bool has_outside_flow = std::any_of(
+            workflow_cap_verified.diagnostics.begin(),
+            workflow_cap_verified.diagnostics.end(),
+            [](const auto &diagnostic) {
+                return diagnostic.code == verify::kCapabilityOutsideFlow;
+            });
+        check(!workflow_cap_verified.ok() && has_outside_flow &&
+                  !workflow_cap_result.artifact.has_value() &&
+                  has_codegen_code(workflow_cap_result,
+                                   backends::core_wasm_diag::kInvalidCore),
+              "workflow-region capability remains a Core outside-Flow rejection");
+
+        auto non_ancestor = make_e3_workflow_program();
+        non_ancestor.workflows[0].nodes[1].after.clear();
+        const auto non_ancestor_result = emit_workflow(non_ancestor);
+        check(!verify_core_program(non_ancestor).ok() &&
+                  !non_ancestor_result.artifact.has_value() &&
+                  has_codegen_code(non_ancestor_result,
+                                   backends::core_wasm_diag::kInvalidCore),
+              "workflow non-ancestor output read remains a standalone Core rejection");
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
