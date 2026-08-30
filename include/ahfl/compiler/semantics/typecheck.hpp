@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -254,6 +255,17 @@ class TypeEnvironment {
     friend class TypeChecker;
     friend class TypeCheckPass;
     friend class DeclarationSema;
+
+  public:
+    // RFC 0026 P4 (coercion): stamp declaration-order variance into every
+    // generic struct/enum's `type_param_variances`, computed once after the
+    // environment is complete. `infer` returns the inferred variance vector for
+    // a nominal by canonical name (empty for a monomorphic / unknown nominal).
+    // Idempotent; only fills nominals whose variance is not yet materialized.
+    void materialize_nominal_variances(
+        const std::function<std::vector<Variance>(std::string_view)> &infer);
+
+  private:
 
     // Maintain reverse name index alongside primary maps so all queries are O(1) on average.
     void index_struct(std::size_t id, StructTypeInfo info);

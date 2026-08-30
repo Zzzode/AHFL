@@ -89,6 +89,7 @@ void test_let_statement_binds_variable() {
         .name = "x",
         .type_ref = make_int_type_ref(),
         .initializer = make_expr_ptr(IntegerLiteralExpr{"42"}),
+        .adjustment = std::nullopt,
     });
     auto result = exec_statement(stmt, ctx);
     check(!result.has_errors(), "let.no_error");
@@ -258,6 +259,7 @@ void test_if_let_restores_only_payload_bindings() {
         .name = "keep",
         .type_ref = make_int_type_ref(),
         .initializer = make_expr_ptr(IntegerLiteralExpr{"2"}),
+        .adjustment = std::nullopt,
     }));
 
     auto stmt = make_stmt(IfLetStatement{
@@ -352,12 +354,14 @@ void test_block_stops_at_goto() {
         .name = "x",
         .type_ref = make_int_type_ref(),
         .initializer = make_expr_ptr(IntegerLiteralExpr{"1"}),
+        .adjustment = std::nullopt,
     }));
     block.statements.push_back(make_stmt_ptr(GotoStatement{"Next"}));
     block.statements.push_back(make_stmt_ptr(LetStatement{
         .name = "y",
         .type_ref = make_int_type_ref(),
         .initializer = make_expr_ptr(IntegerLiteralExpr{"2"}),
+        .adjustment = std::nullopt,
     }));
     auto result = exec_block(block, ctx);
     check(!result.has_errors(), "block_goto.no_error");
@@ -375,6 +379,7 @@ void test_block_stops_at_return() {
         .name = "x",
         .type_ref = make_int_type_ref(),
         .initializer = make_expr_ptr(IntegerLiteralExpr{"5"}),
+        .adjustment = std::nullopt,
     }));
     block.statements.push_back(
         make_stmt_ptr(ReturnStatement{make_expr_ptr(IntegerLiteralExpr{"99"})}));
@@ -382,6 +387,7 @@ void test_block_stops_at_return() {
         .name = "y",
         .type_ref = make_int_type_ref(),
         .initializer = make_expr_ptr(IntegerLiteralExpr{"2"}),
+        .adjustment = std::nullopt,
     }));
     auto result = exec_block(block, ctx);
     check(!result.has_errors(), "block_return.no_error");

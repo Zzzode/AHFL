@@ -415,6 +415,95 @@ class IrJsonPrinter final {
         });
     }
 
+    // RFC 0026 P4 (coercion): declaration-order variance array serialization.
+    static std::string_view variance_json_name(ir::Variance v) {
+        switch (v) {
+        case ir::Variance::Invariant:
+            return "invariant";
+        case ir::Variance::Covariant:
+            return "covariant";
+        case ir::Variance::Contravariant:
+            return "contravariant";
+        }
+        return "invariant";
+    }
+
+    void print_variances(const std::vector<ir::Variance> &values, int indent_level) {
+        print_array(indent_level, [&](const auto &item) {
+            for (const auto v : values) {
+                item([&]() { write_string(variance_json_name(v)); });
+            }
+        });
+    }
+
+    // RFC 0026 P4 (coercion): adjustment-plan op-kind wire names.
+    static std::string_view adjustment_op_kind_name(ir::AdjustmentOpKind k) {
+        switch (k) {
+        case ir::AdjustmentOpKind::IntWiden:
+            return "int_widen";
+        case ir::AdjustmentOpKind::StringWiden:
+            return "string_widen";
+        case ir::AdjustmentOpKind::CapacityWiden:
+            return "capacity_widen";
+        case ir::AdjustmentOpKind::TypeArg:
+            return "type_arg";
+        case ir::AdjustmentOpKind::FnParam:
+            return "fn_param";
+        case ir::AdjustmentOpKind::FnReturn:
+            return "fn_return";
+        case ir::AdjustmentOpKind::VariantToEnum:
+            return "variant_to_enum";
+        }
+        return "int_widen";
+    }
+
+    // RFC 0026 P4 (coercion): serialize a LetStatement adjustment plan. A public
+    // IR field must round-trip exactly (no silent drop) even while it is inert
+    // (no producer yet); the source/target/per-node TypeRefs preserve identity.
+    void print_adjustment_plan(const ir::AdjustmentPlan &plan, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("source", [&]() { print_type_ref(plan.source, indent_level + 1); });
+            field("target", [&]() { print_type_ref(plan.target, indent_level + 1); });
+            field("root", [&]() { write_index(plan.root); });
+            field("nodes", [&]() {
+                print_array(indent_level + 1, [&](const auto &item) {
+                    for (const auto &node : plan.nodes) {
+                        item([&]() {
+                            print_object(indent_level + 2, [&](const auto &node_field) {
+                                node_field("source",
+                                           [&]() { print_type_ref(node.source, indent_level + 3); });
+                                node_field("target",
+                                           [&]() { print_type_ref(node.target, indent_level + 3); });
+                                node_field("ops", [&]() {
+                                    print_array(indent_level + 3, [&](const auto &op_item) {
+                                        for (const auto &op : node.ops) {
+                                            op_item([&]() {
+                                                print_object(
+                                                    indent_level + 4, [&](const auto &op_field) {
+                                                        op_field("kind", [&]() {
+                                                            write_string(
+                                                                adjustment_op_kind_name(op.kind));
+                                                        });
+                                                        op_field("arg_index", [&]() {
+                                                            write_index(op.arg_index);
+                                                        });
+                                                        op_field("child",
+                                                                 [&]() { write_index(op.child); });
+                                                    });
+                                            });
+                                        }
+                                    });
+                                });
+                            });
+                        });
+                    }
+                });
+            });
+        });
+    }
+
+
+
     void write_null() {
         out_ << "null";
     }
@@ -1231,6 +1320,13 @@ class IrJsonPrinter final {
                         field("type", [&]() { write_string(type_name(value.type_ref)); });
                         field("initializer",
                               [&]() { print_expr(*value.initializer, indent_level + 1); });
+                        // RFC 0026 P4 (coercion): additive; only emitted when a
+                        // plan is present (inert until F2 populates it).
+                        if (value.adjustment.has_value()) {
+                            field("adjustment", [&]() {
+                                print_adjustment_plan(*value.adjustment, indent_level + 1);
+                            });
+                        }
                     });
                 },
                 [&](const ir::AssignStatement &value) {
@@ -1517,6 +1613,13 @@ class IrJsonPrinter final {
                             field("symbol_ref",
                                   [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });
                         }
+                        if (value.type_param_count != 0 || !value.type_param_variances.empty()) {
+                            field("type_param_count",
+                                  [&]() { write_index(value.type_param_count); });
+                            field("type_param_variances", [&]() {
+                                print_variances(value.type_param_variances, indent_level + 1);
+                            });
+                        }
                         field("fields", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
                                 for (const auto &struct_field : value.fields) {
@@ -1561,6 +1664,13 @@ class IrJsonPrinter final {
                         if (has_symbol_ref(value.symbol_ref)) {
                             field("symbol_ref",
                                   [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });
+                        }
+                        if (value.type_param_count != 0 || !value.type_param_variances.empty()) {
+                            field("type_param_count",
+                                  [&]() { write_index(value.type_param_count); });
+                            field("type_param_variances", [&]() {
+                                print_variances(value.type_param_variances, indent_level + 1);
+                            });
                         }
                         field("variants", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -2496,6 +2606,37 @@ class IrJsonReader final {
         return *value;
     }
 
+    // RFC 0026 P4 (coercion): optional unsigned field (missing = fallback).
+    [[nodiscard]] std::uint32_t
+    opt_u32(const JsonValue &obj, std::string_view key, std::uint32_t fallback) {
+        const auto *field = obj.get(key);
+        if (field == nullptr) { return fallback; }
+        const auto value = field->as_int();
+        if (!value.has_value()) { fail(); return fallback; }
+        return static_cast<std::uint32_t>(*value);
+    }
+
+    // RFC 0026 P4 (coercion): declaration-order variance array (missing = empty).
+    [[nodiscard]] std::vector<ir::Variance>
+    parse_variances(const JsonValue &obj, std::string_view key) {
+        std::vector<ir::Variance> result;
+        const auto *field = obj.get(key);
+        if (field == nullptr) { return result; }
+        if (!field->is_array()) { fail(); return result; }
+        for (const auto &item : field->array_items) {
+            const auto name = item->as_string();
+            if (!name.has_value()) { fail(); result.push_back(ir::Variance::Invariant); continue; }
+            if (*name == "covariant") {
+                result.push_back(ir::Variance::Covariant);
+            } else if (*name == "contravariant") {
+                result.push_back(ir::Variance::Contravariant);
+            } else {
+                result.push_back(ir::Variance::Invariant);
+            }
+        }
+        return result;
+    }
+
     [[nodiscard]] std::vector<std::string> string_array(const JsonValue &obj,
                                                         std::string_view key) {
         std::vector<std::string> result;
@@ -2626,6 +2767,53 @@ class IrJsonReader final {
             }
         }
         return ref;
+    }
+
+    // RFC 0026 P4 (coercion): adjustment-plan op-kind from its wire name.
+    [[nodiscard]] static ir::AdjustmentOpKind adjustment_op_kind_from_name(std::string_view name) {
+        if (name == "string_widen") { return ir::AdjustmentOpKind::StringWiden; }
+        if (name == "capacity_widen") { return ir::AdjustmentOpKind::CapacityWiden; }
+        if (name == "type_arg") { return ir::AdjustmentOpKind::TypeArg; }
+        if (name == "fn_param") { return ir::AdjustmentOpKind::FnParam; }
+        if (name == "fn_return") { return ir::AdjustmentOpKind::FnReturn; }
+        if (name == "variant_to_enum") { return ir::AdjustmentOpKind::VariantToEnum; }
+        return ir::AdjustmentOpKind::IntWiden;
+    }
+
+    // RFC 0026 P4 (coercion): parse a LetStatement adjustment plan (mirror of
+    // print_adjustment_plan). Present only when the writer emitted it.
+    [[nodiscard]] std::optional<ir::AdjustmentPlan> opt_adjustment_plan(const JsonValue &obj) {
+        const auto *field = obj.get("adjustment");
+        if (field == nullptr || !field->is_object()) { return std::nullopt; }
+        ir::AdjustmentPlan plan;
+        plan.source = opt_type_ref(*field, "source", "");
+        plan.target = opt_type_ref(*field, "target", "");
+        plan.root = opt_u32(*field, "root", 0);
+        const auto *nodes = field->get("nodes");
+        if (nodes != nullptr && nodes->is_array()) {
+            for (const auto &node_item : nodes->array_items) {
+                ir::AdjustmentNode node;
+                node.source = opt_type_ref(*node_item, "source", "");
+                node.target = opt_type_ref(*node_item, "target", "");
+                const auto *ops = node_item->get("ops");
+                if (ops != nullptr && ops->is_array()) {
+                    for (const auto &op_item : ops->array_items) {
+                        ir::AdjustmentOp op;
+                        const auto *kind = op_item->get("kind");
+                        if (kind != nullptr) {
+                            if (const auto k = kind->as_string(); k.has_value()) {
+                                op.kind = adjustment_op_kind_from_name(*k);
+                            }
+                        }
+                        op.arg_index = opt_u32(*op_item, "arg_index", 0);
+                        op.child = opt_u32(*op_item, "child", 0xFFFFFFFFu);
+                        node.ops.push_back(op);
+                    }
+                }
+                plan.nodes.push_back(std::move(node));
+            }
+        }
+        return plan;
     }
 
     [[nodiscard]] ir::Path path(const JsonValue &obj) {
@@ -2951,6 +3139,7 @@ class IrJsonReader final {
             let.name = req_string(obj, "name");
             let.type_ref = opt_type_ref(obj, "type_ref", "type");
             let.initializer = opt_expr(obj, "initializer");
+            let.adjustment = opt_adjustment_plan(obj);
             result->node = std::move(let);
         } else if (kind == "assign") {
             ir::AssignStatement assign;
@@ -3083,6 +3272,8 @@ class IrJsonReader final {
             d.provenance = provenance(obj);
             d.name = req_string(obj, "name");
             d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+            d.type_param_count = opt_u32(obj, "type_param_count", 0);
+            d.type_param_variances = parse_variances(obj, "type_param_variances");
             const auto *fields = obj.get("fields");
             if (fields != nullptr && fields->is_array()) {
                 for (const auto &item : fields->array_items) {
@@ -3180,6 +3371,8 @@ class IrJsonReader final {
         d.provenance = provenance(obj);
         d.name = req_string(obj, "name");
         d.symbol_ref = opt_symbol_ref(obj, "symbol_ref");
+        d.type_param_count = opt_u32(obj, "type_param_count", 0);
+        d.type_param_variances = parse_variances(obj, "type_param_variances");
         const auto *variants = obj.get("variants");
         if (variants != nullptr && variants->is_array()) {
             for (const auto &item : variants->array_items) {

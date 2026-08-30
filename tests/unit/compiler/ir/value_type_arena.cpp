@@ -23,6 +23,7 @@ using namespace ahfl;
 using ir::core::CoreNominalRole;
 using ir::core::CoreProgram;
 using ir::core::CoreTypeDecl;
+using ir::core::CoreVariance;
 using ir::core::CoreValueTypeId;
 
 // A struct/enum TypeRef with a resolved nominal_ref (id-first bridge), the shape
@@ -72,6 +73,7 @@ using ir::core::CoreValueTypeId;
     list.name = "std::collections::List";
     list.role = CoreNominalRole::List;
     list.type_param_count = 1;
+    list.variances = {CoreVariance::Covariant};
     p.types.push_back(std::move(list));
     return p;
 }
@@ -381,6 +383,7 @@ TEST_CASE("P0-2: a REAL std generic decl is decorated with role + arity from the
     // Decorate exactly as register_type would (role=List, arity=1).
     list.role = CoreNominalRole::List;
     list.type_param_count = 1;
+    list.variances = {ir::core::CoreVariance::Covariant};
     list.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
                                     .canonical_name = "std::collections::List",
                                     .id = std::size_t{42}};
@@ -395,6 +398,96 @@ TEST_CASE("P0-2: a REAL std generic decl is decorated with role + arity from the
     INFO(reason);
     REQUIRE(id.has_value());
     CHECK_FALSE(verify_core_program(p).has_errors());
+}
+
+// RFC 0026 P4 (coercion) F1: the builtin descriptor SSOT carries a per-parameter
+// variance vector parallel to its arity (Option/List/Set covariant element,
+// Result covariant both, Map invariant key + covariant value).
+TEST_CASE("builtin nominal SSOT variance vector is parallel to arity") {
+    using namespace ir::core;
+    for (const auto &d : builtin_nominal_table()) {
+        INFO(std::string(d.canonical_name));
+        CHECK(d.variances.size() == d.type_param_count);
+    }
+    const auto by_name = [](std::string_view canonical) -> const BuiltinNominalDescriptor & {
+        for (const auto &d : builtin_nominal_table()) {
+            if (d.canonical_name == canonical) {
+                return d;
+            }
+        }
+        FAIL("descriptor not found");
+        return builtin_nominal_table().front();
+    };
+    CHECK(by_name("std::option::Option").variances == std::vector<CoreVariance>{CoreVariance::Covariant});
+    CHECK(by_name("std::result::Result").variances ==
+          std::vector<CoreVariance>{CoreVariance::Covariant, CoreVariance::Covariant});
+    CHECK(by_name("std::collections::Map").variances ==
+          std::vector<CoreVariance>{CoreVariance::Invariant, CoreVariance::Covariant});
+}
+
+// RFC 0026 P4 (coercion) F1: a user generic nominal now carries a real arity +
+// variance (add_struct/add_enum fill them from the AHFL-IR decl), which unlocks
+// P4-A user-generic lowering: `Box<Int>` lowers to a CoreVtNominal over Box.
+TEST_CASE("F1: a user generic nominal (Box<Int>) lowers with its real arity + variance") {
+    using namespace ir::core;
+    CoreProgram p;
+    CoreTypeDecl box;
+    box.kind = CoreTypeDecl::Kind::Struct;
+    box.name = "app::Box";
+    box.type_param_count = 1;                     // real user arity (was 0 before F1)
+    box.variances = {CoreVariance::Covariant};    // T appears covariantly (a `value: T` field)
+    box.symbol_ref =
+        ir::SymbolRef{.kind = ir::SymbolRefKind::Type, .canonical_name = "app::Box", .id = std::size_t{7}};
+    p.types.push_back(std::move(box));
+
+    ir::TypeRef box_ref = nominal_ref(ir::TypeRefKind::Struct, "app::Box", 7);
+    box_ref.params.push_back(make_owned<ir::TypeRef>([] {
+        ir::TypeRef t;
+        t.kind = ir::TypeRefKind::Int;
+        return t;
+    }()));
+    std::string reason;
+    const auto id = lower_value_type_into(p, box_ref, &reason);
+    INFO(reason);
+    REQUIRE(id.has_value());
+    const auto &vt = p.value_types[id->value];
+    const auto *nom = std::get_if<CoreVtNominal>(&vt.node);
+    REQUIRE(nom != nullptr);
+    CHECK(nom->base.value == 0u); // app::Box is type[0]
+    REQUIRE(nom->args.size() == 1);
+    CHECK(std::holds_alternative<CoreVtInt>(p.value_types[nom->args[0].value].node));
+    // The CoreTypeDecl carries the real arity + variance (field template NOT
+    // materialized here - that stays a P4-C concern).
+    CHECK(p.types[0].type_param_count == 1);
+    CHECK(p.types[0].variances == std::vector<CoreVariance>{CoreVariance::Covariant});
+    CHECK(p.types[0].field_types.empty()); // field template not synthesized
+    CHECK_FALSE(verify_core_program(p).has_errors());
+}
+
+TEST_CASE("F1: a user generic applied at the WRONG arity is fail-closed") {
+    using namespace ir::core;
+    CoreProgram p;
+    CoreTypeDecl box;
+    box.kind = CoreTypeDecl::Kind::Struct;
+    box.name = "app::Box";
+    box.type_param_count = 1;
+    box.variances = {CoreVariance::Covariant};
+    box.symbol_ref =
+        ir::SymbolRef{.kind = ir::SymbolRefKind::Type, .canonical_name = "app::Box", .id = std::size_t{7}};
+    p.types.push_back(std::move(box));
+
+    // Box<Int, Int> - two args against arity 1.
+    ir::TypeRef box_ref = nominal_ref(ir::TypeRefKind::Struct, "app::Box", 7);
+    for (int i = 0; i < 2; ++i) {
+        box_ref.params.push_back(make_owned<ir::TypeRef>([] {
+            ir::TypeRef t;
+            t.kind = ir::TypeRefKind::Int;
+            return t;
+        }()));
+    }
+    std::string reason;
+    const auto id = lower_value_type_into(p, box_ref, &reason);
+    CHECK_FALSE(id.has_value()); // arity mismatch fails closed
 }
 
 TEST_CASE("P0-3: lower_value_type_into resolves nominal bases STRICT id-first") {
@@ -539,6 +632,7 @@ TEST_CASE("P1 verifier: a role<->kind mismatch on a nominal decl is fail-closed"
     bad.name = "std::collections::List";
     bad.role = CoreNominalRole::List;
     bad.type_param_count = 1;
+    bad.variances = {ir::core::CoreVariance::Covariant};
     p.types.push_back(std::move(bad));
     CHECK(verify_core_program(p).has_errors());
 }
@@ -597,6 +691,7 @@ TEST_CASE("P1-2 verifier: role<->canonical identity is locked bidirectionally") 
         evil.name = "evil::Foo";
         evil.role = CoreNominalRole::List; // canonical is NOT std::collections::List
         evil.type_param_count = 1;
+        evil.variances = {ir::core::CoreVariance::Covariant};
         p.types.push_back(std::move(evil));
         CHECK(verify_core_program(p).has_errors());
     }
@@ -607,6 +702,7 @@ TEST_CASE("P1-2 verifier: role<->canonical identity is locked bidirectionally") 
         list.name = "std::collections::List";
         list.role = CoreNominalRole::Ordinary; // must be List
         list.type_param_count = 1;
+        list.variances = {ir::core::CoreVariance::Covariant};
         p.types.push_back(std::move(list));
         CHECK(verify_core_program(p).has_errors());
     }

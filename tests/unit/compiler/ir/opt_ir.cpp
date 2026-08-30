@@ -42,6 +42,7 @@ make_let_int(ahfl::ir::ExprArena &arena, const std::string &name, const std::str
                 .name = name,
                 .type_ref = {},
                 .initializer = expr,
+                .adjustment = std::nullopt,
             },
         .source_range = {},
     });

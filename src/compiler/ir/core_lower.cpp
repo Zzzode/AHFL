@@ -151,14 +151,16 @@ bool operator==(const CoreInstanceDecl &a, const CoreInstanceDecl &b) noexcept {
 const std::vector<BuiltinNominalDescriptor> &builtin_nominal_table() {
     using PK = CoreTypeDecl::VariantPayload::Kind;
     using TK = CoreTypeDecl::Kind;
+    using CV = CoreVariance;
     static const std::vector<BuiltinNominalDescriptor> table = {
         {"std::option::Option", "Option", TK::Enum, CoreNominalRole::Option, 1,
-         {{"Some", PK::Tuple, 1}, {"None", PK::Unit, 0}}},
+         {{"Some", PK::Tuple, 1}, {"None", PK::Unit, 0}}, {CV::Covariant}},
         {"std::result::Result", "Result", TK::Enum, CoreNominalRole::Result, 2,
-         {{"Ok", PK::Tuple, 1}, {"Err", PK::Tuple, 1}}},
-        {"std::collections::List", "", TK::Struct, CoreNominalRole::List, 1, {}},
-        {"std::collections::Set", "", TK::Struct, CoreNominalRole::Set, 1, {}},
-        {"std::collections::Map", "", TK::Struct, CoreNominalRole::Map, 2, {}},
+         {{"Ok", PK::Tuple, 1}, {"Err", PK::Tuple, 1}}, {CV::Covariant, CV::Covariant}},
+        {"std::collections::List", "", TK::Struct, CoreNominalRole::List, 1, {}, {CV::Covariant}},
+        {"std::collections::Set", "", TK::Struct, CoreNominalRole::Set, 1, {}, {CV::Covariant}},
+        {"std::collections::Map", "", TK::Struct, CoreNominalRole::Map, 2, {},
+         {CV::Invariant, CV::Covariant}},
     };
     return table;
 }
@@ -208,13 +210,19 @@ namespace {
 // ---------------------------------------------------------------------------
 class TypeEnv {
   public:
-    explicit TypeEnv(std::vector<CoreTypeDecl> &types) : types_(types) {}
+    explicit TypeEnv(std::vector<CoreTypeDecl> &types, std::vector<CoreLowerDiagnostic> &diags)
+        : types_(types), diags_(diags) {}
 
     void add_struct(const StructDecl &decl) {
         CoreTypeDecl t;
         t.kind = CoreTypeDecl::Kind::Struct;
         t.name = decl.symbol_ref.canonical_name.empty() ? decl.name
                                                         : decl.symbol_ref.canonical_name;
+        // RFC 0026 P4 (coercion): carry the declaration's generic arity + variance
+        // (numeric metadata from the AHFL-IR bridge). register_type cross-checks /
+        // stamps these against the builtin SSOT for a well-known std generic.
+        t.type_param_count = decl.type_param_count;
+        t.variances = ir_variances_to_core(decl.type_param_variances);
         std::vector<std::string> field_type_names;
         for (const FieldDecl &f : decl.fields) {
             t.fields.push_back(f.name);
@@ -232,6 +240,9 @@ class TypeEnv {
         t.kind = CoreTypeDecl::Kind::Enum;
         t.name = decl.symbol_ref.canonical_name.empty() ? decl.name
                                                        : decl.symbol_ref.canonical_name;
+        // RFC 0026 P4 (coercion): see add_struct.
+        t.type_param_count = decl.type_param_count;
+        t.variances = ir_variances_to_core(decl.type_param_variances);
         // Per-variant payload metadata (arity + slot field names), plus the slot
         // type NAMES pending resolution in the fixup pass.
         std::vector<std::vector<std::string>> pending_slot_names;
@@ -486,30 +497,80 @@ class TypeEnv {
             by_name_.emplace(t.name, id);
         }
         t.symbol_ref = ref; // Principle 2: persist resolved-symbol provenance.
-        // Decorate role + generic arity from the single builtin nominal SSOT when
-        // this real declaration IS a well-known stdlib generic (Codex P0-2): a
-        // real std Option/Result/List/Set/Map declaration (include_stdlib / inlined
-        // / deserialized) MUST get the same role/arity as the synthetic base, or a
-        // legal `Option<Int>` would be rejected as "expects 0 args".
+        // Decorate role + generic arity + variance from the single builtin nominal
+        // SSOT. Three-way (Codex P1-3): a SYNTHETIC std base (add_builtins, carries
+        // no incoming metadata) is stamped from the descriptor; a REAL std decl
+        // (include_stdlib / inlined / deserialized, carries incoming metadata) is
+        // cross-checked EXACTLY against the descriptor and fail-closed on drift; a
+        // user nominal keeps its incoming count/variance verbatim.
         decorate_from_builtin_ssot(t);
         types_.push_back(std::move(t));
         return id;
     }
 
-    // If `t.name` matches a builtin nominal descriptor, stamp its role +
-    // type_param_count from that single SSOT (verifying the Struct/Enum kind
-    // agrees — a real decl whose kind disagrees with the SSOT is a structural
-    // contradiction the verifier will separately reject). A non-std nominal is
-    // left as role=Ordinary / arity=0.
-    static void decorate_from_builtin_ssot(CoreTypeDecl &t) {
+    // If `t.name` matches a builtin nominal descriptor, reconcile its role /
+    // arity / variance against that single SSOT (three-way — see register_type).
+    // A synthetic base arrives with type_param_count == 0 and empty variances
+    // (add_builtins does not set them) and is STAMPED; a real std decl arrives
+    // with its own metadata and must MATCH exactly or is fail-closed. A non-std
+    // nominal matches no descriptor and keeps its incoming (user) metadata.
+    void decorate_from_builtin_ssot(CoreTypeDecl &t) {
         for (const BuiltinNominalDescriptor &d : builtin_nominal_table()) {
             if (t.name != d.canonical_name) {
                 continue;
             }
             t.role = d.role;
-            t.type_param_count = d.type_param_count;
+            const auto descriptor_variances = core_variances_of(d);
+            const bool synthetic = t.type_param_count == 0 && t.variances.empty();
+            if (synthetic) {
+                // Synthetic base: stamp arity + variance from the descriptor.
+                t.type_param_count = d.type_param_count;
+                t.variances = descriptor_variances;
+            } else if (t.type_param_count != d.type_param_count ||
+                       t.variances != descriptor_variances) {
+                // Real std decl whose metadata disagrees with the SSOT: fail-closed
+                // (a stable core lowering diagnostic; the program is not executable).
+                diags_.push_back(CoreLowerDiagnostic{
+                    CoreDiagnosticSeverity::Error, std::string(diag::kBuiltinMetadataDrift),
+                    "builtin nominal '" + t.name +
+                        "' declaration metadata (arity/variance) disagrees with the builtin "
+                        "descriptor SSOT",
+                    std::nullopt});
+                // Keep the authoritative descriptor values so downstream arity /
+                // variance checks reflect the SSOT, not the corrupt decl.
+                t.type_param_count = d.type_param_count;
+                t.variances = descriptor_variances;
+            }
             return;
         }
+    }
+
+    // The descriptor's per-parameter variance as CoreVariance (SSOT -> Core).
+    [[nodiscard]] static std::vector<CoreVariance>
+    core_variances_of(const BuiltinNominalDescriptor &d) {
+        return d.variances;
+    }
+
+    // Map AHFL-IR declaration variance to Core variance (identity mapping across
+    // the two mirror enums).
+    [[nodiscard]] static std::vector<CoreVariance>
+    ir_variances_to_core(const std::vector<ir::Variance> &variances) {
+        std::vector<CoreVariance> out;
+        out.reserve(variances.size());
+        for (const auto v : variances) {
+            switch (v) {
+            case ir::Variance::Invariant:
+                out.push_back(CoreVariance::Invariant);
+                break;
+            case ir::Variance::Covariant:
+                out.push_back(CoreVariance::Covariant);
+                break;
+            case ir::Variance::Contravariant:
+                out.push_back(CoreVariance::Contravariant);
+                break;
+            }
+        }
+        return out;
     }
     /// Canonical nominal name of a struct/enum TypeRef, else empty (primitive,
     /// collection, fn, unresolved — none of which support field projection here).
@@ -520,6 +581,7 @@ class TypeEnv {
         return {};
     }
     std::vector<CoreTypeDecl> &types_;
+    std::vector<CoreLowerDiagnostic> &diags_;
     std::unordered_map<std::size_t, CoreTypeId> by_id_;
     std::unordered_map<std::string, CoreTypeId> by_name_;
     // struct CoreTypeId -> its field type NAMES, pending resolution to typed
@@ -2660,7 +2722,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     CoreProgram &core = result.program;
 
     // Pass 1: type table (structs/enums + builtin stdlib enums).
-    TypeEnv types(core.types);
+    TypeEnv types(core.types, result.diagnostics);
     for (const Decl &decl : ahfl_ir.declarations) {
         if (const auto *s = std::get_if<StructDecl>(&decl)) {
             types.add_struct(*s);

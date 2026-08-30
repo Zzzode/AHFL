@@ -685,6 +685,7 @@ void DeclarationSema::build_struct_types() {
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
                 .type_param_names = {},
+                .type_param_variances = {}, // materialized after the environment is built
                 .fields = {},
                 .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,
@@ -743,6 +744,7 @@ void DeclarationSema::build_enum_types() {
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
                 .type_param_names = {},
+                .type_param_variances = {}, // materialized after the environment is built
                 .variants = {},
                 .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,

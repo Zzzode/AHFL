@@ -819,6 +819,7 @@ TEST_CASE("P3-gaps-B opt lowering of unit literal produces monostate constant") 
                 .name = "u",
                 .type_ref = unit_type_ref(),
                 .initializer = unit_expr,
+                .adjustment = std::nullopt,
             },
         .source_range = {},
     });

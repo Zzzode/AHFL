@@ -1090,6 +1090,15 @@ using CoreInstancePayload =
 /// always `Ordinary`.
 enum class CoreNominalRole { Ordinary, Option, Result, List, Set, Map };
 
+/// RFC 0026 P4 (coercion): declaration-order variance of a nominal's type
+/// parameter, materialized from the semantics layer's inferred variance and
+/// carried across the AHFL-IR bridge. A `TypeArg` coercion step is legal ONLY at
+/// a Covariant / Contravariant position; an Invariant position requires the
+/// argument to be structurally equal. This is the SINGLE source of truth the
+/// coercion verifier reads to pick a child's proof direction (F3) — the op
+/// itself carries no variance.
+enum class CoreVariance { Invariant, Covariant, Contravariant };
+
 /// `true` iff a nominal of this role may carry a bounded-collection `capacity`.
 /// The SINGLE decision point shared by `lower_value_type` and
 /// `verify_value_types` (Codex ruling c): capacity is legal ONLY on List/Set/Map;
@@ -1290,6 +1299,13 @@ struct CoreTypeDecl {
     /// (Option 1, Result 2, List 1, Set 1, Map 2). A `CoreVtNominal` referencing
     /// this base must supply exactly `type_param_count` args (verifier-enforced).
     std::uint32_t type_param_count{0};
+    /// RFC 0026 P4 (coercion): declaration-order variance of each type parameter
+    /// (parallel: `variances.size() == type_param_count` in a well-formed decl).
+    /// Filled from the AHFL-IR decl's `type_param_variances` for a user nominal
+    /// and cross-checked against the builtin descriptor SSOT for a std generic.
+    /// Empty for a non-generic nominal. The coercion verifier (F3) reads this to
+    /// judge a `TypeArg` step's legality + proof direction.
+    std::vector<CoreVariance> variances;
     /// The nominal's role (RFC 0026 P4). `Ordinary` for a user type; the std
     /// generics carry their well-known role so `capacity` legality is judged by a
     /// typed enum, never by parsing `name`. Filled from the builtin nominal
@@ -1354,6 +1370,13 @@ inline constexpr std::string_view kDuplicateInstanceKey = "core.DUPLICATE_INSTAN
 inline constexpr std::string_view kUnresolvedInstanceBase = "core.UNRESOLVED_INSTANCE_BASE";
 inline constexpr std::string_view kUnknownInstanceKind = "core.UNKNOWN_INSTANCE_KIND";
 inline constexpr std::string_view kUnresolvedWorkflowInvocation = "core.UNRESOLVED_WORKFLOW_INVOCATION";
+// RFC 0026 P4 (coercion): a real (non-synthetic) declaration of a well-known
+// stdlib generic (Option/Result/List/Set/Map) whose arity or per-parameter
+// variance metadata disagrees with the builtin descriptor SSOT. Fail-closed:
+// the incoming metadata must match the descriptor exactly (a synthetic base is
+// stamped from it; a user nominal is consumed verbatim; only a real std decl is
+// cross-checked here).
+inline constexpr std::string_view kBuiltinMetadataDrift = "core.BUILTIN_METADATA_DRIFT";
 } // namespace diag
 
 /// A structured lowering diagnostic (fail-closed: no throw, no Unknown node).
@@ -1437,6 +1460,12 @@ struct BuiltinNominalDescriptor {
     CoreNominalRole role{CoreNominalRole::Ordinary};
     std::uint32_t type_param_count{0};
     std::vector<BuiltinEnumDescriptor::Variant> variants; // enum variants (empty for a struct)
+    /// RFC 0026 P4 (coercion): declaration-order variance of each type parameter
+    /// (size == type_param_count). Stdlib containers/enums are covariant in their
+    /// element/payload positions; Map's key is invariant. This is the authority a
+    /// real std decl's `type_param_variances` must match exactly (drift is
+    /// fail-closed) and a synthetic base is stamped from.
+    std::vector<CoreVariance> variances;
 };
 
 /// The builtin nominal descriptor SSOT. Order is deterministic (declaration

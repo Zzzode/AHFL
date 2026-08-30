@@ -213,11 +213,22 @@ class Verifier {
                 shape_error(std::string(why) + ": arity must be " +
                             std::to_string(d.type_param_count));
             }
+            if (t.variances != d.variances) {
+                shape_error(std::string(why) +
+                            ": per-parameter variance must match the builtin descriptor");
+            }
             if (t.role != d.role) {
                 shape_error(std::string(why) +
                             ": role must match the builtin descriptor for this canonical");
             }
         };
+        // RFC 0026 P4 (coercion): every nominal's variance vector must be parallel
+        // to its declared arity (the coercion verifier indexes variances by
+        // type-arg position). Empty is legal ONLY for a non-generic nominal.
+        if (t.variances.size() != t.type_param_count) {
+            shape_error("nominal variance vector length " + std::to_string(t.variances.size()) +
+                        " does not equal type_param_count " + std::to_string(t.type_param_count));
+        }
         if (by_role != nullptr) {
             require_matches(*by_role, "nominal role");
         }

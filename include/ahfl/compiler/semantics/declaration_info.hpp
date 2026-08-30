@@ -4,6 +4,7 @@
 #include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/semantics/effect_judgement.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/type_relations.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
 
 #include <cstddef>
@@ -100,6 +101,13 @@ struct StructTypeInfo {
     // declaration building; used by the type resolver to resolve type
     // variables inside field types and by monomorphization to align arguments.
     std::vector<std::string> type_param_names;
+    // RFC 0026 P4 (coercion): declaration-order variance of each type parameter,
+    // parallel to `type_param_names` (same length once materialized). Inferred
+    // structurally after the environment is built (see the variance
+    // materialization pass) and written back here so the Typed HIR -> AHFL-IR
+    // bridge can carry it without re-running inference. Empty for a monomorphic
+    // struct; entry i is the variance of type_param_names[i].
+    std::vector<Variance> type_param_variances;
     std::vector<StructFieldInfo> fields;
     WhereClauseInfo where_clause{};
     SourceRange declaration_range;
@@ -149,6 +157,9 @@ struct EnumTypeInfo {
     // (see types::EnumT). Resolved by the typecheck pass; used by type
     // variable resolution inside variant payload types and by monomorphization.
     std::vector<std::string> type_param_names;
+    // RFC 0026 P4 (coercion): declaration-order variance of each type parameter,
+    // parallel to `type_param_names`. See StructTypeInfo::type_param_variances.
+    std::vector<Variance> type_param_variances;
     std::vector<EnumVariantInfo> variants;
     WhereClauseInfo where_clause{};
     SourceRange declaration_range;

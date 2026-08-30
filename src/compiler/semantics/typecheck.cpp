@@ -1390,6 +1390,33 @@ TypeCheckResult TypeCheckPass::run() {
             return it->second;
         });
 
+    // RFC 0026 P4 (coercion): materialize per-nominal variance into a single
+    // SSOT now that the environment is complete. The declaration_updates payloads
+    // were copied out of the environment by DeclarationSema BEFORE the variance
+    // provider was installed above, so they carry empty type_param_variances;
+    // stamp both the durable environment type info AND those already-built
+    // update payloads so the Typed HIR consumed by lowering sees the variance.
+    // This is why the write-back happens here (after the environment is built)
+    // rather than at DeclarationSema time or via a lower-time provider query.
+    {
+        const auto infer = [this](std::string_view canonical_name) -> std::vector<Variance> {
+            std::unordered_set<std::string> visited;
+            return infer_nominal_variance(environment(), canonical_name, visited);
+        };
+        result_.environment.materialize_nominal_variances(infer);
+        for (auto &update : environment_result.declaration_updates) {
+            if (auto *s = std::get_if<StructTypeInfo>(&update.payload)) {
+                if (!s->type_param_names.empty() && s->type_param_variances.empty()) {
+                    s->type_param_variances = infer(s->canonical_name);
+                }
+            } else if (auto *e = std::get_if<EnumTypeInfo>(&update.payload)) {
+                if (!e->type_param_names.empty() && e->type_param_variances.empty()) {
+                    e->type_param_variances = infer(e->canonical_name);
+                }
+            }
+        }
+    }
+
     hir_builder_.apply_declaration_payload_updates(
         std::move(environment_result.declaration_updates));
     // P3c.S5a: snapshot the declaration-layer impl_index from TypeEnvironment
@@ -3945,6 +3972,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type = std::move(let_type),
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -3988,6 +4016,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type = nullptr,
             .assign_target_root_kind = assign_target_root_kind_of(*statement.assign_stmt->target),
             .assert_message = {},
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -4131,6 +4160,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type = nullptr,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -4316,6 +4346,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 .assign_target_root_kind = AssignTargetRootKind::Identifier,
                 .assert_message = {},
                 .pattern_index = if_let_pattern_index,
+                .let_adjustment = std::nullopt,
             });
         }
         break;
@@ -4339,6 +4370,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type = nullptr,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -4400,6 +4432,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type = nullptr,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -4487,6 +4520,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
             .assertion_kind = AssertionKind::Assert,
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -4550,6 +4584,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
             .assertion_kind = AssertionKind::Unwrap,
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -4633,6 +4668,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
             .assertion_kind = AssertionKind::Requires,
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -4697,6 +4733,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
             .assertion_kind = AssertionKind::Unreachable,
+            .let_adjustment = std::nullopt,
         });
         break;
     }
@@ -4716,6 +4753,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type = nullptr,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
+            .let_adjustment = std::nullopt,
         });
         break;
     }

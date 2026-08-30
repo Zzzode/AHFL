@@ -11,6 +11,17 @@
 
 namespace ahfl::ir {
 
+// RFC 0026 P4 (coercion): declaration-order variance of a generic nominal's type
+// parameter, mirrored from the semantics-layer `ahfl::Variance` across the Typed
+// HIR -> AHFL-IR boundary. Numeric metadata only (no canonical-name lookup): the
+// Core layer consumes it by parameter position to validate covariant /
+// contravariant coercion steps.
+enum class Variance {
+    Invariant,
+    Covariant,
+    Contravariant,
+};
+
 // ----------------------------------------------------------------------------
 // Declaration Provenance
 // ----------------------------------------------------------------------------
@@ -71,6 +82,11 @@ struct StructDecl {
     std::string name;
     std::vector<FieldDecl> fields;
     SymbolRef symbol_ref;
+    // RFC 0026 P4 (coercion): number of declared generic type parameters and
+    // their declaration-order variance (parallel: variances.size() ==
+    // type_param_count once populated). 0 / empty for a monomorphic struct.
+    std::uint32_t type_param_count{0};
+    std::vector<Variance> type_param_variances;
 };
 
 enum class EnumVariantPayloadKind {
@@ -100,6 +116,9 @@ struct EnumDecl {
     std::string name;
     std::vector<EnumVariantDecl> variants;
     SymbolRef symbol_ref;
+    // RFC 0026 P4 (coercion): see StructDecl::type_param_count/variances.
+    std::uint32_t type_param_count{0};
+    std::vector<Variance> type_param_variances;
 };
 
 /// Parameter declaration

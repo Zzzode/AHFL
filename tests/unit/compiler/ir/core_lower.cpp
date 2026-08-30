@@ -3170,3 +3170,67 @@ TEST_CASE("mono verifier: an out-of-range instance base is fail-closed") {
     CHECK(has_verify_code(result, ir::core::verify::kInstanceBaseInvalid));
 }
 
+
+// ---------------------------------------------------------------------------
+// RFC 0026 P4 (coercion) F1: builtin nominal metadata drift is fail-closed.
+// A REAL declaration of a well-known stdlib generic whose arity OR per-parameter
+// variance disagrees with the builtin descriptor SSOT must fail closed with a
+// stable core lowering diagnostic (never assert / silently overwrite). Synthetic
+// bases are stamped from the descriptor; user nominals are consumed verbatim.
+// ---------------------------------------------------------------------------
+
+// A minimal AhflIr carrying one real std List decl with the given arity/variance.
+namespace {
+ir::AhflIr make_std_list_program(std::uint32_t arity, std::vector<ir::Variance> variances) {
+    ir::AhflIr program;
+    ir::StructDecl list;
+    list.name = "List";
+    list.symbol_ref.kind = ir::SymbolRefKind::Type;
+    list.symbol_ref.canonical_name = "std::collections::List";
+    list.type_param_count = arity;
+    list.type_param_variances = std::move(variances);
+    program.declarations.emplace_back(std::move(list));
+    return program;
+}
+} // namespace
+
+TEST_CASE("F1: real std List decl with WRONG arity drifts from the SSOT (fail-closed)") {
+    const auto program = make_std_list_program(2, {ir::Variance::Covariant, ir::Variance::Covariant});
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_lower_code(result, ir::core::diag::kBuiltinMetadataDrift));
+    CHECK_FALSE(result.is_executable);
+}
+
+TEST_CASE("F1: real std List decl with WRONG variance drifts from the SSOT (fail-closed)") {
+    // Correct arity (1) but Contravariant where the SSOT says Covariant.
+    const auto program = make_std_list_program(1, {ir::Variance::Contravariant});
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_lower_code(result, ir::core::diag::kBuiltinMetadataDrift));
+    CHECK_FALSE(result.is_executable);
+}
+
+TEST_CASE("F1: real std List decl matching the SSOT exactly does NOT drift") {
+    const auto program = make_std_list_program(1, {ir::Variance::Covariant});
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(has_lower_code(result, ir::core::diag::kBuiltinMetadataDrift));
+}
+
+TEST_CASE("F1: a synthetic builtin base (no real decl) is stamped from the SSOT, not drifting") {
+    // A program with NO std::collections::List decl: add_builtins registers the
+    // synthetic base, stamped with arity 1 + [Covariant] from the descriptor.
+    ir::AhflIr program;
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(has_lower_code(result, ir::core::diag::kBuiltinMetadataDrift));
+    // The synthetic List base carries the descriptor's arity + variance.
+    const ir::core::CoreTypeDecl *list = nullptr;
+    for (const auto &t : result.program.types) {
+        if (t.name == "std::collections::List") {
+            list = &t;
+        }
+    }
+    REQUIRE(list != nullptr);
+    CHECK(list->type_param_count == 1);
+    CHECK(list->variances == std::vector<ir::core::CoreVariance>{ir::core::CoreVariance::Covariant});
+}

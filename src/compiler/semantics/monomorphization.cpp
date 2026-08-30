@@ -422,6 +422,20 @@ std::uint32_t clone_stmt(CloneContext &ctx, std::uint32_t old_idx) {
     // Substitute let type annotation.
     new_stmt.let_type = substitute_type(old_stmt.let_type, ctx.subst, ctx.subst_scope_id, ctx.types);
 
+    // RFC 0026 P4 (coercion): substitute every TypePtr inside the let adjustment
+    // plan (boundary source/target and each node's source/target). The plan
+    // stores only TypePtrs and flat node indexes (no expr/stmt/block indexes), so
+    // no index remap is needed - only type substitution into the instance.
+    if (new_stmt.let_adjustment.has_value()) {
+        auto &plan = *new_stmt.let_adjustment;
+        plan.source = substitute_type(plan.source, ctx.subst, ctx.subst_scope_id, ctx.types);
+        plan.target = substitute_type(plan.target, ctx.subst, ctx.subst_scope_id, ctx.types);
+        for (auto &node : plan.nodes) {
+            node.source = substitute_type(node.source, ctx.subst, ctx.subst_scope_id, ctx.types);
+            node.target = substitute_type(node.target, ctx.subst, ctx.subst_scope_id, ctx.types);
+        }
+    }
+
     // Clone child expressions.
     for (auto &idx : new_stmt.children_expr_index) {
         idx = clone_expr(ctx, idx);

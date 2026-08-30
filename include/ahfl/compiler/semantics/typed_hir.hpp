@@ -520,6 +520,53 @@ struct TypedBlock {
     std::vector<std::uint32_t> statement_indexes;
 };
 
+// RFC 0026 P4 (coercion): a compositional type-adjustment plan attached to an
+// annotated `let x: T = e` whose declared type T differs from the initializer's
+// actual type A, but A <: T holds. The plan is the CANONICAL witness the Sema
+// relation solver produced on the successful assignability check: a self-
+// contained flat arena (nodes indexed by position) that the Typed HIR -> AHFL-IR
+// bridge carries verbatim so the Core layer never re-derives subtyping.
+//
+// A node owns a full (source, target) pair; its `ops` are ORTHOGONAL projections
+// (each names exactly one dimension), and every dimension NOT named by an op must
+// already be equal. This models e.g. `List<Int(0,0)>(4) -> List<Int>(8)` as one
+// node with a CapacityWiden op plus a TypeArg{0} op whose child proves
+// `Int(0,0) -> Int` - no invented intermediate type. Ops carry NO variance: the
+// direction of a TypeArg child is read downstream from the nominal's declared
+// per-parameter variance (the single SSOT).
+enum class TypedAdjustmentOpKind {
+    IntWiden,      // BoundedInt -> Int, or Int(a,b) -> Int(c,d) with [a,b] subseteq [c,d]
+    StringWiden,   // BoundedString -> String, or narrower length bounds -> wider
+    CapacityWiden, // List/Set/Map(N) -> (M >= N) or -> unbounded
+    TypeArg,       // covariant/contravariant type-arg projection (child proves the arg relation)
+    FnParam,       // Fn parameter position (contravariant: child proves target.param <: source.param)
+    FnReturn,      // Fn return position (covariant: child proves source.ret <: target.ret)
+    VariantToEnum, // EnumVariantT <: EnumT (erased at Core: both intern to the owner nominal)
+};
+
+struct TypedAdjustmentOp {
+    TypedAdjustmentOpKind kind{TypedAdjustmentOpKind::IntWiden};
+    // TypeArg / FnParam: the projected type-parameter / parameter position.
+    // Ignored by scalar ops (IntWiden / StringWiden / CapacityWiden / VariantToEnum).
+    std::uint32_t arg_index{0};
+    // TypeArg / FnParam / FnReturn: index into TypedAdjustmentPlan::nodes of the
+    // child node proving that projection. UINT32_MAX for a leaf (scalar) op.
+    std::uint32_t child{UINT32_MAX};
+};
+
+struct TypedAdjustmentNode {
+    TypePtr source{nullptr};
+    TypePtr target{nullptr};
+    std::vector<TypedAdjustmentOp> ops;
+};
+
+struct TypedAdjustmentPlan {
+    TypePtr source{nullptr}; // the boundary source type (initializer actual type A)
+    TypePtr target{nullptr}; // the boundary target type (declared annotation T)
+    std::vector<TypedAdjustmentNode> nodes; // flat arena, index-referenced
+    std::uint32_t root{0};                  // index into `nodes` of the root node
+};
+
 struct TypedStatement {
     TypedStmtKind kind{TypedStmtKind::None};
     SourceRange range;
@@ -569,6 +616,12 @@ struct TypedStatement {
     // Root pattern for pattern-bearing statements (currently IfLet).
     // UINT32_MAX = no statement-local pattern.
     std::uint32_t pattern_index{UINT32_MAX};
+
+    // RFC 0026 P4 (coercion): the canonical type-adjustment plan for an
+    // annotated `let x: T = e` whose declared type differs from the
+    // initializer's actual type (A <: T). nullopt when the boundary types are
+    // identical (exact / inferred let) or the statement is not a Let.
+    std::optional<TypedAdjustmentPlan> let_adjustment;
 };
 
 struct TypedTemporalExpr {

@@ -970,6 +970,95 @@ class TypedIrLowerer final {
     // primitives + bounds, so a payload binding recovers its exact type. Reuses
     // type_ref_from_type so the nominal_ref bridge + refinements are populated
     // consistently with every other TypeRef.
+    // RFC 0026 P4 (coercion): map declaration-order semantic variance to the
+    // AHFL-IR mirror enum for the struct/enum decl bridge.
+    [[nodiscard]] static std::vector<ir::Variance>
+    ir_variances_of(const std::vector<Variance> &variances) {
+        std::vector<ir::Variance> out;
+        out.reserve(variances.size());
+        for (const auto v : variances) {
+            switch (v) {
+            case Variance::Invariant:
+                out.push_back(ir::Variance::Invariant);
+                break;
+            case Variance::Covariant:
+                out.push_back(ir::Variance::Covariant);
+                break;
+            case Variance::Contravariant:
+                out.push_back(ir::Variance::Contravariant);
+                break;
+            }
+        }
+        return out;
+    }
+
+    // RFC 0026 P4 (coercion): map a semantic TypedAdjustmentOpKind to its
+    // AHFL-IR mirror.
+    [[nodiscard]] static ir::AdjustmentOpKind ir_adjustment_op_kind(TypedAdjustmentOpKind k) {
+        switch (k) {
+        case TypedAdjustmentOpKind::IntWiden:
+            return ir::AdjustmentOpKind::IntWiden;
+        case TypedAdjustmentOpKind::StringWiden:
+            return ir::AdjustmentOpKind::StringWiden;
+        case TypedAdjustmentOpKind::CapacityWiden:
+            return ir::AdjustmentOpKind::CapacityWiden;
+        case TypedAdjustmentOpKind::TypeArg:
+            return ir::AdjustmentOpKind::TypeArg;
+        case TypedAdjustmentOpKind::FnParam:
+            return ir::AdjustmentOpKind::FnParam;
+        case TypedAdjustmentOpKind::FnReturn:
+            return ir::AdjustmentOpKind::FnReturn;
+        case TypedAdjustmentOpKind::VariantToEnum:
+            return ir::AdjustmentOpKind::VariantToEnum;
+        }
+        return ir::AdjustmentOpKind::IntWiden;
+    }
+
+    // RFC 0026 P4 (coercion): bridge the Sema `let_adjustment` witness onto the
+    // AHFL-IR `LetStatement.adjustment`. Types are re-expressed as `ir::TypeRef`
+    // (with nominal_ref identity) via `type_ref_from_type`. The AHFL-IR effect
+    // grade on a Fn TypeRef is erased by construction; if the resulting
+    // source/target TypeRefs are equal (an effect-ONLY Fn adjustment), the plan
+    // is dropped so the boundary carries no plan (Core sees an identity). A
+    // VariantToEnum plan is KEPT here (variant_name makes the TypeRefs differ at
+    // IR level; it is erased only at Core lowering). Returns nullopt when the
+    // statement carries no adjustment.
+    [[nodiscard]] std::optional<ir::AdjustmentPlan>
+    bridge_let_adjustment(const TypedStatement &stmt) const {
+        if (!stmt.let_adjustment.has_value()) {
+            return std::nullopt;
+        }
+        const TypedAdjustmentPlan &plan = *stmt.let_adjustment;
+        ir::AdjustmentPlan out;
+        out.source = plan.source != nullptr ? type_ref_from_type(*plan.source) : ir::TypeRef{};
+        out.target = plan.target != nullptr ? type_ref_from_type(*plan.target) : ir::TypeRef{};
+        out.root = plan.root;
+        out.nodes.reserve(plan.nodes.size());
+        for (const auto &node : plan.nodes) {
+            ir::AdjustmentNode ir_node;
+            ir_node.source =
+                node.source != nullptr ? type_ref_from_type(*node.source) : ir::TypeRef{};
+            ir_node.target =
+                node.target != nullptr ? type_ref_from_type(*node.target) : ir::TypeRef{};
+            ir_node.ops.reserve(node.ops.size());
+            for (const auto &op : node.ops) {
+                ir_node.ops.push_back(ir::AdjustmentOp{
+                    .kind = ir_adjustment_op_kind(op.kind),
+                    .arg_index = op.arg_index,
+                    .child = op.child,
+                });
+            }
+            out.nodes.push_back(std::move(ir_node));
+        }
+        // Effect-only erasure: a plan whose boundary types collapse to equal
+        // TypeRefs once the effect grade is erased carries no observable Core
+        // adjustment. (VariantToEnum keeps a distinct target here.)
+        if (ir::type_refs_equal(out.source, out.target)) {
+            return std::nullopt;
+        }
+        return out;
+    }
+
     [[nodiscard]] ir::TypeRef matched_type_ref_of(const TypedPattern *typed) const {
         if (typed == nullptr || typed->matched_type == nullptr) {
             return ir::TypeRef{}; // kind == Unresolved
@@ -2759,6 +2848,7 @@ class TypedIrLowerer final {
                     .name = stmt.target_name,
                     .type_ref = self.inferred_typed_let_type_ref(stmt, initializer),
                     .initializer = initializer ? self.lower_typed_expr(*initializer) : nullptr,
+                    .adjustment = self.bridge_let_adjustment(stmt),
                 },
                 range);
         }
@@ -3391,6 +3481,8 @@ class TypedIrLowerer final {
                 .name = name,
                 .fields = {},
                 .symbol_ref = symbol_ref_from_decl(decl, "struct declaration"),
+                .type_param_count = static_cast<std::uint32_t>(info.type_param_names.size()),
+                .type_param_variances = ir_variances_of(info.type_param_variances),
             },
             info.declaration_range);
         lowered.fields.reserve(info.fields.size());
@@ -3416,6 +3508,8 @@ class TypedIrLowerer final {
                 .name = name,
                 .variants = {},
                 .symbol_ref = symbol_ref_from_decl(decl, "enum declaration"),
+                .type_param_count = static_cast<std::uint32_t>(info.type_param_names.size()),
+                .type_param_variances = ir_variances_of(info.type_param_variances),
             },
             info.declaration_range);
         lowered.variants.reserve(info.variants.size());
@@ -4314,6 +4408,7 @@ void TypedIrLowerer::lower_try_let_expansion(ir::Block &ir_block,
                 .name = stmt.target_name,
                 .type_ref = ir::TypeRef{},
                 .initializer = nullptr,
+                .adjustment = std::nullopt,
             },
             stmt.range));
         return;
@@ -4354,6 +4449,7 @@ void TypedIrLowerer::lower_try_let_expansion(ir::Block &ir_block,
             .type_ref = operand_type != nullptr ? type_ref_from_type(*operand_type)
                                                 : ir::TypeRef{},
             .initializer = lowered_operand,
+            .adjustment = std::nullopt,
         },
         stmt.range));
 
@@ -4444,6 +4540,7 @@ void TypedIrLowerer::lower_try_let_expansion(ir::Block &ir_block,
                     .fallback_none_message = nullptr,
                 },
                 stmt.range),
+            .adjustment = std::nullopt,
         },
         stmt.range));
 }

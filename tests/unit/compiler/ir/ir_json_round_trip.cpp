@@ -73,6 +73,100 @@ TEST_CASE("IR JSON deserializer rejects malformed input") {
     CHECK_FALSE(ahfl::parse_program_ir_json("[]").has_value()); // not an object
 }
 
+// RFC 0026 P4 (coercion) F1: a NON-EMPTY LetStatement adjustment plan must
+// round-trip through IR JSON byte-for-byte (a public IR field must never
+// silent-drop, even while the plan is inert with no producer). Builds a program
+// with a `let` carrying a compositional plan (a List<Int(0,0)>(4) -> List<Int>(8)
+// shape: one root node with CapacityWiden + TypeArg{0} whose child is IntWiden),
+// prints it, parses it back, prints again, and asserts the two texts match.
+TEST_CASE("IR JSON round-trips a non-empty LetStatement adjustment plan") {
+    using namespace ahfl::ir;
+
+    const auto int_type = [](std::optional<std::pair<std::int64_t, std::int64_t>> bounds) {
+        TypeRef t;
+        t.kind = bounds.has_value() ? TypeRefKind::BoundedInt : TypeRefKind::Int;
+        t.int_bounds = bounds;
+        return t;
+    };
+    const auto list_of = [](TypeRef elem, std::optional<std::uint64_t> cap) {
+        TypeRef t;
+        t.kind = TypeRefKind::Struct;
+        t.canonical_name = "std::collections::List";
+        t.nominal_ref = SymbolRef{.kind = SymbolRefKind::Type,
+                                  .canonical_name = "std::collections::List"};
+        t.collection_capacity = cap;
+        t.params.push_back(std::make_unique<TypeRef>(std::move(elem)));
+        return t;
+    };
+
+    // Program with a flow whose single handler binds `let xs: List<Int>(8) = <...>`
+    // carrying the compositional adjustment plan.
+    Program program;
+    ExprRef init = program.expr_arena.make(IntegerLiteralExpr{"0"});
+
+    AdjustmentPlan plan;
+    plan.source = list_of(int_type(std::pair<std::int64_t, std::int64_t>{0, 0}), std::uint64_t{4});
+    plan.target = list_of(int_type(std::nullopt), std::uint64_t{8});
+    plan.root = 0;
+    // node 0: the List boundary, ops = [CapacityWiden, TypeArg{0 -> child node 1}]
+    AdjustmentNode root_node;
+    root_node.source = list_of(int_type(std::pair<std::int64_t, std::int64_t>{0, 0}), std::uint64_t{4});
+    root_node.target = list_of(int_type(std::nullopt), std::uint64_t{8});
+    root_node.ops.push_back(AdjustmentOp{.kind = AdjustmentOpKind::CapacityWiden});
+    root_node.ops.push_back(AdjustmentOp{.kind = AdjustmentOpKind::TypeArg, .arg_index = 0, .child = 1});
+    // node 1: the element IntWiden Int(0,0) -> Int
+    AdjustmentNode elem_node;
+    elem_node.source = int_type(std::pair<std::int64_t, std::int64_t>{0, 0});
+    elem_node.target = int_type(std::nullopt);
+    elem_node.ops.push_back(AdjustmentOp{.kind = AdjustmentOpKind::IntWiden});
+    plan.nodes.push_back(std::move(root_node));
+    plan.nodes.push_back(std::move(elem_node));
+
+    LetStatement let;
+    let.name = "xs";
+    let.type_ref = list_of(int_type(std::nullopt), std::uint64_t{8});
+    let.initializer = init;
+    let.adjustment = std::move(plan);
+
+    auto stmt = std::make_unique<Statement>();
+    stmt->node = std::move(let);
+    StateHandler handler;
+    handler.state_name = "S";
+    handler.body.statements.push_back(std::move(stmt));
+    FlowDecl flow;
+    flow.target_ref.kind = SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    std::ostringstream first;
+    ahfl::print_program_ir_json(program, first);
+    const auto reparsed = ahfl::parse_program_ir_json(first.str());
+    REQUIRE(reparsed.has_value());
+
+    // The reparsed let carries the full compositional plan (proving the public
+    // IR adjustment field is not silently dropped on read/write). Byte-exact
+    // whole-program idempotence is covered by the golden round-trip test above;
+    // this hand-built program only pins the adjustment-plan fidelity.
+    REQUIRE(reparsed->declarations.size() == 1);
+    const auto *flow_out = std::get_if<FlowDecl>(&reparsed->declarations[0]);
+    REQUIRE(flow_out != nullptr);
+    REQUIRE(flow_out->state_handlers.size() == 1);
+    REQUIRE(flow_out->state_handlers[0].body.statements.size() == 1);
+    const auto *let_out =
+        std::get_if<LetStatement>(&flow_out->state_handlers[0].body.statements[0]->node);
+    REQUIRE(let_out != nullptr);
+    REQUIRE(let_out->adjustment.has_value());
+    CHECK(let_out->adjustment->nodes.size() == 2);
+    CHECK(let_out->adjustment->root == 0);
+    REQUIRE(let_out->adjustment->nodes[0].ops.size() == 2);
+    CHECK(let_out->adjustment->nodes[0].ops[0].kind == AdjustmentOpKind::CapacityWiden);
+    CHECK(let_out->adjustment->nodes[0].ops[1].kind == AdjustmentOpKind::TypeArg);
+    CHECK(let_out->adjustment->nodes[0].ops[1].child == 1);
+    REQUIRE(let_out->adjustment->nodes[1].ops.size() == 1);
+    CHECK(let_out->adjustment->nodes[1].ops[0].kind == AdjustmentOpKind::IntWiden);
+}
+
 namespace {
 
 // A deliberately field-complete TypeRef: a bounded generic collection

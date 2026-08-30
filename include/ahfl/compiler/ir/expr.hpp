@@ -479,11 +479,50 @@ struct Block {
     SourceRangeOpt source_range;
 };
 
+/// RFC 0026 P4 (coercion): AHFL-IR mirror of the Sema `TypedAdjustmentPlan`.
+/// Carries the canonical compositional type-adjustment witness for an annotated
+/// `let x: T = e` (A <: T) across the Typed HIR -> AHFL-IR boundary so the Core
+/// layer never re-derives subtyping. Types are `TypeRef` (with nominal_ref
+/// identity); the node arena is flat and index-referenced. See
+/// `ahfl::TypedAdjustmentPlan` for the full contract.
+enum class AdjustmentOpKind {
+    IntWiden,
+    StringWiden,
+    CapacityWiden,
+    TypeArg,
+    FnParam,
+    FnReturn,
+    VariantToEnum,
+};
+
+struct AdjustmentOp {
+    AdjustmentOpKind kind{AdjustmentOpKind::IntWiden};
+    std::uint32_t arg_index{0};       // TypeArg / FnParam projection position
+    std::uint32_t child{0xFFFFFFFFu}; // index into AdjustmentPlan::nodes; 0xFFFFFFFF = leaf
+};
+
+struct AdjustmentNode {
+    TypeRef source;
+    TypeRef target;
+    std::vector<AdjustmentOp> ops;
+};
+
+struct AdjustmentPlan {
+    TypeRef source;
+    TypeRef target;
+    std::vector<AdjustmentNode> nodes; // flat arena, index-referenced
+    std::uint32_t root{0};             // index into `nodes` of the root node
+};
+
 /// let binding statement: let name: Type = initializer;
 struct LetStatement {
     std::string name;    // Variable name
     TypeRef type_ref;    // Bound type
     ExprRef initializer; // Initializer expression
+    // RFC 0026 P4 (coercion): canonical adjustment plan when the declared type
+    // differs from the initializer's actual type (A <: T). nullopt for an exact
+    // / inferred let (boundary types identical).
+    std::optional<AdjustmentPlan> adjustment;
 };
 
 /// Assignment statement: target = value;

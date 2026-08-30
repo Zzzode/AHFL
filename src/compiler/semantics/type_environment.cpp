@@ -658,6 +658,25 @@ void TypeEnvironment::mark_agent_context_struct(SymbolId id) {
     agent_context_struct_ids_.insert(id.value);
 }
 
+void TypeEnvironment::materialize_nominal_variances(
+    const std::function<std::vector<Variance>(std::string_view)> &infer) {
+    // RFC 0026 P4 (coercion): run the variance inference once per generic
+    // nominal and stamp the result into its type info. Idempotent: skip a
+    // nominal whose variance is already materialized (or that is monomorphic).
+    for (auto &[id, info] : structs_) {
+        if (info.type_param_names.empty() || !info.type_param_variances.empty()) {
+            continue;
+        }
+        info.type_param_variances = infer(info.canonical_name);
+    }
+    for (auto &[id, info] : enums_) {
+        if (info.type_param_names.empty() || !info.type_param_variances.empty()) {
+            continue;
+        }
+        info.type_param_variances = infer(info.canonical_name);
+    }
+}
+
 void dump_type_environment(const TypeEnvironment &environment,
                            const SymbolTable &symbols,
                            std::ostream &out) {

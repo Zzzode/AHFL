@@ -3289,6 +3289,7 @@ TEST_CASE("RFC 0011 monomorphization remaps statement pattern indexes") {
         .assert_message = {},
         .assertion_kind = ahfl::AssertionKind::None,
         .pattern_index = 1,
+        .let_adjustment = std::nullopt,
     });
 
     const auto result = ahfl::monomorphize_decl(

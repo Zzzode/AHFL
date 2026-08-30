@@ -82,6 +82,37 @@ template <typename E> [[nodiscard]] std::unique_ptr<Json> j_optional_enum(std::o
     return array;
 }
 
+// RFC 0026 P4 (coercion): declaration-order variance vector serialization.
+[[nodiscard]] std::string_view variance_name(Variance v) noexcept {
+    switch (v) {
+    case Variance::Invariant:
+        return "invariant";
+    case Variance::Covariant:
+        return "covariant";
+    case Variance::Contravariant:
+        return "contravariant";
+    }
+    return "invariant";
+}
+
+[[nodiscard]] Variance variance_from_name(std::string_view name) noexcept {
+    if (name == "covariant") {
+        return Variance::Covariant;
+    }
+    if (name == "contravariant") {
+        return Variance::Contravariant;
+    }
+    return Variance::Invariant;
+}
+
+[[nodiscard]] std::unique_ptr<Json> j_variance_array(const std::vector<Variance> &values) {
+    auto array = Json::make_array();
+    for (const auto value : values) {
+        array->push(Json::make_string(std::string(variance_name(value))));
+    }
+    return array;
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_range_array(const std::vector<SourceRange> &values) {
     auto array = Json::make_array();
     for (const auto value : values) {
@@ -392,6 +423,7 @@ enum_variant_payload_kind_from_name(std::string_view name) {
         value->set("symbol", j_symbol_id(info->symbol));
         value->set("canonical_name", Json::make_string(info->canonical_name));
         value->set("type_param_names", j_string_array(info->type_param_names));
+        value->set("type_param_variances", j_variance_array(info->type_param_variances));
         auto fields = Json::make_array();
         for (const auto &field : info->fields) {
             fields->push(j_struct_field(field));
@@ -409,6 +441,7 @@ enum_variant_payload_kind_from_name(std::string_view name) {
         value->set("symbol", j_symbol_id(info->symbol));
         value->set("canonical_name", Json::make_string(info->canonical_name));
         value->set("type_param_names", j_string_array(info->type_param_names));
+        value->set("type_param_variances", j_variance_array(info->type_param_variances));
         auto variants = Json::make_array();
         for (const auto &variant : info->variants) {
             auto variant_json = Json::make_object();
@@ -958,6 +991,51 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     return object;
 }
 
+[[nodiscard]] std::string_view adjustment_op_kind_name(TypedAdjustmentOpKind k) noexcept {
+    switch (k) {
+    case TypedAdjustmentOpKind::IntWiden:
+        return "int_widen";
+    case TypedAdjustmentOpKind::StringWiden:
+        return "string_widen";
+    case TypedAdjustmentOpKind::CapacityWiden:
+        return "capacity_widen";
+    case TypedAdjustmentOpKind::TypeArg:
+        return "type_arg";
+    case TypedAdjustmentOpKind::FnParam:
+        return "fn_param";
+    case TypedAdjustmentOpKind::FnReturn:
+        return "fn_return";
+    case TypedAdjustmentOpKind::VariantToEnum:
+        return "variant_to_enum";
+    }
+    return "int_widen";
+}
+
+[[nodiscard]] std::unique_ptr<Json> j_adjustment_plan(const TypedAdjustmentPlan &plan) {
+    auto object = Json::make_object();
+    object->set("source", j_type(plan.source));
+    object->set("target", j_type(plan.target));
+    object->set("root", j_int(plan.root));
+    auto nodes = Json::make_array();
+    for (const auto &node : plan.nodes) {
+        auto node_json = Json::make_object();
+        node_json->set("source", j_type(node.source));
+        node_json->set("target", j_type(node.target));
+        auto ops = Json::make_array();
+        for (const auto &op : node.ops) {
+            auto op_json = Json::make_object();
+            op_json->set("kind", Json::make_string(std::string(adjustment_op_kind_name(op.kind))));
+            op_json->set("arg_index", j_int(op.arg_index));
+            op_json->set("child", j_int(op.child));
+            ops->push(std::move(op_json));
+        }
+        node_json->set("ops", std::move(ops));
+        nodes->push(std::move(node_json));
+    }
+    object->set("nodes", std::move(nodes));
+    return object;
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_statement(const TypedStatement &stmt) {
     auto object = Json::make_object();
     object->set("kind", j_enum(stmt.kind));
@@ -979,6 +1057,11 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     object->set("failure_kind", Json::make_string(to_string(stmt.assertion_kind)));
     object->set("assertion_kind", j_enum(static_cast<int>(stmt.assertion_kind)));
     object->set("pattern_index", j_int(stmt.pattern_index));
+    if (stmt.let_adjustment.has_value()) {
+        object->set("let_adjustment", j_adjustment_plan(*stmt.let_adjustment));
+    } else {
+        object->set("let_adjustment", Json::make_null());
+    }
     return object;
 }
 
@@ -1414,6 +1497,75 @@ class Reader {
     };
 }
 
+// RFC 0026 P4 (coercion): read a declaration-order variance vector (absent /
+// legacy = empty; unknown string = Invariant).
+[[nodiscard]] std::vector<Variance>
+read_variance_array(Reader &reader, const Json &object, std::string_view key) {
+    std::vector<Variance> values;
+    const auto *array = reader.field(object, key);
+    if (array == nullptr || array->kind != json::Kind::Array) {
+        return values;
+    }
+    values.reserve(array->array_items.size());
+    for (const auto &item : array->array_items) {
+        const auto text = item->as_string();
+        values.push_back(text.has_value() ? variance_from_name(*text) : Variance::Invariant);
+    }
+    return values;
+}
+
+// RFC 0026 P4 (coercion): mirror of j_adjustment_plan.
+[[nodiscard]] TypedAdjustmentOpKind adjustment_op_kind_from_name(std::string_view name) noexcept {
+    if (name == "string_widen") {
+        return TypedAdjustmentOpKind::StringWiden;
+    }
+    if (name == "capacity_widen") {
+        return TypedAdjustmentOpKind::CapacityWiden;
+    }
+    if (name == "type_arg") {
+        return TypedAdjustmentOpKind::TypeArg;
+    }
+    if (name == "fn_param") {
+        return TypedAdjustmentOpKind::FnParam;
+    }
+    if (name == "fn_return") {
+        return TypedAdjustmentOpKind::FnReturn;
+    }
+    if (name == "variant_to_enum") {
+        return TypedAdjustmentOpKind::VariantToEnum;
+    }
+    return TypedAdjustmentOpKind::IntWiden;
+}
+
+[[nodiscard]] TypedAdjustmentPlan read_adjustment_plan(Reader &reader, const Json &object) {
+    TypedAdjustmentPlan plan;
+    plan.source = reader.type_field(object, "source");
+    plan.target = reader.type_field(object, "target");
+    plan.root = reader.u32_field(object, "root");
+    const auto *nodes = reader.field(object, "nodes");
+    if (nodes != nullptr && nodes->kind == json::Kind::Array) {
+        plan.nodes.reserve(nodes->array_items.size());
+        for (const auto &node_item : nodes->array_items) {
+            TypedAdjustmentNode node;
+            node.source = reader.type_field(*node_item, "source");
+            node.target = reader.type_field(*node_item, "target");
+            const auto *ops = reader.field(*node_item, "ops");
+            if (ops != nullptr && ops->kind == json::Kind::Array) {
+                node.ops.reserve(ops->array_items.size());
+                for (const auto &op_item : ops->array_items) {
+                    TypedAdjustmentOp op;
+                    op.kind = adjustment_op_kind_from_name(reader.string_field(*op_item, "kind"));
+                    op.arg_index = reader.u32_field(*op_item, "arg_index");
+                    op.child = reader.u32_field(*op_item, "child");
+                    node.ops.push_back(op);
+                }
+            }
+            plan.nodes.push_back(std::move(node));
+        }
+    }
+    return plan;
+}
+
 [[nodiscard]] std::vector<StructFieldInfo>
 read_struct_fields(Reader &reader, const Json &object, std::string_view key) {
     std::vector<StructFieldInfo> values;
@@ -1533,6 +1685,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .type_param_names = value->get("type_param_names") == nullptr
                                     ? std::vector<std::string>{}
                                     : reader.string_array_field(*value, "type_param_names"),
+            .type_param_variances = read_variance_array(reader, *value, "type_param_variances"),
             .fields = read_struct_fields(reader, *value, "fields"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
             .field_index_ = {},
@@ -1548,6 +1701,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .type_param_names = value->get("type_param_names") == nullptr
                                     ? std::vector<std::string>{}
                                     : reader.string_array_field(*value, "type_param_names"),
+            .type_param_variances = read_variance_array(reader, *value, "type_param_variances"),
             .variants = {},
             .declaration_range = reader.range_field(*value, "declaration_range"),
             .variant_set_ = {},
@@ -2263,6 +2417,14 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 ? static_cast<AssertionKind>(reader.int_field(object, "assertion_kind"))
                 : parse_assertion_kind(reader.string_field(object, "failure_kind")),
         .pattern_index = reader.optional_u32_field(object, "pattern_index", UINT32_MAX),
+        .let_adjustment =
+            [&]() -> std::optional<TypedAdjustmentPlan> {
+                const auto *plan = reader.field(object, "let_adjustment");
+                if (plan == nullptr || plan->kind != json::Kind::Object) {
+                    return std::nullopt;
+                }
+                return read_adjustment_plan(reader, *plan);
+            }(),
     };
 }
 
