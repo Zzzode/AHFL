@@ -521,11 +521,17 @@ Implementation Plan 对应分片承载。
   ir 277/277(1996 assertions)、P4-D focused 8/8(94)、ir_equal 9、ir_json 12、ir_opt 16 绿。
   **P4-D 闭合,KR6.5 WASM codegen 解锁**;KR6.4 值表示/内存布局收尾。
 - 2026-08-31: **KR6.5(P5)WASM 编排 codegen 首片 E1 设计(commit `5c8613f5`,docs only)**。
-  新增 `docs/design/core-ir-kr6-5-wasm-codegen.zh.md`(DRAFT rev1)。E1 是**最小可执行 vertical
+  新增 `docs/design/core-ir-kr6-5-wasm-codegen.zh.md`(rev2,commit `43918af8`;rev1 `5c8613f5` 的
+  "empty final handler" 前提被真实 frontend 否定——grammar 要求 `return expr`、validation 要求
+  final handler 必须 return-on-all-paths,故空 final 不可构造)。E1 是**最小可执行 vertical
   slice**:编排结构真跑、表达式计算不 lower(严守 P5/P6 层界——RFC:280-282,P5=编排层不含复杂
   表达式,P6=表达式/算术/控制流/match/闭包)。E1 只收单 agent + 单 flow、非 final handler 恰一个
-  `CoreGotoStmt`、final handler 空、goto 图全覆盖且必达 final;expr/let/return/if/match/cap/
-  workflow 全部 `wasm.UNSUPPORTED_ORCHESTRATION`(连 literal/identity 都不 lower,不偷做 P6)。
+  `CoreGotoStmt`、final handler = **canonical opaque identity return**(精确 ANF
+  `CoreLetStmt(CorePathExpr{root=Input, projection=[]})` + `CoreReturnStmt` 同一 SSA、
+  input_type==output_type、逐位 CoreValueTypeId 相等)、goto 图全覆盖且必达 final;
+  expr/非-identity let/非-canonical return/if/match/cap/workflow + member-projection/literal/
+  construct/coerce/output-type-mismatch 全部 `wasm.UNSUPPORTED_ORCHESTRATION`(identity 是结构识别
+  + opaque 指针透传,非 Core 值求值,不偷做 P6)。
   纯函数 `emit_core_wasm(const CoreProgram&, const CoreLayoutTable&, target)`;Core + layout 双
   verifier 前置;**P4-D 是唯一 layout 权威**(codegen 零自算 size/offset/align);in-tree canonical
   wasm binary encoder(不经 WAT/wat2wasm,fixed index 表 + canonical LEB128 + 无 names section →
@@ -534,8 +540,10 @@ Implementation Plan 对应分片承载。
   无 Core evaluator(新增会违背 RFC 0026 删引擎目标),故同一 checked frontend 分叉——旧
   AgentRuntime/evaluator vs AHFL→Core→layout→wasm,`wasmtime --invoke step` 比 final CoreStateId;
   transition_count exact-increment 由 always-on binary/structural probe 锁,跨 instance 完整 trace
-  留后续 embedded-host harness(不虚报 CLI 可观测)。**ABI 不偷改**:E1 无 output frame、返 null ptr,
-  RFC0019(ptr)vs RFC0021(ptr+len)张力显式记录、值返回的 `run2` 类方案留独立评审。wasmtime
+  留后续 embedded-host harness(不虚报 CLI 可观测)。**ABI 不偷改**:E1 `run` 返 input ptr 不变(纯
+  透传,无 load/store/parse/copy/alloc),output aliases input、len==in_len、host 拥有并只 dealloc 一次;
+  该 identity alias 是 E1 唯一窄例外、非通用先例,RFC0019(ptr)vs RFC0021(ptr+len)张力显式记录、
+  值返回的 `run2` 类方案留独立评审、不 pre-approve。wasmtime
   optional-gated(P-6A provenance:无工具 exit 77 visible SKIP、显式失败 hard FAIL);无 non-skipped
   evidence 不宣称 KR6.5 execution-proven。诊断码 `wasm.{INVALID_CORE,INVALID_LAYOUT,
   UNSUPPORTED_TARGET,ENTRY_AMBIGUOUS,UNSUPPORTED_ORCHESTRATION,NONTERMINATING_E1_RUN,
