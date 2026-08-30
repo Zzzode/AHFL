@@ -1281,6 +1281,13 @@ struct CoreTypeDecl {
     /// typed enum, never by parsing `name`. Filled from the builtin nominal
     /// descriptor SSOT.
     CoreNominalRole role{CoreNominalRole::Ordinary};
+    /// Resolved-symbol provenance of this nominal (RFC 0026 P4 / Principle 2): the
+    /// SymbolRef the decl was registered under, so value-type lowering can resolve
+    /// a `nominal_ref` to this CoreTypeId by SYMBOL ID first (not canonical
+    /// string), matching the production TypeEnv id-first path. A synthetic std
+    /// base that has no user declaration carries a name-only ref (kind=Type,
+    /// canonical set, id absent).
+    ir::SymbolRef symbol_ref{};
     [[nodiscard]] friend bool operator==(const CoreTypeDecl &,
                                          const CoreTypeDecl &) noexcept = default;
 };

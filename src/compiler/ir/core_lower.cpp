@@ -280,8 +280,6 @@ class TypeEnv {
             CoreTypeDecl t;
             t.kind = b.kind;
             t.name = canonical;
-            t.role = b.role;
-            t.type_param_count = b.type_param_count;
             for (const BuiltinEnumDescriptor::Variant &v : b.variants) {
                 t.variants.emplace_back(v.name);
                 CoreTypeDecl::VariantPayload payload;
@@ -289,9 +287,13 @@ class TypeEnv {
                 payload.slot_types.assign(v.payload_arity, CoreTypeId{});
                 t.variant_payloads.push_back(std::move(payload));
             }
-            const auto id = CoreTypeId{static_cast<std::uint32_t>(types_.size())};
-            by_name_.emplace(canonical, id);
-            types_.push_back(std::move(t));
+            // Synthetic std base: a NAME-ONLY resolved-Type ref (no symbol id; the
+            // sysroot decl is not inlined). register_type stamps role + arity from
+            // the same SSOT via decorate_from_builtin_ssot.
+            SymbolRef name_only;
+            name_only.kind = SymbolRefKind::Type;
+            name_only.canonical_name = canonical;
+            (void)register_type(std::move(t), name_only);
         }
     }
 
@@ -480,8 +482,31 @@ class TypeEnv {
         if (!t.name.empty()) {
             by_name_.emplace(t.name, id);
         }
+        t.symbol_ref = ref; // Principle 2: persist resolved-symbol provenance.
+        // Decorate role + generic arity from the single builtin nominal SSOT when
+        // this real declaration IS a well-known stdlib generic (Codex P0-2): a
+        // real std Option/Result/List/Set/Map declaration (include_stdlib / inlined
+        // / deserialized) MUST get the same role/arity as the synthetic base, or a
+        // legal `Option<Int>` would be rejected as "expects 0 args".
+        decorate_from_builtin_ssot(t);
         types_.push_back(std::move(t));
         return id;
+    }
+
+    // If `t.name` matches a builtin nominal descriptor, stamp its role +
+    // type_param_count from that single SSOT (verifying the Struct/Enum kind
+    // agrees — a real decl whose kind disagrees with the SSOT is a structural
+    // contradiction the verifier will separately reject). A non-std nominal is
+    // left as role=Ordinary / arity=0.
+    static void decorate_from_builtin_ssot(CoreTypeDecl &t) {
+        for (const BuiltinNominalDescriptor &d : builtin_nominal_table()) {
+            if (t.name != d.canonical_name) {
+                continue;
+            }
+            t.role = d.role;
+            t.type_param_count = d.type_param_count;
+            return;
+        }
     }
     /// Canonical nominal name of a struct/enum TypeRef, else empty (primitive,
     /// collection, fn, unresolved — none of which support field projection here).
@@ -548,25 +573,28 @@ class ValueTypeArena {
             // (Codex invariant 1). lower_value_type in this consumer fails closed.
             return fail("`Never` cannot be a materialized value type");
         case TypeRefKind::Unit:
-            return no_children_or_fail(type, CoreVtUnit{}, error_reason);
+            return lower_atom(type, CoreVtUnit{}, error_reason);
         case TypeRefKind::Bool:
-            return no_children_or_fail(type, CoreVtBool{}, error_reason);
+            return lower_atom(type, CoreVtBool{}, error_reason);
         case TypeRefKind::Float:
-            return no_children_or_fail(type, CoreVtFloat{}, error_reason);
+            return lower_atom(type, CoreVtFloat{}, error_reason);
         case TypeRefKind::UUID:
-            return no_children_or_fail(type, CoreVtUuid{}, error_reason);
+            return lower_atom(type, CoreVtUuid{}, error_reason);
         case TypeRefKind::Timestamp:
-            return no_children_or_fail(type, CoreVtTimestamp{}, error_reason);
+            return lower_atom(type, CoreVtTimestamp{}, error_reason);
         case TypeRefKind::Duration:
-            return no_children_or_fail(type, CoreVtDuration{}, error_reason);
+            return lower_atom(type, CoreVtDuration{}, error_reason);
         case TypeRefKind::Int:
-            if (has_children(type)) {
-                return fail("`Int` carries stray structural children");
+            if (!fields_within(type, FieldMask{}, error_reason)) {
+                return std::nullopt;
             }
             return intern(CoreVtInt{}, error_reason);
         case TypeRefKind::BoundedInt: {
-            if (has_children(type) || !type.int_bounds.has_value()) {
-                return fail("malformed `BoundedInt` (missing bounds or stray children)");
+            if (!fields_within(type, FieldMask{.int_bounds = true}, error_reason)) {
+                return std::nullopt;
+            }
+            if (!type.int_bounds.has_value()) {
+                return fail("`BoundedInt` is missing its bounds");
             }
             if (type.int_bounds->first > type.int_bounds->second) {
                 return fail("`BoundedInt` has min > max");
@@ -574,13 +602,16 @@ class ValueTypeArena {
             return intern(CoreVtInt{type.int_bounds}, error_reason);
         }
         case TypeRefKind::String:
-            if (has_children(type)) {
-                return fail("`String` carries stray structural children");
+            if (!fields_within(type, FieldMask{}, error_reason)) {
+                return std::nullopt;
             }
             return intern(CoreVtString{}, error_reason);
         case TypeRefKind::BoundedString: {
-            if (has_children(type) || !type.string_bounds.has_value()) {
-                return fail("malformed `BoundedString` (missing bounds or stray children)");
+            if (!fields_within(type, FieldMask{.string_bounds = true}, error_reason)) {
+                return std::nullopt;
+            }
+            if (!type.string_bounds.has_value()) {
+                return fail("`BoundedString` is missing its length bounds");
             }
             const auto [lo, hi] = *type.string_bounds;
             if (lo < 0 || hi < 0 || lo > hi) {
@@ -589,8 +620,11 @@ class ValueTypeArena {
             return intern(CoreVtString{type.string_bounds}, error_reason);
         }
         case TypeRefKind::Decimal:
-            if (has_children(type) || !type.decimal_scale.has_value()) {
-                return fail("malformed `Decimal` (missing scale or stray children)");
+            if (!fields_within(type, FieldMask{.decimal_scale = true}, error_reason)) {
+                return std::nullopt;
+            }
+            if (!type.decimal_scale.has_value()) {
+                return fail("`Decimal` is missing its scale");
             }
             return intern(CoreVtDecimal{*type.decimal_scale}, error_reason);
         case TypeRefKind::Fn:
@@ -689,16 +723,63 @@ class ValueTypeArena {
         return std::nullopt;
     }
 
-    // Atoms with no structural children, no refinement payload, and no nominal
-    // identity. Rejects a stray nominal_ref / children (BackendReady contract).
-    template <typename Node>
-    [[nodiscard]] std::optional<CoreValueTypeId>
-    no_children_or_fail(const TypeRef &type, Node node, std::string *error_reason) {
-        if (has_children(type)) {
-            return set_reason(error_reason, "primitive/unit type carries stray structural children");
+    // Which OPTIONAL/structural fields a given TypeRef kind is allowed to carry.
+    // Every field not named here must be empty, or the input is a malformed
+    // TypeRef and lowering fails closed (Codex P0-1: no silent field drop, no
+    // fail-open normalization). `canonical_name`/`display_name` are display-only
+    // and permitted on any kind (they never enter value-type identity); the
+    // structural fields below are the ones that would silently vanish.
+    struct FieldMask {
+        bool int_bounds{false};
+        bool string_bounds{false};
+        bool decimal_scale{false};
+        bool collection_capacity{false};
+        bool nominal_ref{false};
+        bool variant_name{false};
+        bool first{false};
+        bool second{false};
+        bool params{false};
+    };
+
+    // Reject any structural field present but not allowed by `mask`. Returns true
+    // if the shape is clean; on violation sets the reason and returns false.
+    [[nodiscard]] bool fields_within(const TypeRef &type, const FieldMask &mask,
+                                     std::string *error_reason) {
+        const char *bad = nullptr;
+        if (type.int_bounds.has_value() && !mask.int_bounds) {
+            bad = "int_bounds";
+        } else if (type.string_bounds.has_value() && !mask.string_bounds) {
+            bad = "string_bounds";
+        } else if (type.decimal_scale.has_value() && !mask.decimal_scale) {
+            bad = "decimal_scale";
+        } else if (type.collection_capacity.has_value() && !mask.collection_capacity) {
+            bad = "collection_capacity";
+        } else if (type.nominal_ref.kind != ir::SymbolRefKind::Unknown && !mask.nominal_ref) {
+            bad = "nominal_ref";
+        } else if (!type.variant_name.empty() && !mask.variant_name) {
+            bad = "variant_name";
+        } else if (type.first != nullptr && !mask.first) {
+            bad = "first";
+        } else if (type.second != nullptr && !mask.second) {
+            bad = "second";
+        } else if (!type.params.empty() && !mask.params) {
+            bad = "params/type_args";
         }
-        if (type.nominal_ref.kind != ir::SymbolRefKind::Unknown) {
-            return set_reason(error_reason, "primitive/unit type carries a stray nominal identity");
+        if (bad != nullptr) {
+            set_reason(error_reason,
+                       "type of kind " + std::to_string(static_cast<int>(type.kind)) +
+                           " carries a stray '" + bad + "' field");
+            return false;
+        }
+        return true;
+    }
+
+    // A bare atom (Unit/Bool/Float/UUID/Timestamp/Duration): no field at all.
+    template <typename Node>
+    [[nodiscard]] std::optional<CoreValueTypeId> lower_atom(const TypeRef &type, Node node,
+                                                            std::string *error_reason) {
+        if (!fields_within(type, FieldMask{}, error_reason)) {
+            return std::nullopt;
         }
         return intern(std::move(node), error_reason);
     }
@@ -707,11 +788,13 @@ class ValueTypeArena {
     // encoding SSOT), `second` must be empty. Effect is erased by construction.
     [[nodiscard]] std::optional<CoreValueTypeId> lower_fn(const TypeRef &type,
                                                           std::string *error_reason) {
+        // Fn carries only its return (`first`) and parameters (`params`); any
+        // refinement / nominal / variant field is a malformed shape.
+        if (!fields_within(type, FieldMask{.first = true, .params = true}, error_reason)) {
+            return std::nullopt;
+        }
         if (type.first == nullptr) {
             return set_reason(error_reason, "`Fn` is missing its return type");
-        }
-        if (type.second != nullptr) {
-            return set_reason(error_reason, "`Fn` carries a stray `second` child");
         }
         std::vector<CoreValueTypeId> params;
         params.reserve(type.params.size());
@@ -732,18 +815,34 @@ class ValueTypeArena {
         return intern(CoreVtFn{std::move(params), *ret}, error_reason);
     }
 
-    // Struct/Enum -> CoreVtNominal. An `Enum` TypeRef carrying a non-empty
-    // variant_name (EnumVariant encoding) NORMALIZES to its parent enum — the
-    // variant name does NOT enter the value-type identity. Resolves the nominal
-    // base by the id-first nominal_ref bridge (Principle 2), arity + capacity
-    // legality validated here (capacity via the shared `capacity_allowed` SSOT).
+    // Struct/Enum -> CoreVtNominal. A nominal carries only its resolved
+    // `nominal_ref`, generic args (`params`), an optional `collection_capacity`,
+    // and — for the EnumVariant encoding — a `variant_name` that NORMALIZES to the
+    // parent enum (the variant name does NOT enter value-type identity). Locks the
+    // full nominal identity (Codex P0-1): nominal_ref.kind==Type; tri-canonical
+    // agreement (TypeRef canonical == nominal_ref canonical == CoreTypeDecl.name);
+    // and Struct<->Struct / Enum<->Enum tag consistency.
     [[nodiscard]] std::optional<CoreValueTypeId> lower_nominal(const TypeRef &type,
                                                                std::string *error_reason) {
-        if (type.first != nullptr || type.second != nullptr) {
-            return set_reason(error_reason, "nominal type carries stray first/second children");
+        const bool is_variant_encoding =
+            type.kind == TypeRefKind::Enum && !type.variant_name.empty();
+        FieldMask mask{.collection_capacity = true, .nominal_ref = true, .params = true};
+        mask.variant_name = is_variant_encoding; // only an Enum may carry a variant name
+        if (!fields_within(type, mask, error_reason)) {
+            return std::nullopt;
         }
-        if (type.nominal_ref.kind == ir::SymbolRefKind::Unknown) {
-            return set_reason(error_reason, "nominal type is missing its resolved nominal identity");
+        if (type.nominal_ref.kind != ir::SymbolRefKind::Type) {
+            return set_reason(error_reason,
+                              "nominal type's resolved identity is missing or not a Type symbol");
+        }
+        // Tri-canonical agreement: the display canonical, the resolved-symbol
+        // canonical, and the resolved CoreTypeDecl name must all match, so a
+        // nominal cannot smuggle a mismatched identity past the bridge.
+        if (!type.canonical_name.empty() &&
+            type.canonical_name != type.nominal_ref.canonical_name) {
+            return set_reason(error_reason, "nominal type canonical '" + type.canonical_name +
+                                                "' disagrees with its resolved identity '" +
+                                                type.nominal_ref.canonical_name + "'");
         }
         const auto base = resolve_(type.nominal_ref);
         if (!base) {
@@ -754,6 +853,23 @@ class ValueTypeArena {
             return set_reason(error_reason, "resolved nominal base id is out of range");
         }
         const CoreTypeDecl &decl = types_[base->value];
+        if (!type.nominal_ref.canonical_name.empty() &&
+            type.nominal_ref.canonical_name != decl.name) {
+            return set_reason(error_reason, "nominal identity '" + type.nominal_ref.canonical_name +
+                                                "' resolves to a Core type named '" + decl.name +
+                                                "'");
+        }
+        // Struct<->Struct / Enum<->Enum tag consistency (an EnumVariant encoding is
+        // still an Enum tag). A Struct TypeRef resolving to an Enum decl (or vice
+        // versa) is a malformed cross-kind reference.
+        const bool tag_ok = decl.kind == CoreTypeDecl::Kind::Struct
+                                ? type.kind == TypeRefKind::Struct
+                                : type.kind == TypeRefKind::Enum;
+        if (!tag_ok) {
+            return set_reason(error_reason, "nominal type tag disagrees with the resolved Core "
+                                            "type's Struct/Enum kind for '" +
+                                                decl.name + "'");
+        }
         std::vector<CoreValueTypeId> args;
         args.reserve(type.params.size());
         for (const auto &p : type.params) {
@@ -2737,15 +2853,25 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
 
 std::optional<CoreValueTypeId>
 lower_value_type_into(CoreProgram &program, const ir::TypeRef &type, std::string *reason) {
-    // Resolver over the program's own type table: id-first (the nominal_ref
-    // bridge's resolved symbol id), then canonical name (Principle 2).
+    // Resolver over the program's own type table, ID-FIRST then canonical
+    // (Principle 2), using each CoreTypeDecl's persisted symbol_ref provenance —
+    // the SAME id-first semantics as the production TypeEnv path, so this public
+    // entry point cannot drift into canonical-only resolution.
     auto resolve = [&program](const SymbolRef &ref) -> std::optional<CoreTypeId> {
-        for (std::uint32_t i = 0; i < program.types.size(); ++i) {
-            const CoreTypeDecl &decl = program.types[i];
-            if (ref.canonical_name.empty() || decl.name != ref.canonical_name) {
-                continue;
+        if (ref.id.has_value()) {
+            for (std::uint32_t i = 0; i < program.types.size(); ++i) {
+                const auto &sym = program.types[i].symbol_ref;
+                if (sym.id.has_value() && *sym.id == *ref.id) {
+                    return CoreTypeId{i};
+                }
             }
-            return CoreTypeId{i};
+        }
+        if (!ref.canonical_name.empty()) {
+            for (std::uint32_t i = 0; i < program.types.size(); ++i) {
+                if (program.types[i].name == ref.canonical_name) {
+                    return CoreTypeId{i};
+                }
+            }
         }
         return std::nullopt;
     };

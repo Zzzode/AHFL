@@ -161,6 +161,7 @@ struct SymbolRef {
     std::string local_name{};
     std::string module_name{};
     std::optional<std::size_t> id{}; // Numeric symbol ID for O(1) cross-declaration lookup
+    [[nodiscard]] friend bool operator==(const SymbolRef &, const SymbolRef &) noexcept = default;
 };
 
 /// Resolved or structured type reference.

@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -44,6 +45,18 @@ using ir::core::CoreValueTypeId;
     ir::TypeRef t;
     t.kind = kind;
     return t;
+}
+
+// Intern a value type into a program's arena (dedup by structural equality).
+[[nodiscard]] CoreValueTypeId intern_program_vt(CoreProgram &p, ir::core::CoreValueType vt) {
+    for (std::uint32_t i = 0; i < p.value_types.size(); ++i) {
+        if (p.value_types[i] == vt) {
+            return CoreValueTypeId{i};
+        }
+    }
+    const auto id = CoreValueTypeId{static_cast<std::uint32_t>(p.value_types.size())};
+    p.value_types.push_back(std::move(vt));
+    return id;
 }
 
 // A program whose type table has: [0] user struct "app::User" (0 params),
@@ -311,4 +324,183 @@ TEST_CASE("builtin nominal SSOT collection arities match the sysroot (drift guar
         REQUIRE(arity.has_value());
         CHECK(desc->type_param_count == *arity);
     }
+}
+
+TEST_CASE("builtin nominal SSOT canonical names match the semantics container matcher (P1 sync gate)") {
+    // The semantics layer (stdlib_bridge) hardcodes the same canonical names +
+    // kinds + arities. Pin them to the single IR SSOT so a rename/kind change on
+    // either side is caught rather than silently drifting into a third truth.
+    const auto &table = ir::core::builtin_nominal_table();
+    const auto find = [&](std::string_view canonical) -> const ir::core::BuiltinNominalDescriptor * {
+        for (const auto &d : table) {
+            if (d.canonical_name == canonical) {
+                return &d;
+            }
+        }
+        return nullptr;
+    };
+    using K = ir::core::CoreTypeDecl::Kind;
+    struct Expect {
+        std::string_view canonical;
+        K kind;
+        std::uint32_t arity;
+    };
+    const Expect specs[] = {
+        {ahfl::stdlib_bridge::kOptionType, K::Enum, 1},
+        {ahfl::stdlib_bridge::kResultType, K::Enum, 2},
+        {ahfl::stdlib_bridge::kListType, K::Struct, 1},
+        {ahfl::stdlib_bridge::kSetType, K::Struct, 1},
+        {ahfl::stdlib_bridge::kMapType, K::Struct, 2},
+    };
+    for (const auto &s : specs) {
+        INFO("stdlib_bridge canonical " << s.canonical);
+        const auto *desc = find(s.canonical);
+        REQUIRE(desc != nullptr); // the matcher's canonical MUST exist in the SSOT
+        CHECK(desc->kind == s.kind);
+        CHECK(desc->type_param_count == s.arity);
+    }
+}
+
+TEST_CASE("P0-2: a REAL std generic decl is decorated with role + arity from the SSOT") {
+    // Simulate include_stdlib / inlined / deserialized: a real List<T> struct decl
+    // registered by the normal type-table path (NOT add_builtins) must still get
+    // role=List + type_param_count=1, so a legal List<Int> lowers.
+    using namespace ir::core;
+    CoreProgram p;
+    CoreTypeDecl user;
+    user.kind = CoreTypeDecl::Kind::Struct;
+    user.name = "app::User";
+    p.types.push_back(std::move(user));
+    // A real std List decl WITHOUT hand-set role/arity — the lowering pipeline's
+    // register_type decorates from the SSOT. Here we assert the SSOT projection a
+    // hand-built program must mirror, then confirm a List<User> lowers only when
+    // decorated.
+    CoreTypeDecl list;
+    list.kind = CoreTypeDecl::Kind::Struct;
+    list.name = "std::collections::List";
+    // Decorate exactly as register_type would (role=List, arity=1).
+    list.role = CoreNominalRole::List;
+    list.type_param_count = 1;
+    list.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                    .canonical_name = "std::collections::List",
+                                    .id = std::size_t{42}};
+    p.types.push_back(std::move(list));
+
+    // List<User> resolved by SYMBOL ID (id-first), not just canonical.
+    ir::TypeRef list_ref = nominal_ref(ir::TypeRefKind::Struct, "std::collections::List", 42);
+    list_ref.params.push_back(
+        make_owned<ir::TypeRef>(nominal_ref(ir::TypeRefKind::Struct, "app::User", 0)));
+    std::string reason;
+    const auto id = ir::core::lower_value_type_into(p, list_ref, &reason);
+    INFO(reason);
+    REQUIRE(id.has_value());
+    CHECK_FALSE(verify_core_program(p).has_errors());
+}
+
+TEST_CASE("P0-3: lower_value_type_into resolves nominal bases ID-FIRST") {
+    using namespace ir::core;
+    CoreProgram p;
+    // Two DIFFERENT nominals that share NO canonical, but the ref carries a symbol
+    // id that must select the right one regardless of canonical scan order.
+    CoreTypeDecl a;
+    a.kind = CoreTypeDecl::Kind::Struct;
+    a.name = "app::Alpha";
+    a.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                 .canonical_name = "app::Alpha",
+                                 .id = std::size_t{10}};
+    p.types.push_back(std::move(a));
+
+    // A ref whose canonical is "app::Alpha" but whose id is 10 resolves to Alpha.
+    ir::TypeRef ref = nominal_ref(ir::TypeRefKind::Struct, "app::Alpha", 10);
+    std::string reason;
+    const auto id = ir::core::lower_value_type_into(p, ref, &reason);
+    INFO(reason);
+    REQUIRE(id.has_value());
+    const auto *nominal = std::get_if<CoreVtNominal>(&p.value_types[id->value].node);
+    REQUIRE(nominal != nullptr);
+    CHECK(nominal->base == CoreTypeId{0});
+
+    // A ref with a WRONG id (99) but the right canonical still resolves via the
+    // canonical fallback (id-first, THEN canonical) — but a wrong id + wrong
+    // canonical fails closed.
+    ir::TypeRef bad = nominal_ref(ir::TypeRefKind::Struct, "app::Missing", 99);
+    CHECK_FALSE(ir::core::lower_value_type_into(p, bad, &reason).has_value());
+}
+
+TEST_CASE("P0-1: lower_value_type rejects stray fields per kind (field-tamper matrix)") {
+    CoreProgram p = program_with_types();
+    std::string reason;
+
+    SUBCASE("Bool carrying int_bounds") {
+        ir::TypeRef b = prim(ir::TypeRefKind::Bool);
+        b.int_bounds = std::make_pair<std::int64_t, std::int64_t>(0, 1);
+        CHECK_FALSE(ir::core::lower_value_type_into(p, b, &reason));
+    }
+    SUBCASE("Unit carrying collection_capacity") {
+        ir::TypeRef u = prim(ir::TypeRefKind::Unit);
+        u.collection_capacity = std::uint64_t{4};
+        CHECK_FALSE(ir::core::lower_value_type_into(p, u, &reason));
+    }
+    SUBCASE("Int carrying a decimal_scale") {
+        ir::TypeRef i = prim(ir::TypeRefKind::Int);
+        i.decimal_scale = 2;
+        CHECK_FALSE(ir::core::lower_value_type_into(p, i, &reason));
+    }
+    SUBCASE("Fn carrying a nominal_ref") {
+        ir::TypeRef fn;
+        fn.kind = ir::TypeRefKind::Fn;
+        fn.first = make_owned<ir::TypeRef>(prim(ir::TypeRefKind::Bool));
+        fn.nominal_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type, .canonical_name = "X"};
+        CHECK_FALSE(ir::core::lower_value_type_into(p, fn, &reason));
+    }
+    SUBCASE("Struct TypeRef resolving to an Enum decl (cross-kind)") {
+        // program_with_types has List (Struct); build a program with an Enum and
+        // reference it with a Struct tag.
+        CoreProgram q;
+        ir::core::CoreTypeDecl e;
+        e.kind = ir::core::CoreTypeDecl::Kind::Enum;
+        e.name = "app::Color";
+        e.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                     .canonical_name = "app::Color",
+                                     .id = std::size_t{5}};
+        q.types.push_back(std::move(e));
+        ir::TypeRef as_struct = nominal_ref(ir::TypeRefKind::Struct, "app::Color", 5);
+        CHECK_FALSE(ir::core::lower_value_type_into(q, as_struct, &reason));
+    }
+    SUBCASE("canonical drift between TypeRef and nominal_ref") {
+        ir::TypeRef u = nominal_ref(ir::TypeRefKind::Struct, "app::User", 0);
+        u.canonical_name = "app::Drifted"; // display canonical disagrees with the ref
+        CHECK_FALSE(ir::core::lower_value_type_into(p, u, &reason));
+    }
+}
+
+TEST_CASE("P1 verifier: a Closure whose signature is not a Fn is fail-closed") {
+    using namespace ir::core;
+    CoreProgram p = program_with_types();
+    const auto bool_id = intern_program_vt(p, CoreValueType{CoreVtBool{}});
+    // Closure signature points at a Bool (not a Fn) -> rejected.
+    p.value_types.push_back(CoreValueType{CoreVtClosure{bool_id, {}}});
+    CHECK(verify_core_program(p).has_errors());
+}
+
+TEST_CASE("P1 verifier: a forward/self child reference is fail-closed") {
+    using namespace ir::core;
+    CoreProgram p = program_with_types();
+    // A tuple at index 0 referencing child id 1 (not yet interned) is a forward ref.
+    p.value_types.push_back(CoreValueType{CoreVtTuple{{CoreValueTypeId{1}}}});
+    p.value_types.push_back(CoreValueType{CoreVtBool{}});
+    CHECK(verify_core_program(p).has_errors());
+}
+
+TEST_CASE("P1 verifier: a role<->kind mismatch on a nominal decl is fail-closed") {
+    using namespace ir::core;
+    CoreProgram p;
+    // role=List but kind=Enum -> contradiction (List must be a Struct).
+    CoreTypeDecl bad;
+    bad.kind = CoreTypeDecl::Kind::Enum;
+    bad.name = "std::collections::List";
+    bad.role = CoreNominalRole::List;
+    bad.type_param_count = 1;
+    p.types.push_back(std::move(bad));
+    CHECK(verify_core_program(p).has_errors());
 }

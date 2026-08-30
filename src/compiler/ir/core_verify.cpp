@@ -160,6 +160,51 @@ class Verifier {
                           std::nullopt);
                 }
             }
+            // Role <-> kind + known-arity consistency (RFC 0026 P4): the std
+            // nominal roles pin both the Struct/Enum kind and the generic arity, so
+            // a hand-built `role=List, kind=Enum` (which would let a bogus capacity
+            // slip through the value-type verifier) is rejected here at the SSOT.
+            verify_nominal_role(t, shape_error);
+        }
+    }
+
+    void verify_nominal_role(const CoreTypeDecl &t,
+                             const std::function<void(std::string)> &shape_error) {
+        using K = CoreTypeDecl::Kind;
+        struct RoleSpec {
+            K kind;
+            std::uint32_t arity;
+        };
+        const auto spec = [&]() -> std::optional<RoleSpec> {
+            switch (t.role) {
+            case CoreNominalRole::Ordinary:
+                return std::nullopt; // unconstrained
+            case CoreNominalRole::Option:
+                return RoleSpec{K::Enum, 1};
+            case CoreNominalRole::Result:
+                return RoleSpec{K::Enum, 2};
+            case CoreNominalRole::List:
+                return RoleSpec{K::Struct, 1};
+            case CoreNominalRole::Set:
+                return RoleSpec{K::Struct, 1};
+            case CoreNominalRole::Map:
+                return RoleSpec{K::Struct, 2};
+            }
+            return std::nullopt;
+        }();
+        if (!spec.has_value()) {
+            return;
+        }
+        if (t.kind != spec->kind) {
+            shape_error("nominal role requires a " +
+                        std::string(spec->kind == K::Struct ? "struct" : "enum") +
+                        " but the declaration is a " +
+                        std::string(t.kind == K::Struct ? "struct" : "enum"));
+        }
+        if (t.type_param_count != spec->arity) {
+            shape_error("nominal role requires arity " + std::to_string(spec->arity) +
+                        " but the declaration has type_param_count " +
+                        std::to_string(t.type_param_count));
         }
     }
 
@@ -1864,12 +1909,22 @@ class Verifier {
         std::vector<std::uint32_t> kids;
         for (std::uint32_t i = 0; i < arena.size(); ++i) {
             const CoreValueType &vt = arena[i];
-            // Child-id bounds.
+            // Child-id bounds AND topological order: a hash-cons interns children
+            // BEFORE their parent, so every child id must be strictly LESS than the
+            // parent's index. This makes the arena an acyclic DAG by construction;
+            // a forward (or self) reference is a malformed hand-built / deserialized
+            // arena and is fail-closed here (not merely by the cycle walk).
             children_of(vt, kids);
             for (std::uint32_t child : kids) {
                 if (child == CoreValueTypeId::kInvalid || child >= arena.size()) {
                     error(verify::kValueTypeChildInvalid,
                           "value type #" + std::to_string(i) + " has an out-of-range child id",
+                          std::nullopt);
+                } else if (child >= i) {
+                    error(verify::kValueTypeChildInvalid,
+                          "value type #" + std::to_string(i) + " references child #" +
+                              std::to_string(child) +
+                              " which is not interned earlier (forward/self reference)",
                           std::nullopt);
                 }
             }
@@ -1927,6 +1982,20 @@ class Verifier {
                                error(verify::kValueTypeChildInvalid,
                                      "value type #" + std::to_string(index) +
                                          " (Fn) has an invalid return id",
+                                     std::nullopt);
+                           }
+                       },
+                       [&](const CoreVtClosure &n) {
+                           // A closure's signature MUST resolve to a CoreVtFn (a
+                           // closure is a function value plus captures).
+                           const auto sig = n.signature.value;
+                           const bool sig_ok =
+                               sig != CoreValueTypeId::kInvalid && sig < program_.value_types.size() &&
+                               std::holds_alternative<CoreVtFn>(program_.value_types[sig].node);
+                           if (!sig_ok) {
+                               error(verify::kValueTypeChildInvalid,
+                                     "value type #" + std::to_string(index) +
+                                         " (Closure) signature does not resolve to a Fn value type",
                                      std::nullopt);
                            }
                        },

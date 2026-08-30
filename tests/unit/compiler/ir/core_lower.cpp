@@ -2758,6 +2758,57 @@ TEST_CASE("KR6.4 mono Slice 1: a generic fn instance is consumed into CoreProgra
 
 // --- mono Slice 1 verifier negatives (hand-built Core instance table) ---
 
+TEST_CASE("P4-A2 forward-fix P0-2: a REAL inlined std generic decl is decorated from the SSOT") {
+    // A program that INLINES a real std::collections::List struct declaration
+    // (as include_stdlib / a deserialized program would) must get role=List +
+    // type_param_count=1 via register_type's SSOT decoration — NOT left
+    // Ordinary/0 (which would make a legal List<Int> fail "expects 0 args").
+    ir::AhflIr program;
+    ir::StructDecl list;
+    list.name = "List";
+    list.symbol_ref.kind = ir::SymbolRefKind::Type;
+    list.symbol_ref.canonical_name = "std::collections::List";
+    list.symbol_ref.id = 900;
+    program.declarations.emplace_back(std::move(list));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    const ir::core::CoreTypeDecl *list_decl = nullptr;
+    for (const auto &t : result.program.types) {
+        if (t.name == "std::collections::List") {
+            list_decl = &t;
+        }
+    }
+    REQUIRE(list_decl != nullptr);
+    CHECK(list_decl->role == ir::core::CoreNominalRole::List);
+    CHECK(list_decl->type_param_count == 1);
+    // add_builtins must NOT have added a second synthetic List (real decl wins).
+    std::size_t list_count = 0;
+    for (const auto &t : result.program.types) {
+        if (t.name == "std::collections::List") {
+            ++list_count;
+        }
+    }
+    CHECK(list_count == 1);
+
+    // A legal List<Int> now lowers against the decorated real decl. Re-run the
+    // whole lowering into a fresh mutable program (CoreProgram is move-only, so
+    // we can't copy result.program) and intern into that arena.
+    auto fresh = ir::core::lower_ahfl_to_core(program);
+    ir::TypeRef list_ref;
+    list_ref.kind = ir::TypeRefKind::Struct;
+    list_ref.canonical_name = "std::collections::List";
+    list_ref.nominal_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                         .canonical_name = "std::collections::List",
+                                         .id = std::size_t{900}};
+    auto elem = std::make_unique<ir::TypeRef>();
+    elem->kind = ir::TypeRefKind::Int;
+    list_ref.params.push_back(std::move(elem));
+    std::string reason;
+    const auto id = ir::core::lower_value_type_into(fresh.program, list_ref, &reason);
+    INFO(reason);
+    CHECK(id.has_value());
+}
+
 TEST_CASE("mono verifier: a duplicate instance key is fail-closed") {
     ir::core::CoreProgram p;
     ir::core::CoreInstanceDecl a;
