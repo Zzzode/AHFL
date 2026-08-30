@@ -72,6 +72,32 @@ void give_shell_structs(ir::AhflIr &program, ir::AgentDecl &agent, const std::st
     }
 }
 
+// RFC 0026 P4-B: a real post-Sema `ir::Expr` always carries a resolved value
+// type; the Core-IR lowerer interns it into the per-body `value_types` table.
+// Hand-built fixtures that used to leave `resolved_type` Unresolved must now
+// spell the leaf type Sema would have inferred, or lowering fails closed with
+// core.lower UNRESOLVED_TYPE. These builders keep those fixtures realistic.
+ir::TypeRef int_type() {
+    ir::TypeRef t;
+    t.kind = ir::TypeRefKind::Int;
+    return t;
+}
+// An enum-typed value (e.g. the result of an `Option::Some(_)` constructor).
+// Optionally carries ONE resolved generic argument (the P4-B value-type interner
+// checks arity against the declaration), e.g. `Option<Int>`. `TypeRef` is
+// move-only, so the arg is threaded by rvalue rather than an initializer_list.
+ir::TypeRef enum_type(const std::string &canonical,
+                      std::optional<ir::TypeRef> type_arg = std::nullopt) {
+    ir::TypeRef t;
+    t.kind = ir::TypeRefKind::Enum;
+    t.canonical_name = canonical;
+    t.nominal_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type, .canonical_name = canonical};
+    if (type_arg) {
+        t.params.push_back(std::make_unique<ir::TypeRef>(std::move(*type_arg)));
+    }
+    return t;
+}
+
 ir::AhflIr make_single_agent_program() {
     ir::AhflIr program;
     ir::AgentDecl agent;
@@ -188,6 +214,19 @@ bool callee_is(const std::string &callee, const std::string &name) {
 
 // Does a verify result carry an ERROR diagnostic with this stable code?
 bool has_verify_code(const ir::core::CoreVerifyResult &r, std::string_view code) {
+    for (const auto &d : r.diagnostics) {
+        if (d.severity == ir::core::CoreDiagnosticSeverity::Error && d.code == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Does a LOWER result carry an ERROR diagnostic with this stable code? (P4-B:
+// value-type interning can emit a core.UNRESOLVED_TYPE ahead of a node's own
+// diagnostic, so tests assert the intended code is PRESENT, not necessarily
+// first.)
+bool has_lower_code(const ir::core::CoreLowerResult &r, std::string_view code) {
     for (const auto &d : r.diagnostics) {
         if (d.severity == ir::core::CoreDiagnosticSeverity::Error && d.code == code) {
             return true;
@@ -745,13 +784,14 @@ TEST_CASE("builtin enum variant resolves via the builtin path by symbol identity
     flow.target_ref.id = 1;
 
     // Option::Some(0) as a variant-constructor CallExpr (callee_ref -> Enum).
-    ir::ExprRef arg = program.expr_arena.make(ir::IntegerLiteralExpr{"0"});
+    ir::ExprRef arg = program.expr_arena.make(ir::IntegerLiteralExpr{"0"}, std::nullopt, int_type());
     ir::CallExpr call;
     call.callee = "std::option::Option::Some";
     call.callee_ref.kind = ir::SymbolRefKind::Type; // the front end resolves to the Enum symbol
     call.callee_ref.canonical_name = "std::option::Option";
     call.arguments.push_back(arg);
-    ir::ExprRef call_ref = program.expr_arena.make(std::move(call));
+    ir::ExprRef call_ref = program.expr_arena.make(std::move(call), std::nullopt,
+                                                   enum_type("std::option::Option", int_type()));
 
     auto stmt = std::make_unique<ir::Statement>();
     stmt->node = ir::ExprStatement{call_ref};
@@ -861,7 +901,10 @@ TEST_CASE("branch-local let bindings do not leak across branches or past the if 
     handler.state_name = "S";
 
     const auto make_let = [&](const std::string &name, const std::string &val) {
-        ir::ExprRef init = program.expr_arena.make(ir::IntegerLiteralExpr{val});
+        ir::TypeRef int_ty;
+        int_ty.kind = ir::TypeRefKind::Int;
+        ir::ExprRef init = program.expr_arena.make(ir::IntegerLiteralExpr{val}, std::nullopt,
+                                                   std::move(int_ty));
         auto s = std::make_unique<ir::Statement>();
         ir::LetStatement let;
         let.name = name;
@@ -873,7 +916,10 @@ TEST_CASE("branch-local let bindings do not leak across branches or past the if 
     handler.body.statements.push_back(make_let("x", "1"));
     // if true { let x = 2; } else { let x = 3; }
     {
-        ir::ExprRef cond = program.expr_arena.make(ir::BoolLiteralExpr{true});
+        ir::TypeRef bool_ty;
+        bool_ty.kind = ir::TypeRefKind::Bool;
+        ir::ExprRef cond =
+            program.expr_arena.make(ir::BoolLiteralExpr{true}, std::nullopt, std::move(bool_ty));
         ir::IfStatement if_stmt;
         if_stmt.condition = cond;
         auto then_block = std::make_unique<ir::Block>();
@@ -994,7 +1040,15 @@ TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the ou
     handler.state_name = "S";
 
     const auto make_typed_let = [&](const std::string &name, const std::string &type_canonical) {
-        ir::ExprRef init = program.expr_arena.make(ir::IntegerLiteralExpr{"0"});
+        // A realistic `let x: T = <init>` has the initializer resolved to T (Sema
+        // coerces/checks), so P4-B records the local's value type as the nominal T.
+        ir::TypeRef init_ty;
+        init_ty.kind = ir::TypeRefKind::Struct;
+        init_ty.canonical_name = type_canonical;
+        init_ty.nominal_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                            .canonical_name = type_canonical};
+        ir::ExprRef init = program.expr_arena.make(ir::IntegerLiteralExpr{"0"}, std::nullopt,
+                                                   std::move(init_ty));
         auto s = std::make_unique<ir::Statement>();
         ir::LetStatement let;
         let.name = name;
@@ -1008,7 +1062,10 @@ TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the ou
     handler.body.statements.push_back(make_typed_let("x", "app::AType"));
     // if true { let x: BType = 0; }
     {
-        ir::ExprRef cond = program.expr_arena.make(ir::BoolLiteralExpr{true});
+        ir::TypeRef bool_ty;
+        bool_ty.kind = ir::TypeRefKind::Bool;
+        ir::ExprRef cond =
+            program.expr_arena.make(ir::BoolLiteralExpr{true}, std::nullopt, std::move(bool_ty));
         ir::IfStatement if_stmt;
         if_stmt.condition = cond;
         auto then_block = std::make_unique<ir::Block>();
@@ -1023,7 +1080,9 @@ TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the ou
         ir::PathExpr xa;
         xa.path.root_name = "x";
         xa.path.members = {"a"};
-        ir::ExprRef xaref = program.expr_arena.make(std::move(xa));
+        // `x.a` reads AType's Int field `a`; a real projection carries the leaf
+        // type Sema inferred, which P4-B interns as the projection's result type.
+        ir::ExprRef xaref = program.expr_arena.make(std::move(xa), std::nullopt, int_type());
         ir::AssignStatement assign;
         assign.target.root_kind = ir::PathRootKind::Context;
         assign.target.root_name = "ctx";
@@ -1141,7 +1200,7 @@ TEST_CASE("pure unsupported expression makes the program non-executable (P0-1 ro
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.is_executable);
     REQUIRE_FALSE(result.diagnostics.empty());
-    CHECK(result.diagnostics[0].code == ir::core::diag::kUnloweredExpression);
+    CHECK(has_lower_code(result, ir::core::diag::kUnloweredExpression));
     CHECK(result.diagnostics[0].severity == ir::core::CoreDiagnosticSeverity::Error);
 }
 
@@ -1415,7 +1474,7 @@ TEST_CASE("member projection on an unknown field fails closed") {
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.is_executable);
     REQUIRE_FALSE(result.diagnostics.empty());
-    CHECK(result.diagnostics[0].code == ir::core::diag::kUnloweredFieldProjection);
+    CHECK(has_lower_code(result, ir::core::diag::kUnloweredFieldProjection));
 }
 
 // ==========================================================================
@@ -1587,9 +1646,10 @@ TEST_CASE("enum struct-payload construct with a missing slot fails closed in the
     lit.enum_name = "app::Ticket";
     lit.variant_name = "Open";
     lit.type_name = "app::Ticket::Open";
-    ir::ExprRef id_val = program.expr_arena.make(ir::IntegerLiteralExpr{"1"});
+    ir::ExprRef id_val = program.expr_arena.make(ir::IntegerLiteralExpr{"1"}, std::nullopt, int_type());
     lit.fields.push_back(ir::StructFieldInit{"id", id_val});
-    ir::ExprRef lit_ref = program.expr_arena.make(std::move(lit), SourceRange{5, 9});
+    ir::ExprRef lit_ref =
+        program.expr_arena.make(std::move(lit), SourceRange{5, 9}, enum_type("app::Ticket"));
     auto let = std::make_unique<ir::Statement>();
     ir::LetStatement let_stmt;
     let_stmt.name = "t";
@@ -2421,9 +2481,80 @@ flow for A {
     const ir::core::CoreMatchStmt *m = find_core_match(result.program);
     REQUIRE(m != nullptr);
     REQUIRE(m->arms.size() == 2);
-    // The Some(u) arm's binding carries a nominal (non-kInvalid) type.
+    // RFC 0026 P4-B: the Some(u) arm's binding value carries a nominal value type
+    // in the owning flow's value_types table (the binding_type field is gone).
     REQUIRE(m->arms[0].bindings.size() == 1);
-    CHECK(m->arms[0].bindings[0].binding_type.value != ir::core::CoreTypeId::kInvalid);
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow = result.program.flows[0];
+    const auto bind_value = m->arms[0].bindings[0].value.value;
+    REQUIRE(bind_value < flow.value_types.size());
+    const auto vt = flow.value_types[bind_value];
+    REQUIRE(vt.value < result.program.value_types.size());
+    CHECK(std::holds_alternative<ir::core::CoreVtNominal>(
+        result.program.value_types[vt.value].node));
+}
+
+TEST_CASE("(P4-B) e2e: a lowering-clean flow body has a DENSE value_types table") {
+    // The dense per-body value_types table (RFC 0026 P4-B) is the execution-layer
+    // record of every CoreValueId's logical type. Drive a mixed body (primitive
+    // let, capability-call result, member projection, nominal constructor) through
+    // the REAL front end and assert the density invariant the verifier enforces:
+    // value_types.size() == value_count, every slot in range + non-Never, and a
+    // couple of representative slots carry the exact interned shape.
+    const std::string source = R"AHFL(
+module m;
+
+struct Req { amount: Int; }
+struct Ctx { seen: Int = 0; }
+struct Resp { total: Int; }
+
+capability Scale(factor: Int) -> Int;
+
+agent A {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [Scale];
+}
+
+flow for A {
+    state Done {
+        let base: Int = input.amount;
+        let doubled: Int = Scale(base);
+        return Resp { total: doubled };
+    }
+}
+)AHFL";
+    const auto ahfl_ir = lower_source_to_ahfl_ir("core_dense_value_types", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow = result.program.flows[0];
+
+    // Density: one recorded logical type per allocated value id (the exact
+    // invariant core.verify.VALUE_TYPES_SIZE_MISMATCH guards).
+    CHECK(flow.value_types.size() == flow.value_count);
+    REQUIRE(flow.value_count > 0);
+
+    // Every slot is a valid, in-range, non-Never interned value type.
+    bool saw_int = false;
+    for (const auto id : flow.value_types) {
+        REQUIRE(id.value != ir::core::CoreValueTypeId::kInvalid);
+        REQUIRE(id.value < result.program.value_types.size());
+        const auto &node = result.program.value_types[id.value].node;
+        CHECK_FALSE(std::holds_alternative<ir::core::CoreVtNever>(node));
+        if (std::holds_alternative<ir::core::CoreVtInt>(node)) {
+            saw_int = true;
+        }
+    }
+    // `let base: Int` and the capability result `Scale(base): Int` both intern to Int.
+    CHECK(saw_int);
 }
 
 TEST_CASE("(3)-3c FF P0-3: a match arm whose both if-branches terminate needs no trailing yield") {

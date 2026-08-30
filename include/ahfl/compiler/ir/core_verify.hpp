@@ -156,6 +156,14 @@ inline constexpr std::string_view kValueTypeNominalInvalid = "core.verify.VALUE_
 inline constexpr std::string_view kValueTypeArityInvalid = "core.verify.VALUE_TYPE_ARITY_INVALID";
 inline constexpr std::string_view kValueTypeCapacityInvalid = "core.verify.VALUE_TYPE_CAPACITY_INVALID";
 inline constexpr std::string_view kValueTypeRefinementInvalid = "core.verify.VALUE_TYPE_REFINEMENT_INVALID";
+// --- per-body typed value tables (RFC 0026 P4-B) ---
+// The per-body `value_types` table must be DENSE (size == value_count) and every
+// slot a valid, in-range, non-Never logical value type; a CoreLetStmt result's
+// recorded type must equal its bound expr's `result_type`, and a CoreValueRefExpr
+// must echo the referenced value's recorded type.
+inline constexpr std::string_view kValueTypesSizeMismatch = "core.verify.VALUE_TYPES_SIZE_MISMATCH";
+inline constexpr std::string_view kValueTypeSlotInvalid = "core.verify.VALUE_TYPE_SLOT_INVALID";
+inline constexpr std::string_view kValueTypeMismatch = "core.verify.VALUE_TYPE_MISMATCH";
 } // namespace verify
 
 /// Result of verifying a Core-IR program: any structural violations, as

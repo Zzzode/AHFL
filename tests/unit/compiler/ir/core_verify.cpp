@@ -139,10 +139,17 @@ struct GoodProgram {
     flow.target = CoreAgentId{0};
     flow.agent_name = "A";
 
-    // expr arena
+    // RFC 0026 P4-B: a single interned scalar value type used for every
+    // hand-built value / expr result here (the specific type is not what these
+    // structural tests exercise; they need a VALID, non-Never, in-range slot and
+    // Let/expr result-type consistency).
+    const CoreValueTypeId vt_int{static_cast<std::uint32_t>(p.value_types.size())};
+    p.value_types.push_back(CoreValueType{CoreVtInt{}});
+
+    // expr arena. Every CoreExpr carries a valid result_type (P4-B).
     // %lit1 spelling "1"
     const CoreExprId e_lit1{static_cast<std::uint32_t>(flow.exprs.size())};
-    flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt});
+    flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt, vt_int});
     // path ctx.nested.n  (root Context, projection [Ctx.nested -> Inner, Inner.n -> prim])
     CorePathExpr nested_path;
     nested_path.root = CorePathRoot::Context;
@@ -155,13 +162,16 @@ struct GoodProgram {
     };
     nested_path.projection_resolved = true;
     const CoreExprId e_nested{static_cast<std::uint32_t>(flow.exprs.size())};
-    flow.exprs.push_back(CoreExpr{std::move(nested_path), std::nullopt});
+    flow.exprs.push_back(CoreExpr{std::move(nested_path), std::nullopt, vt_int});
     // %lit2 spelling "2"
     const CoreExprId e_lit2{static_cast<std::uint32_t>(flow.exprs.size())};
-    flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "2"}, std::nullopt});
+    flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "2"}, std::nullopt, vt_int});
 
     // values: %0 = lit1, %1 = Charge(%0), %2 = nested path, %3 = lit2
     flow.value_count = 4;
+    // Dense value_types table (P4-B): size == value_count, each a valid slot; the
+    // Let-bound values (%0, %2, %3) match their expr result_type (all vt_int).
+    flow.value_types = {vt_int, vt_int, vt_int, vt_int};
     const CoreValueId v0{0};
     const CoreValueId v1{1};
     const CoreValueId v2{2};
@@ -297,13 +307,17 @@ struct GoodWorkflow {
     // Shared arena. value ids: %0 node0-input(WorkflowInput read), %1 node1-input
     // (node0 output read), %2 return (node1 output read).
     wf.value_count = 3;
+    // RFC 0026 P4-B: one interned scalar value type for every hand-built value /
+    // expr result (the specific type is irrelevant to these structural checks).
+    const CoreValueTypeId wvt{static_cast<std::uint32_t>(p.value_types.size())};
+    p.value_types.push_back(CoreValueType{CoreVtInt{}});
     // expr[0]: WorkflowInput path (`input`), typed WIn.
     {
         CorePathExpr in_path;
         in_path.root = CorePathRoot::WorkflowInput;
         in_path.root_name = "input";
         in_path.root_type = win_ty;
-        wf.exprs.push_back(CoreExpr{std::move(in_path), std::nullopt});
+        wf.exprs.push_back(CoreExpr{std::move(in_path), std::nullopt, wvt});
     }
     // expr[1]: node0 output read (`first`), typed WMid (First's output).
     {
@@ -312,7 +326,7 @@ struct GoodWorkflow {
         n0.root_name = "first";
         n0.root_type = wmid_ty;
         n0.workflow_node = CoreWorkflowNodeId{0};
-        wf.exprs.push_back(CoreExpr{std::move(n0), std::nullopt});
+        wf.exprs.push_back(CoreExpr{std::move(n0), std::nullopt, wvt});
     }
     // expr[2]: node1 output read (`second`), typed WOut (Second's output).
     {
@@ -321,8 +335,11 @@ struct GoodWorkflow {
         n1.root_name = "second";
         n1.root_type = wout_ty;
         n1.workflow_node = CoreWorkflowNodeId{1};
-        wf.exprs.push_back(CoreExpr{std::move(n1), std::nullopt});
+        wf.exprs.push_back(CoreExpr{std::move(n1), std::nullopt, wvt});
     }
+    // Dense value_types (P4-B): size == value_count; each Let-bound value matches
+    // its expr's result_type (all wvt).
+    wf.value_types = {wvt, wvt, wvt};
     const auto region_yielding = [](CoreExprId expr, CoreValueId result) {
         auto r = std::make_unique<CoreRegion>();
         r->statements.push_back(CoreStmt{CoreLetStmt{result, expr}, std::nullopt});
@@ -460,6 +477,8 @@ TEST_CASE("verifier fails closed on a use-before-def value") {
 TEST_CASE("verifier fails closed on a value id out of range") {
     GoodProgram g = make_good_program();
     g.flow->value_count = 2; // %2 and %3 now out of range
+    g.flow->value_types.resize(2); // keep value_types dense so the targeted
+                                   // kValueIdOutOfRange (not the size check) fires
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kValueIdOutOfRange));
@@ -1116,6 +1135,7 @@ TEST_CASE("verifier accepts a well-formed statement match") {
     g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     const std::uint32_t sid = g.flow->value_count; // fresh scrutinee id
     g.flow->value_count += 1;
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto &done = g.flow->states[1].body;
     done.statements.clear();
     done.statements.push_back(
@@ -1145,6 +1165,7 @@ TEST_CASE("verifier fails closed on a match without a fallback region") {
     g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     const std::uint32_t sid = g.flow->value_count;
     g.flow->value_count += 1;
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto match = make_wildcard_match(sid, /*trap_fallback=*/false);
     match.fallback_region.reset(); // remove fallback
     auto &done = g.flow->states[1].body;
@@ -1162,6 +1183,7 @@ TEST_CASE("verifier fails closed on a statement match arm that falls through (no
     g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     const std::uint32_t sid = g.flow->value_count;
     g.flow->value_count += 1;
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
     match.arms[0].body->statements.clear(); // arm body no longer yields -> fallthrough
     auto &done = g.flow->states[1].body;
@@ -1179,6 +1201,7 @@ TEST_CASE("verifier fails closed on a statement match arm that yields a value") 
     g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     const std::uint32_t sid = g.flow->value_count;
     g.flow->value_count += 1;
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
     // statement match arm yields a VALUE (sid) — illegal for a unit arm.
     match.arms[0].body->statements.clear();
@@ -1199,6 +1222,7 @@ TEST_CASE("verifier accepts an if-both-branches-yield arm body (per-path yield)"
     g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     const std::uint32_t sid = g.flow->value_count;
     g.flow->value_count += 1;
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
     // arm body: if %sid { yield } else { yield } — both paths yield unit.
     match.arms[0].body->statements.clear();
@@ -1231,6 +1255,8 @@ TEST_CASE("verifier fails closed on a match arm binding defined more than once (
     const std::uint32_t sid = g.flow->value_count;
     const std::uint32_t bind_v = sid + 1;
     g.flow->value_count += 2;
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     CoreMatchStmt m;
     m.scrutinee = CoreValueId{sid};
     m.has_result = false;
@@ -1264,6 +1290,8 @@ TEST_CASE("verifier fails closed on an arm that declares a binding the pattern n
     const std::uint32_t sid = g.flow->value_count;
     const std::uint32_t bind_v = sid + 1;
     g.flow->value_count += 2;
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     CoreMatchStmt m;
     m.scrutinee = CoreValueId{sid};
     CoreMatchArm arm;
@@ -1317,6 +1345,8 @@ TEST_CASE("verifier fails closed on two tuple slots reusing one arm binding id")
     const std::uint32_t sid = g.flow->value_count;
     const std::uint32_t bind_v = sid + 1;
     g.flow->value_count += 2;
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     CoreMatchStmt m;
     m.scrutinee = CoreValueId{sid};
     CoreMatchArm arm;

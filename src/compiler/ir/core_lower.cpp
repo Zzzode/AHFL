@@ -97,7 +97,8 @@ namespace {
 bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
     return a.target == b.target && a.agent_name == b.agent_name &&
            symbol_ref_equal(a.target_ref, b.target_ref) && a.exprs == b.exprs &&
-           a.value_count == b.value_count && a.patterns == b.patterns && a.states == b.states;
+           a.value_count == b.value_count && a.value_types == b.value_types &&
+           a.patterns == b.patterns && a.states == b.states;
 }
 
 namespace {
@@ -119,7 +120,8 @@ bool operator==(const CoreWorkflowNode &a, const CoreWorkflowNode &b) noexcept {
 bool operator==(const CoreWorkflowDecl &a, const CoreWorkflowDecl &b) noexcept {
     return a.id == b.id && a.name == b.name && symbol_ref_equal(a.symbol_ref, b.symbol_ref) &&
            a.input_type == b.input_type && a.output_type == b.output_type && a.exprs == b.exprs &&
-           a.value_count == b.value_count && a.patterns == b.patterns && a.nodes == b.nodes &&
+           a.value_count == b.value_count && a.value_types == b.value_types &&
+           a.patterns == b.patterns && a.nodes == b.nodes &&
            region_ptr_eq(a.return_region, b.return_region);
 }
 
@@ -1142,11 +1144,21 @@ struct ResolvedExternalRoot {
     CoreWorkflowNodeId workflow_node{};
 };
 
+// A program-global interner: an `ir::TypeRef` -> interned `CoreValueTypeId`
+// (into `CoreProgram::value_types`), fail-closed (nullopt + `*reason`) on any
+// non-materializable input. Backed by ONE shared `ValueTypeArena` so every body
+// value + every dispatch descriptor interns into the same canonical pool.
+using ValueTypeInterner =
+    std::function<std::optional<CoreValueTypeId>(const TypeRef &, std::string *)>;
+
 // Non-owning refs to the arenas a lowered body owns (CoreFlowDecl OR CoreWorkflowDecl).
 struct CoreBodyStorageRef {
     std::vector<CoreExpr> &exprs;
     std::uint32_t &value_count;
     std::vector<CorePattern> &patterns;
+    // RFC 0026 P4-B: the per-body logical value-type table (index == CoreValueId).
+    // Grown ATOMICALLY with `value_count` by `fresh_value`, so it stays dense.
+    std::vector<CoreValueTypeId> &value_types;
 };
 
 // Flow policy: input/ctx -> agent input/context struct types; others are identifier-like.
@@ -1229,18 +1241,22 @@ class WorkflowRootPolicy {
 /// these and adds the body's statement/region lowering on top.
 template <class RootPolicy> class ExprLowerer {
   public:
-    // A let-bound local: its SSA value id AND its type. Kept in ONE map so
-    // lower_if's snapshot/restore covers both (a branch-local shadow must not
-    // leak its value OR its type to the sibling branch or past the `if`).
+    // A let-bound local: its SSA value id AND its logical value type (RFC 0026
+    // P4-B). Kept in ONE map so lower_if's snapshot/restore covers both (a
+    // branch-local shadow must not leak its value OR its type to the sibling
+    // branch or past the `if`). The nominal base for member projection is derived
+    // from `value_type` on demand (see `nominal_base_of`).
     struct LocalBinding {
         CoreValueId value{};
-        std::optional<CoreTypeId> type; // the binding's struct type, if any
+        CoreValueTypeId value_type{}; // the binding's logical value type
     };
 
     ExprLowerer(CoreBodyStorageRef storage, const CapabilityIndex &caps, const TypeEnv &types,
-                RootPolicy policy, std::vector<CoreLowerDiagnostic> &diags)
+                RootPolicy policy, const ValueTypeInterner &interner,
+                const std::vector<CoreValueType> &value_type_pool,
+                std::vector<CoreLowerDiagnostic> &diags)
         : storage_(storage), caps_(caps), types_(types), policy_(std::move(policy)),
-          diags_(diags) {}
+          interner_(interner), value_type_pool_(value_type_pool), diags_(diags) {}
 
     [[nodiscard]] std::unordered_map<std::string, LocalBinding> &scope() {
         return scope_;
@@ -1249,13 +1265,63 @@ template <class RootPolicy> class ExprLowerer {
         return types_;
     }
 
-    // --- allocation helpers ---
-    [[nodiscard]] CoreValueId fresh_value() {
-        return CoreValueId{storage_.value_count++};
+    // --- value-type interning (RFC 0026 P4-B) ---
+    //
+    // Intern an AHFL `ir::TypeRef` into the program-global value-type pool,
+    // fail-closed. On failure emit a diagnostic (the program is already Error) and
+    // return the kInvalid id so the value_types table stays PARALLEL to value_count
+    // on the error path (the verifier only runs on error-free candidates).
+    [[nodiscard]] CoreValueTypeId intern_value_type(const TypeRef &type, SourceRangeOpt range) {
+        std::string reason;
+        const auto id = interner_(type, &reason);
+        if (!id) {
+            error(diag::kUnresolvedType,
+                  "value type could not be lowered to a Core-IR value type: " + reason, range);
+            return CoreValueTypeId{}; // kInvalid: keeps value_types parallel on the error path
+        }
+        return *id;
     }
-    [[nodiscard]] CoreExprId push_expr(CoreExprNode node, SourceRangeOpt range) {
+
+    // The nominal base CoreTypeId a value type projects through, or kInvalid when
+    // the value type is not a nominal (a primitive / tuple / fn has no struct base
+    // to walk `.field` through). Reads the interned node from the shared pool.
+    [[nodiscard]] CoreTypeId nominal_base_of(CoreValueTypeId ty) const {
+        if (ty.value == CoreValueTypeId::kInvalid || ty.value >= value_type_pool_.size()) {
+            return CoreTypeId{};
+        }
+        if (const auto *nom = std::get_if<CoreVtNominal>(&value_type_pool_[ty.value].node)) {
+            return nom->base;
+        }
+        return CoreTypeId{};
+    }
+
+    // The nominal base of a local binding's value type, as an optional struct
+    // CoreTypeId for member-projection (nullopt when the binding is not a nominal).
+    [[nodiscard]] std::optional<CoreTypeId> binding_nominal_base(const LocalBinding &b) const {
+        const CoreTypeId base = nominal_base_of(b.value_type);
+        if (base.value == CoreTypeId::kInvalid) {
+            return std::nullopt;
+        }
+        return base;
+    }
+
+    // --- allocation helpers ---
+    [[nodiscard]] CoreValueId fresh_value(CoreValueTypeId ty) {
+        const CoreValueId id{storage_.value_count++};
+        storage_.value_types.push_back(ty);
+        return id;
+    }
+    // The logical value type recorded for an already-allocated value id (kInvalid
+    // if out of range — never on a clean path, since every producer records its
+    // type atomically with `fresh_value`).
+    [[nodiscard]] CoreValueTypeId value_type_of(CoreValueId v) const {
+        return v.value < storage_.value_types.size() ? storage_.value_types[v.value]
+                                                      : CoreValueTypeId{};
+    }
+    [[nodiscard]] CoreExprId push_expr(CoreExprNode node, SourceRangeOpt range,
+                                       CoreValueTypeId result_ty) {
         const auto idx = static_cast<std::uint32_t>(storage_.exprs.size());
-        storage_.exprs.push_back(CoreExpr{std::move(node), std::move(range)});
+        storage_.exprs.push_back(CoreExpr{std::move(node), std::move(range), result_ty});
         return CoreExprId{idx};
     }
     void error(std::string_view code, std::string message, SourceRangeOpt range) {
@@ -1270,43 +1336,70 @@ template <class RootPolicy> class ExprLowerer {
     // left-to-right eval order); pure expressions are bound via a CoreLetStmt.
     [[nodiscard]] CoreValueId lower_value(const ExprRef &expr, CoreRegion &region) {
         if (expr.ptr == nullptr) {
+            // No expr => no source type to intern. Fail-closed on the error path;
+            // push a kInvalid-typed value so the arrays stay parallel.
             error(diag::kNullExpr, "null expression in lowered body", std::nullopt);
-            return fresh_value();
+            return fresh_value(CoreValueTypeId{});
         }
         const SourceRangeOpt range = expr.ptr->source_range;
+        // RFC 0026 P4-B: the value's logical result type is the source expr's
+        // resolved type, interned once here and threaded to the per-node lowering
+        // that produces the bound value. Two node kinds are `self_typed` and manage
+        // their OWN result type inside their lowering:
+        //   - CallExpr (capability call / constructor) must fail-closed with its
+        //     OWN diagnostic FIRST, so interning its (possibly Unresolved) type here
+        //     would emit a spurious UNRESOLVED_TYPE ahead of the node's real error;
+        //   - PathExpr, because a BARE LOCAL reference produces NO new value (it
+        //     echoes an already-typed local's value id), so it must not be forced
+        //     to carry a resolved_type; the projection branch interns its own leaf
+        //     type inside lower_path_value.
+        // Every other node (incl. MatchExpr, whose result value carries the match's
+        // resolved type) binds `result_ty` here.
+        const bool self_typed = std::holds_alternative<CallExpr>(expr.ptr->node) ||
+                                std::holds_alternative<PathExpr>(expr.ptr->node);
+        const CoreValueTypeId result_ty =
+            self_typed ? CoreValueTypeId{} : intern_value_type(expr.ptr->resolved_type, range);
         return std::visit(
             Overloaded{
                 [&](const CallExpr &call) { return lower_call_value(call, expr, range, region); },
+                [&](const PathExpr &e) { return lower_path_value(e, expr, range, region); },
                 [&](const BoolLiteralExpr &e) {
                     return bind_pure(CoreLiteralExpr{CoreLiteralKind::Bool, e.value ? "true" : "false"},
-                                     range, region);
+                                     result_ty, range, region);
                 },
                 [&](const IntegerLiteralExpr &e) {
-                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Integer, e.spelling}, range, region);
+                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Integer, e.spelling}, result_ty,
+                                     range, region);
                 },
                 [&](const FloatLiteralExpr &e) {
-                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Float, e.spelling}, range, region);
+                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Float, e.spelling}, result_ty,
+                                     range, region);
                 },
                 [&](const DecimalLiteralExpr &e) {
-                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Decimal, e.spelling}, range, region);
+                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Decimal, e.spelling}, result_ty,
+                                     range, region);
                 },
                 [&](const StringLiteralExpr &e) {
-                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::String, e.spelling}, range, region);
+                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::String, e.spelling}, result_ty,
+                                     range, region);
                 },
                 [&](const DurationLiteralExpr &e) {
-                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Duration, e.spelling}, range, region);
+                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Duration, e.spelling}, result_ty,
+                                     range, region);
                 },
                 [&](const UnitLiteralExpr &) {
-                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Unit, ""}, range, region);
+                    return bind_pure(CoreLiteralExpr{CoreLiteralKind::Unit, ""}, result_ty, range,
+                                     region);
                 },
-                [&](const PathExpr &e) { return lower_path_value(e, range, region); },
                 [&](const QualifiedValueExpr &e) {
-                    return lower_qualified_value(e, range, region);
+                    return lower_qualified_value(e, result_ty, range, region);
                 },
-                [&](const UnaryExpr &e) { return lower_unary_value(e, range, region); },
-                [&](const BinaryExpr &e) { return lower_binary_value(e, range, region); },
-                [&](const StructLiteralExpr &e) { return lower_struct_value(e, range, region); },
-                [&](const MatchExpr &e) { return lower_match_value(e, range, region); },
+                [&](const UnaryExpr &e) { return lower_unary_value(e, result_ty, range, region); },
+                [&](const BinaryExpr &e) { return lower_binary_value(e, result_ty, range, region); },
+                [&](const StructLiteralExpr &e) {
+                    return lower_struct_value(e, result_ty, range, region);
+                },
+                [&](const MatchExpr &e) { return lower_match_value(e, result_ty, range, region); },
                 // Effectful-or-complex shapes not yet lowered. CRITICAL: if the
                 // subtree contains a capability call we MUST fail closed (never
                 // hide an effect); otherwise a pure unsupported node is recorded
@@ -1314,27 +1407,33 @@ template <class RootPolicy> class ExprLowerer {
                 // Routed through the ExprRef so the capability check can recurse.
                 [&](const auto &node) {
                     static_cast<void>(node);
-                    return lower_unsupported_value(expr, expr_kind_name(expr.ptr->node), range,
-                                                   region);
+                    return lower_unsupported_value(expr, expr_kind_name(expr.ptr->node), result_ty,
+                                                   range, region);
                 },
             },
             expr.ptr->node);
     }
 
-    [[nodiscard]] CoreValueId bind_pure(CoreExprNode node, SourceRangeOpt range, CoreRegion &region) {
-        const CoreExprId expr_id = push_expr(std::move(node), range);
-        const CoreValueId value = fresh_value();
+    [[nodiscard]] CoreValueId bind_pure(CoreExprNode node, CoreValueTypeId result_ty,
+                                        SourceRangeOpt range, CoreRegion &region) {
+        const CoreExprId expr_id = push_expr(std::move(node), range, result_ty);
+        const CoreValueId value = fresh_value(result_ty);
         region.statements.push_back(CoreStmt{CoreLetStmt{value, expr_id}, range});
         return value;
     }
 
-    [[nodiscard]] CoreValueId lower_path_value(const PathExpr &e, SourceRangeOpt range,
-                                               CoreRegion &region) {
+    [[nodiscard]] CoreValueId lower_path_value(const PathExpr &e, const ExprRef &expr,
+                                               SourceRangeOpt range, CoreRegion &region) {
         const auto rr = resolve_path_root(e.path);
-        // A bare local reference lowers directly to its bound value id.
+        // A bare local reference lowers directly to its bound value id (its type is
+        // already recorded in the body value_types table). It produces NO new value,
+        // so nothing to intern here.
         if (rr.is_local && e.path.members.empty()) {
             return rr.local;
         }
+        // A projection / external-root path DOES produce a fresh value; intern its
+        // own resolved type for it (self-typed: not eagerly interned by lower_value).
+        const CoreValueTypeId result_ty = intern_value_type(expr.ptr->resolved_type, range);
         CorePathExpr node;
         node.root = rr.is_local ? CorePathRoot::Local : rr.external_root;
         node.root_name = e.path.root_name;
@@ -1355,7 +1454,7 @@ template <class RootPolicy> class ExprLowerer {
             resolve_member_chain(root_type, e.path.members, e.path.root_name, range,
                                  node.projection, node.projection_resolved);
         }
-        return bind_pure(std::move(node), range, region);
+        return bind_pure(std::move(node), result_ty, range, region);
     }
 
     /// A path root resolved to its Core-IR root kind + type + optional local /
@@ -1376,7 +1475,9 @@ template <class RootPolicy> class ExprLowerer {
             if (const auto it = scope_.find(path.root_name); it != scope_.end()) {
                 r.is_local = true;
                 r.local = it->second.value;
-                r.root_type = it->second.type.value_or(CoreTypeId{});
+                // Member projection walks the nominal base of the binding's value
+                // type (kInvalid when the binding is a non-nominal value).
+                r.root_type = nominal_base_of(it->second.value_type);
                 r.external_root = CorePathRoot::Identifier;
                 return r;
             }
@@ -1435,19 +1536,21 @@ template <class RootPolicy> class ExprLowerer {
         }
     }
 
-    [[nodiscard]] CoreValueId lower_unary_value(const UnaryExpr &e, SourceRangeOpt range,
-                                                CoreRegion &region) {
-        // Operand lowered first; if it is effectful its call stmt is hoisted.
+    [[nodiscard]] CoreValueId lower_unary_value(const UnaryExpr &e, CoreValueTypeId result_ty,
+                                                SourceRangeOpt range, CoreRegion &region) {
+        // Operand lowered first; if it is effectful its call stmt is hoisted. The
+        // CoreValueRefExpr echoes the operand value's own logical type.
         const CoreValueId operand_val = lower_value(e.operand, region);
         const CoreExprId operand_ref = push_expr(CoreValueRefExpr{operand_val},
                                                  e.operand.ptr ? e.operand.ptr->source_range
-                                                               : std::nullopt);
+                                                               : std::nullopt,
+                                                 value_type_of(operand_val));
         const CoreUnaryOp op = (e.op == ExprUnaryOp::Negate) ? CoreUnaryOp::Neg : CoreUnaryOp::Not;
-        return bind_pure(CoreUnaryExpr{op, operand_ref}, range, region);
+        return bind_pure(CoreUnaryExpr{op, operand_ref}, result_ty, range, region);
     }
 
-    [[nodiscard]] CoreValueId lower_binary_value(const BinaryExpr &e, SourceRangeOpt range,
-                                                 CoreRegion &region) {
+    [[nodiscard]] CoreValueId lower_binary_value(const BinaryExpr &e, CoreValueTypeId result_ty,
+                                                 SourceRangeOpt range, CoreRegion &region) {
         const auto op = map_binary_op(e.op);
         if (!op.has_value()) {
             // Only `Implies` reaches here. Fail closed either way: an effectful
@@ -1457,14 +1560,15 @@ template <class RootPolicy> class ExprLowerer {
                       "binary operator carries a capability effect but is not yet "
                       "lowered to Core-IR",
                       range);
-                return fresh_value();
+                return fresh_value(result_ty);
             }
             error(diag::kUnloweredExpression,
                   "binary operator is not yet lowered to Core-IR; the program is not "
                   "executable until this slice lands",
                   range);
-            const CoreExprId expr_id = push_expr(CoreUnsupportedExpr{"BinaryExpr", range}, range);
-            const CoreValueId value = fresh_value();
+            const CoreExprId expr_id =
+                push_expr(CoreUnsupportedExpr{"BinaryExpr", range}, range, result_ty);
+            const CoreValueId value = fresh_value(result_ty);
             region.statements.push_back(CoreStmt{CoreLetStmt{value, expr_id}, range});
             return value;
         }
@@ -1472,13 +1576,16 @@ template <class RootPolicy> class ExprLowerer {
         const CoreValueId lhs_val = lower_value(e.lhs, region);
         const CoreValueId rhs_val = lower_value(e.rhs, region);
         const CoreExprId lhs_ref =
-            push_expr(CoreValueRefExpr{lhs_val}, e.lhs.ptr ? e.lhs.ptr->source_range : std::nullopt);
+            push_expr(CoreValueRefExpr{lhs_val}, e.lhs.ptr ? e.lhs.ptr->source_range : std::nullopt,
+                      value_type_of(lhs_val));
         const CoreExprId rhs_ref =
-            push_expr(CoreValueRefExpr{rhs_val}, e.rhs.ptr ? e.rhs.ptr->source_range : std::nullopt);
-        return bind_pure(CoreBinaryExpr{*op, lhs_ref, rhs_ref}, range, region);
+            push_expr(CoreValueRefExpr{rhs_val}, e.rhs.ptr ? e.rhs.ptr->source_range : std::nullopt,
+                      value_type_of(rhs_val));
+        return bind_pure(CoreBinaryExpr{*op, lhs_ref, rhs_ref}, result_ty, range, region);
     }
 
-    [[nodiscard]] CoreValueId lower_struct_value(const StructLiteralExpr &e, SourceRangeOpt range,
+    [[nodiscard]] CoreValueId lower_struct_value(const StructLiteralExpr &e,
+                                                 CoreValueTypeId result_ty, SourceRangeOpt range,
                                                  CoreRegion &region) {
         // A struct / enum-variant constructor is PURE. Arguments are lowered
         // first (effects hoisted, in source order), then the construct consumes
@@ -1562,7 +1669,7 @@ template <class RootPolicy> class ExprLowerer {
             }
             node.args.push_back(arg);
         }
-        return bind_pure(std::move(node), range, region);
+        return bind_pure(std::move(node), result_ty, range, region);
     }
 
     /// Lower a qualified value — a UNIT enum variant (no payload), e.g.
@@ -1570,7 +1677,8 @@ template <class RootPolicy> class ExprLowerer {
     /// FULL qualified name (owning enum = everything before the last `::`);
     /// unresolvable is fail-closed.
     [[nodiscard]] CoreValueId lower_qualified_value(const QualifiedValueExpr &e,
-                                                    SourceRangeOpt range, CoreRegion &region) {
+                                                    CoreValueTypeId result_ty, SourceRangeOpt range,
+                                                    CoreRegion &region) {
         CoreQualifiedExpr node;
         node.name = e.value;
         const auto sep = e.value.rfind("::");
@@ -1591,7 +1699,7 @@ template <class RootPolicy> class ExprLowerer {
                       "' could not be resolved to a typed enum variant",
                   range);
         }
-        return bind_pure(std::move(node), range, region);
+        return bind_pure(std::move(node), result_ty, range, region);
     }
 
     // ------------------------------------------------------------------
@@ -1604,134 +1712,103 @@ template <class RootPolicy> class ExprLowerer {
     // name; an or-pattern's alternatives that reuse a name share the same
     // binding, so the (3)-2 arm-binding bijection is satisfied by construction.
     struct ArmBindings {
-        std::vector<std::string> names;          // index == CorePatternBindingId
-        std::vector<CorePatternBinding> values;  // parallel: the fresh SSA value
+        std::vector<std::string> names;           // index == CorePatternBindingId
+        std::vector<CorePatternBinding> values;   // parallel: the fresh SSA value
+        std::vector<CoreValueTypeId> value_types; // parallel: the binding's interned value type
         std::unordered_map<std::string, std::uint32_t> index_of;
 
-        // Intern a binding by NAME. `type` is the binding's nominal struct/enum
-        // CoreTypeId (kInvalid for a primitive). Or-alternatives reuse the name;
-        // if a later alternative supplies a nominal type where the first had none
-        // (or vice versa), keep the nominal one so member projection resolves.
-        // (Full primitive value-type consistency across alternatives is a P4
-        // value-type gate proven by Sema, not the Core verifier.)
-        std::uint32_t intern(const std::string &name, CoreValueId value, CoreTypeId type) {
+        // Existing binding index for `name` (nullopt if this is a NEW name).
+        [[nodiscard]] std::optional<std::uint32_t> find(const std::string &name) const {
             if (const auto it = index_of.find(name); it != index_of.end()) {
-                CorePatternBinding &existing = values[it->second];
-                if (existing.binding_type.value == CoreTypeId::kInvalid &&
-                    type.value != CoreTypeId::kInvalid) {
-                    existing.binding_type = type;
-                }
                 return it->second;
             }
+            return std::nullopt;
+        }
+        // Register a NEW binding: its arm-scoped fresh SSA value id + interned
+        // logical value type (RFC 0026 P4-B — the type table is the SSOT, this
+        // struct no longer carries a nominal-only CoreTypeId).
+        std::uint32_t add(const std::string &name, CoreValueId value, CoreValueTypeId value_type) {
             const auto id = static_cast<std::uint32_t>(names.size());
             names.push_back(name);
-            values.push_back(CorePatternBinding{value, type});
+            values.push_back(CorePatternBinding{value});
+            value_types.push_back(value_type);
             index_of.emplace(name, id);
             return id;
         }
     };
 
-    // Collect the binding names a pattern introduces, allocating a fresh value id
-    // per NEW name (shared by name across or-alternatives). Runs before pattern
-    // lowering so the CorePatternBindingId domain is fixed. `matched_type` is the
-    // nominal type the pattern is matched against (kInvalid for primitive / no
-    // nominal type) — a binding at this position binds a value of that type, so
-    // `x.field` inside the arm resolves.
-    void collect_arm_bindings(const ir::MatchPattern &pattern, CoreTypeId matched_type,
-                              ArmBindings &out) {
+    // Collect the binding names a pattern introduces, allocating a fresh (typed)
+    // value id per NEW name (shared by name across or-alternatives). Runs before
+    // pattern lowering so the CorePatternBindingId domain is fixed. Each binding's
+    // logical value type is the enclosing pattern node's `matched_type_ref` (the
+    // B1 bridge: Sema records the INSTANTIATED type there, e.g. `Some(u)` on
+    // `Option<User>` records `u : User`), interned into the program-global pool.
+    // An or-alternative reusing a binding NAME must intern to the SAME id (index
+    // equality == structural equality); a divergence is fail-closed.
+    void collect_arm_bindings(const ir::MatchPattern &pattern, ArmBindings &out) {
         std::visit(Overloaded{
                        [&](const ir::BindingPattern &b) {
                            // By (3)-3b, a bare identifier Sema resolved to a unit
                            // variant is already an ir::VariantPattern here, so a
-                           // BindingPattern is always a genuine binding.
-                           //
-                           // Prefer the binding's OWN persisted matched-nominal
-                           // identity (pattern.matched_enum resolves StructT AND
-                           // EnumT, not just enums). Sema records the INSTANTIATED
-                           // payload type there, so `Some(u)` on `Option<User>`
-                           // binds `u : User` even though the builtin generic
-                           // Option's payload slot type is a kInvalid placeholder.
-                           // Fall back to the propagated slot type only when the
-                           // binding carries no nominal identity of its own.
-                           const CoreTypeId own =
-                               types_.resolve(pattern.matched_enum).value_or(CoreTypeId{});
-                           const CoreTypeId bind_type =
-                               own.value != CoreTypeId::kInvalid ? own : matched_type;
+                           // BindingPattern is always a genuine binding. Its type
+                           // is the pattern node's own matched type.
                            if (!b.name.empty()) {
-                               static_cast<void>(out.intern(b.name, fresh_value(), bind_type));
+                               const CoreValueTypeId vt =
+                                   intern_value_type(pattern.matched_type_ref, pattern.source_range);
+                               if (const auto existing = out.find(b.name)) {
+                                   // Or-alternative reusing the name: the interned
+                                   // type must be IDENTICAL across alternatives.
+                                   if (!(out.value_types[*existing] == vt)) {
+                                       error(diag::kUnresolvedType,
+                                             "match binding '" + b.name +
+                                                 "' has inconsistent value types across or-pattern "
+                                                 "alternatives",
+                                             pattern.source_range);
+                                   }
+                               } else {
+                                   static_cast<void>(out.add(b.name, fresh_value(vt), vt));
+                               }
                            }
                            if (b.nested) {
                                // `x @ nested`: the outer name binds the whole
-                               // value; the nested pattern matches the same type.
-                               collect_arm_bindings(*b.nested, bind_type, out);
+                               // value; the nested pattern carries its own type.
+                               collect_arm_bindings(*b.nested, out);
                            }
                        },
                        [&](const ir::VariantPattern &v) {
-                           // Resolve the variant payload slot types so nested
-                           // bindings carry their nominal type.
-                           const auto owner = types_.resolve(v.owner_enum);
-                           const auto vidx =
-                               owner ? types_.variant_index(*owner, v.variant_name) : std::nullopt;
-                           for (std::uint32_t i = 0; i < v.subpatterns.size(); ++i) {
-                               if (v.subpatterns[i]) {
-                                   collect_arm_bindings(*v.subpatterns[i],
-                                                        slot_type_of(owner, vidx, i), out);
+                           // Each sub-pattern is its own MatchPattern node carrying
+                           // its own matched_type_ref (the instantiated payload
+                           // type), so no slot-type propagation is needed here.
+                           for (const auto &sub : v.subpatterns) {
+                               if (sub) {
+                                   collect_arm_bindings(*sub, out);
                                }
                            }
                            for (const auto &f : v.fields) {
                                if (f.pattern) {
-                                   const auto slot =
-                                       (owner && vidx)
-                                           ? types_.variant_field_slot(*owner, *vidx, f.name)
-                                           : std::nullopt;
-                                   collect_arm_bindings(*f.pattern,
-                                                        slot ? slot_type_of(owner, vidx, *slot)
-                                                             : CoreTypeId{},
-                                                        out);
+                                   collect_arm_bindings(*f.pattern, out);
                                }
                            }
                        },
                        [&](const ir::TuplePattern &t) {
-                           // Anonymous tuple element types are a P4 concern; no
-                           // nominal CoreTypeId is available per element yet.
                            for (const auto &e : t.elements) {
                                if (e) {
-                                   collect_arm_bindings(*e, CoreTypeId{}, out);
+                                   collect_arm_bindings(*e, out);
                                }
                            }
                        },
                        [&](const ir::OrPattern &o) {
-                           // Alternatives share bindings BY NAME (intern dedups);
-                           // each alternative matches the same type.
+                           // Alternatives share bindings BY NAME (find/add dedups);
+                           // the identical-type check runs per binding above.
                            for (const auto &alt : o.branches) {
                                if (alt) {
-                                   collect_arm_bindings(*alt, matched_type, out);
+                                   collect_arm_bindings(*alt, out);
                                }
                            }
                        },
                        [&](const auto &) {}, // literal / int-range / wildcard bind nothing
                    },
                    pattern.node);
-    }
-
-    // The nominal CoreTypeId of a resolved variant's payload slot (kInvalid if
-    // the enum/variant is unresolved, the slot is out of range, or the slot type
-    // is a primitive / non-nominal placeholder).
-    [[nodiscard]] CoreTypeId slot_type_of(std::optional<CoreTypeId> owner,
-                                          std::optional<std::uint32_t> vidx,
-                                          std::uint32_t slot) const {
-        if (!owner || !vidx) {
-            return CoreTypeId{};
-        }
-        return types_.variant_slot_type(*owner, *vidx, slot);
-    }
-
-    // The nominal CoreTypeId a match arm / if-let ROOT pattern is matched
-    // against, from its persisted matched_enum ((3)-3b). kInvalid when the
-    // scrutinee is not a resolved nominal type (e.g. a primitive) — a binding
-    // there is a primitive binding (member projection does not apply).
-    [[nodiscard]] CoreTypeId pattern_matched_type(const ir::MatchPattern &pattern) const {
-        return types_.resolve(pattern.matched_enum).value_or(CoreTypeId{});
     }
 
     // Lower one AHFL-IR MatchPattern into the flow's CorePattern arena, returning
@@ -1939,13 +2016,15 @@ template <class RootPolicy> class ExprLowerer {
     // Expression-position match: each arm body yields the arm value; the match
     // defines a single result value in the parent scope (ANF). A non-exhaustive
     // match's fallback traps.
-    [[nodiscard]] CoreValueId lower_match_value(const MatchExpr &m, SourceRangeOpt range,
-                                                CoreRegion &region) {
+    [[nodiscard]] CoreValueId lower_match_value(const MatchExpr &m, CoreValueTypeId result_ty,
+                                                SourceRangeOpt range, CoreRegion &region) {
         const CoreValueId scrutinee = lower_value(m.scrutinee, region);
         CoreMatchStmt stmt;
         stmt.scrutinee = scrutinee;
         stmt.has_result = true;
-        stmt.result = fresh_value();
+        // The match result value carries the match's own resolved type (interned
+        // by the caller into `result_ty`).
+        stmt.result = fresh_value(result_ty);
         bool ok = true;
         for (const MatchArmExpr &arm : m.arms) {
             stmt.arms.push_back(lower_arm(arm.pattern, arm.guard, arm.body,
@@ -1971,7 +2050,7 @@ template <class RootPolicy> class ExprLowerer {
                                          const ExprRef &body, bool expression, SourceRangeOpt range,
                                          bool &ok) {
         ArmBindings bindings;
-        collect_arm_bindings(pattern, pattern_matched_type(pattern), bindings);
+        collect_arm_bindings(pattern, bindings);
         CoreMatchArm arm;
         arm.pattern = lower_pattern(pattern, bindings, range, ok);
         // Extend the scope with the arm bindings for guard + body lowering, then
@@ -1979,7 +2058,7 @@ template <class RootPolicy> class ExprLowerer {
         const auto outer = scope_;
         for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
             scope_[bindings.names[i]] =
-                LocalBinding{bindings.values[i].value, binding_type_opt(bindings.values[i])};
+                LocalBinding{bindings.values[i].value, bindings.value_types[i]};
         }
         // Guard: a pure Bool region that yields its value.
         if (guard.ptr != nullptr) {
@@ -2014,16 +2093,6 @@ template <class RootPolicy> class ExprLowerer {
         }
     }
 
-    // A pattern binding's nominal type as a scope LocalBinding type (nullopt for
-    // a primitive / kInvalid binding, so member projection is only attempted on a
-    // nominal struct/enum binding).
-    [[nodiscard]] static std::optional<CoreTypeId> binding_type_opt(const CorePatternBinding &b) {
-        if (b.binding_type.value == CoreTypeId::kInvalid) {
-            return std::nullopt;
-        }
-        return b.binding_type;
-    }
-
     /// The A-normalization core: a capability call becomes an ordered statement.
     [[nodiscard]] CoreValueId lower_call_value(const CallExpr &call, const ExprRef &expr,
                                                SourceRangeOpt range, CoreRegion &region) {
@@ -2036,10 +2105,16 @@ template <class RootPolicy> class ExprLowerer {
                       "capability call '" + call.callee +
                           "' could not be resolved to a capability declaration",
                       range);
-                return fresh_value();
+                return fresh_value(CoreValueTypeId{});
             }
+            // The call result value carries the call's resolved return type (the
+            // CallExpr's resolved_type is the call result). `expr.ptr` is non-null
+            // here (lower_value checks it before dispatching). Fail-closed if the
+            // resolved type is Unresolved/unmaterializable.
+            const CoreValueTypeId result_ty =
+                intern_value_type(expr.ptr->resolved_type, range);
             CoreCapabilityCallStmt stmt;
-            stmt.result = fresh_value();
+            stmt.result = fresh_value(result_ty);
             stmt.capability = info->id;
             stmt.callee_name = call.callee;
             stmt.args.reserve(call.arguments.size());
@@ -2077,13 +2152,17 @@ template <class RootPolicy> class ExprLowerer {
                     node.args.push_back(CoreConstructArg{CoreFieldId{positional++},
                                                          lower_value(arg, region)});
                 }
-                return bind_pure(std::move(node), range, region);
+                // The constructed value carries the call's resolved result type.
+                const CoreValueTypeId result_ty =
+                    intern_value_type(expr.ptr->resolved_type, range);
+                return bind_pure(std::move(node), result_ty, range, region);
             }
         }
         // Otherwise: a free-function call (not modelled by this slice) or an
         // unresolved variant. Fail closed if the subtree carries an effect;
         // else record a pure unsupported node.
-        return lower_unsupported_value(expr, "CallExpr", range, region);
+        const CoreValueTypeId result_ty = intern_value_type(expr.ptr->resolved_type, range);
+        return lower_unsupported_value(expr, "CallExpr", result_ty, range, region);
     }
 
     /// The trailing `::`-separated segment of a qualified callee (the variant
@@ -2100,6 +2179,7 @@ template <class RootPolicy> class ExprLowerer {
     /// node (with enumerated kind + range) is still recorded so the produced
     /// partial program remains inspectable for diagnostics/tests.
     [[nodiscard]] CoreValueId lower_unsupported_value(const ExprRef &expr, std::string kind,
+                                                      CoreValueTypeId result_ty,
                                                       SourceRangeOpt range, CoreRegion &region) {
         if (expr_has_capability_call(expr)) {
             error(diag::kEffectfulUnsupported,
@@ -2107,15 +2187,16 @@ template <class RootPolicy> class ExprLowerer {
                       "' carries a capability effect but is not yet lowered to Core-IR "
                       "(cannot be reduced to A-normal form in this slice)",
                   range);
-            return fresh_value();
+            return fresh_value(result_ty);
         }
         error(diag::kUnloweredExpression,
               "expression kind '" + kind +
                   "' is not yet lowered to Core-IR; the program is not executable until "
                   "this slice lands",
               range);
-        const CoreExprId expr_id = push_expr(CoreUnsupportedExpr{std::move(kind), range}, range);
-        const CoreValueId value = fresh_value();
+        const CoreExprId expr_id =
+            push_expr(CoreUnsupportedExpr{std::move(kind), range}, range, result_ty);
+        const CoreValueId value = fresh_value(result_ty);
         region.statements.push_back(CoreStmt{CoreLetStmt{value, expr_id}, range});
         return value;
     }
@@ -2187,6 +2268,8 @@ template <class RootPolicy> class ExprLowerer {
     const CapabilityIndex &caps_;
     const TypeEnv &types_;
     RootPolicy policy_;
+    const ValueTypeInterner &interner_;
+    const std::vector<CoreValueType> &value_type_pool_;
     std::vector<CoreLowerDiagnostic> &diags_;
     std::unordered_map<std::string, LocalBinding> scope_;
 };
@@ -2200,9 +2283,11 @@ class FlowLowerer {
   public:
     FlowLowerer(CoreFlowDecl &flow, const CapabilityIndex &caps, const StateIndex &states,
                 const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
+                const ValueTypeInterner &interner, const std::vector<CoreValueType> &value_type_pool,
                 std::vector<CoreLowerDiagnostic> &diags)
-        : ex_(CoreBodyStorageRef{flow.exprs, flow.value_count, flow.patterns}, caps, types,
-              FlowRootPolicy{input_type, context_type}, diags),
+        : ex_(CoreBodyStorageRef{flow.exprs, flow.value_count, flow.patterns, flow.value_types},
+              caps, types, FlowRootPolicy{input_type, context_type}, interner, value_type_pool,
+              diags),
           flow_(flow), states_(states) {}
 
     void lower_handler(const StateHandler &handler, CoreStateId state_id) {
@@ -2275,11 +2360,12 @@ class FlowLowerer {
 
     void lower_let(const LetStatement &s, CoreRegion &region) {
         const CoreValueId value = ex_.lower_value(s.initializer, region);
-        // Track the local's binding value id AND its type together, so later
-        // member projections through this local (`local.field`) can resolve
-        // field ids. The two travel as one binding, so branch scoping (see
-        // lower_if) can snapshot/restore them atomically.
-        ex_.scope()[s.name] = LocalBinding{value, ex_.types().type_id_of(s.type_ref)};
+        // A source `let` REUSES the initializer value (does NOT allocate a fresh
+        // one), so the local's logical type is exactly the value's already-recorded
+        // body-table entry (single source of truth — RFC 0026 P4-B). Both travel as
+        // one binding, so branch scoping (see lower_if) snapshots/restores them
+        // atomically.
+        ex_.scope()[s.name] = LocalBinding{value, ex_.value_type_of(value)};
     }
 
     void lower_assign(const AssignStatement &s, SourceRangeOpt range, CoreRegion &region) {
@@ -2362,7 +2448,7 @@ class FlowLowerer {
         bool ok = true;
         // The single arm: pattern + then-block, yielding no value (statement match).
         ArmBindings bindings;
-        ex_.collect_arm_bindings(s.pattern, ex_.pattern_matched_type(s.pattern), bindings);
+        ex_.collect_arm_bindings(s.pattern, bindings);
         CoreMatchArm arm;
         arm.pattern = ex_.lower_pattern(s.pattern, bindings, range, ok);
         arm.body = std::make_unique<CoreRegion>();
@@ -2398,7 +2484,7 @@ class FlowLowerer {
         const auto outer = ex_.scope();
         for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
             ex_.scope()[bindings.names[i]] =
-                LocalBinding{bindings.values[i].value, ex_.binding_type_opt(bindings.values[i])};
+                LocalBinding{bindings.values[i].value, bindings.value_types[i]};
         }
         CoreRegion region = lower_block(block);
         ex_.scope() = outer;
@@ -2426,9 +2512,12 @@ class WorkflowLowerer {
                     const std::vector<CoreAgentDecl> &agents,
                     const std::unordered_map<std::size_t, CoreAgentId> &agent_by_id,
                     const std::unordered_map<std::string, CoreAgentId> &agent_by_name,
+                    const ValueTypeInterner &interner,
+                    const std::vector<CoreValueType> &value_type_pool,
                     std::vector<CoreLowerDiagnostic> &diags)
         : wf_(wf), caps_(caps), types_(types), agents_(agents), agent_by_id_(agent_by_id),
-          agent_by_name_(agent_by_name), diags_(diags) {}
+          agent_by_name_(agent_by_name), interner_(interner), value_type_pool_(value_type_pool),
+          diags_(diags) {}
 
     void lower(const WorkflowDecl &decl) {
         wf_.name = decl.name;
@@ -2512,8 +2601,9 @@ class WorkflowLowerer {
     /// ExprLowerer<WorkflowRootPolicy> over the workflow's shared arenas.
     void lower_value_region(const ExprRef &expr, CoreRegion &region, SourceRangeOpt range) {
         ExprLowerer<WorkflowRootPolicy> ex(
-            CoreBodyStorageRef{wf_.exprs, wf_.value_count, wf_.patterns}, caps_, types_,
-            WorkflowRootPolicy{wf_.input_type, &node_index_}, diags_);
+            CoreBodyStorageRef{wf_.exprs, wf_.value_count, wf_.patterns, wf_.value_types}, caps_,
+            types_, WorkflowRootPolicy{wf_.input_type, &node_index_}, interner_, value_type_pool_,
+            diags_);
         const CoreValueId value = ex.lower_value(expr, region);
         region.statements.push_back(CoreStmt{CoreYieldStmt{true, value}, range});
     }
@@ -2542,6 +2632,8 @@ class WorkflowLowerer {
     const std::vector<CoreAgentDecl> &agents_;
     const std::unordered_map<std::size_t, CoreAgentId> &agent_by_id_;
     const std::unordered_map<std::string, CoreAgentId> &agent_by_name_;
+    const ValueTypeInterner &interner_;
+    const std::vector<CoreValueType> &value_type_pool_;
     std::vector<CoreLowerDiagnostic> &diags_;
     // node name -> {typed id, target agent output type}. Built in Pass A, consumed
     // by Pass B's WorkflowRootPolicy to classify node-output path roots.
@@ -2598,6 +2690,22 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         }
     }
 
+    // The SINGLE program-global logical value-type arena (RFC 0026 P4). Hoisted
+    // here — after the complete types table is built — and reused for Pass 2/3
+    // (body value types) AND Pass 6 (instance dispatch types), so every value +
+    // dispatch descriptor interns into ONE canonical `core.value_types` pool
+    // (Codex ruling: one long-lived arena, not a per-body/per-pass rebuild). The
+    // strict id-first resolver is the same one the public `lower_value_type_into`
+    // uses, so the two paths never drift. The interner is a thin fail-closed
+    // adapter over `arena.lower`.
+    ValueTypeArena shared_arena(core.value_types, core.types, [&core](const SymbolRef &r) {
+        return resolve_nominal_strict(core.types, r);
+    });
+    const ValueTypeInterner intern_value_type =
+        [&shared_arena](const TypeRef &type, std::string *reason) {
+            return shared_arena.lower(type, reason);
+        };
+
     // Pass 2: flows. Resolve each flow's target agent BY IDENTITY; a missing
     // target or an unknown handler state is a fail-closed Error (never a
     // silent fallback to state 0).
@@ -2642,7 +2750,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         // its CoreAgentDecl (typed shell), so member projections through
         // `input.` / `ctx.` get typed CoreFieldIds without re-querying AHFL-IR.
         FlowLowerer lowerer(core_flow, cap_index, state_index, types, target_agent.input_type,
-                            target_agent.context_type, result.diagnostics);
+                            target_agent.context_type, intern_value_type, core.value_types,
+                            result.diagnostics);
         for (const StateHandler &handler : flow->state_handlers) {
             const auto state_id = state_index.lookup(handler.state_name);
             if (!state_id) {
@@ -2673,7 +2782,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         CoreWorkflowDecl core_wf;
         core_wf.id = CoreWorkflowId{static_cast<std::uint32_t>(core.workflows.size())};
         WorkflowLowerer lowerer(core_wf, cap_index, types, core.agents, agent_by_id, agent_by_name,
-                                result.diagnostics);
+                                intern_value_type, core.value_types, result.diagnostics);
         lowerer.lower(*wf);
         core.workflows.push_back(std::move(core_wf));
     }
@@ -2703,13 +2812,12 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     // InstanceDecls; unifying the two is a later slice.
     std::unordered_set<std::string> seen_instance_keys;
     // Interns each instance's concrete dispatch type into the program's logical
-    // value-type arena (RFC 0026 P4). Uses the SAME strict id-first resolver as
-    // the public lower_value_type_into (Codex P0-3): resolves over the now-complete
-    // core.types table by symbol id, with a name-only-synthetic canonical fallback
-    // and fail-closed id/canonical drift — no drift between the two paths.
-    ValueTypeArena dispatch_arena(
-        core.value_types, core.types,
-        [&core](const SymbolRef &ref) { return resolve_nominal_strict(core.types, ref); });
+    // value-type arena (RFC 0026 P4), REUSING the one long-lived `shared_arena`
+    // hoisted before Pass 2 — so body values and dispatch descriptors intern into
+    // the SAME canonical `core.value_types` pool. It uses the SAME strict id-first
+    // resolver as the public lower_value_type_into (Codex P0-3): resolves over the
+    // now-complete core.types table by symbol id, with a name-only-synthetic
+    // canonical fallback and fail-closed id/canonical drift — no path drift.
     for (const Decl &decl : ahfl_ir.declarations) {
         const auto *inst = std::get_if<InstanceDecl>(&decl);
         if (inst == nullptr) {
@@ -2723,7 +2831,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         out.dispatch_types.reserve(inst->type_args.size());
         for (const TypeRef &t : inst->type_args) {
             std::string reason;
-            const auto vt = dispatch_arena.lower(t, &reason);
+            const auto vt = shared_arena.lower(t, &reason);
             if (!vt) {
                 result.diagnostics.push_back(CoreLowerDiagnostic{
                     CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedType),

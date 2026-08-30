@@ -490,6 +490,13 @@ using CoreExprNode = std::variant<CoreLiteralExpr,
 struct CoreExpr {
     CoreExprNode node;
     SourceRangeOpt source_range;
+    /// RFC 0026 P4-B: the logical value type this pure expression evaluates to
+    /// (index into `CoreProgram::value_types`). REQUIRED in a lowering-clean
+    /// program: the standalone verifier checks every arena entry, and
+    /// `CoreLetStmt` / `CoreValueRefExpr` consistency is proven against it. A
+    /// lowering-ERROR partial artifact may leave this `kInvalid` (the verifier is
+    /// only run on error-free candidates); no clean program carries a placeholder.
+    CoreValueTypeId result_type{};
     [[nodiscard]] friend bool operator==(const CoreExpr &, const CoreExpr &) noexcept = default;
 };
 
@@ -697,16 +704,12 @@ struct CoreTrapStmt {
 
 /// One binding introduced by a match arm (`x` in `Some(x)`), shared across an
 /// or-pattern's alternatives. `value` is the fresh SSA value id it defines
-/// (flow-global single definition; visible only in the arm's guard + body).
-/// `binding_type` is the NOMINAL struct/enum type of the bound value (from the
-/// matched payload slot), so a member projection `x.field` inside the arm body /
-/// guard can resolve. It is `kInvalid` for a primitive (Int/String/…) binding —
-/// full primitive value-type identity is a P4 value-type concern, and same-name
-/// primitive binding consistency across or-alternatives is proven by Sema, NOT
-/// by the Core verifier at this stage.
+/// (flow-global single definition; visible only in the arm's guard + body). The
+/// bound value's logical TYPE lives in the owning body's `value_types[value]`
+/// table (RFC 0026 P4-B) — it covers primitives, bounds, and nominals uniformly,
+/// so this struct no longer carries a nominal-only `binding_type`.
 struct CorePatternBinding {
     CoreValueId value{};
-    CoreTypeId binding_type{}; // kInvalid = primitive / non-nominal
     [[nodiscard]] friend bool operator==(const CorePatternBinding &,
                                          const CorePatternBinding &) noexcept = default;
 };
@@ -923,6 +926,13 @@ struct CoreFlowDecl {
     ir::SymbolRef target_ref;           // provenance / display only
     std::vector<CoreExpr> exprs;        // pure-expression arena (Principle 3)
     std::uint32_t value_count{0};       // number of CoreValueIds allocated
+    /// RFC 0026 P4-B: the logical value type of each CoreValueId (index ==
+    /// CoreValueId). DENSE: `value_types.size() == value_count` in a
+    /// lowering-clean flow, and every entry is a valid, in-range, non-Never
+    /// CoreValueTypeId (a lowering-ERROR partial artifact may hold kInvalid to
+    /// keep the parallel length, but the verifier only runs on error-free
+    /// candidates). Allocated atomically with each value id.
+    std::vector<CoreValueTypeId> value_types;
     std::vector<CorePattern> patterns;  // match-pattern arena (Principle 3)
     std::vector<CoreFlowState> states;
     friend bool operator==(const CoreFlowDecl &, const CoreFlowDecl &) noexcept;
@@ -973,6 +983,10 @@ struct CoreWorkflowDecl {
     CoreTypeId output_type{};                 // workflow output struct
     std::vector<CoreExpr> exprs;              // per-workflow pure-expression arena
     std::uint32_t value_count{0};             // number of CoreValueIds allocated
+    /// RFC 0026 P4-B: logical value type per CoreValueId (index == CoreValueId);
+    /// dense (`size == value_count`) in a lowering-clean workflow. Same contract
+    /// as CoreFlowDecl::value_types.
+    std::vector<CoreValueTypeId> value_types;
     std::vector<CorePattern> patterns;        // per-workflow pattern arena (match in a node/return region)
     std::vector<CoreWorkflowNode> nodes;      // DAG nodes; index == CoreWorkflowNodeId
     std::unique_ptr<CoreRegion> return_region; // ANF; ends in Yield(output value)

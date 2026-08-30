@@ -394,7 +394,58 @@ class Verifier {
         // over EVERY arena expr (not just region-reachable ones). Empty for Flow.
         const std::vector<CoreTypeId> *node_output_types{nullptr};
         CoreTypeId workflow_input_type{}; // Workflow only: the workflow input struct
+        // RFC 0026 P4-B: the body's per-value logical type table (index ==
+        // CoreValueId). Dense (size == value_count) in a well-formed body; used to
+        // prove CoreLetStmt / CoreValueRefExpr result-type consistency.
+        const std::vector<CoreValueTypeId> *value_types{nullptr};
     };
+
+    // The recorded logical value type of a value id in a body (kInvalid sentinel
+    // when the table is missing or the id is out of range — the caller's separate
+    // size / bounds checks report those).
+    [[nodiscard]] CoreValueTypeId body_value_type(const ArenaView &flow, CoreValueId v) const {
+        if (flow.value_types == nullptr || v.value >= flow.value_types->size()) {
+            return CoreValueTypeId{};
+        }
+        return (*flow.value_types)[v.value];
+    }
+
+    // Whether a logical value-type id is a materialized value's type: in range AND
+    // not `Never` (an uninhabited type cannot be the type of a produced value —
+    // the same consumer-context rule dispatch types use). kInvalid is rejected.
+    [[nodiscard]] bool value_type_slot_ok(CoreValueTypeId id) const {
+        if (id.value == CoreValueTypeId::kInvalid || id.value >= program_.value_types.size()) {
+            return false;
+        }
+        return !std::holds_alternative<CoreVtNever>(program_.value_types[id.value].node);
+    }
+
+    // RFC 0026 P4-B: the body's per-value type table must be DENSE (one entry per
+    // allocated value id) and every entry a valid, in-range, non-Never value type.
+    void verify_body_value_types(const ArenaView &flow) {
+        const auto *table = flow.value_types;
+        const auto table_size =
+            table != nullptr ? static_cast<std::uint32_t>(table->size()) : 0u;
+        if (table_size != flow.value_count) {
+            error(verify::kValueTypesSizeMismatch,
+                  "body '" + flow.label + "' value_types table size " +
+                      std::to_string(table_size) + " does not equal value_count " +
+                      std::to_string(flow.value_count),
+                  std::nullopt);
+        }
+        if (table == nullptr) {
+            return;
+        }
+        for (std::uint32_t v = 0; v < table_size; ++v) {
+            if (!value_type_slot_ok((*table)[v])) {
+                error(verify::kValueTypeSlotInvalid,
+                      "body '" + flow.label + "' value id " + std::to_string(v) +
+                          " has an invalid logical value type (out-of-range id or a `Never`, which "
+                          "cannot be a materialized value type)",
+                      std::nullopt);
+            }
+        }
+    }
 
     // --- pure expression arena (static, order-independent checks) ---
     //
@@ -433,7 +484,21 @@ class Verifier {
         for (const CoreExpr &expr : flow.exprs) {
             std::visit(Overloaded{
                            [&](const CoreLiteralExpr &) {},
-                           [&](const CoreValueRefExpr &r) { check_value_id(r.value, expr.source_range); },
+                           [&](const CoreValueRefExpr &r) {
+                               check_value_id(r.value, expr.source_range);
+                               // RFC 0026 P4-B: an SSA use echoes the referenced
+                               // value's recorded logical type.
+                               if (r.value.value < flow.value_count &&
+                                   flow.value_types != nullptr &&
+                                   r.value.value < flow.value_types->size() &&
+                                   !(expr.result_type == (*flow.value_types)[r.value.value])) {
+                                   error(verify::kValueTypeMismatch,
+                                         "value-ref expression result type does not equal the "
+                                         "referenced value's recorded type in '" +
+                                             flow.label + "'",
+                                         expr.source_range);
+                               }
+                           },
                            [&](const CorePathExpr &p) {
                                if (p.has_local) {
                                    check_value_id(p.local, expr.source_range);
@@ -968,7 +1033,9 @@ class Verifier {
 
     // --- flow wiring + per-state statement discipline ---
     void verify_flow(const CoreFlowDecl &flow) {
-        const ArenaView av{flow.exprs, flow.value_count, flow.patterns, flow.agent_name};
+        ArenaView av{flow.exprs, flow.value_count, flow.patterns, flow.agent_name};
+        av.value_types = &flow.value_types;
+        verify_body_value_types(av);
         verify_expr_arena(av);
         verify_pattern_arena(av);
 
@@ -1162,6 +1229,21 @@ class Verifier {
                            [&](const CoreLetStmt &s) {
                                use_expr(s.expr, stmt.source_range);
                                define_value(s.result, stmt.source_range);
+                               // RFC 0026 P4-B: the bound value's recorded logical
+                               // type must equal the bound expr's result_type
+                               // (both index the program-global value-type pool).
+                               if (s.expr.value < flow.exprs.size()) {
+                                   const CoreValueTypeId expr_ty =
+                                       flow.exprs[s.expr.value].result_type;
+                                   if (!(body_value_type(flow, s.result) == expr_ty)) {
+                                       error(verify::kValueTypeMismatch,
+                                             "let-bound value id " + std::to_string(s.result.value) +
+                                                 " recorded type does not equal its expression's "
+                                                 "result type in '" +
+                                                 flow.label + "'",
+                                             stmt.source_range);
+                                   }
+                               }
                            },
                            [&](const CoreCapabilityCallStmt &s) {
                                if (s.capability.value >= program_.capabilities.size()) {
@@ -1705,9 +1787,12 @@ class Verifier {
         // an unresolved identifier, and (over EVERY expr) a bad node-id / mistyped
         // workflow root.
         const auto make_view = [&](std::string lbl) {
-            return ArenaView{wf.exprs,       wf.value_count,     wf.patterns, std::move(lbl),
-                             OwnerKind::Workflow, &node_output_types, wf.input_type};
+            ArenaView av{wf.exprs,           wf.value_count,     wf.patterns, std::move(lbl),
+                         OwnerKind::Workflow, &node_output_types, wf.input_type};
+            av.value_types = &wf.value_types;
+            return av;
         };
+        verify_body_value_types(make_view(wf.name));
         verify_expr_arena(make_view(wf.name));
         verify_pattern_arena(make_view(wf.name));
         std::unordered_set<std::uint32_t> all_definitions;
