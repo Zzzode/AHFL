@@ -908,7 +908,7 @@ TEST_CASE("branch-local let bindings do not leak across branches or past the if 
         ir::LetStatement let;
         let.name = name;
         // An inferred `let x = <Int>` carries the initializer's type in type_ref
-        // (Sema's FromInitializerType strategy), so declared == initializer type.
+        // (Sema's FromInitializerType strategy).
         let.type_ref = int_type();
         let.initializer = init;
         s->node = std::move(let);
@@ -1659,8 +1659,7 @@ TEST_CASE("enum struct-payload construct with a missing slot fails closed in the
     auto let = std::make_unique<ir::Statement>();
     ir::LetStatement let_stmt;
     let_stmt.name = "t";
-    // Declared annotation matches the initializer's resolved enum type (P0-3
-    // lower_let requires declared == initializer value type).
+    // Declared annotation is the initializer's resolved enum type.
     let_stmt.type_ref = enum_type("app::Ticket");
     let_stmt.initializer = lit_ref;
     let->node = std::move(let_stmt);
