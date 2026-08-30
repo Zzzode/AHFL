@@ -1,6 +1,6 @@
 # Core-IR KR6.5: WASM Orchestration Codegen -- Design
 
-> Status: **DRAFT rev 1** (RFC 0026 P5 / KR6.5).
+> Status: **DRAFT rev 2** (RFC 0026 P5 / KR6.5).
 > This document defines the first executable vertical slice, E1. It does not
 > claim that all of P5 is complete: capability calls and workflow DAG execution
 > remain later KR6.5 slices, while expression/control-flow computation remains
@@ -31,7 +31,7 @@ back to the old AHFL-IR projection.
 
 ## 1. E1 goal and explicit non-goals
 
-### 1.1 Goal: one real, input-independent agent path
+### 1.1 Goal: one real agent path with opaque identity output
 
 E1 compiles one explicitly selected Core agent and its flow into a wasm32
 binary. The accepted executable subset is deliberately small:
@@ -39,38 +39,48 @@ binary. The accepted executable subset is deliberately small:
 1. exactly one target `CoreAgentDecl` and exactly one `CoreFlowDecl` targeting
    it;
 2. every non-final state handler contains exactly one `CoreGotoStmt`;
-3. every final state handler is empty;
+3. every final state handler contains exactly the canonical ANF identity form
+   `CoreLetStmt(CorePathExpr{root=Input, projection=[]})` followed by a
+   `CoreReturnStmt` of that same SSA value;
 4. the deterministic goto graph is total and every state reaches a declared
    final state;
-5. no workflow, capability-call statement, store, let/expression, return,
-   yield, trap, `if`, or `match` is accepted in E1.
+5. agent input and output declaration types are identical, and the identity
+   path/result/return logical `CoreValueTypeId` values are exactly equal;
+6. no workflow, capability-call statement, store, non-identity let/expression,
+   non-canonical return, yield, trap, `if`, or `match` is accepted in E1.
 
 The source probe is a real frontend program whose initial handler only
-`goto Done` and whose final handler falls through. Native `AgentRuntime` and
-the wasm module both observe:
+`goto Done` and whose final handler is `return input;`. Native execution plus
+the separately classified wasm execution/structural evidence establish:
 
 - the same declaration-order final `CoreStateId`;
 - one state transition;
-- no output value;
+- the identity output contract described below;
 - no capability invocation.
 
-This is a real orchestration result, not a computed value. It stays on the P5
-side of the P5/P6 seam.
+The canonical identity is not evaluated as a Core expression. The validator
+uses it only as proof that `run` may return its input pointer without reading,
+writing, projecting, coercing, parsing, copying, or reconstructing the value.
+This is opaque orchestration frame routing, not computed value semantics, and
+therefore stays on the P5 side of the P5/P6 seam.
 
 ### 1.2 Non-goals
 
-- No `CoreExprNode` is emitted as wasm instructions in E1, including literals
-  and identity paths. They remain P6, rather than creating a misleading
-  "simple expression" second engine.
+- No `CoreExprNode` is emitted as wasm instructions in E1. The single canonical
+  input identity path is structurally recognized and erased into opaque pointer
+  passthrough; it performs no Core value evaluation. Literals, member
+  projections, construction, coercion, and every other expression remain P6,
+  rather than creating a misleading "simple expression" second engine.
 - `CoreIfStmt` and `CoreMatchStmt` are P6 structured computation/control flow,
   not E1 orchestration.
 - Capability calls, status/error/pending, argument/result frame marshalling,
   and resume are later KR6.5 slices.
-- Workflow DAG scheduling and opaque input/output frame routing are later
-  KR6.5 slices.
+- Workflow DAG scheduling and general opaque input/output frame routing are
+  later KR6.5 slices. E1 permits only its explicitly constrained identity
+  alias; that exception is not a general frame-routing precedent.
 - E1 does not parse or produce `value_json`: the accepted flow is proven to
-  neither read input/context nor return a value. The stable ABI exports remain
-  present, but E1's `run` has no output frame and returns null pointer `0`.
+  return its input unchanged. The stable ABI exports remain present, and E1's
+  `run` returns the input pointer itself.
 - No browser host, JS glue, WASI resource mapping, optimization, debug info, or
   source map is introduced.
 - The legacy `generate_wasm(WasmAgentConfig)` WAT helper is not reused by Core
@@ -153,6 +163,17 @@ discarded after emission. The target of every `Goto` must also appear in the
 agent's declared legal transition table. Finality comes only from
 `CoreAgentDecl::finals`; it is never inferred from outgoing edges.
 
+For each final state, the validator requires the exact two-statement canonical
+identity shape described in section 1.1. The `CorePathExpr` must have `Input`
+as its root, `root_type == agent.input_type`, empty display members, empty
+canonical projection, and `projection_resolved == true`. Its
+`CoreExpr::result_type` must be a materialized nominal whose base is that input
+type. The `CoreReturnStmt` must return the precise SSA value defined by that
+let. Agent input and output `CoreTypeId` values must be equal, and the
+expression result and the flow's SSA value-type entry must be the same exact
+`CoreValueTypeId`. Hidden/orphan expressions or SSA values are rejected. This
+validation never interprets the input value.
+
 The validator follows the single outgoing action from every state with a
 three-color walk. A cycle or a non-final sink is rejected. This is stricter
 than general AHFL, but it guarantees that E1 `run` terminates without reviving
@@ -190,9 +211,11 @@ increments the counter exactly once, and returns the new state.
 `run` resets `current_state` to the declared initial state and
 `transition_count` to zero, then calls the same step logic until a final state
 is reached. Its input `(ptr,len)` is not dereferenced because the E1 validator
-proved that no accepted node can read it. The no-output result is pointer zero.
-The loop carries a compile-time/state-count fuel guard even though the
-validator already proved termination; exhausting it traps rather than hanging.
+proved that the only accepted result is the exact input identity. It returns
+`ptr` unchanged. The `run` body performs no load, store, parse, copy, coercion,
+or allocation for that frame. The loop carries a compile-time/state-count fuel
+guard even though the validator already proved termination; exhausting it
+traps rather than hanging.
 
 `current_state` returns the index. State names are display/provenance and do
 not enter executable identity.
@@ -201,13 +224,28 @@ not enter executable identity.
 
 RFC 0019's v1 `run` returns only an output pointer, while RFC 0021's capability
 ABI returns both pointer and length. Existing comments also alternate between
-"length-prefixed bytes" and a separately supplied length. E1 does not exploit
-or reinterpret this ambiguity: it returns no output frame.
+"length-prefixed bytes" and a separately supplied length. E1 uses one narrow,
+explicit identity exception rather than claiming that this ambiguity is
+resolved:
+
+- the returned output pointer aliases the input buffer exactly;
+- output length equals the caller-known `in_len` by the validated identity
+  invariant;
+- ownership remains with the host, which obtained the buffer from the module's
+  `alloc` and must deallocate that allocation exactly once with the same
+  allocator;
+- the module neither reads nor writes the aliased buffer in `run`.
+
+This exception is valid only when input/output declaration types are identical
+and the final handler has the canonical identity shape. A projection, literal,
+construction, coercion, different output type, or any other value-returning
+form fails closed; none may reuse this alias rule.
 
 Before a value-returning agent/workflow slice lands, the ABI must receive a
 separate reviewed decision. Because published ABI symbols are append-only, a
 likely solution is `run2(...)->(status,ptr,len)` while preserving `run`; E1 does
-not pre-approve that signature and must not silently mutate v1.
+not pre-approve that signature, does not generalize its identity alias, and
+must not silently mutate v1.
 
 ## 4. Deterministic wasm binary emission
 
@@ -276,9 +314,13 @@ does not retain a declaration range; codegen must not fabricate one.
 The following all fail before byte publication:
 
 - `CoreLetStmt` containing even a Bool/integer literal;
-- `CoreIfStmt`, `CoreMatchStmt`, `CoreReturnStmt` with or without a value;
+- any identity candidate with a member projection, a coercion, a literal, a
+  constructed value, mismatched input/output types, or a return of a different
+  SSA value;
+- `CoreIfStmt`, `CoreMatchStmt`, or a non-canonical `CoreReturnStmt`;
 - capability call, store, yield, trap, or unsupported expression;
-- empty/non-goto non-final handler, non-empty final handler, illegal goto;
+- empty/non-goto non-final handler, empty/non-identity final handler, illegal
+  goto;
 - cyclic deterministic goto graph;
 - any workflow in the E1 CLI program;
 - mismatched/tampered layout table;
@@ -298,10 +340,19 @@ same checked program
 
 The source fixture is real frontend input, not a hand-built Core graph. The
 native and wasm observations compare declaration-order state id, transition
-count, no output, and empty capability-call sequence. For the one-hop fixture,
-`wasmtime run --invoke step module.wasm` returns the final state index. The
-harness accepts only one integer result line and treats an unrecognized output
-shape as failure; it does not snapshot incidental warning text.
+count, semantic identity output, and empty capability-call sequence. For the
+one-hop fixture, `wasmtime run --invoke step module.wasm` returns the final
+state index. The harness accepts only one integer result line and treats an
+unrecognized output shape as failure; it does not snapshot incidental warning
+text.
+
+The CLI invocation cannot observe the aliased output pointer and length in the
+same persistent instance. E1 therefore locks the identity `run` body with an
+always-on binary/structural probe: it returns local argument zero and contains
+no memory access for the frame. This is not execution evidence and does not
+replace the real-wasmtime `step` differential. A later embedded-host harness
+may exercise `alloc` and `run` in one instance without changing this evidence
+classification.
 
 Wasmtime remains an external test/host tool, never a linked production
 dependency. Reuse the P-6A discovery provenance and minimum-version policy:
@@ -320,21 +371,28 @@ records a non-skipped real wasmtime pass.
 
 Always-on unit/focused tests:
 
-1. real frontend `Init -> Done`, empty final handler -> Core + layout + binary;
+1. real frontend `Init -> Done`, final `return input;` -> Core + layout +
+   binary;
 2. wasm magic/version, canonical section order, required export signatures,
    initial state id (including an initial state whose index is not zero), and
    explicit final-state behavior;
-3. double emission is byte-identical; profile pair is byte-identical for the
+3. the canonical identity passes, while member projection, literal, different
+   output type, and coercion variants each fail
+   `wasm.UNSUPPORTED_ORCHESTRATION` with no bytes;
+4. the `run` body structurally returns argument zero and contains no frame
+   memory operation; this test is named and documented as binary/structural,
+   not execution evidence;
+5. double emission is byte-identical; profile pair is byte-identical for the
    no-import slice;
-4. `CoreProgram` and `CoreLayoutTable` remain equal to pre-emit snapshots;
-5. a tampered layout table fails `wasm.INVALID_LAYOUT`;
-6. each P6/effect/workflow node in the fail-closed matrix yields
+6. `CoreProgram` and `CoreLayoutTable` remain equal to pre-emit snapshots;
+7. a tampered layout table fails `wasm.INVALID_LAYOUT`;
+8. each P6/effect/workflow node in the fail-closed matrix yields
    `wasm.UNSUPPORTED_ORCHESTRATION` and no bytes;
-7. multiple agents yields `wasm.ENTRY_AMBIGUOUS`, never concatenation/first
+9. multiple agents yields `wasm.ENTRY_AMBIGUOUS`, never concatenation/first
    selection;
-8. direct goto cycle yields `wasm.NONTERMINATING_E1_RUN`;
-9. binary boundary overflow/fault injection yields no partial artifact;
-10. existing P4-C materializer, P4-D layout, Core lower/verifier, evaluator,
+10. direct goto cycle yields `wasm.NONTERMINATING_E1_RUN`;
+11. binary boundary overflow/fault injection yields no partial artifact;
+12. existing P4-C materializer, P4-D layout, Core lower/verifier, evaluator,
     RFC 0019 ABI catalogue, and non-WASM backend suites remain green.
 
 Optional real-execution conformance:
@@ -345,7 +403,9 @@ Optional real-execution conformance:
 3. native transition count is one and the module's step result proves the same
    single transition (a later embedded-host harness will read both exports in
    one instance);
-4. malformed/unsupported wasm or an explicit broken wasmtime is a hard failure,
+4. native output is semantically identical to input; the E1 CLI-only wasmtime
+   probe does not claim to observe the aliased output frame;
+5. malformed/unsupported wasm or an explicit broken wasmtime is a hard failure,
    never a false skip.
 
 ## 9. KR6.5 continuation after E1
