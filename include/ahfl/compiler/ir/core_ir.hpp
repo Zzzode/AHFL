@@ -26,8 +26,10 @@
 // (`ahfl_cap` import) declaration that the effect->capability-call lowering
 // produces, plus the scaffolded lower entry `lower_ahfl_to_core`. The rest of
 // the node set (monomorphized function bodies, structured control-flow regions,
-// value representation / memory layout, capability-call ARGUMENT passing) is
-// filled by the later KR6.4 sub-slices and is intentionally NOT present yet.
+// capability-call ARGUMENT passing and later execution nodes are filled by
+// subsequent KR6.4 sub-slices. Target-specific physical layout deliberately is
+// not a CoreProgram field: P4-D projects it into the pure side artifact declared
+// by core_layout.hpp.
 //
 // Nothing consumes `CoreProgram` yet: WASM codegen is KR6.5 and the evaluator is
 // untouched. This header + `core_lower.cpp` are purely additive scaffolding
@@ -1403,6 +1405,10 @@ struct CoreTypeDecl {
     /// base that has no user declaration carries a name-only ref (kind=Type,
     /// canonical set, id absent).
     ir::SymbolRef symbol_ref{};
+    /// Declaration provenance retained for target-side diagnostics such as a
+    /// malformed/infinite member layout. Synthetic builtin shells have no
+    /// source range.
+    SourceRangeOpt source_range;
     [[nodiscard]] friend bool operator==(const CoreTypeDecl &,
                                          const CoreTypeDecl &) noexcept = default;
 };
@@ -1591,5 +1597,19 @@ instantiate_member_template(CoreProgram &program,
                             CoreMemberTypeTemplateNodeId root,
                             const std::vector<CoreValueTypeId> &owner_args,
                             std::string *reason);
+
+/// Supplied-arena form of `instantiate_member_template`. This is the same P4-C
+/// evaluator, factored so the P4-D layout side pass can seed a private copy of
+/// the logical value-type arena and compute its member closure without mutating
+/// CoreProgram. `value_types` must use ids in the same domain as `types` and
+/// `owner_args`; successful materialization hash-conses into that supplied
+/// vector only.
+[[nodiscard]] std::optional<CoreValueTypeId>
+instantiate_member_template_into(std::vector<CoreValueType> &value_types,
+                                 const std::vector<CoreTypeDecl> &types,
+                                 CoreTypeId owner,
+                                 CoreMemberTypeTemplateNodeId root,
+                                 const std::vector<CoreValueTypeId> &owner_args,
+                                 std::string *reason);
 
 } // namespace ahfl::ir::core

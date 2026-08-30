@@ -242,6 +242,7 @@ class TypeEnv {
         // stamps these against the builtin SSOT for a well-known std generic.
         t.type_param_count = decl.type_param_count;
         t.variances = ir_variances_to_core(decl.type_param_variances);
+        t.source_range = decl.provenance.source_range;
         std::vector<std::string> field_type_names;
         for (const FieldDecl &f : decl.fields) {
             t.fields.push_back(f.name);
@@ -267,6 +268,7 @@ class TypeEnv {
         // RFC 0026 P4 (coercion): see add_struct.
         t.type_param_count = decl.type_param_count;
         t.variances = ir_variances_to_core(decl.type_param_variances);
+        t.source_range = decl.provenance.source_range;
         // Per-variant payload metadata. Complete logical slot types are
         // finalized from the declaration-owned template arena after every
         // nominal has a CoreTypeId.
@@ -3746,21 +3748,22 @@ lower_value_type_into(CoreProgram &program, const ir::TypeRef &type, std::string
 }
 
 std::optional<CoreValueTypeId>
-instantiate_member_template(CoreProgram &program,
-                            CoreTypeId owner,
-                            CoreMemberTypeTemplateNodeId root,
-                            const std::vector<CoreValueTypeId> &owner_args,
-                            std::string *reason) {
+instantiate_member_template_into(std::vector<CoreValueType> &value_types,
+                                 const std::vector<CoreTypeDecl> &types,
+                                 CoreTypeId owner,
+                                 CoreMemberTypeTemplateNodeId root,
+                                 const std::vector<CoreValueTypeId> &owner_args,
+                                 std::string *reason) {
     const auto fail = [&](std::string message) -> std::optional<CoreValueTypeId> {
         if (reason != nullptr && reason->empty()) {
             *reason = std::move(message);
         }
         return std::nullopt;
     };
-    if (owner.value >= program.types.size()) {
+    if (owner.value >= types.size()) {
         return fail("member template owner is out of range");
     }
-    const CoreTypeDecl &decl = program.types[owner.value];
+    const CoreTypeDecl &decl = types[owner.value];
     if (owner_args.size() != decl.type_param_count) {
         return fail("member template owner '" + decl.name + "' expects " +
                     std::to_string(decl.type_param_count) + " argument(s), got " +
@@ -3770,8 +3773,8 @@ instantiate_member_template(CoreProgram &program,
         return fail("member template root is out of range");
     }
 
-    ValueTypeArena arena(program.value_types, program.types, [&program](const SymbolRef &ref) {
-        return resolve_nominal_strict(program.types, ref);
+    ValueTypeArena arena(value_types, types, [&types](const SymbolRef &ref) {
+        return resolve_nominal_strict(types, ref);
     });
     for (const CoreValueTypeId arg : owner_args) {
         if (!arena.valid_materialized_id(arg, reason)) {
@@ -3875,6 +3878,16 @@ instantiate_member_template(CoreProgram &program,
         return value;
     };
     return instantiate(instantiate, root);
+}
+
+std::optional<CoreValueTypeId>
+instantiate_member_template(CoreProgram &program,
+                            CoreTypeId owner,
+                            CoreMemberTypeTemplateNodeId root,
+                            const std::vector<CoreValueTypeId> &owner_args,
+                            std::string *reason) {
+    return instantiate_member_template_into(program.value_types, program.types, owner, root,
+                                            owner_args, reason);
 }
 
 } // namespace ahfl::ir::core

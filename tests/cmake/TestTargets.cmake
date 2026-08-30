@@ -37,6 +37,7 @@ ahfl_apply_project_warnings(ahfl_project_check_tests)
 
 add_executable(ahfl_compiler_ir_tests
     unit/compiler/ir/coercion_adjustment.cpp
+    unit/compiler/ir/core_layout.cpp
     unit/compiler/ir/core_lower.cpp
     unit/compiler/ir/core_lower_sysroot.cpp
     unit/compiler/ir/core_verify.cpp
