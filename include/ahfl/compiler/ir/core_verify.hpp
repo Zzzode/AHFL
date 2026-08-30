@@ -56,7 +56,12 @@
 //     defaults. (Builtin enums registered by fallback carry payload arity from
 //     the SSOT, so std Option/Result are not a blind spot.)
 //   * flow wiring: flow target agent, handler state, and goto targets in range;
-//   * capability-call arity matches the import signature;
+//   * capability declarations carry a unique Capability SymbolId and a fully
+//     materialized logical signature; capability-call arity plus every argument
+//     and result CoreValueTypeId exactly match that signature; each flow call is
+//     present in its target agent's persisted whitelist, while a capability call
+//     in a workflow region is rejected as outside the language's Flow-only
+//     effect boundary;
 //   * an executable program contains NO CoreUnsupportedExpr;
 //   * no executable statement follows a terminator (goto/return) in a region;
 //   * match well-formedness: a CoreYieldStmt appears only in a guard / match-arm
@@ -117,6 +122,20 @@ inline constexpr std::string_view kQualifiedVariantInvalid = "core.verify.QUALIF
 inline constexpr std::string_view kFlowTargetInvalid = "core.verify.FLOW_TARGET_INVALID";
 inline constexpr std::string_view kGotoTargetInvalid = "core.verify.GOTO_TARGET_INVALID";
 inline constexpr std::string_view kCapabilityArityMismatch = "core.verify.CAPABILITY_ARITY_MISMATCH";
+inline constexpr std::string_view kCapabilitySignatureInvalid =
+    "core.verify.CAPABILITY_SIGNATURE_INVALID";
+inline constexpr std::string_view kCapabilitySymbolInvalid =
+    "core.verify.CAPABILITY_SYMBOL_INVALID";
+inline constexpr std::string_view kCapabilityWhitelistInvalid =
+    "core.verify.CAPABILITY_WHITELIST_INVALID";
+inline constexpr std::string_view kCapabilityUnauthorized =
+    "core.verify.CAPABILITY_UNAUTHORIZED";
+inline constexpr std::string_view kCapabilityOutsideFlow =
+    "core.verify.CAPABILITY_OUTSIDE_FLOW";
+inline constexpr std::string_view kCapabilityArgumentTypeMismatch =
+    "core.verify.CAPABILITY_ARGUMENT_TYPE_MISMATCH";
+inline constexpr std::string_view kCapabilityResultTypeMismatch =
+    "core.verify.CAPABILITY_RESULT_TYPE_MISMATCH";
 inline constexpr std::string_view kUnsupportedExpr = "core.verify.UNSUPPORTED_EXPR";
 inline constexpr std::string_view kStmtAfterTerminator = "core.verify.STMT_AFTER_TERMINATOR";
 inline constexpr std::string_view kTypedShellInvalid = "core.verify.TYPED_SHELL_INVALID";

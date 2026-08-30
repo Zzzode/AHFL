@@ -115,14 +115,23 @@ struct GoodProgram {
     const CoreTypeId req_ty{3};
     const CoreTypeId reply_ty{4};
 
+    // Program-global value types are the single signature/body SSA SSOT.
+    const CoreValueTypeId vt_int{static_cast<std::uint32_t>(p.value_types.size())};
+    p.value_types.push_back(CoreValueType{CoreVtInt{}});
+    const CoreValueTypeId vt_bool{static_cast<std::uint32_t>(p.value_types.size())};
+    p.value_types.push_back(CoreValueType{CoreVtBool{}});
+    g.vt_int = vt_int;
+    g.vt_bool = vt_bool;
+
     // capability Charge(Int) -> Bool
     {
         CoreCapabilityDecl cap;
         cap.name = "Charge";
-        ir::TypeRef amount;
-        amount.kind = ir::TypeRefKind::Int;
-        cap.param_types.push_back(std::move(amount));
-        cap.return_type_ref.kind = ir::TypeRefKind::Bool;
+        cap.symbol_ref.kind = ir::SymbolRefKind::Capability;
+        cap.symbol_ref.canonical_name = "app::Charge";
+        cap.symbol_ref.id = 17;
+        cap.param_types.push_back(vt_int);
+        cap.return_type = vt_bool;
         p.capabilities.push_back(std::move(cap));
     }
 
@@ -138,6 +147,7 @@ struct GoodProgram {
         a.output_type = reply_ty;
         a.context_type = ctx_ty;
         a.context_kind = CoreAgentDecl::ContextKind::Struct;
+        a.capabilities = {CoreCapabilityId{0}};
         p.agents.push_back(std::move(a));
     }
 
@@ -145,17 +155,6 @@ struct GoodProgram {
     CoreFlowDecl flow;
     flow.target = CoreAgentId{0};
     flow.agent_name = "A";
-
-    // RFC 0026 P4-B: a single interned scalar value type used for every
-    // hand-built value / expr result here (the specific type is not what these
-    // structural tests exercise; they need a VALID, non-Never, in-range slot and
-    // Let/expr result-type consistency).
-    const CoreValueTypeId vt_int{static_cast<std::uint32_t>(p.value_types.size())};
-    p.value_types.push_back(CoreValueType{CoreVtInt{}});
-    // RFC 0026 P4-B (P1): the if-condition value (%1, the capability result) must
-    // be Bool for the verifier's condition type-check, so intern a Bool too.
-    const CoreValueTypeId vt_bool{static_cast<std::uint32_t>(p.value_types.size())};
-    p.value_types.push_back(CoreValueType{CoreVtBool{}});
 
     const auto concrete_template = [](CoreValueTypeId type) {
         CoreMemberTypeTemplateNode node;
@@ -261,8 +260,6 @@ struct GoodProgram {
 
     p.flows.push_back(std::move(flow));
     g.flow = &p.flows.back();
-    g.vt_int = vt_int;
-    g.vt_bool = vt_bool;
     return g;
 }
 
@@ -276,6 +273,7 @@ struct GoodProgram {
         CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{0, 0}}});
     g.flow->exprs[0].result_type = bounded;
     g.flow->value_types[0] = bounded;
+    g.program.capabilities[0].param_types[0] = bounded;
 
     CoreCoercionPlanNode plan;
     plan.source = bounded;
@@ -315,6 +313,7 @@ void replace_with_type_arg_coercion(GoodProgram &g, CoreVariance variance) {
 
     g.flow->exprs[0].result_type = source;
     g.flow->value_types[0] = source;
+    g.program.capabilities[0].param_types[0] = source;
     g.flow->exprs.back().result_type = result;
     g.flow->value_types.back() = result;
     g.flow->coercion_plans[0].source = bounded;
@@ -532,6 +531,28 @@ struct GoodWorkflow {
     return g;
 }
 
+void add_workflow_capability_call(GoodWorkflow &g, CoreValueTypeId param_type,
+                                  CoreValueTypeId return_type) {
+    CoreCapabilityDecl cap;
+    cap.name = "WorkflowOnly";
+    cap.symbol_ref.kind = ir::SymbolRefKind::Capability;
+    cap.symbol_ref.canonical_name = "app::WorkflowOnly";
+    cap.symbol_ref.id = 901;
+    cap.param_types = {param_type};
+    cap.return_type = return_type;
+    g.program.capabilities.push_back(std::move(cap));
+
+    const CoreValueId result_id{g.wf->value_count++};
+    g.wf->value_types.push_back(g.wf->value_types[0]);
+    CoreCapabilityCallStmt call;
+    call.result = result_id;
+    call.capability = CoreCapabilityId{0};
+    call.callee_name = "WorkflowOnly";
+    call.args = {CoreValueId{0}};
+    auto &statements = g.wf->nodes[0].input_region->statements;
+    statements.insert(statements.begin() + 1, CoreStmt{std::move(call), std::nullopt});
+}
+
 } // namespace
 
 TEST_CASE("verifier accepts a well-formed Core-IR program") {
@@ -739,6 +760,125 @@ TEST_CASE("verifier fails closed on a capability id out of range") {
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kCapabilityIdOutOfRange));
+}
+
+TEST_CASE("verifier fails closed on malformed Core capability declarations") {
+    SUBCASE("parameter type id is invalid") {
+        GoodProgram g = make_good_program();
+        g.program.capabilities[0].param_types[0] = CoreValueTypeId{};
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilitySignatureInvalid));
+    }
+
+    SUBCASE("return type id is invalid") {
+        GoodProgram g = make_good_program();
+        g.program.capabilities[0].return_type = CoreValueTypeId{999};
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilitySignatureInvalid));
+    }
+
+    SUBCASE("Never is not a materialized capability wire value") {
+        GoodProgram g = make_good_program();
+        const CoreValueTypeId never_type{
+            static_cast<std::uint32_t>(g.program.value_types.size())};
+        g.program.value_types.push_back(CoreValueType{CoreVtNever{}});
+        g.program.capabilities[0].return_type = never_type;
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilitySignatureInvalid));
+    }
+
+    SUBCASE("capability SymbolId is missing") {
+        GoodProgram g = make_good_program();
+        g.program.capabilities[0].symbol_ref.id.reset();
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilitySymbolInvalid));
+    }
+
+    SUBCASE("capability SymbolRef kind is wrong") {
+        GoodProgram g = make_good_program();
+        g.program.capabilities[0].symbol_ref.kind = ir::SymbolRefKind::Function;
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilitySymbolInvalid));
+    }
+
+    SUBCASE("capability SymbolId is duplicated") {
+        GoodProgram g = make_good_program();
+        CoreCapabilityDecl duplicate = g.program.capabilities[0];
+        duplicate.name = "ChargeAgain";
+        g.program.capabilities.push_back(std::move(duplicate));
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilitySymbolInvalid));
+    }
+}
+
+TEST_CASE("Core declaration equality includes capability signatures and whitelists") {
+    GoodProgram g = make_good_program();
+    CoreCapabilityDecl cap = g.program.capabilities[0];
+    CoreCapabilityDecl changed_cap = cap;
+    CHECK(cap == changed_cap);
+    changed_cap.return_type = g.vt_int;
+    CHECK_FALSE(cap == changed_cap);
+
+    CoreAgentDecl agent = g.program.agents[0];
+    CoreAgentDecl changed_agent = agent;
+    CHECK(agent == changed_agent);
+    changed_agent.capabilities.clear();
+    CHECK_FALSE(agent == changed_agent);
+
+    CoreDecl cap_decl = cap;
+    CoreDecl changed_cap_decl = changed_cap;
+    CHECK_FALSE(cap_decl == changed_cap_decl);
+}
+
+TEST_CASE("verifier checks exact capability call argument and result value types") {
+    SUBCASE("argument type mismatch") {
+        GoodProgram g = make_good_program();
+        g.program.capabilities[0].param_types[0] = g.vt_bool;
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilityArgumentTypeMismatch));
+    }
+
+    SUBCASE("result type mismatch") {
+        GoodProgram g = make_good_program();
+        g.program.capabilities[0].return_type = g.vt_int;
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilityResultTypeMismatch));
+    }
+}
+
+TEST_CASE("verifier checks agent capability whitelist structure and authorization") {
+    SUBCASE("whitelist id is out of range") {
+        GoodProgram g = make_good_program();
+        g.program.agents[0].capabilities = {CoreCapabilityId{9}};
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilityWhitelistInvalid));
+    }
+
+    SUBCASE("whitelist id is duplicated") {
+        GoodProgram g = make_good_program();
+        g.program.agents[0].capabilities = {CoreCapabilityId{0}, CoreCapabilityId{0}};
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilityWhitelistInvalid));
+    }
+
+    SUBCASE("flow call is not authorized by its target agent") {
+        GoodProgram g = make_good_program();
+        g.program.agents[0].capabilities.clear();
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCapabilityUnauthorized));
+        CHECK_FALSE(has_code(result, verify::kCapabilityOutsideFlow));
+    }
 }
 
 TEST_CASE("verifier fails closed on a broken projection step chain (discontinuity)") {
@@ -2129,6 +2269,47 @@ TEST_CASE("verifier accepts a well-formed workflow") {
         CHECK(false);
     }
     CHECK(result.ok());
+}
+
+TEST_CASE("workflow verifier rejects capability calls outside the Flow-only boundary") {
+    SUBCASE("a signature-correct call reports only the region violation") {
+        GoodWorkflow g = make_good_workflow();
+        const CoreValueTypeId type = g.wf->value_types[0];
+        add_workflow_capability_call(g, type, type);
+
+        const auto verified = verify_core_program(g.program);
+        CHECK_FALSE(verified.ok());
+        CHECK(has_code(verified, verify::kCapabilityOutsideFlow));
+        CHECK_FALSE(has_code(verified, verify::kCapabilityUnauthorized));
+        CHECK_FALSE(has_code(verified, verify::kCapabilityArgumentTypeMismatch));
+        CHECK_FALSE(has_code(verified, verify::kCapabilityResultTypeMismatch));
+    }
+
+    SUBCASE("argument signature checking still runs before rejection") {
+        GoodWorkflow g = make_good_workflow();
+        const CoreValueTypeId bool_type{
+            static_cast<std::uint32_t>(g.program.value_types.size())};
+        g.program.value_types.push_back(CoreValueType{CoreVtBool{}});
+        add_workflow_capability_call(g, bool_type, g.wf->value_types[0]);
+
+        const auto verified = verify_core_program(g.program);
+        CHECK_FALSE(verified.ok());
+        CHECK(has_code(verified, verify::kCapabilityOutsideFlow));
+        CHECK(has_code(verified, verify::kCapabilityArgumentTypeMismatch));
+    }
+
+    SUBCASE("result signature checking still runs before rejection") {
+        GoodWorkflow g = make_good_workflow();
+        const CoreValueTypeId bool_type{
+            static_cast<std::uint32_t>(g.program.value_types.size())};
+        g.program.value_types.push_back(CoreValueType{CoreVtBool{}});
+        add_workflow_capability_call(g, g.wf->value_types[0], bool_type);
+
+        const auto verified = verify_core_program(g.program);
+        CHECK_FALSE(verified.ok());
+        CHECK(has_code(verified, verify::kCapabilityOutsideFlow));
+        CHECK(has_code(verified, verify::kCapabilityResultTypeMismatch));
+    }
 }
 
 TEST_CASE("workflow verifier: a self-dependency edge is fail-closed") {

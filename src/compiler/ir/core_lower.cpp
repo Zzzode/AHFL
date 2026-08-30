@@ -1411,6 +1411,9 @@ class CapabilityIndex {
             if (const auto it = by_id_.find(*ref.id); it != by_id_.end()) {
                 return it->second;
             }
+            // A present SymbolId is canonical. Never let a stale/corrupt id
+            // silently downgrade to display spelling and bind another symbol.
+            return std::nullopt;
         }
         if (!ref.canonical_name.empty()) {
             if (const auto it = by_name_.find(ref.canonical_name); it != by_name_.end()) {
@@ -1463,10 +1466,13 @@ intern_state(std::vector<std::string> &names,
     return CoreStateId{id};
 }
 
-[[nodiscard]] CoreAgentDecl lower_agent(const AgentDecl &agent, const TypeEnv &types) {
+[[nodiscard]] CoreAgentDecl lower_agent(const AgentDecl &agent, const TypeEnv &types,
+                                        const CapabilityIndex &capabilities,
+                                        std::vector<CoreLowerDiagnostic> &diagnostics) {
     CoreAgentDecl out;
     out.name = agent.name;
     out.symbol_ref = agent.symbol_ref;
+    out.source_range = agent.provenance.source_range;
     // Typed shell (Principle 2): `input`/`ctx`/`output` resolve to these
     // CoreTypeIds, so a member projection through `input.`/`ctx.` walks a real
     // struct type. Sema's schema boundary requires input/output to be Struct;
@@ -1502,19 +1508,71 @@ intern_state(std::vector<std::string> &names,
             CoreTransition{intern_state(out.states, index_of, t.from_state),
                            intern_state(out.states, index_of, t.to_state)});
     }
+
+    // Persist Sema's declaration-order authorization fact as Core ids. The
+    // frontend already rejects unresolved/duplicate entries, but lowering is a
+    // fail-closed boundary and must not synthesize id 0 or trust display names.
+    std::unordered_set<std::uint32_t> seen_capabilities;
+    out.capabilities.reserve(agent.capability_refs.size());
+    for (const SymbolRef &ref : agent.capability_refs) {
+        const auto resolved = capabilities.lookup(ref);
+        if (!resolved.has_value()) {
+            std::string display = ref.local_name.empty() ? ref.canonical_name : ref.local_name;
+            if (display.empty() && ref.id.has_value()) {
+                display = "SymbolId " + std::to_string(*ref.id);
+            }
+            diagnostics.push_back(CoreLowerDiagnostic{
+                CoreDiagnosticSeverity::Error,
+                std::string(diag::kUnresolvedAgentCapability),
+                "agent '" + agent.name + "' capability '" + display +
+                    "' could not be resolved to the Core capability table",
+                agent.provenance.source_range});
+            continue;
+        }
+        if (!seen_capabilities.insert(resolved->id.value).second) {
+            diagnostics.push_back(CoreLowerDiagnostic{
+                CoreDiagnosticSeverity::Error,
+                std::string(diag::kDuplicateAgentCapability),
+                "agent '" + agent.name + "' lists Core capability id " +
+                    std::to_string(resolved->id.value) + " more than once",
+                agent.provenance.source_range});
+            continue;
+        }
+        out.capabilities.push_back(resolved->id);
+    }
     return out;
 }
 
-[[nodiscard]] CoreCapabilityDecl lower_capability(const CapabilityDecl &cap) {
+[[nodiscard]] CoreCapabilityDecl
+lower_capability(const CapabilityDecl &cap, ValueTypeArena &value_types,
+                 std::vector<CoreLowerDiagnostic> &diagnostics) {
     CoreCapabilityDecl out;
     out.name = cap.name;
     out.symbol_ref = cap.symbol_ref;
     out.effect_kind = cap.effect.kind;
+    out.source_range = cap.provenance.source_range;
+
+    const auto materialize = [&](const TypeRef &type, std::string position) -> CoreValueTypeId {
+        std::string reason;
+        const auto id = value_types.lower(type, &reason);
+        if (id.has_value()) {
+            return *id;
+        }
+        diagnostics.push_back(CoreLowerDiagnostic{
+            CoreDiagnosticSeverity::Error,
+            std::string(diag::kUnresolvedCapabilitySignature),
+            "capability '" + cap.name + "' " + position +
+                " type could not be materialized as a Core value type: " + reason,
+            cap.provenance.source_range});
+        return CoreValueTypeId{};
+    };
+
     out.param_types.reserve(cap.params.size());
-    for (const ParamDecl &param : cap.params) {
-        out.param_types.push_back(clone_type_ref(param.type_ref));
+    for (std::size_t index = 0; index < cap.params.size(); ++index) {
+        out.param_types.push_back(materialize(
+            cap.params[index].type_ref, "parameter #" + std::to_string(index)));
     }
-    out.return_type_ref = clone_type_ref(cap.return_type_ref);
+    out.return_type = materialize(cap.return_type_ref, "return");
     return out;
 }
 
@@ -3385,7 +3443,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     for (const Decl &decl : ahfl_ir.declarations) {
         if (const auto *cap = std::get_if<CapabilityDecl>(&decl)) {
             const auto id = CoreCapabilityId{static_cast<std::uint32_t>(core.capabilities.size())};
-            core.capabilities.push_back(lower_capability(*cap));
+            core.capabilities.push_back(lower_capability(*cap, shared_arena, result.diagnostics));
             cap_index.add(cap->symbol_ref, id, cap->effect.kind);
         }
     }
@@ -3403,7 +3461,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             if (!agent->symbol_ref.canonical_name.empty()) {
                 agent_by_name.emplace(agent->symbol_ref.canonical_name, id);
             }
-            core.agents.push_back(lower_agent(*agent, types));
+            core.agents.push_back(lower_agent(*agent, types, cap_index, result.diagnostics));
         }
     }
 

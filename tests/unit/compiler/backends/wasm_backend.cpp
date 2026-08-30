@@ -157,19 +157,9 @@ static bool same_e1_program(const ahfl::ir::core::CoreProgram &lhs,
                             const ahfl::ir::core::CoreProgram &rhs) {
     if (lhs.format_version != rhs.format_version || lhs.types != rhs.types ||
         lhs.value_types != rhs.value_types || lhs.flows != rhs.flows ||
-        lhs.instances != rhs.instances || lhs.capabilities.size() != rhs.capabilities.size() ||
-        lhs.workflows.size() != rhs.workflows.size() || lhs.agents.size() != rhs.agents.size()) {
+        lhs.instances != rhs.instances || lhs.capabilities != rhs.capabilities ||
+        lhs.workflows.size() != rhs.workflows.size() || lhs.agents != rhs.agents) {
         return false;
-    }
-    for (std::size_t index = 0; index < lhs.agents.size(); ++index) {
-        const auto &a = lhs.agents[index];
-        const auto &b = rhs.agents[index];
-        if (a.name != b.name || a.states != b.states || a.initial != b.initial ||
-            a.finals != b.finals || a.transitions != b.transitions ||
-            a.input_type != b.input_type || a.context_type != b.context_type ||
-            a.output_type != b.output_type || a.context_kind != b.context_kind) {
-            return false;
-        }
     }
     return true;
 }

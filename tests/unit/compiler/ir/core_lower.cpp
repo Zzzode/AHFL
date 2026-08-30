@@ -10,6 +10,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <cctype>
 #include <cstdio>
@@ -131,6 +132,7 @@ ir::AhflIr make_capability_program() {
     cap.symbol_ref.canonical_name = "app::ChargeCard";
     cap.symbol_ref.local_name = "ChargeCard";
     cap.symbol_ref.id = 11;
+    cap.provenance.source_range = ahfl::SourceRange{3, 17};
     ir::ParamDecl amount;
     amount.name = "amount";
     amount.type_ref.kind = ir::TypeRefKind::Int;
@@ -142,6 +144,7 @@ ir::AhflIr make_capability_program() {
     cap.effect.kind = ir::CapabilityEffectKind::FinancialWrite;
     cap.effect.domain = "payments";
     cap.effect.receipt_mode = ir::CapabilityReceiptMode::Required;
+    const ir::SymbolRef capability_ref = cap.symbol_ref;
     program.declarations.emplace_back(std::move(cap));
 
     ir::AgentDecl agent;
@@ -150,10 +153,12 @@ ir::AhflIr make_capability_program() {
     agent.symbol_ref.canonical_name = "app::Classifier";
     agent.symbol_ref.local_name = "Classifier";
     agent.symbol_ref.id = 7;
+    agent.provenance.source_range = ahfl::SourceRange{19, 41};
     agent.states = {"Init", "Done"};
     agent.initial_state = "Init";
     agent.final_states = {"Done"};
     agent.transitions = {ir::TransitionDecl{"Init", "Done"}};
+    agent.capability_refs.push_back(capability_ref);
     give_shell_structs(program, agent, "Cap");
     program.declarations.emplace_back(std::move(agent));
     return program;
@@ -263,9 +268,108 @@ TEST_CASE("lower_ahfl_to_core lowers a capability into an explicit import decl")
     CHECK(cap.name == "ChargeCard");
     CHECK(cap.symbol_ref.canonical_name == "app::ChargeCard");
     CHECK(cap.effect_kind == ir::CapabilityEffectKind::FinancialWrite);
+    REQUIRE(cap.source_range.has_value());
+    CHECK(cap.source_range->begin_offset == 3);
+    CHECK(cap.source_range->end_offset == 17);
     REQUIRE(cap.param_types.size() == 1);
-    CHECK(cap.param_types[0].kind == ir::TypeRefKind::Int);
-    CHECK(cap.return_type_ref.kind == ir::TypeRefKind::Bool);
+    REQUIRE(cap.param_types[0].value < result.program.value_types.size());
+    REQUIRE(cap.return_type.value < result.program.value_types.size());
+    CHECK(std::holds_alternative<ir::core::CoreVtInt>(
+        result.program.value_types[cap.param_types[0].value].node));
+    CHECK(std::holds_alternative<ir::core::CoreVtBool>(
+        result.program.value_types[cap.return_type.value].node));
+    REQUIRE(result.program.agents.size() == 1);
+    REQUIRE(result.program.agents[0].source_range.has_value());
+    CHECK(result.program.agents[0].source_range->begin_offset == 19);
+    CHECK(result.program.agents[0].source_range->end_offset == 41);
+    REQUIRE(result.program.agents[0].capabilities.size() == 1);
+    CHECK(result.program.agents[0].capabilities[0] == ir::core::CoreCapabilityId{0});
+}
+
+TEST_CASE("lower_ahfl_to_core preserves declaration-order agent capability ids") {
+    auto program = make_capability_program();
+
+    ir::CapabilityDecl audit;
+    audit.name = "Audit";
+    audit.symbol_ref.kind = ir::SymbolRefKind::Capability;
+    audit.symbol_ref.canonical_name = "app::Audit";
+    audit.symbol_ref.local_name = "Audit";
+    audit.symbol_ref.id = 12;
+    ir::ParamDecl input;
+    input.name = "input";
+    input.type_ref.kind = ir::TypeRefKind::Int;
+    audit.params.push_back(std::move(input));
+    audit.return_type_ref.kind = ir::TypeRefKind::Bool;
+    const ir::SymbolRef audit_ref = audit.symbol_ref;
+    program.declarations.insert(program.declarations.begin() + 1, std::move(audit));
+
+    ir::AgentDecl *agent = nullptr;
+    for (auto &decl : program.declarations) {
+        if (auto *candidate = std::get_if<ir::AgentDecl>(&decl)) {
+            agent = candidate;
+            break;
+        }
+    }
+    REQUIRE(agent != nullptr);
+    const ir::SymbolRef charge_ref = agent->capability_refs.front();
+    agent->capability_refs = {audit_ref, charge_ref};
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    REQUIRE(result.ok());
+    REQUIRE(result.program.capabilities.size() == 2);
+    REQUIRE(result.program.agents.size() == 1);
+    REQUIRE(result.program.agents[0].capabilities.size() == 2);
+    CHECK(result.program.agents[0].capabilities[0] == ir::core::CoreCapabilityId{1});
+    CHECK(result.program.agents[0].capabilities[1] == ir::core::CoreCapabilityId{0});
+}
+
+TEST_CASE("lower_ahfl_to_core fails closed on an unresolved capability signature") {
+    auto program = make_capability_program();
+    auto &cap = std::get<ir::CapabilityDecl>(program.declarations[0]);
+    cap.params[0].type_ref = ir::TypeRef{.kind = ir::TypeRefKind::Any};
+    cap.provenance.source_range = ahfl::SourceRange{31, 47};
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_lower_code(result, ir::core::diag::kUnresolvedCapabilitySignature));
+    const auto diagnostic = std::ranges::find_if(result.diagnostics, [](const auto &d) {
+        return d.code == ir::core::diag::kUnresolvedCapabilitySignature;
+    });
+    REQUIRE(diagnostic != result.diagnostics.end());
+    REQUIRE(diagnostic->source_range.has_value());
+    CHECK(diagnostic->source_range->begin_offset == 31);
+    CHECK(diagnostic->source_range->end_offset == 47);
+}
+
+TEST_CASE("lower_ahfl_to_core fails closed on unresolved and duplicate agent capabilities") {
+    SUBCASE("unresolved capability identity") {
+        auto program = make_capability_program();
+        auto agent = std::ranges::find_if(program.declarations, [](const auto &decl) {
+            return std::holds_alternative<ir::AgentDecl>(decl);
+        });
+        REQUIRE(agent != program.declarations.end());
+        auto &agent_decl = std::get<ir::AgentDecl>(*agent);
+        agent_decl.provenance.source_range = ahfl::SourceRange{51, 63};
+        agent_decl.capability_refs[0].id = 999;
+
+        const auto result = ir::core::lower_ahfl_to_core(program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_lower_code(result, ir::core::diag::kUnresolvedAgentCapability));
+    }
+
+    SUBCASE("duplicate capability identity") {
+        auto program = make_capability_program();
+        auto agent = std::ranges::find_if(program.declarations, [](const auto &decl) {
+            return std::holds_alternative<ir::AgentDecl>(decl);
+        });
+        REQUIRE(agent != program.declarations.end());
+        auto &agent_decl = std::get<ir::AgentDecl>(*agent);
+        agent_decl.capability_refs.push_back(agent_decl.capability_refs.front());
+
+        const auto result = ir::core::lower_ahfl_to_core(program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_lower_code(result, ir::core::diag::kDuplicateAgentCapability));
+    }
 }
 
 TEST_CASE("lower_ahfl_to_core is deterministic (decl level)") {
@@ -274,6 +378,9 @@ TEST_CASE("lower_ahfl_to_core is deterministic (decl level)") {
     const auto b = ir::core::lower_ahfl_to_core(program);
     REQUIRE(a.program.capabilities.size() == b.program.capabilities.size());
     REQUIRE(a.program.agents.size() == b.program.agents.size());
+    CHECK(a.program.capabilities == b.program.capabilities);
+    CHECK(a.program.agents == b.program.agents);
+    CHECK(a.program.value_types == b.program.value_types);
     // Agent identity is its symbol (instance_key was removed from CoreAgentDecl;
     // execution/dispatch identity now lives only on CoreInstanceDecl).
     CHECK(a.program.agents[0].symbol_ref.canonical_name ==
@@ -375,7 +482,19 @@ TEST_CASE("flow lowering: capability call inside a branch is preserved (P0-2 mut
             collect_calls(*if_stmt.then_region, then_calls);
             CHECK(then_calls.size() == 1); // Charge is in the then-branch
             if (!then_calls.empty()) {
-                CHECK(callee_is(then_calls[0]->callee_name, "Charge"));
+                const auto &call = *then_calls[0];
+                CHECK(callee_is(call.callee_name, "Charge"));
+                REQUIRE(call.capability.value < result.program.capabilities.size());
+                const auto &signature = result.program.capabilities[call.capability.value];
+                REQUIRE(call.args.size() == signature.param_types.size());
+                REQUIRE(call.args.size() == 1);
+                REQUIRE(call.args[0].value < flow.value_types.size());
+                REQUIRE(call.result.value < flow.value_types.size());
+                CHECK(flow.value_types[call.args[0].value] == signature.param_types[0]);
+                CHECK(flow.value_types[call.result.value] == signature.return_type);
+                REQUIRE(flow.target.value < result.program.agents.size());
+                const auto &whitelist = result.program.agents[flow.target.value].capabilities;
+                CHECK(std::ranges::find(whitelist, call.capability) != whitelist.end());
             }
         }
         if (std::holds_alternative<ir::core::CoreCapabilityCallStmt>(stmt.node)) {

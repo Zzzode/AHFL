@@ -166,16 +166,20 @@ The Core verifier, not codegen, proves:
 - each capability has a present `SymbolRef::id` of kind `Capability`, and no two
   capability declarations share that SymbolId;
 - every agent whitelist id is in range and unique;
-- every `CoreCapabilityCallStmt` capability is in the target agent whitelist;
+- every flow-region `CoreCapabilityCallStmt` capability is in the target
+  agent's whitelist;
 - call arity equals declaration arity;
 - each argument SSA type exactly equals the corresponding declaration
   parameter type;
 - the result SSA type exactly equals the declaration return type;
 - all existing use-before-def, single-definition, and region rules still hold.
 
-The same call-signature checks apply in workflow regions even though E2 codegen
-still rejects workflows. This keeps Core's standalone contract complete and
-prevents a later consumer from inheriting the old hole.
+The same call-signature checks apply in workflow regions, after which the
+verifier rejects the call with `core.verify.CAPABILITY_OUTSIDE_FLOW`. Workflows
+have no owner-agent whitelist: Core must not synthesize one from a union or an
+arbitrary agent. This mirrors the frontend's Flow-only capability rule and keeps
+Core's standalone contract complete even though E2 codegen still rejects
+workflows.
 
 Stable Core diagnostics distinguish invalid signature ids, argument type
 mismatch, result type mismatch, unresolved whitelist identity, duplicate

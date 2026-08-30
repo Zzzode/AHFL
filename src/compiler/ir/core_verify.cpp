@@ -11,6 +11,7 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -50,9 +51,7 @@ class Verifier {
         for (const CoreAgentDecl &agent : program_.agents) {
             verify_agent(agent);
         }
-        for (const CoreCapabilityDecl &cap : program_.capabilities) {
-            verify_capability_shell(cap);
-        }
+        verify_capabilities();
         for (const CoreFlowDecl &flow : program_.flows) {
             verify_flow(flow);
         }
@@ -418,7 +417,7 @@ class Verifier {
         // host an initial/final state and is structurally invalid.
         if (state_count == 0) {
             error(verify::kAgentStateInvalid,
-                  "agent '" + agent.name + "' declares no states", std::nullopt);
+                  "agent '" + agent.name + "' declares no states", agent.source_range);
         }
         const auto check_state = [&](CoreStateId s, const char *what) {
             if (s.value >= state_count) {
@@ -426,7 +425,7 @@ class Verifier {
                       "agent '" + agent.name + "' " + what + " state id " +
                           std::to_string(s.value) + " is out of range (" +
                           std::to_string(state_count) + " states)",
-                      std::nullopt);
+                      agent.source_range);
             }
         };
         // The initial state is always required (unconditional bounds check).
@@ -448,7 +447,7 @@ class Verifier {
                 error(verify::kTypedShellInvalid,
                       "agent '" + agent.name + "' " + what +
                           " type must be a valid struct type",
-                      std::nullopt);
+                      agent.source_range);
             }
         };
         require_struct(agent.input_type, "input");
@@ -459,15 +458,58 @@ class Verifier {
             error(verify::kTypedShellInvalid,
                   "agent '" + agent.name +
                       "' has a Unit context but its context type id is set",
-                  std::nullopt);
+                      agent.source_range);
+        }
+
+        std::unordered_set<std::uint32_t> seen_capabilities;
+        for (const CoreCapabilityId capability : agent.capabilities) {
+            if (capability.value >= program_.capabilities.size()) {
+                error(verify::kCapabilityWhitelistInvalid,
+                      "agent '" + agent.name + "' whitelist capability id " +
+                          std::to_string(capability.value) + " is out of range",
+                      agent.source_range);
+            } else if (!seen_capabilities.insert(capability.value).second) {
+                error(verify::kCapabilityWhitelistInvalid,
+                      "agent '" + agent.name + "' whitelist contains capability id " +
+                          std::to_string(capability.value) + " more than once",
+                      agent.source_range);
+            }
         }
     }
 
     // --- capability import shell ---
-    void verify_capability_shell(const CoreCapabilityDecl &) {
-        // Param/return TypeRefs are verification-layer clones (already checked
-        // upstream); nothing index-based to bound here. Arity is checked at each
-        // call site against this signature.
+    void verify_capabilities() {
+        std::unordered_set<std::size_t> seen_symbol_ids;
+        for (const CoreCapabilityDecl &cap : program_.capabilities) {
+            if (cap.symbol_ref.kind != ir::SymbolRefKind::Capability ||
+                !cap.symbol_ref.id.has_value()) {
+                error(verify::kCapabilitySymbolInvalid,
+                      "capability '" + cap.name +
+                          "' must carry a canonical Capability SymbolId",
+                      cap.source_range);
+            } else if (!seen_symbol_ids.insert(*cap.symbol_ref.id).second) {
+                error(verify::kCapabilitySymbolInvalid,
+                      "capability '" + cap.name + "' duplicates SymbolId " +
+                          std::to_string(*cap.symbol_ref.id),
+                      cap.source_range);
+            }
+
+            for (std::uint32_t index = 0; index < cap.param_types.size(); ++index) {
+                if (!value_type_slot_ok(cap.param_types[index])) {
+                    error(verify::kCapabilitySignatureInvalid,
+                          "capability '" + cap.name + "' parameter #" +
+                              std::to_string(index) +
+                              " is not a valid materialized Core value type",
+                          cap.source_range);
+                }
+            }
+            if (!value_type_slot_ok(cap.return_type)) {
+                error(verify::kCapabilitySignatureInvalid,
+                      "capability '" + cap.name +
+                          "' return is not a valid materialized Core value type",
+                      cap.source_range);
+            }
+        }
     }
 
     // --- projection (shared by CorePathExpr reads and CorePlace stores) ---
@@ -583,6 +625,10 @@ class Verifier {
         // prove CoreLetStmt / CoreValueRefExpr result-type consistency.
         const std::vector<CoreValueTypeId> *value_types{nullptr};
         const std::vector<CoreCoercionPlanNode> *coercion_plans{nullptr};
+        // Flow-only authorization set resolved from the target agent. Workflow
+        // bodies deliberately leave this null: capability calls there are
+        // rejected as outside the language's Flow-only boundary.
+        const std::unordered_set<std::uint32_t> *allowed_capabilities{nullptr};
     };
 
     // The recorded logical value type of a value id in a body (kInvalid sentinel
@@ -1664,6 +1710,13 @@ class Verifier {
             return; // cannot bound states without the target agent
         }
         const CoreAgentDecl &agent = program_.agents[flow.target.value];
+        std::unordered_set<std::uint32_t> allowed_capabilities;
+        for (const CoreCapabilityId capability : agent.capabilities) {
+            if (capability.value < program_.capabilities.size()) {
+                allowed_capabilities.insert(capability.value);
+            }
+        }
+        av.allowed_capabilities = &allowed_capabilities;
         const auto state_count = static_cast<std::uint32_t>(agent.states.size());
         // SSA single-definition is a FLOW-GLOBAL property: a CoreValueId is
         // allocated once from the flow's value counter, so it may be defined at
@@ -1865,14 +1918,15 @@ class Verifier {
                                }
                            },
                            [&](const CoreCapabilityCallStmt &s) {
+                               const CoreCapabilityDecl *decl = nullptr;
                                if (s.capability.value >= program_.capabilities.size()) {
                                    error(verify::kCapabilityIdOutOfRange,
                                          "capability call '" + s.callee_name + "' capability id " +
                                              std::to_string(s.capability.value) + " is out of range",
                                          stmt.source_range);
                                } else {
-                                   const auto arity =
-                                       program_.capabilities[s.capability.value].param_types.size();
+                                   decl = &program_.capabilities[s.capability.value];
+                                   const auto arity = decl->param_types.size();
                                    if (s.args.size() != arity) {
                                        error(verify::kCapabilityArityMismatch,
                                              "capability call '" + s.callee_name + "' passes " +
@@ -1881,6 +1935,42 @@ class Verifier {
                                                  std::to_string(arity),
                                              stmt.source_range);
                                    }
+                                   const auto typed_args = std::min(s.args.size(), arity);
+                                   for (std::size_t index = 0; index < typed_args; ++index) {
+                                       if (flow.value_types != nullptr &&
+                                           s.args[index].value < flow.value_types->size() &&
+                                           !(body_value_type(flow, s.args[index]) ==
+                                             decl->param_types[index])) {
+                                           error(verify::kCapabilityArgumentTypeMismatch,
+                                                 "capability call '" + s.callee_name +
+                                                     "' argument #" + std::to_string(index) +
+                                                     " type does not match its import signature",
+                                                 stmt.source_range);
+                                       }
+                                   }
+                                   if (flow.value_types != nullptr &&
+                                       s.result.value < flow.value_types->size() &&
+                                       !(body_value_type(flow, s.result) == decl->return_type)) {
+                                       error(verify::kCapabilityResultTypeMismatch,
+                                             "capability call '" + s.callee_name +
+                                                 "' result type does not match its import signature",
+                                             stmt.source_range);
+                                   }
+                               }
+
+                               if (flow.owner != OwnerKind::Flow) {
+                                   error(verify::kCapabilityOutsideFlow,
+                                         "capability call '" + s.callee_name +
+                                             "' appears outside a flow region",
+                                         stmt.source_range);
+                               } else if (decl != nullptr &&
+                                          (flow.allowed_capabilities == nullptr ||
+                                           flow.allowed_capabilities->find(s.capability.value) ==
+                                               flow.allowed_capabilities->end())) {
+                                   error(verify::kCapabilityUnauthorized,
+                                         "capability call '" + s.callee_name +
+                                             "' is not in the target agent's whitelist",
+                                         stmt.source_range);
                                }
                                for (const CoreValueId a : s.args) {
                                    use_value(a, stmt.source_range);
@@ -2303,10 +2393,10 @@ class Verifier {
     // region gets a fresh `visible` scope. safety / liveness are ERASED (no field
     // exists here), which this proves structurally by their absence.
     //
-    // HONEST P4 BOUNDARY: CoreValue has no physical value type yet, so the
-    // verifier proves each region "yields A value", NOT that the yielded value's
-    // type equals the target agent input / workflow output schema. Exact-schema
-    // agreement remains a Sema guarantee until the P4 value-representation slice.
+    // This region-level rule proves that every path yields a value. Logical SSA
+    // types are checked by the shared value-type arena and root/instance rules;
+    // physical representation remains the separate verified P4-D layout side
+    // artifact and is deliberately not recomputed here.
     void verify_workflow(const CoreWorkflowDecl &wf, std::uint32_t index) {
         const std::string label = "workflow '" + wf.name + "'";
         // Identity: id == index into CoreProgram::workflows (Principle 2).

@@ -20,20 +20,14 @@
 //   * structured for WASM control flow, with explicit ADT / closure memory
 //     layout.
 //
-// THIS INCREMENT (KR6.4 sub-slices so far) is a SKELETON. It defines the
-// minimal node set needed to carry the simplest orchestration construct
-// end-to-end — an agent's state machine — plus the explicit capability-call
-// (`ahfl_cap` import) declaration that the effect->capability-call lowering
-// produces, plus the scaffolded lower entry `lower_ahfl_to_core`. The rest of
-// the node set (monomorphized function bodies, structured control-flow regions,
-// capability-call ARGUMENT passing and later execution nodes are filled by
-// subsequent KR6.4 sub-slices. Target-specific physical layout deliberately is
-// not a CoreProgram field: P4-D projects it into the pure side artifact declared
-// by core_layout.hpp.
-//
-// Nothing consumes `CoreProgram` yet: WASM codegen is KR6.5 and the evaluator is
-// untouched. This header + `core_lower.cpp` are purely additive scaffolding
-// (zero behavior change to every existing path).
+// The completed KR6.4 slices provide structured flow/workflow regions,
+// monomorphized value types, coercions, member templates, and the P4-D layout
+// projection. Target-specific physical layout deliberately is not a CoreProgram
+// field: P4-D projects it into the pure side artifact declared by
+// core_layout.hpp. KR6.5 E1 consumes the verified orchestration subset; E2 adds
+// capability execution incrementally. Core retains the materialized capability
+// signature and agent authorization facts needed for that consumer to be
+// standalone and fail-closed.
 //
 // Design conventions (AGENTS.md):
 //   * Principle 2 (index-based identity): states are addressed by `CoreStateId`
@@ -266,6 +260,15 @@ struct CoreAgentDecl {
     /// Whether the agent's context is the Unit default or an explicit Struct.
     enum class ContextKind { Unit, Struct };
     ContextKind context_kind{ContextKind::Unit};
+    /// Declaration-order capability whitelist, resolved to the flat Core
+    /// capability table. This persists Sema's authorization fact so a
+    /// standalone Core verifier/backend never needs the discarded frontend
+    /// environment or a display-name lookup.
+    std::vector<CoreCapabilityId> capabilities;
+    /// Source declaration provenance for standalone verifier/backend errors.
+    SourceRangeOpt source_range;
+    [[nodiscard]] friend bool operator==(const CoreAgentDecl &,
+                                         const CoreAgentDecl &) noexcept = default;
 };
 
 // ----------------------------------------------------------------------------
@@ -291,15 +294,16 @@ struct CoreAgentDecl {
 ///     reused, not redefined). The kind is the one piece of the source
 ///     `CapabilityEffectSpec` the execution layer keeps, so a host can classify
 ///     the import (e.g. read vs. financial-write) at bind time.
-///   * `param_types` / `return_type_ref` — the marshalling signature (arity +
-///     concrete types) the `ahfl_cap` frame needs. Source-level param NAMES are
-///     display-only and are intentionally dropped here.
+///   * `param_types` / `return_type` -- the fully materialized logical signature
+///     in the program-global CoreValueType arena. Source-level parameter names
+///     and AHFL TypeRefs are intentionally dropped: retaining both would create
+///     two signature SSOTs.
 ///
 /// What is ERASED: the rest of the `CapabilityEffectSpec` (domain, idempotency
 /// key, receipt/retry mode, timeout, compensation, policies) is verification /
 /// orchestration metadata consumed above Core-IR; it does not exist at this
-/// layer (RFC 0026 erasure invariant). Full argument-passing / value layout for
-/// the call site is filled by later KR6.4 sub-slices.
+/// layer (RFC 0026 erasure invariant). The public ahfl_cap wire frame remains
+/// RFC 0021 value_json; these logical ids do not redefine that byte encoding.
 struct CoreCapabilityDecl {
     /// Display name (diagnostic only). `symbol_ref` is the canonical identity.
     std::string name;
@@ -308,12 +312,15 @@ struct CoreCapabilityDecl {
     ir::SymbolRef symbol_ref;
     /// Effect category of the capability (reused `ir::CapabilityEffectKind`).
     ir::CapabilityEffectKind effect_kind{ir::CapabilityEffectKind::Unknown};
-    /// Import-signature parameter types in declaration order (arity + types the
-    /// `ahfl_cap` frame marshals). Param names are source-level, so they are not
-    /// carried here.
-    std::vector<ir::TypeRef> param_types;
-    /// Import-signature return type.
-    ir::TypeRef return_type_ref;
+    /// Import-signature parameter value types in declaration order. Each id is
+    /// interned in CoreProgram::value_types by the same arena body SSA uses.
+    std::vector<CoreValueTypeId> param_types;
+    /// Import-signature return value type in the same arena.
+    CoreValueTypeId return_type{};
+    /// Source declaration provenance for signature/ABI diagnostics.
+    SourceRangeOpt source_range;
+    [[nodiscard]] friend bool operator==(const CoreCapabilityDecl &,
+                                         const CoreCapabilityDecl &) noexcept = default;
 };
 
 /// Core-IR declaration node set. Minimal by design: this skeleton represents
@@ -1005,12 +1012,13 @@ struct CoreFlowDecl {
 //
 // A workflow is a DAG of agent invocations. Each node targets an agent, depends
 // on a set of upstream nodes (`after`), and computes its input from an ANF
-// `input_region` that runs AFTER those dependencies are ready (so a capability
-// call in a node input is sequenced correctly, not hoisted). The workflow return
-// is a separate `return_region` evaluated after the DAG completes. Node identity
-// is a typed `CoreWorkflowNodeId` (DAG-parallel), distinct from a flow's linear
-// CoreValueId SSA domain. Verification-only `safety` / `liveness` temporal
-// properties are ERASED (no field here).
+// `input_region` that runs AFTER those dependencies are ready. Capability calls
+// are a Flow-only language feature: the standalone verifier rejects one in a
+// workflow region rather than inventing a workflow authorization source. The
+// workflow return is a separate `return_region` evaluated after the DAG
+// completes. Node identity is a typed `CoreWorkflowNodeId` (DAG-parallel),
+// distinct from a flow's linear CoreValueId SSA domain. Verification-only
+// `safety` / `liveness` temporal properties are ERASED (no field here).
 
 /// One node of a workflow DAG. `target_instance` is the monomorphized agent
 /// INSTANCE this node invokes (a CoreInstanceId into `CoreProgram::instances`;
@@ -1018,8 +1026,8 @@ struct CoreFlowDecl {
 /// `after` are the upstream nodes this node depends on (typed ids, resolved from
 /// source names). `input_region` is the node's ANF input computation: it ends by
 /// yielding the single value passed to the agent (RegionContext WorkflowNodeInput
-/// in the verifier); a capability call inside it is an ordered statement, so it
-/// runs only once the node's dependencies are satisfied.
+/// in the verifier). Its statement subset is workflow-specific; capability calls
+/// are rejected as outside Flow even though their signatures are checked.
 struct CoreWorkflowNode {
     CoreWorkflowNodeId id{};
     CoreInstanceId target_instance{};        // invoked agent INSTANCE (Principle 2)
@@ -1072,8 +1080,9 @@ struct CoreWorkflowDecl {
 // descriptor, NOT uniform generic type-args (its source differs per kind: a fn's
 // concrete generic args, a capability/method's argument types, an agent's
 // [input, context, output] shell). It is kept as concrete structural
-// `ir::TypeRef` (like a CoreCapabilityDecl signature) until the P4 value-type
-// arena can encode primitive/bounded/container/Fn/parameterized types uniformly;
+// `CoreValueTypeId` in the same program-global P4 arena used by capability
+// signatures and body SSA values, so primitive/bounded/container/Fn/
+// parameterized types share one canonical representation;
 // the verifier rejects any non-concrete (`Unresolved`/`Any`) dispatch type.
 //
 // The kind of an instance is a STRUCTURAL FACT of its payload variant (no
@@ -1442,6 +1451,12 @@ enum class CoreDiagnosticSeverity { Error, Warning };
 /// share one source of truth rather than duplicating call-site string literals.
 namespace diag {
 inline constexpr std::string_view kUnresolvedCapabilityCall = "core.UNRESOLVED_CAPABILITY_CALL";
+inline constexpr std::string_view kUnresolvedCapabilitySignature =
+    "core.UNRESOLVED_CAPABILITY_SIGNATURE";
+inline constexpr std::string_view kUnresolvedAgentCapability =
+    "core.UNRESOLVED_AGENT_CAPABILITY";
+inline constexpr std::string_view kDuplicateAgentCapability =
+    "core.DUPLICATE_AGENT_CAPABILITY";
 inline constexpr std::string_view kUnresolvedType = "core.UNRESOLVED_TYPE";
 inline constexpr std::string_view kUnresolvedEnumVariant = "core.UNRESOLVED_ENUM_VARIANT";
 inline constexpr std::string_view kUnresolvedStructField = "core.UNRESOLVED_STRUCT_FIELD";
