@@ -44,6 +44,7 @@ add_executable(ahfl_compiler_ir_tests
     unit/compiler/ir/nominal_ref_bridge.cpp
     unit/compiler/ir/tower.cpp
     unit/compiler/ir/typed_hir_instance.cpp
+    unit/compiler/ir/value_type_arena.cpp
 )
 target_link_libraries(ahfl_compiler_ir_tests
     PRIVATE

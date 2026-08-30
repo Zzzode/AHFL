@@ -19,6 +19,7 @@
 #include "ahfl/compiler/ir/core_verify.hpp"
 
 #include <cctype>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -147,17 +148,47 @@ bool operator==(const CoreInstanceDecl &a, const CoreInstanceDecl &b) noexcept {
     return true;
 }
 
-// The production builtin variant table — the SINGLE SOURCE OF TRUTH for the
-// well-known stdlib enum variant order. Both the lowerer (below) and the public
-// `builtin_enum_table()` (for the sync test) read this.
-const std::vector<BuiltinEnumDescriptor> &builtin_enum_table() {
+// The SINGLE builtin nominal descriptor SSOT (RFC 0026 P4). Every well-known
+// stdlib nominal generic is described here ONCE — canonical name, role, kind,
+// arity, and (for enums) variant metadata. Everything else (the enum compat
+// view, add_builtins registration, the semantics-layer container matcher's sync
+// test) projects from or is checked against this table, so there is no
+// "IR enum table + IR collection table + name matcher" triple truth.
+//
+// Variant ORDER for enums MUST MATCH the sysroot declaration order
+// (std/option.ahfl: Some(T) then None; std/result.ahfl: Ok(T) then Err(E)),
+// guarded by a sync test. Collection arities MUST MATCH std/collections.ahfl
+// (List<T>=1, Set<T>=1, Map<K,V>=2), also sync-tested.
+const std::vector<BuiltinNominalDescriptor> &builtin_nominal_table() {
     using PK = CoreTypeDecl::VariantPayload::Kind;
-    static const std::vector<BuiltinEnumDescriptor> table = {
-        // std/option.ahfl: Some(T) [Tuple arity 1] then None [Unit]
-        {"Option", {{"Some", PK::Tuple, 1}, {"None", PK::Unit, 0}}},
-        // std/result.ahfl: Ok(T) [Tuple arity 1] then Err(E) [Tuple arity 1]
-        {"Result", {{"Ok", PK::Tuple, 1}, {"Err", PK::Tuple, 1}}},
+    using TK = CoreTypeDecl::Kind;
+    static const std::vector<BuiltinNominalDescriptor> table = {
+        {"std::option::Option", "Option", TK::Enum, CoreNominalRole::Option, 1,
+         {{"Some", PK::Tuple, 1}, {"None", PK::Unit, 0}}},
+        {"std::result::Result", "Result", TK::Enum, CoreNominalRole::Result, 2,
+         {{"Ok", PK::Tuple, 1}, {"Err", PK::Tuple, 1}}},
+        {"std::collections::List", "", TK::Struct, CoreNominalRole::List, 1, {}},
+        {"std::collections::Set", "", TK::Struct, CoreNominalRole::Set, 1, {}},
+        {"std::collections::Map", "", TK::Struct, CoreNominalRole::Map, 2, {}},
     };
+    return table;
+}
+
+// COMPATIBILITY VIEW of the SSOT: the enum entries only, keyed by unqualified
+// name, in declaration order. Preserved so the existing Option/Result sync test
+// keeps working unchanged; it is projected from `builtin_nominal_table()`, not a
+// second hand-written order.
+const std::vector<BuiltinEnumDescriptor> &builtin_enum_table() {
+    static const std::vector<BuiltinEnumDescriptor> table = [] {
+        std::vector<BuiltinEnumDescriptor> out;
+        for (const BuiltinNominalDescriptor &d : builtin_nominal_table()) {
+            if (d.kind != CoreTypeDecl::Kind::Enum) {
+                continue;
+            }
+            out.push_back(BuiltinEnumDescriptor{d.enum_view_name, d.variants});
+        }
+        return out;
+    }();
     return table;
 }
 
@@ -168,41 +199,13 @@ namespace {
 //
 // P3 resolves names to typed indices so P4 (physical layout) never re-queries
 // AHFL-IR / the type environment. Struct fields and enum variants are keyed by
-// DECLARATION-ORDER index. Well-known stdlib enums (Option/Result), whose
-// EnumDecl lives in the sysroot and may not be inlined in the user program, get
-// a builtin variant table. The builtin ORDER MUST MATCH the stdlib declaration
-// order (std/option.ahfl: `Some(T)` then `None`), guarded by a sync test.
+// DECLARATION-ORDER index. Well-known stdlib nominal generics (Option/Result/
+// List/Set/Map), whose declaration lives in the sysroot and may not be inlined in
+// the user program, are registered from the builtin nominal descriptor SSOT
+// (`builtin_nominal_table()`). Enum variant ORDER MUST MATCH the stdlib
+// declaration order (std/option.ahfl: `Some(T)` then `None`), guarded by a sync
+// test.
 // ---------------------------------------------------------------------------
-
-struct BuiltinEnum {
-    struct Variant {
-        std::string name;
-        CoreTypeDecl::VariantPayload::Kind payload_kind{CoreTypeDecl::VariantPayload::Kind::Unit};
-        std::uint32_t payload_arity{0};
-    };
-    std::string name;                  // unqualified enum name
-    std::vector<Variant> variants;     // declaration order
-};
-
-/// The lowerer's view of the builtin enums, derived from the single public SSOT
-/// `builtin_enum_table()` (which the sync test also reads). No second hand-
-/// written order to drift.
-[[nodiscard]] const std::vector<BuiltinEnum> &builtin_enum_descriptors() {
-    static const std::vector<BuiltinEnum> table = [] {
-        std::vector<BuiltinEnum> out;
-        for (const BuiltinEnumDescriptor &d : builtin_enum_table()) {
-            BuiltinEnum e;
-            e.name = std::string(d.name);
-            for (const BuiltinEnumDescriptor::Variant &v : d.variants) {
-                e.variants.push_back(
-                    BuiltinEnum::Variant{std::string(v.name), v.payload_kind, v.payload_arity});
-            }
-            out.push_back(std::move(e));
-        }
-        return out;
-    }();
-    return table;
-}
 
 // ---------------------------------------------------------------------------
 // Type environment: nominal name/identity -> CoreTypeId + typed field/variant
@@ -274,23 +277,27 @@ class TypeEnv {
         pending_variant_slot_names_.emplace(id.value, std::move(pending_slot_names));
     }
 
-    /// Register the well-known stdlib enums as synthetic types (only if a user
-    /// declaration has not already claimed the canonical name).
+    /// Register the well-known stdlib nominal generics as synthetic types (only
+    /// if a user declaration has not already claimed the canonical name), from the
+    /// single builtin nominal descriptor SSOT. Enums carry their variant metadata
+    /// (so std Option/Result construct/pattern arity is not a verifier blind
+    /// spot); collection structs (List/Set/Map) carry no fields but DO carry their
+    /// role + generic arity so a `CoreVtNominal` over them can be arity-checked and
+    /// capacity-validated. Generic slot/field types are unknown here (type
+    /// parameters), so no slot CoreTypeIds are populated.
     void add_builtins() {
-        for (const BuiltinEnum &b : builtin_enum_descriptors()) {
-            const std::string canonical = "std::" + lower_ascii(b.name) + "::" + b.name;
+        for (const BuiltinNominalDescriptor &b : builtin_nominal_table()) {
+            const std::string canonical(b.canonical_name);
             if (by_name_.count(canonical) != 0) {
                 continue; // a real declaration wins
             }
             CoreTypeDecl t;
-            t.kind = CoreTypeDecl::Kind::Enum;
+            t.kind = b.kind;
             t.name = canonical;
-            // Names + payload metadata come from the SSOT so std Option/Result
-            // construct/pattern arity is not a verifier blind spot. Generic slot
-            // types are unknown here (type parameters), so slot_types holds
-            // kInvalid placeholders of the right ARITY.
-            for (const BuiltinEnum::Variant &v : b.variants) {
-                t.variants.push_back(v.name);
+            t.role = b.role;
+            t.type_param_count = b.type_param_count;
+            for (const BuiltinEnumDescriptor::Variant &v : b.variants) {
+                t.variants.emplace_back(v.name);
                 CoreTypeDecl::VariantPayload payload;
                 payload.kind = v.payload_kind;
                 payload.slot_types.assign(v.payload_arity, CoreTypeId{});
@@ -498,12 +505,6 @@ class TypeEnv {
         }
         return {};
     }
-    [[nodiscard]] static std::string lower_ascii(std::string s) {
-        for (char &c : s) {
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        }
-        return s;
-    }
     std::vector<CoreTypeDecl> &types_;
     std::unordered_map<std::size_t, CoreTypeId> by_id_;
     std::unordered_map<std::string, CoreTypeId> by_name_;
@@ -514,6 +515,290 @@ class TypeEnv {
     // variant's slot_types), pending resolution in fixup_field_types().
     std::unordered_map<std::uint32_t, std::vector<std::vector<std::string>>>
         pending_variant_slot_names_;
+};
+
+// ---------------------------------------------------------------------------
+// Logical value-type arena (RFC 0026 P4). A TRUE hash-cons: `intern` maps a
+// structural key to a `CoreValueTypeId`, children are interned FIRST so a node's
+// key contains only child ids, and storage is deterministic append-only (so two
+// lowerings of the same input produce the same arena order — required for the
+// same-owner-arena `CoreInstanceDecl` equality, Codex ruling a). `lower_value_type`
+// converts an `ir::TypeRef` to an interned id and is ALSO a fail-closed shape gate
+// (Codex invariant 2): it does not assume any prior verifier ran.
+// ---------------------------------------------------------------------------
+class ValueTypeArena {
+  public:
+    using NominalResolver = std::function<std::optional<CoreTypeId>(const SymbolRef &)>;
+
+    ValueTypeArena(std::vector<CoreValueType> &store, const std::vector<CoreTypeDecl> &types,
+                   NominalResolver resolve)
+        : store_(store), types_(types), resolve_(std::move(resolve)) {
+        // Rebuild the hash-cons index from any pre-existing arena entries so
+        // repeated lowerings (e.g. one per dispatch type) keep deduplicating
+        // against everything already interned — the arena stays canonical.
+        for (std::uint32_t i = 0; i < store_.size(); ++i) {
+            index_.emplace(store_[i], CoreValueTypeId{i});
+        }
+    }
+
+    // Lower an ir::TypeRef into an interned CoreValueTypeId. Returns nullopt (a
+    // fail-closed error) on any non-materializable input: Unresolved/Any/Never
+    // TypeRefKind, a malformed structural shape, or an unresolved nominal. The
+    // caller emits the diagnostic (this keeps the arena free of the diagnostic
+    // sink); `*error_reason` is set to a human-readable cause on failure.
+    [[nodiscard]] std::optional<CoreValueTypeId> lower(const TypeRef &type,
+                                                       std::string *error_reason) {
+        const auto fail = [&](std::string reason) -> std::optional<CoreValueTypeId> {
+            return set_reason(error_reason, std::move(reason));
+        };
+        switch (type.kind) {
+        case TypeRefKind::Unresolved:
+            return fail("unresolved type");
+        case TypeRefKind::Any:
+            return fail("`Any` cannot be a materialized value type");
+        case TypeRefKind::Never:
+            // Legal as an arena node in general, but NOT as a materialized value /
+            // dispatch type — this consumer (dispatch descriptors) rejects it
+            // (Codex invariant 1). lower_value_type in this consumer fails closed.
+            return fail("`Never` cannot be a materialized value type");
+        case TypeRefKind::Unit:
+            return no_children_or_fail(type, CoreVtUnit{}, error_reason);
+        case TypeRefKind::Bool:
+            return no_children_or_fail(type, CoreVtBool{}, error_reason);
+        case TypeRefKind::Float:
+            return no_children_or_fail(type, CoreVtFloat{}, error_reason);
+        case TypeRefKind::UUID:
+            return no_children_or_fail(type, CoreVtUuid{}, error_reason);
+        case TypeRefKind::Timestamp:
+            return no_children_or_fail(type, CoreVtTimestamp{}, error_reason);
+        case TypeRefKind::Duration:
+            return no_children_or_fail(type, CoreVtDuration{}, error_reason);
+        case TypeRefKind::Int:
+            if (has_children(type)) {
+                return fail("`Int` carries stray structural children");
+            }
+            return intern(CoreVtInt{}, error_reason);
+        case TypeRefKind::BoundedInt: {
+            if (has_children(type) || !type.int_bounds.has_value()) {
+                return fail("malformed `BoundedInt` (missing bounds or stray children)");
+            }
+            if (type.int_bounds->first > type.int_bounds->second) {
+                return fail("`BoundedInt` has min > max");
+            }
+            return intern(CoreVtInt{type.int_bounds}, error_reason);
+        }
+        case TypeRefKind::String:
+            if (has_children(type)) {
+                return fail("`String` carries stray structural children");
+            }
+            return intern(CoreVtString{}, error_reason);
+        case TypeRefKind::BoundedString: {
+            if (has_children(type) || !type.string_bounds.has_value()) {
+                return fail("malformed `BoundedString` (missing bounds or stray children)");
+            }
+            const auto [lo, hi] = *type.string_bounds;
+            if (lo < 0 || hi < 0 || lo > hi) {
+                return fail("`BoundedString` has a negative or reversed length bound");
+            }
+            return intern(CoreVtString{type.string_bounds}, error_reason);
+        }
+        case TypeRefKind::Decimal:
+            if (has_children(type) || !type.decimal_scale.has_value()) {
+                return fail("malformed `Decimal` (missing scale or stray children)");
+            }
+            return intern(CoreVtDecimal{*type.decimal_scale}, error_reason);
+        case TypeRefKind::Fn:
+            return lower_fn(type, error_reason);
+        case TypeRefKind::Struct:
+        case TypeRefKind::Enum:
+            return lower_nominal(type, error_reason);
+        }
+        return fail("unhandled type kind");
+    }
+
+  private:
+    // Hash for the hash-cons map. Children are already interned to ids, so a
+    // node's hash mixes only its own scalar fields + child ids.
+    struct NodeHash {
+        [[nodiscard]] std::size_t operator()(const CoreValueType &vt) const noexcept {
+            std::size_t h = vt.node.index();
+            const auto mix = [&h](std::size_t v) {
+                h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            };
+            std::visit(Overloaded{
+                           [&](const CoreVtInt &n) {
+                               if (n.bounds) {
+                                   mix(static_cast<std::size_t>(n.bounds->first));
+                                   mix(static_cast<std::size_t>(n.bounds->second));
+                               }
+                           },
+                           [&](const CoreVtString &n) {
+                               if (n.length_bounds) {
+                                   mix(static_cast<std::size_t>(n.length_bounds->first));
+                                   mix(static_cast<std::size_t>(n.length_bounds->second));
+                               }
+                           },
+                           [&](const CoreVtDecimal &n) { mix(static_cast<std::size_t>(n.scale)); },
+                           [&](const CoreVtNominal &n) {
+                               mix(n.base.value);
+                               for (const auto &a : n.args) {
+                                   mix(a.value);
+                               }
+                               if (n.capacity) {
+                                   mix(static_cast<std::size_t>(*n.capacity));
+                               }
+                           },
+                           [&](const CoreVtTuple &n) {
+                               for (const auto &e : n.elements) {
+                                   mix(e.value);
+                               }
+                           },
+                           [&](const CoreVtFn &n) {
+                               for (const auto &p : n.params) {
+                                   mix(p.value);
+                               }
+                               mix(n.ret.value);
+                           },
+                           [&](const CoreVtClosure &n) {
+                               mix(n.signature.value);
+                               for (const auto &c : n.captures) {
+                                   mix(c.value_type.value);
+                                   mix(static_cast<std::size_t>(c.mode));
+                               }
+                           },
+                           [&](const auto &) {},
+                       },
+                       vt.node);
+            return h;
+        }
+    };
+
+    // Intern a fully-built node (children already interned). Deterministic
+    // append-only storage + hash-cons dedup (Principle 3, Codex invariant 4).
+    // Fails closed if the arena would exceed the CoreValueTypeId (uint32) space.
+    [[nodiscard]] std::optional<CoreValueTypeId> intern(CoreValueTypeNode node,
+                                                        std::string *error_reason) {
+        CoreValueType vt{std::move(node)};
+        if (const auto it = index_.find(vt); it != index_.end()) {
+            return it->second;
+        }
+        if (store_.size() >= CoreValueTypeId::kInvalid) {
+            return set_reason(error_reason, "value-type arena exceeded its 32-bit id space");
+        }
+        const auto id = CoreValueTypeId{static_cast<std::uint32_t>(store_.size())};
+        index_.emplace(vt, id);
+        store_.push_back(std::move(vt));
+        return id;
+    }
+
+    [[nodiscard]] static bool has_children(const TypeRef &type) {
+        return type.first != nullptr || type.second != nullptr || !type.params.empty();
+    }
+
+    static std::optional<CoreValueTypeId> set_reason(std::string *error_reason,
+                                                     std::string reason) {
+        if (error_reason != nullptr && error_reason->empty()) {
+            *error_reason = std::move(reason);
+        }
+        return std::nullopt;
+    }
+
+    // Atoms with no structural children, no refinement payload, and no nominal
+    // identity. Rejects a stray nominal_ref / children (BackendReady contract).
+    template <typename Node>
+    [[nodiscard]] std::optional<CoreValueTypeId>
+    no_children_or_fail(const TypeRef &type, Node node, std::string *error_reason) {
+        if (has_children(type)) {
+            return set_reason(error_reason, "primitive/unit type carries stray structural children");
+        }
+        if (type.nominal_ref.kind != ir::SymbolRefKind::Unknown) {
+            return set_reason(error_reason, "primitive/unit type carries a stray nominal identity");
+        }
+        return intern(std::move(node), error_reason);
+    }
+
+    // Fn: params are `params`, the RETURN is `first` (typed_hir_lower FnT
+    // encoding SSOT), `second` must be empty. Effect is erased by construction.
+    [[nodiscard]] std::optional<CoreValueTypeId> lower_fn(const TypeRef &type,
+                                                          std::string *error_reason) {
+        if (type.first == nullptr) {
+            return set_reason(error_reason, "`Fn` is missing its return type");
+        }
+        if (type.second != nullptr) {
+            return set_reason(error_reason, "`Fn` carries a stray `second` child");
+        }
+        std::vector<CoreValueTypeId> params;
+        params.reserve(type.params.size());
+        for (const auto &p : type.params) {
+            if (p == nullptr) {
+                return set_reason(error_reason, "`Fn` has a null parameter type");
+            }
+            const auto id = lower(*p, error_reason);
+            if (!id) {
+                return std::nullopt;
+            }
+            params.push_back(*id);
+        }
+        const auto ret = lower(*type.first, error_reason);
+        if (!ret) {
+            return std::nullopt;
+        }
+        return intern(CoreVtFn{std::move(params), *ret}, error_reason);
+    }
+
+    // Struct/Enum -> CoreVtNominal. An `Enum` TypeRef carrying a non-empty
+    // variant_name (EnumVariant encoding) NORMALIZES to its parent enum — the
+    // variant name does NOT enter the value-type identity. Resolves the nominal
+    // base by the id-first nominal_ref bridge (Principle 2), arity + capacity
+    // legality validated here (capacity via the shared `capacity_allowed` SSOT).
+    [[nodiscard]] std::optional<CoreValueTypeId> lower_nominal(const TypeRef &type,
+                                                               std::string *error_reason) {
+        if (type.first != nullptr || type.second != nullptr) {
+            return set_reason(error_reason, "nominal type carries stray first/second children");
+        }
+        if (type.nominal_ref.kind == ir::SymbolRefKind::Unknown) {
+            return set_reason(error_reason, "nominal type is missing its resolved nominal identity");
+        }
+        const auto base = resolve_(type.nominal_ref);
+        if (!base) {
+            return set_reason(error_reason, "nominal type '" + type.nominal_ref.canonical_name +
+                                                "' does not resolve to a Core type");
+        }
+        if (base->value >= types_.size()) {
+            return set_reason(error_reason, "resolved nominal base id is out of range");
+        }
+        const CoreTypeDecl &decl = types_[base->value];
+        std::vector<CoreValueTypeId> args;
+        args.reserve(type.params.size());
+        for (const auto &p : type.params) {
+            if (p == nullptr) {
+                return set_reason(error_reason, "nominal type has a null type argument");
+            }
+            const auto id = lower(*p, error_reason);
+            if (!id) {
+                return std::nullopt;
+            }
+            args.push_back(*id);
+        }
+        if (args.size() != decl.type_param_count) {
+            return set_reason(error_reason,
+                              "nominal type '" + decl.name + "' expects " +
+                                  std::to_string(decl.type_param_count) + " type argument(s), got " +
+                                  std::to_string(args.size()));
+        }
+        std::optional<std::uint64_t> capacity = type.collection_capacity;
+        if (capacity.has_value() && !capacity_allowed(decl.role)) {
+            return set_reason(error_reason, "type '" + decl.name +
+                                                "' is not a bounded collection and cannot carry a "
+                                                "capacity");
+        }
+        return intern(CoreVtNominal{*base, std::move(args), capacity}, error_reason);
+    }
+
+    std::vector<CoreValueType> &store_;
+    const std::vector<CoreTypeDecl> &types_;
+    NominalResolver resolve_;
+    std::unordered_map<CoreValueType, CoreValueTypeId, NodeHash> index_;
 };
 
 // ---------------------------------------------------------------------------
@@ -2445,6 +2730,24 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     }
     result.is_executable = !result.has_errors();
     return result;
+}
+
+std::optional<CoreValueTypeId>
+lower_value_type_into(CoreProgram &program, const ir::TypeRef &type, std::string *reason) {
+    // Resolver over the program's own type table: id-first (the nominal_ref
+    // bridge's resolved symbol id), then canonical name (Principle 2).
+    auto resolve = [&program](const SymbolRef &ref) -> std::optional<CoreTypeId> {
+        for (std::uint32_t i = 0; i < program.types.size(); ++i) {
+            const CoreTypeDecl &decl = program.types[i];
+            if (ref.canonical_name.empty() || decl.name != ref.canonical_name) {
+                continue;
+            }
+            return CoreTypeId{i};
+        }
+        return std::nullopt;
+    };
+    ValueTypeArena arena(program.value_types, program.types, std::move(resolve));
+    return arena.lower(type, reason);
 }
 
 } // namespace ahfl::ir::core

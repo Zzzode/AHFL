@@ -166,6 +166,22 @@ struct CoreInstanceId {
     [[nodiscard]] friend bool operator==(CoreInstanceId, CoreInstanceId) noexcept = default;
 };
 
+/// Canonical identity of a LOGICAL value type within `CoreProgram::value_types`
+/// (RFC 0026 P4, Principle 2/3): the index into that program-global, hash-consed
+/// arena. Because the arena is interned, index equality IS structural equality —
+/// but ONLY within the SAME owning arena (`CoreProgram::value_types`). A
+/// `CoreValueTypeId` from one program is meaningless against another program's
+/// arena; comparisons that carry these ids (e.g. `CoreInstanceDecl::operator==`)
+/// are therefore SAME-OWNER-ARENA equality. A future cross-program semantic diff
+/// must go through a dedicated arena-aware comparator, never a bare `operator==`.
+/// Target-INDEPENDENT: physical layout is a separate P4-D projection keyed by
+/// this id, never stored in the value type itself.
+struct CoreValueTypeId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreValueTypeId, CoreValueTypeId) noexcept = default;
+};
+
 // ----------------------------------------------------------------------------
 // State-machine node set (minimal orchestration skeleton)
 // ----------------------------------------------------------------------------
@@ -1039,6 +1055,160 @@ using CoreInstancePayload =
     std::variant<CoreCapabilityInstance, CorePredicateInstance, CoreAgentInstance,
                  CoreWorkflowInstance, CoreFnInstance>;
 
+// ----------------------------------------------------------------------------
+// Logical value types (RFC 0026 P4). A program-global, hash-consed arena of
+// TARGET-INDEPENDENT value types — the "what a value logically is" layer,
+// distinct from nominal declaration identity (`CoreTypeId`) and from physical
+// layout (a separate P4-D projection). Covers `types::Type` MINUS TypeVar / Any
+// / Error (those cannot survive monomorphization; `lower_value_type` fails
+// closed if it sees one). NOT a 1:1 mirror: an enum VARIANT normalizes into its
+// parent `CoreVtNominal` (a value's type is the enum, not a per-variant type),
+// and `CoreVtClosure` is a Core-only execution type with no `types::Type`
+// counterpart. Interned: index equality IS structural equality within the SAME
+// arena (Principle 3).
+// ----------------------------------------------------------------------------
+
+/// The nominal ROLE of a `CoreTypeDecl`, so the verifier judges collection-only
+/// facts (e.g. a bounded `capacity`) by a typed enum, NEVER by parsing a
+/// canonical name. `Ordinary` = a user struct/enum with no collection semantics;
+/// the rest are the well-known stdlib nominal generics. Filled from the single
+/// builtin nominal descriptor SSOT (`builtin_nominal_table()`); a user nominal is
+/// always `Ordinary`.
+enum class CoreNominalRole { Ordinary, Option, Result, List, Set, Map };
+
+/// `true` iff a nominal of this role may carry a bounded-collection `capacity`.
+/// The SINGLE decision point shared by `lower_value_type` and
+/// `verify_value_types` (Codex ruling c): capacity is legal ONLY on List/Set/Map;
+/// Ordinary/Option/Result carrying a capacity is fail-closed at BOTH layers.
+/// NOTE: "allowed" is not "required" — a `List<T>` with no capacity is a legal
+/// logical type (unbounded); the P4-D layout pass fail-closes an unbounded
+/// collection for a bounded target, not this predicate.
+[[nodiscard]] constexpr bool capacity_allowed(CoreNominalRole role) noexcept {
+    return role == CoreNominalRole::List || role == CoreNominalRole::Set ||
+           role == CoreNominalRole::Map;
+}
+
+// scalars & atoms -----------------------------------------------------------
+struct CoreVtUnit {
+    [[nodiscard]] friend bool operator==(const CoreVtUnit &, const CoreVtUnit &) noexcept = default;
+};
+/// Uninhabited. Legal as an arena entry (e.g. a diverging expression's type),
+/// but a CONSUMER-CONTEXT check rejects it as a materialized value / dispatch
+/// type / shell (see `verify_value_types` and the instance dispatch verifier).
+struct CoreVtNever {
+    [[nodiscard]] friend bool operator==(const CoreVtNever &, const CoreVtNever &) noexcept =
+        default;
+};
+struct CoreVtBool {
+    [[nodiscard]] friend bool operator==(const CoreVtBool &, const CoreVtBool &) noexcept = default;
+};
+/// `Int` (unbounded) or `BoundedInt` (a refinement range). `bounds` present iff
+/// the source was a bounded int; `min <= max` enforced by the verifier.
+struct CoreVtInt {
+    std::optional<std::pair<std::int64_t, std::int64_t>> bounds;
+    [[nodiscard]] friend bool operator==(const CoreVtInt &, const CoreVtInt &) noexcept = default;
+};
+struct CoreVtFloat {
+    [[nodiscard]] friend bool operator==(const CoreVtFloat &, const CoreVtFloat &) noexcept =
+        default;
+};
+/// `String` or `BoundedString`. `length_bounds` present iff bounded; both bounds
+/// non-negative and `min <= max`, enforced by the verifier.
+struct CoreVtString {
+    std::optional<std::pair<std::int64_t, std::int64_t>> length_bounds;
+    [[nodiscard]] friend bool operator==(const CoreVtString &, const CoreVtString &) noexcept =
+        default;
+};
+struct CoreVtDecimal {
+    std::int64_t scale{0};
+    [[nodiscard]] friend bool operator==(const CoreVtDecimal &, const CoreVtDecimal &) noexcept =
+        default;
+};
+struct CoreVtDuration {
+    [[nodiscard]] friend bool operator==(const CoreVtDuration &, const CoreVtDuration &) noexcept =
+        default;
+};
+struct CoreVtTimestamp {
+    [[nodiscard]] friend bool operator==(const CoreVtTimestamp &,
+                                         const CoreVtTimestamp &) noexcept = default;
+};
+struct CoreVtUuid {
+    [[nodiscard]] friend bool operator==(const CoreVtUuid &, const CoreVtUuid &) noexcept = default;
+};
+
+/// A nominal instance: `base` is the canonical in-Core nominal identity
+/// (`CoreTypeId`), `args` are the concrete type arguments BY PARAMETER POSITION
+/// (Rust `Substs`). A value type NEVER stores a `SymbolRef` — the resolved
+/// nominal identity is resolved to a `CoreTypeId` ONCE in `lower_value_type`
+/// (via the `ir::TypeRef::nominal_ref` bridge), so the three-layer identity table
+/// cannot give one nominal two canonical representations. `capacity` is legal
+/// ONLY on a bounded-collection role (see `capacity_allowed`).
+struct CoreVtNominal {
+    CoreTypeId base{};
+    std::vector<CoreValueTypeId> args;
+    std::optional<std::uint64_t> capacity;
+    [[nodiscard]] friend bool operator==(const CoreVtNominal &, const CoreVtNominal &) noexcept =
+        default;
+};
+
+/// An anonymous structural tuple.
+struct CoreVtTuple {
+    std::vector<CoreValueTypeId> elements;
+    [[nodiscard]] friend bool operator==(const CoreVtTuple &, const CoreVtTuple &) noexcept =
+        default;
+};
+
+/// A callable SIGNATURE. The effect grade of `types::FnT` is ERASED by
+/// construction — Core-IR is the effect-lowered layer, so a function's
+/// callability/effect is expressed structurally by the capability-call node, not
+/// carried on the value type.
+struct CoreVtFn {
+    std::vector<CoreValueTypeId> params;
+    CoreValueTypeId ret{};
+    [[nodiscard]] friend bool operator==(const CoreVtFn &, const CoreVtFn &) noexcept = default;
+};
+
+/// How a closure captures an environment slot. Only `ByValue` is accepted today;
+/// `ByRef` (with lifetime/region rules) is a future addition that does not change
+/// the node shape.
+enum class CoreCaptureMode { ByValue };
+
+/// One captured environment slot of a closure. The capture's NAME does not enter
+/// the logical type identity (only `value_type` + `mode` do) — the name is
+/// closure-construction/debug provenance only.
+struct CoreClosureCapture {
+    CoreValueTypeId value_type{};
+    CoreCaptureMode mode{CoreCaptureMode::ByValue};
+    [[nodiscard]] friend bool operator==(const CoreClosureCapture &,
+                                         const CoreClosureCapture &) noexcept = default;
+};
+
+/// A closure: a signature (must resolve to a `CoreVtFn`) PLUS its captured
+/// environment slots in canonical env-slot order. NOTE: `lower_value_type` does
+/// not YET produce a closure (P4-A has no closure consumer); the node exists so
+/// the arena's node set is complete for later slices.
+struct CoreVtClosure {
+    CoreValueTypeId signature{};
+    std::vector<CoreClosureCapture> captures;
+    [[nodiscard]] friend bool operator==(const CoreVtClosure &, const CoreVtClosure &) noexcept =
+        default;
+};
+
+using CoreValueTypeNode =
+    std::variant<CoreVtUnit, CoreVtNever, CoreVtBool, CoreVtInt, CoreVtFloat, CoreVtString,
+                 CoreVtDecimal, CoreVtDuration, CoreVtTimestamp, CoreVtUuid, CoreVtNominal,
+                 CoreVtTuple, CoreVtFn, CoreVtClosure>;
+
+/// An interned logical value type (`CoreProgram::value_types`). Structural
+/// equality of the node IS the interning key: two `CoreValueType`s compare equal
+/// iff their nodes do, and the hash-cons guarantees at most one arena entry per
+/// distinct node. `index == CoreValueTypeId`.
+struct CoreValueType {
+    CoreValueTypeNode node;
+    [[nodiscard]] friend bool operator==(const CoreValueType &, const CoreValueType &) noexcept =
+        default;
+};
+
 /// One monomorphized instance consumed from an `ir::InstanceDecl`. `instance_key`
 /// is the byte-exact mangled name (execution dispatch label + global-uniqueness
 /// key — NEVER re-derived or string-parsed in Core). `payload` makes kind a
@@ -1092,6 +1262,16 @@ struct CoreTypeDecl {
                                              const VariantPayload &) noexcept = default;
     };
     std::vector<VariantPayload> variant_payloads;
+    /// Number of generic type parameters this nominal declares (RFC 0026 P4).
+    /// `0` for a non-generic user type; the std generics carry their arity
+    /// (Option 1, Result 2, List 1, Set 1, Map 2). A `CoreVtNominal` referencing
+    /// this base must supply exactly `type_param_count` args (verifier-enforced).
+    std::uint32_t type_param_count{0};
+    /// The nominal's role (RFC 0026 P4). `Ordinary` for a user type; the std
+    /// generics carry their well-known role so `capacity` legality is judged by a
+    /// typed enum, never by parsing `name`. Filled from the builtin nominal
+    /// descriptor SSOT.
+    CoreNominalRole role{CoreNominalRole::Ordinary};
     [[nodiscard]] friend bool operator==(const CoreTypeDecl &,
                                          const CoreTypeDecl &) noexcept = default;
 };
@@ -1104,6 +1284,7 @@ struct CoreTypeDecl {
 struct CoreProgram {
     std::string format_version{std::string(kCoreFormatVersion)};
     std::vector<CoreTypeDecl> types;              // index == CoreTypeId
+    std::vector<CoreValueType> value_types;       // index == CoreValueTypeId (interned, P4)
     std::vector<CoreCapabilityDecl> capabilities; // index == CoreCapabilityId
     std::vector<CoreAgentDecl> agents;            // index == CoreAgentId
     std::vector<CoreFlowDecl> flows;
@@ -1211,9 +1392,45 @@ struct BuiltinEnumDescriptor {
     std::vector<Variant> variants;       // declaration order
 };
 
+/// The SINGLE builtin nominal descriptor SSOT (RFC 0026 P4, Codex invariant 3).
+/// Every well-known stdlib nominal generic — Option / Result / List / Set / Map —
+/// is described here ONCE: its canonical name, `CoreNominalRole`, Struct-vs-Enum
+/// kind, generic arity, and (for enums) its variant metadata. `builtin_enum_table`
+/// is a COMPATIBILITY VIEW projected from this table (enum entries only), so there
+/// is no separate "IR enum table + IR collection table". The semantics-layer
+/// container matcher (`stdlib_bridge`) is kept in sync with this SSOT by a strict
+/// sync test rather than being a third independent source of truth.
+struct BuiltinNominalDescriptor {
+    std::string_view canonical_name;             // fully-qualified, e.g. "std::option::Option"
+    std::string_view enum_view_name;             // unqualified name for the enum compat view ("" if not an enum)
+    CoreTypeDecl::Kind kind{CoreTypeDecl::Kind::Enum};
+    CoreNominalRole role{CoreNominalRole::Ordinary};
+    std::uint32_t type_param_count{0};
+    std::vector<BuiltinEnumDescriptor::Variant> variants; // enum variants (empty for a struct)
+};
+
+/// The builtin nominal descriptor SSOT. Order is deterministic (declaration
+/// order used by `add_builtins`). Guarded against sysroot drift by a sync test.
+[[nodiscard]] const std::vector<BuiltinNominalDescriptor> &builtin_nominal_table();
+
 /// The production builtin variant order. Exposed so a sync test can compare it
 /// against the actual sysroot declaration order (std/option.ahfl,
-/// std/result.ahfl) and fail if the two ever drift apart.
+/// std/result.ahfl) and fail if the two ever drift apart. COMPATIBILITY VIEW:
+/// projected from `builtin_nominal_table()` (enum entries only).
 [[nodiscard]] const std::vector<BuiltinEnumDescriptor> &builtin_enum_table();
+
+/// Intern an `ir::TypeRef` into a program's logical value-type arena
+/// (`CoreProgram::value_types`), resolving nominal bases against the program's
+/// own `types` table (id-first via the `nominal_ref` bridge, then canonical
+/// name). Returns the interned `CoreValueTypeId`, or `nullopt` with `*reason` set
+/// on any fail-closed input (Unresolved/Any/Never, malformed shape, unresolved
+/// nominal, arity/capacity violation). This is the SINGLE entry point shared by
+/// the dispatch-type lowering (P4-A2) and its tests; repeated calls reuse the
+/// arena's hash-cons so a structurally identical type always yields the SAME id.
+///
+/// Deterministic: for a fixed program, the same input sequence produces the same
+/// arena order (required for same-owner-arena `CoreInstanceDecl` equality).
+[[nodiscard]] std::optional<CoreValueTypeId>
+lower_value_type_into(CoreProgram &program, const ir::TypeRef &type, std::string *reason);
 
 } // namespace ahfl::ir::core

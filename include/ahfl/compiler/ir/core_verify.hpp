@@ -148,6 +148,14 @@ inline constexpr std::string_view kInstanceBaseInvalid = "core.verify.INSTANCE_B
 inline constexpr std::string_view kInstanceOriginInvalid = "core.verify.INSTANCE_ORIGIN_INVALID";
 inline constexpr std::string_view kInstanceShellMismatch = "core.verify.INSTANCE_SHELL_MISMATCH";
 inline constexpr std::string_view kWorkflowInvocationInvalid = "core.verify.WORKFLOW_INVOCATION_INVALID";
+// --- logical value types (RFC 0026 P4) ---
+inline constexpr std::string_view kValueTypeChildInvalid = "core.verify.VALUE_TYPE_CHILD_INVALID";
+inline constexpr std::string_view kValueTypeCycle = "core.verify.VALUE_TYPE_CYCLE";
+inline constexpr std::string_view kValueTypeDuplicate = "core.verify.VALUE_TYPE_DUPLICATE";
+inline constexpr std::string_view kValueTypeNominalInvalid = "core.verify.VALUE_TYPE_NOMINAL_INVALID";
+inline constexpr std::string_view kValueTypeArityInvalid = "core.verify.VALUE_TYPE_ARITY_INVALID";
+inline constexpr std::string_view kValueTypeCapacityInvalid = "core.verify.VALUE_TYPE_CAPACITY_INVALID";
+inline constexpr std::string_view kValueTypeRefinementInvalid = "core.verify.VALUE_TYPE_REFINEMENT_INVALID";
 } // namespace verify
 
 /// Result of verifying a Core-IR program: any structural violations, as

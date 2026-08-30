@@ -45,6 +45,7 @@ class Verifier {
         for (std::uint32_t i = 0; i < program_.workflows.size(); ++i) {
             verify_workflow(program_.workflows[i], i);
         }
+        verify_value_types();
         verify_instances();
         return std::move(diags_);
     }
@@ -1807,6 +1808,240 @@ class Verifier {
                        },
                        wf.exprs[id].node);
         }
+    }
+
+    // --- logical value-type arena (RFC 0026 P4) ---
+    //
+    // Verifies CoreProgram.value_types independently of how it was produced (so a
+    // hand-built / deserialized arena cannot bypass the lowerer's invariants):
+    //   * every child id is in range and points BACKWARD or to a distinct entry
+    //     (the arena is a DAG — an interned, hash-consed acyclic structure);
+    //   * the arena is a canonical hash-cons: no two entries are structurally
+    //     equal (a duplicate means interning was bypassed);
+    //   * a CoreVtNominal's base is an in-range CoreTypeId, its arg count equals
+    //     that type's `type_param_count`, and a `capacity` is present ONLY on a
+    //     bounded-collection role (the SAME `capacity_allowed` SSOT the lowerer
+    //     uses — Codex ruling c);
+    //   * refinement bounds are well-formed (min<=max, non-negative lengths).
+    // Acyclicity + child-bounds are checked by an iterative 3-color walk (no
+    // native recursion). `CoreVtNever` is a legal ARENA node here; a consumer
+    // context (dispatch types) separately rejects it.
+    void verify_value_types() {
+        const auto &arena = program_.value_types;
+        // Duplicate-structural-entry detection (canonical interning).
+        std::map<std::size_t, std::vector<std::uint32_t>> by_hash; // hash -> entry ids
+        // Child-id bounds + collect children for the cycle walk.
+        const auto children_of = [](const CoreValueType &vt, std::vector<std::uint32_t> &out) {
+            out.clear();
+            std::visit(Overloaded{
+                           [&](const CoreVtNominal &n) {
+                               for (const auto &a : n.args) {
+                                   out.push_back(a.value);
+                               }
+                           },
+                           [&](const CoreVtTuple &n) {
+                               for (const auto &e : n.elements) {
+                                   out.push_back(e.value);
+                               }
+                           },
+                           [&](const CoreVtFn &n) {
+                               for (const auto &p : n.params) {
+                                   out.push_back(p.value);
+                               }
+                               out.push_back(n.ret.value);
+                           },
+                           [&](const CoreVtClosure &n) {
+                               out.push_back(n.signature.value);
+                               for (const auto &c : n.captures) {
+                                   out.push_back(c.value_type.value);
+                               }
+                           },
+                           [&](const auto &) {},
+                       },
+                       vt.node);
+        };
+
+        std::vector<std::uint32_t> kids;
+        for (std::uint32_t i = 0; i < arena.size(); ++i) {
+            const CoreValueType &vt = arena[i];
+            // Child-id bounds.
+            children_of(vt, kids);
+            for (std::uint32_t child : kids) {
+                if (child == CoreValueTypeId::kInvalid || child >= arena.size()) {
+                    error(verify::kValueTypeChildInvalid,
+                          "value type #" + std::to_string(i) + " has an out-of-range child id",
+                          std::nullopt);
+                }
+            }
+            // Per-node structural checks.
+            verify_value_type_node(i, vt);
+        }
+
+        // Duplicate detection: two arena entries that compare equal mean the
+        // hash-cons was bypassed. Bucket by a cheap hash then compare within.
+        for (std::uint32_t i = 0; i < arena.size(); ++i) {
+            by_hash[value_type_hash(arena[i])].push_back(i);
+        }
+        for (const auto &[h, ids] : by_hash) {
+            (void)h;
+            for (std::size_t a = 0; a < ids.size(); ++a) {
+                for (std::size_t b = a + 1; b < ids.size(); ++b) {
+                    if (arena[ids[a]] == arena[ids[b]]) {
+                        error(verify::kValueTypeDuplicate,
+                              "value types #" + std::to_string(ids[a]) + " and #" +
+                                  std::to_string(ids[b]) + " are structurally identical (the arena "
+                                  "must be a canonical hash-cons)",
+                              std::nullopt);
+                    }
+                }
+            }
+        }
+
+        // Acyclicity: iterative 3-color DFS over the child graph.
+        verify_value_types_acyclic(children_of);
+    }
+
+    void verify_value_type_node(std::uint32_t index, const CoreValueType &vt) {
+        std::visit(Overloaded{
+                       [&](const CoreVtInt &n) {
+                           if (n.bounds && n.bounds->first > n.bounds->second) {
+                               error(verify::kValueTypeRefinementInvalid,
+                                     "value type #" + std::to_string(index) +
+                                         " has an Int bound with min > max",
+                                     std::nullopt);
+                           }
+                       },
+                       [&](const CoreVtString &n) {
+                           if (n.length_bounds &&
+                               (n.length_bounds->first < 0 || n.length_bounds->second < 0 ||
+                                n.length_bounds->first > n.length_bounds->second)) {
+                               error(verify::kValueTypeRefinementInvalid,
+                                     "value type #" + std::to_string(index) +
+                                         " has a negative or reversed String length bound",
+                                     std::nullopt);
+                           }
+                       },
+                       [&](const CoreVtNominal &n) { verify_value_type_nominal(index, n); },
+                       [&](const CoreVtFn &n) {
+                           if (n.ret.value == CoreValueTypeId::kInvalid) {
+                               error(verify::kValueTypeChildInvalid,
+                                     "value type #" + std::to_string(index) +
+                                         " (Fn) has an invalid return id",
+                                     std::nullopt);
+                           }
+                       },
+                       [&](const auto &) {},
+                   },
+                   vt.node);
+    }
+
+    void verify_value_type_nominal(std::uint32_t index, const CoreVtNominal &n) {
+        if (n.base.value == CoreTypeId::kInvalid || n.base.value >= program_.types.size()) {
+            error(verify::kValueTypeNominalInvalid,
+                  "value type #" + std::to_string(index) + " nominal base id is out of range",
+                  std::nullopt);
+            return;
+        }
+        const CoreTypeDecl &decl = program_.types[n.base.value];
+        if (n.args.size() != decl.type_param_count) {
+            error(verify::kValueTypeArityInvalid,
+                  "value type #" + std::to_string(index) + " nominal '" + decl.name + "' expects " +
+                      std::to_string(decl.type_param_count) + " arg(s), got " +
+                      std::to_string(n.args.size()),
+                  std::nullopt);
+        }
+        if (n.capacity.has_value() && !capacity_allowed(decl.role)) {
+            error(verify::kValueTypeCapacityInvalid,
+                  "value type #" + std::to_string(index) + " nominal '" + decl.name +
+                      "' is not a bounded collection and cannot carry a capacity",
+                  std::nullopt);
+        }
+    }
+
+    // Iterative 3-color DFS: white(0)=unvisited, gray(1)=on stack, black(2)=done.
+    // A gray->gray edge is a cycle. Out-of-range children were already reported;
+    // skip them here to avoid indexing past the arena.
+    void
+    verify_value_types_acyclic(const std::function<void(const CoreValueType &,
+                                                        std::vector<std::uint32_t> &)> &children_of) {
+        const auto &arena = program_.value_types;
+        enum Color : std::uint8_t { White, Gray, Black };
+        std::vector<Color> color(arena.size(), White);
+        std::vector<std::uint32_t> kids;
+        bool reported = false;
+        for (std::uint32_t root = 0; root < arena.size() && !reported; ++root) {
+            if (color[root] != White) {
+                continue;
+            }
+            // Explicit stack of (node, child-cursor); enter=push, exit=color black.
+            std::vector<std::pair<std::uint32_t, std::size_t>> stack;
+            std::vector<std::vector<std::uint32_t>> child_lists;
+            stack.emplace_back(root, 0);
+            color[root] = Gray;
+            {
+                std::vector<std::uint32_t> tmp;
+                children_of(arena[root], tmp);
+                child_lists.push_back(std::move(tmp));
+            }
+            while (!stack.empty()) {
+                auto &[node, cursor] = stack.back();
+                const std::vector<std::uint32_t> &ch = child_lists.back();
+                if (cursor >= ch.size()) {
+                    color[node] = Black;
+                    stack.pop_back();
+                    child_lists.pop_back();
+                    continue;
+                }
+                const std::uint32_t child = ch[cursor++];
+                if (child >= arena.size()) {
+                    continue; // out-of-range already reported
+                }
+                if (color[child] == Gray) {
+                    error(verify::kValueTypeCycle,
+                          "value type arena contains a cycle at #" + std::to_string(child),
+                          std::nullopt);
+                    reported = true;
+                    break;
+                }
+                if (color[child] == White) {
+                    color[child] = Gray;
+                    stack.emplace_back(child, 0);
+                    children_of(arena[child], kids);
+                    child_lists.push_back(kids);
+                }
+            }
+        }
+    }
+
+    // A cheap structural hash for duplicate bucketing (NOT the interner's hash;
+    // just enough to avoid O(n^2) full comparisons across the whole arena).
+    [[nodiscard]] static std::size_t value_type_hash(const CoreValueType &vt) noexcept {
+        std::size_t h = vt.node.index();
+        const auto mix = [&h](std::size_t v) {
+            h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+        };
+        std::visit(Overloaded{
+                       [&](const CoreVtNominal &n) {
+                           mix(n.base.value);
+                           for (const auto &a : n.args) {
+                               mix(a.value);
+                           }
+                       },
+                       [&](const CoreVtTuple &n) {
+                           for (const auto &e : n.elements) {
+                               mix(e.value);
+                           }
+                       },
+                       [&](const CoreVtFn &n) {
+                           for (const auto &p : n.params) {
+                               mix(p.value);
+                           }
+                           mix(n.ret.value);
+                       },
+                       [&](const auto &) {},
+                   },
+                   vt.node);
+        return h;
     }
 
     // --- monomorphized instance table ---
