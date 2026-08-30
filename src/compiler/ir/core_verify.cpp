@@ -110,8 +110,14 @@ class Verifier {
             if (t.kind == CoreTypeDecl::Kind::Struct) {
                 // Struct parallel arrays must all match; struct carries NO enum
                 // metadata.
-                if (t.field_types.size() != t.fields.size()) {
-                    shape_error("field_types size (" + std::to_string(t.field_types.size()) +
+                if (t.field_nominal_types.size() != t.fields.size()) {
+                    shape_error("field_nominal_types size (" +
+                                std::to_string(t.field_nominal_types.size()) +
+                                ") != fields size (" + std::to_string(t.fields.size()) + ")");
+                }
+                if (t.field_type_template_roots.size() != t.fields.size()) {
+                    shape_error("field_type_template_roots size (" +
+                                std::to_string(t.field_type_template_roots.size()) +
                                 ") != fields size (" + std::to_string(t.fields.size()) + ")");
                 }
                 if (t.field_has_default.size() != t.fields.size()) {
@@ -129,15 +135,21 @@ class Verifier {
                                 std::to_string(t.variant_payloads.size()) + ") != variants size (" +
                                 std::to_string(t.variants.size()) + ")");
                 }
-                if (!t.fields.empty() || !t.field_types.empty() || !t.field_has_default.empty()) {
+                if (!t.fields.empty() || !t.field_nominal_types.empty() ||
+                    !t.field_has_default.empty() || !t.field_type_template_roots.empty()) {
                     shape_error("an enum must not carry struct field metadata");
                 }
                 // Each variant payload's kind must agree with its vectors.
                 for (std::uint32_t v = 0; v < t.variant_payloads.size(); ++v) {
                     const auto &p = t.variant_payloads[v];
                     using PK = CoreTypeDecl::VariantPayload::Kind;
-                    if (p.kind == PK::Unit) {
-                        if (!p.slot_types.empty() || !p.field_names.empty()) {
+                    const bool legal_kind =
+                        p.kind == PK::Unit || p.kind == PK::Tuple || p.kind == PK::Struct;
+                    if (!legal_kind) {
+                        shape_error("variant #" + std::to_string(v) +
+                                    " has an illegal payload kind");
+                    } else if (p.kind == PK::Unit) {
+                        if (!p.slot_type_template_roots.empty() || !p.field_names.empty()) {
                             shape_error("variant #" + std::to_string(v) +
                                         " is Unit but carries payload slots");
                         }
@@ -147,26 +159,19 @@ class Verifier {
                                         " is Tuple but carries field names");
                         }
                     } else { // Struct payload
-                        if (p.field_names.size() != p.slot_types.size()) {
+                        if (p.field_names.size() != p.slot_type_template_roots.size()) {
                             shape_error("variant #" + std::to_string(v) +
-                                        " struct payload field_names/slot_types size mismatch");
-                        }
-                    }
-                    // Every non-kInvalid payload slot type id must be in range.
-                    for (const CoreTypeId st : p.slot_types) {
-                        if (st.value != CoreTypeId::kInvalid && st.value >= program_.types.size()) {
-                            shape_error("variant #" + std::to_string(v) +
-                                        " payload slot references out-of-range type id " +
-                                        std::to_string(st.value));
+                                        " struct payload field_names/template-roots size mismatch");
                         }
                     }
                 }
             }
-            // Each valid field_types entry must be an in-range type id (it need
+            verify_member_type_templates(t, shape_error);
+            // Each valid field_nominal_types entry must be an in-range type id (it need
             // not be a struct — an enum field type is legal, though it cannot be
             // projected THROUGH; that is enforced at the projection site).
-            for (std::uint32_t f = 0; f < t.field_types.size(); ++f) {
-                const CoreTypeId ft = t.field_types[f];
+            for (std::uint32_t f = 0; f < t.field_nominal_types.size(); ++f) {
+                const CoreTypeId ft = t.field_nominal_types[f];
                 if (ft.value != CoreTypeId::kInvalid && ft.value >= program_.types.size()) {
                     error(verify::kTypeIdOutOfRange,
                           "type '" + t.name + "' field #" + std::to_string(f) +
@@ -179,6 +184,111 @@ class Verifier {
             // a hand-built `role=List, kind=Enum` (which would let a bogus capacity
             // slip through the value-type verifier) is rejected here at the SSOT.
             verify_nominal_role(t, shape_error);
+        }
+    }
+
+    void verify_member_type_templates(const CoreTypeDecl &t,
+                                      const std::function<void(std::string)> &shape_error) {
+        const auto &nodes = t.member_type_templates;
+        std::vector<CoreMemberTypeTemplateNodeId> roots = t.field_type_template_roots;
+        for (const auto &payload : t.variant_payloads) {
+            roots.insert(roots.end(),
+                         payload.slot_type_template_roots.begin(),
+                         payload.slot_type_template_roots.end());
+        }
+        std::vector<bool> reachable(nodes.size(), false);
+        const auto mark = [&](auto &&self, CoreMemberTypeTemplateNodeId id) -> void {
+            if (id.value >= nodes.size()) {
+                shape_error("member template root/child id " + std::to_string(id.value) +
+                            " is out of range");
+                return;
+            }
+            if (reachable[id.value]) {
+                return;
+            }
+            reachable[id.value] = true;
+            const auto &node = nodes[id.value];
+            for (const auto child : node.children) {
+                if (child.value >= id.value) {
+                    shape_error("member template child must precede parent #" +
+                                std::to_string(id.value));
+                    continue;
+                }
+                self(self, child);
+            }
+            if (node.kind == CoreMemberTypeTemplateKind::Fn) {
+                if (node.fn_return.value >= id.value) {
+                    shape_error("member template Fn return must precede parent #" +
+                                std::to_string(id.value));
+                } else {
+                    self(self, node.fn_return);
+                }
+            }
+        };
+        for (const auto root : roots) {
+            mark(mark, root);
+        }
+        for (std::size_t i = 0; i < reachable.size(); ++i) {
+            if (!reachable[i]) {
+                shape_error("member template arena contains orphan node #" + std::to_string(i));
+            }
+        }
+
+        for (std::uint32_t i = 0; i < nodes.size(); ++i) {
+            const auto &node = nodes[i];
+            using K = CoreMemberTypeTemplateKind;
+            const bool legal_kind = node.kind == K::Concrete || node.kind == K::Param ||
+                                    node.kind == K::Nominal || node.kind == K::Fn;
+            if (!legal_kind) {
+                shape_error("member template node #" + std::to_string(i) + " has an illegal kind");
+                continue;
+            }
+            const bool has_concrete = node.concrete.value != CoreValueTypeId::kInvalid;
+            const bool has_nominal = node.nominal.value != CoreTypeId::kInvalid;
+            const bool has_return = node.fn_return.value != CoreMemberTypeTemplateNodeId::kInvalid;
+            if (node.kind == K::Concrete) {
+                if (!has_concrete || has_nominal || node.param_index != 0 ||
+                    node.capacity.has_value() || !node.children.empty() || has_return) {
+                    shape_error("Concrete member template node #" + std::to_string(i) +
+                                " has invalid fields");
+                    continue;
+                }
+                if (node.concrete.value >= program_.value_types.size() ||
+                    std::holds_alternative<CoreVtNever>(
+                        program_.value_types[node.concrete.value].node)) {
+                    shape_error("Concrete member template node #" + std::to_string(i) +
+                                " references an invalid materialized value type");
+                }
+            } else if (node.kind == K::Param) {
+                if (has_concrete || has_nominal || node.capacity.has_value() ||
+                    !node.children.empty() || has_return ||
+                    node.param_index >= t.type_param_count) {
+                    shape_error("Param member template node #" + std::to_string(i) +
+                                " has invalid fields/index");
+                }
+            } else if (node.kind == K::Nominal) {
+                if (has_concrete || !has_nominal || node.param_index != 0 || has_return ||
+                    node.nominal.value >= program_.types.size()) {
+                    shape_error("Nominal member template node #" + std::to_string(i) +
+                                " has invalid fields/base");
+                    continue;
+                }
+                const CoreTypeDecl &base = program_.types[node.nominal.value];
+                if (node.children.size() != base.type_param_count) {
+                    shape_error("Nominal member template node #" + std::to_string(i) +
+                                " has wrong type-argument arity");
+                }
+                if (node.capacity.has_value() && !capacity_allowed(base.role)) {
+                    shape_error("Nominal member template node #" + std::to_string(i) +
+                                " carries an illegal capacity");
+                }
+            } else {
+                if (has_concrete || has_nominal || node.param_index != 0 ||
+                    node.capacity.has_value() || !has_return) {
+                    shape_error("Fn member template node #" + std::to_string(i) +
+                                " has invalid fields/return");
+                }
+            }
         }
     }
 
@@ -221,6 +331,41 @@ class Verifier {
             if (t.role != d.role) {
                 shape_error(std::string(why) +
                             ": role must match the builtin descriptor for this canonical");
+            }
+            if (t.kind == K::Enum) {
+                if (t.variant_payloads.size() != d.variants.size() ||
+                    t.variants.size() != d.variants.size()) {
+                    shape_error(std::string(why) + ": variants must match the builtin descriptor");
+                } else {
+                    for (std::size_t v = 0; v < d.variants.size(); ++v) {
+                        const auto &expected = d.variants[v];
+                        const auto &payload = t.variant_payloads[v];
+                        if (t.variants[v] != expected.name ||
+                            payload.kind != expected.payload_kind ||
+                            payload.slot_type_template_roots.size() !=
+                                expected.payload_type_params.size()) {
+                            shape_error(std::string(why) + ": variant #" + std::to_string(v) +
+                                        " template shape must match the builtin descriptor");
+                            continue;
+                        }
+                        for (std::size_t s = 0; s < expected.payload_type_params.size(); ++s) {
+                            const auto root = payload.slot_type_template_roots[s];
+                            if (root.value >= t.member_type_templates.size()) {
+                                continue; // the general template verifier reports the bound
+                            }
+                            const auto &node = t.member_type_templates[root.value];
+                            if (node.kind != CoreMemberTypeTemplateKind::Param ||
+                                node.param_index != expected.payload_type_params[s]) {
+                                shape_error(std::string(why) + ": variant #" + std::to_string(v) +
+                                            " slot #" + std::to_string(s) +
+                                            " must reference the descriptor parameter");
+                            }
+                        }
+                    }
+                }
+            } else if (!t.member_type_templates.empty() || !t.field_type_template_roots.empty()) {
+                shape_error(std::string(why) +
+                            ": builtin collection must not carry member templates");
             }
         };
         // RFC 0026 P4 (coercion): every nominal's variance vector must be parallel
@@ -371,8 +516,8 @@ class Verifier {
             }
             // result_type must match the owner's DECLARED field type (the typed
             // step chain must agree with the type table).
-            const CoreTypeId declared = step.field.value < owner.field_types.size()
-                                            ? owner.field_types[step.field.value]
+            const CoreTypeId declared = step.field.value < owner.field_nominal_types.size()
+                                            ? owner.field_nominal_types[step.field.value]
                                             : CoreTypeId{};
             if (!(step.result_type == declared)) {
                 error(verify::kProjectionDiscontinuity,
@@ -1238,7 +1383,7 @@ class Verifier {
             return;
         }
         const auto &payload = enum_decl.variant_payloads[v.variant.value];
-        const auto arity = static_cast<std::uint32_t>(payload.slot_types.size());
+        const auto arity = static_cast<std::uint32_t>(payload.slot_type_template_roots.size());
         using PK = CoreTypeDecl::VariantPayload::Kind;
         if (payload.kind == PK::Struct) {
             // Struct payload: slot-identified fields; slots in range, no
@@ -1424,7 +1569,7 @@ class Verifier {
                 // Enum-variant payload args are positional slots; their count
                 // must match the declared payload arity.
                 const auto &payload = type.variant_payloads[c.variant.value];
-                const auto arity = payload.slot_types.size();
+                const auto arity = payload.slot_type_template_roots.size();
                 if (c.args.size() != arity) {
                     error(verify::kConstructPayloadArity,
                           "constructor '" + c.type_name + "::" + c.variant_name + "' passes " +

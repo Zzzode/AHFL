@@ -19,10 +19,11 @@
 //
 // What it checks (fail-closed on every violation):
 //   * type-table self-consistency: struct/enum parallel arrays are in sync
-//     (field_types == fields == field_has_default; variant_payloads == variants),
+//     (field_nominal_types == fields == field_has_default; variant_payloads == variants),
 //     a struct carries no enum metadata and vice versa, each variant payload's
-//     kind agrees with its vectors, and every payload slot type id is in range —
-//     a dedicated core.verify.TYPE_TABLE_SHAPE_INVALID, so downstream arity /
+//     kind agrees with its vectors, and every declaration-owned member template
+//     root/node is typed, bounded, postordered, and reachable — a dedicated
+//     core.verify.TYPE_TABLE_SHAPE_INVALID, so downstream arity /
 //     field-domain checks cannot be bypassed by a malformed table;
 //   * typed-ID bounds: every CoreTypeId / CoreAgentId / CoreCapabilityId /
 //     CoreStateId / CoreExprId / CoreValueId is in range for its store;

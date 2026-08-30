@@ -182,6 +182,17 @@ struct CoreValueTypeId {
     [[nodiscard]] friend bool operator==(CoreValueTypeId, CoreValueTypeId) noexcept = default;
 };
 
+/// Index into a nominal declaration's member-type template arena. The arena is
+/// declaration-owned and postordered: every child id is strictly smaller than
+/// its parent id. These templates describe logical member types before an
+/// owning nominal's type arguments are known; physical layout remains P4-D.
+struct CoreMemberTypeTemplateNodeId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreMemberTypeTemplateNodeId,
+                                         CoreMemberTypeTemplateNodeId) noexcept = default;
+};
+
 /// Index into a body's normalized coercion-plan arena. A plan id is meaningful
 /// only within its owning CoreFlowDecl/CoreWorkflowDecl.
 struct CoreCoercionPlanId {
@@ -1148,6 +1159,29 @@ enum class CoreNominalRole { Ordinary, Option, Result, List, Set, Map };
 /// itself carries no variance.
 enum class CoreVariance { Invariant, Covariant, Contravariant };
 
+enum class CoreMemberTypeTemplateKind {
+    Concrete,
+    Param,
+    Nominal,
+    Fn
+};
+
+/// One node in a CoreTypeDecl's flat, compositional member-type template arena.
+/// Field usage is kind-specific and fail-closed by the Core verifier:
+/// Concrete uses `concrete`; Param uses `param_index`; Nominal uses
+/// `nominal`/`capacity`/`children`; Fn uses `children`/`fn_return`.
+struct CoreMemberTypeTemplateNode {
+    CoreMemberTypeTemplateKind kind{CoreMemberTypeTemplateKind::Concrete};
+    CoreValueTypeId concrete{};
+    std::uint32_t param_index{0};
+    CoreTypeId nominal{};
+    std::optional<std::uint64_t> capacity;
+    std::vector<CoreMemberTypeTemplateNodeId> children;
+    CoreMemberTypeTemplateNodeId fn_return{};
+    [[nodiscard]] friend bool operator==(const CoreMemberTypeTemplateNode &,
+                                         const CoreMemberTypeTemplateNode &) noexcept = default;
+};
+
 /// `true` iff a nominal of this role may carry a bounded-collection `capacity`.
 /// The SINGLE decision point shared by `lower_value_type` and
 /// `verify_value_types` (Codex ruling c): capacity is legal ONLY on List/Set/Map;
@@ -1315,13 +1349,12 @@ struct CoreTypeDecl {
     Kind kind{Kind::Struct};
     std::string name;                       // canonical name (display + provenance)
     std::vector<std::string> fields;        // struct field names; index == CoreFieldId
-    /// Typed type of each struct field (parallel to `fields`): the field's own
-    /// CoreTypeId when it is a struct/enum, or `kInvalid` for a primitive /
-    /// collection / P4 type. Lets a member chain (`a.b.c`) advance from one
-    /// struct's CoreTypeId to the next without any canonical-name strings
-    /// leaking to a backend. Populated by a fixup pass after the type table is
-    /// built (so forward references resolve).
-    std::vector<CoreTypeId> field_types;
+    /// NAVIGATION ONLY (parallel to `fields`): the field's nominal CoreTypeId,
+    /// or kInvalid when a member chain cannot advance through it. This is NOT
+    /// the field's logical type and MUST NOT be consumed by layout/codegen; use
+    /// field_type_template_roots + member_type_templates for that. Populated by
+    /// a forward-reference fixup after the complete nominal table is registered.
+    std::vector<CoreTypeId> field_nominal_types;
     /// Whether each struct field has a default value (parallel to `fields`). A
     /// field WITHOUT a default is REQUIRED: a struct-literal constructor must
     /// assign it. Lets the verifier prove struct-literal completeness.
@@ -1333,16 +1366,19 @@ struct CoreTypeDecl {
     struct VariantPayload {
         enum class Kind { Unit, Tuple, Struct };
         Kind kind{Kind::Unit};
-        /// Payload slot types in declaration order (index == payload slot). For a
-        /// Struct-payload variant, parallel to `field_names`. A slot's CoreTypeId
-        /// is the slot's own struct/enum type, or `kInvalid` for a primitive.
-        std::vector<CoreTypeId> slot_types;
+        /// Logical payload slot template roots in declaration order. For a
+        /// Struct payload this is parallel to `field_names`; Unit has none.
+        std::vector<CoreMemberTypeTemplateNodeId> slot_type_template_roots;
         /// Struct-payload field names (index == slot); empty for Unit/Tuple.
         std::vector<std::string> field_names;
         [[nodiscard]] friend bool operator==(const VariantPayload &,
                                              const VariantPayload &) noexcept = default;
     };
     std::vector<VariantPayload> variant_payloads;
+    /// Declaration-owned, postordered logical member-type template arena.
+    std::vector<CoreMemberTypeTemplateNode> member_type_templates;
+    /// Parallel to struct `fields`; empty for enums.
+    std::vector<CoreMemberTypeTemplateNodeId> field_type_template_roots;
     /// Number of generic type parameters this nominal declares (RFC 0026 P4).
     /// `0` for a non-generic user type; the std generics carry their arity
     /// (Option 1, Result 2, List 1, Set 1, Map 2). A `CoreVtNominal` referencing
@@ -1421,6 +1457,7 @@ inline constexpr std::string_view kUnknownInstanceKind = "core.UNKNOWN_INSTANCE_
 inline constexpr std::string_view kUnresolvedWorkflowInvocation = "core.UNRESOLVED_WORKFLOW_INVOCATION";
 inline constexpr std::string_view kMissingAdjustment = "core.MISSING_ADJUSTMENT";
 inline constexpr std::string_view kInvalidCoercion = "core.INVALID_COERCION";
+inline constexpr std::string_view kInvalidMemberTemplate = "core.INVALID_MEMBER_TEMPLATE";
 // RFC 0026 P4 (coercion): a real (non-synthetic) declaration of a well-known
 // stdlib generic (Option/Result/List/Set/Map) whose arity or per-parameter
 // variance metadata disagrees with the builtin descriptor SSOT. Fail-closed:
@@ -1483,14 +1520,15 @@ struct CoreLowerResult {
 /// (its EnumDecl lives in the sysroot and may not be inlined in a program).
 struct BuiltinEnumDescriptor {
     /// One variant: its name plus payload shape. `Option::Some` / `Result::Ok` /
-    /// `Result::Err` are Tuple payloads of arity 1; `None` is Unit (arity 0). The
-    /// generic slot's concrete CoreTypeId is not known here (it is a type
-    /// parameter), but the KIND + ARITY are — and must be, so std Option/Result
-    /// construct/pattern arity is not a verifier blind spot.
+    /// `Result::Err` are Tuple payloads of arity 1; `None` is Unit (arity 0).
+    /// Each payload slot names its owning generic parameter position, so kind,
+    /// arity, and logical payload template come from one SSOT.
     struct Variant {
         std::string_view name;
         CoreTypeDecl::VariantPayload::Kind payload_kind{CoreTypeDecl::VariantPayload::Kind::Unit};
-        std::uint32_t payload_arity{0};
+        /// Declaration-order payload slot -> owning enum type-parameter index.
+        /// Its size is the payload arity; this is the builtin template SSOT.
+        std::vector<std::uint32_t> payload_type_params;
     };
     std::string_view name;               // unqualified enum name
     std::vector<Variant> variants;       // declaration order
@@ -1542,5 +1580,16 @@ struct BuiltinNominalDescriptor {
 /// arena order (required for same-owner-arena `CoreInstanceDecl` equality).
 [[nodiscard]] std::optional<CoreValueTypeId>
 lower_value_type_into(CoreProgram &program, const ir::TypeRef &type, std::string *reason);
+
+/// Instantiate one declaration-owned member type template with concrete owning
+/// nominal arguments. The result is interned in `program.value_types`; repeated
+/// instantiation therefore returns the same id. This substitutes only the
+/// template tree and never expands nominal fields (recursive layout is P4-D).
+[[nodiscard]] std::optional<CoreValueTypeId>
+instantiate_member_template(CoreProgram &program,
+                            CoreTypeId owner,
+                            CoreMemberTypeTemplateNodeId root,
+                            const std::vector<CoreValueTypeId> &owner_args,
+                            std::string *reason);
 
 } // namespace ahfl::ir::core

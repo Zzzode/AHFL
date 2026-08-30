@@ -346,7 +346,7 @@ flow for Payer {
 TEST_CASE("flow lowering: capability call inside a branch is preserved (P0-2 mutual exclusion)") {
     const auto ahfl_ir = lower_source_to_ahfl_ir("payflow", kFlowSource);
     REQUIRE(ahfl_ir.has_value());
-    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     INFO("diagnostics: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
     REQUIRE(result.ok()); // member projections now resolve; fully executable
     REQUIRE(result.program.flows.size() == 1);
@@ -755,7 +755,7 @@ TEST_CASE("builtin variant table matches stdlib declaration (name + payload kind
             INFO("variant #" << i);
             CHECK(std::string(desc.variants[i].name) == sysroot[i].name);
             CHECK(desc.variants[i].payload_kind == sysroot[i].kind);
-            CHECK(desc.variants[i].payload_arity == sysroot[i].arity);
+            CHECK(desc.variants[i].payload_type_params.size() == sysroot[i].arity);
         }
     }
 }
@@ -1000,6 +1000,11 @@ TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the ou
         f.name = field;
         f.type_ref.kind = ir::TypeRefKind::Int;
         s.fields.push_back(std::move(f));
+        ir::MemberTypeTemplateNode node;
+        node.kind = ir::MemberTypeTemplateKind::Concrete;
+        node.type_ref.kind = ir::TypeRefKind::Int;
+        s.member_type_templates.push_back(std::move(node));
+        s.field_type_template_roots.push_back(0);
         program.declarations.emplace_back(std::move(s));
     };
     make_struct("AType", "app::AType", 60, "a");
@@ -1016,6 +1021,11 @@ TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the ou
         f.name = "out";
         f.type_ref.kind = ir::TypeRefKind::Int;
         ctx.fields.push_back(std::move(f));
+        ir::MemberTypeTemplateNode node;
+        node.kind = ir::MemberTypeTemplateKind::Concrete;
+        node.type_ref.kind = ir::TypeRefKind::Int;
+        ctx.member_type_templates.push_back(std::move(node));
+        ctx.field_type_template_roots.push_back(0);
         program.declarations.emplace_back(std::move(ctx));
     }
 
@@ -1627,6 +1637,15 @@ TEST_CASE("enum struct-payload construct with a missing slot fails closed in the
     f_owner.type_ref.kind = ir::TypeRefKind::String;
     open.fields.push_back(std::move(f_id));
     open.fields.push_back(std::move(f_owner));
+    ir::MemberTypeTemplateNode id_template;
+    id_template.kind = ir::MemberTypeTemplateKind::Concrete;
+    id_template.type_ref.kind = ir::TypeRefKind::Int;
+    ticket.member_type_templates.push_back(std::move(id_template));
+    ir::MemberTypeTemplateNode owner_template;
+    owner_template.kind = ir::MemberTypeTemplateKind::Concrete;
+    owner_template.type_ref.kind = ir::TypeRefKind::String;
+    ticket.member_type_templates.push_back(std::move(owner_template));
+    open.payload_type_template_roots = {0, 1};
     ticket.variants.push_back(std::move(open));
     program.declarations.emplace_back(std::move(ticket));
 
@@ -3261,6 +3280,110 @@ TEST_CASE("F1: a synthetic builtin base (no real decl) is stamped from the SSOT,
     REQUIRE(list != nullptr);
     CHECK(list->type_param_count == 1);
     CHECK(list->variances == std::vector<ir::core::CoreVariance>{ir::core::CoreVariance::Covariant});
+
+    const ir::core::CoreTypeDecl *option = nullptr;
+    const ir::core::CoreTypeDecl *std_result = nullptr;
+    for (const auto &t : result.program.types) {
+        if (t.name == "std::option::Option") {
+            option = &t;
+        } else if (t.name == "std::result::Result") {
+            std_result = &t;
+        }
+    }
+    REQUIRE(option != nullptr);
+    REQUIRE(std_result != nullptr);
+    REQUIRE(option->variant_payloads.size() == 2);
+    REQUIRE(option->variant_payloads[0].slot_type_template_roots.size() == 1);
+    const auto option_root = option->variant_payloads[0].slot_type_template_roots[0];
+    REQUIRE(option_root.value < option->member_type_templates.size());
+    CHECK(option->member_type_templates[option_root.value].kind ==
+          ir::core::CoreMemberTypeTemplateKind::Param);
+    CHECK(option->member_type_templates[option_root.value].param_index == 0);
+    REQUIRE(std_result->variant_payloads.size() == 2);
+    for (std::size_t variant = 0; variant < 2; ++variant) {
+        REQUIRE(std_result->variant_payloads[variant].slot_type_template_roots.size() == 1);
+        const auto root = std_result->variant_payloads[variant].slot_type_template_roots[0];
+        REQUIRE(root.value < std_result->member_type_templates.size());
+        CHECK(std_result->member_type_templates[root.value].kind ==
+              ir::core::CoreMemberTypeTemplateKind::Param);
+        CHECK(std_result->member_type_templates[root.value].param_index == variant);
+    }
+}
+
+TEST_CASE("P4-C real builtin payload template drift is fail-closed") {
+    ir::AhflIr program;
+    ir::EnumDecl result_decl;
+    result_decl.name = "Result";
+    result_decl.symbol_ref.kind = ir::SymbolRefKind::Type;
+    result_decl.symbol_ref.canonical_name = "std::result::Result";
+    result_decl.symbol_ref.id = 812;
+    result_decl.type_param_count = 2;
+    result_decl.type_param_variances = {ir::Variance::Covariant, ir::Variance::Covariant};
+    for (std::string_view name : {"Ok", "Err"}) {
+        ir::EnumVariantDecl variant;
+        variant.name = name;
+        variant.payload_kind = ir::EnumVariantPayloadKind::Tuple;
+        variant.payload.push_back(ir::TypeRef{});
+        variant.payload_type_template_roots.push_back(
+            static_cast<std::uint32_t>(result_decl.member_type_templates.size()));
+        ir::MemberTypeTemplateNode wrong;
+        wrong.kind = ir::MemberTypeTemplateKind::Param;
+        wrong.param_index = 0; // Err MUST map to parameter 1, so this drifts.
+        result_decl.member_type_templates.push_back(std::move(wrong));
+        result_decl.variants.push_back(std::move(variant));
+    }
+    program.declarations.emplace_back(std::move(result_decl));
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_lower_code(result, ir::core::diag::kBuiltinMetadataDrift));
+}
+
+TEST_CASE("P4-C invalid user member template publishes no partial declaration arena") {
+    ir::AhflIr program;
+    ir::StructDecl bad;
+    bad.name = "Bad";
+    bad.symbol_ref.kind = ir::SymbolRefKind::Type;
+    bad.symbol_ref.canonical_name = "app::Bad";
+    bad.symbol_ref.id = 813;
+    bad.provenance.source_range = ahfl::SourceRange{11, 29};
+    bad.type_param_count = 1;
+    bad.type_param_variances = {ir::Variance::Covariant};
+    ir::FieldDecl field;
+    field.name = "value";
+    field.type_ref.kind = ir::TypeRefKind::Any;
+    bad.fields.push_back(std::move(field));
+    ir::MemberTypeTemplateNode concrete;
+    concrete.kind = ir::MemberTypeTemplateKind::Concrete;
+    concrete.type_ref.kind = ir::TypeRefKind::Int;
+    bad.member_type_templates.push_back(std::move(concrete));
+    ir::MemberTypeTemplateNode invalid_param;
+    invalid_param.kind = ir::MemberTypeTemplateKind::Param;
+    invalid_param.param_index = 1; // owner arity is 1
+    bad.member_type_templates.push_back(std::move(invalid_param));
+    bad.field_type_template_roots = {1};
+    program.declarations.emplace_back(std::move(bad));
+
+    const auto result = ir::core::lower_ahfl_to_core(program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_lower_code(result, ir::core::diag::kInvalidMemberTemplate));
+    const ir::core::CoreTypeDecl *core_bad = nullptr;
+    for (const auto &type : result.program.types) {
+        if (type.name == "app::Bad") {
+            core_bad = &type;
+        }
+    }
+    REQUIRE(core_bad != nullptr);
+    CHECK(core_bad->member_type_templates.empty());
+    CHECK(core_bad->field_type_template_roots.empty());
+    bool ranged = false;
+    for (const auto &d : result.diagnostics) {
+        if (d.code == ir::core::diag::kInvalidMemberTemplate && d.source_range.has_value()) {
+            CHECK(d.source_range->begin_offset == 11);
+            CHECK(d.source_range->end_offset == 29);
+            ranged = true;
+        }
+    }
+    CHECK(ranged);
 }
 
 TEST_CASE("F1 forward-fix (P0-1): a REAL std List decl missing BOTH new fields still drifts") {
@@ -3329,7 +3452,7 @@ TEST_CASE("F1 forward-fix (P1-3): a real frontend Box<T> lowers to Core with its
     REQUIRE(ahfl_box->type_param_variances.size() == 1);
     CHECK(ahfl_box->type_param_variances[0] == ir::Variance::Covariant);
 
-    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     for (const auto &diag : result.diagnostics) {
         INFO("unexpected core diagnostic: " << diag.code << " — " << diag.message);
         CHECK(false);
@@ -3339,9 +3462,12 @@ TEST_CASE("F1 forward-fix (P1-3): a real frontend Box<T> lowers to Core with its
     // Box lowers to a CoreTypeDecl preserving arity + variance verbatim (a user
     // nominal is consumed as-is, never cross-checked against the builtin SSOT).
     const ir::core::CoreTypeDecl *core_box = nullptr;
-    for (const auto &t : result.program.types) {
+    ir::core::CoreTypeId core_box_id{};
+    for (std::uint32_t i = 0; i < result.program.types.size(); ++i) {
+        const auto &t = result.program.types[i];
         if (t.name == "bx::Box" || t.name == "Box") {
             core_box = &t;
+            core_box_id = ir::core::CoreTypeId{i};
         }
     }
     REQUIRE(core_box != nullptr);
@@ -3349,12 +3475,141 @@ TEST_CASE("F1 forward-fix (P1-3): a real frontend Box<T> lowers to Core with its
     CHECK(core_box->type_param_count == 1);
     REQUIRE(core_box->variances.size() == 1);
     CHECK(core_box->variances[0] == ir::core::CoreVariance::Covariant);
-    // The struct's real field `value` exists (a real field, not a guessed slot),
-    // but its generic member TEMPLATE type is NOT materialized into a concrete
-    // CoreTypeId here — P4-C boundary: `value`'s field type stays unresolved
-    // (kInvalid) because `T` has no monomorphic Core type at the template level.
+    // field_nominal_types remains navigation-only, while the logical type is a
+    // durable declaration-owned Param(0) template.
     REQUIRE(core_box->fields.size() == 1);
     CHECK(core_box->fields[0] == "value");
-    REQUIRE(core_box->field_types.size() == 1);
-    CHECK(core_box->field_types[0].value == ir::core::CoreTypeId::kInvalid);
+    REQUIRE(core_box->field_nominal_types.size() == 1);
+    CHECK(core_box->field_nominal_types[0].value == ir::core::CoreTypeId::kInvalid);
+    REQUIRE(core_box->member_type_templates.size() == 1);
+    CHECK(core_box->member_type_templates[0].kind == ir::core::CoreMemberTypeTemplateKind::Param);
+    CHECK(core_box->member_type_templates[0].param_index == 0);
+    REQUIRE(core_box->field_type_template_roots ==
+            std::vector<ir::core::CoreMemberTypeTemplateNodeId>{
+                ir::core::CoreMemberTypeTemplateNodeId{0}});
+
+    ir::TypeRef int_ref;
+    int_ref.kind = ir::TypeRefKind::Int;
+    std::string reason;
+    const auto int_id = ir::core::lower_value_type_into(result.program, int_ref, &reason);
+    REQUIRE(int_id.has_value());
+    reason.clear();
+    const auto field_id = ir::core::instantiate_member_template(
+        result.program, core_box_id, ir::core::CoreMemberTypeTemplateNodeId{0}, {*int_id}, &reason);
+    INFO(reason);
+    REQUIRE(field_id.has_value());
+    CHECK(*field_id == *int_id);
+}
+
+namespace {
+const std::string kRecursiveMemberTemplateSource = R"AHFL(
+module mt;
+
+struct Basket<T> {}
+struct Assoc<K, V> {}
+
+struct Box<T> {
+    value: T;
+    nested: Basket<T>;
+    transform: Fn(T) -> Basket<T>;
+}
+
+enum Packet<T> {
+    Empty,
+    One(T),
+    Named { table: Assoc<String, T> },
+}
+)AHFL";
+} // namespace
+
+TEST_CASE("P4-C C2 materializes recursive member templates through the shared value arena") {
+    const auto ahfl =
+        lower_source_to_ahfl_ir("recursive_member_templates", kRecursiveMemberTemplateSource);
+    REQUIRE(ahfl.has_value());
+    auto lowered = ir::core::lower_ahfl_to_core(*ahfl);
+    for (const auto &d : lowered.diagnostics) {
+        INFO(d.code << ": " << d.message);
+    }
+    REQUIRE(lowered.ok());
+
+    const auto find_type = [&](std::string_view suffix) -> std::optional<ir::core::CoreTypeId> {
+        for (std::uint32_t i = 0; i < lowered.program.types.size(); ++i) {
+            const auto &name = lowered.program.types[i].name;
+            if (name == suffix || (name.size() > suffix.size() &&
+                                   name.ends_with(std::string("::") + std::string(suffix)))) {
+                return ir::core::CoreTypeId{i};
+            }
+        }
+        return std::nullopt;
+    };
+    const auto box_id = find_type("Box");
+    const auto packet_id = find_type("Packet");
+    REQUIRE(box_id.has_value());
+    REQUIRE(packet_id.has_value());
+    const auto &box = lowered.program.types[box_id->value];
+    REQUIRE(box.field_type_template_roots.size() == 3);
+    REQUIRE(box.member_type_templates.size() == 7);
+    CHECK(box.member_type_templates[2].kind == ir::core::CoreMemberTypeTemplateKind::Nominal);
+    CHECK(box.member_type_templates[6].kind == ir::core::CoreMemberTypeTemplateKind::Fn);
+
+    ir::TypeRef int_ref;
+    int_ref.kind = ir::TypeRefKind::Int;
+    std::string reason;
+    const auto int_id = ir::core::lower_value_type_into(lowered.program, int_ref, &reason);
+    REQUIRE(int_id.has_value());
+    const std::size_t before = lowered.program.value_types.size();
+    const auto nested = ir::core::instantiate_member_template(
+        lowered.program, *box_id, box.field_type_template_roots[1], {*int_id}, &reason);
+    INFO(reason);
+    REQUIRE(nested.has_value());
+    const auto *list =
+        std::get_if<ir::core::CoreVtNominal>(&lowered.program.value_types[nested->value].node);
+    REQUIRE(list != nullptr);
+    CHECK(list->args == std::vector<ir::core::CoreValueTypeId>{*int_id});
+    CHECK_FALSE(list->capacity.has_value());
+    const std::size_t after_first = lowered.program.value_types.size();
+    reason.clear();
+    const auto nested_again = ir::core::instantiate_member_template(
+        lowered.program, *box_id, box.field_type_template_roots[1], {*int_id}, &reason);
+    REQUIRE(nested_again.has_value());
+    CHECK(*nested_again == *nested);
+    CHECK(lowered.program.value_types.size() == after_first);
+    CHECK(after_first >= before);
+
+    reason.clear();
+    const auto transform = ir::core::instantiate_member_template(
+        lowered.program, *box_id, box.field_type_template_roots[2], {*int_id}, &reason);
+    INFO(reason);
+    REQUIRE(transform.has_value());
+    const auto *fn =
+        std::get_if<ir::core::CoreVtFn>(&lowered.program.value_types[transform->value].node);
+    REQUIRE(fn != nullptr);
+    CHECK(fn->params == std::vector<ir::core::CoreValueTypeId>{*int_id});
+    CHECK(fn->ret == *nested);
+
+    const auto &packet = lowered.program.types[packet_id->value];
+    REQUIRE(packet.variant_payloads.size() == 3);
+    REQUIRE(packet.variant_payloads[2].slot_type_template_roots.size() == 1);
+    reason.clear();
+    const auto table = ir::core::instantiate_member_template(
+        lowered.program,
+        *packet_id,
+        packet.variant_payloads[2].slot_type_template_roots[0],
+        {*int_id},
+        &reason);
+    INFO(reason);
+    REQUIRE(table.has_value());
+    const auto *map =
+        std::get_if<ir::core::CoreVtNominal>(&lowered.program.value_types[table->value].node);
+    REQUIRE(map != nullptr);
+    REQUIRE(map->args.size() == 2);
+    CHECK(std::holds_alternative<ir::core::CoreVtString>(
+        lowered.program.value_types[map->args[0].value].node));
+    CHECK(map->args[1] == *int_id);
+    CHECK_FALSE(map->capacity.has_value());
+
+    const auto second = ir::core::lower_ahfl_to_core(*ahfl);
+    REQUIRE(second.ok());
+    CHECK(second.program.types == ir::core::lower_ahfl_to_core(*ahfl).program.types);
+    CHECK(second.program.value_types == ir::core::lower_ahfl_to_core(*ahfl).program.value_types);
 }

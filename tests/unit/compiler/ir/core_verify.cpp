@@ -73,7 +73,7 @@ struct GoodProgram {
         inner.kind = CoreTypeDecl::Kind::Struct;
         inner.name = "Inner";
         inner.fields = {"n"};
-        inner.field_types = {CoreTypeId{}}; // Int -> primitive
+        inner.field_nominal_types = {CoreTypeId{}}; // Int -> primitive
         inner.field_has_default = {false};
         p.types.push_back(std::move(inner));
 
@@ -81,7 +81,8 @@ struct GoodProgram {
         ctx.kind = CoreTypeDecl::Kind::Struct;
         ctx.name = "Ctx";
         ctx.fields = {"saved", "nested"};
-        ctx.field_types = {CoreTypeId{}, CoreTypeId{0}}; // saved: Int, nested: Inner (type 0)
+        ctx.field_nominal_types = {CoreTypeId{},
+                                   CoreTypeId{0}};       // saved: Int, nested: Inner (type 0)
         ctx.field_has_default = {true, true};            // both default (stateless-friendly)
         p.types.push_back(std::move(ctx));
 
@@ -97,7 +98,7 @@ struct GoodProgram {
         req.kind = CoreTypeDecl::Kind::Struct;
         req.name = "Req";
         req.fields = {"amount"};
-        req.field_types = {CoreTypeId{}}; // Int
+        req.field_nominal_types = {CoreTypeId{}}; // Int
         req.field_has_default = {false};   // required
         p.types.push_back(std::move(req));
 
@@ -105,7 +106,7 @@ struct GoodProgram {
         reply.kind = CoreTypeDecl::Kind::Struct;
         reply.name = "Reply";
         reply.fields = {"ok"};
-        reply.field_types = {CoreTypeId{}}; // Bool
+        reply.field_nominal_types = {CoreTypeId{}}; // Bool
         reply.field_has_default = {false};   // required
         p.types.push_back(std::move(reply));
     }
@@ -155,6 +156,26 @@ struct GoodProgram {
     // be Bool for the verifier's condition type-check, so intern a Bool too.
     const CoreValueTypeId vt_bool{static_cast<std::uint32_t>(p.value_types.size())};
     p.value_types.push_back(CoreValueType{CoreVtBool{}});
+
+    const auto concrete_template = [](CoreValueTypeId type) {
+        CoreMemberTypeTemplateNode node;
+        node.kind = CoreMemberTypeTemplateKind::Concrete;
+        node.concrete = type;
+        return node;
+    };
+    p.types[0].member_type_templates = {concrete_template(vt_int)};
+    p.types[0].field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+    p.types[1].member_type_templates = {concrete_template(vt_int)};
+    CoreMemberTypeTemplateNode nested;
+    nested.kind = CoreMemberTypeTemplateKind::Nominal;
+    nested.nominal = CoreTypeId{0};
+    p.types[1].member_type_templates.push_back(nested);
+    p.types[1].field_type_template_roots = {CoreMemberTypeTemplateNodeId{0},
+                                            CoreMemberTypeTemplateNodeId{1}};
+    p.types[3].member_type_templates = {concrete_template(vt_int)};
+    p.types[3].field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+    p.types[4].member_type_templates = {concrete_template(vt_bool)};
+    p.types[4].field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
 
     // expr arena. Every CoreExpr carries a valid result_type (P4-B).
     // %lit1 spelling "1"
@@ -334,7 +355,7 @@ struct GoodWorkflow {
     win.kind = CoreTypeDecl::Kind::Struct;
     win.name = "WIn";
     win.fields = {"amount"};
-    win.field_types = {CoreTypeId{}};
+    win.field_nominal_types = {CoreTypeId{}};
     win.field_has_default = {false};
     p.types.push_back(std::move(win));
 
@@ -342,7 +363,7 @@ struct GoodWorkflow {
     wmid.kind = CoreTypeDecl::Kind::Struct;
     wmid.name = "WMid";
     wmid.fields = {"total"};
-    wmid.field_types = {CoreTypeId{}};
+    wmid.field_nominal_types = {CoreTypeId{}};
     wmid.field_has_default = {false};
     p.types.push_back(std::move(wmid));
 
@@ -350,7 +371,7 @@ struct GoodWorkflow {
     wout.kind = CoreTypeDecl::Kind::Struct;
     wout.name = "WOut";
     wout.fields = {"ok"};
-    wout.field_types = {CoreTypeId{}};
+    wout.field_nominal_types = {CoreTypeId{}};
     wout.field_has_default = {false};
     p.types.push_back(std::move(wout));
 
@@ -387,6 +408,13 @@ struct GoodWorkflow {
     // expr result (the specific type is irrelevant to these structural checks).
     const CoreValueTypeId wvt{static_cast<std::uint32_t>(p.value_types.size())};
     p.value_types.push_back(CoreValueType{CoreVtInt{}});
+    for (std::uint32_t type_index = 0; type_index < 3; ++type_index) {
+        CoreMemberTypeTemplateNode node;
+        node.kind = CoreMemberTypeTemplateKind::Concrete;
+        node.concrete = wvt;
+        p.types[type_index].member_type_templates = {node};
+        p.types[type_index].field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+    }
     // expr[0]: WorkflowInput path (`input`), typed WIn.
     {
         CorePathExpr in_path;
@@ -1099,9 +1127,9 @@ TEST_CASE("verifier fails closed on an enum context (not folded into Unit)") {
 
 // --- type-table shape self-consistency (Codex P0/P1) ---
 
-TEST_CASE("verifier fails closed when a struct's field_types length differs from fields") {
+TEST_CASE("verifier fails closed when a struct's field_nominal_types length differs from fields") {
     GoodProgram g = make_good_program();
-    g.program.types[1].field_types.pop_back(); // Ctx: 2 fields, 1 field_type
+    g.program.types[1].field_nominal_types.pop_back(); // Ctx: 2 fields, 1 field_type
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kTypeTableShapeInvalid));
@@ -1113,6 +1141,93 @@ TEST_CASE("verifier fails closed when a struct's field_has_default length differ
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+}
+
+TEST_CASE("P4-C Core verifier fails closed on malformed member template arenas") {
+    const auto add_box = [](GoodProgram &g) -> CoreTypeDecl & {
+        CoreTypeDecl box;
+        box.kind = CoreTypeDecl::Kind::Struct;
+        box.name = "Box";
+        box.fields = {"value"};
+        box.field_nominal_types = {CoreTypeId{}};
+        box.field_has_default = {false};
+        box.type_param_count = 1;
+        box.variances = {CoreVariance::Covariant};
+        CoreMemberTypeTemplateNode param;
+        param.kind = CoreMemberTypeTemplateKind::Param;
+        param.param_index = 0;
+        box.member_type_templates = {param};
+        box.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+        g.program.types.push_back(std::move(box));
+        return g.program.types.back();
+    };
+    const auto rejects = [](const GoodProgram &g) {
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kTypeTableShapeInvalid));
+    };
+
+    SUBCASE("roots are parallel to fields") {
+        GoodProgram g = make_good_program();
+        add_box(g).field_type_template_roots.clear();
+        rejects(g);
+    }
+    SUBCASE("all nodes are reachable") {
+        GoodProgram g = make_good_program();
+        auto &box = add_box(g);
+        CoreMemberTypeTemplateNode orphan;
+        orphan.kind = CoreMemberTypeTemplateKind::Concrete;
+        orphan.concrete = g.vt_int;
+        box.member_type_templates.push_back(orphan);
+        rejects(g);
+    }
+    SUBCASE("children are postordered") {
+        GoodProgram g = make_good_program();
+        auto &box = add_box(g);
+        CoreMemberTypeTemplateNode nominal;
+        nominal.kind = CoreMemberTypeTemplateKind::Nominal;
+        nominal.nominal = CoreTypeId{0};
+        nominal.children = {CoreMemberTypeTemplateNodeId{1}};
+        box.member_type_templates.push_back(nominal);
+        box.field_type_template_roots[0] = CoreMemberTypeTemplateNodeId{1};
+        rejects(g);
+    }
+    SUBCASE("Concrete references a materialized non-Never value type") {
+        GoodProgram g = make_good_program();
+        auto &box = add_box(g);
+        box.member_type_templates[0].kind = CoreMemberTypeTemplateKind::Concrete;
+        box.member_type_templates[0].concrete = CoreValueTypeId{999};
+        rejects(g);
+    }
+    SUBCASE("Param index is within owner arity") {
+        GoodProgram g = make_good_program();
+        add_box(g).member_type_templates[0].param_index = 1;
+        rejects(g);
+    }
+    SUBCASE("Nominal arity and capacity follow the referenced declaration") {
+        GoodProgram g = make_good_program();
+        auto &box = add_box(g);
+        auto &node = box.member_type_templates[0];
+        node.kind = CoreMemberTypeTemplateKind::Nominal;
+        node.param_index = 0;
+        node.nominal = CoreTypeId{0}; // Inner has arity 0 and Ordinary role
+        node.capacity = 4;
+        rejects(g);
+    }
+    SUBCASE("Fn return is present and postordered") {
+        GoodProgram g = make_good_program();
+        auto &box = add_box(g);
+        auto &node = box.member_type_templates[0];
+        node.kind = CoreMemberTypeTemplateKind::Fn;
+        node.param_index = 0;
+        rejects(g);
+    }
+    SUBCASE("variant payload kind is a legal enum value") {
+        GoodProgram g = make_good_program();
+        g.program.types[2].variant_payloads[0].kind =
+            static_cast<CoreTypeDecl::VariantPayload::Kind>(99);
+        rejects(g);
+    }
 }
 
 TEST_CASE("verifier fails closed when an enum's variant_payloads length differs from variants") {
@@ -1141,7 +1256,8 @@ TEST_CASE("verifier fails closed when an enum carries struct field metadata") {
 
 TEST_CASE("verifier fails closed when a Unit payload variant carries slots") {
     GoodProgram g = make_good_program();
-    g.program.types[2].variant_payloads[0].slot_types.push_back(CoreTypeId{}); // On is Unit
+    g.program.types[2].variant_payloads[0].slot_type_template_roots.push_back(
+        CoreMemberTypeTemplateNodeId{0}); // On is Unit
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kTypeTableShapeInvalid));
@@ -1151,17 +1267,19 @@ TEST_CASE("verifier fails closed when a struct-payload variant's field_names/slo
     GoodProgram g = make_good_program();
     auto &pv = g.program.types[2].variant_payloads[0];
     pv.kind = CoreTypeDecl::VariantPayload::Kind::Struct;
-    pv.slot_types = {CoreTypeId{}, CoreTypeId{}};
+    pv.slot_type_template_roots = {CoreMemberTypeTemplateNodeId{0},
+                                   CoreMemberTypeTemplateNodeId{0}};
     pv.field_names = {"only_one"}; // 1 name vs 2 slots
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kTypeTableShapeInvalid));
 }
 
-TEST_CASE("verifier fails closed when a payload slot type id is out of range") {
+TEST_CASE("verifier fails closed when a payload template root is out of range") {
     GoodProgram g = make_good_program();
     g.program.types[2].variant_payloads[0].kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
-    g.program.types[2].variant_payloads[0].slot_types = {CoreTypeId{999}}; // OOR
+    g.program.types[2].variant_payloads[0].slot_type_template_roots = {
+        CoreMemberTypeTemplateNodeId{999}};
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kTypeTableShapeInvalid));
@@ -1786,7 +1904,12 @@ TEST_CASE("verifier fails closed on two tuple slots reusing one arm binding id")
     pair_enum.variants = {"Both"};
     CoreTypeDecl::VariantPayload pv;
     pv.kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
-    pv.slot_types = {CoreTypeId{}, CoreTypeId{}}; // arity 2, primitive slots
+    CoreMemberTypeTemplateNode slot;
+    slot.kind = CoreMemberTypeTemplateKind::Concrete;
+    slot.concrete = g.vt_int;
+    pair_enum.member_type_templates = {slot};
+    pv.slot_type_template_roots = {CoreMemberTypeTemplateNodeId{0},
+                                   CoreMemberTypeTemplateNodeId{0}}; // arity 2
     pair_enum.variant_payloads = {pv};
     g.program.types.push_back(std::move(pair_enum));
     const auto pair_ty = static_cast<std::uint32_t>(g.program.types.size() - 1);

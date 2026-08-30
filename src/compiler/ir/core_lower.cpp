@@ -155,13 +155,28 @@ const std::vector<BuiltinNominalDescriptor> &builtin_nominal_table() {
     using TK = CoreTypeDecl::Kind;
     using CV = CoreVariance;
     static const std::vector<BuiltinNominalDescriptor> table = {
-        {"std::option::Option", "Option", TK::Enum, CoreNominalRole::Option, 1,
-         {{"Some", PK::Tuple, 1}, {"None", PK::Unit, 0}}, {CV::Covariant}},
-        {"std::result::Result", "Result", TK::Enum, CoreNominalRole::Result, 2,
-         {{"Ok", PK::Tuple, 1}, {"Err", PK::Tuple, 1}}, {CV::Covariant, CV::Covariant}},
+        {"std::option::Option",
+         "Option",
+         TK::Enum,
+         CoreNominalRole::Option,
+         1,
+         {{"Some", PK::Tuple, {0}}, {"None", PK::Unit, {}}},
+         {CV::Covariant}},
+        {"std::result::Result",
+         "Result",
+         TK::Enum,
+         CoreNominalRole::Result,
+         2,
+         {{"Ok", PK::Tuple, {0}}, {"Err", PK::Tuple, {1}}},
+         {CV::Covariant, CV::Covariant}},
         {"std::collections::List", "", TK::Struct, CoreNominalRole::List, 1, {}, {CV::Covariant}},
         {"std::collections::Set", "", TK::Struct, CoreNominalRole::Set, 1, {}, {CV::Covariant}},
-        {"std::collections::Map", "", TK::Struct, CoreNominalRole::Map, 2, {},
+        {"std::collections::Map",
+         "",
+         TK::Struct,
+         CoreNominalRole::Map,
+         2,
+         {},
          {CV::Invariant, CV::Covariant}},
     };
     return table;
@@ -210,6 +225,8 @@ namespace {
 // synthetic types so a program using `std::option::Option::Some` resolves even
 // when the sysroot EnumDecl is not inlined.
 // ---------------------------------------------------------------------------
+class ValueTypeArena;
+
 class TypeEnv {
   public:
     explicit TypeEnv(std::vector<CoreTypeDecl> &types, std::vector<CoreLowerDiagnostic> &diags)
@@ -228,7 +245,8 @@ class TypeEnv {
         std::vector<std::string> field_type_names;
         for (const FieldDecl &f : decl.fields) {
             t.fields.push_back(f.name);
-            t.field_types.push_back(CoreTypeId{}); // resolved in fixup_field_types()
+            t.field_nominal_types.push_back(
+                CoreTypeId{}); // resolved in fixup_field_nominal_types()
             // A field with an initializer is optional in a struct literal; one
             // without is REQUIRED (the verifier proves completeness).
             t.field_has_default.push_back(f.default_value.ptr != nullptr);
@@ -238,6 +256,8 @@ class TypeEnv {
                                       RegistrationOrigin::RealIrDecl,
                                       decl.provenance.source_range);
         pending_field_type_names_.emplace(id.value, std::move(field_type_names));
+        pending_member_templates_.push_back(
+            PendingMemberTemplateDecl{id, &decl, nullptr, decl.provenance.source_range});
     }
     void add_enum(const EnumDecl &decl) {
         CoreTypeDecl t;
@@ -247,40 +267,33 @@ class TypeEnv {
         // RFC 0026 P4 (coercion): see add_struct.
         t.type_param_count = decl.type_param_count;
         t.variances = ir_variances_to_core(decl.type_param_variances);
-        // Per-variant payload metadata (arity + slot field names), plus the slot
-        // type NAMES pending resolution in the fixup pass.
-        std::vector<std::vector<std::string>> pending_slot_names;
+        // Per-variant payload metadata. Complete logical slot types are
+        // finalized from the declaration-owned template arena after every
+        // nominal has a CoreTypeId.
         for (const EnumVariantDecl &v : decl.variants) {
             t.variants.push_back(v.name);
             CoreTypeDecl::VariantPayload payload;
-            std::vector<std::string> slot_names;
             switch (v.payload_kind) {
             case EnumVariantPayloadKind::Unit:
                 payload.kind = CoreTypeDecl::VariantPayload::Kind::Unit;
                 break;
             case EnumVariantPayloadKind::Tuple:
                 payload.kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
-                for (const TypeRef &slot : v.payload) {
-                    payload.slot_types.push_back(CoreTypeId{}); // resolved in fixup
-                    slot_names.push_back(nominal_type_name(slot));
-                }
                 break;
             case EnumVariantPayloadKind::Struct:
                 payload.kind = CoreTypeDecl::VariantPayload::Kind::Struct;
                 for (const EnumVariantFieldDecl &field : v.fields) {
-                    payload.slot_types.push_back(CoreTypeId{}); // resolved in fixup
                     payload.field_names.push_back(field.name);
-                    slot_names.push_back(nominal_type_name(field.type_ref));
                 }
                 break;
             }
             t.variant_payloads.push_back(std::move(payload));
-            pending_slot_names.push_back(std::move(slot_names));
         }
         const auto id = register_type(std::move(t), decl.symbol_ref,
                                       RegistrationOrigin::RealIrDecl,
                                       decl.provenance.source_range);
-        pending_variant_slot_names_.emplace(id.value, std::move(pending_slot_names));
+        pending_member_templates_.push_back(
+            PendingMemberTemplateDecl{id, nullptr, &decl, decl.provenance.source_range});
     }
 
     /// Register the well-known stdlib nominal generics as synthetic types (only
@@ -304,7 +317,15 @@ class TypeEnv {
                 t.variants.emplace_back(v.name);
                 CoreTypeDecl::VariantPayload payload;
                 payload.kind = v.payload_kind;
-                payload.slot_types.assign(v.payload_arity, CoreTypeId{});
+                for (const std::uint32_t param : v.payload_type_params) {
+                    const auto node_id = CoreMemberTypeTemplateNodeId{
+                        static_cast<std::uint32_t>(t.member_type_templates.size())};
+                    CoreMemberTypeTemplateNode node;
+                    node.kind = CoreMemberTypeTemplateKind::Param;
+                    node.param_index = param;
+                    t.member_type_templates.push_back(std::move(node));
+                    payload.slot_type_template_roots.push_back(node_id);
+                }
                 t.variant_payloads.push_back(std::move(payload));
             }
             // Synthetic std base: a NAME-ONLY resolved-Type ref (no symbol id; the
@@ -391,22 +412,7 @@ class TypeEnv {
             return 0;
         }
         return static_cast<std::uint32_t>(
-            types_[type.value].variant_payloads[variant].slot_types.size());
-    }
-
-    /// The resolved CoreTypeId of a variant payload slot (kInvalid when OOR or
-    /// the slot type is a primitive / non-nominal placeholder). Lets a payload
-    /// binding carry its nominal struct/enum type for member projection.
-    [[nodiscard]] CoreTypeId variant_slot_type(CoreTypeId type, std::uint32_t variant,
-                                               std::uint32_t slot) const {
-        if (type.value >= types_.size() || variant >= types_[type.value].variant_payloads.size()) {
-            return CoreTypeId{};
-        }
-        const auto &slots = types_[type.value].variant_payloads[variant].slot_types;
-        if (slot >= slots.size()) {
-            return CoreTypeId{};
-        }
-        return slots[slot];
+            types_[type.value].variant_payloads[variant].slot_type_template_roots.size());
     }
 
     /// Declaration slot index of a NAMED field in a struct-payload variant, by
@@ -447,12 +453,12 @@ class TypeEnv {
             if (decl.fields[i] == field) {
                 FieldStep step;
                 step.field = CoreFieldId{i};
-                // A valid field_types entry (non-kInvalid) is the field's own
+                // A valid field_nominal_types entry (non-kInvalid) is the field's own
                 // struct type; invalid means primitive/collection/P4 (no further
                 // projection possible).
-                if (i < decl.field_types.size() &&
-                    decl.field_types[i].value != CoreTypeId::kInvalid) {
-                    step.next_type = decl.field_types[i];
+                if (i < decl.field_nominal_types.size() &&
+                    decl.field_nominal_types[i].value != CoreTypeId::kInvalid) {
+                    step.next_type = decl.field_nominal_types[i];
                 }
                 return step;
             }
@@ -463,38 +469,29 @@ class TypeEnv {
     /// Second pass: resolve each struct field's recorded type NAME to a typed
     /// CoreTypeId, so no canonical-name strings survive for a backend. Run once
     /// after ALL types are registered (forward references resolve).
-    void fixup_field_types() {
+    void fixup_field_nominal_types() {
         for (const auto &[type_index, names] : pending_field_type_names_) {
             CoreTypeDecl &decl = types_[type_index];
-            for (std::size_t i = 0; i < names.size() && i < decl.field_types.size(); ++i) {
+            for (std::size_t i = 0; i < names.size() && i < decl.field_nominal_types.size(); ++i) {
                 if (!names[i].empty()) {
                     if (const auto id = resolve_by_name(names[i])) {
-                        decl.field_types[i] = *id;
+                        decl.field_nominal_types[i] = *id;
                     }
                 }
             }
         }
         pending_field_type_names_.clear();
-        // Resolve each enum variant's payload slot type NAMES to CoreTypeIds.
-        for (const auto &[type_index, per_variant] : pending_variant_slot_names_) {
-            CoreTypeDecl &decl = types_[type_index];
-            for (std::size_t v = 0; v < per_variant.size() && v < decl.variant_payloads.size();
-                 ++v) {
-                auto &slot_types = decl.variant_payloads[v].slot_types;
-                const auto &slot_names = per_variant[v];
-                for (std::size_t s = 0; s < slot_names.size() && s < slot_types.size(); ++s) {
-                    if (!slot_names[s].empty()) {
-                        if (const auto id = resolve_by_name(slot_names[s])) {
-                            slot_types[s] = *id;
-                        }
-                    }
-                }
-            }
-        }
-        pending_variant_slot_names_.clear();
     }
 
+    void finalize_member_templates(ValueTypeArena &arena);
+
   private:
+    struct PendingMemberTemplateDecl {
+        CoreTypeId id{};
+        const StructDecl *struct_decl{nullptr};
+        const EnumDecl *enum_decl{nullptr};
+        SourceRangeOpt source_range;
+    };
     // Where a CoreTypeDecl entered `register_type`. This is an EXPLICIT provenance
     // flag, never inferred from the decl's metadata shape (Codex P0-1): a real std
     // decl that happens to arrive with `type_param_count == 0 && variances.empty()`
@@ -608,12 +605,9 @@ class TypeEnv {
     std::unordered_map<std::size_t, CoreTypeId> by_id_;
     std::unordered_map<std::string, CoreTypeId> by_name_;
     // struct CoreTypeId -> its field type NAMES, pending resolution to typed
-    // CoreTypeIds in fixup_field_types() (after all types are registered).
+    // navigation CoreTypeIds after all types are registered.
     std::unordered_map<std::uint32_t, std::vector<std::string>> pending_field_type_names_;
-    // enum CoreTypeId -> per-variant payload slot type NAMES (parallel to the
-    // variant's slot_types), pending resolution in fixup_field_types().
-    std::unordered_map<std::uint32_t, std::vector<std::vector<std::string>>>
-        pending_variant_slot_names_;
+    std::vector<PendingMemberTemplateDecl> pending_member_templates_;
 };
 
 // ---------------------------------------------------------------------------
@@ -776,7 +770,61 @@ class ValueTypeArena {
         return fail("unhandled type kind");
     }
 
+    [[nodiscard]] std::optional<CoreValueTypeId>
+    materialize_nominal(CoreTypeId base,
+                        std::vector<CoreValueTypeId> args,
+                        std::optional<std::uint64_t> capacity,
+                        std::string *error_reason) {
+        if (base.value >= types_.size()) {
+            return set_reason(error_reason, "member template nominal base is out of range");
+        }
+        const CoreTypeDecl &decl = types_[base.value];
+        if (args.size() != decl.type_param_count) {
+            return set_reason(error_reason,
+                              "member template nominal '" + decl.name + "' expects " +
+                                  std::to_string(decl.type_param_count) + " argument(s), got " +
+                                  std::to_string(args.size()));
+        }
+        if (!valid_materialized_children(args, error_reason)) {
+            return std::nullopt;
+        }
+        if (capacity.has_value() && !capacity_allowed(decl.role)) {
+            return set_reason(error_reason,
+                              "member template nominal '" + decl.name +
+                                  "' cannot carry a collection capacity");
+        }
+        return intern(CoreVtNominal{base, std::move(args), capacity}, error_reason);
+    }
+
+    [[nodiscard]] std::optional<CoreValueTypeId> materialize_fn(std::vector<CoreValueTypeId> params,
+                                                                CoreValueTypeId ret,
+                                                                std::string *error_reason) {
+        if (!valid_materialized_children(params, error_reason) ||
+            !valid_materialized_id(ret, error_reason)) {
+            return std::nullopt;
+        }
+        return intern(CoreVtFn{std::move(params), ret}, error_reason);
+    }
+
+    [[nodiscard]] bool valid_materialized_id(CoreValueTypeId id, std::string *error_reason) const {
+        if (id.value >= store_.size()) {
+            set_reason(error_reason, "member template references an out-of-range value type");
+            return false;
+        }
+        if (std::holds_alternative<CoreVtNever>(store_[id.value].node)) {
+            set_reason(error_reason, "member template cannot materialize `Never`");
+            return false;
+        }
+        return true;
+    }
+
   private:
+    [[nodiscard]] bool valid_materialized_children(const std::vector<CoreValueTypeId> &ids,
+                                                   std::string *error_reason) const {
+        return std::all_of(ids.begin(), ids.end(), [&](CoreValueTypeId id) {
+            return valid_materialized_id(id, error_reason);
+        });
+    }
     // Hash for the hash-cons map. Children are already interned to ids, so a
     // node's hash mixes only its own scalar fields + child ids.
     struct NodeHash {
@@ -1063,6 +1111,280 @@ class ValueTypeArena {
     NominalResolver resolve_;
     std::unordered_map<CoreValueType, CoreValueTypeId, NodeHash> index_;
 };
+
+void TypeEnv::finalize_member_templates(ValueTypeArena &arena) {
+    const auto builtin_descriptor = [](std::string_view name) -> const BuiltinNominalDescriptor * {
+        for (const auto &d : builtin_nominal_table()) {
+            if (d.canonical_name == name) {
+                return &d;
+            }
+        }
+        return nullptr;
+    };
+
+    for (const PendingMemberTemplateDecl &pending : pending_member_templates_) {
+        if (pending.id.value >= types_.size()) {
+            continue;
+        }
+        CoreTypeDecl &target = types_[pending.id.value];
+        const std::vector<MemberTypeTemplateNode> *source_nodes = nullptr;
+        std::vector<std::uint32_t> roots;
+        std::vector<std::vector<std::uint32_t>> variant_roots;
+        if (pending.struct_decl != nullptr) {
+            source_nodes = &pending.struct_decl->member_type_templates;
+            roots = pending.struct_decl->field_type_template_roots;
+            if (roots.size() != pending.struct_decl->fields.size()) {
+                source_nodes = nullptr;
+            }
+        } else if (pending.enum_decl != nullptr) {
+            source_nodes = &pending.enum_decl->member_type_templates;
+            variant_roots.reserve(pending.enum_decl->variants.size());
+            if (pending.enum_decl->variants.size() != target.variant_payloads.size()) {
+                source_nodes = nullptr;
+            } else {
+                for (const auto &variant : pending.enum_decl->variants) {
+                    const std::size_t expected_roots =
+                        variant.payload_kind == EnumVariantPayloadKind::Tuple
+                            ? variant.payload.size()
+                            : (variant.payload_kind == EnumVariantPayloadKind::Struct
+                                   ? variant.fields.size()
+                                   : 0);
+                    if (variant.payload_type_template_roots.size() != expected_roots) {
+                        source_nodes = nullptr;
+                        break;
+                    }
+                    variant_roots.push_back(variant.payload_type_template_roots);
+                }
+            }
+        }
+
+        std::string reason;
+        bool builtin_template_drift = false;
+        std::vector<CoreMemberTypeTemplateNode> converted;
+        const auto fail = [&](std::string message) {
+            if (reason.empty()) {
+                reason = std::move(message);
+            }
+        };
+        if (source_nodes == nullptr) {
+            fail("member template roots do not match declaration members");
+        }
+
+        std::vector<bool> reachable;
+        if (source_nodes != nullptr) {
+            reachable.assign(source_nodes->size(), false);
+            const auto mark = [&](auto &&self, std::uint32_t id) -> bool {
+                if (id >= source_nodes->size()) {
+                    fail("member template root/child is out of range");
+                    return false;
+                }
+                if (reachable[id]) {
+                    return true;
+                }
+                reachable[id] = true;
+                const auto &node = (*source_nodes)[id];
+                for (const std::uint32_t child : node.children) {
+                    if (child >= id) {
+                        fail("member template children must precede their parent");
+                        return false;
+                    }
+                    if (!self(self, child)) {
+                        return false;
+                    }
+                }
+                if (node.kind == MemberTypeTemplateKind::Fn) {
+                    if (node.fn_return >= id || !self(self, node.fn_return)) {
+                        fail("member template function return must precede its parent");
+                        return false;
+                    }
+                }
+                return true;
+            };
+            for (const std::uint32_t root : roots) {
+                (void)mark(mark, root);
+            }
+            for (const auto &per_variant : variant_roots) {
+                for (const std::uint32_t root : per_variant) {
+                    (void)mark(mark, root);
+                }
+            }
+            if (reason.empty() &&
+                std::any_of(reachable.begin(), reachable.end(), [](bool used) { return !used; })) {
+                fail("member template arena contains an orphan node");
+            }
+        }
+
+        if (source_nodes != nullptr && reason.empty()) {
+            converted.reserve(source_nodes->size());
+            for (std::uint32_t index = 0; index < source_nodes->size(); ++index) {
+                const MemberTypeTemplateNode &source = (*source_nodes)[index];
+                CoreMemberTypeTemplateNode node;
+                switch (source.kind) {
+                case MemberTypeTemplateKind::Concrete: {
+                    if (source.param_index != 0 || !source.children.empty() ||
+                        source.fn_return != kInvalidMemberTypeTemplateNode) {
+                        fail("Concrete member template carries fields for another kind");
+                        break;
+                    }
+                    std::string lower_reason;
+                    const auto concrete = arena.lower(source.type_ref, &lower_reason);
+                    if (!concrete) {
+                        fail("concrete member template is not materializable: " + lower_reason);
+                    } else {
+                        node.kind = CoreMemberTypeTemplateKind::Concrete;
+                        node.concrete = *concrete;
+                    }
+                    break;
+                }
+                case MemberTypeTemplateKind::Param:
+                    if (!type_refs_equal(source.type_ref, TypeRef{}) || !source.children.empty() ||
+                        source.fn_return != kInvalidMemberTypeTemplateNode ||
+                        source.param_index >= target.type_param_count) {
+                        fail("member template parameter index is out of range");
+                    } else {
+                        node.kind = CoreMemberTypeTemplateKind::Param;
+                        node.param_index = source.param_index;
+                    }
+                    break;
+                case MemberTypeTemplateKind::Nominal: {
+                    const TypeRef &type = source.type_ref;
+                    if ((type.kind != TypeRefKind::Struct && type.kind != TypeRefKind::Enum) ||
+                        source.param_index != 0 ||
+                        source.fn_return != kInvalidMemberTypeTemplateNode ||
+                        type.nominal_ref.kind != SymbolRefKind::Type ||
+                        type.canonical_name.empty() ||
+                        type.canonical_name != type.nominal_ref.canonical_name ||
+                        type.int_bounds.has_value() || type.string_bounds.has_value() ||
+                        type.decimal_scale.has_value() || !type.params.empty() ||
+                        type.first != nullptr || type.second != nullptr ||
+                        !type.variant_name.empty()) {
+                        fail("nominal member template has a malformed base TypeRef");
+                        break;
+                    }
+                    const auto base = resolve_nominal_strict(types_, type.nominal_ref);
+                    if (!base || base->value >= types_.size()) {
+                        fail("nominal member template base does not resolve");
+                        break;
+                    }
+                    const CoreTypeDecl &base_decl = types_[base->value];
+                    const bool kind_matches = (type.kind == TypeRefKind::Struct) ==
+                                              (base_decl.kind == CoreTypeDecl::Kind::Struct);
+                    if (!kind_matches || source.children.size() != base_decl.type_param_count ||
+                        (type.collection_capacity.has_value() &&
+                         !capacity_allowed(base_decl.role))) {
+                        fail("nominal member template base kind/arity/capacity is invalid");
+                        break;
+                    }
+                    node.kind = CoreMemberTypeTemplateKind::Nominal;
+                    node.nominal = *base;
+                    node.capacity = type.collection_capacity;
+                    for (const std::uint32_t child : source.children) {
+                        node.children.push_back(CoreMemberTypeTemplateNodeId{child});
+                    }
+                    break;
+                }
+                case MemberTypeTemplateKind::Fn:
+                    if (!type_refs_equal(source.type_ref, TypeRef{}) || source.param_index != 0 ||
+                        source.fn_return >= index) {
+                        fail("function member template has an invalid return node");
+                        break;
+                    }
+                    node.kind = CoreMemberTypeTemplateKind::Fn;
+                    for (const std::uint32_t child : source.children) {
+                        node.children.push_back(CoreMemberTypeTemplateNodeId{child});
+                    }
+                    node.fn_return = CoreMemberTypeTemplateNodeId{source.fn_return};
+                    break;
+                default:
+                    fail("member template has an illegal node kind");
+                    break;
+                }
+                if (!reason.empty()) {
+                    break;
+                }
+                converted.push_back(std::move(node));
+            }
+        }
+
+        std::vector<CoreMemberTypeTemplateNodeId> converted_roots;
+        std::vector<std::vector<CoreMemberTypeTemplateNodeId>> converted_variant_roots;
+        if (reason.empty()) {
+            for (const auto root : roots) {
+                converted_roots.push_back(CoreMemberTypeTemplateNodeId{root});
+            }
+            for (const auto &per_variant : variant_roots) {
+                std::vector<CoreMemberTypeTemplateNodeId> out;
+                for (const auto root : per_variant) {
+                    out.push_back(CoreMemberTypeTemplateNodeId{root});
+                }
+                converted_variant_roots.push_back(std::move(out));
+            }
+
+            if (const auto *builtin = builtin_descriptor(target.name); builtin != nullptr) {
+                if (target.kind != builtin->kind ||
+                    target.variant_payloads.size() != builtin->variants.size()) {
+                    builtin_template_drift = true;
+                    fail("builtin member templates disagree with descriptor shape");
+                } else if (builtin->kind == CoreTypeDecl::Kind::Struct &&
+                           (!target.fields.empty() || !converted.empty() ||
+                            !converted_roots.empty())) {
+                    builtin_template_drift = true;
+                    fail("builtin collection member templates disagree with descriptor shape");
+                } else {
+                    for (std::size_t v = 0; v < builtin->variants.size() && reason.empty(); ++v) {
+                        const auto &expected = builtin->variants[v];
+                        const auto &actual_roots = converted_variant_roots[v];
+                        if (target.variants[v] != expected.name ||
+                            target.variant_payloads[v].kind != expected.payload_kind ||
+                            actual_roots.size() != expected.payload_type_params.size()) {
+                            builtin_template_drift = true;
+                            fail("builtin member templates disagree with descriptor variant");
+                            break;
+                        }
+                        for (std::size_t slot = 0; slot < actual_roots.size(); ++slot) {
+                            const auto root = actual_roots[slot];
+                            if (root.value >= converted.size() ||
+                                converted[root.value].kind != CoreMemberTypeTemplateKind::Param ||
+                                converted[root.value].param_index !=
+                                    expected.payload_type_params[slot]) {
+                                builtin_template_drift = true;
+                                fail(
+                                    "builtin payload template disagrees with descriptor parameter");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!reason.empty()) {
+            builtin_template_drift =
+                builtin_template_drift || builtin_descriptor(target.name) != nullptr;
+            diags_.push_back(CoreLowerDiagnostic{
+                CoreDiagnosticSeverity::Error,
+                std::string(builtin_template_drift ? diag::kBuiltinMetadataDrift
+                                                   : diag::kInvalidMemberTemplate),
+                (builtin_template_drift ? "builtin nominal '" : "nominal '") + target.name +
+                    (builtin_template_drift
+                         ? "' member templates disagree with the builtin descriptor SSOT: "
+                         : "' has an invalid member type template: ") +
+                    reason,
+                pending.source_range});
+            continue;
+        }
+
+        // Atomic publication: no declaration-owned Core template arena/root is
+        // visible until the complete declaration has converted successfully.
+        target.member_type_templates = std::move(converted);
+        target.field_type_template_roots = std::move(converted_roots);
+        for (std::size_t v = 0; v < converted_variant_roots.size(); ++v) {
+            target.variant_payloads[v].slot_type_template_roots =
+                std::move(converted_variant_roots[v]);
+        }
+    }
+    pending_member_templates_.clear();
+}
 
 // ---------------------------------------------------------------------------
 // Capability index: canonical identity -> CoreCapabilityId + effect kind.
@@ -3042,7 +3364,19 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     // member-projection chains advance struct-to-struct without re-querying
     // AHFL-IR. Must run after ALL types are registered (fields can reference a
     // type declared later in the module).
-    types.fixup_field_types();
+    types.fixup_field_nominal_types();
+
+    // Build the one program-global logical value-type arena immediately after
+    // every nominal is registered, then finalize declaration member templates
+    // in source order before any body/shell consumer can observe the type table.
+    ValueTypeArena shared_arena(core.value_types, core.types, [&core](const SymbolRef &r) {
+        return resolve_nominal_strict(core.types, r);
+    });
+    types.finalize_member_templates(shared_arena);
+    const ValueTypeInterner intern_value_type = [&shared_arena](const TypeRef &type,
+                                                                std::string *reason) {
+        return shared_arena.lower(type, reason);
+    };
 
     // Capability table.
     CapabilityIndex cap_index;
@@ -3070,22 +3404,6 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             core.agents.push_back(lower_agent(*agent, types));
         }
     }
-
-    // The SINGLE program-global logical value-type arena (RFC 0026 P4). Hoisted
-    // here — after the complete types table is built — and reused for Pass 2/3
-    // (body value types) AND Pass 6 (instance dispatch types), so every value +
-    // dispatch descriptor interns into ONE canonical `core.value_types` pool
-    // (Codex ruling: one long-lived arena, not a per-body/per-pass rebuild). The
-    // strict id-first resolver is the same one the public `lower_value_type_into`
-    // uses, so the two paths never drift. The interner is a thin fail-closed
-    // adapter over `arena.lower`.
-    ValueTypeArena shared_arena(core.value_types, core.types, [&core](const SymbolRef &r) {
-        return resolve_nominal_strict(core.types, r);
-    });
-    const ValueTypeInterner intern_value_type =
-        [&shared_arena](const TypeRef &type, std::string *reason) {
-            return shared_arena.lower(type, reason);
-        };
 
     // Pass 2: flows. Resolve each flow's target agent BY IDENTITY; a missing
     // target or an unknown handler state is a fail-closed Error (never a
@@ -3425,6 +3743,138 @@ lower_value_type_into(CoreProgram &program, const ir::TypeRef &type, std::string
     };
     ValueTypeArena arena(program.value_types, program.types, std::move(resolve));
     return arena.lower(type, reason);
+}
+
+std::optional<CoreValueTypeId>
+instantiate_member_template(CoreProgram &program,
+                            CoreTypeId owner,
+                            CoreMemberTypeTemplateNodeId root,
+                            const std::vector<CoreValueTypeId> &owner_args,
+                            std::string *reason) {
+    const auto fail = [&](std::string message) -> std::optional<CoreValueTypeId> {
+        if (reason != nullptr && reason->empty()) {
+            *reason = std::move(message);
+        }
+        return std::nullopt;
+    };
+    if (owner.value >= program.types.size()) {
+        return fail("member template owner is out of range");
+    }
+    const CoreTypeDecl &decl = program.types[owner.value];
+    if (owner_args.size() != decl.type_param_count) {
+        return fail("member template owner '" + decl.name + "' expects " +
+                    std::to_string(decl.type_param_count) + " argument(s), got " +
+                    std::to_string(owner_args.size()));
+    }
+    if (root.value >= decl.member_type_templates.size()) {
+        return fail("member template root is out of range");
+    }
+
+    ValueTypeArena arena(program.value_types, program.types, [&program](const SymbolRef &ref) {
+        return resolve_nominal_strict(program.types, ref);
+    });
+    for (const CoreValueTypeId arg : owner_args) {
+        if (!arena.valid_materialized_id(arg, reason)) {
+            return std::nullopt;
+        }
+    }
+
+    std::vector<std::optional<CoreValueTypeId>> memo(decl.member_type_templates.size());
+    std::vector<std::uint8_t> color(decl.member_type_templates.size(), 0);
+    const auto instantiate =
+        [&](auto &&self, CoreMemberTypeTemplateNodeId id) -> std::optional<CoreValueTypeId> {
+        if (id.value >= decl.member_type_templates.size()) {
+            return fail("member template child is out of range");
+        }
+        if (color[id.value] == 1) {
+            return fail("member template graph is cyclic");
+        }
+        if (color[id.value] == 2) {
+            return memo[id.value];
+        }
+        color[id.value] = 1;
+        const CoreMemberTypeTemplateNode &node = decl.member_type_templates[id.value];
+        using K = CoreMemberTypeTemplateKind;
+        const bool legal_kind = node.kind == K::Concrete || node.kind == K::Param ||
+                                node.kind == K::Nominal || node.kind == K::Fn;
+        const bool has_concrete = node.concrete.value != CoreValueTypeId::kInvalid;
+        const bool has_nominal = node.nominal.value != CoreTypeId::kInvalid;
+        const bool has_return = node.fn_return.value != CoreMemberTypeTemplateNodeId::kInvalid;
+        if (!legal_kind) {
+            return fail("member template node has an illegal kind");
+        }
+        if ((node.kind == K::Concrete &&
+             (!has_concrete || has_nominal || node.param_index != 0 || node.capacity.has_value() ||
+              !node.children.empty() || has_return)) ||
+            (node.kind == K::Param && (has_concrete || has_nominal || node.capacity.has_value() ||
+                                       !node.children.empty() || has_return)) ||
+            (node.kind == K::Nominal &&
+             (has_concrete || !has_nominal || node.param_index != 0 || has_return)) ||
+            (node.kind == K::Fn && (has_concrete || has_nominal || node.param_index != 0 ||
+                                    node.capacity.has_value() || !has_return))) {
+            return fail("member template node carries fields for another kind");
+        }
+        for (const auto child : node.children) {
+            if (child.value >= id.value) {
+                return fail("member template child does not precede its parent");
+            }
+        }
+        if (node.kind == K::Fn && node.fn_return.value >= id.value) {
+            return fail("member template function return does not precede its parent");
+        }
+        std::optional<CoreValueTypeId> value;
+        switch (node.kind) {
+        case CoreMemberTypeTemplateKind::Concrete:
+            if (!arena.valid_materialized_id(node.concrete, reason)) {
+                return std::nullopt;
+            }
+            value = node.concrete;
+            break;
+        case CoreMemberTypeTemplateKind::Param:
+            if (node.param_index >= owner_args.size()) {
+                return fail("member template parameter index is out of range");
+            }
+            value = owner_args[node.param_index];
+            break;
+        case CoreMemberTypeTemplateKind::Nominal: {
+            std::vector<CoreValueTypeId> args;
+            args.reserve(node.children.size());
+            for (const auto child : node.children) {
+                const auto child_value = self(self, child);
+                if (!child_value) {
+                    return std::nullopt;
+                }
+                args.push_back(*child_value);
+            }
+            value = arena.materialize_nominal(node.nominal, std::move(args), node.capacity, reason);
+            break;
+        }
+        case CoreMemberTypeTemplateKind::Fn: {
+            std::vector<CoreValueTypeId> params;
+            params.reserve(node.children.size());
+            for (const auto child : node.children) {
+                const auto child_value = self(self, child);
+                if (!child_value) {
+                    return std::nullopt;
+                }
+                params.push_back(*child_value);
+            }
+            const auto ret = self(self, node.fn_return);
+            if (!ret) {
+                return std::nullopt;
+            }
+            value = arena.materialize_fn(std::move(params), *ret, reason);
+            break;
+        }
+        }
+        if (!value) {
+            return std::nullopt;
+        }
+        color[id.value] = 2;
+        memo[id.value] = value;
+        return value;
+    };
+    return instantiate(instantiate, root);
 }
 
 } // namespace ahfl::ir::core

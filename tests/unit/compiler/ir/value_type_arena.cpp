@@ -460,7 +460,7 @@ TEST_CASE("F1: a user generic nominal (Box<Int>) lowers with its real arity + va
     // materialized here - that stays a P4-C concern).
     CHECK(p.types[0].type_param_count == 1);
     CHECK(p.types[0].variances == std::vector<CoreVariance>{CoreVariance::Covariant});
-    CHECK(p.types[0].field_types.empty()); // field template not synthesized
+    CHECK(p.types[0].field_nominal_types.empty()); // field template not synthesized
     CHECK_FALSE(verify_core_program(p).has_errors());
 }
 
@@ -717,4 +717,70 @@ TEST_CASE("P1-2 verifier: role<->canonical identity is locked bidirectionally") 
         p.types.push_back(std::move(t));
         CHECK(verify_core_program(p).has_errors());
     }
+}
+
+TEST_CASE("P4-C member template materializer substitutes recursively and hash-conses") {
+    using namespace ir::core;
+    CoreProgram p = program_with_types();
+
+    CoreTypeDecl box;
+    box.kind = CoreTypeDecl::Kind::Struct;
+    box.name = "app::Box";
+    box.fields = {"items", "map"};
+    box.field_nominal_types = {CoreTypeId{}, CoreTypeId{}};
+    box.field_has_default = {false, false};
+    box.type_param_count = 1;
+    box.variances = {CoreVariance::Covariant};
+    CoreMemberTypeTemplateNode param;
+    param.kind = CoreMemberTypeTemplateKind::Param;
+    param.param_index = 0;
+    box.member_type_templates.push_back(param); // #0 T
+    CoreMemberTypeTemplateNode list;
+    list.kind = CoreMemberTypeTemplateKind::Nominal;
+    list.nominal = CoreTypeId{1}; // std List
+    list.capacity = 4;
+    list.children = {CoreMemberTypeTemplateNodeId{0}};
+    box.member_type_templates.push_back(list); // #1 List<T>(4)
+    CoreMemberTypeTemplateNode fn;
+    fn.kind = CoreMemberTypeTemplateKind::Fn;
+    fn.children = {CoreMemberTypeTemplateNodeId{0}};
+    fn.fn_return = CoreMemberTypeTemplateNodeId{1};
+    box.member_type_templates.push_back(fn); // #2 Fn(T)->List<T>(4)
+    box.field_type_template_roots = {CoreMemberTypeTemplateNodeId{1},
+                                     CoreMemberTypeTemplateNodeId{2}};
+    p.types.push_back(std::move(box));
+
+    std::string reason;
+    const auto int_id = lower_value_type_into(p, prim(ir::TypeRefKind::Int), &reason);
+    REQUIRE(int_id.has_value());
+    const auto list_id = instantiate_member_template(
+        p, CoreTypeId{2}, CoreMemberTypeTemplateNodeId{1}, {*int_id}, &reason);
+    INFO(reason);
+    REQUIRE(list_id.has_value());
+    const auto *list_vt = std::get_if<CoreVtNominal>(&p.value_types[list_id->value].node);
+    REQUIRE(list_vt != nullptr);
+    CHECK(list_vt->base == CoreTypeId{1});
+    CHECK(list_vt->args == std::vector<CoreValueTypeId>{*int_id});
+    CHECK(list_vt->capacity == std::optional<std::uint64_t>{4});
+
+    const auto fn_id = instantiate_member_template(
+        p, CoreTypeId{2}, CoreMemberTypeTemplateNodeId{2}, {*int_id}, &reason);
+    REQUIRE(fn_id.has_value());
+    const auto *fn_vt = std::get_if<CoreVtFn>(&p.value_types[fn_id->value].node);
+    REQUIRE(fn_vt != nullptr);
+    CHECK(fn_vt->params == std::vector<CoreValueTypeId>{*int_id});
+    CHECK(fn_vt->ret == *list_id);
+
+    const auto size = p.value_types.size();
+    reason.clear();
+    CHECK(instantiate_member_template(
+              p, CoreTypeId{2}, CoreMemberTypeTemplateNodeId{2}, {*int_id}, &reason) == fn_id);
+    CHECK(p.value_types.size() == size);
+    CHECK_FALSE(verify_core_program(p).has_errors());
+
+    reason.clear();
+    CHECK_FALSE(
+        instantiate_member_template(p, CoreTypeId{2}, CoreMemberTypeTemplateNodeId{2}, {}, &reason)
+            .has_value());
+    CHECK(reason.find("expects 1") != std::string::npos);
 }
