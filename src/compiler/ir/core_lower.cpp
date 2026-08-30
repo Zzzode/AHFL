@@ -98,7 +98,8 @@ bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
     return a.target == b.target && a.agent_name == b.agent_name &&
            symbol_ref_equal(a.target_ref, b.target_ref) && a.exprs == b.exprs &&
            a.value_count == b.value_count && a.value_types == b.value_types &&
-           a.patterns == b.patterns && a.states == b.states;
+           a.coercion_plans == b.coercion_plans && a.patterns == b.patterns &&
+           a.states == b.states;
 }
 
 namespace {
@@ -121,6 +122,7 @@ bool operator==(const CoreWorkflowDecl &a, const CoreWorkflowDecl &b) noexcept {
     return a.id == b.id && a.name == b.name && symbol_ref_equal(a.symbol_ref, b.symbol_ref) &&
            a.input_type == b.input_type && a.output_type == b.output_type && a.exprs == b.exprs &&
            a.value_count == b.value_count && a.value_types == b.value_types &&
+           a.coercion_plans == b.coercion_plans &&
            a.patterns == b.patterns && a.nodes == b.nodes &&
            region_ptr_eq(a.return_region, b.return_region);
 }
@@ -1242,6 +1244,7 @@ struct CoreBodyStorageRef {
     // RFC 0026 P4-B: the per-body logical value-type table (index == CoreValueId).
     // Grown ATOMICALLY with `value_count` by `fresh_value`, so it stays dense.
     std::vector<CoreValueTypeId> &value_types;
+    std::vector<CoreCoercionPlanNode> &coercion_plans;
 };
 
 // Flow policy: input/ctx -> agent input/context struct types; others are identifier-like.
@@ -1503,6 +1506,97 @@ template <class RootPolicy> class ExprLowerer {
         const CoreValueId value = fresh_value(result_ty);
         region.statements.push_back(CoreStmt{CoreLetStmt{value, expr_id}, range});
         return value;
+    }
+
+    /// Any/Never cannot name a materialized Core SSA value. This preflight is
+    /// intentionally callable before lowering the initializer: FromNever would
+    /// otherwise fail while interning the operand and obscure the persisted
+    /// adjustment's stable core.INVALID_COERCION boundary diagnostic.
+    [[nodiscard]] bool reject_nonmaterializable_adjustment(const AdjustmentPlan &plan,
+                                                           SourceRangeOpt range) {
+        for (const auto &node : plan.nodes) {
+            for (const auto &op : node.ops) {
+                if (op.kind == AdjustmentOpKind::ToAny || op.kind == AdjustmentOpKind::FromNever) {
+                    error(diag::kInvalidCoercion,
+                          "ToAny/FromNever adjustment has no materializable Core value type",
+                          range);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// Apply an annotated-let boundary without ever re-labelling the operand's
+    /// existing SSA id. The persisted AHFL adjustment proof is normalized into
+    /// a temporary Core arena first; only a complete non-identity plan is
+    /// appended and bound as a fresh CoreCoerceExpr value.
+    [[nodiscard]] CoreValueId lower_let_boundary(const LetStatement &stmt,
+                                                 CoreValueId operand,
+                                                 SourceRangeOpt range,
+                                                 CoreRegion &region) {
+        const CoreValueTypeId source_ty = value_type_of(operand);
+        if (source_ty.value == CoreValueTypeId::kInvalid) {
+            return operand; // an earlier lowering diagnostic already owns this partial value
+        }
+
+        if (!stmt.adjustment.has_value()) {
+            const CoreValueTypeId target_ty = intern_value_type(stmt.type_ref, range);
+            if (target_ty.value != CoreValueTypeId::kInvalid && !(source_ty == target_ty)) {
+                error(diag::kMissingAdjustment,
+                      "let boundary changes logical value type without a persisted adjustment",
+                      range);
+            }
+            return operand;
+        }
+
+        const auto normalized = normalize_adjustment_plan(*stmt.adjustment, range);
+        if (!normalized.has_value()) {
+            return operand;
+        }
+
+        std::string target_reason;
+        const auto declared_target = interner_(stmt.type_ref, &target_reason);
+        if (!declared_target.has_value()) {
+            error(diag::kInvalidCoercion,
+                  "coercion target cannot be represented in Core-IR: " + target_reason,
+                  range);
+            return operand;
+        }
+        if (!(normalized->source == source_ty) || !(normalized->result == *declared_target)) {
+            error(diag::kInvalidCoercion,
+                  "coercion plan boundary does not match the initializer and declared let types",
+                  range);
+            return operand;
+        }
+
+        if (!normalized->root.has_value()) {
+            if (!(source_ty == *declared_target)) {
+                error(diag::kInvalidCoercion,
+                      "coercion normalized to identity but its Core source and target differ",
+                      range);
+            }
+            return operand;
+        }
+
+        if (storage_.coercion_plans.size() > CoreCoercionPlanId::kInvalid ||
+            normalized->nodes.size() >
+                CoreCoercionPlanId::kInvalid - storage_.coercion_plans.size()) {
+            error(
+                diag::kInvalidCoercion, "coercion-plan arena exceeded its 32-bit id space", range);
+            return operand;
+        }
+        const std::uint32_t base = static_cast<std::uint32_t>(storage_.coercion_plans.size());
+        for (auto node : normalized->nodes) {
+            for (auto &op : node.ops) {
+                if (op.child.value != CoreCoercionPlanId::kInvalid) {
+                    op.child.value += base;
+                }
+            }
+            storage_.coercion_plans.push_back(std::move(node));
+        }
+        const CoreCoercionPlanId root{base + *normalized->root};
+        return bind_pure(CoreCoerceExpr{operand, root}, *declared_target, range, region);
     }
 
     [[nodiscard]] CoreValueId lower_path_value(const PathExpr &e, const ExprRef &expr,
@@ -2347,6 +2441,202 @@ template <class RootPolicy> class ExprLowerer {
     }
 
   private:
+    struct NormalizedAdjustment {
+        CoreValueTypeId source{};
+        CoreValueTypeId result{};
+        std::optional<std::uint32_t> root;
+        std::vector<CoreCoercionPlanNode> nodes;
+    };
+
+    struct NormalizedNode {
+        bool ok{false};
+        CoreValueTypeId source{};
+        CoreValueTypeId result{};
+        std::optional<std::uint32_t> id;
+    };
+
+    [[nodiscard]] std::optional<NormalizedAdjustment>
+    normalize_adjustment_plan(const AdjustmentPlan &plan, SourceRangeOpt range) {
+        // Any/Never are not materializable Core value types. Reject their
+        // semantic leaf operations BEFORE attempting to intern either endpoint,
+        // so the stable diagnostic is core.INVALID_COERCION rather than a lower-
+        // level value-type materialization error.
+        if (reject_nonmaterializable_adjustment(plan, range)) {
+            return std::nullopt;
+        }
+        if (plan.root >= plan.nodes.size()) {
+            error(diag::kInvalidCoercion, "coercion plan root is out of range", range);
+            return std::nullopt;
+        }
+
+        const auto intern_plan_type =
+            [&](const TypeRef &type, std::string_view label) -> std::optional<CoreValueTypeId> {
+            std::string reason;
+            const auto id = interner_(type, &reason);
+            if (!id.has_value()) {
+                error(diag::kInvalidCoercion,
+                      "coercion " + std::string(label) +
+                          " cannot be represented in Core-IR: " + reason,
+                      range);
+            }
+            return id;
+        };
+
+        const auto boundary_source = intern_plan_type(plan.source, "source type");
+        const auto boundary_result = intern_plan_type(plan.target, "target type");
+        if (!boundary_source.has_value() || !boundary_result.has_value()) {
+            return std::nullopt;
+        }
+
+        NormalizedAdjustment out;
+        out.source = *boundary_source;
+        out.result = *boundary_result;
+        std::vector<unsigned char> color(plan.nodes.size(), 0);
+        std::vector<NormalizedNode> memo(plan.nodes.size());
+
+        std::function<NormalizedNode(std::uint32_t)> visit =
+            [&](std::uint32_t old_id) -> NormalizedNode {
+            if (old_id >= plan.nodes.size()) {
+                error(diag::kInvalidCoercion, "coercion child plan id is out of range", range);
+                return {};
+            }
+            if (color[old_id] == 1) {
+                error(diag::kInvalidCoercion, "coercion plan contains a cycle", range);
+                return {};
+            }
+            if (color[old_id] == 2) {
+                return memo[old_id];
+            }
+            color[old_id] = 1;
+            const AdjustmentNode &input = plan.nodes[old_id];
+            const auto source = intern_plan_type(input.source, "node source type");
+            const auto result = intern_plan_type(input.target, "node result type");
+            if (!source.has_value() || !result.has_value()) {
+                color[old_id] = 2;
+                return {};
+            }
+
+            std::vector<CoreCoercionOp> ops;
+            ops.reserve(input.ops.size());
+            for (const AdjustmentOp &op : input.ops) {
+                if (op.kind == AdjustmentOpKind::VariantToEnum) {
+                    if (input.ops.size() != 1 || op.arg_index != 0 || op.child != UINT32_MAX ||
+                        !(*source == *result)) {
+                        error(diag::kInvalidCoercion,
+                              "VariantToEnum can only erase when its Core endpoint types are equal",
+                              range);
+                        color[old_id] = 2;
+                        return {};
+                    }
+                    continue;
+                }
+
+                CoreCoercionOp core_op;
+                core_op.arg_index = op.arg_index;
+                switch (op.kind) {
+                case AdjustmentOpKind::IntWiden:
+                    core_op.kind = CoreCoercionOpKind::IntWiden;
+                    break;
+                case AdjustmentOpKind::StringWiden:
+                    core_op.kind = CoreCoercionOpKind::StringWiden;
+                    break;
+                case AdjustmentOpKind::CapacityWiden:
+                    core_op.kind = CoreCoercionOpKind::CapacityWiden;
+                    break;
+                case AdjustmentOpKind::TypeArg:
+                    core_op.kind = CoreCoercionOpKind::TypeArg;
+                    break;
+                case AdjustmentOpKind::FnParam:
+                    core_op.kind = CoreCoercionOpKind::FnParam;
+                    break;
+                case AdjustmentOpKind::FnReturn:
+                    core_op.kind = CoreCoercionOpKind::FnReturn;
+                    break;
+                case AdjustmentOpKind::VariantToEnum:
+                case AdjustmentOpKind::ToAny:
+                case AdjustmentOpKind::FromNever:
+                    break; // handled before endpoint interning / above
+                default:
+                    error(diag::kInvalidCoercion,
+                          "coercion plan carries an unknown adjustment operation kind",
+                          range);
+                    color[old_id] = 2;
+                    return {};
+                }
+
+                const bool projected = op.kind == AdjustmentOpKind::TypeArg ||
+                                       op.kind == AdjustmentOpKind::FnParam ||
+                                       op.kind == AdjustmentOpKind::FnReturn;
+                if (projected) {
+                    if (op.child == UINT32_MAX) {
+                        error(diag::kInvalidCoercion,
+                              "projected coercion operation is missing its child proof",
+                              range);
+                        color[old_id] = 2;
+                        return {};
+                    }
+                    const NormalizedNode child = visit(op.child);
+                    if (!child.ok) {
+                        color[old_id] = 2;
+                        return {};
+                    }
+                    if (!child.id.has_value()) {
+                        continue; // identity child removes the projected operation
+                    }
+                    core_op.child = CoreCoercionPlanId{*child.id};
+                } else if (op.child != UINT32_MAX) {
+                    error(diag::kInvalidCoercion,
+                          "leaf coercion operation unexpectedly carries a child proof",
+                          range);
+                    color[old_id] = 2;
+                    return {};
+                }
+                ops.push_back(core_op);
+            }
+
+            NormalizedNode result_node{
+                .ok = true,
+                .source = *source,
+                .result = *result,
+                .id = std::nullopt,
+            };
+            if (ops.empty()) {
+                if (!(*source == *result)) {
+                    error(diag::kInvalidCoercion,
+                          "coercion node normalizes to identity but its Core endpoints differ",
+                          range);
+                    color[old_id] = 2;
+                    return {};
+                }
+            } else {
+                if (out.nodes.size() >= CoreCoercionPlanId::kInvalid) {
+                    error(diag::kInvalidCoercion,
+                          "temporary coercion-plan arena exceeded its 32-bit id space",
+                          range);
+                    color[old_id] = 2;
+                    return {};
+                }
+                result_node.id = static_cast<std::uint32_t>(out.nodes.size());
+                out.nodes.push_back(CoreCoercionPlanNode{*source, *result, std::move(ops)});
+            }
+            color[old_id] = 2;
+            memo[old_id] = result_node;
+            return result_node;
+        };
+
+        const NormalizedNode root = visit(plan.root);
+        if (!root.ok) {
+            return std::nullopt;
+        }
+        if (!(root.source == out.source) || !(root.result == out.result)) {
+            error(diag::kInvalidCoercion,
+                  "coercion root endpoints do not match the plan boundary",
+                  range);
+            return std::nullopt;
+        }
+        out.root = root.id;
+        return out;
+    }
     CoreBodyStorageRef storage_;
     const CapabilityIndex &caps_;
     const TypeEnv &types_;
@@ -2368,7 +2658,8 @@ class FlowLowerer {
                 const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
                 const ValueTypeInterner &interner, const std::vector<CoreValueType> &value_type_pool,
                 std::vector<CoreLowerDiagnostic> &diags)
-        : ex_(CoreBodyStorageRef{flow.exprs, flow.value_count, flow.patterns, flow.value_types},
+        : ex_(CoreBodyStorageRef{flow.exprs, flow.value_count, flow.patterns, flow.value_types,
+                                 flow.coercion_plans},
               caps, types, FlowRootPolicy{input_type, context_type}, interner, value_type_pool,
               diags),
           flow_(flow), states_(states) {}
@@ -2442,25 +2733,18 @@ class FlowLowerer {
     }
 
     void lower_let(const LetStatement &s, CoreRegion &region) {
-        const CoreValueId value = ex_.lower_value(s.initializer, region);
-        // A source `let` REUSES the initializer value (does NOT allocate a fresh
-        // one), so the local's logical type is the value's already-recorded
-        // body-table entry (single source of truth - RFC 0026 P4-B). Both travel
-        // as one binding, so branch scoping (see lower_if) snapshots/restores them
-        // atomically.
-        //
-        // DEFERRED (P4-B coercion slice): the declared annotation `let x: T = e`
-        // is NOT compared here. AHFL `let` semantics are ASSIGNABLE / SUBTYPE, not
-        // structural equality (Sema builds the value at the initializer's actual
-        // type, then check_assignable(actual, declared) allows e.g.
-        // `let x: Int(0,2) = 1` where the literal is Int(1,1)). Recording the
-        // declared type as the local's type would require an explicit typed
-        // coercion (a CoreCoerceExpr producing a fresh CoreValueId: source=actual,
-        // result=declared) so a widening (which layout may realize as i32->i64) is
-        // never faked by re-labelling an existing value id. Until that coercion
-        // slice lands, the local carries the initializer's actual value type (a
-        // valid subtype of the declared type), and the declared-vs-initializer
-        // gate is deferred rather than enforced with a wrong exact-equality rule.
+        const SourceRangeOpt range =
+            s.initializer.get() != nullptr ? s.initializer.get()->source_range : std::nullopt;
+        if (s.adjustment.has_value() &&
+            ex_.reject_nonmaterializable_adjustment(*s.adjustment, range)) {
+            return;
+        }
+        const CoreValueId initializer = ex_.lower_value(s.initializer, region);
+        const CoreValueId value = ex_.lower_let_boundary(s, initializer, range, region);
+        // Exact/inferred boundaries reuse `initializer`. A real adjustment binds
+        // a fresh CoreCoerceExpr result; in both cases the local's value + logical
+        // type come from the dense SSA table as one source of truth (never re-label
+        // an existing value id with the declared target type).
         ex_.scope()[s.name] = LocalBinding{value, ex_.value_type_of(value)};
     }
 
@@ -2697,7 +2981,8 @@ class WorkflowLowerer {
     /// ExprLowerer<WorkflowRootPolicy> over the workflow's shared arenas.
     void lower_value_region(const ExprRef &expr, CoreRegion &region, SourceRangeOpt range) {
         ExprLowerer<WorkflowRootPolicy> ex(
-            CoreBodyStorageRef{wf_.exprs, wf_.value_count, wf_.patterns, wf_.value_types}, caps_,
+            CoreBodyStorageRef{wf_.exprs, wf_.value_count, wf_.patterns, wf_.value_types,
+                               wf_.coercion_plans}, caps_,
             types_, WorkflowRootPolicy{wf_.input_type, &node_index_}, interner_, value_type_pool_,
             diags_);
         const CoreValueId value = ex.lower_value(expr, region);

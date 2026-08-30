@@ -164,6 +164,12 @@ inline constexpr std::string_view kValueTypeRefinementInvalid = "core.verify.VAL
 inline constexpr std::string_view kValueTypesSizeMismatch = "core.verify.VALUE_TYPES_SIZE_MISMATCH";
 inline constexpr std::string_view kValueTypeSlotInvalid = "core.verify.VALUE_TYPE_SLOT_INVALID";
 inline constexpr std::string_view kValueTypeMismatch = "core.verify.VALUE_TYPE_MISMATCH";
+// --- coercion proof plans / CoreCoerceExpr ---
+inline constexpr std::string_view kCoercionInvalid = "core.verify.COERCION_INVALID";
+inline constexpr std::string_view kCoercionKindMismatch = "core.verify.COERCION_KIND_MISMATCH";
+inline constexpr std::string_view kCoercionVarianceInvalid =
+    "core.verify.COERCION_VARIANCE_INVALID";
+inline constexpr std::string_view kCoercionIdentity = "core.verify.COERCION_IDENTITY";
 } // namespace verify
 
 /// Result of verifying a Core-IR program: any structural violations, as

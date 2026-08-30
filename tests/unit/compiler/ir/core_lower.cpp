@@ -1687,7 +1687,8 @@ TEST_CASE("enum struct-payload construct with a missing slot fails closed in the
 // <init literal typed `init`>`, then a `return`. `decl` and `init` are the
 // declared annotation and the initializer's resolved type.
 ir::AhflIr make_let_annotation_program(const std::string &name, ir::TypeRef decl_type,
-                                       ir::TypeRef init_type) {
+                                       ir::TypeRef init_type,
+                                       bool with_int_widen = false) {
     ir::AhflIr program;
     ir::AgentDecl agent;
     agent.name = "A";
@@ -1714,6 +1715,18 @@ ir::AhflIr make_let_annotation_program(const std::string &name, ir::TypeRef decl
     let.name = name;
     let.type_ref = std::move(decl_type);
     let.initializer = init;
+    if (with_int_widen) {
+        ir::AdjustmentPlan plan;
+        plan.source = ir::clone_type_ref(init->resolved_type);
+        plan.target = ir::clone_type_ref(let.type_ref);
+        plan.root = 0;
+        ir::AdjustmentNode node;
+        node.source = ir::clone_type_ref(plan.source);
+        node.target = ir::clone_type_ref(plan.target);
+        node.ops.push_back(ir::AdjustmentOp{.kind = ir::AdjustmentOpKind::IntWiden});
+        plan.nodes.push_back(std::move(node));
+        let.adjustment = std::move(plan);
+    }
     auto s = std::make_unique<ir::Statement>();
     s->node = std::move(let);
     handler.body.statements.push_back(std::move(s));
@@ -1742,18 +1755,33 @@ TEST_CASE("P4-B P0-3: a let whose declared type is a SUPERTYPE of the initialize
     // AHFL `let` semantics are ASSIGNABLE / SUBTYPE, not structural equality:
     // `let x: Int(0,2) = 1` is legal (the literal is Int(1,1), a subtype of the
     // declared Int(0,2)). The lowerer must NOT reject this via an exact-equality
-    // check — the local carries the initializer's actual type; the declared-vs-
-    // initializer coercion gate is deferred to the CoreCoerceExpr slice.
+    // check. Sema's persisted IntWiden witness makes the boundary explicit, and
+    // Core lowering must bind a fresh coercion result rather than re-label the
+    // literal's existing SSA value.
     ir::TypeRef declared;
     declared.kind = ir::TypeRefKind::BoundedInt;
     declared.int_bounds = std::pair<std::int64_t, std::int64_t>{0, 2};
     ir::TypeRef init;
     init.kind = ir::TypeRefKind::BoundedInt;
     init.int_bounds = std::pair<std::int64_t, std::int64_t>{1, 1};
-    const auto program = make_let_annotation_program("x", std::move(declared), std::move(init));
+    const auto program = make_let_annotation_program("x", std::move(declared), std::move(init), true);
     const auto result = ir::core::lower_ahfl_to_core(program);
     INFO("diag: " << (result.diagnostics.empty() ? "none" : result.diagnostics[0].message));
-    CHECK(result.ok());
+    REQUIRE(result.ok());
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow = result.program.flows[0];
+    REQUIRE(flow.coercion_plans.size() == 1);
+    REQUIRE(flow.coercion_plans[0].ops.size() == 1);
+    CHECK(flow.coercion_plans[0].ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
+    REQUIRE(flow.exprs.size() == 2);
+    const auto *coerce = std::get_if<ir::core::CoreCoerceExpr>(&flow.exprs[1].node);
+    REQUIRE(coerce != nullptr);
+    CHECK(coerce->operand.value == 0);
+    REQUIRE(flow.states.size() == 1);
+    REQUIRE(flow.states[0].body.statements.size() == 2);
+    const auto &coerce_let =
+        std::get<ir::core::CoreLetStmt>(flow.states[0].body.statements[1].node);
+    CHECK(coerce_let.result.value != coerce->operand.value);
 }
 
 // ---------------------------------------------------------------------------

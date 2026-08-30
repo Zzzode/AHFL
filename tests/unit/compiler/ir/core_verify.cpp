@@ -245,6 +245,69 @@ struct GoodProgram {
     return g;
 }
 
+// Add one valid `%out = coerce %0` edge to the known-good flow. `%0` is
+// retyped from Int to Int(0,0), while the fresh result remains Int. The helper
+// returns the coercion expression id so negative tests can move/tamper the
+// exact edge without rebuilding an unrelated body fixture.
+[[nodiscard]] CoreExprId add_good_int_coercion(GoodProgram &g) {
+    const CoreValueTypeId bounded{static_cast<std::uint32_t>(g.program.value_types.size())};
+    g.program.value_types.push_back(
+        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{0, 0}}});
+    g.flow->exprs[0].result_type = bounded;
+    g.flow->value_types[0] = bounded;
+
+    CoreCoercionPlanNode plan;
+    plan.source = bounded;
+    plan.result = g.vt_int;
+    plan.ops.push_back(CoreCoercionOp{.kind = CoreCoercionOpKind::IntWiden});
+    g.flow->coercion_plans.push_back(std::move(plan));
+
+    const CoreExprId expr{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    g.flow->exprs.push_back(
+        CoreExpr{CoreCoerceExpr{CoreValueId{0}, CoreCoercionPlanId{0}}, std::nullopt, g.vt_int});
+    const CoreValueId result{g.flow->value_count++};
+    g.flow->value_types.push_back(g.vt_int);
+    auto &body = g.flow->states[0].body.statements;
+    body.insert(body.begin() + 1, CoreStmt{CoreLetStmt{result, expr}, std::nullopt});
+    return expr;
+}
+
+// Replace the scalar plan installed above with a nominal TypeArg plan. The
+// declaration variance is supplied by the caller so the same fixture can prove
+// both the legal covariant direction and the invariant/contravariant rejects.
+void replace_with_type_arg_coercion(GoodProgram &g, CoreVariance variance) {
+    static_cast<void>(add_good_int_coercion(g));
+    const CoreValueTypeId bounded = g.flow->coercion_plans[0].source;
+
+    CoreTypeDecl box;
+    box.kind = CoreTypeDecl::Kind::Struct;
+    box.name = "Box";
+    box.type_param_count = 1;
+    box.variances = {variance};
+    const CoreTypeId box_id{static_cast<std::uint32_t>(g.program.types.size())};
+    g.program.types.push_back(std::move(box));
+
+    const CoreValueTypeId source{static_cast<std::uint32_t>(g.program.value_types.size())};
+    g.program.value_types.push_back(CoreValueType{CoreVtNominal{box_id, {bounded}, std::nullopt}});
+    const CoreValueTypeId result{static_cast<std::uint32_t>(g.program.value_types.size())};
+    g.program.value_types.push_back(CoreValueType{CoreVtNominal{box_id, {g.vt_int}, std::nullopt}});
+
+    g.flow->exprs[0].result_type = source;
+    g.flow->value_types[0] = source;
+    g.flow->exprs.back().result_type = result;
+    g.flow->value_types.back() = result;
+    g.flow->coercion_plans[0].source = bounded;
+    g.flow->coercion_plans[0].result = g.vt_int;
+
+    CoreCoercionPlanNode root;
+    root.source = source;
+    root.result = result;
+    root.ops.push_back(CoreCoercionOp{
+        .kind = CoreCoercionOpKind::TypeArg, .arg_index = 0, .child = CoreCoercionPlanId{0}});
+    g.flow->coercion_plans.push_back(std::move(root));
+    std::get<CoreCoerceExpr>(g.flow->exprs.back().node).plan = CoreCoercionPlanId{1};
+}
+
 // --------------------------------------------------------------------------
 // A known-good WORKFLOW program builder (RFC 0026 KR6.4 workflow slice). Shape:
 //   types:  [0] struct WIn  { amount: Int }   (workflow input + First input)
@@ -451,6 +514,121 @@ TEST_CASE("verifier accepts a well-formed Core-IR program") {
         CHECK(false);
     }
     CHECK(result.ok());
+}
+
+TEST_CASE("coercion verifier accepts a well-formed Int widening with a fresh SSA result") {
+    GoodProgram g = make_good_program();
+    static_cast<void>(add_good_int_coercion(g));
+    const auto result = verify_core_program(g.program);
+    for (const auto &diagnostic : result.diagnostics) {
+        INFO(diagnostic.code << ": " << diagnostic.message);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("coercion operand participates in use-before-def and branch-scope analysis") {
+    SUBCASE("operand is defined later in the same region") {
+        GoodProgram g = make_good_program();
+        static_cast<void>(add_good_int_coercion(g));
+        auto &body = g.flow->states[0].body.statements;
+        // The helper inserts `%4 = coerce %0` immediately after `%0`. Move it
+        // before `%0`; collect_expr_uses must see the coercion operand.
+        CoreStmt coerce = std::move(body[1]);
+        body.erase(body.begin() + 1);
+        body.insert(body.begin(), std::move(coerce));
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kValueUseBeforeDef));
+    }
+
+    SUBCASE("operand is defined only in a sibling branch") {
+        GoodProgram g = make_good_program();
+        static_cast<void>(add_good_int_coercion(g));
+        auto &body = g.flow->states[0].body.statements;
+        CoreStmt coerce = std::move(body[1]);
+        body.erase(body.begin() + 1);
+        auto *if_stmt = std::get_if<CoreIfStmt>(&body.back().node);
+        REQUIRE(if_stmt != nullptr);
+        REQUIRE(if_stmt->else_region != nullptr);
+        auto &coerce_expr = std::get<CoreCoerceExpr>(
+            g.flow->exprs[std::get<CoreLetStmt>(coerce.node).expr.value].node);
+        // %3 is defined only in the then branch. Reading it from the else branch
+        // must fail even though its dense type slot is valid.
+        coerce_expr.operand = CoreValueId{3};
+        g.flow->coercion_plans[0].source = g.flow->value_types[3];
+        if_stmt->else_region->statements.insert(if_stmt->else_region->statements.begin(),
+                                                std::move(coerce));
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kValueUseBeforeDef));
+    }
+}
+
+TEST_CASE("coercion verifier reads nominal variance from CoreTypeDecl SSOT") {
+    SUBCASE("covariant TypeArg is accepted") {
+        GoodProgram g = make_good_program();
+        replace_with_type_arg_coercion(g, CoreVariance::Covariant);
+        const auto result = verify_core_program(g.program);
+        for (const auto &diagnostic : result.diagnostics) {
+            INFO(diagnostic.code << ": " << diagnostic.message);
+        }
+        CHECK(result.ok());
+    }
+
+    SUBCASE("TypeArg on an invariant parameter is rejected") {
+        GoodProgram g = make_good_program();
+        replace_with_type_arg_coercion(g, CoreVariance::Invariant);
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCoercionVarianceInvalid));
+    }
+
+    SUBCASE("a contravariant parameter rejects a covariant child direction") {
+        GoodProgram g = make_good_program();
+        replace_with_type_arg_coercion(g, CoreVariance::Contravariant);
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCoercionVarianceInvalid));
+    }
+}
+
+TEST_CASE("coercion verifier rejects identity, cyclic, orphan, and unknown plans") {
+    SUBCASE("identity node") {
+        GoodProgram g = make_good_program();
+        static_cast<void>(add_good_int_coercion(g));
+        g.flow->coercion_plans[0].ops.clear();
+        g.flow->coercion_plans[0].source = g.vt_int;
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCoercionIdentity));
+    }
+
+    SUBCASE("cycle") {
+        GoodProgram g = make_good_program();
+        replace_with_type_arg_coercion(g, CoreVariance::Covariant);
+        g.flow->coercion_plans[1].ops[0].child = CoreCoercionPlanId{1};
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCoercionInvalid));
+    }
+
+    SUBCASE("orphan") {
+        GoodProgram g = make_good_program();
+        static_cast<void>(add_good_int_coercion(g));
+        g.flow->coercion_plans.push_back(g.flow->coercion_plans[0]);
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCoercionInvalid));
+    }
+
+    SUBCASE("unknown operation enum") {
+        GoodProgram g = make_good_program();
+        static_cast<void>(add_good_int_coercion(g));
+        g.flow->coercion_plans[0].ops[0].kind = static_cast<CoreCoercionOpKind>(255);
+        const auto result = verify_core_program(g.program);
+        CHECK_FALSE(result.ok());
+        CHECK(has_code(result, verify::kCoercionKindMismatch));
+    }
 }
 
 TEST_CASE("verifier fails closed on a dangling flow target agent id") {

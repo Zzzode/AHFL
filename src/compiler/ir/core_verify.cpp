@@ -437,6 +437,7 @@ class Verifier {
         // CoreValueId). Dense (size == value_count) in a well-formed body; used to
         // prove CoreLetStmt / CoreValueRefExpr result-type consistency.
         const std::vector<CoreValueTypeId> *value_types{nullptr};
+        const std::vector<CoreCoercionPlanNode> *coercion_plans{nullptr};
     };
 
     // The recorded logical value type of a value id in a body (kInvalid sentinel
@@ -489,6 +490,387 @@ class Verifier {
                           " has an invalid logical value type (out-of-range id or a `Never`, which "
                           "cannot be a materialized value type)",
                       std::nullopt);
+            }
+        }
+    }
+
+    // RFC 0026 P4 coercion: verify the normalized, per-body proof-plan arena.
+    // This is structural proof checking, not a second subtype solver: each op
+    // names one changed dimension and all unnamed dimensions must be identical.
+    void verify_coercion_plans(const ArenaView &flow) {
+        if (flow.coercion_plans == nullptr) {
+            return;
+        }
+        const auto &plans = *flow.coercion_plans;
+        const auto plan_count = static_cast<std::uint32_t>(plans.size());
+        const auto plan_error = [&](std::string_view code, std::string message) {
+            error(code, "body '" + flow.label + "': " + std::move(message), std::nullopt);
+        };
+        const auto child_valid = [&](CoreCoercionPlanId id) {
+            return id.value != CoreCoercionPlanId::kInvalid && id.value < plan_count;
+        };
+
+        // Every plan node must be reachable from some CoreCoerceExpr root. This
+        // forbids partially-appended/orphan normalization artifacts.
+        std::vector<bool> reachable(plan_count, false);
+        std::vector<std::uint32_t> stack;
+        for (const CoreExpr &expr : flow.exprs) {
+            if (const auto *coerce = std::get_if<CoreCoerceExpr>(&expr.node);
+                coerce != nullptr && coerce->plan.value < plan_count) {
+                stack.push_back(coerce->plan.value);
+            }
+        }
+        while (!stack.empty()) {
+            const std::uint32_t id = stack.back();
+            stack.pop_back();
+            if (id >= plan_count || reachable[id]) {
+                continue;
+            }
+            reachable[id] = true;
+            for (const CoreCoercionOp &op : plans[id].ops) {
+                if (child_valid(op.child)) {
+                    stack.push_back(op.child.value);
+                }
+            }
+        }
+        for (std::uint32_t id = 0; id < plan_count; ++id) {
+            if (!reachable[id]) {
+                plan_error(verify::kCoercionInvalid,
+                           "coercion plan node #" + std::to_string(id) +
+                               " is not reachable from a CoreCoerceExpr");
+            }
+        }
+
+        // Iterative 3-color DFS over child-plan edges.
+        enum class Color : std::uint8_t { White, Gray, Black };
+        std::vector<Color> color(plan_count, Color::White);
+        struct Frame {
+            std::uint32_t id;
+            std::size_t next;
+        };
+        for (std::uint32_t root = 0; root < plan_count; ++root) {
+            if (color[root] != Color::White) {
+                continue;
+            }
+            std::vector<Frame> dfs{{root, 0}};
+            color[root] = Color::Gray;
+            while (!dfs.empty()) {
+                Frame &frame = dfs.back();
+                const auto &ops = plans[frame.id].ops;
+                bool descended = false;
+                while (frame.next < ops.size()) {
+                    const CoreCoercionPlanId child = ops[frame.next++].child;
+                    if (!child_valid(child)) {
+                        continue;
+                    }
+                    if (color[child.value] == Color::Gray) {
+                        plan_error(verify::kCoercionInvalid,
+                                   "coercion plan contains a cycle through node #" +
+                                       std::to_string(child.value));
+                    } else if (color[child.value] == Color::White) {
+                        color[child.value] = Color::Gray;
+                        dfs.push_back(Frame{child.value, 0});
+                        descended = true;
+                        break;
+                    }
+                }
+                if (!descended && frame.next >= ops.size()) {
+                    color[frame.id] = Color::Black;
+                    dfs.pop_back();
+                }
+            }
+        }
+
+        const auto int_widen = [](const CoreVtInt &source, const CoreVtInt &result) {
+            if (!source.bounds.has_value()) {
+                return false;
+            }
+            if (!result.bounds.has_value()) {
+                return true;
+            }
+            return source.bounds->first >= result.bounds->first &&
+                   source.bounds->second <= result.bounds->second && source.bounds != result.bounds;
+        };
+        const auto string_widen = [](const CoreVtString &source, const CoreVtString &result) {
+            if (!source.length_bounds.has_value()) {
+                return false;
+            }
+            if (!result.length_bounds.has_value()) {
+                return true;
+            }
+            return source.length_bounds->first >= result.length_bounds->first &&
+                   source.length_bounds->second <= result.length_bounds->second &&
+                   source.length_bounds != result.length_bounds;
+        };
+        const auto capacity_widen = [](const CoreVtNominal &source, const CoreVtNominal &result) {
+            if (!source.capacity.has_value()) {
+                return false;
+            }
+            if (!result.capacity.has_value()) {
+                return true;
+            }
+            return *source.capacity < *result.capacity;
+        };
+
+        for (std::uint32_t id = 0; id < plan_count; ++id) {
+            const auto &node = plans[id];
+            const auto label = "coercion plan node #" + std::to_string(id);
+            if (!value_type_slot_ok(node.source) || !value_type_slot_ok(node.result)) {
+                plan_error(verify::kCoercionInvalid,
+                           label + " has an invalid or uninhabited endpoint value type");
+                continue;
+            }
+            if (node.ops.empty()) {
+                plan_error(verify::kCoercionIdentity,
+                           label + " is an identity node retained after normalization");
+                continue;
+            }
+
+            const auto &source_vt = program_.value_types[node.source.value].node;
+            const auto &result_vt = program_.value_types[node.result.value].node;
+            const auto *source_nominal = std::get_if<CoreVtNominal>(&source_vt);
+            const auto *result_nominal = std::get_if<CoreVtNominal>(&result_vt);
+            const auto *source_fn = std::get_if<CoreVtFn>(&source_vt);
+            const auto *result_fn = std::get_if<CoreVtFn>(&result_vt);
+            std::unordered_set<std::uint32_t> type_args;
+            std::unordered_set<std::uint32_t> fn_params;
+            bool has_capacity = false;
+            bool has_fn_return = false;
+            bool has_int = false;
+            bool has_string = false;
+            std::optional<std::pair<unsigned char, std::uint32_t>> previous_order;
+
+            for (const CoreCoercionOp &op : node.ops) {
+                const bool projected = op.kind == CoreCoercionOpKind::TypeArg ||
+                                       op.kind == CoreCoercionOpKind::FnParam ||
+                                       op.kind == CoreCoercionOpKind::FnReturn;
+                const bool indexed = op.kind == CoreCoercionOpKind::TypeArg ||
+                                     op.kind == CoreCoercionOpKind::FnParam;
+                if (!indexed && op.arg_index != 0) {
+                    plan_error(verify::kCoercionKindMismatch,
+                               label + " has a non-indexed op with non-zero arg_index");
+                }
+                if (projected) {
+                    if (!child_valid(op.child)) {
+                        plan_error(verify::kCoercionInvalid,
+                                   label + " has a projected op with an invalid child plan id");
+                    }
+                } else if (op.child.value != CoreCoercionPlanId::kInvalid) {
+                    plan_error(verify::kCoercionKindMismatch,
+                               label + " has a leaf op with a child plan id");
+                }
+
+                std::optional<std::pair<unsigned char, std::uint32_t>> order;
+                bool known_kind = true;
+                switch (op.kind) {
+                case CoreCoercionOpKind::CapacityWiden:
+                case CoreCoercionOpKind::FnParam:
+                    order = std::pair{static_cast<unsigned char>(0), op.arg_index};
+                    break;
+                case CoreCoercionOpKind::TypeArg:
+                case CoreCoercionOpKind::FnReturn:
+                    order = std::pair{static_cast<unsigned char>(1), op.arg_index};
+                    break;
+                case CoreCoercionOpKind::IntWiden:
+                case CoreCoercionOpKind::StringWiden:
+                    break;
+                default:
+                    known_kind = false;
+                    plan_error(verify::kCoercionKindMismatch,
+                               label + " carries an unknown coercion operation kind");
+                    break;
+                }
+                if (!known_kind) {
+                    continue;
+                }
+                if (order.has_value()) {
+                    if (previous_order.has_value() && *order <= *previous_order) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " operations are not in canonical order");
+                    }
+                    previous_order = order;
+                }
+
+                switch (op.kind) {
+                case CoreCoercionOpKind::IntWiden: {
+                    has_int = true;
+                    const auto *source = std::get_if<CoreVtInt>(&source_vt);
+                    const auto *result = std::get_if<CoreVtInt>(&result_vt);
+                    if (node.ops.size() != 1 || source == nullptr || result == nullptr) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " IntWiden does not name a sole Int dimension");
+                    } else if (!int_widen(*source, *result)) {
+                        plan_error(verify::kCoercionInvalid,
+                                   label + " IntWiden endpoints are not a strict bounds widening");
+                    }
+                    break;
+                }
+                case CoreCoercionOpKind::StringWiden: {
+                    has_string = true;
+                    const auto *source = std::get_if<CoreVtString>(&source_vt);
+                    const auto *result = std::get_if<CoreVtString>(&result_vt);
+                    if (node.ops.size() != 1 || source == nullptr || result == nullptr) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " StringWiden does not name a sole String dimension");
+                    } else if (!string_widen(*source, *result)) {
+                        plan_error(verify::kCoercionInvalid,
+                                   label +
+                                       " StringWiden endpoints are not a strict bounds widening");
+                    }
+                    break;
+                }
+                case CoreCoercionOpKind::CapacityWiden:
+                    if (has_capacity) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " contains duplicate CapacityWiden operations");
+                    }
+                    has_capacity = true;
+                    if (source_nominal == nullptr || result_nominal == nullptr ||
+                        !(source_nominal->base == result_nominal->base) ||
+                        source_nominal->base.value >= program_.types.size() ||
+                        !capacity_allowed(program_.types[source_nominal->base.value].role)) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " CapacityWiden does not name a collection capacity");
+                    } else if (!capacity_widen(*source_nominal, *result_nominal)) {
+                        plan_error(verify::kCoercionInvalid,
+                                   label + " CapacityWiden is not a strict capacity widening");
+                    }
+                    break;
+                case CoreCoercionOpKind::TypeArg: {
+                    if (!type_args.insert(op.arg_index).second) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " contains duplicate TypeArg positions");
+                    }
+                    if (source_nominal == nullptr || result_nominal == nullptr ||
+                        !(source_nominal->base == result_nominal->base) ||
+                        op.arg_index >= source_nominal->args.size() ||
+                        op.arg_index >= result_nominal->args.size() ||
+                        source_nominal->base.value >= program_.types.size()) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " TypeArg position does not match a nominal node");
+                        break;
+                    }
+                    const auto &decl = program_.types[source_nominal->base.value];
+                    if (op.arg_index >= decl.variances.size()) {
+                        plan_error(verify::kCoercionVarianceInvalid,
+                                   label + " TypeArg has no declaration variance metadata");
+                        break;
+                    }
+                    const CoreVariance variance = decl.variances[op.arg_index];
+                    if (variance == CoreVariance::Invariant) {
+                        plan_error(verify::kCoercionVarianceInvalid,
+                                   label + " TypeArg is not legal at an invariant position");
+                        break;
+                    }
+                    if (variance != CoreVariance::Covariant &&
+                        variance != CoreVariance::Contravariant) {
+                        plan_error(verify::kCoercionVarianceInvalid,
+                                   label + " TypeArg declaration variance is invalid");
+                        break;
+                    }
+                    if (!child_valid(op.child)) {
+                        break;
+                    }
+                    const auto &child = plans[op.child.value];
+                    const bool direction =
+                        variance == CoreVariance::Covariant
+                            ? child.source == source_nominal->args[op.arg_index] &&
+                                  child.result == result_nominal->args[op.arg_index]
+                            : child.source == result_nominal->args[op.arg_index] &&
+                                  child.result == source_nominal->args[op.arg_index];
+                    if (!direction) {
+                        plan_error(verify::kCoercionVarianceInvalid,
+                                   label + " TypeArg child has the wrong variance direction");
+                    }
+                    break;
+                }
+                case CoreCoercionOpKind::FnParam:
+                    if (!fn_params.insert(op.arg_index).second) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " contains duplicate FnParam positions");
+                    }
+                    if (source_fn == nullptr || result_fn == nullptr ||
+                        op.arg_index >= source_fn->params.size() ||
+                        op.arg_index >= result_fn->params.size()) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " FnParam position does not match a function node");
+                    } else if (child_valid(op.child)) {
+                        const auto &child = plans[op.child.value];
+                        if (!(child.source == result_fn->params[op.arg_index]) ||
+                            !(child.result == source_fn->params[op.arg_index])) {
+                            plan_error(verify::kCoercionVarianceInvalid,
+                                       label +
+                                           " FnParam child has the wrong contravariant direction");
+                        }
+                    }
+                    break;
+                case CoreCoercionOpKind::FnReturn:
+                    if (has_fn_return) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " contains duplicate FnReturn operations");
+                    }
+                    has_fn_return = true;
+                    if (source_fn == nullptr || result_fn == nullptr) {
+                        plan_error(verify::kCoercionKindMismatch,
+                                   label + " FnReturn does not match a function node");
+                    } else if (child_valid(op.child)) {
+                        const auto &child = plans[op.child.value];
+                        if (!(child.source == source_fn->ret) ||
+                            !(child.result == result_fn->ret)) {
+                            plan_error(verify::kCoercionVarianceInvalid,
+                                       label + " FnReturn child has the wrong covariant direction");
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if (source_nominal != nullptr && result_nominal != nullptr) {
+                if (!(source_nominal->base == result_nominal->base) ||
+                    source_nominal->args.size() != result_nominal->args.size()) {
+                    plan_error(verify::kCoercionKindMismatch,
+                               label + " changes nominal base or argument arity");
+                } else {
+                    for (std::uint32_t i = 0; i < source_nominal->args.size(); ++i) {
+                        if (!type_args.contains(i) &&
+                            !(source_nominal->args[i] == result_nominal->args[i])) {
+                            plan_error(verify::kCoercionInvalid,
+                                       label + " changes an unnamed nominal type argument");
+                        }
+                    }
+                }
+                if (!has_capacity && source_nominal->capacity != result_nominal->capacity) {
+                    plan_error(verify::kCoercionInvalid,
+                               label + " changes an unnamed nominal capacity");
+                }
+                if (has_int || has_string || !fn_params.empty() || has_fn_return) {
+                    plan_error(verify::kCoercionKindMismatch,
+                               label + " mixes nominal and non-nominal operations");
+                }
+            } else if (source_fn != nullptr && result_fn != nullptr) {
+                if (source_fn->params.size() != result_fn->params.size()) {
+                    plan_error(verify::kCoercionKindMismatch,
+                               label + " changes function parameter arity");
+                } else {
+                    for (std::uint32_t i = 0; i < source_fn->params.size(); ++i) {
+                        if (!fn_params.contains(i) &&
+                            !(source_fn->params[i] == result_fn->params[i])) {
+                            plan_error(verify::kCoercionInvalid,
+                                       label + " changes an unnamed function parameter");
+                        }
+                    }
+                }
+                if (!has_fn_return && !(source_fn->ret == result_fn->ret)) {
+                    plan_error(verify::kCoercionInvalid,
+                               label + " changes an unnamed function return type");
+                }
+                if (has_int || has_string || has_capacity || !type_args.empty()) {
+                    plan_error(verify::kCoercionKindMismatch,
+                               label + " mixes function and non-function operations");
+                }
+            } else if (!has_int && !has_string) {
+                plan_error(verify::kCoercionKindMismatch,
+                           label + " endpoints do not have a supported coercion shape");
             }
         }
     }
@@ -628,6 +1010,36 @@ class Verifier {
                                    check_value_id(arg.value, expr.source_range);
                                }
                                verify_construct(c, expr.source_range);
+                           },
+                           [&](const CoreCoerceExpr &c) {
+                               check_value_id(c.operand, expr.source_range);
+                               const auto plan_count =
+                                   flow.coercion_plans != nullptr
+                                       ? static_cast<std::uint32_t>(
+                                             flow.coercion_plans->size())
+                                       : 0u;
+                               if (c.plan.value >= plan_count) {
+                                   error(verify::kCoercionInvalid,
+                                         "coercion expression plan id is out of range in '" +
+                                             flow.label + "'",
+                                         expr.source_range);
+                                   return;
+                               }
+                               const auto &root = (*flow.coercion_plans)[c.plan.value];
+                               if (!(expr.result_type == root.result)) {
+                                   error(verify::kCoercionInvalid,
+                                         "coercion expression result type does not equal its plan "
+                                         "root result in '" +
+                                             flow.label + "'",
+                                         expr.source_range);
+                               }
+                               if (!(body_value_type(flow, c.operand) == root.source)) {
+                                   error(verify::kCoercionInvalid,
+                                         "coercion operand type does not equal its plan root source "
+                                         "in '" +
+                                             flow.label + "'",
+                                         expr.source_range);
+                               }
                            },
                            [&](const CoreUnsupportedExpr &u) {
                                error(verify::kUnsupportedExpr,
@@ -1093,7 +1505,9 @@ class Verifier {
     void verify_flow(const CoreFlowDecl &flow) {
         ArenaView av{flow.exprs, flow.value_count, flow.patterns, flow.agent_name};
         av.value_types = &flow.value_types;
+        av.coercion_plans = &flow.coercion_plans;
         verify_body_value_types(av);
+        verify_coercion_plans(av);
         verify_expr_arena(av);
         verify_pattern_arena(av);
 
@@ -1172,6 +1586,7 @@ class Verifier {
                                    out.push_back(arg.value);
                                }
                            },
+                           [&](const CoreCoerceExpr &c) { out.push_back(c.operand); },
                            [&](const CoreUnsupportedExpr &) {},
                        },
                        flow.exprs[cur].node);
@@ -1895,9 +2310,11 @@ class Verifier {
             ArenaView av{wf.exprs,           wf.value_count,     wf.patterns, std::move(lbl),
                          OwnerKind::Workflow, &node_output_types, wf.input_type};
             av.value_types = &wf.value_types;
+            av.coercion_plans = &wf.coercion_plans;
             return av;
         };
         verify_body_value_types(make_view(wf.name));
+        verify_coercion_plans(make_view(wf.name));
         verify_expr_arena(make_view(wf.name));
         verify_pattern_arena(make_view(wf.name));
         std::unordered_set<std::uint32_t> all_definitions;

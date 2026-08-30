@@ -1,6 +1,8 @@
 #include <doctest.h>
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/typed_hir_lower.hpp"
 #include "ahfl/compiler/ir/verify.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
@@ -118,6 +120,55 @@ struct LoweredFixture {
         }
     }
     return false;
+}
+
+[[nodiscard]] bool has_core_lower_code(const ir::core::CoreLowerResult &result,
+                                       std::string_view code) {
+    for (const auto &diagnostic : result.diagnostics) {
+        if (diagnostic.severity == ir::core::CoreDiagnosticSeverity::Error &&
+            diagnostic.code == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] ir::TypeRef
+int_ref(std::optional<std::pair<std::int64_t, std::int64_t>> bounds = std::nullopt) {
+    ir::TypeRef type;
+    type.kind = bounds.has_value() ? ir::TypeRefKind::BoundedInt : ir::TypeRefKind::Int;
+    type.int_bounds = bounds;
+    return type;
+}
+
+[[nodiscard]] ir::TypeRef list_ref(ir::TypeRef element, std::uint64_t capacity) {
+    ir::TypeRef type;
+    type.kind = ir::TypeRefKind::Struct;
+    type.canonical_name = "std::collections::List";
+    type.nominal_ref =
+        ir::SymbolRef{.kind = ir::SymbolRefKind::Type, .canonical_name = "std::collections::List"};
+    type.collection_capacity = capacity;
+    type.params.push_back(std::make_unique<ir::TypeRef>(std::move(element)));
+    return type;
+}
+
+[[nodiscard]] ir::TypeRef fn_ref(ir::TypeRef param, ir::TypeRef result) {
+    ir::TypeRef type;
+    type.kind = ir::TypeRefKind::Fn;
+    type.params.push_back(std::make_unique<ir::TypeRef>(std::move(param)));
+    type.first = std::make_unique<ir::TypeRef>(std::move(result));
+    return type;
+}
+
+[[nodiscard]] std::vector<const ir::core::CoreCoerceExpr *>
+collect_core_coercions(const ir::core::CoreFlowDecl &flow) {
+    std::vector<const ir::core::CoreCoerceExpr *> out;
+    for (const auto &expr : flow.exprs) {
+        if (const auto *coerce = std::get_if<ir::core::CoreCoerceExpr>(&expr.node)) {
+            out.push_back(coerce);
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -304,5 +355,227 @@ TEST_CASE("F2 BackendReady adjustment gate rejects missing or malformed witnesse
             ir::verify_ir_program(fixture->ir, ir::IrVerificationMode::BackendReady);
         CHECK(verified.has_errors());
         CHECK(has_adjustment_error(verified));
+    }
+}
+
+TEST_CASE("F3 Core lowering consumes real scalar and user-variance adjustment plans") {
+    auto fixture = lower_scalar_fixture();
+    REQUIRE(fixture.has_value());
+
+    const auto lowered = ir::core::lower_ahfl_to_core(fixture->ir);
+    for (const auto &diagnostic : lowered.diagnostics) {
+        INFO(diagnostic.code << ": " << diagnostic.message);
+    }
+    REQUIRE(lowered.ok());
+    REQUIRE(lowered.is_executable);
+    REQUIRE(lowered.program.flows.size() == 1);
+    const auto &flow = lowered.program.flows[0];
+    const auto coercions = collect_core_coercions(flow);
+
+    // `wide`, covariant `Box`, and contravariant `Sink` each produce a fresh
+    // Core SSA value. VariantToEnum is erased because both endpoints intern to
+    // the same nominal Core value type, so it leaves neither an expression nor
+    // an orphan plan node.
+    REQUIRE(coercions.size() == 3);
+    REQUIRE(flow.coercion_plans.size() == 5);
+    std::size_t int_widen_nodes = 0;
+    std::size_t type_arg_nodes = 0;
+    for (const auto &node : flow.coercion_plans) {
+        REQUIRE_FALSE(node.ops.empty());
+        if (node.ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden) {
+            ++int_widen_nodes;
+        }
+        if (node.ops[0].kind == ir::core::CoreCoercionOpKind::TypeArg) {
+            ++type_arg_nodes;
+        }
+    }
+    CHECK(int_widen_nodes == 3);
+    CHECK(type_arg_nodes == 2);
+
+    for (const auto *coerce : coercions) {
+        REQUIRE(coerce->plan.value < flow.coercion_plans.size());
+        const auto &root = flow.coercion_plans[coerce->plan.value];
+        REQUIRE(coerce->operand.value < flow.value_types.size());
+        CHECK(flow.value_types[coerce->operand.value] == root.source);
+
+        bool found_fresh_result = false;
+        for (const auto &state : flow.states) {
+            for (const auto &statement : state.body.statements) {
+                if (const auto *let = std::get_if<ir::core::CoreLetStmt>(&statement.node);
+                    let != nullptr && let->expr.value < flow.exprs.size() &&
+                    std::get_if<ir::core::CoreCoerceExpr>(&flow.exprs[let->expr.value].node) ==
+                        coerce) {
+                    CHECK(let->result.value != coerce->operand.value);
+                    REQUIRE(let->result.value < flow.value_types.size());
+                    CHECK(flow.value_types[let->result.value] == root.result);
+                    found_fresh_result = true;
+                }
+            }
+        }
+        CHECK(found_fresh_result);
+    }
+
+    CHECK(ir::core::verify_core_program(lowered.program).ok());
+}
+
+TEST_CASE("F3 Core lowering preserves a composite capacity and element witness") {
+    auto fixture = lower_scalar_fixture();
+    REQUIRE(fixture.has_value());
+    auto *let = first_let(fixture->ir);
+    REQUIRE(let != nullptr);
+
+    const auto source = list_ref(int_ref(std::pair<std::int64_t, std::int64_t>{0, 0}), 4);
+    const auto target = list_ref(int_ref(), 8);
+    let->initializer->resolved_type = ir::clone_type_ref(source);
+    let->type_ref = ir::clone_type_ref(target);
+    ir::AdjustmentPlan plan;
+    plan.source = ir::clone_type_ref(source);
+    plan.target = ir::clone_type_ref(target);
+    plan.root = 0;
+    ir::AdjustmentNode root;
+    root.source = ir::clone_type_ref(source);
+    root.target = ir::clone_type_ref(target);
+    root.ops.push_back(ir::AdjustmentOp{.kind = ir::AdjustmentOpKind::CapacityWiden});
+    root.ops.push_back(
+        ir::AdjustmentOp{.kind = ir::AdjustmentOpKind::TypeArg, .arg_index = 0, .child = 1});
+    ir::AdjustmentNode child;
+    child.source = int_ref(std::pair<std::int64_t, std::int64_t>{0, 0});
+    child.target = int_ref();
+    child.ops.push_back(ir::AdjustmentOp{.kind = ir::AdjustmentOpKind::IntWiden});
+    plan.nodes.push_back(std::move(root));
+    plan.nodes.push_back(std::move(child));
+    let->adjustment = std::move(plan);
+
+    const auto lowered = ir::core::lower_ahfl_to_core(fixture->ir);
+    for (const auto &diagnostic : lowered.diagnostics) {
+        INFO(diagnostic.code << ": " << diagnostic.message);
+    }
+    REQUIRE(lowered.ok());
+    REQUIRE(lowered.program.flows.size() == 1);
+    const auto &flow = lowered.program.flows[0];
+    const auto coercions = collect_core_coercions(flow);
+    REQUIRE(coercions.size() == 3);
+
+    bool found_composite = false;
+    for (const auto &node : flow.coercion_plans) {
+        if (node.ops.size() != 2) {
+            continue;
+        }
+        CHECK(node.ops[0].kind == ir::core::CoreCoercionOpKind::CapacityWiden);
+        CHECK(node.ops[1].kind == ir::core::CoreCoercionOpKind::TypeArg);
+        REQUIRE(node.ops[1].child.value < flow.coercion_plans.size());
+        const auto &element = flow.coercion_plans[node.ops[1].child.value];
+        REQUIRE(element.ops.size() == 1);
+        CHECK(element.ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
+        found_composite = true;
+    }
+    CHECK(found_composite);
+    CHECK(ir::core::verify_core_program(lowered.program).ok());
+}
+
+TEST_CASE("F3 Core lowering preserves function parameter and return variance directions") {
+    auto fixture = lower_scalar_fixture();
+    REQUIRE(fixture.has_value());
+    auto *let = first_let(fixture->ir);
+    REQUIRE(let != nullptr);
+
+    const auto bounded = std::pair<std::int64_t, std::int64_t>{0, 0};
+    const auto source = fn_ref(int_ref(), int_ref(bounded));
+    const auto target = fn_ref(int_ref(bounded), int_ref());
+    let->initializer->resolved_type = ir::clone_type_ref(source);
+    let->type_ref = ir::clone_type_ref(target);
+    ir::AdjustmentPlan plan;
+    plan.source = ir::clone_type_ref(source);
+    plan.target = ir::clone_type_ref(target);
+    plan.root = 0;
+    ir::AdjustmentNode root;
+    root.source = ir::clone_type_ref(source);
+    root.target = ir::clone_type_ref(target);
+    root.ops.push_back(
+        ir::AdjustmentOp{.kind = ir::AdjustmentOpKind::FnParam, .arg_index = 0, .child = 1});
+    root.ops.push_back(ir::AdjustmentOp{.kind = ir::AdjustmentOpKind::FnReturn, .child = 2});
+    ir::AdjustmentNode param;
+    param.source = int_ref(bounded); // target parameter <: source parameter
+    param.target = int_ref();
+    param.ops.push_back(ir::AdjustmentOp{.kind = ir::AdjustmentOpKind::IntWiden});
+    ir::AdjustmentNode result;
+    result.source = int_ref(bounded); // source return <: target return
+    result.target = int_ref();
+    result.ops.push_back(ir::AdjustmentOp{.kind = ir::AdjustmentOpKind::IntWiden});
+    plan.nodes.push_back(std::move(root));
+    plan.nodes.push_back(std::move(param));
+    plan.nodes.push_back(std::move(result));
+    let->adjustment = std::move(plan);
+
+    const auto lowered = ir::core::lower_ahfl_to_core(fixture->ir);
+    for (const auto &diagnostic : lowered.diagnostics) {
+        INFO(diagnostic.code << ": " << diagnostic.message);
+    }
+    REQUIRE(lowered.ok());
+    REQUIRE(lowered.program.flows.size() == 1);
+    const auto &flow = lowered.program.flows[0];
+    bool found_fn = false;
+    for (const auto &node : flow.coercion_plans) {
+        if (node.ops.size() == 2 && node.ops[0].kind == ir::core::CoreCoercionOpKind::FnParam &&
+            node.ops[1].kind == ir::core::CoreCoercionOpKind::FnReturn) {
+            REQUIRE(node.ops[0].child.value < flow.coercion_plans.size());
+            REQUIRE(node.ops[1].child.value < flow.coercion_plans.size());
+            const auto &param_child = flow.coercion_plans[node.ops[0].child.value];
+            const auto &return_child = flow.coercion_plans[node.ops[1].child.value];
+            CHECK(param_child.ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
+            CHECK(return_child.ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
+            found_fn = true;
+        }
+    }
+    CHECK(found_fn);
+    CHECK(ir::core::verify_core_program(lowered.program).ok());
+}
+
+TEST_CASE("F3 Core lowering fails closed on missing and non-materializable adjustments") {
+    SUBCASE("missing non-identity plan") {
+        auto fixture = lower_scalar_fixture();
+        REQUIRE(fixture.has_value());
+        auto *let = first_let(fixture->ir);
+        REQUIRE(let != nullptr);
+        let->adjustment.reset();
+        const auto lowered = ir::core::lower_ahfl_to_core(fixture->ir);
+        CHECK_FALSE(lowered.ok());
+        CHECK(has_core_lower_code(lowered, ir::core::diag::kMissingAdjustment));
+    }
+
+    SUBCASE("ToAny is rejected before Any value-type materialization") {
+        auto fixture = lower_scalar_fixture();
+        REQUIRE(fixture.has_value());
+        auto *let = first_let(fixture->ir);
+        REQUIRE(let != nullptr);
+        REQUIRE(let->adjustment.has_value());
+        let->type_ref.kind = ir::TypeRefKind::Any;
+        let->adjustment->target.kind = ir::TypeRefKind::Any;
+        auto &root = let->adjustment->nodes[let->adjustment->root];
+        root.target.kind = ir::TypeRefKind::Any;
+        root.ops[0].kind = ir::AdjustmentOpKind::ToAny;
+
+        const auto lowered = ir::core::lower_ahfl_to_core(fixture->ir);
+        CHECK_FALSE(lowered.ok());
+        CHECK(has_core_lower_code(lowered, ir::core::diag::kInvalidCoercion));
+        CHECK_FALSE(has_core_lower_code(lowered, ir::core::diag::kUnresolvedType));
+    }
+
+    SUBCASE("FromNever is rejected before Never operand materialization") {
+        auto fixture = lower_scalar_fixture();
+        REQUIRE(fixture.has_value());
+        auto *let = first_let(fixture->ir);
+        REQUIRE(let != nullptr);
+        REQUIRE(let->adjustment.has_value());
+        let->initializer->resolved_type.kind = ir::TypeRefKind::Never;
+        let->adjustment->source.kind = ir::TypeRefKind::Never;
+        auto &root = let->adjustment->nodes[let->adjustment->root];
+        root.source.kind = ir::TypeRefKind::Never;
+        root.ops[0].kind = ir::AdjustmentOpKind::FromNever;
+
+        const auto lowered = ir::core::lower_ahfl_to_core(fixture->ir);
+        CHECK_FALSE(lowered.ok());
+        CHECK(has_core_lower_code(lowered, ir::core::diag::kInvalidCoercion));
+        CHECK_FALSE(has_core_lower_code(lowered, ir::core::diag::kUnresolvedType));
     }
 }

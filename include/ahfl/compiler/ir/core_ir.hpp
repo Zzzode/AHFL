@@ -182,6 +182,14 @@ struct CoreValueTypeId {
     [[nodiscard]] friend bool operator==(CoreValueTypeId, CoreValueTypeId) noexcept = default;
 };
 
+/// Index into a body's normalized coercion-plan arena. A plan id is meaningful
+/// only within its owning CoreFlowDecl/CoreWorkflowDecl.
+struct CoreCoercionPlanId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreCoercionPlanId, CoreCoercionPlanId) noexcept = default;
+};
+
 // ----------------------------------------------------------------------------
 // State-machine node set (minimal orchestration skeleton)
 // ----------------------------------------------------------------------------
@@ -465,6 +473,44 @@ struct CoreConstructExpr {
                                          const CoreConstructExpr &) noexcept = default;
 };
 
+/// One orthogonal operation in a normalized coercion proof node. TypeArg carries
+/// no variance field: the verifier reads the owning CoreTypeDecl::variances SSOT.
+enum class CoreCoercionOpKind {
+    IntWiden,
+    StringWiden,
+    CapacityWiden,
+    TypeArg,
+    FnParam,
+    FnReturn,
+};
+
+struct CoreCoercionOp {
+    CoreCoercionOpKind kind{CoreCoercionOpKind::IntWiden};
+    std::uint32_t arg_index{0};
+    CoreCoercionPlanId child{};
+    [[nodiscard]] friend bool operator==(const CoreCoercionOp &,
+                                         const CoreCoercionOp &) noexcept = default;
+};
+
+/// A normalized proof-tree node. source/result are complete logical value types;
+/// ops name the dimensions that change and point to child proofs for projections.
+struct CoreCoercionPlanNode {
+    CoreValueTypeId source{};
+    CoreValueTypeId result{};
+    std::vector<CoreCoercionOp> ops;
+    [[nodiscard]] friend bool operator==(const CoreCoercionPlanNode &,
+                                         const CoreCoercionPlanNode &) noexcept = default;
+};
+
+/// A pure coercion that consumes an existing SSA value and produces a fresh one.
+/// Physical realization is layout-dependent and deferred to P4-D.
+struct CoreCoerceExpr {
+    CoreValueId operand{};
+    CoreCoercionPlanId plan{};
+    [[nodiscard]] friend bool operator==(const CoreCoerceExpr &,
+                                         const CoreCoerceExpr &) noexcept = default;
+};
+
 /// A structurally-preserved but not-yet-lowered PURE expression (e.g. match,
 /// lambda, index/member access forms deferred to a later sub-slice). It carries
 /// the source expr kind + range so the Core-IR verifier can reject it if a
@@ -485,6 +531,7 @@ using CoreExprNode = std::variant<CoreLiteralExpr,
                                   CoreUnaryExpr,
                                   CoreBinaryExpr,
                                   CoreConstructExpr,
+                                  CoreCoerceExpr,
                                   CoreUnsupportedExpr>;
 
 struct CoreExpr {
@@ -933,6 +980,7 @@ struct CoreFlowDecl {
     /// keep the parallel length, but the verifier only runs on error-free
     /// candidates). Allocated atomically with each value id.
     std::vector<CoreValueTypeId> value_types;
+    std::vector<CoreCoercionPlanNode> coercion_plans; // normalized proof arena
     std::vector<CorePattern> patterns;  // match-pattern arena (Principle 3)
     std::vector<CoreFlowState> states;
     friend bool operator==(const CoreFlowDecl &, const CoreFlowDecl &) noexcept;
@@ -987,6 +1035,7 @@ struct CoreWorkflowDecl {
     /// dense (`size == value_count`) in a lowering-clean workflow. Same contract
     /// as CoreFlowDecl::value_types.
     std::vector<CoreValueTypeId> value_types;
+    std::vector<CoreCoercionPlanNode> coercion_plans; // normalized proof arena
     std::vector<CorePattern> patterns;        // per-workflow pattern arena (match in a node/return region)
     std::vector<CoreWorkflowNode> nodes;      // DAG nodes; index == CoreWorkflowNodeId
     std::unique_ptr<CoreRegion> return_region; // ANF; ends in Yield(output value)
@@ -1370,6 +1419,8 @@ inline constexpr std::string_view kDuplicateInstanceKey = "core.DUPLICATE_INSTAN
 inline constexpr std::string_view kUnresolvedInstanceBase = "core.UNRESOLVED_INSTANCE_BASE";
 inline constexpr std::string_view kUnknownInstanceKind = "core.UNKNOWN_INSTANCE_KIND";
 inline constexpr std::string_view kUnresolvedWorkflowInvocation = "core.UNRESOLVED_WORKFLOW_INVOCATION";
+inline constexpr std::string_view kMissingAdjustment = "core.MISSING_ADJUSTMENT";
+inline constexpr std::string_view kInvalidCoercion = "core.INVALID_COERCION";
 // RFC 0026 P4 (coercion): a real (non-synthetic) declaration of a well-known
 // stdlib generic (Option/Result/List/Set/Map) whose arity or per-parameter
 // variance metadata disagrees with the builtin descriptor SSOT. Fail-closed:
