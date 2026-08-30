@@ -1017,6 +1017,10 @@ enum_variant_payload_kind_from_name(std::string_view name) {
         return "fn_return";
     case TypedAdjustmentOpKind::VariantToEnum:
         return "variant_to_enum";
+    case TypedAdjustmentOpKind::ToAny:
+        return "to_any";
+    case TypedAdjustmentOpKind::FromNever:
+        return "from_never";
     }
     return "int_widen";
 }
@@ -1566,6 +1570,14 @@ read_variance_array(Reader &reader, const Json &object, std::string_view key) {
     }
     if (name == "variant_to_enum") {
         out = TypedAdjustmentOpKind::VariantToEnum;
+        return true;
+    }
+    if (name == "to_any") {
+        out = TypedAdjustmentOpKind::ToAny;
+        return true;
+    }
+    if (name == "from_never") {
+        out = TypedAdjustmentOpKind::FromNever;
         return true;
     }
     return false;

@@ -427,6 +427,55 @@ TEST_CASE("Typed-HIR round-trips a non-empty let_adjustment plan and rejects a b
     CHECK_FALSE(ahfl::deserialize_typed_program_json(corrupt).has_value());
 }
 
+TEST_CASE("Typed-HIR round-trips top and bottom adjustment leaf operations") {
+    ahfl::TypeContext types;
+    const auto int_ty = types.make(ahfl::TypeKind::Int);
+    const auto any_ty = types.make(ahfl::TypeKind::Any);
+    const auto never_ty = types.make(ahfl::TypeKind::Never);
+
+    const auto make_plan =
+        [](ahfl::TypePtr source, ahfl::TypePtr target, ahfl::TypedAdjustmentOpKind kind) {
+            ahfl::TypedAdjustmentPlan plan;
+            plan.source = source;
+            plan.target = target;
+            plan.root = 0;
+            ahfl::TypedAdjustmentNode node;
+            node.source = source;
+            node.target = target;
+            node.ops.push_back(ahfl::TypedAdjustmentOp{.kind = kind});
+            plan.nodes.push_back(std::move(node));
+            return plan;
+        };
+
+    ahfl::TypedProgram program;
+    ahfl::TypedStatement to_any;
+    to_any.kind = ahfl::TypedStmtKind::Let;
+    to_any.node_id = 4301;
+    to_any.target_name = "to_any";
+    to_any.let_type = any_ty;
+    to_any.let_adjustment = make_plan(int_ty, any_ty, ahfl::TypedAdjustmentOpKind::ToAny);
+    program.statements.push_back(std::move(to_any));
+
+    ahfl::TypedStatement from_never;
+    from_never.kind = ahfl::TypedStmtKind::Let;
+    from_never.node_id = 4302;
+    from_never.target_name = "from_never";
+    from_never.let_type = int_ty;
+    from_never.let_adjustment = make_plan(never_ty, int_ty, ahfl::TypedAdjustmentOpKind::FromNever);
+    program.statements.push_back(std::move(from_never));
+
+    const auto back =
+        ahfl::deserialize_typed_program_json(ahfl::serialize_typed_program_json(program));
+    REQUIRE(back.has_value());
+    REQUIRE(back->statements.size() == 2);
+    REQUIRE(back->statements[0].let_adjustment.has_value());
+    REQUIRE(back->statements[1].let_adjustment.has_value());
+    CHECK(back->statements[0].let_adjustment->nodes[0].ops[0].kind ==
+          ahfl::TypedAdjustmentOpKind::ToAny);
+    CHECK(back->statements[1].let_adjustment->nodes[0].ops[0].kind ==
+          ahfl::TypedAdjustmentOpKind::FromNever);
+}
+
 // RFC 0026 P4 (coercion) F1 re-review fix (Codex P1): the typed-HIR plan reader
 // must fail the WHOLE deserialize closed when an inner structural field is the
 // wrong JSON kind (nodes/ops not an array, a node/op item not an object, an

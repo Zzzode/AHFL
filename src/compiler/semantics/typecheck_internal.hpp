@@ -611,6 +611,12 @@ class TypeCheckPass final {
                                         SourceRange range,
                                         std::string_view context_label,
                                         const TypeExpectation &expectation);
+    [[nodiscard]] bool check_assignable(const Type &source,
+                                        const Type &target,
+                                        SourceRange range,
+                                        std::string_view context_label,
+                                        const TypeExpectation &expectation,
+                                        std::optional<TypedAdjustmentPlan> *adjustment_out);
     [[nodiscard]] bool check_exact_schema_boundary(const Type &source,
                                                    const Type &target,
                                                    SchemaBoundaryKind boundary,

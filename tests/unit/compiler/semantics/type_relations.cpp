@@ -565,6 +565,176 @@ TEST_CASE("MemoizedRelationSolver reuses proven and disproven relation states") 
     CHECK(solver.stats().disproven > 0);
 }
 
+TEST_CASE("F2 assignability decision materializes canonical scalar and composite witnesses") {
+    using namespace ahfl;
+    auto &tc = TypeContext::global();
+    const auto bounded = tc.bounded_int(0, 0);
+    const auto plain = tc.make(TypeKind::Int);
+
+    {
+        TypeRelationContext ctx;
+        const auto decision = decide_assignability(*bounded, *plain, ctx);
+        REQUIRE(decision.accepted);
+        REQUIRE(decision.adjustment.has_value());
+        const auto &plan = *decision.adjustment;
+        CHECK(plan.source == bounded);
+        CHECK(plan.target == plain);
+        REQUIRE(plan.nodes.size() == 1);
+        CHECK(plan.root == 0);
+        REQUIRE(plan.nodes[0].ops.size() == 1);
+        CHECK(plan.nodes[0].ops[0].kind == TypedAdjustmentOpKind::IntWiden);
+        CHECK(plan.nodes[0].ops[0].child == kInvalidAdjustmentNode);
+    }
+
+    {
+        const auto source = bounded_list_type(tc, bounded, 4);
+        const auto target = bounded_list_type(tc, plain, 8);
+        TypeRelationContext ctx;
+        const auto decision = decide_assignability(*source, *target, ctx);
+        REQUIRE(decision.accepted);
+        REQUIRE(decision.adjustment.has_value());
+        const auto &plan = *decision.adjustment;
+        REQUIRE(plan.nodes.size() == 2);
+        REQUIRE(plan.nodes[plan.root].ops.size() == 2);
+        CHECK(plan.nodes[plan.root].ops[0].kind == TypedAdjustmentOpKind::CapacityWiden);
+        CHECK(plan.nodes[plan.root].ops[1].kind == TypedAdjustmentOpKind::TypeArg);
+        CHECK(plan.nodes[plan.root].ops[1].arg_index == 0);
+        const auto child = plan.nodes[plan.root].ops[1].child;
+        REQUIRE(child < plan.nodes.size());
+        REQUIRE(plan.nodes[child].ops.size() == 1);
+        CHECK(plan.nodes[child].ops[0].kind == TypedAdjustmentOpKind::IntWiden);
+    }
+
+    {
+        const auto source = option_type(tc, bounded);
+        const auto target = option_type(tc, plain);
+        TypeRelationContext ctx;
+        const auto decision = decide_assignability(*source, *target, ctx);
+        REQUIRE(decision.accepted);
+        REQUIRE(decision.adjustment.has_value());
+        const auto &root = decision.adjustment->nodes[decision.adjustment->root];
+        REQUIRE(root.ops.size() == 1);
+        CHECK(root.ops[0].kind == TypedAdjustmentOpKind::TypeArg);
+        CHECK(root.ops[0].arg_index == 0);
+    }
+}
+
+TEST_CASE("F2 witness memo returns the same witness id and numeric widening fails closed") {
+    using namespace ahfl;
+    auto &tc = TypeContext::global();
+    const auto bounded = tc.bounded_string(2, 8);
+    const auto plain = tc.string();
+
+    TypeRelationContext ctx;
+    MemoizedRelationSolver solver(ctx, true);
+    const auto first = solver.solve(TypeRelationKind::Assignable, *bounded, *plain);
+    const auto second = solver.solve(TypeRelationKind::Assignable, *bounded, *plain);
+    REQUIRE(first.accepted);
+    REQUIRE(second.accepted);
+    CHECK(first.witness == second.witness);
+    CHECK(solver.stats().cache_hits >= 1);
+    REQUIRE(solver.materialize(*bounded, *plain, first.witness).has_value());
+
+    TypeRelationOptions numeric_options;
+    numeric_options.allow_numeric_widening = true;
+    TypeRelationContext numeric_ctx(numeric_options);
+    const auto numeric =
+        decide_assignability(*tc.make(TypeKind::Int), *tc.make(TypeKind::Float), numeric_ctx);
+    CHECK_FALSE(numeric.accepted);
+    CHECK(numeric.failure == RelationFailure::UnsupportedAdjustment);
+}
+
+TEST_CASE("F2 witnesses top and bottom boundaries with explicit leaf operations") {
+    using namespace ahfl;
+    auto &tc = TypeContext::global();
+    const auto integer = tc.make(TypeKind::Int);
+    const auto any = tc.make(TypeKind::Any);
+    const auto never = tc.make(TypeKind::Never);
+
+    TypeRelationContext top_ctx;
+    const auto to_any = decide_assignability(*integer, *any, top_ctx);
+    REQUIRE(to_any.accepted);
+    REQUIRE(to_any.adjustment.has_value());
+    REQUIRE(to_any.adjustment->nodes.size() == 1);
+    REQUIRE(to_any.adjustment->nodes[0].ops.size() == 1);
+    CHECK(to_any.adjustment->nodes[0].ops[0].kind == TypedAdjustmentOpKind::ToAny);
+    CHECK(to_any.adjustment->nodes[0].ops[0].child == kInvalidAdjustmentNode);
+
+    TypeRelationContext bottom_ctx;
+    const auto from_never = decide_assignability(*never, *integer, bottom_ctx);
+    REQUIRE(from_never.accepted);
+    REQUIRE(from_never.adjustment.has_value());
+    REQUIRE(from_never.adjustment->nodes.size() == 1);
+    REQUIRE(from_never.adjustment->nodes[0].ops.size() == 1);
+    CHECK(from_never.adjustment->nodes[0].ops[0].kind == TypedAdjustmentOpKind::FromNever);
+    CHECK(from_never.adjustment->nodes[0].ops[0].child == kInvalidAdjustmentNode);
+}
+
+TEST_CASE("F2 witnesses user variance, function direction, and variant provenance") {
+    using namespace ahfl;
+    auto &tc = TypeContext::global();
+    const auto bounded = tc.bounded_int(0, 0);
+    const auto plain = tc.make(TypeKind::Int);
+
+    TypeRelationContext nominal_ctx;
+    nominal_ctx.set_variance_provider([](std::string_view name) {
+        if (name == "pkg::Box") {
+            return std::vector{Variance::Covariant};
+        }
+        if (name == "pkg::Sink") {
+            return std::vector{Variance::Contravariant};
+        }
+        return std::vector<Variance>{};
+    });
+    const auto box_source = tc.struct_type("pkg::Box", SymbolId{501}, {bounded});
+    const auto box_target = tc.struct_type("pkg::Box", SymbolId{501}, {plain});
+    const auto box = decide_assignability(*box_source, *box_target, nominal_ctx);
+    REQUIRE(box.accepted);
+    REQUIRE(box.adjustment.has_value());
+    CHECK(box.adjustment->nodes[box.adjustment->root].ops[0].kind ==
+          TypedAdjustmentOpKind::TypeArg);
+
+    const auto sink_source = tc.struct_type("pkg::Sink", SymbolId{502}, {plain});
+    const auto sink_target = tc.struct_type("pkg::Sink", SymbolId{502}, {bounded});
+    const auto sink = decide_assignability(*sink_source, *sink_target, nominal_ctx);
+    REQUIRE(sink.accepted);
+    REQUIRE(sink.adjustment.has_value());
+    const auto sink_child = sink.adjustment->nodes[sink.adjustment->root].ops[0].child;
+    CHECK(sink.adjustment->nodes[sink_child].source == bounded);
+    CHECK(sink.adjustment->nodes[sink_child].target == plain);
+
+    const auto pure = EffectJudgement::make_pure();
+    const auto fn_source = tc.fn({plain}, bounded, pure);
+    const auto fn_target = tc.fn({bounded}, plain, pure);
+    TypeRelationContext fn_ctx;
+    const auto fn = decide_assignability(*fn_source, *fn_target, fn_ctx);
+    REQUIRE(fn.accepted);
+    REQUIRE(fn.adjustment.has_value());
+    const auto &fn_ops = fn.adjustment->nodes[fn.adjustment->root].ops;
+    REQUIRE(fn_ops.size() == 2);
+    CHECK(fn_ops[0].kind == TypedAdjustmentOpKind::FnParam);
+    CHECK(fn_ops[1].kind == TypedAdjustmentOpKind::FnReturn);
+
+    const auto nondet = EffectJudgement::make_nondet();
+    const auto effect_source = tc.fn({plain}, plain, pure);
+    const auto effect_target = tc.fn({plain}, plain, nondet);
+    TypeRelationContext effect_ctx;
+    const auto effect_only = decide_assignability(*effect_source, *effect_target, effect_ctx);
+    REQUIRE(effect_only.accepted);
+    REQUIRE(effect_only.adjustment.has_value());
+    CHECK(effect_only.adjustment->nodes[effect_only.adjustment->root].ops.empty());
+
+    const auto owner = tc.enum_type("pkg::Maybe", SymbolId{503}, {plain});
+    const auto variant = tc.enum_variant_type("pkg::Maybe", "Some", SymbolId{503}, {plain});
+    TypeRelationContext variant_ctx;
+    const auto variant_decision = decide_assignability(*variant, *owner, variant_ctx);
+    REQUIRE(variant_decision.accepted);
+    REQUIRE(variant_decision.adjustment.has_value());
+    REQUIRE(variant_decision.adjustment->nodes.size() == 1);
+    CHECK(variant_decision.adjustment->nodes[0].ops[0].kind ==
+          TypedAdjustmentOpKind::VariantToEnum);
+}
+
 TEST_CASE("MemoizedRelationSolver applies coinductive visiting assumption") {
     using namespace ahfl;
 
@@ -588,6 +758,23 @@ TEST_CASE("MemoizedRelationSolver applies coinductive visiting assumption") {
 
     CHECK(solver.equivalent(left, right));
     CHECK(solver.stats().coinductive_assumptions == 1);
+
+    // The ordinary boolean API preserves the legacy coinductive assumption,
+    // but a serializable witness may not contain a recursive back-edge.
+    TypeRelationContext witness_ctx;
+    MemoizedRelationSolver witness_solver(witness_ctx, true);
+    const auto witness_relation = witness_solver.solve(TypeRelationKind::Assignable, left, right);
+    const auto witness = AssignabilityDecision{
+        .accepted = witness_relation.accepted,
+        .adjustment = witness_relation.accepted
+                          ? witness_solver.materialize(left, right, witness_relation.witness)
+                          : std::nullopt,
+        .failure = witness_relation.failure,
+    };
+    CHECK_FALSE(witness.accepted);
+    CHECK(witness.failure == RelationFailure::VisitingCycle);
+    CHECK_FALSE(witness.adjustment.has_value());
+    CHECK(witness_solver.stats().witness_cycle_rejections == 1);
 }
 
 TEST_CASE("MemoizedRelationSolver fails closed at depth guard") {

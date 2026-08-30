@@ -2496,12 +2496,44 @@ bool TypeCheckPass::check_assignable(const Type &source,
                                      SourceRange range,
                                      std::string_view context_label,
                                      const TypeExpectation &expectation) {
+    return check_assignable(source, target, range, context_label, expectation, nullptr);
+}
+
+bool TypeCheckPass::check_assignable(const Type &source,
+                                     const Type &target,
+                                     SourceRange range,
+                                     std::string_view context_label,
+                                     const TypeExpectation &expectation,
+                                     std::optional<TypedAdjustmentPlan> *adjustment_out) {
     if (is_error_type(source) || is_error_type(target)) {
         return true;
     }
 
-    if (ahfl::is_assignable_to(source, target, relations_)) {
+    if (adjustment_out == nullptr && ahfl::is_assignable_to(source, target, relations_)) {
         return true;
+    }
+    if (adjustment_out != nullptr) {
+        adjustment_out->reset();
+        auto decision = ahfl::decide_assignability(source, target, relations_);
+        if (decision.accepted) {
+            if (&source != &target) {
+                *adjustment_out = std::move(decision.adjustment);
+            }
+            return true;
+        }
+        if (decision.failure == RelationFailure::VisitingCycle) {
+            typecheck_error_here(error_codes::typecheck::CoercionWitnessCycle,
+                                 messages::typecheck::CoercionWitnessCycle.format_with(),
+                                 range);
+            return false;
+        }
+        if (decision.failure == RelationFailure::DepthLimit ||
+            decision.failure == RelationFailure::UnsupportedAdjustment) {
+            typecheck_error_here(error_codes::typecheck::UnsupportedCoercionWitness,
+                                 messages::typecheck::UnsupportedCoercionWitness.format_with(),
+                                 range);
+            return false;
+        }
     }
 
     // RFC 0025: specialized capacity-overflow diagnostic (Principle 5) before
@@ -3893,6 +3925,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         let_context.try_allowed = !statement.let_stmt->is_wildcard;
         const auto initializer =
             check_expr(*statement.let_stmt->initializer, let_context, expected);
+        std::optional<TypedAdjustmentPlan> let_adjustment;
         if (expected.has_value() && statement.let_stmt->type) {
             const auto expectation = TypeExpectation{
                 .expected = expected->get().clone(),
@@ -3905,7 +3938,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                    expected->get(),
                                    statement.let_stmt->initializer->range,
                                    "let initializer",
-                                   expectation);
+                                   expectation,
+                                   &let_adjustment);
         } else if (expected.has_value()) {
             (void)check_assignable(*initializer.type,
                                    expected->get(),
@@ -3982,7 +4016,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type = std::move(let_type),
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = {},
-            .let_adjustment = std::nullopt,
+            .let_adjustment = std::move(let_adjustment),
         });
         break;
     }

@@ -72,6 +72,7 @@ node.ops 的顺序 = capacity 先、再 TypeArg 按 arg index 升序;Fn 的 FnPa
   enum class TypedAdjustmentOpKind {
       IntWiden, StringWiden, CapacityWiden, TypeArg, FnParam, FnReturn,
       VariantToEnum,   // P0-1:EnumVariantT <: EnumT(见下)
+      ToAny, FromNever // top/bottom subtype 规则的显式叶证明
   };
   struct TypedAdjustmentOp { TypedAdjustmentOpKind kind; uint32 arg_index; uint32 child; };
   // 注:无 variance 字段(P1-1)——方向在 Core verifier 从 CoreTypeDecl.variances 读;
@@ -89,6 +90,7 @@ node.ops 的顺序 = capacity 先、再 TypeArg 按 arg index 升序;Fn 的 FnPa
   let m: Maybe = v;                // path source 是 variant,target 是 owner enum
   ```
   第一个值 Core-lowerable(P4-A 已把 EnumVariant TypeRef 归一到 owner `CoreVtNominal`)。故第二个边界 **Core 无需物理 coercion**,但 AHFL-IR 层 initializer TypeRef 仍带 `variant_name`,`type_refs_equal` 判其 != target enum。加 `VariantToEnum`(同 resolved nominal id + args 逐位置 equivalent + 变体真实存在):Typed→AHFL 保留为语义 provenance(IR 边界类型不同,不能缺 plan 否则 §7 拒);**AHFL→Core normalization 时擦除**(两端 intern 到**同一** CoreValueTypeId),elision 在 §3 P0-4 规则下合法(Core source_ty==target_ty)。**此 op 不进 `CoreCoercionOp`**(与 effect-only 同类,是 IR 边界的语义证明、Core 无对应转换)。加两-let real frontend probe。
+- **F2 forward-fix:`ToAny` / `FromNever`**:`T <: Any` 与 `Never <: T` 不能产空 ops；否则非 identity 边界既不能省略 plan，又会被完整性 verifier 判为“改变未命名维度”。两条规则分别产唯一叶 op `ToAny` / `FromNever`。AHFL verifier 锁方向(`target==Any && source!=Any` / `source==Never && target!=Never`)、无 child、`arg_index==0`、且为 node 唯一 op。`Any`/`Never` 不是源码可写类型，因此 probe 以 relation solver + hand-built AHFL verifier/serialization 覆盖；F3 在 Core value-type lowering 边界显式裁决可表示性，不能静默擦除或重标 SSA 类型。
 - **P0-2 Visiting/coinductive(定死,不留开放)**:witness-producing assignability query **在 `Visiting` 命中时 fail-closed**(不走 coinductive assumption),因为 Typed/AHFL/Core plan verifier 都要求 3-color 无环,真正 revisit 会产 cyclic witness,序列化/verifier 必拒——placeholder-finalize 解决不了 final-plan 无环要求。本片 let 用到的 source Type 图是**有限的**结构 args / Fn params / ret(subtype **不**遍历 nominal 字段递归),故 witness query 不会 revisit;文档 + probe 明确这点。普通 bool relation 行为**不变**(其它分析若依赖 coinduction 照旧)。将来若有 equirecursive coercion,单独设计显式有限 `RecursiveAssumption` proof node,**不序列化 cyclic plan**。
 - **memo 结果携 witness**:`RelationDecision { bool accepted; TypedAdjustmentNodeId witness; }`(witness 指向**本次 materialize 的 arena**,不是 solver-local id);memo entry `{RelationState state; TypedAdjustmentNodeId witness;}`。Proven cache hit 连 witness 一起 return。public `is_subtype_of`/`is_assignable_to` 只投影 `.accepted`(现有 caller 不变);annotated-let caller 取 witness + materialize 进 statement。若全返回类型重构过大 → 抽 `BoolPolicy`/`WitnessPolicy` 复用**同一组 rule case 定义**,不留两套遍历。
 - **纯 equiv/identity 子树**:witness node 无 op(Identity)。materialize 时保留结构位置(证明是哪一维,虽无 op),但 lower 到 Core 时规范化掉(§3)。
@@ -174,7 +176,7 @@ Codex 锁:把推断结果**物化成唯一 SSOT**,不再开第二条 query。
 - plan present 的 source/target 必**等于**这两个边界类型(source==initializer.resolved_type, target==let.type_ref)。
 - plan arena root/children 在界、无环(3-color)、所有 TypeRef resolved(非 Unresolved)。
 - **plan present 在 equal 边界(source==target 且无真实 op)→ 拒(identity)**;但 effect-only 已在 bridge 擦除(§6),不会到这。
-- **BackendReady 结构完整校验(P1-2,不只 root/child bounds + resolved)**:用 TypeRef + 声明 variance metadata(ir decl 的 type_param_variances)对每 node/op 校验 kind/投影/方向/bounds/coverage——镜像 §4 Core verifier 的规则,但在 AHFL-IR 层跑:op 唯一性(每维度至多一 op)、op kind ↔ node TypeRef 形状、TypeArg 方向 == 声明 variance(逆变 child 方向反转)、未命名维度相等、bounds ⊆。**一个被篡改的 `IntWiden` 挂在 nominal node 上、或方向错的 contravariant child,必须在 AHFL-IR verification 就 fail(Core lowering 之前)**,不能只查 root/child bounds。
+- **BackendReady 结构完整校验(P1-2,不只 root/child bounds + resolved)**:用 TypeRef + 声明 variance metadata(ir decl 的 type_param_variances)对每 node/op 校验 kind/投影/方向/bounds/coverage——镜像 §4 Core verifier 的规则,但在 AHFL-IR 层跑:op 唯一性(每维度至多一 op)、canonical 顺序(capacity 先、type arg / Fn param 按 index、Fn return 最后)、op kind ↔ node TypeRef 形状、TypeArg 方向 == 声明 variance(逆变 child 方向反转)、VariantToEnum 的变体确实存在、ToAny/FromNever 方向、未命名维度相等、bounds ⊆。**一个被篡改的 `IntWiden` 挂在 nominal node 上、或方向错的 contravariant child,必须在 AHFL-IR verification 就 fail(Core lowering 之前)**,不能只查 root/child bounds。
 - BackendReady 对每个 annotated let 强制上述。
 - **wrong/missing plan round-trip 测试**:断言结构相等(round-trip 保真)+ 篡改后 verifier 拒(丢 plan / source-target 不符 / child 越界 / equal 边界带 plan / IntWiden-on-nominal / contravariant child 方向错)。
 
@@ -187,6 +189,7 @@ Codex 锁:把推断结果**物化成唯一 SSOT**,不再开第二条 query。
 - **同时 `List<Int(0,0)>(4) -> List<Int>(8)`**:root=[CapacityWiden, TypeArg{0,IntWiden}](rev 1/2 会回归的 case 现通过)。
 - user covariant `Box<T>{value:T}`:`let b: Box<Int> = <Box<Int(0,0)>>` → [TypeArg{0,IntWiden}],CoreTypeDecl.variances[Box]==[Cov]。
 - **VariantToEnum(P0-1)**:`let v = Maybe::Some(input.id); let m: Maybe = v;`(两-let)——第二个 let source 是 EnumVariantT、target 是 owner enum。Typed/AHFL 带 VariantToEnum witness op;AHFL→Core 擦除(两端 intern 同一 CoreVtNominal),**不产 CoreCoerceExpr**(Core source_ty==target_ty,§3 P0-4 合法 elide)。断言 lower 干净 + arena 无 CoreCoerceExpr。
+- top/bottom helper rules:`T <: Any` 产唯一 `ToAny` 叶、`Never <: T` 产唯一 `FromNever` 叶；wire round-trip 保真，错误方向/child/额外 op 在 AHFL BackendReady 阶段拒绝。因两类型不可在源码显式书写，此项不伪造“real frontend”正例。
 - **Fn param 逆变 + return 协变**:capability 返回 `(Int) -> Int(0,0)`,`let f: (Int) -> Int = <that>` → root=[FnReturn{child: Int(0,0)<:Int}](param 无变则无 FnParam;若 param 变则 FnParam child 方向反转,按 §1.2)。
 - **user contravariant nominal**(补 arity/variance 桥后):capability 返回 `Sink<Int>`,`let s: Sink<Int(0,0)> = <that>` → [TypeArg{0,child 方向反转}](Sink<T> 的 T 在 Fn param 位 → CoreTypeDecl.variances[Sink]==[Contra],verifier 据此锁 child 反向)。
 - effect-only Fn 关系:擦除后边界相等 → **不产 CoreCoerceExpr**(断言 arena 无)。

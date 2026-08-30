@@ -75,7 +75,7 @@ TEST_CASE("IR JSON deserializer rejects malformed input") {
 
 // RFC 0026 P4 (coercion) F1: a NON-EMPTY LetStatement adjustment plan must
 // round-trip through IR JSON byte-for-byte (a public IR field must never
-// silent-drop, even while the plan is inert with no producer). Builds a program
+// silent-drop). Builds a program
 // with a `let` carrying a compositional plan (a List<Int(0,0)>(4) -> List<Int>(8)
 // shape: one root node with CapacityWiden + TypeArg{0} whose child is IntWiden),
 // prints it, parses it back, prints again, and asserts the two texts match.
@@ -165,6 +165,78 @@ TEST_CASE("IR JSON round-trips a non-empty LetStatement adjustment plan") {
     CHECK(let_out->adjustment->nodes[0].ops[1].child == 1);
     REQUIRE(let_out->adjustment->nodes[1].ops.size() == 1);
     CHECK(let_out->adjustment->nodes[1].ops[0].kind == AdjustmentOpKind::IntWiden);
+}
+
+TEST_CASE("IR JSON round-trips top and bottom adjustment leaf operations") {
+    using namespace ahfl::ir;
+
+    const auto type = [](TypeRefKind kind) {
+        TypeRef out;
+        out.kind = kind;
+        return out;
+    };
+    const auto make_plan = [](TypeRef source, TypeRef target, AdjustmentOpKind kind) {
+        AdjustmentPlan plan;
+        plan.source = clone_type_ref(source);
+        plan.target = clone_type_ref(target);
+        plan.root = 0;
+        AdjustmentNode node;
+        node.source = std::move(source);
+        node.target = std::move(target);
+        node.ops.push_back(AdjustmentOp{.kind = kind});
+        plan.nodes.push_back(std::move(node));
+        return plan;
+    };
+
+    Program program;
+    StateHandler handler;
+    handler.state_name = "S";
+
+    auto to_any = std::make_unique<Statement>();
+    LetStatement to_any_let;
+    to_any_let.name = "to_any";
+    to_any_let.type_ref = type(TypeRefKind::Any);
+    to_any_let.initializer = program.expr_arena.make(IntegerLiteralExpr{"1"});
+    to_any_let.adjustment =
+        make_plan(type(TypeRefKind::Int), type(TypeRefKind::Any), AdjustmentOpKind::ToAny);
+    to_any->node = std::move(to_any_let);
+    handler.body.statements.push_back(std::move(to_any));
+
+    auto from_never = std::make_unique<Statement>();
+    LetStatement from_never_let;
+    from_never_let.name = "from_never";
+    from_never_let.type_ref = type(TypeRefKind::Int);
+    from_never_let.initializer = program.expr_arena.make(IntegerLiteralExpr{"2"});
+    from_never_let.adjustment =
+        make_plan(type(TypeRefKind::Never), type(TypeRefKind::Int), AdjustmentOpKind::FromNever);
+    from_never->node = std::move(from_never_let);
+    handler.body.statements.push_back(std::move(from_never));
+
+    FlowDecl flow;
+    flow.target_ref.kind = SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    std::ostringstream out;
+    ahfl::print_program_ir_json(program, out);
+    CHECK(out.str().find("\"to_any\"") != std::string::npos);
+    CHECK(out.str().find("\"from_never\"") != std::string::npos);
+    const auto back = ahfl::parse_program_ir_json(out.str());
+    REQUIRE(back.has_value());
+    const auto *flow_out = std::get_if<FlowDecl>(&back->declarations[0]);
+    REQUIRE(flow_out != nullptr);
+    REQUIRE(flow_out->state_handlers[0].body.statements.size() == 2);
+    const auto *to_any_out =
+        std::get_if<LetStatement>(&flow_out->state_handlers[0].body.statements[0]->node);
+    const auto *from_never_out =
+        std::get_if<LetStatement>(&flow_out->state_handlers[0].body.statements[1]->node);
+    REQUIRE(to_any_out != nullptr);
+    REQUIRE(from_never_out != nullptr);
+    REQUIRE(to_any_out->adjustment.has_value());
+    REQUIRE(from_never_out->adjustment.has_value());
+    CHECK(to_any_out->adjustment->nodes[0].ops[0].kind == AdjustmentOpKind::ToAny);
+    CHECK(from_never_out->adjustment->nodes[0].ops[0].kind == AdjustmentOpKind::FromNever);
 }
 
 namespace {

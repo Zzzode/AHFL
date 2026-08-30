@@ -558,11 +558,11 @@ bool equivalent_impl(const Type &lhs,
 // Apply the variance rule for one type-argument pair: Covariant defers to
 // source <: target, Contravariant to target <: source, Invariant to
 // equivalence. Returns whether the pair satisfies the relation.
-[[nodiscard]] bool solve_variant_arg(MemoizedRelationSolver &solver,
-                                     Variance variance,
-                                     const Type &source_arg,
-                                     const Type &target_arg,
-                                     const std::string &path) {
+[[nodiscard]] RelationDecision solve_variant_arg(MemoizedRelationSolver &solver,
+                                                 Variance variance,
+                                                 const Type &source_arg,
+                                                 const Type &target_arg,
+                                                 const std::string &path) {
     switch (variance) {
     case Variance::Covariant:
         return solver.solve(TypeRelationKind::Subtype, source_arg, target_arg, path);
@@ -574,18 +574,19 @@ bool equivalent_impl(const Type &lhs,
     return solver.solve(TypeRelationKind::Equivalent, source_arg, target_arg, path);
 }
 
+RelationDecision subtype_impl(const Type &source,
+                              const Type &target,
+                              TypeRelationContext *ctx,
+                              const std::string &path,
+                              MemoizedRelationSolver &solver);
 
-bool subtype_impl(const Type &source,
-                  const Type &target,
-                  TypeRelationContext *ctx,
-                  const std::string &path,
-                  MemoizedRelationSolver &solver);
-
-bool subtype_leaf(const Type &source,
-                  const Type &target,
-                  TypeRelationContext *ctx,
-                  const std::string &path,
-                  bool value) {
+RelationDecision subtype_leaf(const Type &source,
+                              const Type &target,
+                              TypeRelationContext *ctx,
+                              const std::string &path,
+                              MemoizedRelationSolver &solver,
+                              bool value,
+                              std::vector<TypedAdjustmentOp> ops = {}) {
     sync_trace(ctx, TypeRelationKind::Subtype, path, target.describe(), source.describe(), value);
     if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
         TypeConstraintNode n;
@@ -598,14 +599,17 @@ bool subtype_leaf(const Type &source,
         ctx->push_node(std::move(n));
         ctx->pop_node();
     }
-    return value;
+    if (!value) {
+        return {};
+    }
+    return solver.accepted_node(source, target, std::move(ops));
 }
 
-bool subtype_impl(const Type &source,
-                  const Type &target,
-                  TypeRelationContext *ctx,
-                  const std::string &path,
-                  MemoizedRelationSolver &solver) {
+RelationDecision subtype_impl(const Type &source,
+                              const Type &target,
+                              TypeRelationContext *ctx,
+                              const std::string &path,
+                              MemoizedRelationSolver &solver) {
     // Disjunction: subtype can succeed via equivalence, via top/bottom type
     // rules, via structural covariance, or via any of the specific
     // relaxations. Model this as an Or node when the skeleton is enabled.
@@ -613,32 +617,58 @@ bool subtype_impl(const Type &source,
 
     // Pointer identity short-circuit.
     if (&source == &target) {
-        return subtype_leaf(source, target, ctx, join_path(path, "identical"), true);
+        return subtype_leaf(source, target, ctx, join_path(path, "identical"), solver, true);
     }
 
     // Error propagation: Error is both top-and-bottom for error recovery — it is
     // compatible with every type in both directions so a single error doesn't
     // cascade into dozens of spurious secondary diagnostics.
     if (source.holds<types::ErrorT>() || target.holds<types::ErrorT>()) {
-        return subtype_leaf(source, target, ctx, join_path(path, "error"), true);
+        if (solver.produces_witness() && &source != &target) {
+            return solver.fail(RelationFailure::UnsupportedAdjustment);
+        }
+        return subtype_leaf(source, target, ctx, join_path(path, "error"), solver, true);
     }
 
     // Any is the top type: every type is a subtype of Any.
     if (target.holds<types::AnyT>()) {
-        return subtype_leaf(source, target, ctx, join_path(path, "any-top"), true);
+        return subtype_leaf(source,
+                            target,
+                            ctx,
+                            join_path(path, "any-top"),
+                            solver,
+                            true,
+                            {TypedAdjustmentOp{
+                                .kind = TypedAdjustmentOpKind::ToAny,
+                                .arg_index = 0,
+                                .child = kInvalidAdjustmentNode,
+                            }});
     }
 
     // Never is the bottom type: Never is a subtype of every type.
     if (source.holds<types::NeverT>()) {
-        return subtype_leaf(source, target, ctx, join_path(path, "never-bottom"), true);
+        return subtype_leaf(source,
+                            target,
+                            ctx,
+                            join_path(path, "never-bottom"),
+                            solver,
+                            true,
+                            {TypedAdjustmentOp{
+                                .kind = TypedAdjustmentOpKind::FromNever,
+                                .arg_index = 0,
+                                .child = kInvalidAdjustmentNode,
+                            }});
     }
 
     // Branch 1: equivalence. Relation kind is part of the solver key, so
     // equivalence and subtype cache entries stay separate.
-    const bool eq =
+    const RelationDecision eq =
         solver.solve(TypeRelationKind::Equivalent, source, target, join_path(path, "equiv"));
     if (eq) {
-        return true;
+        return eq;
+    }
+    if (eq.failure != RelationFailure::None) {
+        return eq;
     }
 
     // Nominal generic subtyping for struct / enum.
@@ -656,10 +686,12 @@ bool subtype_impl(const Type &source,
         const auto *t = target.get_if<types::StructT>();
         if (s != nullptr && t != nullptr) {
             if (!nominal_name_matches(s->symbol, s->canonical_name, t->symbol, t->canonical_name)) {
-                return subtype_leaf(source, target, ctx, join_path(path, "struct.name"), false);
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "struct.name"), solver, false);
             }
             if (s->type_args.size() != t->type_args.size()) {
-                return subtype_leaf(source, target, ctx, join_path(path, "struct.arity"), false);
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "struct.arity"), solver, false);
             }
             const auto src_container = stdlib_bridge::std_container_type_view(source);
             if (src_container.has_value() && src_container->nominal &&
@@ -672,8 +704,20 @@ bool subtype_impl(const Type &source,
                     // bounded target requires source_cap <= target_cap and
                     // rejects an unbounded source).
                     if (!capacity_assignable(s->capacity, t->capacity)) {
-                        return subtype_leaf(
-                            source, target, ctx, join_path(path, "collection.capacity"), false);
+                        return subtype_leaf(source,
+                                            target,
+                                            ctx,
+                                            join_path(path, "collection.capacity"),
+                                            solver,
+                                            false);
+                    }
+                    std::vector<TypedAdjustmentOp> ops;
+                    if (s->capacity != t->capacity) {
+                        ops.push_back(TypedAdjustmentOp{
+                            .kind = TypedAdjustmentOpKind::CapacityWiden,
+                            .arg_index = 0,
+                            .child = kInvalidAdjustmentNode,
+                        });
                     }
                     switch (src_container->kind) {
                     case stdlib_bridge::StdContainerKind::Option:
@@ -685,26 +729,54 @@ bool subtype_impl(const Type &source,
                                 : (src_container->kind == stdlib_bridge::StdContainerKind::List
                                        ? "list.element"
                                        : "set.element");
-                        return solver.solve(TypeRelationKind::Subtype,
-                                            *src_container->first,
-                                            *tgt_container->first,
-                                            join_path(path, seg));
+                        const auto child = solver.solve(TypeRelationKind::Subtype,
+                                                        *src_container->first,
+                                                        *tgt_container->first,
+                                                        join_path(path, seg));
+                        if (!child) {
+                            return child;
+                        }
+                        if (!solver.witness_is_identity(child.witness)) {
+                            ops.push_back(TypedAdjustmentOp{
+                                .kind = TypedAdjustmentOpKind::TypeArg,
+                                .arg_index = 0,
+                                .child = child.witness,
+                            });
+                        }
+                        return solver.accepted_node(source, target, std::move(ops));
                     }
                     case stdlib_bridge::StdContainerKind::Map:
                         if (src_container->second == nullptr || tgt_container->second == nullptr) {
-                            return false;
+                            return {};
                         }
                         if (!solver.solve(TypeRelationKind::Equivalent,
                                           *src_container->first,
                                           *tgt_container->first,
                                           join_path(path, "map.key"))) {
-                            return subtype_leaf(
-                                source, target, ctx, join_path(path, "map.key-mismatch"), false);
+                            return subtype_leaf(source,
+                                                target,
+                                                ctx,
+                                                join_path(path, "map.key-mismatch"),
+                                                solver,
+                                                false);
                         }
-                        return solver.solve(TypeRelationKind::Subtype,
-                                            *src_container->second,
-                                            *tgt_container->second,
-                                            join_path(path, "map.value"));
+                        {
+                            const auto child = solver.solve(TypeRelationKind::Subtype,
+                                                            *src_container->second,
+                                                            *tgt_container->second,
+                                                            join_path(path, "map.value"));
+                            if (!child) {
+                                return child;
+                            }
+                            if (!solver.witness_is_identity(child.witness)) {
+                                ops.push_back(TypedAdjustmentOp{
+                                    .kind = TypedAdjustmentOpKind::TypeArg,
+                                    .arg_index = 1,
+                                    .child = child.witness,
+                                });
+                            }
+                            return solver.accepted_node(source, target, std::move(ops));
+                        }
                     }
                 }
             }
@@ -713,21 +785,30 @@ bool subtype_impl(const Type &source,
             // declared/inferred variance (Covariant -> subtype, Contravariant
             // -> reversed subtype, Invariant -> equivalence). Absent a variance
             // provider every position defaults to Invariant (legacy behavior).
+            std::vector<TypedAdjustmentOp> ops;
             for (std::size_t i = 0; i < s->type_args.size(); ++i) {
                 if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {
-                    return false;
+                    return {};
                 }
                 const auto variance = nominal_arg_variance(ctx, s->canonical_name, i);
-                if (!solve_variant_arg(solver,
-                                       variance,
-                                       *s->type_args[i],
-                                       *t->type_args[i],
-                                       join_path(path, "struct.type_args[" + std::to_string(i) +
-                                                           "]"))) {
-                    return false;
+                const auto child = solve_variant_arg(
+                    solver,
+                    variance,
+                    *s->type_args[i],
+                    *t->type_args[i],
+                    join_path(path, "struct.type_args[" + std::to_string(i) + "]"));
+                if (!child) {
+                    return child;
+                }
+                if (variance != Variance::Invariant && !solver.witness_is_identity(child.witness)) {
+                    ops.push_back(TypedAdjustmentOp{
+                        .kind = TypedAdjustmentOpKind::TypeArg,
+                        .arg_index = static_cast<std::uint32_t>(i),
+                        .child = child.witness,
+                    });
                 }
             }
-            return true;
+            return solver.accepted_node(source, target, std::move(ops));
         }
     }
 
@@ -736,10 +817,12 @@ bool subtype_impl(const Type &source,
         const auto *t = target.get_if<types::EnumT>();
         if (s != nullptr && t != nullptr) {
             if (!nominal_name_matches(s->symbol, s->canonical_name, t->symbol, t->canonical_name)) {
-                return subtype_leaf(source, target, ctx, join_path(path, "enum.name"), false);
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "enum.name"), solver, false);
             }
             if (s->type_args.size() != t->type_args.size()) {
-                return subtype_leaf(source, target, ctx, join_path(path, "enum.arity"), false);
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "enum.arity"), solver, false);
             }
             const auto src_container = stdlib_bridge::std_container_type_view(source);
             if (src_container.has_value() && src_container->nominal &&
@@ -749,30 +832,51 @@ bool subtype_impl(const Type &source,
                 if (tgt_container.has_value() && tgt_container->nominal &&
                     tgt_container->kind == stdlib_bridge::StdContainerKind::Option &&
                     tgt_container->first != nullptr) {
-                    return solver.solve(TypeRelationKind::Subtype,
-                                        *src_container->first,
-                                        *tgt_container->first,
-                                        join_path(path, "optional.inner"));
+                    const auto child = solver.solve(TypeRelationKind::Subtype,
+                                                    *src_container->first,
+                                                    *tgt_container->first,
+                                                    join_path(path, "optional.inner"));
+                    if (!child) {
+                        return child;
+                    }
+                    std::vector<TypedAdjustmentOp> ops;
+                    if (!solver.witness_is_identity(child.witness)) {
+                        ops.push_back(TypedAdjustmentOp{
+                            .kind = TypedAdjustmentOpKind::TypeArg,
+                            .arg_index = 0,
+                            .child = child.witness,
+                        });
+                    }
+                    return solver.accepted_node(source, target, std::move(ops));
                 }
             }
             // KR5.4 (RFC 0013 P5-02): per-parameter variance for user enum
             // nominals (Result and other user enums). Same rule as structs;
             // defaults to Invariant without a variance provider.
+            std::vector<TypedAdjustmentOp> ops;
             for (std::size_t i = 0; i < s->type_args.size(); ++i) {
                 if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {
-                    return false;
+                    return {};
                 }
                 const auto variance = nominal_arg_variance(ctx, s->canonical_name, i);
-                if (!solve_variant_arg(solver,
-                                       variance,
-                                       *s->type_args[i],
-                                       *t->type_args[i],
-                                       join_path(path, "enum.type_args[" + std::to_string(i) +
-                                                           "]"))) {
-                    return false;
+                const auto child =
+                    solve_variant_arg(solver,
+                                      variance,
+                                      *s->type_args[i],
+                                      *t->type_args[i],
+                                      join_path(path, "enum.type_args[" + std::to_string(i) + "]"));
+                if (!child) {
+                    return child;
+                }
+                if (variance != Variance::Invariant && !solver.witness_is_identity(child.witness)) {
+                    ops.push_back(TypedAdjustmentOp{
+                        .kind = TypedAdjustmentOpKind::TypeArg,
+                        .arg_index = static_cast<std::uint32_t>(i),
+                        .child = child.witness,
+                    });
                 }
             }
-            return true;
+            return solver.accepted_node(source, target, std::move(ops));
         }
     }
 
@@ -786,25 +890,37 @@ bool subtype_impl(const Type &source,
             return variant->canonical_name == target_enum->canonical_name;
         }();
         if (!same_enum) {
-            return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), false);
+            return subtype_leaf(
+                source, target, ctx, join_path(path, "enum.variant"), solver, false);
         }
         // Type arguments must be pairwise equivalent for variant-to-enum subtyping.
         if (variant->type_args.size() != target_enum->type_args.size()) {
-            return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), false);
+            return subtype_leaf(
+                source, target, ctx, join_path(path, "enum.variant"), solver, false);
         }
         for (std::size_t i = 0; i < variant->type_args.size(); ++i) {
             if (variant->type_args[i] == nullptr || target_enum->type_args[i] == nullptr) {
-                return false;
+                return {};
             }
             if (!solver.solve(
                     TypeRelationKind::Equivalent,
                     *variant->type_args[i],
                     *target_enum->type_args[i],
                     join_path(path, "enum.variant.type_args[" + std::to_string(i) + "]"))) {
-                return false;
+                return {};
             }
         }
-        return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), true);
+        return subtype_leaf(source,
+                            target,
+                            ctx,
+                            join_path(path, "enum.variant"),
+                            solver,
+                            true,
+                            {TypedAdjustmentOp{
+                                .kind = TypedAdjustmentOpKind::VariantToEnum,
+                                .arg_index = 0,
+                                .child = kInvalidAdjustmentNode,
+                            }});
     }
 
     // Fn type subtyping: contravariant params, covariant return, covariant effect
@@ -814,6 +930,7 @@ bool subtype_impl(const Type &source,
         const auto *t = target.get_if<types::FnT>();
         if (s != nullptr && t != nullptr && s->params.size() == t->params.size()) {
             FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, source, target);
+            std::vector<TypedAdjustmentOp> ops;
             // Parameters: contravariant — target.param <: source.param
             for (std::size_t i = 0; i < s->params.size(); ++i) {
                 if (s->params[i] == nullptr || t->params[i] == nullptr) {
@@ -821,38 +938,68 @@ bool subtype_impl(const Type &source,
                                         target,
                                         ctx,
                                         join_path(path, "fn.param[" + std::to_string(i) + "]"),
+                                        solver,
                                         false);
                 }
-                if (!solver.solve(TypeRelationKind::Subtype,
-                                  *t->params[i],
-                                  *s->params[i],
-                                  join_path(path, "fn.param[" + std::to_string(i) + "]"))) {
-                    return false;
+                const auto child =
+                    solver.solve(TypeRelationKind::Subtype,
+                                 *t->params[i],
+                                 *s->params[i],
+                                 join_path(path, "fn.param[" + std::to_string(i) + "]"));
+                if (!child) {
+                    return child;
+                }
+                if (!solver.witness_is_identity(child.witness)) {
+                    ops.push_back(TypedAdjustmentOp{
+                        .kind = TypedAdjustmentOpKind::FnParam,
+                        .arg_index = static_cast<std::uint32_t>(i),
+                        .child = child.witness,
+                    });
                 }
             }
             // Return type: covariant — source.return <: target.return
             if (s->return_type == nullptr || t->return_type == nullptr) {
-                return subtype_leaf(source, target, ctx, join_path(path, "fn.return-null"), false);
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "fn.return-null"), solver, false);
             }
-            if (!solver.solve(TypeRelationKind::Subtype,
-                              *s->return_type,
-                              *t->return_type,
-                              join_path(path, "fn.return"))) {
-                return false;
+            const auto return_child = solver.solve(TypeRelationKind::Subtype,
+                                                   *s->return_type,
+                                                   *t->return_type,
+                                                   join_path(path, "fn.return"));
+            if (!return_child) {
+                return return_child;
+            }
+            if (!solver.witness_is_identity(return_child.witness)) {
+                ops.push_back(TypedAdjustmentOp{
+                    .kind = TypedAdjustmentOpKind::FnReturn,
+                    .arg_index = 0,
+                    .child = return_child.witness,
+                });
             }
             // Effect: covariant — source.effect ⊑ target.effect (source is no
             // stronger than target, so it's acceptable where target is expected).
             if (!judgement_le(s->effect, t->effect)) {
-                return subtype_leaf(source, target, ctx, join_path(path, "fn.effect"), false);
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "fn.effect"), solver, false);
             }
-            return true;
+            return solver.accepted_node(source, target, std::move(ops));
         }
     }
 
     // BoundedInt <: Int relaxation.
     const auto *src_bi = source.get_if<types::BoundedIntT>();
     if (src_bi != nullptr && target.holds<types::IntT>()) {
-        return subtype_leaf(source, target, ctx, join_path(path, "bounded-int->int"), true);
+        return subtype_leaf(source,
+                            target,
+                            ctx,
+                            join_path(path, "bounded-int->int"),
+                            solver,
+                            true,
+                            {TypedAdjustmentOp{
+                                .kind = TypedAdjustmentOpKind::IntWiden,
+                                .arg_index = 0,
+                                .child = kInvalidAdjustmentNode,
+                            }});
     }
 
     // BoundedInt covariance.
@@ -860,7 +1007,18 @@ bool subtype_impl(const Type &source,
         const auto *tgt_bi = target.get_if<types::BoundedIntT>();
         if (tgt_bi != nullptr) {
             bool ok = src_bi->minimum >= tgt_bi->minimum && src_bi->maximum <= tgt_bi->maximum;
-            return subtype_leaf(source, target, ctx, join_path(path, "bounded-int.bounds"), ok);
+            return subtype_leaf(source,
+                                target,
+                                ctx,
+                                join_path(path, "bounded-int.bounds"),
+                                solver,
+                                ok,
+                                ok ? std::vector<TypedAdjustmentOp>{TypedAdjustmentOp{
+                                         .kind = TypedAdjustmentOpKind::IntWiden,
+                                         .arg_index = 0,
+                                         .child = kInvalidAdjustmentNode,
+                                     }}
+                                   : std::vector<TypedAdjustmentOp>{});
         }
     }
 
@@ -868,7 +1026,17 @@ bool subtype_impl(const Type &source,
     const auto *src_bs = source.get_if<types::BoundedStringT>();
     const bool allow_bs = ctx == nullptr ? true : ctx->options().allow_bounded_string_relaxation;
     if (allow_bs && src_bs != nullptr && target.holds<types::StringT>()) {
-        return subtype_leaf(source, target, ctx, join_path(path, "bounded->string"), true);
+        return subtype_leaf(source,
+                            target,
+                            ctx,
+                            join_path(path, "bounded->string"),
+                            solver,
+                            true,
+                            {TypedAdjustmentOp{
+                                .kind = TypedAdjustmentOpKind::StringWiden,
+                                .arg_index = 0,
+                                .child = kInvalidAdjustmentNode,
+                            }});
     }
 
     // BoundedString covariance.
@@ -876,7 +1044,18 @@ bool subtype_impl(const Type &source,
         const auto *tgt_bs = target.get_if<types::BoundedStringT>();
         if (tgt_bs != nullptr) {
             bool ok = src_bs->minimum >= tgt_bs->minimum && src_bs->maximum <= tgt_bs->maximum;
-            return subtype_leaf(source, target, ctx, join_path(path, "bounded.bounds"), ok);
+            return subtype_leaf(source,
+                                target,
+                                ctx,
+                                join_path(path, "bounded.bounds"),
+                                solver,
+                                ok,
+                                ok ? std::vector<TypedAdjustmentOp>{TypedAdjustmentOp{
+                                         .kind = TypedAdjustmentOpKind::StringWiden,
+                                         .arg_index = 0,
+                                         .child = kInvalidAdjustmentNode,
+                                     }}
+                                   : std::vector<TypedAdjustmentOp>{});
         }
     }
 
@@ -885,12 +1064,19 @@ bool subtype_impl(const Type &source,
     const bool allow_numeric = ctx == nullptr ? true : ctx->options().allow_numeric_widening;
     const bool source_is_int_like = source.holds<types::IntT>() || src_bi != nullptr;
     if (allow_numeric && source_is_int_like && target.holds<types::FloatT>()) {
-        return subtype_leaf(source, target, ctx, join_path(path, "numeric.widen"), true);
+        if (solver.produces_witness()) {
+            return solver.fail(RelationFailure::UnsupportedAdjustment);
+        }
+        return subtype_leaf(source, target, ctx, join_path(path, "numeric.widen"), solver, true);
     }
 
     // Int <: Decimal (numeric promotion).
     if (allow_numeric && source_is_int_like && target.holds<types::DecimalT>()) {
-        return subtype_leaf(source, target, ctx, join_path(path, "numeric.int->decimal"), true);
+        if (solver.produces_witness()) {
+            return solver.fail(RelationFailure::UnsupportedAdjustment);
+        }
+        return subtype_leaf(
+            source, target, ctx, join_path(path, "numeric.int->decimal"), solver, true);
     }
     // Decimal(s1) <: Decimal(s2) if s2 >= s1 (wider scale accepts narrower).
     if (allow_numeric && source.holds<types::DecimalT>() && target.holds<types::DecimalT>()) {
@@ -898,11 +1084,15 @@ bool subtype_impl(const Type &source,
         const auto *t = target.get_if<types::DecimalT>();
         if (s != nullptr && t != nullptr) {
             const bool ok = t->scale >= s->scale;
-            return subtype_leaf(source, target, ctx, join_path(path, "numeric.decimal-widen"), ok);
+            if (ok && solver.produces_witness()) {
+                return solver.fail(RelationFailure::UnsupportedAdjustment);
+            }
+            return subtype_leaf(
+                source, target, ctx, join_path(path, "numeric.decimal-widen"), solver, ok);
         }
     }
 
-    return false;
+    return {};
 }
 
 } // namespace
@@ -963,36 +1153,134 @@ RelationKey MemoizedRelationSolver::make_key(TypeRelationKind kind,
 }
 
 bool MemoizedRelationSolver::equivalent(const Type &lhs, const Type &rhs) {
-    return solve(TypeRelationKind::Equivalent, lhs, rhs);
+    return solve(TypeRelationKind::Equivalent, lhs, rhs).accepted;
 }
 
 bool MemoizedRelationSolver::subtype(const Type &source, const Type &target) {
-    return solve(TypeRelationKind::Subtype, source, target);
+    return solve(TypeRelationKind::Subtype, source, target).accepted;
 }
 
 bool MemoizedRelationSolver::assignable(const Type &source, const Type &target) {
-    return solve(TypeRelationKind::Assignable, source, target);
+    return solve(TypeRelationKind::Assignable, source, target).accepted;
 }
 
 bool MemoizedRelationSolver::exact_schema(const Type &source, const Type &target) {
-    return solve(TypeRelationKind::ExactSchema, source, target);
+    return solve(TypeRelationKind::ExactSchema, source, target).accepted;
 }
 
-bool MemoizedRelationSolver::solve(TypeRelationKind kind,
-                                   const Type &source,
-                                   const Type &target,
-                                   std::string path) {
+RelationDecision MemoizedRelationSolver::accepted_node(const Type &source,
+                                                       const Type &target,
+                                                       std::vector<TypedAdjustmentOp> ops) {
+    if (!produce_witness_) {
+        return RelationDecision{.accepted = true};
+    }
+    if (witness_nodes_.size() >= kInvalidAdjustmentNode) {
+        return fail(RelationFailure::UnsupportedAdjustment);
+    }
+    const auto id = static_cast<std::uint32_t>(witness_nodes_.size());
+    witness_nodes_.push_back(TypedAdjustmentNode{
+        .source = &source,
+        .target = &target,
+        .ops = std::move(ops),
+    });
+    return RelationDecision{.accepted = true, .witness = id};
+}
+
+RelationDecision MemoizedRelationSolver::fail(RelationFailure failure) noexcept {
+    if (failure != RelationFailure::None) {
+        fatal_failure_ = failure;
+    }
+    return RelationDecision{
+        .accepted = false, .witness = kInvalidAdjustmentNode, .failure = failure};
+}
+
+bool MemoizedRelationSolver::witness_is_identity(std::uint32_t witness) const noexcept {
+    if (!produce_witness_) {
+        return true;
+    }
+    return witness < witness_nodes_.size() && witness_nodes_[witness].ops.empty();
+}
+
+std::optional<TypedAdjustmentPlan> MemoizedRelationSolver::materialize(const Type &source,
+                                                                       const Type &target,
+                                                                       std::uint32_t root) const {
+    if (!produce_witness_ || root >= witness_nodes_.size()) {
+        return std::nullopt;
+    }
+
+    TypedAdjustmentPlan plan;
+    plan.source = &source;
+    plan.target = &target;
+    std::unordered_map<std::uint32_t, std::uint32_t> remap;
+    std::vector<unsigned char> color(witness_nodes_.size(), 0);
+
+    std::function<std::optional<std::uint32_t>(std::uint32_t)> copy_node =
+        [&](std::uint32_t old_id) -> std::optional<std::uint32_t> {
+        if (old_id >= witness_nodes_.size()) {
+            return std::nullopt;
+        }
+        if (color[old_id] == 1) {
+            return std::nullopt;
+        }
+        if (color[old_id] == 2) {
+            return remap.at(old_id);
+        }
+        color[old_id] = 1;
+        const auto new_id = static_cast<std::uint32_t>(plan.nodes.size());
+        remap.emplace(old_id, new_id);
+        const auto &source_node = witness_nodes_[old_id];
+        plan.nodes.push_back(TypedAdjustmentNode{
+            .source = source_node.source,
+            .target = source_node.target,
+            .ops = source_node.ops,
+        });
+        for (std::size_t op_index = 0; op_index < source_node.ops.size(); ++op_index) {
+            const auto old_child = source_node.ops[op_index].child;
+            if (old_child == kInvalidAdjustmentNode) {
+                continue;
+            }
+            const auto child = copy_node(old_child);
+            if (!child.has_value()) {
+                return std::nullopt;
+            }
+            plan.nodes[new_id].ops[op_index].child = *child;
+        }
+        color[old_id] = 2;
+        return new_id;
+    };
+
+    const auto materialized_root = copy_node(root);
+    if (!materialized_root.has_value()) {
+        return std::nullopt;
+    }
+    plan.root = *materialized_root;
+    return plan;
+}
+
+RelationDecision MemoizedRelationSolver::solve(TypeRelationKind kind,
+                                               const Type &source,
+                                               const Type &target,
+                                               std::string path) {
+    if (recursion_depth_ == 0) {
+        fatal_failure_ = RelationFailure::None;
+    }
     ++stats_.queries;
     const auto key = make_key(kind, source, target);
     if (const auto iter = memo_.find(key); iter != memo_.end()) {
-        switch (iter->second) {
+        switch (iter->second.state) {
         case RelationState::Proven:
             ++stats_.cache_hits;
-            return true;
+            return RelationDecision{.accepted = true, .witness = iter->second.witness};
         case RelationState::Disproven:
             ++stats_.cache_hits;
-            return false;
+            return RelationDecision{.accepted = false,
+                                    .witness = kInvalidAdjustmentNode,
+                                    .failure = iter->second.failure};
         case RelationState::Visiting:
+            if (produce_witness_) {
+                ++stats_.witness_cycle_rejections;
+                return fail(RelationFailure::VisitingCycle);
+            }
             ++stats_.coinductive_assumptions;
             if (ctx_->options().enable_trace) {
                 sync_trace(ctx_,
@@ -1003,14 +1291,20 @@ bool MemoizedRelationSolver::solve(TypeRelationKind kind,
                            true,
                            "coinductive relation assumption");
             }
-            return true;
+            return RelationDecision{.accepted = true};
         }
     }
 
     if (recursion_depth_ >= ctx_->options().max_solver_depth) {
         ++stats_.depth_guard_rejections;
         ++stats_.disproven;
-        memo_.emplace(key, RelationState::Disproven);
+        const auto failure = produce_witness_ ? RelationFailure::DepthLimit : RelationFailure::None;
+        memo_.emplace(key,
+                      RelationMemoEntry{
+                          .state = RelationState::Disproven,
+                          .witness = kInvalidAdjustmentNode,
+                          .failure = failure,
+                      });
         if (ctx_->options().enable_trace) {
             sync_trace(ctx_,
                        kind,
@@ -1020,21 +1314,25 @@ bool MemoizedRelationSolver::solve(TypeRelationKind kind,
                        false,
                        "relation depth limit exceeded");
         }
-        return false;
+        return produce_witness_ ? fail(failure) : RelationDecision{};
     }
 
-    memo_.emplace(key, RelationState::Visiting);
+    memo_.emplace(key, RelationMemoEntry{.state = RelationState::Visiting});
     ++recursion_depth_;
-    bool result = false;
+    RelationDecision decision;
     switch (kind) {
     case TypeRelationKind::Equivalent:
-        result = equivalent_impl(source, target, ctx_, path, *this);
+        if (equivalent_impl(source, target, ctx_, path, *this)) {
+            decision = accepted_node(source, target);
+        } else if (fatal_failure_ != RelationFailure::None) {
+            decision = fail(fatal_failure_);
+        }
         break;
     case TypeRelationKind::Subtype:
-        result = subtype_impl(source, target, ctx_, path, *this);
+        decision = subtype_impl(source, target, ctx_, path, *this);
         break;
     case TypeRelationKind::Assignable:
-        result = subtype_impl(source, target, ctx_, path, *this);
+        decision = subtype_impl(source, target, ctx_, path, *this);
         if (ctx_->options().enable_trace) {
             TypeRelationTraceStep step;
             step.kind = TypeRelationKind::Assignable;
@@ -1042,13 +1340,18 @@ bool MemoizedRelationSolver::solve(TypeRelationKind kind,
             step.path = path;
             step.expected_describe = target.describe();
             step.actual_describe = source.describe();
-            step.result = result ? TypeRelationResult::Accepted : TypeRelationResult::Rejected;
+            step.result =
+                decision.accepted ? TypeRelationResult::Accepted : TypeRelationResult::Rejected;
             step.reason = "assignability delegated to subtype check";
             ctx_->trace().steps.push_back(std::move(step));
         }
         break;
     case TypeRelationKind::ExactSchema:
-        result = equivalent_impl(source, target, ctx_, path, *this);
+        if (equivalent_impl(source, target, ctx_, path, *this)) {
+            decision = accepted_node(source, target);
+        } else if (fatal_failure_ != RelationFailure::None) {
+            decision = fail(fatal_failure_);
+        }
         if (ctx_->options().enable_trace) {
             TypeRelationTraceStep step;
             step.kind = TypeRelationKind::ExactSchema;
@@ -1056,23 +1359,32 @@ bool MemoizedRelationSolver::solve(TypeRelationKind kind,
             step.path = path;
             step.expected_describe = target.describe();
             step.actual_describe = source.describe();
-            step.result = result ? TypeRelationResult::Accepted : TypeRelationResult::Rejected;
+            step.result =
+                decision.accepted ? TypeRelationResult::Accepted : TypeRelationResult::Rejected;
             step.reason = "exact schema match implemented as equivalence";
             ctx_->trace().steps.push_back(std::move(step));
         }
         break;
     }
+    if (!decision.accepted && decision.failure == RelationFailure::None &&
+        fatal_failure_ != RelationFailure::None) {
+        decision.failure = fatal_failure_;
+    }
     --recursion_depth_;
 
     if (const auto iter = memo_.find(key); iter != memo_.end()) {
-        iter->second = result ? RelationState::Proven : RelationState::Disproven;
+        iter->second = RelationMemoEntry{
+            .state = decision.accepted ? RelationState::Proven : RelationState::Disproven,
+            .witness = decision.witness,
+            .failure = decision.failure,
+        };
     }
-    if (result) {
+    if (decision.accepted) {
         ++stats_.proven;
     } else {
         ++stats_.disproven;
     }
-    return result;
+    return decision;
 }
 
 // ---- Equivalence public API ------------------------------------------------
@@ -1147,6 +1459,46 @@ bool is_assignable_to(const Type &source, const Type &target, TypeRelationContex
         ctx.pop_node();
     }
     return result;
+}
+
+AssignabilityDecision
+decide_assignability(const Type &source, const Type &target, TypeRelationContext &ctx) {
+    if (ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
+        TypeConstraintNode top;
+        top.kind = TypeConstraintNode::Kind::And;
+        top.path = "";
+        top.left_describe = source.describe();
+        top.right_describe = target.describe();
+        ctx.push_node(std::move(top));
+    }
+
+    MemoizedRelationSolver solver(ctx, true);
+    const auto relation =
+        solver.solve(TypeRelationKind::Assignable, source, target, "annotated-let");
+
+    if (ctx.options().emit_constraint_skeleton) {
+        ctx.pop_node();
+    }
+    if (!relation.accepted) {
+        return AssignabilityDecision{
+            .accepted = false,
+            .adjustment = std::nullopt,
+            .failure = relation.failure,
+        };
+    }
+    auto plan = solver.materialize(source, target, relation.witness);
+    if (!plan.has_value()) {
+        return AssignabilityDecision{
+            .accepted = false,
+            .adjustment = std::nullopt,
+            .failure = RelationFailure::UnsupportedAdjustment,
+        };
+    }
+    return AssignabilityDecision{
+        .accepted = true,
+        .adjustment = std::move(plan),
+        .failure = RelationFailure::None,
+    };
 }
 
 bool is_assignable_to(const Type &source, const Type &target) {

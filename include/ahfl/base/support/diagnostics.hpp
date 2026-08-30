@@ -409,6 +409,10 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CollectionCapacityNotA
     "COLLECTION_CAPACITY_NOT_ALLOWED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CollectionCapacityExceeded{
     "COLLECTION_CAPACITY_EXCEEDED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CoercionWitnessCycle{
+    "COERCION_WITNESS_CYCLE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnsupportedCoercionWitness{
+    "UNSUPPORTED_COERCION_WITNESS"};
 } // namespace typecheck
 
 namespace validation {
@@ -782,6 +786,10 @@ inline constexpr MessageTemplate CollectionCapacityNotAllowed{
 // {0} = source capacity, {1} = target capacity (target is the wider/declared bound).
 inline constexpr MessageTemplate CollectionCapacityExceeded{
     "collection capacity {} exceeds the target capacity {}"};
+inline constexpr MessageTemplate CoercionWitnessCycle{
+    "cannot construct a finite coercion witness for recursive type relation"};
+inline constexpr MessageTemplate UnsupportedCoercionWitness{
+    "accepted type relation has no supported coercion witness"};
 } // namespace typecheck
 
 namespace validation {

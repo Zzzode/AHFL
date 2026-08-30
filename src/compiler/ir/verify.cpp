@@ -606,9 +606,412 @@ class ProgramVerifier {
                    stmt.node);
     }
 
+    [[nodiscard]] static bool same_symbol_identity(const SymbolRef &lhs,
+                                                   const SymbolRef &rhs) noexcept {
+        if (lhs.kind != rhs.kind) {
+            return false;
+        }
+        if (lhs.id.has_value() && rhs.id.has_value()) {
+            return *lhs.id == *rhs.id;
+        }
+        return !lhs.canonical_name.empty() && lhs.canonical_name == rhs.canonical_name;
+    }
+
+    [[nodiscard]] static bool same_nominal_base(const TypeRef &source,
+                                                const TypeRef &target) noexcept {
+        return source.kind == target.kind &&
+               (source.kind == TypeRefKind::Struct || source.kind == TypeRefKind::Enum) &&
+               same_symbol_identity(source.nominal_ref, target.nominal_ref);
+    }
+
+    [[nodiscard]] std::optional<std::vector<Variance>>
+    nominal_variances(const TypeRef &type) const {
+        if (type.kind != TypeRefKind::Struct && type.kind != TypeRefKind::Enum) {
+            return std::nullopt;
+        }
+        for (const auto &decl : program_.declarations) {
+            if (const auto *value = std::get_if<StructDecl>(&decl);
+                type.kind == TypeRefKind::Struct && value != nullptr &&
+                same_symbol_identity(type.nominal_ref, value->symbol_ref)) {
+                return value->type_param_variances;
+            }
+            if (const auto *value = std::get_if<EnumDecl>(&decl);
+                type.kind == TypeRefKind::Enum && value != nullptr &&
+                same_symbol_identity(type.nominal_ref, value->symbol_ref)) {
+                return value->type_param_variances;
+            }
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] bool nominal_enum_has_variant(const TypeRef &type,
+                                                std::string_view variant_name) const {
+        if (type.kind != TypeRefKind::Enum || variant_name.empty()) {
+            return false;
+        }
+        for (const auto &decl : program_.declarations) {
+            const auto *value = std::get_if<EnumDecl>(&decl);
+            if (value == nullptr || !same_symbol_identity(type.nominal_ref, value->symbol_ref)) {
+                continue;
+            }
+            return std::ranges::any_of(value->variants, [&](const EnumVariantDecl &variant) {
+                return variant.name == variant_name;
+            });
+        }
+        return false;
+    }
+
+    [[nodiscard]] static bool
+    bounds_widen(const std::optional<std::pair<std::int64_t, std::int64_t>> &source,
+                 const std::optional<std::pair<std::int64_t, std::int64_t>> &target) noexcept {
+        return source.has_value() && target.has_value() && source->first >= target->first &&
+               source->second <= target->second && source != target;
+    }
+
+    [[nodiscard]] static bool capacity_widen(const TypeRef &source,
+                                             const TypeRef &target) noexcept {
+        if (!source.collection_capacity.has_value()) {
+            return false;
+        }
+        if (!target.collection_capacity.has_value()) {
+            return true;
+        }
+        return *source.collection_capacity < *target.collection_capacity;
+    }
+
+    void verify_adjustment_plan(const AdjustmentPlan &plan,
+                                const TypeRef &initializer_type,
+                                const TypeRef &binding_type,
+                                const std::string &path) {
+        verify_type_ref(plan.source, path + ".source");
+        verify_type_ref(plan.target, path + ".target");
+        if (!type_refs_equal(plan.source, initializer_type)) {
+            add_error(path + ".source", "adjustment source does not match initializer type");
+        }
+        if (!type_refs_equal(plan.target, binding_type)) {
+            add_error(path + ".target", "adjustment target does not match let binding type");
+        }
+        if (type_refs_equal(plan.source, plan.target)) {
+            add_error(path, "identity adjustment plan is not allowed");
+        }
+        if (plan.root >= plan.nodes.size()) {
+            add_error(path + ".root", "adjustment root index is out of range");
+            return;
+        }
+        if (!type_refs_equal(plan.nodes[plan.root].source, plan.source)) {
+            add_error(path + ".root", "adjustment root source does not match plan source");
+        }
+        if (!type_refs_equal(plan.nodes[plan.root].target, plan.target)) {
+            add_error(path + ".root", "adjustment root target does not match plan target");
+        }
+
+        std::vector<unsigned char> color(plan.nodes.size(), 0);
+        std::vector<bool> reachable(plan.nodes.size(), false);
+        std::function<void(std::uint32_t)> visit = [&](std::uint32_t id) {
+            if (id >= plan.nodes.size()) {
+                return;
+            }
+            reachable[id] = true;
+            if (color[id] == 1) {
+                add_error(path + ".nodes[" + std::to_string(id) + "]",
+                          "adjustment plan contains a cycle");
+                return;
+            }
+            if (color[id] == 2) {
+                return;
+            }
+            color[id] = 1;
+            for (const auto &op : plan.nodes[id].ops) {
+                if (op.child != UINT32_MAX) {
+                    if (op.child >= plan.nodes.size()) {
+                        add_error(path + ".nodes[" + std::to_string(id) + "]",
+                                  "adjustment child index is out of range");
+                    } else {
+                        visit(op.child);
+                    }
+                }
+            }
+            color[id] = 2;
+        };
+        visit(plan.root);
+        for (std::uint32_t id = 0; id < plan.nodes.size(); ++id) {
+            if (!reachable[id]) {
+                add_error(path + ".nodes[" + std::to_string(id) + "]",
+                          "adjustment node is not reachable from root");
+            }
+        }
+
+        for (std::uint32_t id = 0; id < plan.nodes.size(); ++id) {
+            const auto &node = plan.nodes[id];
+            const auto node_path = path + ".nodes[" + std::to_string(id) + "]";
+            verify_type_ref(node.source, node_path + ".source");
+            verify_type_ref(node.target, node_path + ".target");
+
+            std::unordered_set<std::uint32_t> type_args;
+            std::unordered_set<std::uint32_t> fn_params;
+            bool has_capacity = false;
+            bool has_fn_return = false;
+            bool has_scalar = false;
+            bool has_variant = false;
+            bool has_top_bottom = false;
+            std::optional<std::pair<unsigned char, std::uint32_t>> previous_order;
+            for (std::uint32_t op_index = 0; op_index < node.ops.size(); ++op_index) {
+                const auto &op = node.ops[op_index];
+                const auto op_path = node_path + ".ops[" + std::to_string(op_index) + "]";
+                std::optional<std::pair<unsigned char, std::uint32_t>> current_order;
+                switch (op.kind) {
+                case AdjustmentOpKind::CapacityWiden:
+                case AdjustmentOpKind::FnParam:
+                    current_order = std::pair{static_cast<unsigned char>(0), op.arg_index};
+                    break;
+                case AdjustmentOpKind::TypeArg:
+                case AdjustmentOpKind::FnReturn:
+                    current_order = std::pair{static_cast<unsigned char>(1), op.arg_index};
+                    break;
+                case AdjustmentOpKind::IntWiden:
+                case AdjustmentOpKind::StringWiden:
+                case AdjustmentOpKind::VariantToEnum:
+                case AdjustmentOpKind::ToAny:
+                case AdjustmentOpKind::FromNever:
+                    break;
+                }
+                if (current_order.has_value()) {
+                    if (previous_order.has_value() && *current_order <= *previous_order) {
+                        add_error(op_path, "adjustment operations are not in canonical order");
+                    }
+                    previous_order = current_order;
+                }
+                const bool projected = op.kind == AdjustmentOpKind::TypeArg ||
+                                       op.kind == AdjustmentOpKind::FnParam ||
+                                       op.kind == AdjustmentOpKind::FnReturn;
+                const bool indexed =
+                    op.kind == AdjustmentOpKind::TypeArg || op.kind == AdjustmentOpKind::FnParam;
+                if (!indexed && op.arg_index != 0) {
+                    add_error(op_path, "non-indexed adjustment has a non-zero argument index");
+                }
+                if (projected) {
+                    if (op.child >= plan.nodes.size()) {
+                        add_error(op_path, "projected adjustment has no valid child");
+                        continue;
+                    }
+                } else if (op.child != UINT32_MAX) {
+                    add_error(op_path, "leaf adjustment unexpectedly has a child");
+                }
+
+                switch (op.kind) {
+                case AdjustmentOpKind::IntWiden: {
+                    if (has_scalar || node.ops.size() != 1) {
+                        add_error(op_path, "scalar adjustment must be the node's only operation");
+                    }
+                    has_scalar = true;
+                    const bool to_plain = node.source.kind == TypeRefKind::BoundedInt &&
+                                          node.target.kind == TypeRefKind::Int;
+                    const bool bounded =
+                        node.source.kind == TypeRefKind::BoundedInt &&
+                        node.target.kind == TypeRefKind::BoundedInt &&
+                        bounds_widen(node.source.int_bounds, node.target.int_bounds);
+                    if (!to_plain && !bounded) {
+                        add_error(op_path, "IntWiden does not match node source/target bounds");
+                    }
+                    break;
+                }
+                case AdjustmentOpKind::StringWiden: {
+                    if (has_scalar || node.ops.size() != 1) {
+                        add_error(op_path, "scalar adjustment must be the node's only operation");
+                    }
+                    has_scalar = true;
+                    const bool to_plain = node.source.kind == TypeRefKind::BoundedString &&
+                                          node.target.kind == TypeRefKind::String;
+                    const bool bounded =
+                        node.source.kind == TypeRefKind::BoundedString &&
+                        node.target.kind == TypeRefKind::BoundedString &&
+                        bounds_widen(node.source.string_bounds, node.target.string_bounds);
+                    if (!to_plain && !bounded) {
+                        add_error(op_path, "StringWiden does not match node source/target bounds");
+                    }
+                    break;
+                }
+                case AdjustmentOpKind::CapacityWiden:
+                    if (has_capacity || !same_nominal_base(node.source, node.target) ||
+                        node.source.kind != TypeRefKind::Struct ||
+                        (node.source.canonical_name != "std::collections::List" &&
+                         node.source.canonical_name != "std::collections::Set" &&
+                         node.source.canonical_name != "std::collections::Map") ||
+                        !capacity_widen(node.source, node.target)) {
+                        add_error(op_path,
+                                  "CapacityWiden does not match a widening nominal capacity");
+                    }
+                    has_capacity = true;
+                    break;
+                case AdjustmentOpKind::TypeArg: {
+                    if (!type_args.insert(op.arg_index).second) {
+                        add_error(op_path, "duplicate TypeArg adjustment position");
+                    }
+                    if (!same_nominal_base(node.source, node.target) ||
+                        op.arg_index >= node.source.params.size() ||
+                        op.arg_index >= node.target.params.size() ||
+                        node.source.params[op.arg_index] == nullptr ||
+                        node.target.params[op.arg_index] == nullptr) {
+                        add_error(op_path, "TypeArg adjustment position is invalid for node");
+                        break;
+                    }
+                    const auto variances = nominal_variances(node.source);
+                    if (!variances.has_value() || op.arg_index >= variances->size() ||
+                        (*variances)[op.arg_index] == Variance::Invariant) {
+                        add_error(op_path,
+                                  "TypeArg adjustment is not allowed at an invariant position");
+                        break;
+                    }
+                    const auto &child = plan.nodes[op.child];
+                    const auto &source_arg = *node.source.params[op.arg_index];
+                    const auto &target_arg = *node.target.params[op.arg_index];
+                    const bool correct = (*variances)[op.arg_index] == Variance::Covariant
+                                             ? type_refs_equal(child.source, source_arg) &&
+                                                   type_refs_equal(child.target, target_arg)
+                                             : type_refs_equal(child.source, target_arg) &&
+                                                   type_refs_equal(child.target, source_arg);
+                    if (!correct) {
+                        add_error(op_path, "TypeArg child has the wrong variance direction");
+                    }
+                    break;
+                }
+                case AdjustmentOpKind::FnParam: {
+                    if (!fn_params.insert(op.arg_index).second) {
+                        add_error(op_path, "duplicate FnParam adjustment position");
+                    }
+                    if (node.source.kind != TypeRefKind::Fn ||
+                        node.target.kind != TypeRefKind::Fn ||
+                        op.arg_index >= node.source.params.size() ||
+                        op.arg_index >= node.target.params.size() ||
+                        node.source.params[op.arg_index] == nullptr ||
+                        node.target.params[op.arg_index] == nullptr) {
+                        add_error(op_path, "FnParam adjustment position is invalid for node");
+                        break;
+                    }
+                    const auto &child = plan.nodes[op.child];
+                    if (!type_refs_equal(child.source, *node.target.params[op.arg_index]) ||
+                        !type_refs_equal(child.target, *node.source.params[op.arg_index])) {
+                        add_error(op_path, "FnParam child has the wrong contravariant direction");
+                    }
+                    break;
+                }
+                case AdjustmentOpKind::FnReturn: {
+                    if (has_fn_return) {
+                        add_error(op_path, "duplicate FnReturn adjustment");
+                    }
+                    has_fn_return = true;
+                    if (node.source.kind != TypeRefKind::Fn ||
+                        node.target.kind != TypeRefKind::Fn || node.source.first == nullptr ||
+                        node.target.first == nullptr) {
+                        add_error(op_path, "FnReturn adjustment does not match a function node");
+                        break;
+                    }
+                    const auto &child = plan.nodes[op.child];
+                    if (!type_refs_equal(child.source, *node.source.first) ||
+                        !type_refs_equal(child.target, *node.target.first)) {
+                        add_error(op_path, "FnReturn child has the wrong covariant direction");
+                    }
+                    break;
+                }
+                case AdjustmentOpKind::VariantToEnum:
+                    if (has_variant || node.ops.size() != 1 ||
+                        node.source.kind != TypeRefKind::Enum ||
+                        node.target.kind != TypeRefKind::Enum ||
+                        !same_nominal_base(node.source, node.target) ||
+                        node.source.variant_name.empty() || !node.target.variant_name.empty() ||
+                        !nominal_enum_has_variant(node.source, node.source.variant_name)) {
+                        add_error(op_path,
+                                  "VariantToEnum does not match a variant-to-owner boundary");
+                    }
+                    if (node.source.params.size() != node.target.params.size()) {
+                        add_error(op_path, "VariantToEnum changes type-argument arity");
+                    } else {
+                        for (std::size_t i = 0; i < node.source.params.size(); ++i) {
+                            if (!type_refs_equal(node.source.params[i].get(),
+                                                 node.target.params[i].get())) {
+                                add_error(op_path, "VariantToEnum changes a type argument");
+                            }
+                        }
+                    }
+                    has_variant = true;
+                    break;
+                case AdjustmentOpKind::ToAny:
+                    if (has_top_bottom || node.ops.size() != 1 ||
+                        node.target.kind != TypeRefKind::Any ||
+                        node.source.kind == TypeRefKind::Any) {
+                        add_error(op_path, "ToAny does not match a non-Any-to-Any boundary");
+                    }
+                    has_top_bottom = true;
+                    break;
+                case AdjustmentOpKind::FromNever:
+                    if (has_top_bottom || node.ops.size() != 1 ||
+                        node.source.kind != TypeRefKind::Never ||
+                        node.target.kind == TypeRefKind::Never) {
+                        add_error(op_path,
+                                  "FromNever does not match a Never-to-non-Never boundary");
+                    }
+                    has_top_bottom = true;
+                    break;
+                }
+            }
+
+            if (has_scalar || has_variant || has_top_bottom) {
+                continue;
+            }
+            if (same_nominal_base(node.source, node.target)) {
+                if (node.source.params.size() != node.target.params.size()) {
+                    add_error(node_path, "nominal adjustment changes type-argument arity");
+                } else {
+                    for (std::uint32_t i = 0; i < node.source.params.size(); ++i) {
+                        if (!type_args.contains(i) &&
+                            !type_refs_equal(node.source.params[i].get(),
+                                             node.target.params[i].get())) {
+                            add_error(node_path, "unnamed nominal type argument changes");
+                        }
+                    }
+                }
+                if (!has_capacity &&
+                    node.source.collection_capacity != node.target.collection_capacity) {
+                    add_error(node_path, "unnamed nominal capacity changes");
+                }
+            } else if (node.source.kind == TypeRefKind::Fn && node.target.kind == TypeRefKind::Fn) {
+                if (node.source.params.size() != node.target.params.size()) {
+                    add_error(node_path, "function adjustment changes parameter arity");
+                } else {
+                    for (std::uint32_t i = 0; i < node.source.params.size(); ++i) {
+                        if (!fn_params.contains(i) &&
+                            !type_refs_equal(node.source.params[i].get(),
+                                             node.target.params[i].get())) {
+                            add_error(node_path, "unnamed function parameter changes");
+                        }
+                    }
+                }
+                if (!has_fn_return &&
+                    !type_refs_equal(node.source.first.get(), node.target.first.get())) {
+                    add_error(node_path, "unnamed function return type changes");
+                }
+            } else if (!type_refs_equal(node.source, node.target)) {
+                add_error(node_path, "adjustment node changes an unnamed type dimension");
+            }
+        }
+    }
+
     void verify_statement_node(const LetStatement &stmt, const std::string &path) {
         verify_type_ref(stmt.type_ref, path + ".type_ref");
         verify_required_expr_ref(stmt.initializer, path + ".initializer");
+        if (!is_backend_ready_mode(mode_) || !stmt.initializer ||
+            stmt.initializer.get() == nullptr) {
+            return;
+        }
+        const auto &initializer_type = stmt.initializer.get()->resolved_type;
+        if (!stmt.adjustment.has_value()) {
+            if (!type_refs_equal(initializer_type, stmt.type_ref)) {
+                add_error(path + ".adjustment", "missing adjustment for non-identity let boundary");
+            }
+            return;
+        }
+        verify_adjustment_plan(
+            *stmt.adjustment, initializer_type, stmt.type_ref, path + ".adjustment");
     }
 
     void verify_statement_node(const AssignStatement &stmt, const std::string &path) {

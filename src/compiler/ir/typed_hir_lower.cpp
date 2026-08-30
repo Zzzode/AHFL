@@ -1010,6 +1010,10 @@ class TypedIrLowerer final {
             return ir::AdjustmentOpKind::FnReturn;
         case TypedAdjustmentOpKind::VariantToEnum:
             return ir::AdjustmentOpKind::VariantToEnum;
+        case TypedAdjustmentOpKind::ToAny:
+            return ir::AdjustmentOpKind::ToAny;
+        case TypedAdjustmentOpKind::FromNever:
+            return ir::AdjustmentOpKind::FromNever;
         }
         return ir::AdjustmentOpKind::IntWiden;
     }

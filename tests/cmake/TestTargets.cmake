@@ -36,6 +36,7 @@ target_include_directories(ahfl_project_check_tests PRIVATE ${PROJECT_SOURCE_DIR
 ahfl_apply_project_warnings(ahfl_project_check_tests)
 
 add_executable(ahfl_compiler_ir_tests
+    unit/compiler/ir/coercion_adjustment.cpp
     unit/compiler/ir/core_lower.cpp
     unit/compiler/ir/core_lower_sysroot.cpp
     unit/compiler/ir/core_verify.cpp

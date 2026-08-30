@@ -454,13 +454,17 @@ class IrJsonPrinter final {
             return "fn_return";
         case ir::AdjustmentOpKind::VariantToEnum:
             return "variant_to_enum";
+        case ir::AdjustmentOpKind::ToAny:
+            return "to_any";
+        case ir::AdjustmentOpKind::FromNever:
+            return "from_never";
         }
         return "int_widen";
     }
 
     // RFC 0026 P4 (coercion): serialize a LetStatement adjustment plan. A public
-    // IR field must round-trip exactly (no silent drop) even while it is inert
-    // (no producer yet); the source/target/per-node TypeRefs preserve identity.
+    // IR field must round-trip exactly (no silent drop); the source/target and
+    // per-node TypeRefs preserve identity.
     void print_adjustment_plan(const ir::AdjustmentPlan &plan, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("source", [&]() { print_type_ref(plan.source, indent_level + 1); });
@@ -2586,6 +2590,8 @@ using ahfl::json::JsonValue;
     if (s == "fn_param") { out = ir::AdjustmentOpKind::FnParam; return true; }
     if (s == "fn_return") { out = ir::AdjustmentOpKind::FnReturn; return true; }
     if (s == "variant_to_enum") { out = ir::AdjustmentOpKind::VariantToEnum; return true; }
+    if (s == "to_any") { out = ir::AdjustmentOpKind::ToAny; return true; }
+    if (s == "from_never") { out = ir::AdjustmentOpKind::FromNever; return true; }
     return false;
 }
 

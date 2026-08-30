@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ahfl/compiler/semantics/types.hpp"
+#include "ahfl/compiler/semantics/adjustment_plan.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -216,26 +216,67 @@ enum class RelationState {
     Disproven,
 };
 
+enum class RelationFailure {
+    None,
+    VisitingCycle,
+    DepthLimit,
+    UnsupportedAdjustment,
+};
+
+struct RelationDecision {
+    bool accepted{false};
+    std::uint32_t witness{kInvalidAdjustmentNode};
+    RelationFailure failure{RelationFailure::None};
+
+    [[nodiscard]] operator bool() const noexcept {
+        return accepted;
+    }
+};
+
+struct RelationMemoEntry {
+    RelationState state{RelationState::Visiting};
+    std::uint32_t witness{kInvalidAdjustmentNode};
+    RelationFailure failure{RelationFailure::None};
+};
+
+struct AssignabilityDecision {
+    bool accepted{false};
+    std::optional<TypedAdjustmentPlan> adjustment;
+    RelationFailure failure{RelationFailure::None};
+};
+
 struct RelationSolverStats {
     std::size_t queries{0};
     std::size_t cache_hits{0};
     std::size_t proven{0};
     std::size_t disproven{0};
     std::size_t coinductive_assumptions{0};
+    std::size_t witness_cycle_rejections{0};
     std::size_t depth_guard_rejections{0};
 };
 
 class MemoizedRelationSolver {
   public:
-    explicit MemoizedRelationSolver(TypeRelationContext &ctx) : ctx_(&ctx) {}
+    explicit MemoizedRelationSolver(TypeRelationContext &ctx, bool produce_witness = false)
+        : ctx_(&ctx), produce_witness_(produce_witness) {}
 
     [[nodiscard]] bool equivalent(const Type &lhs, const Type &rhs);
     [[nodiscard]] bool subtype(const Type &source, const Type &target);
     [[nodiscard]] bool assignable(const Type &source, const Type &target);
     [[nodiscard]] bool exact_schema(const Type &source, const Type &target);
 
-    [[nodiscard]] bool
+    [[nodiscard]] RelationDecision
     solve(TypeRelationKind kind, const Type &source, const Type &target, std::string path = {});
+
+    [[nodiscard]] RelationDecision
+    accepted_node(const Type &source, const Type &target, std::vector<TypedAdjustmentOp> ops = {});
+    [[nodiscard]] RelationDecision fail(RelationFailure failure) noexcept;
+    [[nodiscard]] bool witness_is_identity(std::uint32_t witness) const noexcept;
+    [[nodiscard]] bool produces_witness() const noexcept {
+        return produce_witness_;
+    }
+    [[nodiscard]] std::optional<TypedAdjustmentPlan>
+    materialize(const Type &source, const Type &target, std::uint32_t root) const;
 
     [[nodiscard]] const RelationSolverStats &stats() const noexcept {
         return stats_;
@@ -250,15 +291,20 @@ class MemoizedRelationSolver {
     make_key(TypeRelationKind kind, const Type &source, const Type &target) const noexcept;
 
     TypeRelationContext *ctx_{nullptr};
-    std::unordered_map<RelationKey, RelationState, RelationKeyHash> memo_;
+    std::unordered_map<RelationKey, RelationMemoEntry, RelationKeyHash> memo_;
+    std::vector<TypedAdjustmentNode> witness_nodes_;
     RelationSolverStats stats_{};
     int recursion_depth_{0};
+    bool produce_witness_{false};
+    RelationFailure fatal_failure_{RelationFailure::None};
 };
 
 [[nodiscard]] bool are_types_equivalent(const Type &lhs, const Type &rhs, TypeRelationContext &ctx);
 [[nodiscard]] bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &ctx);
 [[nodiscard]] bool
 is_assignable_to(const Type &source, const Type &target, TypeRelationContext &ctx);
+[[nodiscard]] AssignabilityDecision
+decide_assignability(const Type &source, const Type &target, TypeRelationContext &ctx);
 [[nodiscard]] bool
 is_exact_schema_match(const Type &source, const Type &target, TypeRelationContext &ctx);
 

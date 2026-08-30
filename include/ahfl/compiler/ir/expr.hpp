@@ -493,6 +493,8 @@ enum class AdjustmentOpKind {
     FnParam,
     FnReturn,
     VariantToEnum,
+    ToAny,
+    FromNever,
 };
 
 struct AdjustmentOp {
