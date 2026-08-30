@@ -19,6 +19,7 @@
 #include "ahfl/compiler/ir/core_verify.hpp"
 
 #include <cctype>
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <string>
@@ -529,6 +530,58 @@ class TypeEnv {
 };
 
 // ---------------------------------------------------------------------------
+// The SINGLE nominal resolver used by BOTH the production dispatch path and the
+// public `lower_value_type_into` (Codex P0-3). STRICT id-first identity:
+//   * ref has an id AND a Core type carries that same id -> use it, and require
+//     the canonical names agree (a matching id with a drifting canonical is a
+//     corrupt identity, fail-closed);
+//   * ref has an id but NO Core type has it -> canonical fallback is allowed ONLY
+//     to a name-only synthetic base (a CoreTypeDecl whose own symbol_ref has no
+//     id, e.g. an un-inlined std base). A canonical candidate that DOES carry a
+//     (necessarily different) id is fail-closed — a wrong id must never be
+//     silently downgraded to a spelling match;
+//   * ref has no id -> plain canonical name-only fallback.
+// Returns nullopt on no match OR on a fail-closed contradiction.
+[[nodiscard]] inline std::optional<CoreTypeId>
+resolve_nominal_strict(const std::vector<CoreTypeDecl> &types, const SymbolRef &ref) {
+    if (ref.id.has_value()) {
+        for (std::uint32_t i = 0; i < types.size(); ++i) {
+            const auto &sym = types[i].symbol_ref;
+            if (sym.id.has_value() && *sym.id == *ref.id) {
+                // Matching id: canonical must agree (both empty is fine).
+                if (!ref.canonical_name.empty() && !types[i].name.empty() &&
+                    ref.canonical_name != types[i].name) {
+                    return std::nullopt; // id/canonical drift -> fail-closed
+                }
+                return CoreTypeId{i};
+            }
+        }
+        // Present id with no id-match: only a name-only synthetic base may be
+        // reached by canonical, and only if the candidate itself carries no id.
+        if (!ref.canonical_name.empty()) {
+            for (std::uint32_t i = 0; i < types.size(); ++i) {
+                if (types[i].name != ref.canonical_name) {
+                    continue;
+                }
+                if (types[i].symbol_ref.id.has_value()) {
+                    return std::nullopt; // candidate has a DIFFERENT id -> reject
+                }
+                return CoreTypeId{i}; // name-only synthetic base
+            }
+        }
+        return std::nullopt;
+    }
+    if (!ref.canonical_name.empty()) {
+        for (std::uint32_t i = 0; i < types.size(); ++i) {
+            if (types[i].name == ref.canonical_name) {
+                return CoreTypeId{i};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// ---------------------------------------------------------------------------
 // Logical value-type arena (RFC 0026 P4). A TRUE hash-cons: `intern` maps a
 // structural key to a `CoreValueTypeId`, children are interned FIRST so a node's
 // key contains only child ids, and storage is deterministic append-only (so two
@@ -835,11 +888,16 @@ class ValueTypeArena {
             return set_reason(error_reason,
                               "nominal type's resolved identity is missing or not a Type symbol");
         }
-        // Tri-canonical agreement: the display canonical, the resolved-symbol
-        // canonical, and the resolved CoreTypeDecl name must all match, so a
-        // nominal cannot smuggle a mismatched identity past the bridge.
-        if (!type.canonical_name.empty() &&
-            type.canonical_name != type.nominal_ref.canonical_name) {
+        // Tri-canonical agreement (Codex P1-1): the display canonical, the
+        // resolved-symbol canonical, and the resolved CoreTypeDecl name must ALL
+        // be non-empty and equal — we do NOT bypass the check when a field is
+        // empty (lower must not assume BackendReady ran first).
+        if (type.canonical_name.empty() || type.nominal_ref.canonical_name.empty()) {
+            return set_reason(error_reason,
+                              "nominal type is missing a canonical name on the TypeRef or its "
+                              "resolved identity");
+        }
+        if (type.canonical_name != type.nominal_ref.canonical_name) {
             return set_reason(error_reason, "nominal type canonical '" + type.canonical_name +
                                                 "' disagrees with its resolved identity '" +
                                                 type.nominal_ref.canonical_name + "'");
@@ -853,8 +911,7 @@ class ValueTypeArena {
             return set_reason(error_reason, "resolved nominal base id is out of range");
         }
         const CoreTypeDecl &decl = types_[base->value];
-        if (!type.nominal_ref.canonical_name.empty() &&
-            type.nominal_ref.canonical_name != decl.name) {
+        if (decl.name.empty() || type.nominal_ref.canonical_name != decl.name) {
             return set_reason(error_reason, "nominal identity '" + type.nominal_ref.canonical_name +
                                                 "' resolves to a Core type named '" + decl.name +
                                                 "'");
@@ -869,6 +926,23 @@ class ValueTypeArena {
             return set_reason(error_reason, "nominal type tag disagrees with the resolved Core "
                                             "type's Struct/Enum kind for '" +
                                                 decl.name + "'");
+        }
+        // EnumVariant encoding: the variant name must name a real variant of the
+        // resolved enum (a `Ghost` variant is a malformed reference, not silently
+        // normalized to the parent enum).
+        if (is_variant_encoding) {
+            if (decl.kind != CoreTypeDecl::Kind::Enum) {
+                return set_reason(error_reason,
+                                  "variant-qualified nominal '" + decl.name + "' is not an enum");
+            }
+            const bool variant_found =
+                std::find(decl.variants.begin(), decl.variants.end(), type.variant_name) !=
+                decl.variants.end();
+            if (!variant_found) {
+                return set_reason(error_reason, "enum '" + decl.name +
+                                                    "' has no variant named '" + type.variant_name +
+                                                    "'");
+            }
         }
         std::vector<CoreValueTypeId> args;
         args.reserve(type.params.size());
@@ -2629,12 +2703,13 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     // InstanceDecls; unifying the two is a later slice.
     std::unordered_set<std::string> seen_instance_keys;
     // Interns each instance's concrete dispatch type into the program's logical
-    // value-type arena (RFC 0026 P4). Resolves nominal bases through the SAME
-    // TypeEnv used to build core.types (id-first via nominal_ref, then canonical),
-    // so a dispatch type carrying a resolved symbol id resolves precisely.
+    // value-type arena (RFC 0026 P4). Uses the SAME strict id-first resolver as
+    // the public lower_value_type_into (Codex P0-3): resolves over the now-complete
+    // core.types table by symbol id, with a name-only-synthetic canonical fallback
+    // and fail-closed id/canonical drift — no drift between the two paths.
     ValueTypeArena dispatch_arena(
         core.value_types, core.types,
-        [&types](const SymbolRef &ref) { return types.resolve(ref); });
+        [&core](const SymbolRef &ref) { return resolve_nominal_strict(core.types, ref); });
     for (const Decl &decl : ahfl_ir.declarations) {
         const auto *inst = std::get_if<InstanceDecl>(&decl);
         if (inst == nullptr) {
@@ -2853,27 +2928,11 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
 
 std::optional<CoreValueTypeId>
 lower_value_type_into(CoreProgram &program, const ir::TypeRef &type, std::string *reason) {
-    // Resolver over the program's own type table, ID-FIRST then canonical
-    // (Principle 2), using each CoreTypeDecl's persisted symbol_ref provenance —
-    // the SAME id-first semantics as the production TypeEnv path, so this public
-    // entry point cannot drift into canonical-only resolution.
-    auto resolve = [&program](const SymbolRef &ref) -> std::optional<CoreTypeId> {
-        if (ref.id.has_value()) {
-            for (std::uint32_t i = 0; i < program.types.size(); ++i) {
-                const auto &sym = program.types[i].symbol_ref;
-                if (sym.id.has_value() && *sym.id == *ref.id) {
-                    return CoreTypeId{i};
-                }
-            }
-        }
-        if (!ref.canonical_name.empty()) {
-            for (std::uint32_t i = 0; i < program.types.size(); ++i) {
-                if (program.types[i].name == ref.canonical_name) {
-                    return CoreTypeId{i};
-                }
-            }
-        }
-        return std::nullopt;
+    // Strict id-first resolver shared with the production dispatch path (Codex
+    // P0-3): a present-but-unmatched id never silently downgrades to a spelling
+    // match unless the canonical candidate is a name-only synthetic base.
+    auto resolve = [&program](const SymbolRef &ref) {
+        return resolve_nominal_strict(program.types, ref);
     };
     ValueTypeArena arena(program.value_types, program.types, std::move(resolve));
     return arena.lower(type, reason);

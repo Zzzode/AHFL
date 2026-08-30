@@ -171,40 +171,59 @@ class Verifier {
     void verify_nominal_role(const CoreTypeDecl &t,
                              const std::function<void(std::string)> &shape_error) {
         using K = CoreTypeDecl::Kind;
-        struct RoleSpec {
-            K kind;
-            std::uint32_t arity;
-        };
-        const auto spec = [&]() -> std::optional<RoleSpec> {
-            switch (t.role) {
-            case CoreNominalRole::Ordinary:
-                return std::nullopt; // unconstrained
-            case CoreNominalRole::Option:
-                return RoleSpec{K::Enum, 1};
-            case CoreNominalRole::Result:
-                return RoleSpec{K::Enum, 2};
-            case CoreNominalRole::List:
-                return RoleSpec{K::Struct, 1};
-            case CoreNominalRole::Set:
-                return RoleSpec{K::Struct, 1};
-            case CoreNominalRole::Map:
-                return RoleSpec{K::Struct, 2};
+        // The single builtin nominal SSOT drives BIDIRECTIONAL consistency (Codex
+        // P1-2): a non-Ordinary role must exactly match its unique descriptor
+        // (canonical + kind + arity), AND a canonical that hits a descriptor must
+        // carry that descriptor's role/kind/arity. This blocks both
+        // `name=evil::Foo, role=List` (a user type faking a collection to smuggle a
+        // capacity) and `name=std::collections::List, role=Ordinary`.
+        const BuiltinNominalDescriptor *by_role = nullptr;
+        const BuiltinNominalDescriptor *by_name = nullptr;
+        for (const auto &d : builtin_nominal_table()) {
+            if (d.role == t.role && t.role != CoreNominalRole::Ordinary) {
+                by_role = &d;
             }
-            return std::nullopt;
-        }();
-        if (!spec.has_value()) {
-            return;
+            if (t.name == d.canonical_name) {
+                by_name = &d;
+            }
         }
-        if (t.kind != spec->kind) {
-            shape_error("nominal role requires a " +
-                        std::string(spec->kind == K::Struct ? "struct" : "enum") +
-                        " but the declaration is a " +
-                        std::string(t.kind == K::Struct ? "struct" : "enum"));
+        const auto require_matches = [&](const BuiltinNominalDescriptor &d, const char *why) {
+            if (t.name != d.canonical_name) {
+                shape_error(std::string(why) + ": canonical must be '" +
+                            std::string(d.canonical_name) + "'");
+            }
+            if (t.kind != d.kind) {
+                shape_error(std::string(why) + ": kind must be " +
+                            std::string(d.kind == K::Struct ? "struct" : "enum"));
+            }
+            if (t.type_param_count != d.type_param_count) {
+                shape_error(std::string(why) + ": arity must be " +
+                            std::to_string(d.type_param_count));
+            }
+            if (t.role != d.role) {
+                shape_error(std::string(why) +
+                            ": role must match the builtin descriptor for this canonical");
+            }
+        };
+        if (by_role != nullptr) {
+            require_matches(*by_role, "nominal role");
         }
-        if (t.type_param_count != spec->arity) {
-            shape_error("nominal role requires arity " + std::to_string(spec->arity) +
-                        " but the declaration has type_param_count " +
-                        std::to_string(t.type_param_count));
+        if (by_name != nullptr) {
+            require_matches(*by_name, "builtin canonical");
+        }
+        // symbol_ref provenance: when present it must be a Type ref whose canonical
+        // agrees with the decl name; a name-only synthetic base may omit the id.
+        const auto &sym = t.symbol_ref;
+        const bool sym_present = sym.kind != ir::SymbolRefKind::Unknown ||
+                                 !sym.canonical_name.empty() || sym.id.has_value();
+        if (sym_present) {
+            if (sym.kind != ir::SymbolRefKind::Type) {
+                shape_error("nominal symbol_ref is present but not a Type symbol");
+            }
+            if (!sym.canonical_name.empty() && sym.canonical_name != t.name) {
+                shape_error("nominal symbol_ref canonical '" + sym.canonical_name +
+                            "' drifts from type name '" + t.name + "'");
+            }
         }
     }
 

@@ -397,34 +397,72 @@ TEST_CASE("P0-2: a REAL std generic decl is decorated with role + arity from the
     CHECK_FALSE(verify_core_program(p).has_errors());
 }
 
-TEST_CASE("P0-3: lower_value_type_into resolves nominal bases ID-FIRST") {
+TEST_CASE("P0-3: lower_value_type_into resolves nominal bases STRICT id-first") {
     using namespace ir::core;
-    CoreProgram p;
-    // Two DIFFERENT nominals that share NO canonical, but the ref carries a symbol
-    // id that must select the right one regardless of canonical scan order.
-    CoreTypeDecl a;
-    a.kind = CoreTypeDecl::Kind::Struct;
-    a.name = "app::Alpha";
-    a.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
-                                 .canonical_name = "app::Alpha",
-                                 .id = std::size_t{10}};
-    p.types.push_back(std::move(a));
 
-    // A ref whose canonical is "app::Alpha" but whose id is 10 resolves to Alpha.
-    ir::TypeRef ref = nominal_ref(ir::TypeRefKind::Struct, "app::Alpha", 10);
-    std::string reason;
-    const auto id = ir::core::lower_value_type_into(p, ref, &reason);
-    INFO(reason);
-    REQUIRE(id.has_value());
-    const auto *nominal = std::get_if<CoreVtNominal>(&p.value_types[id->value].node);
-    REQUIRE(nominal != nullptr);
-    CHECK(nominal->base == CoreTypeId{0});
-
-    // A ref with a WRONG id (99) but the right canonical still resolves via the
-    // canonical fallback (id-first, THEN canonical) — but a wrong id + wrong
-    // canonical fails closed.
-    ir::TypeRef bad = nominal_ref(ir::TypeRefKind::Struct, "app::Missing", 99);
-    CHECK_FALSE(ir::core::lower_value_type_into(p, bad, &reason).has_value());
+    SUBCASE("matching id resolves to that decl") {
+        CoreProgram p;
+        CoreTypeDecl a;
+        a.kind = CoreTypeDecl::Kind::Struct;
+        a.name = "app::Alpha";
+        a.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                     .canonical_name = "app::Alpha",
+                                     .id = std::size_t{10}};
+        p.types.push_back(std::move(a));
+        ir::TypeRef ref = nominal_ref(ir::TypeRefKind::Struct, "app::Alpha", 10);
+        std::string reason;
+        const auto id = ir::core::lower_value_type_into(p, ref, &reason);
+        INFO(reason);
+        REQUIRE(id.has_value());
+        const auto *nominal = std::get_if<CoreVtNominal>(&p.value_types[id->value].node);
+        REQUIRE(nominal != nullptr);
+        CHECK(nominal->base == CoreTypeId{0});
+    }
+    SUBCASE("WRONG id + right canonical against an id-bearing decl -> REJECT") {
+        // The decl has id=10; a ref claiming id=99 (with the right canonical) must
+        // NOT be silently downgraded to a spelling match.
+        CoreProgram p;
+        CoreTypeDecl a;
+        a.kind = CoreTypeDecl::Kind::Struct;
+        a.name = "app::Alpha";
+        a.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                     .canonical_name = "app::Alpha",
+                                     .id = std::size_t{10}};
+        p.types.push_back(std::move(a));
+        ir::TypeRef ref = nominal_ref(ir::TypeRefKind::Struct, "app::Alpha", 99);
+        std::string reason;
+        CHECK_FALSE(ir::core::lower_value_type_into(p, ref, &reason).has_value());
+    }
+    SUBCASE("present id + NAME-ONLY synthetic base (no id) + same canonical -> ACCEPT") {
+        // The un-inlined std base carries a name-only ref (no id); a typed-side ref
+        // WITH an id but the right canonical resolves to it (the legal fallback).
+        CoreProgram p;
+        CoreTypeDecl syn;
+        syn.kind = CoreTypeDecl::Kind::Struct;
+        syn.name = "app::Beta";
+        syn.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                       .canonical_name = "app::Beta"}; // no id
+        p.types.push_back(std::move(syn));
+        ir::TypeRef ref = nominal_ref(ir::TypeRefKind::Struct, "app::Beta", 7);
+        std::string reason;
+        CHECK(ir::core::lower_value_type_into(p, ref, &reason).has_value());
+    }
+    SUBCASE("matching id + canonical drift -> REJECT") {
+        CoreProgram p;
+        CoreTypeDecl a;
+        a.kind = CoreTypeDecl::Kind::Struct;
+        a.name = "app::Alpha";
+        a.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                     .canonical_name = "app::Alpha",
+                                     .id = std::size_t{10}};
+        p.types.push_back(std::move(a));
+        // The ref self-consistently names "app::Drifted" (TypeRef canonical ==
+        // nominal_ref canonical) with id=10 — but id 10 resolves to a decl named
+        // "app::Alpha". The strict resolver rejects the id/name drift.
+        ir::TypeRef ref = nominal_ref(ir::TypeRefKind::Struct, "app::Drifted", 10);
+        std::string reason;
+        CHECK_FALSE(ir::core::lower_value_type_into(p, ref, &reason).has_value());
+    }
 }
 
 TEST_CASE("P0-1: lower_value_type rejects stray fields per kind (field-tamper matrix)") {
@@ -503,4 +541,84 @@ TEST_CASE("P1 verifier: a role<->kind mismatch on a nominal decl is fail-closed"
     bad.type_param_count = 1;
     p.types.push_back(std::move(bad));
     CHECK(verify_core_program(p).has_errors());
+}
+
+TEST_CASE("P1-1: lower_nominal rejects a missing canonical and an unknown enum variant") {
+    using namespace ir::core;
+    CoreProgram p;
+    // An enum Color { Red } to reference by variant.
+    CoreTypeDecl color;
+    color.kind = CoreTypeDecl::Kind::Enum;
+    color.name = "app::Color";
+    color.variants = {"Red"};
+    color.variant_payloads.push_back(CoreTypeDecl::VariantPayload{});
+    color.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                     .canonical_name = "app::Color",
+                                     .id = std::size_t{3}};
+    p.types.push_back(std::move(color));
+
+    SUBCASE("missing TypeRef canonical (empty) is rejected even if nominal_ref resolves") {
+        ir::TypeRef ref;
+        ref.kind = ir::TypeRefKind::Enum;
+        ref.canonical_name = ""; // empty display canonical
+        ref.nominal_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                        .canonical_name = "app::Color",
+                                        .id = std::size_t{3}};
+        std::string reason;
+        CHECK_FALSE(ir::core::lower_value_type_into(p, ref, &reason).has_value());
+    }
+    SUBCASE("an unknown variant (Ghost) is NOT silently normalized to the parent enum") {
+        ir::TypeRef ref = nominal_ref(ir::TypeRefKind::Enum, "app::Color", 3);
+        ref.variant_name = "Ghost"; // no such variant
+        std::string reason;
+        CHECK_FALSE(ir::core::lower_value_type_into(p, ref, &reason).has_value());
+    }
+    SUBCASE("a known variant (Red) normalizes to the parent enum and lowers") {
+        ir::TypeRef ref = nominal_ref(ir::TypeRefKind::Enum, "app::Color", 3);
+        ref.variant_name = "Red";
+        std::string reason;
+        const auto id = ir::core::lower_value_type_into(p, ref, &reason);
+        INFO(reason);
+        REQUIRE(id.has_value());
+        // Identity is the parent enum; the variant name did not enter it.
+        const auto *nominal = std::get_if<CoreVtNominal>(&p.value_types[id->value].node);
+        REQUIRE(nominal != nullptr);
+        CHECK(nominal->base == CoreTypeId{0});
+    }
+}
+
+TEST_CASE("P1-2 verifier: role<->canonical identity is locked bidirectionally") {
+    using namespace ir::core;
+
+    SUBCASE("a user type faking a collection role (evil::Foo, role=List) is rejected") {
+        CoreProgram p;
+        CoreTypeDecl evil;
+        evil.kind = CoreTypeDecl::Kind::Struct;
+        evil.name = "evil::Foo";
+        evil.role = CoreNominalRole::List; // canonical is NOT std::collections::List
+        evil.type_param_count = 1;
+        p.types.push_back(std::move(evil));
+        CHECK(verify_core_program(p).has_errors());
+    }
+    SUBCASE("a builtin canonical with the wrong role (List name, Ordinary role) is rejected") {
+        CoreProgram p;
+        CoreTypeDecl list;
+        list.kind = CoreTypeDecl::Kind::Struct;
+        list.name = "std::collections::List";
+        list.role = CoreNominalRole::Ordinary; // must be List
+        list.type_param_count = 1;
+        p.types.push_back(std::move(list));
+        CHECK(verify_core_program(p).has_errors());
+    }
+    SUBCASE("symbol_ref canonical drift from the decl name is rejected") {
+        CoreProgram p;
+        CoreTypeDecl t;
+        t.kind = CoreTypeDecl::Kind::Struct;
+        t.name = "app::User";
+        t.symbol_ref = ir::SymbolRef{.kind = ir::SymbolRefKind::Type,
+                                     .canonical_name = "app::Drifted",
+                                     .id = std::size_t{1}};
+        p.types.push_back(std::move(t));
+        CHECK(verify_core_program(p).has_errors());
+    }
 }
