@@ -385,6 +385,24 @@ static bool contains_bytes(const std::vector<std::uint8_t> &bytes,
     return std::search(bytes.begin(), bytes.end(), needle.begin(), needle.end()) != bytes.end();
 }
 
+static std::vector<std::uint32_t>
+small_fixture_call_indices(const std::vector<std::uint8_t> &body) {
+    std::vector<std::uint32_t> calls;
+    for (std::size_t offset = 0; offset < body.size(); ++offset) {
+        if (body[offset] != 0x10) {
+            continue;
+        }
+        ++offset;
+        const auto index = read_u32_leb(body, offset);
+        if (!index.has_value()) {
+            return {};
+        }
+        calls.push_back(*index);
+        --offset;
+    }
+    return calls;
+}
+
 static bool rejects_as_unsupported(const ahfl::ir::core::CoreProgram &program) {
     const auto verified = ahfl::ir::core::verify_core_program(program);
     const auto layout = ahfl::ir::core::compute_core_layouts(program);
@@ -1226,9 +1244,8 @@ int main() {
               "present package metadata without an entry never uses legacy fallback");
     }
 
-    // Test 15: E3-C1 validates a real multi-agent workflow plan but publishes no
-    // workflow bytes until C2. Subset violations are classified at the narrow
-    // workflow-frame seam.
+    // Test 15: E3-C2 emits a deterministic real multi-agent workflow module.
+    // Subset violations remain classified at the narrow workflow-frame seam.
     {
         using namespace ahfl;
         using namespace ahfl::ir::core;
@@ -1243,13 +1260,75 @@ int main() {
         };
 
         const auto valid = make_e3_workflow_program();
+        const auto valid_layouts = compute_core_layouts(valid);
+        const auto valid_layout_snapshot = valid_layouts.table;
         const auto valid_result = emit_workflow(valid);
-        check(verify_core_program(valid).ok() && !valid_result.artifact.has_value() &&
-                  has_codegen_code(valid_result,
-                                   backends::core_wasm_diag::kUnsupportedOrchestration) &&
-                  !has_codegen_code(valid_result,
-                                    backends::core_wasm_diag::kUnsupportedWorkflowFrame),
-              "E3-C1 accepts the complete identity DAG plan but does not emit workflow bytes");
+        const auto repeated_result = emit_workflow(valid);
+        const bool packaged_exactly =
+            valid_result.artifact.has_value() &&
+            valid_result.artifact->packaged_agent_instances ==
+                std::vector<CoreInstanceId>{CoreInstanceId{0}, CoreInstanceId{1}};
+        check(verify_core_program(valid).ok() && valid_layouts.ok() &&
+                  valid_result.ok() && repeated_result.ok() &&
+                  valid_result.artifact->bytes == repeated_result.artifact->bytes &&
+                  std::holds_alternative<CoreWorkflowId>(valid_result.artifact->entry) &&
+                  packaged_exactly && valid_result.artifact->imports.empty() &&
+                  valid_layouts.table == valid_layout_snapshot,
+              "E3-C2 emits deterministic workflow bytes without mutating layout or expanding authority");
+
+        auto bad_workflow_layout = *valid_layouts.table;
+        bad_workflow_layout.target.pointer_size = 8;
+        const auto bad_workflow_layout_result = backends::emit_core_wasm(
+            valid,
+            bad_workflow_layout,
+            {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi});
+        check(!bad_workflow_layout_result.artifact.has_value() &&
+                  has_codegen_code(bad_workflow_layout_result,
+                                   backends::core_wasm_diag::kInvalidLayout),
+              "E3-C2 rejects an unverified workflow layout before byte emission");
+
+        const auto current_body = valid_result.artifact.has_value()
+                                      ? wasm_function_body(valid_result.artifact->bytes, 2)
+                                      : std::nullopt;
+        const auto step_body = valid_result.artifact.has_value()
+                                   ? wasm_function_body(valid_result.artifact->bytes, 3)
+                                   : std::nullopt;
+        const auto first_runner = valid_result.artifact.has_value()
+                                      ? wasm_function_body(valid_result.artifact->bytes, 4)
+                                      : std::nullopt;
+        const auto second_runner = valid_result.artifact.has_value()
+                                       ? wasm_function_body(valid_result.artifact->bytes, 5)
+                                       : std::nullopt;
+        const auto workflow_run = valid_result.artifact.has_value()
+                                      ? wasm_function_body(valid_result.artifact->bytes, 6)
+                                      : std::nullopt;
+        const auto workflow_run2 = valid_result.artifact.has_value()
+                                       ? wasm_function_body(valid_result.artifact->bytes, 7)
+                                       : std::nullopt;
+        const bool traps_before_effect =
+            current_body == std::optional<std::vector<std::uint8_t>>{{0x00, 0x00, 0x0b}} &&
+            step_body == std::optional<std::vector<std::uint8_t>>{{0x00, 0x00, 0x0b}};
+        const bool runners_are_frame_opaque =
+            first_runner.has_value() && second_runner.has_value() &&
+            std::none_of(first_runner->begin(), first_runner->end(), [](std::uint8_t byte) {
+                return byte >= 0x28 && byte <= 0x3e;
+            }) &&
+            std::none_of(second_runner->begin(), second_runner->end(), [](std::uint8_t byte) {
+                return byte >= 0x28 && byte <= 0x3e;
+            }) &&
+            workflow_run.has_value() && workflow_run2.has_value() &&
+            std::none_of(workflow_run->begin(), workflow_run->end(), [](std::uint8_t byte) {
+                return byte >= 0x28 && byte <= 0x3e;
+            }) &&
+            std::none_of(workflow_run2->begin(), workflow_run2->end(), [](std::uint8_t byte) {
+                return byte >= 0x28 && byte <= 0x3e;
+            });
+        const bool schedule_calls_in_order =
+            workflow_run2.has_value() &&
+            small_fixture_call_indices(*workflow_run2) ==
+                std::vector<std::uint32_t>{4, 5};
+        check(traps_before_effect && runners_are_frame_opaque && schedule_calls_in_order,
+              "E3-C2 workflow step/state trap and identity runners dispatch without frame memory operations");
 
         handoff::PackageMetadata workflow_metadata;
         workflow_metadata.entry_target = handoff::ExecutableRef{
@@ -1316,13 +1395,16 @@ int main() {
             CoreStmt{CoreYieldStmt{true, join_value}, std::nullopt});
         branch_workflow.nodes.push_back(std::move(join));
         const auto branch_join_result = emit_workflow(branch_join);
-        check(verify_core_program(branch_join).ok() &&
-                  !branch_join_result.artifact.has_value() &&
-                  has_codegen_code(branch_join_result,
-                                   backends::core_wasm_diag::kUnsupportedOrchestration) &&
-                  !has_codegen_code(branch_join_result,
-                                    backends::core_wasm_diag::kUnsupportedWorkflowFrame),
-              "E3-C1 validates declaration-order parallel roots plus a join and dedups instances");
+        const auto branch_run2 = branch_join_result.artifact.has_value()
+                                     ? wasm_function_body(branch_join_result.artifact->bytes, 7)
+                                     : std::nullopt;
+        check(verify_core_program(branch_join).ok() && branch_join_result.ok() &&
+                  branch_join_result.artifact->packaged_agent_instances ==
+                      std::vector<CoreInstanceId>{CoreInstanceId{0}, CoreInstanceId{1}} &&
+                  branch_run2.has_value() &&
+                  small_fixture_call_indices(*branch_run2) ==
+                      std::vector<std::uint32_t>{4, 5, 4},
+              "E3-C2 emits declaration-order parallel roots plus a join and dedups instance runners");
 
         auto wrong_type = make_e3_workflow_program();
         CoreTypeDecl other;
@@ -1347,7 +1429,7 @@ int main() {
                   !wrong_type_result.artifact.has_value() &&
                   has_codegen_code(wrong_type_result,
                                    backends::core_wasm_diag::kUnsupportedWorkflowFrame),
-              "E3-C1 rejects a workflow frame that does not match target input type");
+              "E3 rejects a workflow frame that does not match target input type");
 
         auto capability_agent = make_e3_workflow_program();
         CoreCapabilityDecl cap;
@@ -1381,7 +1463,7 @@ int main() {
                   !capability_result.artifact.has_value() &&
                   has_codegen_code(capability_result,
                                    backends::core_wasm_diag::kUnsupportedWorkflowFrame),
-              "E3-C1 rejects a reachable capability-bearing agent before byte emission");
+              "E3 rejects a reachable capability-bearing agent before byte emission");
 
         auto workflow_capability = make_e3_workflow_program();
         CoreCapabilityDecl workflow_cap;

@@ -1,0 +1,21 @@
+manifest_version = 1
+
+[package]
+name = "wasm-e3-workflow"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "wasm_e3"
+root = "."
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "wasm_e3::main::IdentityPipeline"
+exports = [
+  { kind = "workflow", name = "wasm_e3::main::IdentityPipeline" },
+]

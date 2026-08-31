@@ -194,7 +194,7 @@ constexpr CommandSpec kCommandSpecs[] = {
     emit_command(CommandKind::EmitOpenApi, "emit-openapi", "openapi", "openapi", 120, 116, 120),
     emit_command(
         CommandKind::EmitTerraform, "emit-terraform", "terraform", "terraform", 121, 117, 121),
-    emit_command(CommandKind::EmitWasm, "emit-wasm", "wasm", "wasm", 122, 118, 122),
+    emit_command(CommandKind::EmitWasm, "emit-wasm", "wasm", "wasm", 122, 118, 122, 54),
     routed_command(CommandKind::ValidateAssurance,
                    "validate-assurance",
                    ActionGroup::Validate,

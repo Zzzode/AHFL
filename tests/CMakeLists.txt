@@ -131,6 +131,69 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;wasmtime"
     )
+
+    # KR6.5 E3: the same checked frontend workflow feeds native
+    # WorkflowRuntime and Core->layout->wasm. This always-on producer is
+    # semantic/binary evidence, not wasm-engine execution by itself.
+    add_test(NAME ahfl.wasm.e3_same_frontend_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_e3_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_identity_workflow.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/e3_same_frontend_probe.wasm"
+    )
+    set_tests_properties(ahfl.wasm.e3_same_frontend_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "schedule=first,second completed_nodes=2 transition_count=2 identity_output=1"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.e3_package_cli_binary_gate
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e3_cli_gate.py"
+                $<TARGET_FILE:ahflc>
+                $<TARGET_FILE:ahfl_core_wasm_e3_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_identity_workflow.ahfl"
+                "${PROJECT_SOURCE_DIR}/tests/integration/wasm_e3_workflow/ahfl.toml"
+    )
+    set_tests_properties(ahfl.wasm.e3_package_cli_binary_gate PROPERTIES
+        PASS_REGULAR_EXPRESSION "E3 package CLI typed-entry byte identity passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural;cli"
+    )
+
+    # Persistent embedded execution observes both workflow counters and the
+    # returned borrowed frame in one module instance. This is real Node-engine
+    # evidence, visibly distinct from real-wasmtime evidence.
+    add_test(NAME ahfl.wasm.e3_node_persistent_workflow
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e3_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_e3_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_identity_workflow.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.e3_node_persistent_workflow PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "E3 Node persistent workflow execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
+    # Separate wasmtime CLI invocations cannot observe persistent globals, so
+    # this optional test claims only legacy-run pointer passthrough. Missing
+    # incidental tools SKIP; an explicitly configured broken tool hard-fails.
+    add_test(NAME ahfl.wasm.e3_wasmtime_workflow_run
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e3_wasmtime_conformance.py"
+                --probe $<TARGET_FILE:ahfl_core_wasm_e3_probe>
+                --source
+                    "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_identity_workflow.ahfl"
+                --explicit-wasmtime "${AHFL_WASMTIME}"
+                --detected-wasmtime "${_ahfl_detected_wasmtime}"
+    )
+    set_tests_properties(ahfl.wasm.e3_wasmtime_workflow_run PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "real-wasmtime workflow run passthrough passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;wasmtime"
+    )
 endif()
 
 add_test(NAME ahfl.runtime.native_grpc_gate

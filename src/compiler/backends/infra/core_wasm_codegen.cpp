@@ -164,6 +164,29 @@ struct FunctionTable {
     [[nodiscard]] std::uint32_t run2() const noexcept { return import_count + kDefinedRun2; }
 };
 
+struct WorkflowFunctionTable {
+    std::uint32_t runner_count{0};
+    [[nodiscard]] constexpr std::uint32_t alloc() const noexcept { return 0; }
+    [[nodiscard]] constexpr std::uint32_t dealloc() const noexcept { return 1; }
+    [[nodiscard]] constexpr std::uint32_t current_state() const noexcept { return 2; }
+    [[nodiscard]] constexpr std::uint32_t step() const noexcept { return 3; }
+    [[nodiscard]] constexpr std::uint32_t runner(std::uint32_t index) const noexcept {
+        return 4 + index;
+    }
+    [[nodiscard]] constexpr std::uint32_t run() const noexcept {
+        return 4 + runner_count;
+    }
+    [[nodiscard]] constexpr std::uint32_t run2() const noexcept {
+        return 5 + runner_count;
+    }
+};
+
+constexpr std::uint32_t kWorkflowGlobalTransitionCount = 0;
+constexpr std::uint32_t kWorkflowGlobalAbiVersion = 1;
+constexpr std::uint32_t kWorkflowGlobalHeapNext = 2;
+constexpr std::uint32_t kWorkflowGlobalNodeCount = 3;
+constexpr std::uint32_t kWorkflowGlobalCompletedCount = 4;
+
 void add_diag(CoreWasmCodegenResult &result,
               std::string_view code,
               std::string message,
@@ -1143,17 +1166,17 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
     return true;
 }
 
-[[nodiscard]] ByteBuffer make_alloc_body() {
+[[nodiscard]] ByteBuffer make_alloc_body(std::uint32_t heap_global = kGlobalHeapNext) {
     ByteBuffer body;
     body.u32(1);
     body.u32(1);
     body.byte(kI32);
-    append_indexed_op(body, kOpGlobalGet, kGlobalHeapNext);
+    append_indexed_op(body, kOpGlobalGet, heap_global);
     append_indexed_op(body, kOpLocalSet, 1);
-    append_indexed_op(body, kOpGlobalGet, kGlobalHeapNext);
+    append_indexed_op(body, kOpGlobalGet, heap_global);
     append_indexed_op(body, kOpLocalGet, 0);
     body.byte(kOpI32Add);
-    append_indexed_op(body, kOpGlobalSet, kGlobalHeapNext);
+    append_indexed_op(body, kOpGlobalSet, heap_global);
     append_indexed_op(body, kOpLocalGet, 1);
     body.byte(kOpEnd);
     return body;
@@ -1506,6 +1529,364 @@ encode_module(const CoreProgram &program, const AgentPlan &plan) {
     return std::move(module).take();
 }
 
+[[nodiscard]] ByteBuffer make_trapping_i32_body() {
+    ByteBuffer body;
+    body.u32(0);
+    body.byte(kOpUnreachable);
+    body.byte(kOpEnd);
+    return body;
+}
+
+[[nodiscard]] std::optional<std::uint32_t>
+workflow_runner_index(const WorkflowPlan &plan, CoreInstanceId instance) {
+    const auto it = std::lower_bound(plan.packaged_instances.begin(),
+                                     plan.packaged_instances.end(),
+                                     instance,
+                                     [](auto lhs, auto rhs) { return lhs.value < rhs.value; });
+    if (it == plan.packaged_instances.end() || *it != instance) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(it - plan.packaged_instances.begin());
+}
+
+[[nodiscard]] std::optional<std::vector<std::pair<CoreStateId, CoreStateId>>>
+workflow_initial_transitions(const AgentPlan &plan) {
+    if (plan.initial.value >= plan.actions.size()) {
+        return std::nullopt;
+    }
+
+    std::vector<bool> visited(plan.actions.size(), false);
+    std::vector<std::pair<CoreStateId, CoreStateId>> transitions;
+    auto state = plan.initial;
+    while (true) {
+        if (state.value >= plan.actions.size() || visited[state.value]) {
+            return std::nullopt;
+        }
+        visited[state.value] = true;
+        const auto &action = plan.actions[state.value];
+        if (std::holds_alternative<IdentityAction>(action)) {
+            break;
+        }
+        const auto *go = std::get_if<GotoAction>(&action);
+        if (go == nullptr || go->target.value >= plan.actions.size()) {
+            return std::nullopt;
+        }
+        transitions.emplace_back(state, go->target);
+        state = go->target;
+    }
+    return transitions;
+}
+
+[[nodiscard]] std::optional<ByteBuffer>
+make_workflow_runner_body(const AgentPlan &plan) {
+    auto transitions = workflow_initial_transitions(plan);
+    if (!transitions.has_value()) {
+        return std::nullopt;
+    }
+    ByteBuffer body;
+    body.u32(1);
+    body.u32(1);
+    body.byte(kI32); // local 2 = private current state
+    append_const(body, plan.initial.value);
+    append_indexed_op(body, kOpLocalSet, 2);
+
+    auto state = plan.initial;
+    for (const auto &[source, target] : *transitions) {
+        append_indexed_op(body, kOpLocalGet, 2);
+        append_const(body, source.value);
+        body.byte(kOpI32Eq);
+        body.byte(kOpI32Eqz);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        body.byte(kOpUnreachable);
+        body.byte(kOpEnd);
+
+        append_const(body, target.value);
+        append_indexed_op(body, kOpLocalSet, 2);
+        state = target;
+        append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalTransitionCount);
+        append_const(body, 1);
+        body.byte(kOpI32Add);
+        append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalTransitionCount);
+    }
+
+    append_indexed_op(body, kOpLocalGet, 2);
+    append_const(body, state.value);
+    body.byte(kOpI32Eq);
+    body.byte(kOpI32Eqz);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    body.byte(kOpUnreachable);
+    body.byte(kOpEnd);
+    append_const(body, AHFL_CAP_OK);
+    append_indexed_op(body, kOpLocalGet, 0);
+    append_indexed_op(body, kOpLocalGet, 1);
+    body.byte(kOpEnd);
+    return body;
+}
+
+[[nodiscard]] std::optional<std::uint32_t>
+workflow_node_ptr_local(CoreWorkflowNodeId node) {
+    if (node.value > (std::numeric_limits<std::uint32_t>::max() - 2u) / 2u) {
+        return std::nullopt;
+    }
+    return 2u + node.value * 2u;
+}
+
+[[nodiscard]] std::optional<std::uint32_t>
+workflow_node_len_local(CoreWorkflowNodeId node) {
+    const auto ptr = workflow_node_ptr_local(node);
+    if (!ptr.has_value() || *ptr == std::numeric_limits<std::uint32_t>::max()) {
+        return std::nullopt;
+    }
+    return *ptr + 1u;
+}
+
+[[nodiscard]] bool append_workflow_source(ByteBuffer &body,
+                                          const WorkflowFrameSource &source) {
+    if (source.kind == WorkflowFrameSourceKind::Input) {
+        append_indexed_op(body, kOpLocalGet, 0);
+        append_indexed_op(body, kOpLocalGet, 1);
+        return true;
+    }
+    const auto ptr = workflow_node_ptr_local(source.node);
+    const auto len = workflow_node_len_local(source.node);
+    if (!ptr.has_value() || !len.has_value()) {
+        return false;
+    }
+    append_indexed_op(body, kOpLocalGet, *ptr);
+    append_indexed_op(body, kOpLocalGet, *len);
+    return true;
+}
+
+[[nodiscard]] bool append_workflow_schedule(ByteBuffer &body,
+                                            const WorkflowPlan &plan,
+                                            const WorkflowFunctionTable &functions,
+                                            std::uint32_t status_local) {
+    append_const(body, 0);
+    append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalTransitionCount);
+    append_const(body, 0);
+    append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
+
+    for (const auto node_id : plan.schedule) {
+        if (node_id.value >= plan.nodes.size()) {
+            return false;
+        }
+        const auto &node = plan.nodes[node_id.value];
+        const auto runner = workflow_runner_index(plan, node.target_instance);
+        const auto ptr_local = workflow_node_ptr_local(node_id);
+        const auto len_local = workflow_node_len_local(node_id);
+        if (!runner.has_value() || !ptr_local.has_value() || !len_local.has_value() ||
+            !append_workflow_source(body, node.input)) {
+            return false;
+        }
+        append_indexed_op(body, kOpCall, functions.runner(*runner));
+        // Multi-value results are (status, ptr, len); pop in reverse order.
+        append_indexed_op(body, kOpLocalSet, *len_local);
+        append_indexed_op(body, kOpLocalSet, *ptr_local);
+        append_indexed_op(body, kOpLocalSet, status_local);
+        append_indexed_op(body, kOpLocalGet, status_local);
+        append_const(body, AHFL_CAP_OK);
+        body.byte(kOpI32Eq);
+        body.byte(kOpI32Eqz);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        body.byte(kOpUnreachable);
+        body.byte(kOpEnd);
+        append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalCompletedCount);
+        append_const(body, 1);
+        body.byte(kOpI32Add);
+        append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
+    }
+    return true;
+}
+
+[[nodiscard]] std::optional<ByteBuffer>
+make_workflow_run2_body(const WorkflowPlan &plan,
+                        const WorkflowFunctionTable &functions) {
+    if (plan.nodes.size() >
+        (static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) - 1u) / 2u) {
+        return std::nullopt;
+    }
+    const auto node_locals = static_cast<std::uint32_t>(plan.nodes.size()) * 2u;
+    const auto status_local = 2u + node_locals;
+
+    ByteBuffer body;
+    body.u32(1);
+    body.u32(node_locals + 1u);
+    body.byte(kI32); // node (ptr,len) pairs followed by one status scratch
+    if (!append_workflow_schedule(body, plan, functions, status_local)) {
+        return std::nullopt;
+    }
+    append_const(body, AHFL_CAP_OK);
+    if (!append_workflow_source(body, plan.output)) {
+        return std::nullopt;
+    }
+    body.byte(kOpEnd);
+    return body;
+}
+
+[[nodiscard]] ByteBuffer make_workflow_run_body(const WorkflowFunctionTable &functions) {
+    ByteBuffer body;
+    body.u32(1);
+    body.u32(3);
+    body.byte(kI32); // locals 2=status, 3=ptr, 4=len
+    append_indexed_op(body, kOpLocalGet, 0);
+    append_indexed_op(body, kOpLocalGet, 1);
+    append_indexed_op(body, kOpCall, functions.run2());
+    append_indexed_op(body, kOpLocalSet, 4);
+    append_indexed_op(body, kOpLocalSet, 3);
+    append_indexed_op(body, kOpLocalSet, 2);
+    append_indexed_op(body, kOpLocalGet, 2);
+    append_const(body, AHFL_CAP_OK);
+    body.byte(kOpI32Eq);
+    body.byte(kOpI32Eqz);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    body.byte(kOpUnreachable);
+    body.byte(kOpEnd);
+    append_indexed_op(body, kOpLocalGet, 3);
+    body.byte(kOpEnd);
+    return body;
+}
+
+[[nodiscard]] std::optional<std::vector<std::uint8_t>>
+encode_workflow_module(const WorkflowPlan &plan) {
+    if (plan.packaged_instances.size() >
+        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 6u) ||
+        plan.agent_plans.size() != plan.packaged_instances.size() ||
+        plan.nodes.size() >=
+            static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+        return std::nullopt;
+    }
+    std::uint64_t aggregate_transitions = 0;
+    for (const auto node_id : plan.schedule) {
+        if (node_id.value >= plan.nodes.size()) {
+            return std::nullopt;
+        }
+        const auto runner = workflow_runner_index(
+            plan, plan.nodes[node_id.value].target_instance);
+        if (!runner.has_value() || *runner >= plan.agent_plans.size()) {
+            return std::nullopt;
+        }
+        const auto transitions = workflow_initial_transitions(plan.agent_plans[*runner]);
+        if (!transitions.has_value()) {
+            return std::nullopt;
+        }
+        aggregate_transitions += transitions->size();
+        if (aggregate_transitions >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+            return std::nullopt;
+        }
+    }
+    const WorkflowFunctionTable functions{
+        static_cast<std::uint32_t>(plan.packaged_instances.size())};
+    ByteBuffer module;
+    module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
+
+    ByteBuffer types;
+    types.u32(5);
+    append_func_type(types, {}, {kI32});
+    append_func_type(types, {kI32}, {kI32});
+    append_func_type(types, {kI32, kI32}, {});
+    append_func_type(types, {kI32, kI32}, {kI32});
+    append_func_type(types, {kI32, kI32}, {kI32, kI32, kI32});
+    if (!append_section(module, kSectionType, types)) {
+        return std::nullopt;
+    }
+
+    ByteBuffer functions_section;
+    functions_section.u32(functions.runner_count + 6u);
+    functions_section.u32(kTypeI32ToI32);
+    functions_section.u32(kTypeTwoI32ToVoid);
+    functions_section.u32(kTypeNoArgsI32);
+    functions_section.u32(kTypeNoArgsI32);
+    for (std::uint32_t i = 0; i < functions.runner_count; ++i) {
+        functions_section.u32(kTypeCapabilityTuple);
+    }
+    functions_section.u32(kTypeTwoI32ToI32);
+    functions_section.u32(kTypeCapabilityTuple);
+    if (!append_section(module, kSectionFunction, functions_section)) {
+        return std::nullopt;
+    }
+
+    ByteBuffer memories;
+    memories.u32(1);
+    memories.byte(0);
+    memories.u32(1);
+    if (!append_section(module, kSectionMemory, memories)) {
+        return std::nullopt;
+    }
+
+    ByteBuffer globals;
+    globals.u32(5);
+    append_global(globals, true, 0);
+    append_global(globals, false, 1);
+    append_global(globals, true, 1024);
+    append_global(globals, false, static_cast<std::uint32_t>(plan.nodes.size()));
+    append_global(globals, true, 0);
+    if (!append_section(module, kSectionGlobal, globals)) {
+        return std::nullopt;
+    }
+
+    ByteBuffer exports;
+    exports.u32(11);
+    const bool exports_ok =
+        append_export(exports, "memory", kExportMemory, 0) &&
+        append_export(exports, "alloc", kExportFunction, functions.alloc()) &&
+        append_export(exports, "dealloc", kExportFunction, functions.dealloc()) &&
+        append_export(exports, "run", kExportFunction, functions.run()) &&
+        append_export(exports, "run2", kExportFunction, functions.run2()) &&
+        append_export(exports, "step", kExportFunction, functions.step()) &&
+        append_export(exports,
+                      "current_state",
+                      kExportFunction,
+                      functions.current_state()) &&
+        append_export(exports,
+                      "transition_count",
+                      kExportGlobal,
+                      kWorkflowGlobalTransitionCount) &&
+        append_export(exports,
+                      "ahfl_abi_version",
+                      kExportGlobal,
+                      kWorkflowGlobalAbiVersion) &&
+        append_export(exports,
+                      "workflow_node_count",
+                      kExportGlobal,
+                      kWorkflowGlobalNodeCount) &&
+        append_export(exports,
+                      "workflow_completed_count",
+                      kExportGlobal,
+                      kWorkflowGlobalCompletedCount);
+    if (!exports_ok || !append_section(module, kSectionExport, exports)) {
+        return std::nullopt;
+    }
+
+    ByteBuffer code;
+    code.u32(functions.runner_count + 6u);
+    const auto alloc = make_alloc_body(kWorkflowGlobalHeapNext);
+    const auto dealloc = make_dealloc_body();
+    const auto current = make_trapping_i32_body();
+    const auto step = make_trapping_i32_body();
+    if (!code.sized(alloc) || !code.sized(dealloc) || !code.sized(current) ||
+        !code.sized(step)) {
+        return std::nullopt;
+    }
+    for (const auto &agent_plan : plan.agent_plans) {
+        auto runner = make_workflow_runner_body(agent_plan);
+        if (!runner.has_value() || !code.sized(*runner)) {
+            return std::nullopt;
+        }
+    }
+    const auto run = make_workflow_run_body(functions);
+    auto run2 = make_workflow_run2_body(plan, functions);
+    if (!run2.has_value() || !code.sized(run) || !code.sized(*run2) ||
+        !append_section(module, kSectionCode, code)) {
+        return std::nullopt;
+    }
+    return std::move(module).take();
+}
+
 } // namespace
 
 std::expected<CoreWasmEntry, CoreWasmDiagnostic>
@@ -1614,9 +1995,29 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         if (!plan.has_value()) {
             return result;
         }
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedOrchestration,
-                 "KR6.5 E3-C1 validated the workflow plan; workflow byte emission lands in E3-C2");
+        auto bytes = encode_workflow_module(*plan);
+        if (!bytes.has_value()) {
+            add_diag(result,
+                     core_wasm_diag::kBinaryOverflow,
+                     "workflow WASM section, local, function, or index exceeds the wasm32 encoding domain");
+            return result;
+        }
+        CoreWasmArtifact artifact;
+        artifact.bytes = std::move(*bytes);
+        artifact.entry = target.entry;
+        artifact.packaged_agent_instances = plan->packaged_instances;
+        artifact.exports = {"memory",
+                            "alloc",
+                            "dealloc",
+                            "run",
+                            "run2",
+                            "step",
+                            "current_state",
+                            "transition_count",
+                            "ahfl_abi_version",
+                            "workflow_node_count",
+                            "workflow_completed_count"};
+        result.artifact = std::move(artifact);
         return result;
     }
     const auto *agent = std::get_if<CoreAgentId>(&target.entry);

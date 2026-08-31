@@ -44,6 +44,9 @@ int main() {
           "emit-opt-ir-json is handled by the CLI opt pipeline");
     check(!ahfl::cli::is_core_backend_command(ahfl::cli::CommandKind::RunWorkflow),
           "run is not a core backend command");
+    check(maps_to_backend(ahfl::cli::CommandKind::EmitWasm,
+                          ahfl::BackendKind::InfraWasm),
+          "emit-wasm maps to the Core WASM backend");
 
     check(ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::EmitExecutionPlan),
           "emit-execution-plan remains package-aware");
@@ -53,6 +56,8 @@ int main() {
           "emit-smv is package-aware");
     check(ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::RunWorkflow),
           "run is package-aware for multi-file workflow execution");
+    check(ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::EmitWasm),
+          "emit-wasm is package-aware for typed workflow entry selection");
 
     // --- Subcommand dispatch tests ---
 
