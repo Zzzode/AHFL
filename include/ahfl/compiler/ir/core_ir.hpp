@@ -1540,17 +1540,49 @@ struct CoreLowerResult {
 /// RFC 0026 KR6.5 E4-B0-C2: the type-table-only projection of an AHFL program's
 /// nominal universe, factored out of `lower_ahfl_to_core` so the wire-schema
 /// migration projector can seed a private value-type arena WITHOUT lowering any
-/// capability / agent / flow / workflow body. `types` + `value_types` are exactly
-/// the arenas `lower_ahfl_to_core` builds in its type-table pass (same source
-/// order, field-nav fixup, and P4-C member-template finalization); the full
-/// lowerer consumes the SAME construction path, so this is not a second type
-/// registration. The gate here is TYPE-LOCAL: it validates only the invariants
-/// the type table / value-type arena need, never a handler body. `ok()` is false
-/// iff an ERROR diagnostic was produced; a consumer that sees `!ok()` must fail
-/// closed (no partial artifact).
-struct CoreTypeEnvironmentSeed {
-    std::vector<CoreTypeDecl> types;
-    std::vector<CoreValueType> value_types;
+/// capability / agent / flow / workflow body. `types()` + `value_types()` are
+/// exactly the arenas `lower_ahfl_to_core` builds in its type-table pass (same
+/// source order, field-nav fixup, and P4-C member-template finalization); the
+/// full lowerer consumes the SAME construction path, so this is not a second type
+/// registration.
+///
+/// This is a constructor-guarded, copy-only immutable handle: only
+/// `build_core_type_environment` can mint one, and only after the TYPE-LOCAL
+/// structural gate passed. There is therefore no post-gate mutable state — a
+/// holder of this type ALWAYS carries a verified type environment (a caller
+/// cannot rewrite `types` to another self-consistent-but-different definition and
+/// keep a stale "ok"). The payload is `shared_ptr<const>`; no move ctor/assignment
+/// is declared, so an rvalue copies the cheap pointer (no moved-from state).
+class VerifiedCoreTypeEnvironment {
+  public:
+    VerifiedCoreTypeEnvironment(const VerifiedCoreTypeEnvironment &) = default;
+    VerifiedCoreTypeEnvironment &operator=(const VerifiedCoreTypeEnvironment &) = default;
+    // Intentionally NO move ctor/assignment: copy-only immutable handle.
+
+    [[nodiscard]] const std::vector<CoreTypeDecl> &types() const noexcept {
+        return payload_->types;
+    }
+    [[nodiscard]] const std::vector<CoreValueType> &value_types() const noexcept {
+        return payload_->value_types;
+    }
+
+  private:
+    friend struct CoreTypeEnvironmentFactory;
+    struct Payload {
+        std::vector<CoreTypeDecl> types;
+        std::vector<CoreValueType> value_types;
+    };
+    explicit VerifiedCoreTypeEnvironment(std::shared_ptr<const Payload> payload)
+        : payload_(std::move(payload)) {}
+
+    std::shared_ptr<const Payload> payload_;
+};
+
+/// Result of `build_core_type_environment`: a verified environment iff the
+/// type-local gate produced no ERROR, plus the diagnostics either way. A consumer
+/// that sees `!ok()` must fail closed (no partial artifact).
+struct CoreTypeEnvironmentResult {
+    std::optional<VerifiedCoreTypeEnvironment> environment;
     std::vector<CoreLowerDiagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -1561,14 +1593,19 @@ struct CoreTypeEnvironmentSeed {
         }
         return false;
     }
-    [[nodiscard]] bool ok() const noexcept { return !has_errors(); }
+    [[nodiscard]] bool ok() const noexcept {
+        return environment.has_value() && !has_errors();
+    }
 };
 
-/// Build the shared type-table-only seed from a verified AHFL program. Lowers NO
-/// body. This is the single registration/fixup/finalize path — `lower_ahfl_to_core`
-/// runs the identical steps in-place, so a program that lowers cleanly and this
-/// seed agree on `types` / `value_types` byte-for-byte.
-[[nodiscard]] CoreTypeEnvironmentSeed build_core_type_environment(const AhflIr &ahfl_ir);
+/// Build the shared, verified type-table-only environment from a verified AHFL
+/// program. Lowers NO body. This is the single registration/fixup/finalize path —
+/// `lower_ahfl_to_core` runs the identical steps in-place, so a program that
+/// lowers cleanly and this environment agree on `types` / `value_types`
+/// byte-for-byte. The TYPE-LOCAL structural gate (`verify_types` +
+/// `verify_value_types` over empty body shells) runs before an environment is
+/// minted; on any ERROR the result carries diagnostics and no environment.
+[[nodiscard]] CoreTypeEnvironmentResult build_core_type_environment(const AhflIr &ahfl_ir);
 
 /// A well-known stdlib enum the lowerer resolves via a builtin variant table
 /// (its EnumDecl lives in the sysroot and may not be inlined in a program).

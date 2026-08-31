@@ -128,6 +128,14 @@ agent Worker {
     return b.table().nodes[id.value].shape;
 }
 
+// Build a verified type environment, asserting the type-local gate passed.
+[[nodiscard]] VerifiedCoreTypeEnvironment require_env(const ir::AhflIr &program) {
+    auto result = build_core_type_environment(program);
+    REQUIRE(result.ok());
+    REQUIRE(result.environment.has_value());
+    return *result.environment;
+}
+
 } // namespace
 
 TEST_CASE("build_core_type_environment matches lower_ahfl_to_core's type table byte-for-byte") {
@@ -136,8 +144,7 @@ TEST_CASE("build_core_type_environment matches lower_ahfl_to_core's type table b
 
     const auto full = lower_ahfl_to_core(*program);
     REQUIRE(full.ok());
-    const auto seed = build_core_type_environment(*program);
-    REQUIRE(seed.ok());
+    const auto env = require_env(*program);
 
     // The shared prelude must produce EXACTLY the type table the full lowerer
     // builds (same source order, fixup, template finalize) — no body adds a
@@ -145,11 +152,11 @@ TEST_CASE("build_core_type_environment matches lower_ahfl_to_core's type table b
     // deterministic PREFIX of the full program's arena: full lowering appends
     // more value types while lowering capability / flow / workflow bodies, but it
     // must not reorder or alter the type-table-produced entries.
-    CHECK(seed.types == full.program.types);
-    REQUIRE(seed.value_types.size() <= full.program.value_types.size());
+    CHECK(env.types() == full.program.types);
+    REQUIRE(env.value_types().size() <= full.program.value_types.size());
     bool prefix = true;
-    for (std::size_t i = 0; i < seed.value_types.size(); ++i) {
-        if (!(seed.value_types[i] == full.program.value_types[i])) {
+    for (std::size_t i = 0; i < env.value_types().size(); ++i) {
+        if (!(env.value_types()[i] == full.program.value_types[i])) {
             prefix = false;
             break;
         }
@@ -160,13 +167,12 @@ TEST_CASE("build_core_type_environment matches lower_ahfl_to_core's type table b
 TEST_CASE("migration projector lowers scalar and refinement capability returns") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
-    const auto seed = build_core_type_environment(*program);
-    REQUIRE(seed.ok());
+    const auto env = require_env(*program);
 
     SUBCASE("Bool") {
         const auto *cap = find_capability(*program, "ScalarCap");
         REQUIRE(cap != nullptr);
-        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
         REQUIRE(result.ok());
         CHECK(std::holds_alternative<CoreWireSchemaBool>(
             shape_of(*result.binding, result.binding->root())));
@@ -175,7 +181,7 @@ TEST_CASE("migration projector lowers scalar and refinement capability returns")
     SUBCASE("bounded Int refinement carries its bounds") {
         const auto *cap = find_capability(*program, "RefineCap");
         REQUIRE(cap != nullptr);
-        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
         REQUIRE(result.ok());
         const auto &shape = shape_of(*result.binding, result.binding->root());
         const auto &as_int = std::get<CoreWireSchemaInt>(shape);
@@ -225,13 +231,12 @@ TEST_CASE("migration projector lowers an enum return with tuple + unit variants"
 TEST_CASE("migration projector lowers Option and bounded List returns") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
-    const auto seed = build_core_type_environment(*program);
-    REQUIRE(seed.ok());
+    const auto env = require_env(*program);
 
     SUBCASE("Option<Int>") {
         const auto *cap = find_capability(*program, "OptionCap");
         REQUIRE(cap != nullptr);
-        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
         REQUIRE(result.ok());
         const auto &opt = std::get<CoreWireSchemaOption>(
             shape_of(*result.binding, result.binding->root()));
@@ -241,7 +246,7 @@ TEST_CASE("migration projector lowers Option and bounded List returns") {
     SUBCASE("List<Int>(8)") {
         const auto *cap = find_capability(*program, "ListCap");
         REQUIRE(cap != nullptr);
-        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
         REQUIRE(result.ok());
         const auto &list = std::get<CoreWireSchemaSequence>(
             shape_of(*result.binding, result.binding->root()));
@@ -251,20 +256,19 @@ TEST_CASE("migration projector lowers Option and bounded List returns") {
     }
 }
 
-TEST_CASE("migration is pure and deterministic") {
+TEST_CASE("migration is deterministic over an immutable environment") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
     const auto *cap = find_capability(*program, "StructCap");
     REQUIRE(cap != nullptr);
-    const auto seed = build_core_type_environment(*program);
-    const auto before = seed;
-    const auto a = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
-    const auto b = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+    const auto env = require_env(*program);
+    const auto a = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
+    const auto b = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
     REQUIRE(a.ok());
     REQUIRE(b.ok());
-    // Seed untouched (pure) and repeat migration structurally identical.
-    CHECK(seed.types == before.types);
-    CHECK(seed.value_types == before.value_types);
+    // The environment is a const, copy-only immutable handle — migration cannot
+    // mutate it (purity is structural), so it suffices to prove repeat migration
+    // is byte-for-byte identical.
     CHECK(a.binding->table() == b.binding->table());
     CHECK(a.binding->root() == b.binding->root());
 }
@@ -272,12 +276,11 @@ TEST_CASE("migration is pure and deterministic") {
 TEST_CASE("migration projector fails closed on non-projectable TypeRefs") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
-    const auto seed = build_core_type_environment(*program);
-    REQUIRE(seed.ok());
+    const auto env = require_env(*program);
 
     SUBCASE("Unresolved type") {
         ir::TypeRef unresolved; // default kind == Unresolved
-        const auto result = migrate_type_ref_to_wire_binding(unresolved, seed);
+        const auto result = migrate_type_ref_to_wire_binding(unresolved, env);
         CHECK_FALSE(result.ok());
         CHECK_FALSE(result.binding.has_value());
     }
@@ -285,7 +288,7 @@ TEST_CASE("migration projector fails closed on non-projectable TypeRefs") {
     SUBCASE("Any type") {
         ir::TypeRef any;
         any.kind = ir::TypeRefKind::Any;
-        const auto result = migrate_type_ref_to_wire_binding(any, seed);
+        const auto result = migrate_type_ref_to_wire_binding(any, env);
         CHECK_FALSE(result.ok());
         CHECK_FALSE(result.binding.has_value());
     }
@@ -293,7 +296,7 @@ TEST_CASE("migration projector fails closed on non-projectable TypeRefs") {
     SUBCASE("Never type") {
         ir::TypeRef never;
         never.kind = ir::TypeRefKind::Never;
-        const auto result = migrate_type_ref_to_wire_binding(never, seed);
+        const auto result = migrate_type_ref_to_wire_binding(never, env);
         CHECK_FALSE(result.ok());
         CHECK_FALSE(result.binding.has_value());
     }
@@ -303,7 +306,7 @@ TEST_CASE("migration projector fails closed on non-projectable TypeRefs") {
         bogus.kind = ir::TypeRefKind::Struct;
         bogus.canonical_name = "app::main::DoesNotExist";
         // nominal_ref left with no id and a name that no decl claims.
-        const auto result = migrate_type_ref_to_wire_binding(bogus, seed);
+        const auto result = migrate_type_ref_to_wire_binding(bogus, env);
         CHECK_FALSE(result.ok());
         CHECK_FALSE(result.binding.has_value());
     }
@@ -330,7 +333,7 @@ TEST_CASE("the transported-table factory applies the public local verifier gate"
     }
     std::vector<CoreLowerDiagnostic> diagnostics;
     const auto rejected = make_wire_binding_from_transported_table(
-        std::move(tampered), good.binding->root(), diagnostics);
+        std::move(tampered), good.binding->selector(), diagnostics);
     CHECK_FALSE(rejected.has_value());
     CHECK_FALSE(diagnostics.empty());
 }
@@ -338,13 +341,12 @@ TEST_CASE("the transported-table factory applies the public local verifier gate"
 TEST_CASE("migration projector lowers String-keyed Map and rejects a non-String key") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
-    const auto seed = build_core_type_environment(*program);
-    REQUIRE(seed.ok());
+    const auto env = require_env(*program);
 
     SUBCASE("Map<String, Int> projects") {
         const auto *cap = find_capability(*program, "MapCap");
         REQUIRE(cap != nullptr);
-        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
         REQUIRE(result.ok());
         const auto &map = std::get<CoreWireSchemaMap>(
             shape_of(*result.binding, result.binding->root()));
@@ -355,7 +357,7 @@ TEST_CASE("migration projector lowers String-keyed Map and rejects a non-String 
     SUBCASE("Map<Int, Int> fails closed (non-String key)") {
         const auto *cap = find_capability(*program, "MapKeyCap");
         REQUIRE(cap != nullptr);
-        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
         CHECK_FALSE(result.ok());
         CHECK_FALSE(result.binding.has_value());
     }
@@ -381,15 +383,14 @@ TEST_CASE("migration projector resolves a recursive nominal via a bounded sequen
 TEST_CASE("migration projector fails closed on a Fn TypeRef") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
-    const auto seed = build_core_type_environment(*program);
-    REQUIRE(seed.ok());
+    const auto env = require_env(*program);
     // A function value is not a wire value (value_json cannot represent it); the
     // C1 projector rejects CoreVtFn, so migration yields no binding.
     ir::TypeRef fn;
     fn.kind = ir::TypeRefKind::Fn;
     fn.first = std::make_unique<ir::TypeRef>();
     fn.first->kind = ir::TypeRefKind::Int; // return Int
-    const auto result = migrate_type_ref_to_wire_binding(fn, seed);
+    const auto result = migrate_type_ref_to_wire_binding(fn, env);
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.binding.has_value());
     // NOTE: Closure has no constructible AHFL TypeRef surface here; its
@@ -400,8 +401,7 @@ TEST_CASE("migration projector fails closed on a Fn TypeRef") {
 TEST_CASE("migration projector rejects a Struct TypeRef carrying a WRONG resolved id") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
-    const auto seed = build_core_type_environment(*program);
-    REQUIRE(seed.ok());
+    const auto env = require_env(*program);
     // A Struct ref that names Point but carries a resolved SymbolId no Core type
     // holds must NOT silently downgrade to the canonical-name match (strict
     // id-first resolve_nominal_strict): a present-but-unmatched id fails closed.
@@ -411,40 +411,93 @@ TEST_CASE("migration projector rejects a Struct TypeRef carrying a WRONG resolve
     wrong.nominal_ref.kind = ir::SymbolRefKind::Type;
     wrong.nominal_ref.canonical_name = "app::main::Point";
     wrong.nominal_ref.id = 0x7fffffff; // an id no registered nominal carries
-    const auto result = migrate_type_ref_to_wire_binding(wrong, seed);
+    const auto result = migrate_type_ref_to_wire_binding(wrong, env);
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.binding.has_value());
 }
 
-TEST_CASE("the transported-table factory rejects a reachable descendant root") {
-    // A struct result binding's Int FIELD node is a legal, in-range, non-orphan
-    // node — but it is NOT a capability param/result root. Wrapping it would
-    // silently narrow the Struct signature to Int; the factory must reject it.
-    const auto program = lower_fixture(__func__);
-    REQUIRE(program.has_value());
-    const auto *cap = find_capability(*program, "StructCap");
-    REQUIRE(cap != nullptr);
-    const auto good = migrate_type_ref_to_wire_binding(cap->return_type_ref, *program);
-    REQUIRE(good.ok());
+TEST_CASE("the typed root selector prevents cross-capability and descendant confusion") {
+    // Hand-build a two-capability wire table:
+    //   nodes: [0] Int, [1] Bool, [2] String
+    //   cap A (id 0, symbol 100): params [Int], result Bool
+    //   cap B (id 1, symbol 200): params [String], result String
+    // The selector factory must derive the root from {capability, kind,
+    // param_index} + a source_symbol cross-check — never accept a raw node, a
+    // cross-capability slot, or an out-of-range index.
+    CoreWireSchemaTable table;
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});    // 0
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaBool{}});   // 1
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaString{}}); // 2
+    CoreWireCapabilitySchema cap_a;
+    cap_a.capability = CoreCapabilityId{0};
+    cap_a.source_symbol = 100;
+    cap_a.params = {CoreWireSchemaNodeId{0}};
+    cap_a.result = CoreWireSchemaNodeId{1};
+    table.capabilities.push_back(cap_a);
+    CoreWireCapabilitySchema cap_b;
+    cap_b.capability = CoreCapabilityId{1};
+    cap_b.source_symbol = 200;
+    cap_b.params = {CoreWireSchemaNodeId{2}};
+    cap_b.result = CoreWireSchemaNodeId{2};
+    table.capabilities.push_back(cap_b);
 
-    const auto &table = good.binding->table();
-    const auto &as_struct = std::get<CoreWireSchemaStruct>(
-        table.nodes[good.binding->root().value].shape);
-    REQUIRE_FALSE(as_struct.fields.empty());
-    const CoreWireSchemaNodeId descendant = as_struct.fields[0].type; // a field node
-    REQUIRE(descendant.value != good.binding->root().value);
+    const auto mint = [&](CoreWireRootSelector selector) {
+        std::vector<CoreLowerDiagnostic> diagnostics;
+        auto b = make_wire_binding_from_transported_table(table, selector, diagnostics);
+        return std::make_pair(std::move(b), std::move(diagnostics));
+    };
 
-    std::vector<CoreLowerDiagnostic> diagnostics;
-    const auto rejected =
-        make_wire_binding_from_transported_table(table, descendant, diagnostics);
-    CHECK_FALSE(rejected.has_value());
-    CHECK_FALSE(diagnostics.empty());
-    // And the declared result root IS accepted.
-    std::vector<CoreLowerDiagnostic> ok_diagnostics;
-    const auto accepted =
-        make_wire_binding_from_transported_table(table, good.binding->root(), ok_diagnostics);
-    CHECK(accepted.has_value());
-    CHECK(ok_diagnostics.empty());
+    SUBCASE("cap A result with the correct source_symbol is accepted") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{0}, 100, CoreWireRootKind::Result, 0});
+        REQUIRE(binding.has_value());
+        CHECK(binding->root() == CoreWireSchemaNodeId{1}); // Bool
+        CHECK(diagnostics.empty());
+    }
+
+    SUBCASE("cap A param 0 is accepted and derives the Int node") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{0}, 100, CoreWireRootKind::Param, 0});
+        REQUIRE(binding.has_value());
+        CHECK(binding->root() == CoreWireSchemaNodeId{0}); // Int
+    }
+
+    SUBCASE("a wrong source_symbol for the named capability is rejected") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{0}, 999, CoreWireRootKind::Result, 0});
+        CHECK_FALSE(binding.has_value());
+        CHECK_FALSE(diagnostics.empty());
+    }
+
+    SUBCASE("cap B's symbol cannot be used to select cap A (cross-capability)") {
+        // Selecting capability id 0 while presenting cap B's symbol (200) fails:
+        // the id names A, whose symbol is 100.
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{0}, 200, CoreWireRootKind::Result, 0});
+        CHECK_FALSE(binding.has_value());
+        CHECK_FALSE(diagnostics.empty());
+    }
+
+    SUBCASE("a Result selector with a nonzero param index is rejected") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{0}, 100, CoreWireRootKind::Result, 1});
+        CHECK_FALSE(binding.has_value());
+        CHECK_FALSE(diagnostics.empty());
+    }
+
+    SUBCASE("a Param selector with an out-of-range index is rejected") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{0}, 100, CoreWireRootKind::Param, 5});
+        CHECK_FALSE(binding.has_value());
+        CHECK_FALSE(diagnostics.empty());
+    }
+
+    SUBCASE("an out-of-range capability id is rejected") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{7}, 100, CoreWireRootKind::Result, 0});
+        CHECK_FALSE(binding.has_value());
+        CHECK_FALSE(diagnostics.empty());
+    }
 }
 
 TEST_CASE("build_core_type_environment fails closed on a malformed generic decl (type-local gate)") {
@@ -463,13 +516,73 @@ TEST_CASE("build_core_type_environment fails closed on a malformed generic decl 
     // type_param_variances deliberately left EMPTY (size 0 != arity 1).
     program.declarations.emplace_back(std::move(bad));
 
-    const auto seed = build_core_type_environment(program);
-    CHECK_FALSE(seed.ok());
-    // A migration against this seed must yield no binding (fail-closed).
-    ir::TypeRef point;
-    point.kind = ir::TypeRefKind::Struct;
-    point.canonical_name = "app::main::BadGeneric";
-    const auto result = migrate_type_ref_to_wire_binding(point, seed);
+    const auto result = build_core_type_environment(program);
     CHECK_FALSE(result.ok());
-    CHECK_FALSE(result.binding.has_value());
+    CHECK_FALSE(result.environment.has_value()); // no environment minted on gate failure
+    // The single-arg migration overload builds the environment internally; it
+    // must fail closed (no binding) on the same malformed program.
+    ir::TypeRef bad_ref;
+    bad_ref.kind = ir::TypeRefKind::Struct;
+    bad_ref.canonical_name = "app::main::BadGeneric";
+    const auto migrated = migrate_type_ref_to_wire_binding(bad_ref, program);
+    CHECK_FALSE(migrated.ok());
+    CHECK_FALSE(migrated.binding.has_value());
+}
+
+TEST_CASE("build_core_type_environment fails closed on a malformed value type (member-template gate)") {
+    // Prove the type-local gate reaches verify_value_types / member-template
+    // checks, not only verify_types variance. A struct field whose member
+    // template resolves to a bounded Int with min > max is a malformed value type
+    // the value-type verifier must reject — surfaced through the gate as no
+    // environment.
+    ir::AhflIr program;
+    ir::StructDecl holder;
+    holder.name = "Holder";
+    holder.symbol_ref.kind = ir::SymbolRefKind::Type;
+    holder.symbol_ref.canonical_name = "app::main::Holder";
+    holder.symbol_ref.id = 4243;
+    ir::FieldDecl field;
+    field.name = "n";
+    field.type_ref.kind = ir::TypeRefKind::BoundedInt;
+    field.type_ref.int_bounds = std::pair<std::int64_t, std::int64_t>{100, 0}; // min > max
+    holder.fields.push_back(std::move(field));
+    program.declarations.emplace_back(std::move(holder));
+
+    const auto result = build_core_type_environment(program);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.environment.has_value());
+}
+
+TEST_CASE("migration resolves an un-inlined std builtin via the descriptor-backed synthetic base") {
+    // A program that does NOT declare or import std::option: add_builtins stamps a
+    // NAME-ONLY synthetic Option base (its symbol_ref carries no id). A TypeRef
+    // that names std::option::Option with a present-but-unmatched id must resolve
+    // through the descriptor-backed synthetic-builtin exception in
+    // resolve_nominal_strict (NOT fail closed, NOT hit a real decl). This proves
+    // the id-first tightening kept exactly that one name-only exception.
+    ir::AhflIr program;
+    ir::StructDecl anchor; // a trivial real decl so the program is non-empty
+    anchor.name = "Anchor";
+    anchor.symbol_ref.kind = ir::SymbolRefKind::Type;
+    anchor.symbol_ref.canonical_name = "app::main::Anchor";
+    anchor.symbol_ref.id = 5000;
+    program.declarations.emplace_back(std::move(anchor));
+
+    const auto env = require_env(program);
+    // Option<Int> with a present id no registered nominal carries: the synthetic
+    // Option base (name-only, no id) is the only legal match.
+    ir::TypeRef option;
+    option.kind = ir::TypeRefKind::Enum;
+    option.canonical_name = "std::option::Option";
+    option.nominal_ref.kind = ir::SymbolRefKind::Type;
+    option.nominal_ref.canonical_name = "std::option::Option";
+    option.nominal_ref.id = 0x6fffffff; // unmatched id -> descriptor-backed name-only base
+    option.params.push_back(std::make_unique<ir::TypeRef>());
+    option.params[0]->kind = ir::TypeRefKind::Int;
+
+    const auto result = migrate_type_ref_to_wire_binding(option, env);
+    REQUIRE(result.ok());
+    const auto &opt = std::get<CoreWireSchemaOption>(
+        shape_of(*result.binding, result.binding->root()));
+    CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(*result.binding, opt.value)));
 }

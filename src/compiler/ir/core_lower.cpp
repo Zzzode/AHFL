@@ -3810,38 +3810,49 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     return result;
 }
 
-CoreTypeEnvironmentSeed build_core_type_environment(const AhflIr &ahfl_ir) {
-    CoreTypeEnvironmentSeed seed;
+// Factory access to the private VerifiedCoreTypeEnvironment constructor. Only
+// build_core_type_environment (below), after its type-local gate passed, mints
+// one — so the immutable handle always carries a verified type environment.
+struct CoreTypeEnvironmentFactory {
+    [[nodiscard]] static VerifiedCoreTypeEnvironment make(std::vector<CoreTypeDecl> types,
+                                                          std::vector<CoreValueType> value_types) {
+        return VerifiedCoreTypeEnvironment(
+            std::make_shared<const VerifiedCoreTypeEnvironment::Payload>(
+                VerifiedCoreTypeEnvironment::Payload{std::move(types), std::move(value_types)}));
+    }
+};
+
+CoreTypeEnvironmentResult build_core_type_environment(const AhflIr &ahfl_ir) {
+    CoreTypeEnvironmentResult result;
     // A throwaway CoreProgram whose type table + value-type arena the shared
-    // prelude fills; we snapshot exactly those two arenas plus diagnostics. No
-    // body is lowered, so an unrelated (e.g. not-yet-lowered P6) handler cannot
-    // block a wire-schema migration projection.
+    // prelude fills; the verified environment (minted only if the type-local gate
+    // passes) owns a copy. No body is lowered, so an unrelated (e.g. not-yet-
+    // lowered P6) handler cannot block a wire-schema migration projection.
     CoreProgram scratch;
     ValueTypeArena shared_arena(scratch.value_types, scratch.types, [&scratch](const SymbolRef &r) {
         return resolve_nominal_strict(scratch.types, r);
     });
     // The returned TypeEnv binds references into `scratch`; it is dropped here —
     // only the populated arenas are retained.
-    static_cast<void>(populate_core_type_table(ahfl_ir, scratch, seed.diagnostics, shared_arena));
+    static_cast<void>(populate_core_type_table(ahfl_ir, scratch, result.diagnostics, shared_arena));
 
     // TYPE-LOCAL gate: `populate_core_type_table` only reports the diagnostics
     // TypeEnv construction happens to raise, which is NOT proof the type table +
-    // value-type arena are structurally legal (e.g. a user generic with
-    // type_param_count=1 but empty variances is accepted by TypeEnv yet rejected
-    // by the value-type/type-table verifier). Run the real structural verifier on
+    // value-type arena are structurally legal. Run the real structural verifier on
     // the types+value_types-only scratch: with empty agents/capabilities/flows/
     // workflows/instances, `verify_core_program` walks ONLY verify_types() and
-    // verify_value_types() — no capability/agent/flow/workflow body — so this is
-    // the type-local gate the design requires, reusing the single verifier rather
-    // than a second structural pass. A consumer that sees `!seed.ok()` fails
-    // closed (migration yields no binding).
+    // verify_value_types() — no body — so this is the type-local gate the design
+    // requires, reusing the single verifier rather than a second structural pass.
     auto verification = verify_core_program(scratch);
     for (auto &d : verification.diagnostics) {
-        seed.diagnostics.push_back(std::move(d));
+        result.diagnostics.push_back(std::move(d));
     }
-    seed.types = std::move(scratch.types);
-    seed.value_types = std::move(scratch.value_types);
-    return seed;
+    if (result.has_errors()) {
+        return result; // fail closed: no environment minted
+    }
+    result.environment = CoreTypeEnvironmentFactory::make(std::move(scratch.types),
+                                                          std::move(scratch.value_types));
+    return result;
 }
 
 std::optional<CoreValueTypeId>

@@ -27,20 +27,38 @@
 
 namespace ahfl::ir::core {
 
+/// Which slot of a capability signature a binding root denotes. A binding root is
+/// ALWAYS a capability param or result — never a mere reachable descendant.
+enum class CoreWireRootKind { Param, Result };
+
+/// A typed selector that names EXACTLY one capability signature slot. The binding
+/// factory takes this instead of a raw `CoreWireSchemaNodeId`, so a caller cannot
+/// point a binding at an arbitrary in-range node (e.g. another capability's root,
+/// or a descendant field) — the factory looks the capability up by id, requires
+/// its `source_symbol` to match `expected_source_symbol`, and then DERIVES the
+/// root from `kind` / `param_index`. `param_index` is meaningful only for
+/// `Param`; for `Result` it must be 0.
+struct CoreWireRootSelector {
+    CoreCapabilityId capability{};
+    std::uint64_t expected_source_symbol{0};
+    CoreWireRootKind kind{CoreWireRootKind::Result};
+    std::uint32_t param_index{0};
+};
+
 /// An immutable, copy-only binding of a verified wire-schema table to a single
-/// root node. The ONLY ways to obtain one are the verifying factories below
-/// (TypeRef migration in C2, transported-table in E4-B1); both run the public
-/// local verifier AND require the root to be one of the table's capability
-/// param/result roots (a reachable descendant is NOT a valid binding root — that
-/// would let a Struct signature be silently narrowed to one of its fields). The
-/// codec consumes ONLY this type, so a hand-built / tampered `CoreWireSchemaTable`
-/// can never reach the decode/validate rule engine.
+/// capability signature slot. The ONLY ways to obtain one are the verifying
+/// factories below (TypeRef migration in C2, transported-table in E4-B1); both
+/// run the public local verifier AND derive the root from a typed
+/// `CoreWireRootSelector` whose capability id + source_symbol are cross-checked
+/// against the table (a reachable descendant or another capability's root is NOT
+/// a valid binding root). The codec consumes ONLY this type, so a hand-built /
+/// tampered `CoreWireSchemaTable` can never reach the decode/validate rule engine.
 ///
 /// The payload is a `shared_ptr<const>`: the type is copy-only (no move ctor /
 /// assignment is declared, so a user-declared copy suppresses the implicit move
 /// and an rvalue copies the cheap shared_ptr). There is therefore NO public
 /// moved-from state whose invariant could be violated — every live instance holds
-/// a fully-verified payload.
+/// a fully-verified payload with a selector and its derived root pinned together.
 class VerifiedWireSchemaBinding {
   public:
     VerifiedWireSchemaBinding(const VerifiedWireSchemaBinding &) = default;
@@ -49,12 +67,16 @@ class VerifiedWireSchemaBinding {
 
     [[nodiscard]] const CoreWireSchemaTable &table() const noexcept { return payload_->table; }
     [[nodiscard]] CoreWireSchemaNodeId root() const noexcept { return payload_->root; }
+    [[nodiscard]] const CoreWireRootSelector &selector() const noexcept {
+        return payload_->selector;
+    }
 
   private:
     friend struct WireSchemaBindingFactory;
     struct Payload {
         CoreWireSchemaTable table;
-        CoreWireSchemaNodeId root;
+        CoreWireRootSelector selector;
+        CoreWireSchemaNodeId root; // derived from selector; pinned with it
     };
     explicit VerifiedWireSchemaBinding(std::shared_ptr<const Payload> payload)
         : payload_(std::move(payload)) {}
@@ -77,31 +99,32 @@ struct WireSchemaMigrationResult {
     [[nodiscard]] bool ok() const noexcept { return binding.has_value() && !has_errors(); }
 };
 
-/// Migrate one AHFL `ir::TypeRef` into a verified wire-schema binding, using the
-/// nominal universe of `program` (its type declarations resolve user nominals
-/// id-first through the single `resolve_nominal_strict` path). Pure: neither
-/// `program` nor any global arena is mutated. Fails closed with no binding on any
-/// non-projectable type. The `seed` is the shared type-table projection of
-/// `program` (`build_core_type_environment`); callers that migrate many TypeRefs
-/// against one program should build the seed once and pass it in.
+/// Migrate one AHFL `ir::TypeRef` into a verified wire-schema binding, using a
+/// verified type environment (its type declarations resolve user nominals
+/// id-first through the single `resolve_nominal_strict` path). Pure: neither the
+/// environment nor any global arena is mutated. Fails closed with no binding on
+/// any non-projectable type.
 [[nodiscard]] WireSchemaMigrationResult
 migrate_type_ref_to_wire_binding(const ir::TypeRef &type,
-                                 const CoreTypeEnvironmentSeed &seed);
+                                 const VerifiedCoreTypeEnvironment &environment);
 
-/// Convenience overload that builds the seed from `program` internally. Prefer the
-/// seed-taking overload when migrating multiple TypeRefs against one program.
+/// Convenience overload that builds the type environment from `program`
+/// internally (fails closed if the environment does not verify). Prefer the
+/// environment-taking overload when migrating multiple TypeRefs against one
+/// program.
 [[nodiscard]] WireSchemaMigrationResult
 migrate_type_ref_to_wire_binding(const ir::TypeRef &type, const AhflIr &program);
 
 /// E4-B1 transport factory (declared here so both bindings share one type): wrap
 /// a table that arrived over transport, after running the public local verifier
-/// AND requiring `root` to be one of the table's capability param/result roots
-/// (never a mere reachable descendant). Defined in this translation unit so the
-/// codec's binding type is stable across slices; E4-B1 will call it with a
-/// transported table. `diagnostics` is cleared on entry, so a returned nullopt
-/// carries exactly this call's failure.
+/// AND deriving the root from a typed `CoreWireRootSelector` (capability id +
+/// source_symbol cross-check + kind/param_index; never a raw NodeId). Defined in
+/// this translation unit so the codec's binding type is stable across slices;
+/// E4-B1 will call it with a transported table. `diagnostics` is cleared on
+/// entry, so a returned nullopt carries exactly this call's failure.
 [[nodiscard]] std::optional<VerifiedWireSchemaBinding>
-make_wire_binding_from_transported_table(CoreWireSchemaTable table, CoreWireSchemaNodeId root,
+make_wire_binding_from_transported_table(CoreWireSchemaTable table,
+                                         const CoreWireRootSelector &selector,
                                          std::vector<CoreLowerDiagnostic> &diagnostics);
 
 } // namespace ahfl::ir::core
