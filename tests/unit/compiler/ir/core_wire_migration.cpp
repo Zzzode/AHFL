@@ -1,6 +1,7 @@
 #include <doctest.h>
 
 #include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program.hpp"
@@ -16,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -273,6 +275,64 @@ TEST_CASE("migration is deterministic over an immutable environment") {
     CHECK(a.binding->root() == b.binding->root());
 }
 
+// Compile-time constraints that make the verified environment an unforgeable,
+// immutable, copy-only handle. These are the "immutable probe" invariants: a
+// consumer cannot default-construct one (only a verifying factory mints it),
+// cannot mint one out of thin air, and only reads through const accessors.
+static_assert(!std::is_default_constructible_v<VerifiedCoreTypeEnvironment>,
+              "no public default ctor: an environment must come from a verifying factory");
+static_assert(std::is_copy_constructible_v<VerifiedCoreTypeEnvironment> &&
+                  std::is_copy_assignable_v<VerifiedCoreTypeEnvironment>,
+              "the handle is copyable (cheap shared_ptr)");
+// No dedicated move: the user-declared copy suppresses the implicit move ctor,
+// so an rvalue binds to the COPY ctor. The runtime test below proves this leaves
+// the source usable (non-destructive) rather than asserting it here, since
+// is_move_constructible_v is trivially true via the copy ctor.
+// The accessors hand back const references only — no mutator exists.
+static_assert(std::is_same_v<decltype(std::declval<const VerifiedCoreTypeEnvironment &>().types()),
+                             const std::vector<CoreTypeDecl> &>,
+              "types() is a const accessor");
+static_assert(
+    std::is_same_v<decltype(std::declval<const VerifiedCoreTypeEnvironment &>().value_types()),
+                   const std::vector<CoreValueType> &>,
+    "value_types() is a const accessor");
+// The same guarantees hold for the binding the codec consumes.
+static_assert(!std::is_default_constructible_v<VerifiedWireSchemaBinding>,
+              "no public default ctor: a binding must come from a verifying factory");
+static_assert(std::is_copy_constructible_v<VerifiedWireSchemaBinding>,
+              "the binding is copyable");
+
+TEST_CASE("a verified environment survives copy AND rvalue-copy with identical projections") {
+    // Runtime immutable-binding probe: because the environment declares a copy but
+    // no move, `auto copy2 = std::move(env)` binds to the COPY ctor (non-
+    // destructive) — the source stays fully usable. Prove all three handles
+    // (source + two copies) still project the SAME capability return byte-for-byte,
+    // so no handle was hollowed out.
+    const auto program = lower_fixture(__func__);
+    REQUIRE(program.has_value());
+    const auto *cap = find_capability(*program, "StructCap");
+    REQUIRE(cap != nullptr);
+
+    auto env = require_env(*program);
+    auto copy = env;                  // copy ctor
+    auto copy2 = std::move(env);      // binds to COPY ctor (no move declared)
+
+    const auto from_source = migrate_type_ref_to_wire_binding(cap->return_type_ref, env);
+    const auto from_copy = migrate_type_ref_to_wire_binding(cap->return_type_ref, copy);
+    const auto from_copy2 = migrate_type_ref_to_wire_binding(cap->return_type_ref, copy2);
+    REQUIRE(from_source.ok()); // the "moved-from" source is NOT hollowed out
+    REQUIRE(from_copy.ok());
+    REQUIRE(from_copy2.ok());
+
+    CHECK(from_source.binding->table() == from_copy.binding->table());
+    CHECK(from_source.binding->table() == from_copy2.binding->table());
+    CHECK(from_source.binding->root() == from_copy.binding->root());
+    CHECK(from_source.binding->root() == from_copy2.binding->root());
+    // The underlying type/value-type arenas are shared and structurally equal.
+    CHECK(env.types() == copy.types());
+    CHECK(env.value_types() == copy2.value_types());
+}
+
 TEST_CASE("migration projector fails closed on non-projectable TypeRefs") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());
@@ -500,6 +560,105 @@ TEST_CASE("the typed root selector prevents cross-capability and descendant conf
     }
 }
 
+TEST_CASE("the root selector treats the capability id as identity, not a vector index") {
+    // A wire table is the SELECTED-capability subset of a program, so the
+    // projector preserves the original program-global CoreCapabilityId and the
+    // local verifier only requires the entries to be strictly increasing + unique
+    // — NOT zero-based or contiguous. This table legally holds the sparse ids
+    // {3, 7}. `derive_root` must therefore look a capability up BY IDENTITY (exact
+    // match), never subscript `capabilities[id]`:
+    //   * a legal in-table id larger than the subset size (7, size 2) must be
+    //     ACCEPTED, not rejected as "out of range"; and
+    //   * an id absent from the table (0/1/5) must be REJECTED even when its
+    //     expected_source_symbol matches some OTHER entry — otherwise selector
+    //     id=1 would silently bind to whatever entry sits at index 1, breaking the
+    //     "selector + derived root pinned together" invariant.
+    //   nodes: [0] Int, [1] Bool, [2] String
+    //   cap 3 (symbol 300): params [Int],    result Bool
+    //   cap 7 (symbol 700): params [String], result String
+    CoreWireSchemaTable table;
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});    // 0
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaBool{}});   // 1
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaString{}}); // 2
+    CoreWireCapabilitySchema cap3;
+    cap3.capability = CoreCapabilityId{3};
+    cap3.source_symbol = 300;
+    cap3.params = {CoreWireSchemaNodeId{0}};
+    cap3.result = CoreWireSchemaNodeId{1};
+    table.capabilities.push_back(cap3);
+    CoreWireCapabilitySchema cap7;
+    cap7.capability = CoreCapabilityId{7};
+    cap7.source_symbol = 700;
+    cap7.params = {CoreWireSchemaNodeId{2}};
+    cap7.result = CoreWireSchemaNodeId{2};
+    table.capabilities.push_back(cap7);
+
+    // Sanity: this sparse-id table is a LEGAL table (passes the local verifier).
+    REQUIRE(verify_core_wire_schema_table_local(table).empty());
+
+    const auto mint = [&](CoreWireRootSelector selector) {
+        std::vector<CoreLowerDiagnostic> diagnostics;
+        auto b = make_wire_binding_from_transported_table(table, selector, diagnostics);
+        return std::make_pair(std::move(b), std::move(diagnostics));
+    };
+
+    SUBCASE("id 3 result is accepted and derives the Bool node") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{3}, 300, CoreWireRootKind::Result, 0});
+        REQUIRE(binding.has_value());
+        CHECK(binding->root() == CoreWireSchemaNodeId{1}); // Bool
+        CHECK(diagnostics.empty());
+    }
+
+    SUBCASE("id 7 param 0 is accepted even though 7 exceeds the subset size") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{7}, 700, CoreWireRootKind::Param, 0});
+        REQUIRE(binding.has_value()); // the OLD id-as-index code rejected this
+        CHECK(binding->root() == CoreWireSchemaNodeId{2}); // String
+    }
+
+    SUBCASE("the adversarial case: absent id 1 + another entry's symbol is rejected") {
+        // The OLD code did `capabilities[1]` == cap7 and, since 700 matches cap7's
+        // symbol, MINTED a binding whose payload claimed cap 1 but whose root came
+        // from cap 7. Identity lookup rejects it: id 1 is not in {3, 7}.
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{1}, 700, CoreWireRootKind::Param, 0});
+        CHECK_FALSE(binding.has_value());
+        CHECK_FALSE(diagnostics.empty());
+    }
+
+    SUBCASE("other absent ids (0, 5) are rejected") {
+        for (std::uint32_t absent : {0u, 5u}) {
+            auto [binding, diagnostics] =
+                mint({CoreCapabilityId{absent}, 300, CoreWireRootKind::Result, 0});
+            CHECK_FALSE(binding.has_value());
+            CHECK_FALSE(diagnostics.empty());
+        }
+    }
+
+    SUBCASE("a present id with the wrong source_symbol is still rejected") {
+        auto [binding, diagnostics] =
+            mint({CoreCapabilityId{7}, 300, CoreWireRootKind::Result, 0}); // 300 is cap3's
+        CHECK_FALSE(binding.has_value());
+        CHECK_FALSE(diagnostics.empty());
+    }
+
+    SUBCASE("slot kind / index constraints still hold on a sparse id") {
+        // Result selector with a nonzero param index.
+        {
+            auto [binding, diagnostics] =
+                mint({CoreCapabilityId{3}, 300, CoreWireRootKind::Result, 2});
+            CHECK_FALSE(binding.has_value());
+        }
+        // Param selector past the (single) param slot.
+        {
+            auto [binding, diagnostics] =
+                mint({CoreCapabilityId{7}, 700, CoreWireRootKind::Param, 4});
+            CHECK_FALSE(binding.has_value());
+        }
+    }
+}
+
 TEST_CASE("build_core_type_environment fails closed on a malformed generic decl (type-local gate)") {
     // A user generic struct declaring type_param_count=1 but leaving its variance
     // vector empty is accepted by TypeEnv construction, yet the value-type /
@@ -529,12 +688,14 @@ TEST_CASE("build_core_type_environment fails closed on a malformed generic decl 
     CHECK_FALSE(migrated.binding.has_value());
 }
 
-TEST_CASE("build_core_type_environment fails closed on a malformed value type (member-template gate)") {
-    // Prove the type-local gate reaches verify_value_types / member-template
-    // checks, not only verify_types variance. A struct field whose member
-    // template resolves to a bounded Int with min > max is a malformed value type
-    // the value-type verifier must reject — surfaced through the gate as no
-    // environment.
+TEST_CASE("build_core_type_environment fails closed when the type-table lowerer rejects a "
+          "refinement") {
+    // HONEST claim: a struct field typed `BoundedInt` with min > max is rejected
+    // by the type-table LOWERER (populate_core_type_table -> ValueTypeArena::lower,
+    // core_lower.cpp), BEFORE the value-type verifier ever runs. This test proves
+    // only that build_core_type_environment fails closed (no environment) on that
+    // lowering error — it does NOT exercise verify_value_types. The direct
+    // verifier negative below covers the verify_value_types gate itself.
     ir::AhflIr program;
     ir::StructDecl holder;
     holder.name = "Holder";
@@ -551,6 +712,30 @@ TEST_CASE("build_core_type_environment fails closed on a malformed value type (m
     const auto result = build_core_type_environment(program);
     CHECK_FALSE(result.ok());
     CHECK_FALSE(result.environment.has_value());
+}
+
+TEST_CASE("verify_core_program's verify_value_types rejects a malformed value-type arena") {
+    // This is the value-type gate build_core_type_environment relies on, tested
+    // DIRECTLY on the verifier. A production lowering never mints an Int refinement
+    // with min > max (the lowerer screens it first), but a transported or
+    // deserialized arena can carry one, so the structural verifier MUST still fail
+    // closed. Hand-build the smallest arena that isolates verify_value_type_node's
+    // refinement check and feed it straight to verify_core_program — no lowerer in
+    // the path, so a pass here is genuine verifier behavior.
+    CoreProgram program;
+    CoreValueType bad;
+    bad.node = CoreVtInt{std::pair<std::int64_t, std::int64_t>{100, 0}}; // min > max
+    program.value_types.push_back(bad);
+
+    const auto verified = verify_core_program(program);
+    CHECK_FALSE(verified.ok());
+    bool saw_refinement_error = false;
+    for (const auto &d : verified.diagnostics) {
+        if (d.code == verify::kValueTypeRefinementInvalid) {
+            saw_refinement_error = true;
+        }
+    }
+    CHECK(saw_refinement_error);
 }
 
 TEST_CASE("migration resolves an un-inlined std builtin via the descriptor-backed synthetic base") {

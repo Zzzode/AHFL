@@ -1,5 +1,6 @@
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -40,17 +41,34 @@ struct WireSchemaBindingFactory {
     }
 
     // Derive the binding root from a typed selector, enforcing every trust
-    // invariant: the capability id is in range; its source_symbol matches the
-    // caller's expectation (no cross-capability confusion); a Result selector
-    // carries param_index 0; a Param selector's index is strictly in bounds.
+    // invariant: the capability id names a REAL entry in this table; its
+    // source_symbol matches the caller's expectation (no cross-capability
+    // confusion); a Result selector carries param_index 0; a Param selector's
+    // index is strictly in bounds.
+    //
+    // The capability id is a program-global `CoreCapabilityId`, NOT a positional
+    // index into `table.capabilities`: a wire table is the selected-capability
+    // subset, so it may hold sparse, non-zero-based ids (e.g. {3, 7}). Using the
+    // id as a vector subscript would (a) wrongly reject a legal in-table id that
+    // exceeds the subset size and (b) — far worse — silently bind selector id=1
+    // to whatever entry happens to sit at index 1, breaking the "selector + root
+    // pinned together" invariant. The local verifier guarantees the entries are
+    // strictly increasing and unique by `capability.value`, so we lower_bound to
+    // the exact entry and reject when it is absent.
     [[nodiscard]] static std::optional<CoreWireSchemaNodeId>
     derive_root(const CoreWireSchemaTable &table, const CoreWireRootSelector &selector,
                 std::vector<CoreLowerDiagnostic> &diagnostics) {
-        if (selector.capability.value >= table.capabilities.size()) {
-            fail(diagnostics, "wire-schema binding selector capability id is out of range");
+        const auto it = std::lower_bound(
+            table.capabilities.begin(), table.capabilities.end(), selector.capability,
+            [](const CoreWireCapabilitySchema &entry, CoreCapabilityId target) noexcept {
+                return entry.capability.value < target.value;
+            });
+        if (it == table.capabilities.end() || it->capability != selector.capability) {
+            fail(diagnostics,
+                 "wire-schema binding selector capability id is not present in the table");
             return std::nullopt;
         }
-        const auto &capability = table.capabilities[selector.capability.value];
+        const auto &capability = *it;
         if (capability.source_symbol != selector.expected_source_symbol) {
             fail(diagnostics,
                  "wire-schema binding selector source_symbol does not match the capability entry");
