@@ -85,6 +85,7 @@ class SchemaBuilder {
             projected.result = *result;
             table_.capabilities.push_back(std::move(projected));
         }
+        canonicalize();
         return std::move(table_);
     }
 
@@ -133,6 +134,7 @@ class SchemaBuilder {
         }
         const auto id = CoreWireSchemaNodeId{static_cast<std::uint32_t>(table_.nodes.size())};
         table_.nodes.push_back(CoreWireSchemaNode{});
+        node_source_.push_back(type);
         schema_ids_[type.value] = id;
         return id;
     }
@@ -163,7 +165,14 @@ class SchemaBuilder {
 
     [[nodiscard]] std::optional<CoreWireSchemaShape>
     build_shape(CoreValueTypeId type, SourceRangeOpt range) {
-        const CoreValueTypeNode &node = scratch_types_[type.value].node;
+        // Snapshot the scratch value-type node BY VALUE. The visitor below
+        // descends through `project_type` (which reserves nodes) and `instantiate`
+        // (P4-C member instantiation), and the latter hash-conses into
+        // `scratch_types_`, reallocating it. A reference into the arena would
+        // dangle after the first generic field/slot / child append, so the next
+        // read of a nominal/tuple payload would be a use-after-free (ASan-proven).
+        // The copy is cheap (small inline vectors) and this is not a hot path.
+        const CoreValueTypeNode node = scratch_types_[type.value].node;
         return std::visit(
             Overloaded{
                 [](const CoreVtUnit &) -> std::optional<CoreWireSchemaShape> {
@@ -413,10 +422,90 @@ class SchemaBuilder {
         return result;
     }
 
+    // Rewrite every CoreWireSchemaNodeId inside one shape through `remap`.
+    static void remap_shape(CoreWireSchemaShape &shape,
+                            const std::vector<CoreWireSchemaNodeId> &remap) {
+        const auto fix = [&](CoreWireSchemaNodeId &id) { id = remap[id.value]; };
+        std::visit(Overloaded{
+                       [](CoreWireSchemaUnit &) {},
+                       [](CoreWireSchemaBool &) {},
+                       [](CoreWireSchemaInt &) {},
+                       [](CoreWireSchemaFloat &) {},
+                       [](CoreWireSchemaString &) {},
+                       [](CoreWireSchemaDecimal &) {},
+                       [](CoreWireSchemaDuration &) {},
+                       [](CoreWireSchemaTimestamp &) {},
+                       [](CoreWireSchemaUuid &) {},
+                       [&](CoreWireSchemaOption &s) { fix(s.value); },
+                       [&](CoreWireSchemaSequence &s) { fix(s.element); },
+                       [&](CoreWireSchemaMap &s) {
+                           fix(s.key);
+                           fix(s.value);
+                       },
+                       [&](CoreWireSchemaStruct &s) {
+                           for (auto &field : s.fields) {
+                               fix(field.type);
+                           }
+                       },
+                       [&](CoreWireSchemaEnum &s) {
+                           for (auto &variant : s.variants) {
+                               for (auto &slot : variant.slots) {
+                                   fix(slot.type);
+                               }
+                           }
+                       },
+                       [&](CoreWireSchemaTuple &s) {
+                           for (auto &element : s.elements) {
+                               fix(element);
+                           }
+                       },
+                   },
+                   shape);
+    }
+
+    // Canonicalize node order to ascending program-global source CoreValueTypeId
+    // (design §2.2): projection discovers nodes in capability params/result DFS
+    // order, but the published table's node order is a stable function of the
+    // Core value-type ids alone, so repeated projection is byte-identical
+    // regardless of capability declaration order. Builds an explicit
+    // old-id -> new-id map, then remaps every node edge and capability root in one
+    // pass before publishing (no intermediate partially-remapped state escapes).
+    void canonicalize() {
+        const std::size_t count = table_.nodes.size();
+        std::vector<std::uint32_t> order(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            order[i] = i;
+        }
+        std::sort(order.begin(), order.end(), [&](std::uint32_t a, std::uint32_t b) {
+            return node_source_[a].value < node_source_[b].value;
+        });
+        // remap[old] = new position. `order[new] = old`.
+        std::vector<CoreWireSchemaNodeId> remap(count);
+        for (std::uint32_t new_id = 0; new_id < count; ++new_id) {
+            remap[order[new_id]] = CoreWireSchemaNodeId{new_id};
+        }
+        std::vector<CoreWireSchemaNode> reordered(count);
+        for (std::uint32_t new_id = 0; new_id < count; ++new_id) {
+            reordered[new_id] = std::move(table_.nodes[order[new_id]]);
+            remap_shape(reordered[new_id].shape, remap);
+        }
+        table_.nodes = std::move(reordered);
+        for (auto &capability : table_.capabilities) {
+            for (auto &param : capability.params) {
+                param = remap[param.value];
+            }
+            capability.result = remap[capability.result.value];
+        }
+    }
+
     const CoreProgram &program_;
     const std::vector<CoreCapabilityId> &selected_;
     std::vector<CoreValueType> scratch_types_;
     std::vector<std::optional<CoreWireSchemaNodeId>> schema_ids_;
+    // Parallel to `table_.nodes` during projection: the program-global scratch
+    // CoreValueTypeId each node was discovered from. Used to canonicalize node
+    // order to ascending source id (design §2.2) before the table is published.
+    std::vector<CoreValueTypeId> node_source_;
     CoreWireSchemaTable table_;
     std::vector<CoreLowerDiagnostic> diagnostics_;
 };
@@ -444,6 +533,11 @@ class LocalSchemaVerifier {
             fail("wire-schema arena exceeds its 32-bit id space");
             return std::move(diagnostics_);
         }
+        // Size the reachability set unconditionally: an empty capability table
+        // must still run the orphan gate below (a table may legally have zero
+        // capabilities, but then it must also have zero nodes — every node is a
+        // root-reachable descendant of some capability param/result).
+        reachable_.assign(table_.nodes.size(), false);
         std::optional<std::uint32_t> previous;
         for (const auto &capability : table_.capabilities) {
             if (capability.capability.value == CoreCapabilityId::kInvalid ||
@@ -493,9 +587,6 @@ class LocalSchemaVerifier {
     [[nodiscard]] bool mark(CoreWireSchemaNodeId id) {
         if (!valid_id(id)) {
             return false;
-        }
-        if (reachable_.empty()) {
-            reachable_.resize(table_.nodes.size(), false);
         }
         if (reachable_[id.value]) {
             return true;

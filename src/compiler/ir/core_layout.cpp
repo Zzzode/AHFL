@@ -193,7 +193,13 @@ class LayoutBuilder {
     }
 
     [[nodiscard]] std::optional<CoreLayout> build_type(CoreValueTypeId type) {
-        const CoreValueType &value_type = scratch_types_[type.value];
+        // Snapshot the scratch value type BY VALUE: the visitor below descends
+        // through `instantiate` / `layout_type`, both of which hash-cons into
+        // `scratch_types_` and can reallocate it. A reference into the arena would
+        // dangle after the first generic field/slot append and the next read of a
+        // nominal/tuple payload would be a use-after-free (ASan-proven). The copy
+        // is cheap (small inline vectors) and this is not a hot path.
+        const CoreValueType value_type = scratch_types_[type.value];
         return std::visit(
             Overloaded{
                 [&](const CoreVtUnit &) -> std::optional<CoreLayout> {

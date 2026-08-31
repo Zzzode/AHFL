@@ -70,6 +70,57 @@ CoreTypeDecl collection(std::string name,
     return decl;
 }
 
+TEST_CASE("P4-D lays out a two-generic-field struct without a scratch-arena UAF") {
+    // Regression for the supplied-arena use-after-free: build_type held a
+    // reference into scratch_types_ while build_nominal instantiated each field's
+    // member template, which hash-conses into that same vector and can reallocate
+    // it. The second generic field re-read the (now dangling) owner nominal. This
+    // is the shared two-field generic fixture (mirrored in the wire-schema probe);
+    // it must lay out cleanly and reproducibly, and is heap-use-after-free under
+    // ASan before the by-value snapshot fix.
+    //   struct Box<T> { a: List<T>(4), b: List<T>(8) }, laid out at Box<Int>.
+    CoreProgram program;
+    CoreTypeDecl box;
+    box.kind = CoreTypeDecl::Kind::Struct;
+    box.name = "app::Box";
+    box.fields = {"a", "b"};
+    box.field_nominal_types = {CoreTypeId{1}, CoreTypeId{1}};
+    box.field_has_default = {false, false};
+    box.type_param_count = 1;
+    box.variances = {CoreVariance::Covariant};
+    // templates: [0] Param(0)=T, [1] List<T>(4), [2] List<T>(8).
+    box.member_type_templates = {
+        param(0),
+        nominal(CoreTypeId{1}, {CoreMemberTypeTemplateNodeId{0}}, 4),
+        nominal(CoreTypeId{1}, {CoreMemberTypeTemplateNodeId{0}}, 8),
+    };
+    box.field_type_template_roots = {CoreMemberTypeTemplateNodeId{1},
+                                     CoreMemberTypeTemplateNodeId{2}};
+    program.types.push_back(std::move(box));
+    program.types.push_back(collection("std::collections::List", CoreNominalRole::List, 1));
+
+    program.value_types = {
+        CoreValueType{CoreVtInt{}},
+        CoreValueType{CoreVtNominal{CoreTypeId{0}, {CoreValueTypeId{0}}, std::nullopt}},
+    };
+    const auto before = program.value_types;
+    const auto first = compute_core_layouts(program);
+    REQUIRE(first.ok());
+    CHECK(program.value_types == before); // pure: no mutation of the input program
+    const auto &box_layout = first.table->layouts[first.table->value_layouts[1].value];
+    const auto &box_struct = std::get<CoreLayoutStruct>(box_layout.shape);
+    REQUIRE(box_struct.field_layouts.size() == 2);
+    const auto &list_a = std::get<CoreLayoutContainer>(
+        first.table->layouts[box_struct.field_layouts[0].value].shape);
+    const auto &list_b = std::get<CoreLayoutContainer>(
+        first.table->layouts[box_struct.field_layouts[1].value].shape);
+    CHECK(list_a.capacity == 4);
+    CHECK(list_b.capacity == 8);
+    const auto second = compute_core_layouts(program);
+    REQUIRE(second.ok());
+    CHECK(*first.table == *second.table);
+}
+
 TEST_CASE("P4-D wasm32 scalar layouts are deterministic side artifacts") {
     CoreProgram program;
     program.value_types = {

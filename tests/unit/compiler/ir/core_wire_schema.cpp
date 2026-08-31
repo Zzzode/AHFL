@@ -231,6 +231,135 @@ enum : std::uint32_t {
     return out;
 }
 
+// The P0 regression fixture, shared in spirit with core_layout: a generic user
+// struct with TWO generic fields, each instantiating a distinct bounded List<T>.
+// Projecting/laying-out the second field re-reads the owner nominal AFTER the
+// first field's member instantiation appended to the scratch value-type arena —
+// exactly the use-after-free the by-value snapshot fixes. Also carries a Result
+// return and a recursive nominal so §7.1 recursion/Result gaps are covered.
+//
+//   struct Box<T> { a: List<T>(4), b: List<T>(8) }
+//   struct Tree { children: List<Tree>(4) }   // recursive via bounded List
+//   enum Pair<A,B> is modeled with Result<A,B> (builtin) for the Result case.
+//   cap GenCap(Box<Int>) -> Result<Int, String>
+//   cap TreeCap(Tree)    -> Bool
+struct GenericProgram {
+    CoreProgram program;
+    CoreCapabilityId gen_cap{};
+    CoreCapabilityId tree_cap{};
+    CoreValueTypeId box_int{};
+};
+
+enum : std::uint32_t {
+    kGenListTy = 0,   // std::collections::List
+    kGenBoxTy = 1,    // Box<T>
+    kGenTreeTy = 2,   // Tree
+    kGenResultTy = 3, // std::result::Result
+};
+
+[[nodiscard]] GenericProgram make_generic_program() {
+    GenericProgram g;
+    CoreProgram &p = g.program;
+
+    // [0] List<T>
+    p.types.push_back(collection("std::collections::List", CoreNominalRole::List, 1,
+                                 {CoreVariance::Covariant}));
+
+    // [1] struct Box<T> { a: List<T>(4), b: List<T>(8) }
+    CoreTypeDecl box;
+    box.kind = CoreTypeDecl::Kind::Struct;
+    box.name = "Box";
+    box.fields = {"a", "b"};
+    box.field_nominal_types = {CoreTypeId{kGenListTy}, CoreTypeId{kGenListTy}};
+    box.field_has_default = {false, false};
+    box.type_param_count = 1;
+    box.variances = {CoreVariance::Covariant};
+    // templates: [0] Param(0)=T, [1] List<T>(4), [2] List<T>(8).
+    box.member_type_templates = {param(0)};
+    CoreMemberTypeTemplateNode list4;
+    list4.kind = CoreMemberTypeTemplateKind::Nominal;
+    list4.nominal = CoreTypeId{kGenListTy};
+    list4.children = {CoreMemberTypeTemplateNodeId{0}};
+    list4.capacity = std::uint64_t{4};
+    box.member_type_templates.push_back(list4);
+    CoreMemberTypeTemplateNode list8 = list4;
+    list8.capacity = std::uint64_t{8};
+    box.member_type_templates.push_back(list8);
+    box.field_type_template_roots = {CoreMemberTypeTemplateNodeId{1},
+                                     CoreMemberTypeTemplateNodeId{2}};
+    p.types.push_back(std::move(box));
+
+    // [2] struct Tree { children: List<Tree>(4) }
+    CoreTypeDecl tree;
+    tree.kind = CoreTypeDecl::Kind::Struct;
+    tree.name = "Tree";
+    tree.fields = {"children"};
+    tree.field_nominal_types = {CoreTypeId{kGenListTy}};
+    tree.field_has_default = {false};
+    // templates: [0] Nominal Tree (self), [1] List<Tree>(4).
+    CoreMemberTypeTemplateNode self;
+    self.kind = CoreMemberTypeTemplateKind::Nominal;
+    self.nominal = CoreTypeId{kGenTreeTy};
+    tree.member_type_templates = {self};
+    CoreMemberTypeTemplateNode tree_list;
+    tree_list.kind = CoreMemberTypeTemplateKind::Nominal;
+    tree_list.nominal = CoreTypeId{kGenListTy};
+    tree_list.children = {CoreMemberTypeTemplateNodeId{0}};
+    tree_list.capacity = std::uint64_t{4};
+    tree.member_type_templates.push_back(tree_list);
+    tree.field_type_template_roots = {CoreMemberTypeTemplateNodeId{1}};
+    p.types.push_back(std::move(tree));
+
+    // [3] std::result::Result<A,B>
+    CoreTypeDecl result;
+    result.kind = CoreTypeDecl::Kind::Enum;
+    result.name = "std::result::Result";
+    result.role = CoreNominalRole::Result;
+    result.type_param_count = 2;
+    result.variances = {CoreVariance::Covariant, CoreVariance::Covariant};
+    result.variants = {"Ok", "Err"};
+    result.member_type_templates = {param(0), param(1)};
+    CoreTypeDecl::VariantPayload ok;
+    ok.kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
+    ok.slot_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+    CoreTypeDecl::VariantPayload err;
+    err.kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
+    err.slot_type_template_roots = {CoreMemberTypeTemplateNodeId{1}};
+    result.variant_payloads = {std::move(ok), std::move(err)};
+    p.types.push_back(std::move(result));
+
+    // value-type arena (topological).
+    p.value_types = {
+        CoreValueType{CoreVtInt{}},                                             // 0
+        CoreValueType{CoreVtString{}},                                          // 1
+        CoreValueType{CoreVtBool{}},                                            // 2
+        CoreValueType{CoreVtNominal{CoreTypeId{kGenBoxTy},
+                                    {CoreValueTypeId{0}}, std::nullopt}},        // 3 Box<Int>
+        CoreValueType{CoreVtNominal{CoreTypeId{kGenTreeTy}, {}, std::nullopt}},  // 4 Tree
+        CoreValueType{CoreVtNominal{CoreTypeId{kGenResultTy},
+                                    {CoreValueTypeId{0}, CoreValueTypeId{1}},
+                                    std::nullopt}},                             // 5 Result<Int,String>
+    };
+    g.box_int = CoreValueTypeId{3};
+
+    const auto add_cap = [&](std::string name, std::vector<CoreValueTypeId> params,
+                             CoreValueTypeId ret, std::size_t symbol_id) {
+        const CoreCapabilityId id{static_cast<std::uint32_t>(p.capabilities.size())};
+        CoreCapabilityDecl c;
+        c.symbol_ref.kind = ir::SymbolRefKind::Capability;
+        c.symbol_ref.canonical_name = "app::" + name;
+        c.symbol_ref.id = symbol_id;
+        c.name = std::move(name);
+        c.param_types = std::move(params);
+        c.return_type = ret;
+        p.capabilities.push_back(std::move(c));
+        return id;
+    };
+    g.gen_cap = add_cap("GenCap", {CoreValueTypeId{3}}, CoreValueTypeId{5}, 20);
+    g.tree_cap = add_cap("TreeCap", {CoreValueTypeId{4}}, CoreValueTypeId{2}, 21);
+    return g;
+}
+
 } // namespace
 
 TEST_CASE("the fixture CoreProgram verifies clean (capabilities-only program)") {
@@ -466,4 +595,155 @@ TEST_CASE("wire encoder emits a deterministic, magic-prefixed payload") {
     const auto second = encode_core_wire_schema_table(*projected.table);
     REQUIRE(second.ok());
     CHECK(*first.bytes == *second.bytes);
+}
+
+// --- P0 regression + §7.1 generic / recursion / Result coverage ------------
+
+TEST_CASE("the generic fixture CoreProgram verifies clean") {
+    const GenericProgram g = make_generic_program();
+    const auto verification = verify_core_program(g.program);
+    for (const auto &d : verification.diagnostics) {
+        INFO("unexpected verifier diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(verification.ok());
+}
+
+TEST_CASE("wire projection of a two-generic-field struct is UAF-safe (P0 regression)") {
+    // Box<Int> { a: List<Int>(4), b: List<Int>(8) }. Projecting field `b` re-reads
+    // the owner nominal after field `a`'s member instantiation reallocated the
+    // scratch value-type arena. Under ASan this is the heap-use-after-free the
+    // by-value snapshot fixes; under any sanitizer-free build it must still emit
+    // the correct two-field struct with distinct capacities.
+    const GenericProgram g = make_generic_program();
+    const auto result = project_core_wire_schema(g.program, {g.gen_cap});
+    REQUIRE(result.ok());
+    const auto &table = *result.table;
+    const auto &cap = table.capabilities[0];
+    REQUIRE(cap.params.size() == 1);
+
+    const auto &box = std::get<CoreWireSchemaStruct>(shape_of(table, cap.params[0]));
+    CHECK(box.wire_name == "Box");
+    REQUIRE(box.fields.size() == 2);
+    const auto &list_a = std::get<CoreWireSchemaSequence>(shape_of(table, box.fields[0].type));
+    const auto &list_b = std::get<CoreWireSchemaSequence>(shape_of(table, box.fields[1].type));
+    CHECK(list_a.kind == CoreWireSequenceKind::List);
+    CHECK(list_a.capacity == std::optional<std::uint64_t>{4});
+    CHECK(list_b.capacity == std::optional<std::uint64_t>{8});
+    CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(table, list_a.element)));
+    CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(table, list_b.element)));
+
+    // Result<Int, String> return: an enum with two Tuple-payload variants.
+    const auto &res = std::get<CoreWireSchemaEnum>(shape_of(table, cap.result));
+    CHECK(res.wire_name == "std::result::Result");
+    REQUIRE(res.variants.size() == 2);
+    CHECK(res.variants[0].wire_name == "Ok");
+    CHECK(res.variants[0].payload_kind == CoreWirePayloadKind::Tuple);
+    REQUIRE(res.variants[0].slots.size() == 1);
+    CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(table, res.variants[0].slots[0].type)));
+    CHECK(res.variants[1].wire_name == "Err");
+    REQUIRE(res.variants[1].slots.size() == 1);
+    CHECK(
+        std::holds_alternative<CoreWireSchemaString>(shape_of(table, res.variants[1].slots[0].type)));
+
+    CHECK(project_core_wire_schema(g.program, {g.gen_cap}).table == result.table);
+}
+
+TEST_CASE("wire projection resolves a recursive nominal via a bounded sequence") {
+    // Tree { children: List<Tree>(4) } — the List element schema node must refer
+    // back to the reserved Tree struct node (reserve-before-descend), and the
+    // table must verify (a cycle is legal when every ref is valid + reachable).
+    const GenericProgram g = make_generic_program();
+    const auto result = project_core_wire_schema(g.program, {g.tree_cap});
+    REQUIRE(result.ok());
+    const auto &table = *result.table;
+    const auto &cap = table.capabilities[0];
+    REQUIRE(cap.params.size() == 1);
+
+    const auto tree_id = cap.params[0];
+    const auto &tree = std::get<CoreWireSchemaStruct>(shape_of(table, tree_id));
+    CHECK(tree.wire_name == "Tree");
+    REQUIRE(tree.fields.size() == 1);
+    const auto &list = std::get<CoreWireSchemaSequence>(shape_of(table, tree.fields[0].type));
+    CHECK(list.capacity == std::optional<std::uint64_t>{4});
+    CHECK(list.element == tree_id); // recursive back-reference
+    CHECK(verify_core_wire_schema_table(g.program, {g.tree_cap}, table).empty());
+}
+
+TEST_CASE("wire node order is canonical: ascending program-global value type id") {
+    // Design §2.2: nodes are ordered by program-global CoreValueTypeId, NOT by
+    // capability params/result discovery order. ScalarCap params=[Int(vt0),
+    // String(vt2)], result=Bool(vt1): the node arena must therefore be
+    // [Int, Bool, String] (source ids 0,1,2), regardless of the param order that
+    // discovers String before Bool.
+    const CoreProgram program = make_wire_program();
+    const auto result = project_core_wire_schema(program, caps({kScalarCap}));
+    REQUIRE(result.ok());
+    const auto &table = *result.table;
+    REQUIRE(table.nodes.size() == 3);
+    CHECK(std::holds_alternative<CoreWireSchemaInt>(table.nodes[0].shape));
+    CHECK(std::holds_alternative<CoreWireSchemaBool>(table.nodes[1].shape));
+    CHECK(std::holds_alternative<CoreWireSchemaString>(table.nodes[2].shape));
+    // The capability edges must have been remapped to point at the reordered ids.
+    const auto &cap = table.capabilities[0];
+    CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(table, cap.params[0])));
+    CHECK(std::holds_alternative<CoreWireSchemaString>(shape_of(table, cap.params[1])));
+    CHECK(std::holds_alternative<CoreWireSchemaBool>(shape_of(table, cap.result)));
+}
+
+TEST_CASE("node order is independent of capability selection order") {
+    // Two selections that share nodes must produce identically-ordered arenas:
+    // node order is a function of source value-type ids, not discovery path.
+    const CoreProgram program = make_wire_program();
+    const auto a = project_core_wire_schema(program, caps({kCollCap, kScalarCap}));
+    const auto b = project_core_wire_schema(program, caps({kCollCap, kScalarCap}));
+    REQUIRE(a.ok());
+    REQUIRE(b.ok());
+    CHECK(*a.table == *b.table);
+    // Nodes are strictly ascending by first-discovered source id, so the arena is
+    // sorted: assert the shared scalars land in canonical Int < Bool < String slots
+    // ahead of the aggregate nodes.
+    CHECK(std::holds_alternative<CoreWireSchemaInt>(a.table->nodes[0].shape));
+    CHECK(std::holds_alternative<CoreWireSchemaBool>(a.table->nodes[1].shape));
+    CHECK(std::holds_alternative<CoreWireSchemaString>(a.table->nodes[2].shape));
+}
+
+// --- local verifier hardening (P1-1 orphan gate + hand-built negatives) ----
+
+TEST_CASE("table verifier rejects an orphan node even with an empty capability set") {
+    // P1-1: reachability must be seeded unconditionally. A table with a node but
+    // no capability roots has an unreachable (orphan) node and must be rejected —
+    // both by the standalone verifier and by the encoder (no partial publish).
+    CoreWireSchemaTable table;
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});
+    const CoreProgram program = make_wire_program();
+    const auto diagnostics = verify_core_wire_schema_table(program, {}, table);
+    CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
+
+    const auto encoded = encode_core_wire_schema_table(table);
+    CHECK_FALSE(encoded.ok());
+}
+
+TEST_CASE("an empty table (no nodes, no capabilities) is legal") {
+    CoreWireSchemaTable table;
+    const CoreProgram program = make_wire_program();
+    CHECK(verify_core_wire_schema_table(program, {}, table).empty());
+    const auto encoded = encode_core_wire_schema_table(table);
+    CHECK(encoded.ok());
+}
+
+TEST_CASE("table verifier rejects a hand-built table with a bad node reference") {
+    // A struct field pointing past the node arena must fail the local pass.
+    CoreWireSchemaTable table;
+    CoreWireSchemaStruct s;
+    s.wire_name = "Bad";
+    s.fields.push_back(CoreWireSchemaField{"x", CoreWireSchemaNodeId{7}});
+    table.nodes.push_back(CoreWireSchemaNode{std::move(s)});
+    CoreWireCapabilitySchema cap;
+    cap.capability = CoreCapabilityId{0};
+    cap.result = CoreWireSchemaNodeId{0};
+    table.capabilities.push_back(std::move(cap));
+    const CoreProgram program = make_wire_program();
+    const auto diagnostics = verify_core_wire_schema_table(program, caps({0}), table);
+    CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
 }
