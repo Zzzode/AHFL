@@ -40,6 +40,20 @@ using namespace ahfl::ir::core;
     return false;
 }
 
+// True iff some ERROR diagnostic's message contains `needle` — used to prove a
+// negative hits the INTENDED gate (all wire gates share the kInvalid code, so
+// the message is what distinguishes local-order vs reprojection vs shape gates).
+[[nodiscard]] bool has_message(const std::vector<CoreLowerDiagnostic> &diagnostics,
+                               std::string_view needle) {
+    for (const auto &d : diagnostics) {
+        if (d.severity == CoreDiagnosticSeverity::Error &&
+            d.message.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] const CoreWireSchemaShape &shape_of(const CoreWireSchemaTable &table,
                                                   CoreWireSchemaNodeId id) {
     REQUIRE(id.value < table.nodes.size());
@@ -358,6 +372,65 @@ enum : std::uint32_t {
     g.gen_cap = add_cap("GenCap", {CoreValueTypeId{3}}, CoreValueTypeId{5}, 20);
     g.tree_cap = add_cap("TreeCap", {CoreValueTypeId{4}}, CoreValueTypeId{2}, 21);
     return g;
+}
+
+// A fixture exercising every remaining directly-projected scalar/refinement
+// shape plus an enum with a Struct-form payload variant.
+//   enum Shape { Dot, Line{len: BoundedInt(0,100), label: BoundedString(1,8)} }
+//   cap ScalarsCap(Unit, Float, Decimal(3), Duration, Timestamp, Uuid,
+//                  BoundedInt(-5,5), BoundedString(2,4)) -> Shape
+struct ScalarProgram {
+    CoreProgram program;
+    CoreCapabilityId cap{};
+};
+
+[[nodiscard]] ScalarProgram make_scalar_program() {
+    ScalarProgram s;
+    CoreProgram &p = s.program;
+
+    // value-type arena (topological). Bounded refinements carry their bounds.
+    p.value_types = {
+        CoreValueType{CoreVtUnit{}},                                                 // 0
+        CoreValueType{CoreVtFloat{}},                                                // 1
+        CoreValueType{CoreVtDecimal{3}},                                             // 2
+        CoreValueType{CoreVtDuration{}},                                             // 3
+        CoreValueType{CoreVtTimestamp{}},                                            // 4
+        CoreValueType{CoreVtUuid{}},                                                 // 5
+        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{-5, 5}}},      // 6
+        CoreValueType{CoreVtString{std::pair<std::int64_t, std::int64_t>{2, 4}}},    // 7
+        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{0, 100}}},     // 8 Line.len
+        CoreValueType{CoreVtString{std::pair<std::int64_t, std::int64_t>{1, 8}}},    // 9 Line.label
+    };
+
+    // enum Shape { Dot (unit), Line{len, label} (struct payload) }.
+    CoreTypeDecl shape;
+    shape.kind = CoreTypeDecl::Kind::Enum;
+    shape.name = "Shape";
+    shape.variants = {"Dot", "Line"};
+    shape.member_type_templates = {concrete(CoreValueTypeId{8}), concrete(CoreValueTypeId{9})};
+    CoreTypeDecl::VariantPayload dot;
+    CoreTypeDecl::VariantPayload line;
+    line.kind = CoreTypeDecl::VariantPayload::Kind::Struct;
+    line.field_names = {"len", "label"};
+    line.slot_type_template_roots = {CoreMemberTypeTemplateNodeId{0},
+                                     CoreMemberTypeTemplateNodeId{1}};
+    shape.variant_payloads = {std::move(dot), std::move(line)};
+    p.types.push_back(std::move(shape));
+
+    CoreCapabilityDecl c;
+    c.symbol_ref.kind = ir::SymbolRefKind::Capability;
+    c.symbol_ref.canonical_name = "app::ScalarsCap";
+    c.symbol_ref.id = 30;
+    c.name = "ScalarsCap";
+    c.param_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2},
+                     CoreValueTypeId{3}, CoreValueTypeId{4}, CoreValueTypeId{5},
+                     CoreValueTypeId{6}, CoreValueTypeId{7}};
+    c.return_type = CoreValueTypeId{static_cast<std::uint32_t>(p.value_types.size())};
+    // Shape nominal value type (the enum result).
+    p.value_types.push_back(CoreValueType{CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}});
+    s.cap = CoreCapabilityId{0};
+    p.capabilities.push_back(std::move(c));
+    return s;
 }
 
 } // namespace
@@ -691,21 +764,22 @@ TEST_CASE("wire node order is canonical: ascending program-global value type id"
     CHECK(std::holds_alternative<CoreWireSchemaBool>(shape_of(table, cap.result)));
 }
 
-TEST_CASE("node order is independent of capability selection order") {
-    // Two selections that share nodes must produce identically-ordered arenas:
-    // node order is a function of source value-type ids, not discovery path.
+TEST_CASE("repeated projection of the same selection is byte-identical") {
+    // Determinism guard: the same canonical selection projects an identical table
+    // every time. (Discovery-order independence — that node order follows source
+    // value-type id, not param/result DFS — is proven separately by the canonical
+    // node-order case above; this case only asserts repeated projection is stable.)
     const CoreProgram program = make_wire_program();
     const auto a = project_core_wire_schema(program, caps({kCollCap, kScalarCap}));
     const auto b = project_core_wire_schema(program, caps({kCollCap, kScalarCap}));
     REQUIRE(a.ok());
     REQUIRE(b.ok());
     CHECK(*a.table == *b.table);
-    // Nodes are strictly ascending by first-discovered source id, so the arena is
-    // sorted: assert the shared scalars land in canonical Int < Bool < String slots
-    // ahead of the aggregate nodes.
-    CHECK(std::holds_alternative<CoreWireSchemaInt>(a.table->nodes[0].shape));
-    CHECK(std::holds_alternative<CoreWireSchemaBool>(a.table->nodes[1].shape));
-    CHECK(std::holds_alternative<CoreWireSchemaString>(a.table->nodes[2].shape));
+    const auto ea = encode_core_wire_schema_table(*a.table);
+    const auto eb = encode_core_wire_schema_table(*b.table);
+    REQUIRE(ea.ok());
+    REQUIRE(eb.ok());
+    CHECK(*ea.bytes == *eb.bytes);
 }
 
 // --- local verifier hardening (P1-1 orphan gate + hand-built negatives) ----
@@ -746,4 +820,152 @@ TEST_CASE("table verifier rejects a hand-built table with a bad node reference")
     const CoreProgram program = make_wire_program();
     const auto diagnostics = verify_core_wire_schema_table(program, caps({0}), table);
     CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
+}
+
+// --- §7.1 coverage closure: direct scalars/refinements + enum struct payload --
+
+TEST_CASE("the scalar fixture CoreProgram verifies clean") {
+    const ScalarProgram s = make_scalar_program();
+    const auto verification = verify_core_program(s.program);
+    for (const auto &d : verification.diagnostics) {
+        INFO("unexpected verifier diagnostic: " << d.code << " — " << d.message);
+        CHECK(false);
+    }
+    CHECK(verification.ok());
+}
+
+TEST_CASE("wire projection lowers every scalar and refinement shape verbatim") {
+    const ScalarProgram s = make_scalar_program();
+    const auto result = project_core_wire_schema(s.program, {s.cap});
+    REQUIRE(result.ok());
+    const auto &table = *result.table;
+    const auto &cap = table.capabilities[0];
+    REQUIRE(cap.params.size() == 8);
+
+    CHECK(std::holds_alternative<CoreWireSchemaUnit>(shape_of(table, cap.params[0])));
+    CHECK(std::holds_alternative<CoreWireSchemaFloat>(shape_of(table, cap.params[1])));
+    const auto &decimal = std::get<CoreWireSchemaDecimal>(shape_of(table, cap.params[2]));
+    CHECK(decimal.scale == 3);
+    CHECK(std::holds_alternative<CoreWireSchemaDuration>(shape_of(table, cap.params[3])));
+    CHECK(std::holds_alternative<CoreWireSchemaTimestamp>(shape_of(table, cap.params[4])));
+    CHECK(std::holds_alternative<CoreWireSchemaUuid>(shape_of(table, cap.params[5])));
+
+    const auto &bounded_int = std::get<CoreWireSchemaInt>(shape_of(table, cap.params[6]));
+    REQUIRE(bounded_int.bounds.has_value());
+    CHECK(bounded_int.bounds->first == -5);
+    CHECK(bounded_int.bounds->second == 5);
+    const auto &bounded_str = std::get<CoreWireSchemaString>(shape_of(table, cap.params[7]));
+    REQUIRE(bounded_str.length_bounds.has_value());
+    CHECK(bounded_str.length_bounds->first == 2);
+    CHECK(bounded_str.length_bounds->second == 4);
+}
+
+TEST_CASE("wire projection lowers an enum variant with a Struct payload") {
+    const ScalarProgram s = make_scalar_program();
+    const auto result = project_core_wire_schema(s.program, {s.cap});
+    REQUIRE(result.ok());
+    const auto &table = *result.table;
+    const auto &shape = std::get<CoreWireSchemaEnum>(shape_of(table, table.capabilities[0].result));
+    CHECK(shape.wire_name == "Shape");
+    REQUIRE(shape.variants.size() == 2);
+    CHECK(shape.variants[0].wire_name == "Dot");
+    CHECK(shape.variants[0].payload_kind == CoreWirePayloadKind::Unit);
+    CHECK(shape.variants[0].slots.empty());
+
+    const auto &line = shape.variants[1];
+    CHECK(line.wire_name == "Line");
+    CHECK(line.payload_kind == CoreWirePayloadKind::Struct);
+    REQUIRE(line.slots.size() == 2);
+    CHECK(line.slots[0].wire_name == "len"); // struct payload carries field names
+    const auto &len = std::get<CoreWireSchemaInt>(shape_of(table, line.slots[0].type));
+    REQUIRE(len.bounds.has_value());
+    CHECK(len.bounds->second == 100);
+    CHECK(line.slots[1].wire_name == "label");
+    CHECK(std::holds_alternative<CoreWireSchemaString>(shape_of(table, line.slots[1].type)));
+
+    CHECK(verify_core_wire_schema_table(s.program, {s.cap}, table).empty());
+}
+
+// --- §7.1 coverage closure: table verifier fail-closed negatives -----------
+
+TEST_CASE("public verifier rejects a duplicated capability entry at the local gate") {
+    // Two capability roots with the same id violate strictly-increasing/unique.
+    // This is a LOCAL gate: it fires before reprojection is even attempted.
+    const CoreProgram program = make_wire_program();
+    const auto projected = project_core_wire_schema(program, caps({kScalarCap}));
+    REQUIRE(projected.ok());
+    CoreWireSchemaTable table = *projected.table;
+    table.capabilities.push_back(table.capabilities[0]); // duplicate root id
+    const auto diagnostics = verify_core_wire_schema_table(program, caps({kScalarCap}), table);
+    CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
+    CHECK(has_message(diagnostics, "capability roots are not strictly ordered")); // local gate
+}
+
+TEST_CASE("public verifier rejects a wrong source_symbol at the reprojection gate") {
+    // A tampered source_symbol is locally well-formed (the local pass does not
+    // know Core symbols), so it must be caught by the deterministic reprojection
+    // equality against the verified Core signatures.
+    const CoreProgram program = make_wire_program();
+    const auto selection = caps({kScalarCap});
+    const auto projected = project_core_wire_schema(program, selection);
+    REQUIRE(projected.ok());
+    // The untampered table passes BOTH gates (local + reprojection).
+    REQUIRE(verify_core_wire_schema_table(program, selection, *projected.table).empty());
+    CoreWireSchemaTable table = *projected.table;
+    // Mutate ONLY source_symbol; the node graph and roots are untouched. The
+    // local pass does not inspect source_symbol, so the rejection below can only
+    // come from the deterministic reprojection gate.
+    table.capabilities[0].source_symbol += 1;
+    const auto diagnostics = verify_core_wire_schema_table(program, selection, table);
+    CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
+    CHECK(has_message(diagnostics, "deterministic Core reprojection")); // reprojection gate
+}
+
+TEST_CASE("projection fails closed with no table on a wrong-arity nominal (unverified Core)") {
+    // A nominal value type whose arg count disagrees with its declaration makes
+    // verify_core_program fail, so projection must refuse with kInvalidCore and
+    // publish no table.
+    CoreProgram program = make_wire_program();
+    // kVtOptionInt (#5) is Option<Int>; drop its arg so arity (0) != decl (1).
+    std::get<CoreVtNominal>(program.value_types[kVtOptionInt].node).args.clear();
+    const auto result = project_core_wire_schema(program, caps({kOptListCap}));
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.table.has_value());
+    CHECK(has_code(result.diagnostics, std::string(wire_schema::kInvalidCore)));
+}
+
+TEST_CASE("public verifier and encoder reject an unknown wire enum underlying value") {
+    const CoreProgram program = make_wire_program();
+
+    SUBCASE("unknown sequence kind") {
+        const auto projected = project_core_wire_schema(program, caps({kOptListCap}));
+        REQUIRE(projected.ok());
+        CoreWireSchemaTable table = *projected.table;
+        for (auto &node : table.nodes) {
+            if (auto *seq = std::get_if<CoreWireSchemaSequence>(&node.shape)) {
+                seq->kind = static_cast<CoreWireSequenceKind>(7); // out of range
+            }
+        }
+        CHECK(has_code(verify_core_wire_schema_table(program, caps({kOptListCap}), table),
+                       std::string(wire_schema::kInvalid)));
+        CHECK(has_message(verify_core_wire_schema_table(program, caps({kOptListCap}), table),
+                          "sequence kind is invalid")); // local shape gate
+        CHECK_FALSE(encode_core_wire_schema_table(table).ok());
+    }
+
+    SUBCASE("unknown enum payload kind") {
+        const auto projected = project_core_wire_schema(program, caps({kStructCap}));
+        REQUIRE(projected.ok());
+        CoreWireSchemaTable table = *projected.table;
+        for (auto &node : table.nodes) {
+            if (auto *en = std::get_if<CoreWireSchemaEnum>(&node.shape)) {
+                en->variants[0].payload_kind = static_cast<CoreWirePayloadKind>(9);
+            }
+        }
+        CHECK(has_code(verify_core_wire_schema_table(program, caps({kStructCap}), table),
+                       std::string(wire_schema::kInvalid)));
+        CHECK(has_message(verify_core_wire_schema_table(program, caps({kStructCap}), table),
+                          "payload kind is invalid")); // local shape gate
+        CHECK_FALSE(encode_core_wire_schema_table(table).ok());
+    }
 }
