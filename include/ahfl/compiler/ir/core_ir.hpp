@@ -1537,6 +1537,39 @@ struct CoreLowerResult {
 /// (enumerated kind + range) the verifier can reject; it never hides an effect.
 [[nodiscard]] CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir);
 
+/// RFC 0026 KR6.5 E4-B0-C2: the type-table-only projection of an AHFL program's
+/// nominal universe, factored out of `lower_ahfl_to_core` so the wire-schema
+/// migration projector can seed a private value-type arena WITHOUT lowering any
+/// capability / agent / flow / workflow body. `types` + `value_types` are exactly
+/// the arenas `lower_ahfl_to_core` builds in its type-table pass (same source
+/// order, field-nav fixup, and P4-C member-template finalization); the full
+/// lowerer consumes the SAME construction path, so this is not a second type
+/// registration. The gate here is TYPE-LOCAL: it validates only the invariants
+/// the type table / value-type arena need, never a handler body. `ok()` is false
+/// iff an ERROR diagnostic was produced; a consumer that sees `!ok()` must fail
+/// closed (no partial artifact).
+struct CoreTypeEnvironmentSeed {
+    std::vector<CoreTypeDecl> types;
+    std::vector<CoreValueType> value_types;
+    std::vector<CoreLowerDiagnostic> diagnostics;
+
+    [[nodiscard]] bool has_errors() const noexcept {
+        for (const auto &d : diagnostics) {
+            if (d.severity == CoreDiagnosticSeverity::Error) {
+                return true;
+            }
+        }
+        return false;
+    }
+    [[nodiscard]] bool ok() const noexcept { return !has_errors(); }
+};
+
+/// Build the shared type-table-only seed from a verified AHFL program. Lowers NO
+/// body. This is the single registration/fixup/finalize path — `lower_ahfl_to_core`
+/// runs the identical steps in-place, so a program that lowers cleanly and this
+/// seed agree on `types` / `value_types` byte-for-byte.
+[[nodiscard]] CoreTypeEnvironmentSeed build_core_type_environment(const AhflIr &ahfl_ir);
+
 /// A well-known stdlib enum the lowerer resolves via a builtin variant table
 /// (its EnumDecl lives in the sysroot and may not be inlined in a program).
 struct BuiltinEnumDescriptor {

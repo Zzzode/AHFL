@@ -3405,12 +3405,20 @@ class WorkflowLowerer {
 
 } // namespace
 
-CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
-    CoreLowerResult result;
-    CoreProgram &core = result.program;
-
-    // Pass 1: type table (structs/enums + builtin stdlib enums).
-    TypeEnv types(core.types, result.diagnostics);
+// RFC 0026 KR6.5 E4-B0-C2: the shared type-table pass. Registers every
+// struct/enum + builtin stdlib nominal (source order), resolves field-nav
+// nominal ids, and finalizes the P4-C declaration member templates into the
+// supplied `shared_arena`. This is the SINGLE registration/fixup/finalize
+// implementation: `lower_ahfl_to_core` runs it in-place for full lowering, and
+// `build_core_type_environment` runs it standalone for the wire-schema migration
+// projector. It lowers NO capability/agent/flow/workflow body. The returned
+// `TypeEnv` binds references to `core.types` / `diags`, which must outlive it.
+// `static` (internal linkage): it returns an anonymous-namespace `TypeEnv`, so it
+// must not have external linkage.
+[[nodiscard]] static TypeEnv populate_core_type_table(const AhflIr &ahfl_ir, CoreProgram &core,
+                                                      std::vector<CoreLowerDiagnostic> &diags,
+                                                      ValueTypeArena &shared_arena) {
+    TypeEnv types(core.types, diags);
     for (const Decl &decl : ahfl_ir.declarations) {
         if (const auto *s = std::get_if<StructDecl>(&decl)) {
             types.add_struct(*s);
@@ -3425,14 +3433,23 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     // AHFL-IR. Must run after ALL types are registered (fields can reference a
     // type declared later in the module).
     types.fixup_field_nominal_types();
+    // Finalize declaration member templates in source order before any
+    // body/shell consumer can observe the type table.
+    types.finalize_member_templates(shared_arena);
+    return types;
+}
 
-    // Build the one program-global logical value-type arena immediately after
-    // every nominal is registered, then finalize declaration member templates
-    // in source order before any body/shell consumer can observe the type table.
+CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
+    CoreLowerResult result;
+    CoreProgram &core = result.program;
+
+    // Pass 1: type table (structs/enums + builtin stdlib enums). The one
+    // program-global logical value-type arena is built here and REUSED for body
+    // lowering below (never a second arena).
     ValueTypeArena shared_arena(core.value_types, core.types, [&core](const SymbolRef &r) {
         return resolve_nominal_strict(core.types, r);
     });
-    types.finalize_member_templates(shared_arena);
+    TypeEnv types = populate_core_type_table(ahfl_ir, core, result.diagnostics, shared_arena);
     const ValueTypeInterner intern_value_type = [&shared_arena](const TypeRef &type,
                                                                 std::string *reason) {
         return shared_arena.lower(type, reason);
@@ -3791,6 +3808,24 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     }
     result.is_executable = !result.has_errors();
     return result;
+}
+
+CoreTypeEnvironmentSeed build_core_type_environment(const AhflIr &ahfl_ir) {
+    CoreTypeEnvironmentSeed seed;
+    // A throwaway CoreProgram whose type table + value-type arena the shared
+    // prelude fills; we snapshot exactly those two arenas plus diagnostics. No
+    // body is lowered, so an unrelated (e.g. not-yet-lowered P6) handler cannot
+    // block a wire-schema migration projection.
+    CoreProgram scratch;
+    ValueTypeArena shared_arena(scratch.value_types, scratch.types, [&scratch](const SymbolRef &r) {
+        return resolve_nominal_strict(scratch.types, r);
+    });
+    // The returned TypeEnv binds references into `scratch`; it is dropped here —
+    // only the populated arenas are retained.
+    static_cast<void>(populate_core_type_table(ahfl_ir, scratch, seed.diagnostics, shared_arena));
+    seed.types = std::move(scratch.types);
+    seed.value_types = std::move(scratch.value_types);
+    return seed;
 }
 
 std::optional<CoreValueTypeId>

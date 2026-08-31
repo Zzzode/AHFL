@@ -1014,6 +1014,11 @@ project_core_wire_schema(const CoreProgram &program,
 }
 
 std::vector<CoreLowerDiagnostic>
+verify_core_wire_schema_table_local(const CoreWireSchemaTable &table) {
+    return verify_local(table);
+}
+
+std::vector<CoreLowerDiagnostic>
 verify_core_wire_schema_table(const CoreProgram &program,
                               const std::vector<CoreCapabilityId> &selected_capabilities,
                               const CoreWireSchemaTable &table) {

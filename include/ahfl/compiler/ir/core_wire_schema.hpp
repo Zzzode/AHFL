@@ -190,6 +190,18 @@ verify_core_wire_schema_table(const CoreProgram &program,
                               const std::vector<CoreCapabilityId> &selected_capabilities,
                               const CoreWireSchemaTable &table);
 
+/// Verify ONLY the local graph invariants of a wire-schema table (format version,
+/// 32-bit id space, strictly-ordered/unique capability roots, per-node structural
+/// legality, and cycle-SAFE reachability with no orphan node). This is the gate a
+/// generic host (E4-B1 transport, or the E4-B0-C2 codec) applies to a table it
+/// did not itself project: it accepts a legal root-reachable CYCLIC graph
+/// (recursive nominals) and rejects only bad references, orphans, and illegal
+/// shapes. It does NOT re-derive from a CoreProgram (that stronger reprojection
+/// check is `verify_core_wire_schema_table`, available only when the Core source
+/// is present). Empty diagnostics == locally valid.
+[[nodiscard]] std::vector<CoreLowerDiagnostic>
+verify_core_wire_schema_table_local(const CoreWireSchemaTable &table);
+
 /// Encode the verified in-memory table into its deterministic section payload.
 /// This does not append a Wasm custom section; transport remains E4-B1.
 [[nodiscard]] CoreWireSchemaEncodeResult
