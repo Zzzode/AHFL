@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["compiler", "runtime"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["0243ff10", "a1a38d1a", "31eded7f", "c48e2c18", "c3aa3ec2", "ddf7f391", "fc06245b", "1e676d3b", "814d3378", "98da0bd9", "86ea43f3", "c60b46fc", "3334fba0", "2df0357c", "a143cd7f", "6a2eb394"]
+implementation_prs: ["0243ff10", "a1a38d1a", "31eded7f", "c48e2c18", "c3aa3ec2", "ddf7f391", "fc06245b", "1e676d3b", "814d3378", "98da0bd9", "86ea43f3", "c60b46fc", "3334fba0", "2df0357c", "a143cd7f", "6a2eb394", "eb26502f"]
 decision_due: "2026-10-15"
 ---
 
@@ -653,3 +653,22 @@ Implementation Plan 对应分片承载。
   native_wasm_diff 17/17、11 wasm ctest(Node/gate Passed、3 wasmtime SKIP);reviewer 独立复跑。
   **C2 workflow codegen(internal runner 表 + Kahn dispatch + borrowed alias + run2 schedule +
   counters + step/current_state trap)未开始**;KR6.5 仍非 execution-proven。
+- 2026-08-31: **KR6.5 E3-C2 workflow codegen 落地(commit `eb26502f`)**,`feat(wasm): emit
+  deterministic E3 workflow modules`。**E3 完成(设计 `c80a06ac` + C1 `6a2eb394` + C2 `eb26502f`)——
+  P5 编排 codegen 塔完整:E1 agent + E2 capability + E3 workflow。** 独立 `encode_workflow_module`
+  (agent `encode_module` 路径/字节零改——reviewer 亲测 E1 emit md5 C1==C2 相同,证明隔离);private
+  runner 按 packaged_instances 升序、逐条执行 C1 已证 goto 链、聚合 transition count、返回
+  `(OK,in_ptr,in_len)` **无 frame memory op**。workflow run2 按 C1 Kahn schedule unrolled call、每
+  runner OK gate 后 completed++、入口 reset transition/completed、return source 只选 input/completed
+  node;legacy run 调 run2 返 ptr;`step`/`current_state` body 首指令 `unreachable` trap(DAG 无单一
+  agent state)。globals immutable workflow_node_count/ABI + mutable transition/completed/heap,无
+  imports/pending latch。P4-D 仅 C1 finalized-root gate、C2 零 layout 算术;wire=value_json opaque。
+  CLI 闭环:EmitWasm 进 package-supported SSOT,`--manifest --target workflow` 真加载 metadata +
+  strict typed entry;package CLI vs direct Core target byte-identical(实测 470 bytes)。**additive、
+  agent-entry 零回归**:dev -Werror no-work、wasm 69/69、compiler_ir 285/285、AgentRuntime 43/43、
+  WorkflowRuntime 194/194、native-wasm 17/17、CLI routing 91/91、15 wasm ctest(Node persistent
+  workflow Passed、E3 wasmtime 等 4 项诚实 SKIP);reviewer 独立复跑 + 亲手 emit/Node 执行 workflow
+  (schedule=first,second、completed=2、transition=2、identity)。**KR6.5 仍非 execution-proven**——
+  workflow 亦 Node 证、wasmtime SKIP。后续 E4 P5 conformance(把 E1-E3 的 wasmtime SKIP 收成真跑
+  evidence、坐实 execution-proven),之后 KR6.6/P6 表达式/算术/match/闭包;evaluator 退役(KR6.8)
+  严格门控在 conformance 全绿之后。
