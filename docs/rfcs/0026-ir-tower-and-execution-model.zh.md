@@ -672,3 +672,20 @@ Implementation Plan 对应分片承载。
   workflow 亦 Node 证、wasmtime SKIP。后续 E4 P5 conformance(把 E1-E3 的 wasmtime SKIP 收成真跑
   evidence、坐实 execution-proven),之后 KR6.6/P6 表达式/算术/match/闭包;evaluator 退役(KR6.8)
   严格门控在 conformance 全绿之后。
+- 2026-08-31: **KR6.5 E4-A real-Wasmtime conformance closure 设计(commit `3c326f85`,docs only)**。
+  `docs/design/core-ir-kr6-5-e4-conformance.zh.md`。**诚实拆 E4-A/E4-B**:E4-A 只把已实现 E1-E3 从
+  optional/SKIP 升成 **required real-Wasmtime evidence**,**零 Core/codegen/ABI/字节改动**(reviewer
+  后续用 byte-identical gate 证);A 后仅可称"implemented E1-E3 subset execution-evidenced",
+  **KR6.5 仍 false**。E4-B(later)才做 capability chain、workflow capability ownership、durable
+  resume(RFC0022 P0:runtime type check 不能用 host type-id/layout-id/byte-hash 冒充类型证明,须独立
+  design 解)、exact runtime node order。§2.4 honest-status 表 + manifest gate 保 composite-not-exact
+  (workflow order 仍 native+structural+executed counters、**非 event log**;`runtime_node_order_observed`
+  /`durable_resume_observed` 强制 false)。claim gate fail-closed:拒 any `<skipped>`、错 provenance、
+  `execution_proven:true` while resume/order false、unknown manifest field;manifest secret-free +
+  deterministic(无 wall-clock/pid/path/allocator/hostname/map-order)。E2 OK 所有权守住(result 从
+  callee/target allocator、preallocation 非 shortcut)。**环境 decision gate 显式留 owner**:是否在 CI
+  加 Ubuntu required job + wasmtime CLI 28.0.0 + python binding 28.0.0 + importlib_resources 7.1.0
+  (全 SHA-256 pin、官方 Bytecode Alliance 源);设计头标 pending,**owner 拍板前不落任何 CI/依赖实现**。
+  feasibility audit(文档明确非 evidence):pin 的 toolchain 亲跑 4 harness 全 non-skipped PASS。
+  **E4-A 实现(harness required 化 + manifest + checker + CI job)blocked on owner decision**;KR6.5
+  仍非 execution-proven。
