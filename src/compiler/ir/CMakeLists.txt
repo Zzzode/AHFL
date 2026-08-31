@@ -3,6 +3,7 @@ add_library(ahfl_compiler_ir STATIC
     core_layout.cpp
     core_lower.cpp
     core_verify.cpp
+    core_wire_schema.cpp
     identity.cpp
     ir_equal.cpp
     ir_lower.cpp
