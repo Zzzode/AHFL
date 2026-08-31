@@ -3823,6 +3823,22 @@ CoreTypeEnvironmentSeed build_core_type_environment(const AhflIr &ahfl_ir) {
     // The returned TypeEnv binds references into `scratch`; it is dropped here —
     // only the populated arenas are retained.
     static_cast<void>(populate_core_type_table(ahfl_ir, scratch, seed.diagnostics, shared_arena));
+
+    // TYPE-LOCAL gate: `populate_core_type_table` only reports the diagnostics
+    // TypeEnv construction happens to raise, which is NOT proof the type table +
+    // value-type arena are structurally legal (e.g. a user generic with
+    // type_param_count=1 but empty variances is accepted by TypeEnv yet rejected
+    // by the value-type/type-table verifier). Run the real structural verifier on
+    // the types+value_types-only scratch: with empty agents/capabilities/flows/
+    // workflows/instances, `verify_core_program` walks ONLY verify_types() and
+    // verify_value_types() — no capability/agent/flow/workflow body — so this is
+    // the type-local gate the design requires, reusing the single verifier rather
+    // than a second structural pass. A consumer that sees `!seed.ok()` fails
+    // closed (migration yields no binding).
+    auto verification = verify_core_program(scratch);
+    for (auto &d : verification.diagnostics) {
+        seed.diagnostics.push_back(std::move(d));
+    }
     seed.types = std::move(scratch.types);
     seed.value_types = std::move(scratch.value_types);
     return seed;

@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -58,12 +59,19 @@ enum Color {
     Green(Int),
 }
 
+struct Tree {
+    children: std::collections::List<Tree>(4);
+}
+
 capability ScalarCap(flag: Bool) -> Bool;
 capability RefineCap(n: Int) -> Int(0, 100);
 capability StructCap(p: Point) -> Point;
 capability EnumCap(c: Color) -> Color;
 capability OptionCap(n: Int) -> std::option::Option<Int>;
 capability ListCap(n: Int) -> std::collections::List<Int>(8);
+capability TreeCap(n: Int) -> Tree;
+capability MapCap(n: Int) -> std::collections::Map<String, Int>(4);
+capability MapKeyCap(n: Int) -> std::collections::Map<Int, Int>(4);
 
 agent Worker {
     input: Point;
@@ -325,4 +333,143 @@ TEST_CASE("the transported-table factory applies the public local verifier gate"
         std::move(tampered), good.binding->root(), diagnostics);
     CHECK_FALSE(rejected.has_value());
     CHECK_FALSE(diagnostics.empty());
+}
+
+TEST_CASE("migration projector lowers String-keyed Map and rejects a non-String key") {
+    const auto program = lower_fixture(__func__);
+    REQUIRE(program.has_value());
+    const auto seed = build_core_type_environment(*program);
+    REQUIRE(seed.ok());
+
+    SUBCASE("Map<String, Int> projects") {
+        const auto *cap = find_capability(*program, "MapCap");
+        REQUIRE(cap != nullptr);
+        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+        REQUIRE(result.ok());
+        const auto &map = std::get<CoreWireSchemaMap>(
+            shape_of(*result.binding, result.binding->root()));
+        CHECK(std::holds_alternative<CoreWireSchemaString>(shape_of(*result.binding, map.key)));
+        CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(*result.binding, map.value)));
+    }
+
+    SUBCASE("Map<Int, Int> fails closed (non-String key)") {
+        const auto *cap = find_capability(*program, "MapKeyCap");
+        REQUIRE(cap != nullptr);
+        const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, seed);
+        CHECK_FALSE(result.ok());
+        CHECK_FALSE(result.binding.has_value());
+    }
+}
+
+TEST_CASE("migration projector resolves a recursive nominal via a bounded sequence") {
+    const auto program = lower_fixture(__func__);
+    REQUIRE(program.has_value());
+    const auto *cap = find_capability(*program, "TreeCap");
+    REQUIRE(cap != nullptr);
+    const auto result = migrate_type_ref_to_wire_binding(cap->return_type_ref, *program);
+    REQUIRE(result.ok());
+    const auto root = result.binding->root();
+    const auto &tree = std::get<CoreWireSchemaStruct>(shape_of(*result.binding, root));
+    CHECK(tree.wire_name == "app::main::Tree");
+    REQUIRE(tree.fields.size() == 1);
+    const auto &list = std::get<CoreWireSchemaSequence>(shape_of(*result.binding, tree.fields[0].type));
+    CHECK(list.capacity == std::optional<std::uint64_t>{4});
+    // The recursive back-reference: List<Tree> element node is the Tree root.
+    CHECK(list.element == root);
+}
+
+TEST_CASE("migration projector fails closed on a Fn TypeRef") {
+    const auto program = lower_fixture(__func__);
+    REQUIRE(program.has_value());
+    const auto seed = build_core_type_environment(*program);
+    REQUIRE(seed.ok());
+    // A function value is not a wire value (value_json cannot represent it); the
+    // C1 projector rejects CoreVtFn, so migration yields no binding.
+    ir::TypeRef fn;
+    fn.kind = ir::TypeRefKind::Fn;
+    fn.first = std::make_unique<ir::TypeRef>();
+    fn.first->kind = ir::TypeRefKind::Int; // return Int
+    const auto result = migrate_type_ref_to_wire_binding(fn, seed);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.binding.has_value());
+    // NOTE: Closure has no constructible AHFL TypeRef surface here; its
+    // fail-closed projection is covered by the C1 wire-schema probe
+    // (core_wire_schema.cpp "value_json-unrepresentable types" -> closure).
+}
+
+TEST_CASE("migration projector rejects a Struct TypeRef carrying a WRONG resolved id") {
+    const auto program = lower_fixture(__func__);
+    REQUIRE(program.has_value());
+    const auto seed = build_core_type_environment(*program);
+    REQUIRE(seed.ok());
+    // A Struct ref that names Point but carries a resolved SymbolId no Core type
+    // holds must NOT silently downgrade to the canonical-name match (strict
+    // id-first resolve_nominal_strict): a present-but-unmatched id fails closed.
+    ir::TypeRef wrong;
+    wrong.kind = ir::TypeRefKind::Struct;
+    wrong.canonical_name = "app::main::Point";
+    wrong.nominal_ref.kind = ir::SymbolRefKind::Type;
+    wrong.nominal_ref.canonical_name = "app::main::Point";
+    wrong.nominal_ref.id = 0x7fffffff; // an id no registered nominal carries
+    const auto result = migrate_type_ref_to_wire_binding(wrong, seed);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.binding.has_value());
+}
+
+TEST_CASE("the transported-table factory rejects a reachable descendant root") {
+    // A struct result binding's Int FIELD node is a legal, in-range, non-orphan
+    // node — but it is NOT a capability param/result root. Wrapping it would
+    // silently narrow the Struct signature to Int; the factory must reject it.
+    const auto program = lower_fixture(__func__);
+    REQUIRE(program.has_value());
+    const auto *cap = find_capability(*program, "StructCap");
+    REQUIRE(cap != nullptr);
+    const auto good = migrate_type_ref_to_wire_binding(cap->return_type_ref, *program);
+    REQUIRE(good.ok());
+
+    const auto &table = good.binding->table();
+    const auto &as_struct = std::get<CoreWireSchemaStruct>(
+        table.nodes[good.binding->root().value].shape);
+    REQUIRE_FALSE(as_struct.fields.empty());
+    const CoreWireSchemaNodeId descendant = as_struct.fields[0].type; // a field node
+    REQUIRE(descendant.value != good.binding->root().value);
+
+    std::vector<CoreLowerDiagnostic> diagnostics;
+    const auto rejected =
+        make_wire_binding_from_transported_table(table, descendant, diagnostics);
+    CHECK_FALSE(rejected.has_value());
+    CHECK_FALSE(diagnostics.empty());
+    // And the declared result root IS accepted.
+    std::vector<CoreLowerDiagnostic> ok_diagnostics;
+    const auto accepted =
+        make_wire_binding_from_transported_table(table, good.binding->root(), ok_diagnostics);
+    CHECK(accepted.has_value());
+    CHECK(ok_diagnostics.empty());
+}
+
+TEST_CASE("build_core_type_environment fails closed on a malformed generic decl (type-local gate)") {
+    // A user generic struct declaring type_param_count=1 but leaving its variance
+    // vector empty is accepted by TypeEnv construction, yet the value-type /
+    // type-table verifier rejects it (variances must be parallel to arity). The
+    // type-local gate must surface that so seed.ok() is honest — NOT merely the
+    // diagnostics TypeEnv happened to raise.
+    ir::AhflIr program;
+    ir::StructDecl bad;
+    bad.name = "BadGeneric";
+    bad.symbol_ref.kind = ir::SymbolRefKind::Type;
+    bad.symbol_ref.canonical_name = "app::main::BadGeneric";
+    bad.symbol_ref.id = 4242;
+    bad.type_param_count = 1;
+    // type_param_variances deliberately left EMPTY (size 0 != arity 1).
+    program.declarations.emplace_back(std::move(bad));
+
+    const auto seed = build_core_type_environment(program);
+    CHECK_FALSE(seed.ok());
+    // A migration against this seed must yield no binding (fail-closed).
+    ir::TypeRef point;
+    point.kind = ir::TypeRefKind::Struct;
+    point.canonical_name = "app::main::BadGeneric";
+    const auto result = migrate_type_ref_to_wire_binding(point, seed);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.binding.has_value());
 }

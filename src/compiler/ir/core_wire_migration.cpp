@@ -6,11 +6,48 @@
 namespace ahfl::ir::core {
 
 // Factory access to the private VerifiedWireSchemaBinding constructor. The
-// binding is constructor-guarded so only a verifying path can mint one.
+// binding is constructor-guarded so only a verifying path can mint one, and the
+// gate here enforces the trust invariants the codec relies on: the table passes
+// the public local verifier AND the root is one of the table's capability
+// param/result roots (never a mere reachable descendant, which would silently
+// narrow a signature to a sub-node). `diagnostics` is CLEARED on entry so the
+// result is unambiguous.
 struct WireSchemaBindingFactory {
-    [[nodiscard]] static VerifiedWireSchemaBinding make(CoreWireSchemaTable table,
-                                                        CoreWireSchemaNodeId root) {
-        return VerifiedWireSchemaBinding(std::move(table), root);
+    [[nodiscard]] static std::optional<VerifiedWireSchemaBinding>
+    make(CoreWireSchemaTable table, CoreWireSchemaNodeId root,
+         std::vector<CoreLowerDiagnostic> &diagnostics) {
+        diagnostics.clear();
+        auto local = verify_core_wire_schema_table_local(table);
+        if (!local.empty()) {
+            diagnostics = std::move(local);
+            return std::nullopt;
+        }
+        if (!root_is_capability_root(table, root)) {
+            diagnostics.push_back(CoreLowerDiagnostic{
+                CoreDiagnosticSeverity::Error, std::string(wire_schema::kInvalid),
+                "wire-schema binding root is not a capability param/result root", std::nullopt});
+            return std::nullopt;
+        }
+        auto payload = std::make_shared<const VerifiedWireSchemaBinding::Payload>(
+            VerifiedWireSchemaBinding::Payload{std::move(table), root});
+        return VerifiedWireSchemaBinding(std::move(payload));
+    }
+
+  private:
+    // A binding root MUST be one of the table's capability param/result roots.
+    [[nodiscard]] static bool root_is_capability_root(const CoreWireSchemaTable &table,
+                                                      CoreWireSchemaNodeId root) {
+        for (const auto &capability : table.capabilities) {
+            if (capability.result == root) {
+                return true;
+            }
+            for (const auto param : capability.params) {
+                if (param == root) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 };
 
@@ -81,21 +118,26 @@ migrate_type_ref_to_wire_binding(const ir::TypeRef &type, const CoreTypeEnvironm
     }
 
     CoreWireSchemaTable table = std::move(*projected.table);
-    // Belt-and-suspenders: the codec-facing binding must satisfy the SAME public
-    // local verifier a transported table would. (The projector already produced a
-    // locally-valid table; this makes the invariant explicit at the trust seam.)
-    auto local = verify_core_wire_schema_table_local(table);
-    if (!local.empty()) {
-        result.diagnostics = std::move(local);
-        return result;
-    }
     if (table.capabilities.size() != 1) {
         result.diagnostics.push_back(
             migration_error("wire-schema migration produced an unexpected capability count"));
         return result;
     }
     const CoreWireSchemaNodeId root = table.capabilities.front().result;
-    result.binding = WireSchemaBindingFactory::make(std::move(table), root);
+    // The gated factory re-runs the public local verifier AND enforces
+    // root ∈ capability param/result before minting the binding — the same trust
+    // gate a transported table gets, applied even to our own projection.
+    std::vector<CoreLowerDiagnostic> binding_diagnostics;
+    auto binding = WireSchemaBindingFactory::make(std::move(table), root, binding_diagnostics);
+    if (!binding.has_value()) {
+        result.diagnostics = std::move(binding_diagnostics);
+        if (result.diagnostics.empty()) {
+            result.diagnostics.push_back(
+                migration_error("wire-schema migration binding failed with no diagnostic"));
+        }
+        return result;
+    }
+    result.binding = std::move(binding);
     return result;
 }
 
@@ -108,18 +150,10 @@ std::optional<VerifiedWireSchemaBinding>
 make_wire_binding_from_transported_table(CoreWireSchemaTable table, CoreWireSchemaNodeId root,
                                          std::vector<CoreLowerDiagnostic> &diagnostics) {
     // E4-B1 transport gate: a table that did not originate from our own projector
-    // must pass the public local verifier AND have a root that is a real node.
-    auto local = verify_core_wire_schema_table_local(table);
-    if (!local.empty()) {
-        diagnostics = std::move(local);
-        return std::nullopt;
-    }
-    if (root.value >= table.nodes.size()) {
-        diagnostics.push_back(
-            migration_error("transported wire-schema root is out of range"));
-        return std::nullopt;
-    }
-    return WireSchemaBindingFactory::make(std::move(table), root);
+    // must pass the public local verifier AND have a root that is one of the
+    // table's capability param/result roots (the factory enforces both; a mere
+    // reachable descendant is rejected).
+    return WireSchemaBindingFactory::make(std::move(table), root, diagnostics);
 }
 
 } // namespace ahfl::ir::core

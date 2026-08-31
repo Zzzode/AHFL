@@ -17,6 +17,7 @@
 // This is design §2.5's "TypeRef migration projector into the same
 // WireSchemaTable" — NOT a second schema authority.
 
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -26,29 +27,39 @@
 
 namespace ahfl::ir::core {
 
-/// An immutable, constructor-guarded binding of a verified wire-schema table to a
-/// single root node. The ONLY ways to obtain one are the verifying factories
-/// below (TypeRef migration in C2, transported-table in E4-B1); both run the
-/// public local verifier + root gate before minting one. The codec consumes ONLY
-/// this type, so a hand-built / tampered `CoreWireSchemaTable` can never reach the
-/// decode/validate rule engine.
+/// An immutable, copy-only binding of a verified wire-schema table to a single
+/// root node. The ONLY ways to obtain one are the verifying factories below
+/// (TypeRef migration in C2, transported-table in E4-B1); both run the public
+/// local verifier AND require the root to be one of the table's capability
+/// param/result roots (a reachable descendant is NOT a valid binding root — that
+/// would let a Struct signature be silently narrowed to one of its fields). The
+/// codec consumes ONLY this type, so a hand-built / tampered `CoreWireSchemaTable`
+/// can never reach the decode/validate rule engine.
+///
+/// The payload is a `shared_ptr<const>`: the type is copy-only (no move ctor /
+/// assignment is declared, so a user-declared copy suppresses the implicit move
+/// and an rvalue copies the cheap shared_ptr). There is therefore NO public
+/// moved-from state whose invariant could be violated — every live instance holds
+/// a fully-verified payload.
 class VerifiedWireSchemaBinding {
   public:
     VerifiedWireSchemaBinding(const VerifiedWireSchemaBinding &) = default;
-    VerifiedWireSchemaBinding(VerifiedWireSchemaBinding &&) = default;
     VerifiedWireSchemaBinding &operator=(const VerifiedWireSchemaBinding &) = default;
-    VerifiedWireSchemaBinding &operator=(VerifiedWireSchemaBinding &&) = default;
+    // Intentionally NO move ctor/assignment: copy-only immutable handle.
 
-    [[nodiscard]] const CoreWireSchemaTable &table() const noexcept { return table_; }
-    [[nodiscard]] CoreWireSchemaNodeId root() const noexcept { return root_; }
+    [[nodiscard]] const CoreWireSchemaTable &table() const noexcept { return payload_->table; }
+    [[nodiscard]] CoreWireSchemaNodeId root() const noexcept { return payload_->root; }
 
   private:
     friend struct WireSchemaBindingFactory;
-    VerifiedWireSchemaBinding(CoreWireSchemaTable table, CoreWireSchemaNodeId root)
-        : table_(std::move(table)), root_(root) {}
+    struct Payload {
+        CoreWireSchemaTable table;
+        CoreWireSchemaNodeId root;
+    };
+    explicit VerifiedWireSchemaBinding(std::shared_ptr<const Payload> payload)
+        : payload_(std::move(payload)) {}
 
-    CoreWireSchemaTable table_;
-    CoreWireSchemaNodeId root_{};
+    std::shared_ptr<const Payload> payload_;
 };
 
 struct WireSchemaMigrationResult {
@@ -82,10 +93,13 @@ migrate_type_ref_to_wire_binding(const ir::TypeRef &type,
 [[nodiscard]] WireSchemaMigrationResult
 migrate_type_ref_to_wire_binding(const ir::TypeRef &type, const AhflIr &program);
 
-/// E4-B1 factory (declared here so both bindings share one type): wrap a table
-/// that arrived over transport, after running the public local verifier + root
-/// gate. Not used in C2 (no transport yet); present so the codec's binding type is
-/// stable across slices. Defined in E4-B1.
+/// E4-B1 transport factory (declared here so both bindings share one type): wrap
+/// a table that arrived over transport, after running the public local verifier
+/// AND requiring `root` to be one of the table's capability param/result roots
+/// (never a mere reachable descendant). Defined in this translation unit so the
+/// codec's binding type is stable across slices; E4-B1 will call it with a
+/// transported table. `diagnostics` is cleared on entry, so a returned nullopt
+/// carries exactly this call's failure.
 [[nodiscard]] std::optional<VerifiedWireSchemaBinding>
 make_wire_binding_from_transported_table(CoreWireSchemaTable table, CoreWireSchemaNodeId root,
                                          std::vector<CoreLowerDiagnostic> &diagnostics);
