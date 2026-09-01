@@ -283,6 +283,17 @@ target_link_libraries(ahfl_core_wasm_resume_record_tests
 )
 ahfl_apply_project_warnings(ahfl_core_wasm_resume_record_tests)
 
+add_executable(ahfl_core_wasm_schema_module_tests
+    unit/runtime/engine/core_wasm_schema_module.cpp
+)
+target_link_libraries(ahfl_core_wasm_schema_module_tests
+    PRIVATE
+        ahfl_compiler_backend_infra_wasm
+        ahfl_runtime_engine
+)
+target_include_directories(ahfl_core_wasm_schema_module_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+ahfl_apply_project_warnings(ahfl_core_wasm_schema_module_tests)
+
 add_executable(ahfl_e2e_workflow_tests
     unit/runtime/engine/e2e_workflow.cpp
 )
@@ -1335,6 +1346,7 @@ foreach(_tgt
     ahfl_native_wasm_differential_tests
     ahfl_core_wire_codec_tests
     ahfl_core_wasm_resume_record_tests
+    ahfl_core_wasm_schema_module_tests
     ahfl_e2e_workflow_tests
     ahfl_enum_variant_e2e_tests
     ahfl_if_let_e2e_tests

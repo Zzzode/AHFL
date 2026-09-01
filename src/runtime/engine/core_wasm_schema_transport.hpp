@@ -14,8 +14,11 @@
 // A generic embedder receives module bytes, not a `CoreProgram`. The C2 writer
 // carries the deterministic logical wire schema for the module's reachable
 // capability imports in exactly one `ahfl.wire-schema.v1` custom section fixed at
-// module EOF. This inspector is the ONLY runtime entry that turns those raw bytes
-// into a `VerifiedWireSchemaBinding` for the codec:
+// module EOF. This single-shot inspector turns those raw bytes into one
+// `VerifiedWireSchemaBinding` for the codec (the B2-A2
+// `core_wasm_schema_module` context is a separate, shared-authority path that mints
+// many bindings from one admitted module; this inspector remains the single-mint
+// entry):
 //
 //   1. It frames the module (header + section walk) far enough to locate the sole
 //      target custom section, and to cross-check the module's `ahfl_cap` import
@@ -35,10 +38,12 @@
 //      which re-runs the local verifier and derives the root. The caller never
 //      supplies a bare `CoreCapabilityId`, `source_symbol`, or `CoreWireSchemaNodeId`.
 //
-// Each call fully re-parses the module and mints exactly one binding; there is no
-// batch, cache, or shared table. On any failure the binding is absent and only
-// fixed schema diagnostics are emitted (never the raw bytes, a decoded string, a
-// wire name, an import name, or a custom-section name).
+// Each call to THIS single-shot inspector fully re-parses the module and mints
+// exactly one binding; it keeps no batch, cache, or shared table (the shared-table
+// authority is the separate B2-A2 `core_wasm_schema_module` context). On any
+// failure the binding is absent and only fixed schema diagnostics are emitted
+// (never the raw bytes, a decoded string, a wire name, an import name, or a
+// custom-section name).
 
 namespace ahfl::runtime::core_wasm_schema {
 

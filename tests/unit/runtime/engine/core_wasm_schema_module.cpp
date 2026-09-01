@@ -1,0 +1,941 @@
+#include "runtime/engine/core_wasm_schema_module.hpp"
+
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/core_wire_schema.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
+#include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "common/project_input_support.hpp"
+
+#include <cstdint>
+#include <filesystem>
+#include <iostream>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+// RFC 0026 KR6.5 E4-B2-A2 permanent regression for the verified Core-Wasm schema
+// MODULE context + exec-manifest decoder. Hand-rolled check()/main().
+//
+// Evidence is split by attribution:
+//   * REAL emitter artifact: a genuine `emit_core_wasm` E2 module (no AHFLXM) must
+//     FAIL CLOSED (missing exec-manifest).
+//   * REAL emitter bytes + SYNTHETIC manifest injection: a test-built canonical
+//     AHFLXM injected immediately before the EOF AHFLWS proves A2's framing /
+//     table-decode / cross-check / eager-mint are compatible with genuine
+//     Type/Import/AHFLWS bytes. This is NOT capability-workflow emitter/topology
+//     evidence.
+//   * HAND-BUILT canonical two-section fixture: all placement/canonical/set-equality
+//     negatives, sparse {3,7} cap ids, SymbolId{0}, repeated capability, and the
+//     distinct import-vs-invocation ordinal, exercised without any emitter.
+// Node/Wasmtime/native are NOT evidence of B2 real-Wasm durable resume.
+
+namespace {
+
+using namespace ahfl::runtime::core_wasm_schema_module;
+using ahfl::ir::core::CoreCapabilityId;
+using ahfl::ir::core::CoreWireCapabilitySchema;
+using ahfl::ir::core::CoreWireSchemaInt;
+using ahfl::ir::core::CoreWireSchemaNode;
+using ahfl::ir::core::CoreWireSchemaNodeId;
+using ahfl::ir::core::CoreWireSchemaString;
+using ahfl::ir::core::CoreWireSchemaTable;
+using ahfl::ir::core::CoreWorkflowId;
+using ahfl::ir::core::CoreWorkflowNodeId;
+
+int g_failures = 0;
+
+void check(bool ok, std::string_view name) {
+    if (!ok) {
+        ++g_failures;
+        std::cerr << "FAIL: " << name << "\n";
+    }
+}
+
+// ---- test-only canonical byte builders (NOT a production authority) ----------
+
+void put_uleb(std::vector<std::uint8_t> &out, std::uint64_t value) {
+    do {
+        auto b = static_cast<std::uint8_t>(value & 0x7fU);
+        value >>= 7U;
+        if (value != 0) {
+            b |= 0x80U;
+        }
+        out.push_back(b);
+    } while (value != 0);
+}
+
+void put_section(std::vector<std::uint8_t> &out, std::uint8_t id,
+                 const std::vector<std::uint8_t> &payload) {
+    out.push_back(id);
+    put_uleb(out, payload.size());
+    out.insert(out.end(), payload.begin(), payload.end());
+}
+
+std::vector<std::uint8_t> func_type(const std::vector<std::uint8_t> &params,
+                                    const std::vector<std::uint8_t> &results) {
+    std::vector<std::uint8_t> t;
+    t.push_back(0x60);
+    put_uleb(t, params.size());
+    t.insert(t.end(), params.begin(), params.end());
+    put_uleb(t, results.size());
+    t.insert(t.end(), results.begin(), results.end());
+    return t;
+}
+
+std::vector<std::uint8_t> capability_tuple() {
+    return func_type({0x7f, 0x7f}, {0x7f, 0x7f, 0x7f});
+}
+
+std::vector<std::uint8_t> type_payload(const std::vector<std::vector<std::uint8_t>> &types) {
+    std::vector<std::uint8_t> p;
+    put_uleb(p, types.size());
+    for (const auto &t : types) {
+        p.insert(p.end(), t.begin(), t.end());
+    }
+    return p;
+}
+
+// One import: ahfl_cap / cap_<symbol> / func / typeidx.
+std::vector<std::uint8_t>
+import_payload(const std::vector<std::pair<std::uint64_t, std::uint32_t>> &imports) {
+    std::vector<std::uint8_t> p;
+    put_uleb(p, imports.size());
+    for (const auto &[symbol, typeidx] : imports) {
+        const std::string module_name = "ahfl_cap";
+        put_uleb(p, module_name.size());
+        p.insert(p.end(), module_name.begin(), module_name.end());
+        const std::string field = "cap_" + std::to_string(symbol);
+        put_uleb(p, field.size());
+        p.insert(p.end(), field.begin(), field.end());
+        p.push_back(0x00); // func import
+        put_uleb(p, typeidx);
+    }
+    return p;
+}
+
+std::vector<std::uint8_t> custom_payload(const std::string &name,
+                                         const std::vector<std::uint8_t> &body) {
+    std::vector<std::uint8_t> p;
+    put_uleb(p, name.size());
+    p.insert(p.end(), name.begin(), name.end());
+    p.insert(p.end(), body.begin(), body.end());
+    return p;
+}
+
+// A canonical AHFLXM manifest body for a Workflow with the given node specs.
+struct ManifestNodeSpec {
+    std::uint32_t workflow_node_id;
+    std::uint8_t cap_call_count; // 0 or 1
+    std::uint32_t capability;    // used iff cap_call_count == 1
+    std::uint64_t source_symbol; // used iff cap_call_count == 1
+};
+
+std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
+                                             const std::vector<ManifestNodeSpec> &nodes) {
+    std::vector<std::uint8_t> b;
+    const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+    for (char c : magic) {
+        b.push_back(static_cast<std::uint8_t>(c));
+    }
+    b.push_back(1); // version
+    b.push_back(0); // entry.kind = Workflow
+    put_uleb(b, entry_id);
+    put_uleb(b, nodes.size());
+    for (std::uint32_t i = 0; i < nodes.size(); ++i) {
+        const auto &n = nodes[i];
+        put_uleb(b, n.workflow_node_id);
+        put_uleb(b, i); // schedule_pos == index
+        b.push_back(n.cap_call_count);
+        if (n.cap_call_count == 1) {
+            put_uleb(b, n.capability);
+            put_uleb(b, n.source_symbol);
+        }
+    }
+    return b;
+}
+
+// Build a wire-schema table with the given capabilities; each cap result is a
+// String struct field, param is a single Int (so param cardinality == 1).
+CoreWireSchemaTable schema_table(const std::vector<std::pair<std::uint32_t, std::uint64_t>> &caps) {
+    CoreWireSchemaTable table;
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});    // 0: Int param
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaString{}}); // 1: String result
+    for (const auto &[cap_id, symbol] : caps) {
+        CoreWireCapabilitySchema c;
+        c.capability = CoreCapabilityId{cap_id};
+        c.source_symbol = symbol;
+        c.params = {CoreWireSchemaNodeId{0}};
+        c.result = CoreWireSchemaNodeId{1};
+        table.capabilities.push_back(c);
+    }
+    return table;
+}
+
+std::vector<std::uint8_t> encode_schema(const CoreWireSchemaTable &table) {
+    auto enc = ahfl::ir::core::encode_core_wire_schema_table(table);
+    if (!enc.ok() || !enc.bytes.has_value()) {
+        return {};
+    }
+    return *enc.bytes;
+}
+
+// Assemble a full module: header + Type + Import + [extra sections] + AHFLXM +
+// AHFLWS-at-EOF. `caps` drives both the import table and the schema table so the
+// strict one-to-one cross-check passes for a conforming module.
+struct ModuleSpec {
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> caps; // (cap_id, source_symbol)
+    std::vector<ManifestNodeSpec> manifest_nodes;
+    std::uint32_t entry_id = 7;
+    bool emit_manifest = true;
+    bool emit_schema = true;
+    bool duplicate_manifest = false;
+    bool manifest_after_schema = false;
+    bool custom_between = false;      // an unknown custom between manifest and schema
+    bool section_after_schema = false; // a standard section after AHFLWS
+    std::optional<std::vector<std::uint8_t>> manifest_override;
+    std::optional<std::vector<std::uint8_t>> schema_override;
+};
+
+std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    // Type section: one tuple type at index 0.
+    put_section(m, 1, type_payload({capability_tuple()}));
+    // Import section: every cap imports type 0, in cap order (ascending symbol as
+    // the table is ascending by cap id; we keep imports aligned 1:1 by position).
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> imports;
+    for (const auto &[cap_id, symbol] : spec.caps) {
+        (void)cap_id;
+        imports.emplace_back(symbol, 0u);
+    }
+    put_section(m, 2, import_payload(imports));
+
+    const auto manifest = spec.manifest_override.has_value()
+                              ? *spec.manifest_override
+                              : exec_manifest_body(spec.entry_id, spec.manifest_nodes);
+    const auto schema = spec.schema_override.has_value()
+                            ? *spec.schema_override
+                            : encode_schema(schema_table(spec.caps));
+
+    const auto emit_manifest_section = [&]() {
+        put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1", manifest));
+    };
+    const auto emit_schema_section = [&]() {
+        put_section(m, 0, custom_payload("ahfl.wire-schema.v1", schema));
+    };
+
+    if (spec.manifest_after_schema) {
+        if (spec.emit_schema) {
+            emit_schema_section();
+        }
+        if (spec.emit_manifest) {
+            emit_manifest_section();
+        }
+        return m;
+    }
+    if (spec.emit_manifest) {
+        emit_manifest_section();
+    }
+    if (spec.duplicate_manifest) {
+        emit_manifest_section();
+    }
+    if (spec.custom_between) {
+        put_section(m, 0, custom_payload("producers", {0x00}));
+    }
+    if (spec.emit_schema) {
+        emit_schema_section();
+    }
+    if (spec.section_after_schema) {
+        put_section(m, 12, {0x00}); // DataCount-like, after the target
+    }
+    return m;
+}
+
+bool admit_ok(const std::vector<std::uint8_t> &module) {
+    return make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module)).ok();
+}
+
+bool admit_fails(const std::vector<std::uint8_t> &module) {
+    auto r = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+    if (r.ok() || r.module.has_value() || !r.has_errors()) {
+        return false;
+    }
+    for (const auto &d : r.diagnostics) {
+        if (d.code != std::string(ahfl::ir::core::wire_schema::kInvalid) ||
+            d.source_range.has_value()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ---- real emitter helpers ---------------------------------------------------
+
+std::optional<std::vector<std::uint8_t>> real_e2_module_bytes() {
+    namespace fs = std::filesystem;
+    const fs::path repo = ahfl::test_support::repo_root_from_source_file(__FILE__);
+    const fs::path fixture = repo / "tests" / "golden" / "wasm" / "e2_capability_agent.ahfl";
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_file(fixture);
+    if (parse.has_errors() || parse.program == nullptr) {
+        return std::nullopt;
+    }
+    const ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    if (resolve.has_errors()) {
+        return std::nullopt;
+    }
+    const ahfl::TypeChecker checker;
+    const auto typecheck = checker.check(*parse.program, resolve);
+    if (typecheck.has_errors()) {
+        return std::nullopt;
+    }
+    const ahfl::Validator validator;
+    const auto validation = validator.validate(*parse.program, resolve, typecheck);
+    if (validation.has_errors()) {
+        return std::nullopt;
+    }
+    const auto ir = ahfl::lower_program_ir(*parse.program, resolve, typecheck);
+    const auto core = ahfl::ir::core::lower_ahfl_to_core(ir);
+    if (!core.ok()) {
+        return std::nullopt;
+    }
+    const auto layouts = ahfl::ir::core::compute_core_layouts(core.program);
+    if (!layouts.ok() || !layouts.table.has_value()) {
+        return std::nullopt;
+    }
+    const auto emitted = ahfl::backends::emit_core_wasm(
+        core.program, *layouts.table,
+        {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
+    if (!emitted.ok() || !emitted.artifact.has_value()) {
+        return std::nullopt;
+    }
+    return emitted.artifact->bytes;
+}
+
+// Inject a synthetic canonical AHFLXM section immediately before the EOF AHFLWS
+// section of a real module. Returns nullopt if the module does not end with an
+// AHFLWS custom section (it always should for an E2 capability artifact).
+std::optional<std::vector<std::uint8_t>>
+inject_manifest_before_schema(const std::vector<std::uint8_t> &module,
+                              const std::vector<std::uint8_t> &manifest_body) {
+    // The AHFLWS section is the final section. Find its start by walking sections.
+    // Simpler + robust: the E2 writer appends exactly one custom section at EOF, so
+    // we locate the last section header by re-walking from offset 8.
+    std::size_t off = 8;
+    std::size_t last_section_start = std::string::npos;
+    while (off < module.size()) {
+        last_section_start = off;
+        // id
+        ++off;
+        // size ULEB
+        std::uint64_t size = 0;
+        std::uint32_t shift = 0;
+        while (off < module.size()) {
+            const std::uint8_t b = module[off++];
+            size |= static_cast<std::uint64_t>(b & 0x7fU) << shift;
+            if ((b & 0x80U) == 0) {
+                break;
+            }
+            shift += 7;
+        }
+        off += static_cast<std::size_t>(size);
+    }
+    if (last_section_start == std::string::npos || off != module.size()) {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> out(module.begin(),
+                                  module.begin() + static_cast<std::ptrdiff_t>(last_section_start));
+    put_section(out, 0, custom_payload("ahfl.wasm-exec-manifest.v1", manifest_body));
+    out.insert(out.end(),
+               module.begin() + static_cast<std::ptrdiff_t>(last_section_start), module.end());
+    return out;
+}
+
+// Read the emitter's sole capability identity (cap id, source_symbol) out of the
+// genuine AHFLWS section at module EOF, via the C1 decoder. Returns nullopt if the
+// module does not end with a decodable single-capability wire-schema section.
+std::optional<std::pair<std::uint32_t, std::uint64_t>>
+real_e2_sole_capability(const std::vector<std::uint8_t> &module) {
+    std::size_t off = 8;
+    std::span<const std::uint8_t> last_payload;
+    std::uint8_t last_id = 0xff;
+    while (off < module.size()) {
+        const std::uint8_t id = module[off++];
+        std::uint64_t size = 0;
+        std::uint32_t shift = 0;
+        while (off < module.size()) {
+            const std::uint8_t b = module[off++];
+            size |= static_cast<std::uint64_t>(b & 0x7fU) << shift;
+            if ((b & 0x80U) == 0) {
+                break;
+            }
+            shift += 7;
+        }
+        if (off + size > module.size()) {
+            return std::nullopt;
+        }
+        last_id = id;
+        last_payload = std::span<const std::uint8_t>(module.data() + off, size);
+        off += static_cast<std::size_t>(size);
+    }
+    if (last_id != 0) {
+        return std::nullopt; // last section is not a custom section
+    }
+    // Strip the custom name framing.
+    std::size_t p = 0;
+    std::uint64_t name_len = 0;
+    std::uint32_t shift = 0;
+    while (p < last_payload.size()) {
+        const std::uint8_t b = last_payload[p++];
+        name_len |= static_cast<std::uint64_t>(b & 0x7fU) << shift;
+        if ((b & 0x80U) == 0) {
+            break;
+        }
+        shift += 7;
+    }
+    if (p + name_len > last_payload.size()) {
+        return std::nullopt;
+    }
+    const auto table_bytes = last_payload.subspan(p + name_len);
+    auto decoded = ahfl::ir::core::decode_core_wire_schema_table(table_bytes);
+    if (!decoded.ok() || !decoded.table.has_value() ||
+        decoded.table->capabilities.size() != 1) {
+        return std::nullopt;
+    }
+    const auto &cap = decoded.table->capabilities.front();
+    return std::make_pair(cap.capability.value, cap.source_symbol);
+}
+
+} // namespace
+
+int main() {
+    // ==== HAND-BUILT two-section fixtures (no emitter) ====
+
+    // Positive: two caps {3,7}, sparse ids, SymbolId 0 on cap 3, one identity node
+    // + two capability nodes referencing caps 3 and 7 (import order aligns 1:1).
+    {
+        ModuleSpec spec;
+        spec.caps = {{3, 0}, {7, 700}}; // (cap_id, source_symbol); SymbolId 0 legal
+        spec.manifest_nodes = {
+            {40, 0, 0, 0},   // identity node
+            {41, 1, 3, 0},   // cap node -> cap 3
+            {42, 1, 7, 700}, // cap node -> cap 7
+        };
+        const auto module = build_module(spec);
+        check(admit_ok(module), "handbuilt.positive_two_cap_sparse_symbol0");
+
+        auto admitted =
+            make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+        check(admitted.ok(), "handbuilt.admitted");
+        if (admitted.ok()) {
+            const auto &mod = *admitted.module;
+            check(mod.entry_id() == CoreWorkflowId{7}, "handbuilt.entry_id");
+            check(mod.node_count() == 3, "handbuilt.node_count");
+            check(mod.call_site_count() == 2, "handbuilt.call_site_count");
+
+            // resolve_node covers the identity node (cap_call_count 0).
+            auto n0 = mod.resolve_node(ManifestNodeIndex{0});
+            check(n0.ok() && n0.node->cap_call_count() == 0 &&
+                      n0.node->workflow_node_id() == CoreWorkflowNodeId{40},
+                  "handbuilt.node0_identity");
+            auto n1 = mod.resolve_node(ManifestNodeIndex{1});
+            check(n1.ok() && n1.node->cap_call_count() == 1 &&
+                      n1.node->schedule_pos() == ManifestNodeIndex{1},
+                  "handbuilt.node1_capability");
+            auto n_oob = mod.resolve_node(ManifestNodeIndex{9});
+            check(admit_ok(module) && !n_oob.ok(), "handbuilt.node_oob_fails");
+
+            // call site 0 -> cap 3 (import ordinal 0); call site 1 -> cap 7 (ordinal 1).
+            auto cs0 = mod.resolve(ManifestCallSiteIndex{0});
+            check(cs0.ok() && cs0.call_site->capability() == CoreCapabilityId{3} &&
+                      cs0.call_site->source_symbol() == 0 &&
+                      cs0.call_site->import_ordinal() == CapabilityImportOrdinal{0} &&
+                      cs0.call_site->invocation_ordinal() ==
+                          ahfl::runtime::core_wasm_resume::InvocationOrdinal{0},
+                  "handbuilt.callsite0_cap3");
+            auto cs1 = mod.resolve(ManifestCallSiteIndex{1});
+            check(cs1.ok() && cs1.call_site->capability() == CoreCapabilityId{7} &&
+                      cs1.call_site->import_ordinal() == CapabilityImportOrdinal{1},
+                  "handbuilt.callsite1_cap7");
+
+            // Eager pre-minted bindings: Param + Result from ONE call site share the
+            // SAME table backing (address equal), proving no per-mint copy.
+            if (cs0.ok()) {
+                auto p = cs0.call_site->param_binding();
+                auto r = cs0.call_site->result_binding();
+                check(&p.table() == &r.table(), "handbuilt.param_result_shared_backing");
+
+                // Lifetime: bindings + token stay valid after the module handle drops.
+                admitted.module.reset();
+                auto p2 = cs0.call_site->param_binding();
+                check(&p2.table() == &p.table(), "handbuilt.binding_valid_after_module_drop");
+            }
+        }
+    }
+
+    // Two distinct fixtures resolve their OWN entry/cap (semantic isolation).
+    {
+        ModuleSpec a;
+        a.caps = {{0, 5}};
+        a.entry_id = 11;
+        a.manifest_nodes = {{100, 1, 0, 5}};
+        ModuleSpec b;
+        b.caps = {{0, 9}};
+        b.entry_id = 22;
+        b.manifest_nodes = {{200, 1, 0, 9}};
+        const auto bytes_a = build_module(a);
+        const auto bytes_b = build_module(b);
+        auto ma = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(bytes_a));
+        auto mb = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(bytes_b));
+        check(ma.ok() && mb.ok(), "isolation.both_admit");
+        if (ma.ok() && mb.ok()) {
+            check(ma.module->entry_id() == CoreWorkflowId{11} &&
+                      mb.module->entry_id() == CoreWorkflowId{22},
+                  "isolation.distinct_entry");
+            auto csa = ma.module->resolve(ManifestCallSiteIndex{0});
+            auto csb = mb.module->resolve(ManifestCallSiteIndex{0});
+            check(csa.ok() && csb.ok() && csa.call_site->source_symbol() == 5 &&
+                      csb.call_site->source_symbol() == 9,
+                  "isolation.distinct_source_symbol");
+        }
+    }
+
+    // Repeated capability across nodes is allowed (one cap in authority set).
+    {
+        ModuleSpec spec;
+        spec.caps = {{3, 300}};
+        spec.manifest_nodes = {{40, 1, 3, 300}, {41, 1, 3, 300}};
+        check(admit_ok(build_module(spec)), "handbuilt.repeated_cap_across_nodes_ok");
+    }
+
+    // ==== HAND-BUILT negatives ====
+    {
+        ModuleSpec base;
+        base.caps = {{3, 300}};
+        base.manifest_nodes = {{40, 1, 3, 300}};
+
+        // missing manifest
+        {
+            ModuleSpec s = base;
+            s.emit_manifest = false;
+            check(admit_fails(build_module(s)), "neg.missing_manifest");
+        }
+        // missing schema
+        {
+            ModuleSpec s = base;
+            s.emit_schema = false;
+            check(admit_fails(build_module(s)), "neg.missing_schema");
+        }
+        // duplicate manifest
+        {
+            ModuleSpec s = base;
+            s.duplicate_manifest = true;
+            check(admit_fails(build_module(s)), "neg.duplicate_manifest");
+        }
+        // manifest after schema (wrong order)
+        {
+            ModuleSpec s = base;
+            s.manifest_after_schema = true;
+            check(admit_fails(build_module(s)), "neg.manifest_after_schema");
+        }
+        // an unknown custom between manifest and schema (not immediately-before)
+        {
+            ModuleSpec s = base;
+            s.custom_between = true;
+            check(admit_fails(build_module(s)), "neg.custom_between_manifest_schema");
+        }
+        // a section after the EOF schema
+        {
+            ModuleSpec s = base;
+            s.section_after_schema = true;
+            check(admit_fails(build_module(s)), "neg.section_after_schema");
+        }
+        // manifest wrong magic
+        {
+            ModuleSpec s = base;
+            auto body = exec_manifest_body(7, base.manifest_nodes);
+            body[0] = 'X';
+            s.manifest_override = body;
+            check(admit_fails(build_module(s)), "neg.manifest_bad_magic");
+        }
+        // manifest bad version
+        {
+            ModuleSpec s = base;
+            auto body = exec_manifest_body(7, base.manifest_nodes);
+            body[6] = 2;
+            s.manifest_override = body;
+            check(admit_fails(build_module(s)), "neg.manifest_bad_version");
+        }
+        // manifest cap_call_count out of range (2)
+        {
+            ModuleSpec s = base;
+            auto body = exec_manifest_body(7, base.manifest_nodes);
+            body.back() = body.back(); // placeholder; rebuild via override with bad count
+            // hand-build: magic+ver+kind+entry(7)+count(1)+node{id40,pos0,cap_call_count=2}
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(1);
+            bad.push_back(0);
+            put_uleb(bad, 7);
+            put_uleb(bad, 1);
+            put_uleb(bad, 40);
+            put_uleb(bad, 0);
+            bad.push_back(2); // out of range
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_bad_cap_call_count");
+        }
+        // manifest schedule_pos not dense (node index mismatch)
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(1);
+            bad.push_back(0);
+            put_uleb(bad, 7);
+            put_uleb(bad, 1);
+            put_uleb(bad, 40);
+            put_uleb(bad, 5); // schedule_pos != index 0
+            bad.push_back(1);
+            put_uleb(bad, 3);
+            put_uleb(bad, 300);
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_schedule_pos_gap");
+        }
+        // manifest trailing byte
+        {
+            ModuleSpec s = base;
+            auto body = exec_manifest_body(7, base.manifest_nodes);
+            body.push_back(0x00);
+            s.manifest_override = body;
+            check(admit_fails(build_module(s)), "neg.manifest_trailing");
+        }
+        // hidden import: manifest references cap 3 only, but the module/schema carry
+        // caps 3 AND 7 -> cap 7 unreferenced -> set-equality fails.
+        {
+            ModuleSpec s;
+            s.caps = {{3, 300}, {7, 700}};
+            s.manifest_nodes = {{40, 1, 3, 300}}; // only references cap 3
+            check(admit_fails(build_module(s)), "neg.hidden_unreferenced_capability");
+        }
+        // manifest references a cap absent from the authority set.
+        {
+            ModuleSpec s;
+            s.caps = {{3, 300}};
+            s.manifest_nodes = {{40, 1, 9, 300}}; // cap 9 not in table/imports
+            check(admit_fails(build_module(s)), "neg.manifest_cap_absent_from_authority");
+        }
+        // manifest source symbol mismatch vs the capability entry.
+        {
+            ModuleSpec s;
+            s.caps = {{3, 300}};
+            s.manifest_nodes = {{40, 1, 3, 999}}; // wrong symbol for cap 3
+            check(admit_fails(build_module(s)), "neg.manifest_source_symbol_mismatch");
+        }
+        // huge node_count with a short manifest payload -> count-before-reserve.
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(1);
+            bad.push_back(0);
+            put_uleb(bad, 7);
+            put_uleb(bad, 0xFFFFFFF0U); // attacker node_count; body then STOPS
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_huge_node_count");
+        }
+        // manifest noncanonical (overlong) ULEB for the entry id.
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(1);
+            bad.push_back(0);
+            bad.push_back(0x87);
+            bad.push_back(0x00); // OVERLONG entry_id = 7
+            put_uleb(bad, 1);
+            put_uleb(bad, 40);
+            put_uleb(bad, 0);
+            bad.push_back(1);
+            put_uleb(bad, 3);
+            put_uleb(bad, 300);
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_overlong_entry_id");
+        }
+        // manifest bad entry.kind (not Workflow).
+        {
+            ModuleSpec s = base;
+            auto body = exec_manifest_body(7, base.manifest_nodes);
+            body[7] = 1; // entry.kind byte (magic6+ver1 = offset 7)
+            s.manifest_override = body;
+            check(admit_fails(build_module(s)), "neg.manifest_bad_entry_kind");
+        }
+        // manifest entry id invalid sentinel (UINT32_MAX) -> canonical ULEB of it.
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(1);
+            bad.push_back(0);
+            put_uleb(bad, CoreWorkflowId::kInvalid);
+            put_uleb(bad, 1);
+            put_uleb(bad, 40);
+            put_uleb(bad, 0);
+            bad.push_back(1);
+            put_uleb(bad, 3);
+            put_uleb(bad, 300);
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_entry_id_sentinel");
+        }
+        // manifest node id invalid sentinel.
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(1);
+            bad.push_back(0);
+            put_uleb(bad, 7);
+            put_uleb(bad, 1);
+            put_uleb(bad, CoreWorkflowNodeId::kInvalid);
+            put_uleb(bad, 0);
+            bad.push_back(1);
+            put_uleb(bad, 3);
+            put_uleb(bad, 300);
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_node_id_sentinel");
+        }
+        // manifest capability invalid sentinel.
+        {
+            ModuleSpec s = base;
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(1);
+            bad.push_back(0);
+            put_uleb(bad, 7);
+            put_uleb(bad, 1);
+            put_uleb(bad, 40);
+            put_uleb(bad, 0);
+            bad.push_back(1);
+            put_uleb(bad, CoreCapabilityId::kInvalid);
+            put_uleb(bad, 300);
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_capability_sentinel");
+        }
+        // duplicate node id across nodes.
+        {
+            ModuleSpec s;
+            s.caps = {{3, 300}};
+            std::vector<std::uint8_t> bad;
+            const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+            for (char c : magic) {
+                bad.push_back(static_cast<std::uint8_t>(c));
+            }
+            bad.push_back(1);
+            bad.push_back(0);
+            put_uleb(bad, 7);
+            put_uleb(bad, 2);   // two nodes
+            put_uleb(bad, 40);  // node 0 id
+            put_uleb(bad, 0);   // schedule_pos 0
+            bad.push_back(0);   // identity
+            put_uleb(bad, 40);  // node 1 id == node 0 (duplicate)
+            put_uleb(bad, 1);   // schedule_pos 1
+            bad.push_back(1);   // capability
+            put_uleb(bad, 3);
+            put_uleb(bad, 300);
+            s.manifest_override = bad;
+            check(admit_fails(build_module(s)), "neg.manifest_duplicate_node_id");
+        }
+        // hidden SCHEMA capability: the schema table carries an extra cap that the
+        // import table does NOT (strict one-to-one import<->schema fails).
+        {
+            ModuleSpec s;
+            s.caps = {{3, 300}}; // imports carry ONE cap
+            s.manifest_nodes = {{40, 1, 3, 300}};
+            s.schema_override = encode_schema(schema_table({{3, 300}, {7, 700}})); // schema has TWO
+            check(admit_fails(build_module(s)), "neg.hidden_schema_capability");
+        }
+        // exact-one-Param violation: the cap's schema result/param shape gives the
+        // capability TWO params, so eager Param{0} mint context rejects cardinality.
+        {
+            ModuleSpec s;
+            s.caps = {{3, 300}};
+            s.manifest_nodes = {{40, 1, 3, 300}};
+            CoreWireSchemaTable two_param;
+            two_param.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});    // 0
+            two_param.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaString{}}); // 1
+            CoreWireCapabilitySchema c;
+            c.capability = CoreCapabilityId{3};
+            c.source_symbol = 300;
+            c.params = {CoreWireSchemaNodeId{0}, CoreWireSchemaNodeId{0}}; // TWO params
+            c.result = CoreWireSchemaNodeId{1};
+            two_param.capabilities.push_back(c);
+            s.schema_override = encode_schema(two_param);
+            check(admit_fails(build_module(s)), "neg.exact_one_param_violation");
+        }
+        // wrong Type ordinal: the import points at a typeidx whose signature is NOT
+        // the ahfl_cap tuple (two types; import -> the non-tuple one).
+        {
+            ModuleSpec s;
+            s.caps = {{3, 300}};
+            s.manifest_nodes = {{40, 1, 3, 300}};
+            // Build a bespoke module with two types: index 0 tuple, index 1 wrong;
+            // import references type index 1.
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple(), func_type({0x7f}, {0x7f})}));
+            put_section(m, 2, import_payload({{300, 1}})); // typeidx 1 (wrong signature)
+            put_section(m, 0,
+                        custom_payload("ahfl.wasm-exec-manifest.v1",
+                                       exec_manifest_body(7, {{40, 1, 3, 300}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "neg.import_wrong_type_ordinal");
+        }
+        // duplicate EOF wire-schema section: two AHFLWS sections -> the second is a
+        // section after the (first) EOF-target and fails the not-at-EOF gate.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
+                                             exec_manifest_body(7, {{40, 1, 3, 300}})));
+            const auto schema = encode_schema(schema_table({{3, 300}}));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1", schema));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1", schema)); // duplicate at EOF
+            check(admit_fails(m), "neg.duplicate_wire_schema_section");
+        }
+        // malformed custom-section name framing: a name length that overruns the
+        // section payload (non-canonical/bounds) must fail closed in the framer.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            // A custom section whose declared name length exceeds its own payload.
+            std::vector<std::uint8_t> bad_custom;
+            put_uleb(bad_custom, 0xFFU); // name length 255, but no name bytes follow
+            put_section(m, 0, bad_custom);
+            check(admit_fails(m), "neg.malformed_custom_name_framing");
+        }
+    }
+
+    // ==== no-echo: a marker planted in a wire name / import field must never
+    //      surface in any diagnostic; every diagnostic is fixed code + null range. ====
+    {
+        // Plant the marker as the exec-manifest section NAME suffix is not possible
+        // (the name is matched exactly), so plant it in a bogus custom section name
+        // placed between manifest and schema (which fails the placement gate) and
+        // assert the marker never appears in any diagnostic.
+        static constexpr std::string_view kMarker = "A2_SECRET_MARKER_ZZZ";
+        ModuleSpec s;
+        s.caps = {{3, 300}};
+        s.manifest_nodes = {{40, 1, 3, 300}};
+        std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+        put_section(m, 1, type_payload({capability_tuple()}));
+        put_section(m, 2, import_payload({{300, 0}}));
+        put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
+                                         exec_manifest_body(7, {{40, 1, 3, 300}})));
+        put_section(m, 0, custom_payload(std::string(kMarker), {0x00})); // bogus custom between
+        put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                         encode_schema(schema_table({{3, 300}}))));
+        auto r = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(m));
+        check(!r.ok() && r.has_errors() && !r.module.has_value(), "noecho.fails_closed");
+        bool clean = true;
+        for (const auto &d : r.diagnostics) {
+            if (d.code != std::string(ahfl::ir::core::wire_schema::kInvalid) ||
+                d.source_range.has_value() ||
+                d.message.find(kMarker) != std::string::npos) {
+                clean = false;
+            }
+        }
+        check(clean, "noecho.fixed_code_null_range_no_marker");
+    }
+
+    // ==== REAL emitter evidence ====
+    {
+        auto real = real_e2_module_bytes();
+        check(real.has_value(), "real.e2_emit_ok");
+        if (real) {
+            // raw real E2 has NO AHFLXM -> must fail closed (missing manifest).
+            check(admit_fails(*real), "real.raw_e2_missing_manifest_fails_closed");
+
+            // real emitter bytes + SYNTHETIC manifest injection immediately before
+            // the EOF AHFLWS. We read the emitter's ACTUAL sole capability identity
+            // (cap id + source_symbol) out of the genuine AHFLWS section via the C1
+            // decoder, then synthesize a matching single-cap-node Workflow manifest.
+            // This proves A2 framing/table-decode/cross-check/eager-mint accept
+            // genuine Type/Import/AHFLWS bytes -- it is NOT capability-workflow
+            // emitter/topology evidence (the manifest is test-synthesized).
+            auto identity = real_e2_sole_capability(*real);
+            check(identity.has_value(), "real.read_sole_capability");
+            if (identity) {
+                const auto manifest = exec_manifest_body(
+                    3, {{50, 1, identity->first, identity->second}});
+                auto injected = inject_manifest_before_schema(*real, manifest);
+                check(injected.has_value(), "real.injection_built");
+                if (injected) {
+                    // Full-chain assertion over genuine Type/Import/AHFLWS bytes:
+                    // framing -> C1 table decode -> cross-check/set-equality ->
+                    // eager mint -> read surface.
+                    auto admitted = make_verified_core_wasm_schema_module(
+                        std::span<const std::uint8_t>(*injected));
+                    check(admitted.ok(), "real.injected_admitted");
+                    if (admitted.ok()) {
+                        check(admitted.module->call_site_count() == 1,
+                              "real.injected_one_call_site");
+                        auto cs = admitted.module->resolve(ManifestCallSiteIndex{0});
+                        check(cs.ok(), "real.injected_resolve_ok");
+                        if (cs.ok()) {
+                            check(cs.call_site->capability() ==
+                                          CoreCapabilityId{identity->first} &&
+                                      cs.call_site->source_symbol() == identity->second,
+                                  "real.injected_callsite_identity_matches_ahflws");
+                            check(cs.call_site->import_ordinal() == CapabilityImportOrdinal{0},
+                                  "real.injected_import_ordinal");
+                            auto p = cs.call_site->param_binding();
+                            auto r = cs.call_site->result_binding();
+                            check(p.selector().capability ==
+                                          CoreCapabilityId{identity->first} &&
+                                      r.selector().capability ==
+                                          CoreCapabilityId{identity->first},
+                                  "real.injected_binding_selectors_match_identity");
+                            check(&p.table() == &r.table(),
+                                  "real.injected_param_result_shared_backing");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (g_failures == 0) {
+        std::cout << "core_wasm_schema_module: all checks passed\n";
+        return 0;
+    }
+    std::cerr << "core_wasm_schema_module: " << g_failures << " failure(s)\n";
+    return 1;
+}
