@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -175,6 +176,14 @@ struct CoreWireSchemaEncodeResult {
     [[nodiscard]] bool ok() const noexcept { return bytes.has_value() && !has_errors(); }
 };
 
+struct CoreWireSchemaDecodeResult {
+    std::optional<CoreWireSchemaTable> table;
+    std::vector<CoreLowerDiagnostic> diagnostics;
+
+    [[nodiscard]] bool has_errors() const noexcept;
+    [[nodiscard]] bool ok() const noexcept { return table.has_value() && !has_errors(); }
+};
+
 /// Project the transitive wire-schema closure of exactly `selected_capabilities`.
 /// The selection must be strictly increasing and duplicate-free. Pure: the
 /// verified CoreProgram is never mutated; P4-C member instantiation uses a
@@ -228,5 +237,18 @@ verify_core_wire_schema_table_local(const CoreWireSchemaTable &table);
 /// This does not append a Wasm custom section; transport remains E4-B1.
 [[nodiscard]] CoreWireSchemaEncodeResult
 encode_core_wire_schema_table(const CoreWireSchemaTable &table);
+
+/// Decode a deterministic section payload (as produced by
+/// `encode_core_wire_schema_table`) back into an in-memory table. This is the
+/// canonical payload admission authority for a transported table: it mirrors the
+/// encoder byte-for-byte, then in one entry point runs the local verifier AND a
+/// canonical re-encode byte-equality check, so a non-canonical, truncated,
+/// overlong, or otherwise tampered payload is rejected before any table is
+/// returned. It is Wasm-independent — it neither knows nor parses module framing,
+/// import sections, or bindings; E4-B1 transport wraps it. On any failure the
+/// table is absent and only fixed schema diagnostics are emitted (never the raw
+/// bytes, a decoded string, or a wire name).
+[[nodiscard]] CoreWireSchemaDecodeResult
+decode_core_wire_schema_table(std::span<const std::uint8_t> bytes);
 
 } // namespace ahfl::ir::core

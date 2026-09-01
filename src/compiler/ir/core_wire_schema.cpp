@@ -4,6 +4,8 @@
 #include "ahfl/compiler/ir/core_verify.hpp"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -596,14 +598,40 @@ class LocalSchemaVerifier {
     }
 
     [[nodiscard]] bool mark(CoreWireSchemaNodeId id) {
-        if (!valid_id(id)) {
-            return false;
+        // Iterative DFS (explicit worklist) rather than recursion: a decoder feeds
+        // this verifier untrusted transported payloads, and a legal but very deep
+        // acyclic Struct/Tuple chain would otherwise exhaust the C++ call stack.
+        //
+        // Ordering equivalence with the previous recursion: a node's validity is
+        // checked when it is POPPED (never when merely collected as a child), and
+        // children are pushed in reverse so they pop left-to-right. So the very node
+        // the old recursion would have descended into next is the next one popped —
+        // reproducing its first-visit / first-error order exactly, including a
+        // first child's deep descendant being reported before a later sibling.
+        // Already-marked nodes are skipped, so a cyclic (recursive nominal) graph
+        // still terminates.
+        std::vector<CoreWireSchemaNodeId> stack;
+        stack.push_back(id);
+        while (!stack.empty()) {
+            const auto current = stack.back();
+            stack.pop_back();
+            if (!valid_id(current)) {
+                return false;
+            }
+            if (reachable_[current.value]) {
+                continue;
+            }
+            reachable_[current.value] = true;
+            std::vector<CoreWireSchemaNodeId> children;
+            (void)for_each_child(current, [&](CoreWireSchemaNodeId child) {
+                children.push_back(child);
+                return true;
+            });
+            for (auto it = children.rbegin(); it != children.rend(); ++it) {
+                stack.push_back(*it);
+            }
         }
-        if (reachable_[id.value]) {
-            return true;
-        }
-        reachable_[id.value] = true;
-        return for_each_child(id, [&](CoreWireSchemaNodeId child) { return mark(child); });
+        return true;
     }
 
     template <typename Callback>
@@ -1052,6 +1080,430 @@ class SchemaEncoder {
     std::vector<CoreLowerDiagnostic> diagnostics_;
 };
 
+// Mirror of SchemaEncoder: parse the deterministic payload back into a table with
+// strict bounds/overflow gates. Every read is bounds-checked against `remaining`
+// BEFORE it consumes; LEB reads reject truncation and >64-bit overflow.
+// Shortest-form canonicality is NOT judged here — that is the public entry
+// point's canonical re-encode byte-equality gate (decode_core_wire_schema_table).
+// Any reader failure latches a single fixed diagnostic (no raw bytes / string /
+// name echo) and stops. A successful parse must consume EXACTLY the whole payload.
+class SchemaDecoder {
+  public:
+    [[nodiscard]] std::optional<CoreWireSchemaTable>
+    run(std::span<const std::uint8_t> bytes) {
+        data_ = bytes;
+        pos_ = 0;
+        static constexpr std::array<std::uint8_t, 6> kMagic = {'A', 'H', 'F', 'L', 'W', 'S'};
+        for (const auto expected : kMagic) {
+            if (pos_ >= data_.size() || data_[pos_] != expected) {
+                fail("wire-schema payload has a bad magic header");
+                return std::nullopt;
+            }
+            ++pos_;
+        }
+        CoreWireSchemaTable table;
+        table.format_version = u32();
+        if (failed()) {
+            return std::nullopt;
+        }
+        if (table.format_version != 1) {
+            fail("wire-schema payload has an unsupported format version");
+            return std::nullopt;
+        }
+        const std::uint32_t node_count = u32();
+        if (failed() || !bounded_count(node_count)) {
+            return std::nullopt;
+        }
+        table.nodes.reserve(node_count);
+        for (std::uint32_t i = 0; i < node_count; ++i) {
+            auto node = decode_node();
+            if (failed()) {
+                return std::nullopt;
+            }
+            table.nodes.push_back(std::move(*node));
+        }
+        const std::uint32_t cap_count = u32();
+        if (failed() || !bounded_count(cap_count)) {
+            return std::nullopt;
+        }
+        table.capabilities.reserve(cap_count);
+        for (std::uint32_t i = 0; i < cap_count; ++i) {
+            CoreWireCapabilitySchema capability;
+            capability.capability = CoreCapabilityId{u32()};
+            capability.source_symbol = u64();
+            capability.params = ids();
+            capability.result = CoreWireSchemaNodeId{u32()};
+            if (failed()) {
+                return std::nullopt;
+            }
+            table.capabilities.push_back(std::move(capability));
+        }
+        if (failed()) {
+            return std::nullopt;
+        }
+        if (pos_ != data_.size()) {
+            fail("wire-schema payload has trailing bytes");
+            return std::nullopt;
+        }
+        return table;
+    }
+
+    [[nodiscard]] std::vector<CoreLowerDiagnostic> take_diagnostics() {
+        return std::move(diagnostics_);
+    }
+
+  private:
+    [[nodiscard]] bool failed() const noexcept { return !diagnostics_.empty(); }
+
+    void fail(std::string message) {
+        if (!failed()) {
+            diagnostics_.push_back(diagnostic(wire_schema::kInvalid, std::move(message)));
+        }
+    }
+
+    [[nodiscard]] std::size_t remaining() const noexcept { return data_.size() - pos_; }
+
+    // A count/length can never exceed the bytes left to read (each element costs
+    // at least one byte), and a legal node/id count is strictly below the reserved
+    // 32-bit invalid sentinel. Reject an attacker-inflated count before any reserve.
+    [[nodiscard]] bool bounded_count(std::uint32_t count) {
+        if (count >= CoreWireSchemaNodeId::kInvalid) {
+            fail("wire-schema payload declares a count at the reserved 32-bit sentinel");
+            return false;
+        }
+        if (count > remaining()) {
+            fail("wire-schema payload declares more elements than remaining bytes");
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::uint8_t byte() {
+        if (failed()) {
+            return 0;
+        }
+        if (pos_ >= data_.size()) {
+            fail("wire-schema payload is truncated");
+            return 0;
+        }
+        return data_[pos_++];
+    }
+
+    [[nodiscard]] std::uint64_t u64() {
+        std::uint64_t result = 0;
+        std::uint32_t shift = 0;
+        while (true) {
+            if (failed()) {
+                return 0;
+            }
+            if (shift >= 64) {
+                fail("wire-schema payload has an overlong LEB128 integer");
+                return 0;
+            }
+            const std::uint8_t current = byte();
+            if (failed()) {
+                return 0;
+            }
+            const std::uint64_t payload = current & 0x7fU;
+            // On the last representable group (shift == 63) only bit 0 fits.
+            if (shift == 63 && payload > 1U) {
+                fail("wire-schema payload has an out-of-range LEB128 integer");
+                return 0;
+            }
+            result |= payload << shift;
+            if ((current & 0x80U) == 0) {
+                break;
+            }
+            shift += 7;
+        }
+        // Non-shortest unsigned encodings (a redundant trailing 0x00 group) are
+        // rejected by the authoritative canonical re-encode byte-equality gate in
+        // decode_core_wire_schema_table; the reader here only guarantees no UB /
+        // overflow / truncation.
+        return result;
+    }
+
+    [[nodiscard]] std::uint32_t u32() {
+        const std::uint64_t value = u64();
+        if (failed()) {
+            return 0;
+        }
+        if (value > std::numeric_limits<std::uint32_t>::max()) {
+            fail("wire-schema payload has an integer outside the 32-bit domain");
+            return 0;
+        }
+        return static_cast<std::uint32_t>(value);
+    }
+
+    [[nodiscard]] std::int64_t s64() {
+        std::uint64_t bits = 0;
+        std::uint32_t shift = 0;
+        std::uint8_t current = 0;
+        while (true) {
+            if (failed()) {
+                return 0;
+            }
+            if (shift >= 64) {
+                fail("wire-schema payload has an overlong signed LEB128 integer");
+                return 0;
+            }
+            current = byte();
+            if (failed()) {
+                return 0;
+            }
+            const std::uint64_t payload = current & 0x7fU;
+            // On the last representable group (shift == 63) only a pure sign group
+            // (0x00 or 0x7f) fits; anything else overflows int64.
+            if (shift == 63 && payload != 0 && payload != 0x7fU) {
+                fail("wire-schema payload has an out-of-range signed LEB128 integer");
+                return 0;
+            }
+            bits |= payload << shift;
+            shift += 7;
+            if ((current & 0x80U) == 0) {
+                break;
+            }
+        }
+        // Sign-extend in the unsigned domain (no signed left shift / no UB), then
+        // bit_cast to two's-complement int64. Non-shortest signed encodings are
+        // rejected by the authoritative canonical re-encode byte-equality gate; the
+        // reader here only guarantees no UB / overflow / truncation.
+        if (shift < 64 && (current & 0x40U) != 0) {
+            bits |= (~std::uint64_t{0}) << shift;
+        }
+        return std::bit_cast<std::int64_t>(bits);
+    }
+
+    [[nodiscard]] std::string string() {
+        const std::uint32_t length = u32();
+        if (failed()) {
+            return {};
+        }
+        if (length > remaining()) {
+            fail("wire-schema payload declares a string longer than remaining bytes");
+            return {};
+        }
+        std::string value(reinterpret_cast<const char *>(data_.data() + pos_), length);
+        pos_ += length;
+        return value;
+    }
+
+    [[nodiscard]] std::vector<CoreWireSchemaNodeId> ids() {
+        const std::uint32_t count = u32();
+        if (failed() || !bounded_count(count)) {
+            return {};
+        }
+        std::vector<CoreWireSchemaNodeId> values;
+        values.reserve(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            values.push_back(CoreWireSchemaNodeId{u32()});
+            if (failed()) {
+                return {};
+            }
+        }
+        return values;
+    }
+
+    [[nodiscard]] std::optional<std::uint64_t> optional_u64() {
+        const std::uint8_t present = byte();
+        if (failed()) {
+            return std::nullopt;
+        }
+        if (present == 0) {
+            return std::nullopt;
+        }
+        if (present != 1) {
+            fail("wire-schema payload has a non-canonical optional tag");
+            return std::nullopt;
+        }
+        const std::uint64_t value = u64();
+        if (failed()) {
+            return std::nullopt;
+        }
+        return value;
+    }
+
+    [[nodiscard]] std::optional<std::pair<std::int64_t, std::int64_t>> optional_bounds() {
+        const std::uint8_t present = byte();
+        if (failed()) {
+            return std::nullopt;
+        }
+        if (present == 0) {
+            return std::nullopt;
+        }
+        if (present != 1) {
+            fail("wire-schema payload has a non-canonical optional tag");
+            return std::nullopt;
+        }
+        const std::int64_t lo = s64();
+        const std::int64_t hi = s64();
+        if (failed()) {
+            return std::nullopt;
+        }
+        return std::pair<std::int64_t, std::int64_t>{lo, hi};
+    }
+
+    [[nodiscard]] std::vector<CoreWireSchemaField> decode_fields() {
+        const std::uint32_t count = u32();
+        if (failed() || !bounded_count(count)) {
+            return {};
+        }
+        std::vector<CoreWireSchemaField> values;
+        values.reserve(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            CoreWireSchemaField field;
+            field.wire_name = string();
+            field.type = CoreWireSchemaNodeId{u32()};
+            if (failed()) {
+                return {};
+            }
+            values.push_back(std::move(field));
+        }
+        return values;
+    }
+
+    [[nodiscard]] std::optional<CoreWireSchemaNode> decode_node() {
+        const std::uint8_t tag = byte();
+        if (failed()) {
+            return std::nullopt;
+        }
+        CoreWireSchemaNode node;
+        switch (tag) {
+        case 0:
+            node.shape = CoreWireSchemaUnit{};
+            break;
+        case 1:
+            node.shape = CoreWireSchemaBool{};
+            break;
+        case 2: {
+            CoreWireSchemaInt value;
+            value.bounds = optional_bounds();
+            node.shape = value;
+            break;
+        }
+        case 3:
+            node.shape = CoreWireSchemaFloat{};
+            break;
+        case 4: {
+            CoreWireSchemaString value;
+            value.length_bounds = optional_bounds();
+            node.shape = value;
+            break;
+        }
+        case 5: {
+            CoreWireSchemaDecimal value;
+            value.scale = s64();
+            node.shape = value;
+            break;
+        }
+        case 6:
+            node.shape = CoreWireSchemaDuration{};
+            break;
+        case 7:
+            node.shape = CoreWireSchemaTimestamp{};
+            break;
+        case 8:
+            node.shape = CoreWireSchemaUuid{};
+            break;
+        case 9: {
+            CoreWireSchemaOption value;
+            value.value = CoreWireSchemaNodeId{u32()};
+            node.shape = value;
+            break;
+        }
+        case 10: {
+            CoreWireSchemaSequence value;
+            const std::uint8_t kind = byte();
+            if (failed()) {
+                return std::nullopt;
+            }
+            if (kind == 0) {
+                value.kind = CoreWireSequenceKind::List;
+            } else if (kind == 1) {
+                value.kind = CoreWireSequenceKind::Set;
+            } else {
+                fail("wire-schema payload has an unknown sequence kind");
+                return std::nullopt;
+            }
+            value.element = CoreWireSchemaNodeId{u32()};
+            value.capacity = optional_u64();
+            node.shape = value;
+            break;
+        }
+        case 11: {
+            CoreWireSchemaMap value;
+            value.key = CoreWireSchemaNodeId{u32()};
+            value.value = CoreWireSchemaNodeId{u32()};
+            value.capacity = optional_u64();
+            node.shape = value;
+            break;
+        }
+        case 12: {
+            CoreWireSchemaStruct value;
+            value.wire_name = string();
+            value.fields = decode_fields();
+            node.shape = value;
+            break;
+        }
+        case 13: {
+            CoreWireSchemaEnum value;
+            value.wire_name = string();
+            const std::uint32_t variant_count = u32();
+            if (failed() || !bounded_count(variant_count)) {
+                return std::nullopt;
+            }
+            value.variants.reserve(variant_count);
+            for (std::uint32_t i = 0; i < variant_count; ++i) {
+                CoreWireSchemaVariant variant;
+                variant.wire_name = string();
+                const std::uint8_t payload_kind = byte();
+                if (failed()) {
+                    return std::nullopt;
+                }
+                switch (payload_kind) {
+                case 0:
+                    variant.payload_kind = CoreWirePayloadKind::Unit;
+                    break;
+                case 1:
+                    variant.payload_kind = CoreWirePayloadKind::Tuple;
+                    break;
+                case 2:
+                    variant.payload_kind = CoreWirePayloadKind::Struct;
+                    break;
+                default:
+                    fail("wire-schema payload has an unknown enum payload kind");
+                    return std::nullopt;
+                }
+                variant.slots = decode_fields();
+                if (failed()) {
+                    return std::nullopt;
+                }
+                value.variants.push_back(std::move(variant));
+            }
+            node.shape = value;
+            break;
+        }
+        case 14: {
+            CoreWireSchemaTuple value;
+            value.elements = ids();
+            node.shape = value;
+            break;
+        }
+        default:
+            fail("wire-schema payload has an unknown node kind");
+            return std::nullopt;
+        }
+        if (failed()) {
+            return std::nullopt;
+        }
+        return node;
+    }
+
+    std::span<const std::uint8_t> data_{};
+    std::size_t pos_{0};
+    std::vector<CoreLowerDiagnostic> diagnostics_;
+};
+
 } // namespace
 
 bool CoreWireSchemaBuildResult::has_errors() const noexcept {
@@ -1061,6 +1513,12 @@ bool CoreWireSchemaBuildResult::has_errors() const noexcept {
 }
 
 bool CoreWireSchemaEncodeResult::has_errors() const noexcept {
+    return std::any_of(diagnostics.begin(), diagnostics.end(), [](const CoreLowerDiagnostic &d) {
+        return d.severity == CoreDiagnosticSeverity::Error;
+    });
+}
+
+bool CoreWireSchemaDecodeResult::has_errors() const noexcept {
     return std::any_of(diagnostics.begin(), diagnostics.end(), [](const CoreLowerDiagnostic &d) {
         return d.severity == CoreDiagnosticSeverity::Error;
     });
@@ -1115,6 +1573,52 @@ encode_core_wire_schema_table(const CoreWireSchemaTable &table) {
     CoreWireSchemaEncodeResult result;
     result.bytes = encoder.run(table);
     result.diagnostics = encoder.take_diagnostics();
+    return result;
+}
+
+CoreWireSchemaDecodeResult
+decode_core_wire_schema_table(std::span<const std::uint8_t> bytes) {
+    CoreWireSchemaDecodeResult result;
+    SchemaDecoder decoder;
+    auto table = decoder.run(bytes);
+    result.diagnostics = decoder.take_diagnostics();
+    if (!table.has_value()) {
+        return result;
+    }
+    // Structural admission: the same local verifier a generic host applies to any
+    // table it did not itself project (format/id-space/strict-ordered roots/
+    // per-node legality/cycle-safe reachability, plus the reserved-name and
+    // nullable-Option gates).
+    auto local = verify_local(*table);
+    if (!local.empty()) {
+        result.diagnostics.insert(result.diagnostics.end(),
+                                  std::make_move_iterator(local.begin()),
+                                  std::make_move_iterator(local.end()));
+        return result;
+    }
+    // Canonical admission: re-encode the decoded table and require byte-for-byte
+    // equality with the input. This is the single authority for shortest-form /
+    // canonical LEB and field ordering, so the byte readers above only need to be
+    // memory-safe. Any non-canonical or otherwise inequivalent payload is rejected.
+    auto reencoded = encode_core_wire_schema_table(*table);
+    if (!reencoded.ok() || !reencoded.bytes.has_value()) {
+        result.diagnostics.insert(result.diagnostics.end(),
+                                  std::make_move_iterator(reencoded.diagnostics.begin()),
+                                  std::make_move_iterator(reencoded.diagnostics.end()));
+        if (!result.has_errors()) {
+            result.diagnostics.push_back(diagnostic(
+                wire_schema::kInvalid, "wire-schema payload failed canonical re-encoding"));
+        }
+        return result;
+    }
+    const auto &canonical = *reencoded.bytes;
+    if (canonical.size() != bytes.size() ||
+        !std::equal(canonical.begin(), canonical.end(), bytes.begin())) {
+        result.diagnostics.push_back(diagnostic(
+            wire_schema::kInvalid, "wire-schema payload is not canonical"));
+        return result;
+    }
+    result.table = std::move(*table);
     return result;
 }
 

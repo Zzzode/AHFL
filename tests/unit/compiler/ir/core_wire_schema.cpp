@@ -4,7 +4,9 @@
 #include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -1281,4 +1283,655 @@ TEST_CASE("local verifier rejects reserved wire-name collisions (P0-11)") {
         CHECK(result.ok());
         CHECK(result.table.has_value());
     }
+}
+
+// --- E4-B0-C1 (E4-B1 stage) decoder: canonical payload admission authority -----
+
+namespace {
+
+// Encode a projected selection to bytes (REQUIREs a clean projection + encode).
+[[nodiscard]] std::vector<std::uint8_t>
+encode_selection(const CoreProgram &program, const std::vector<CoreCapabilityId> &selection) {
+    const auto projected = project_core_wire_schema(program, selection);
+    REQUIRE(projected.ok());
+    const auto encoded = encode_core_wire_schema_table(*projected.table);
+    REQUIRE(encoded.ok());
+    return *encoded.bytes;
+}
+
+// A distinctive marker used to prove the decoder never echoes payload/name bytes.
+constexpr std::string_view kSecretName = "SECRET_WIRE_NAME_MARKER_ZZZ";
+
+[[nodiscard]] bool any_diag_contains(const std::vector<CoreLowerDiagnostic> &diagnostics,
+                                     std::string_view needle) {
+    return std::any_of(diagnostics.begin(), diagnostics.end(),
+                       [&](const CoreLowerDiagnostic &d) {
+                           return d.message.find(needle) != std::string::npos;
+                       });
+}
+
+// A Decimal(scale) node is the cleanest signed-LEB carrier: `scale` is the only
+// s64 field on any shape, so an encode->decode->equal round-trip exercises s64 at
+// exactly the requested boundary.
+[[nodiscard]] std::vector<std::uint8_t> encode_decimal_scale(std::int64_t scale) {
+    std::vector<CoreWireSchemaNode> nodes;
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaDecimal{scale}});
+    const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{0});
+    const auto encoded = encode_core_wire_schema_table(table);
+    REQUIRE(encoded.ok());
+    return *encoded.bytes;
+}
+
+} // namespace
+
+TEST_CASE("wire decoder round-trips a rich table and its bytes re-encode identically") {
+    const CoreProgram program = make_wire_program();
+    const auto selection = caps({kStructCap, kOptListCap, kCollCap, kScalarCap});
+    const auto projected = project_core_wire_schema(program, selection);
+    REQUIRE(projected.ok());
+    const auto encoded = encode_core_wire_schema_table(*projected.table);
+    REQUIRE(encoded.ok());
+
+    const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    REQUIRE(decoded.table.has_value());
+    CHECK(!decoded.has_errors());
+    // Structural round-trip: decoded table equals the projected one.
+    CHECK(*decoded.table == *projected.table);
+    // Canonical round-trip: re-encoding the decoded table reproduces the bytes.
+    const auto reencoded = encode_core_wire_schema_table(*decoded.table);
+    REQUIRE(reencoded.ok());
+    CHECK(*reencoded.bytes == *encoded.bytes);
+}
+
+TEST_CASE("wire decoder round-trips the generic (UAF/Result) and recursive tables") {
+    {
+        const GenericProgram g = make_generic_program();
+        const auto bytes = encode_selection(g.program, {g.gen_cap});
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        REQUIRE(decoded.ok());
+        const auto reencoded = encode_core_wire_schema_table(*decoded.table);
+        REQUIRE(reencoded.ok());
+        CHECK(*reencoded.bytes == bytes);
+    }
+    {
+        const GenericProgram g = make_generic_program();
+        const auto bytes = encode_selection(g.program, {g.tree_cap});
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        REQUIRE(decoded.ok());
+        // The recursive Tree back-reference survives decode.
+        const auto reencoded = encode_core_wire_schema_table(*decoded.table);
+        REQUIRE(reencoded.ok());
+        CHECK(*reencoded.bytes == bytes);
+    }
+}
+
+TEST_CASE("wire decoder round-trips a hand-built table exercising every node shape") {
+    // One node per shape, ALL root-reachable from the final Struct, so decode_node
+    // covers every tag and every optional/bounds/capacity/ids field, and the local
+    // verifier (no-orphan) accepts the graph. Covers: Unit(tag0), Bool, Int(bounds
+    // + unbounded), Float, String(len bounds), Decimal(scale), Duration, Timestamp,
+    // Uuid, Option, Sequence List + Set(capacity), Map(capacity), Struct, Enum
+    // (Unit + Tuple + Struct payload kinds), Tuple.
+    std::vector<CoreWireSchemaNode> nodes;
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});          // 0 Unit
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaBool{}});          // 1 Bool
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{{{-5, 5}}}});  // 2 Int bounded
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});           // 3 Int unbounded
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaFloat{}});         // 4 Float
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaString{{{0, 16}}}}); // 5 String len bounds
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaDecimal{2}});      // 6 Decimal scale
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaDuration{}});      // 7 Duration
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaTimestamp{}});     // 8 Timestamp
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUuid{}});          // 9 Uuid
+    // 10 Option<Int(3)>
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{3}}});
+    CoreWireSchemaSequence list;
+    list.kind = CoreWireSequenceKind::List;
+    list.element = CoreWireSchemaNodeId{1};
+    nodes.push_back(CoreWireSchemaNode{list}); // 11 List<Bool> (no capacity)
+    CoreWireSchemaSequence set;
+    set.kind = CoreWireSequenceKind::Set;
+    set.element = CoreWireSchemaNodeId{3};
+    set.capacity = std::optional<std::uint64_t>{4};
+    nodes.push_back(CoreWireSchemaNode{set}); // 12 Set<Int>(4)
+    CoreWireSchemaMap map;
+    map.key = CoreWireSchemaNodeId{5};
+    map.value = CoreWireSchemaNodeId{3};
+    map.capacity = std::optional<std::uint64_t>{8};
+    nodes.push_back(CoreWireSchemaNode{map}); // 13 Map<String,Int>(8)
+    CoreWireSchemaTuple tup;
+    tup.elements = {CoreWireSchemaNodeId{1}, CoreWireSchemaNodeId{4}};
+    nodes.push_back(CoreWireSchemaNode{tup}); // 14 (Bool,Float)
+    CoreWireSchemaEnum en;
+    en.wire_name = "app::Shape";
+    en.variants.push_back(CoreWireSchemaVariant{"None", CoreWirePayloadKind::Unit, {}});
+    en.variants.push_back(CoreWireSchemaVariant{
+        "Pos", CoreWirePayloadKind::Tuple,
+        {CoreWireSchemaField{"", CoreWireSchemaNodeId{2}},
+         CoreWireSchemaField{"", CoreWireSchemaNodeId{4}}}});
+    en.variants.push_back(CoreWireSchemaVariant{
+        "Named", CoreWirePayloadKind::Struct,
+        {CoreWireSchemaField{"a", CoreWireSchemaNodeId{10}},
+         CoreWireSchemaField{"b", CoreWireSchemaNodeId{11}}}});
+    nodes.push_back(CoreWireSchemaNode{en}); // 15 enum (Unit + Tuple + Struct payloads)
+    CoreWireSchemaStruct st;
+    st.wire_name = "app::Bag";
+    st.fields.push_back(CoreWireSchemaField{"u", CoreWireSchemaNodeId{0}});
+    st.fields.push_back(CoreWireSchemaField{"decimal", CoreWireSchemaNodeId{6}});
+    st.fields.push_back(CoreWireSchemaField{"dur", CoreWireSchemaNodeId{7}});
+    st.fields.push_back(CoreWireSchemaField{"ts", CoreWireSchemaNodeId{8}});
+    st.fields.push_back(CoreWireSchemaField{"id", CoreWireSchemaNodeId{9}});
+    st.fields.push_back(CoreWireSchemaField{"set", CoreWireSchemaNodeId{12}});
+    st.fields.push_back(CoreWireSchemaField{"map", CoreWireSchemaNodeId{13}});
+    st.fields.push_back(CoreWireSchemaField{"tup", CoreWireSchemaNodeId{14}});
+    st.fields.push_back(CoreWireSchemaField{"shape", CoreWireSchemaNodeId{15}});
+    nodes.push_back(CoreWireSchemaNode{st}); // 16 root
+
+    const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{16});
+    REQUIRE(verify_core_wire_schema_table_local(table).empty());
+    const auto encoded = encode_core_wire_schema_table(table);
+    REQUIRE(encoded.ok());
+    const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    CHECK(*decoded.table == table);
+}
+
+TEST_CASE("wire decoder accepts an empty (no-node, no-cap) table round-trip") {
+    CoreWireSchemaTable table; // format_version 1, zero nodes, zero caps
+    const auto encoded = encode_core_wire_schema_table(table);
+    REQUIRE(encoded.ok());
+    const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    CHECK(*decoded.table == table);
+    CHECK(decoded.table->nodes.empty());
+    CHECK(decoded.table->capabilities.empty());
+}
+
+TEST_CASE("wire decoder rejects header / framing corruption") {
+    const CoreProgram program = make_wire_program();
+    const auto good = encode_selection(program, caps({kScalarCap}));
+
+    SUBCASE("bad magic") {
+        auto bytes = good;
+        bytes[0] = 'X';
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(decoded.has_errors());
+    }
+    SUBCASE("empty input") {
+        const std::vector<std::uint8_t> empty;
+        const auto decoded = decode_core_wire_schema_table(empty);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+    }
+    SUBCASE("magic-only truncation") {
+        const std::vector<std::uint8_t> magic{'A', 'H', 'F', 'L', 'W', 'S'};
+        const auto decoded = decode_core_wire_schema_table(magic);
+        CHECK(!decoded.ok());
+    }
+    SUBCASE("unsupported format version") {
+        auto bytes = good;
+        bytes[6] = 2; // version LEB byte immediately after magic
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+    }
+    SUBCASE("trailing bytes after a valid payload") {
+        auto bytes = good;
+        bytes.push_back(0x00);
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+    }
+    SUBCASE("every proper prefix cut is rejected (exhaustive truncation)") {
+        for (std::size_t cut = 0; cut < good.size(); ++cut) {
+            const std::vector<std::uint8_t> prefix(good.begin(), good.begin() + cut);
+            const auto decoded = decode_core_wire_schema_table(prefix);
+            INFO("prefix length " << cut);
+            CHECK(!decoded.ok());
+            CHECK(!decoded.table.has_value());
+        }
+    }
+}
+
+TEST_CASE("wire decoder rejects an unknown node kind tag") {
+    // A single-node table whose node tag byte is an unknown shape id.
+    // Hand-assemble: magic + version(1) + node_count(1) + tag(0xFF).
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 0xFF};
+    const auto decoded = decode_core_wire_schema_table(bytes);
+    CHECK(!decoded.ok());
+    CHECK(!decoded.table.has_value());
+    CHECK(any_diag_contains(decoded.diagnostics, "unknown node kind"));
+}
+
+TEST_CASE("wire decoder rejects non-binary discriminant tags at each discriminant gate") {
+    SUBCASE("Int optional_bounds tag != 0/1") {
+        // magic + v1 + node_count(1) + Int(2) + bounds tag(0x02, illegal).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 2, 0x02};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "non-canonical optional tag"));
+    }
+    SUBCASE("Sequence optional_u64 capacity tag != 0/1") {
+        // Sequence(10) + kind List(0) + element(node 0) + capacity tag(0x03, illegal).
+        // node 0 is the sequence itself (self element keeps it in-range for the tag
+        // check, which runs before reachability).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01,
+                                        10,  0x00, 0x00, 0x03};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "non-canonical optional tag"));
+    }
+    SUBCASE("Sequence kind != List/Set") {
+        // Sequence(10) + kind(0x02, illegal).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 10, 0x02};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "unknown sequence kind"));
+    }
+    SUBCASE("Enum variant payload_kind != Unit/Tuple/Struct") {
+        // Enum(13) + name("E") + variant_count(1) + variant name("V") +
+        // payload_kind(0x03, illegal).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 13,
+                                        1,   'E', 0x01, 1,   'V', 0x03};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "unknown enum payload kind"));
+    }
+}
+
+TEST_CASE("wire decoder rejects a non-canonical LEB integer via the re-encode gate") {
+    // format_version encoded non-shortest: 0x81 0x00 == 1 with a redundant group.
+    // magic + [0x81,0x00] (version=1 overlong) + node_count(0) + cap_count(0).
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x81, 0x00, 0x00, 0x00};
+    const auto decoded = decode_core_wire_schema_table(bytes);
+    CHECK(!decoded.ok());
+    CHECK(!decoded.table.has_value());
+    CHECK(any_diag_contains(decoded.diagnostics, "not canonical"));
+}
+
+TEST_CASE("wire decoder rejects an out-of-range final u64 LEB group") {
+    // node_count with a 10th group at shift 63 carrying payload 0x02: only 0/1 fit
+    // there, so this overflows the u64 domain and reports out-of-range (distinct
+    // from the >64-bit overlong gate, which needs an 11th group). Bytes: magic +
+    // version(1) + 9x continuation-zero (0x80) + terminating group 0x02.
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01};
+    for (int i = 0; i < 9; ++i) {
+        bytes.push_back(0x80);
+    }
+    bytes.push_back(0x02);
+    const auto decoded = decode_core_wire_schema_table(bytes);
+    CHECK(!decoded.ok());
+    CHECK(!decoded.table.has_value());
+    CHECK(any_diag_contains(decoded.diagnostics, "out-of-range"));
+}
+
+TEST_CASE("wire decoder rejects a count that exceeds the remaining bytes") {
+    // node_count = 0xFF (255) but no node bodies follow.
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0xFF, 0x01};
+    const auto decoded = decode_core_wire_schema_table(bytes);
+    CHECK(!decoded.ok());
+    CHECK(!decoded.table.has_value());
+    CHECK(any_diag_contains(decoded.diagnostics, "remaining bytes"));
+}
+
+TEST_CASE("wire decoder rejects a string length that exceeds the remaining bytes") {
+    // magic + version(1) + node_count(1) + tag Struct(12) + name_len(0xFF) + 'x'.
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 12, 0xFF, 0x01, 'x'};
+    const auto decoded = decode_core_wire_schema_table(bytes);
+    CHECK(!decoded.ok());
+    CHECK(!decoded.table.has_value());
+    CHECK(any_diag_contains(decoded.diagnostics, "string longer than remaining bytes"));
+}
+
+TEST_CASE("wire decoder emits fixed diagnostics that never echo payload names or bytes") {
+    // Build a table whose Struct carries the secret marker as its wire_name, encode
+    // it, then corrupt a trailing byte so decode fails. The diagnostics must not
+    // contain the secret name.
+    std::vector<CoreWireSchemaNode> nodes;
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0
+    CoreWireSchemaStruct st;
+    st.wire_name = std::string(kSecretName);
+    st.fields.push_back(CoreWireSchemaField{"n", CoreWireSchemaNodeId{0}});
+    nodes.push_back(CoreWireSchemaNode{st}); // 1 root
+    const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
+    const auto encoded = encode_core_wire_schema_table(table);
+    REQUIRE(encoded.ok());
+    auto bytes = *encoded.bytes;
+    bytes.push_back(0x00); // trailing byte -> decode fails
+    const auto decoded = decode_core_wire_schema_table(bytes);
+    CHECK(!decoded.ok());
+    CHECK(!any_diag_contains(decoded.diagnostics, kSecretName));
+}
+
+TEST_CASE("wire decoder ok()/has_errors()/table are a consistent tri-state") {
+    const CoreProgram program = make_wire_program();
+    const auto good = encode_selection(program, caps({kScalarCap}));
+    {
+        const auto decoded = decode_core_wire_schema_table(good);
+        CHECK(decoded.ok());
+        CHECK(decoded.table.has_value());
+        CHECK(!decoded.has_errors());
+    }
+    {
+        auto bad = good;
+        bad[0] = 'Z';
+        const auto decoded = decode_core_wire_schema_table(bad);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(decoded.has_errors());
+    }
+}
+
+// A Decimal(scale) node is the cleanest signed-LEB carrier: `scale` is the only
+// s64 field on any shape, so an encode->decode->equal round-trip exercises s64 at
+// exactly the requested boundary.
+TEST_CASE("wire decoder round-trips signed LEB canonical boundaries via Decimal scale") {
+    for (const std::int64_t scale : {std::int64_t{0}, std::int64_t{63}, std::int64_t{64},
+                                     std::int64_t{127}, std::int64_t{128}, std::int64_t{-1},
+                                     std::int64_t{-64}, std::int64_t{-65},
+                                     std::numeric_limits<std::int64_t>::max(),
+                                     std::numeric_limits<std::int64_t>::min()}) {
+        const auto bytes = encode_decimal_scale(scale);
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        INFO("scale " << scale);
+        REQUIRE(decoded.ok());
+        REQUIRE(decoded.table->nodes.size() == 1);
+        CHECK(std::get<CoreWireSchemaDecimal>(decoded.table->nodes[0].shape).scale == scale);
+        const auto reencoded = encode_core_wire_schema_table(*decoded.table);
+        REQUIRE(reencoded.ok());
+        CHECK(*reencoded.bytes == bytes);
+    }
+}
+
+TEST_CASE("wire decoder rejects malformed signed LEB encodings") {
+    // Decimal scale == +0 is canonically one byte 0x00. A non-shortest +0 as
+    // 0x80 0x00 (a redundant continuation of a positive) must fail the canonical
+    // re-encode gate. Bytes: magic + v1 + node_count(1) + tag Decimal(5) + scale
+    // 0x80 0x00 + cap_count(0).
+    // A Decimal node needs a capability whose result points at it, or verify_local
+    // rejects it as an orphan BEFORE the canonical re-encode gate is reached. The
+    // suffix `cap_count(1) cap_id(0) source_symbol(7) params(0) result(node 0)`.
+    SUBCASE("redundant positive sign group") {
+        std::vector<std::uint8_t> bytes{'A',  'H',  'F',  'L',  'W',  'S',  0x01, 0x01,
+                                        5,    0x80, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "not canonical"));
+    }
+    SUBCASE("redundant negative sign group") {
+        // scale == -1 is canonically 0x7f. A non-shortest -1 as 0xff 0x7f (a
+        // redundant sign-extension of a negative) must fail the canonical gate.
+        std::vector<std::uint8_t> bytes{'A',  'H',  'F',  'L',  'W',  'S',  0x01, 0x01,
+                                        5,    0xff, 0x7f, 0x01, 0x00, 0x07, 0x00, 0x00};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "not canonical"));
+    }
+    SUBCASE("out-of-range signed final group (shift == 63)") {
+        // s64 is a distinct reader from u64. A Decimal scale whose 10th group at
+        // shift 63 carries payload 0x01 (only a pure sign group 0x00/0x7f fits
+        // there) overflows int64 and reports out-of-range. Bytes: magic + v1 +
+        // node_count(1) + Decimal(5) + 9x continuation-zero (0x80) + 0x01.
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 5};
+        for (int i = 0; i < 9; ++i) {
+            bytes.push_back(0x80);
+        }
+        bytes.push_back(0x01);
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "out-of-range signed"));
+    }
+    SUBCASE("overlong signed (>64-bit) run (shift >= 64)") {
+        // A Decimal scale with 10 continuation groups drives shift from 63 to 70
+        // on the 10th read; the attempted 11th group is rejected before consumption
+        // by the shift >= 64 overlong gate (distinct from the shift == 63
+        // out-of-range gate). Bytes: magic + v1 + node_count(1) + Decimal(5) + 10x
+        // continuation-zero (0x80) + 0x00.
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 5};
+        for (int i = 0; i < 10; ++i) {
+            bytes.push_back(0x80);
+        }
+        bytes.push_back(0x00);
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "overlong signed"));
+    }
+}
+
+TEST_CASE("wire decoder separates u32-domain overflow from u64 overflow") {
+    SUBCASE("a valid u64 that exceeds the 32-bit domain (node_count) is rejected") {
+        // node_count encoded as 0x1_0000_0000 (2^32): a legal 5-byte u64 that is
+        // out of the u32 domain used for counts/ids. LEB of 2^32 = 80 80 80 80 10.
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01,
+                                        0x80, 0x80, 0x80, 0x80, 0x10};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "32-bit domain"));
+    }
+    SUBCASE("a legal 10-byte UINT64_MAX source_symbol round-trips exactly") {
+        // source_symbol is the only u64 field; UINT64_MAX is the maximal legal
+        // 10-byte LEB (ff ff ff ff ff ff ff ff ff 01). It must decode to the exact
+        // value and re-encode byte-identically.
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});
+        auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{0});
+        table.capabilities[0].source_symbol = std::numeric_limits<std::uint64_t>::max();
+        const auto encoded = encode_core_wire_schema_table(table);
+        REQUIRE(encoded.ok());
+        const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
+        REQUIRE(decoded.ok());
+        CHECK(decoded.table->capabilities[0].source_symbol ==
+              std::numeric_limits<std::uint64_t>::max());
+        const auto reencoded = encode_core_wire_schema_table(*decoded.table);
+        REQUIRE(reencoded.ok());
+        CHECK(*reencoded.bytes == *encoded.bytes);
+    }
+    SUBCASE("an overlong (>64-bit) LEB is rejected as overflow, not a u32 error") {
+        // source_symbol as a >64-bit run: 10 continuation groups drive shift from
+        // 63 to 70 on the 10th read; the attempted 11th group is rejected before
+        // consumption by the shift >= 64 overlong gate (distinct from out-of-range).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x00, 0x01, 0x00};
+        for (int i = 0; i < 10; ++i) {
+            bytes.push_back(0x80); // continuation, payload 0
+        }
+        bytes.push_back(0x01); // attempted 11th group -> rejected before consumption
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "overlong"));
+    }
+}
+
+TEST_CASE("wire decoder count at the reserved 32-bit sentinel is rejected before reserve") {
+    // node_count == kInvalid (UINT32_MAX) = LEB ff ff ff ff 0f. Must be rejected by
+    // bounded_count's sentinel gate BEFORE any reserve, independent of remaining.
+    std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01,
+                                    0xff, 0xff, 0xff, 0xff, 0x0f};
+    const auto decoded = decode_core_wire_schema_table(bytes);
+    CHECK(!decoded.ok());
+    CHECK(!decoded.table.has_value());
+    CHECK(any_diag_contains(decoded.diagnostics, "reserved 32-bit sentinel"));
+}
+
+TEST_CASE("wire decoder cap-id: kInvalid / order / duplicate reject, large-sparse accept") {
+    // Helper: assemble a two-cap, single-Int-node table whose two capability ids
+    // are the given values, both roots pointing at node 0.
+    auto assemble = [](std::uint32_t cap0, std::uint32_t cap1) {
+        std::vector<std::uint8_t> b{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 2 /*Int*/};
+        auto leb = [&](std::uint64_t v) {
+            do {
+                std::uint8_t c = v & 0x7fU;
+                v >>= 7U;
+                if (v != 0) {
+                    c |= 0x80U;
+                }
+                b.push_back(c);
+            } while (v != 0);
+        };
+        // Int tag 2 has an optional bounds byte (absent = 0).
+        b.push_back(0x00); // Int bounds absent
+        leb(2);            // cap_count
+        // cap0: id, source_symbol(7), params(0), result(node 0)
+        leb(cap0);
+        leb(7);
+        leb(0);
+        leb(0);
+        // cap1
+        leb(cap1);
+        leb(9);
+        leb(0);
+        leb(0);
+        return b;
+    };
+    SUBCASE("strictly increasing large sparse non-invalid ids are accepted") {
+        const auto bytes = assemble(5, 4000000000U); // both < UINT32_MAX, increasing
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        REQUIRE(decoded.ok());
+        REQUIRE(decoded.table->capabilities.size() == 2);
+        CHECK(decoded.table->capabilities[1].capability.value == 4000000000U);
+    }
+    SUBCASE("a kInvalid cap id is rejected") {
+        const auto bytes = assemble(5, CoreCapabilityId::kInvalid);
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(any_diag_contains(decoded.diagnostics, "strictly ordered and unique"));
+    }
+    SUBCASE("non-increasing (out of order) cap ids are rejected") {
+        const auto bytes = assemble(9, 5);
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(any_diag_contains(decoded.diagnostics, "strictly ordered and unique"));
+    }
+    SUBCASE("duplicate cap ids are rejected") {
+        const auto bytes = assemble(5, 5);
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(any_diag_contains(decoded.diagnostics, "strictly ordered and unique"));
+    }
+}
+
+TEST_CASE("wire decoder local-verifier negatives entered via raw bytes") {
+    SUBCASE("orphan node (unreachable) is rejected") {
+        // Two Int nodes, root = node 0; node 1 is unreachable.
+        // magic + v1 + node_count(2) + Int(2)+bounds-absent + Int(2)+bounds-absent
+        // + cap_count(1) + cap_id(0) + source_symbol(7) + params(0) + result(0).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x02,
+                                        2,   0x00, 2,   0x00, 0x01, 0x00, 0x07, 0x00, 0x00};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(any_diag_contains(decoded.diagnostics, "orphan node"));
+    }
+    SUBCASE("a NodeId reference out of the table range is rejected") {
+        // Single Option node whose child is node 9 (only node 0 exists).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01,
+                                        9,   9,   0x01, 0x00, 0x07, 0x00, 0x00};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics, "node reference is out of range"));
+    }
+    SUBCASE("a Struct field named _type (reserved) is rejected without echoing names") {
+        // Struct{ _type: Int }, root, with the struct wire_name set to the secret
+        // marker. This exercises the parse-succeeds -> local-verifier-fails path and
+        // asserts the reserved-name diagnostic does NOT echo the (attacker-supplied)
+        // struct name. magic + v1 + node_count(2) + Int(2)+absent + Struct(12) +
+        // name(kSecretName) + field_count(1) + field name("_type") + field type(0) +
+        // cap_count(1) cap_id0 sym7 params0 result(node 1).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x02, 2, 0x00, 12};
+        auto push_str = [&](std::string_view s) {
+            bytes.push_back(static_cast<std::uint8_t>(s.size()));
+            bytes.insert(bytes.end(), s.begin(), s.end());
+        };
+        push_str(kSecretName);       // struct wire_name = secret marker
+        bytes.push_back(0x01);       // field_count
+        push_str("_type");           // reserved field name
+        bytes.push_back(0x00);       // field type -> node 0
+        bytes.push_back(0x01);       // cap_count
+        bytes.push_back(0x00);       // cap_id 0
+        bytes.push_back(0x07);       // source_symbol
+        bytes.push_back(0x00);       // params 0
+        bytes.push_back(0x01);       // result -> node 1 (struct)
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(any_diag_contains(decoded.diagnostics, "reserved wire name '_type'"));
+        CHECK(!any_diag_contains(decoded.diagnostics, kSecretName));
+    }
+    SUBCASE("nullable Option (Option<Unit>) is rejected") {
+        // Option -> Unit: Unit encodes as null, so None and Some(Unit) collide.
+        // magic + v1 + node_count(2) + Unit(0) + Option(9)+child(0) + cap_count(1)
+        // cap_id0 sym7 params0 result(node 1).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x02,
+                                        0,   9,   0,   0x01, 0x00, 0x07, 0x00, 0x01};
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(any_diag_contains(decoded.diagnostics, "encodes as JSON null"));
+    }
+    SUBCASE("an ordinary Enum wire_name std::option::Option (reserved) is rejected") {
+        // A tag-13 Enum whose wire_name collides with the value_json Option
+        // special-case name. Bytes: magic + v1 + node_count(1) + Enum(13) +
+        // name("std::option::Option") + variant_count(1) + variant name("None") +
+        // payload_kind Unit(0) + slots(0) + cap_count(1) cap_id0 sym7 params0
+        // result(node 0).
+        std::vector<std::uint8_t> bytes{'A', 'H', 'F', 'L', 'W', 'S', 0x01, 0x01, 13};
+        auto push_str = [&](std::string_view s) {
+            bytes.push_back(static_cast<std::uint8_t>(s.size()));
+            bytes.insert(bytes.end(), s.begin(), s.end());
+        };
+        push_str("std::option::Option");
+        bytes.push_back(0x01); // variant_count
+        push_str("None");
+        bytes.push_back(0x00); // payload_kind Unit
+        bytes.push_back(0x00); // slots count
+        bytes.push_back(0x01); // cap_count
+        bytes.push_back(0x00); // cap_id 0
+        bytes.push_back(0x07); // source_symbol
+        bytes.push_back(0x00); // params 0
+        bytes.push_back(0x00); // result -> node 0
+        const auto decoded = decode_core_wire_schema_table(bytes);
+        CHECK(!decoded.ok());
+        CHECK(!decoded.table.has_value());
+        CHECK(any_diag_contains(decoded.diagnostics,
+                                "ordinary enum uses the reserved wire name 'std::option::Option'"));
+    }
+}
+
+TEST_CASE("wire decoder handles a very deep acyclic reachable chain without recursion") {
+    // The reachability verifier walks an untrusted graph; a recursive DFS would
+    // overflow the C++ stack on a legal but very deep acyclic chain, so it is an
+    // iterative worklist. Build a minimal single-edge chain node[i] = Tuple{ node[i+1] },
+    // node[N] = Int (an Option-of-Option chain would trip the nullable gate). Tuple
+    // avoids the per-node string/field/set allocation a Struct chain incurs while
+    // exercising the same for_each_child/mark path. Depth proves the non-recursive
+    // path but stays fast.
+    constexpr std::uint32_t kDepth = 20000;
+    std::vector<CoreWireSchemaNode> nodes;
+    nodes.reserve(kDepth + 1);
+    for (std::uint32_t i = 0; i < kDepth; ++i) {
+        CoreWireSchemaTuple tup;
+        tup.elements.push_back(CoreWireSchemaNodeId{i + 1});
+        nodes.push_back(CoreWireSchemaNode{tup});
+    }
+    nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // node[kDepth]
+    const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{0});
+    REQUIRE(verify_core_wire_schema_table_local(table).empty());
+    const auto encoded = encode_core_wire_schema_table(table);
+    REQUIRE(encoded.ok());
+    const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    CHECK(decoded.table->nodes.size() == kDepth + 1);
+    const auto reencoded = encode_core_wire_schema_table(*decoded.table);
+    REQUIRE(reencoded.ok());
+    CHECK(*reencoded.bytes == *encoded.bytes);
 }
