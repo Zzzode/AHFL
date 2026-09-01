@@ -188,6 +188,15 @@ Corrected exact rules (verified against value_json.cpp):
     reason C2b does NOT claim an unconditional Option round-trip. The gate lives
     only in `LocalSchemaVerifier::validate_node`, covering both the source
     projector and any transported table.
+  - **Reserved wire-name restriction (P0-11)**: the wire-schema local verifier
+    also rejects (with `core.wire.UNSUPPORTED`, after all structural checks) a
+    Struct field named `_type` (collides with the value_json struct discriminator)
+    and an ORDINARY Enum whose `wire_name` is `std::option::Option` (collides with
+    the value_json Option special-case). A genuine Option is the distinct
+    `CoreWireSchemaOption` shape and is unaffected. Normal source-derived Core
+    never produces either; any synthetic (projector-API) or transported attempt is
+    fail-closed by the same `LocalSchemaVerifier::validate_node` gate, so no such
+    table is published or minted.
 - **UUID**: canonical wire is the object `{"_uuid":"<32 lowercase hex>"}`
   (value_json.cpp:174-178), NOT a bare string. decode requires that object.
 - **Timestamp**: canonical wire is `{"_timestamp":<int64 unix_ms>}` (:179-184),

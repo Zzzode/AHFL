@@ -1170,3 +1170,115 @@ TEST_CASE("source projector fails closed on Option<Unit> without publishing a ta
     CHECK(has_code(result.diagnostics, std::string(wire_schema::kUnsupported)));
     CHECK_FALSE(has_code(result.diagnostics, std::string(wire_schema::kInvalidCore)));
 }
+
+// RFC 0026 C2b P0-11: the local verifier rejects two writer-impossible reserved
+// collisions that a transported / hand-built table could otherwise forge. Both
+// are legal-but-unsupported (core.wire.UNSUPPORTED), and both are gated only in
+// LocalSchemaVerifier so the source projector, the local verify, and the
+// transported binding path share one check.
+TEST_CASE("local verifier rejects reserved wire-name collisions (P0-11)") {
+    SUBCASE("Struct field named '_type' is UNSUPPORTED") {
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0
+        CoreWireSchemaStruct st;
+        st.wire_name = "app::Bad";
+        st.fields.push_back(CoreWireSchemaField{"_type", CoreWireSchemaNodeId{0}});
+        nodes.push_back(CoreWireSchemaNode{st}); // 1
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
+        const auto diagnostics = verify_core_wire_schema_table_local(table);
+        CHECK(has_code(diagnostics, std::string(wire_schema::kUnsupported)));
+        CHECK(has_message(diagnostics, "reserved wire name '_type'"));
+    }
+
+    SUBCASE("ordinary Enum named 'std::option::Option' is UNSUPPORTED") {
+        std::vector<CoreWireSchemaNode> nodes;
+        CoreWireSchemaEnum en;
+        en.wire_name = "std::option::Option";
+        en.variants.push_back(CoreWireSchemaVariant{"Red", CoreWirePayloadKind::Unit, {}});
+        nodes.push_back(CoreWireSchemaNode{en}); // 0
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{0});
+        const auto diagnostics = verify_core_wire_schema_table_local(table);
+        CHECK(has_code(diagnostics, std::string(wire_schema::kUnsupported)));
+        CHECK(has_message(diagnostics, "reserved wire name 'std::option::Option'"));
+    }
+
+    // invalid-before-unsupported: a table that is BOTH structurally invalid AND
+    // reserved must report the structural (kInvalid) error, never kUnsupported.
+    // The malformation is chosen to pass the reachability `mark` phase (all ids in
+    // range) and fail only inside validate_node, so it genuinely proves the
+    // reserved gate runs AFTER the structural checks within the Struct/Enum branch.
+    SUBCASE("Struct with duplicate '_type' fields is kInvalid, not UNSUPPORTED") {
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0 (reachable)
+        CoreWireSchemaStruct st;
+        st.wire_name = "app::Bad";
+        // Two fields both named "_type", both referencing the valid Int child:
+        // names_unique fails inside validate_node before the reserved-name gate.
+        st.fields.push_back(CoreWireSchemaField{"_type", CoreWireSchemaNodeId{0}});
+        st.fields.push_back(CoreWireSchemaField{"_type", CoreWireSchemaNodeId{0}});
+        nodes.push_back(CoreWireSchemaNode{st}); // 1
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
+        const auto diagnostics = verify_core_wire_schema_table_local(table);
+        CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
+        CHECK_FALSE(has_code(diagnostics, std::string(wire_schema::kUnsupported)));
+    }
+
+    SUBCASE("reserved Enum with a unit variant carrying a slot is kInvalid, not UNSUPPORTED") {
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0 (reachable)
+        CoreWireSchemaEnum en;
+        en.wire_name = "std::option::Option";
+        CoreWireSchemaVariant bad_unit;
+        bad_unit.wire_name = "X";
+        bad_unit.payload_kind = CoreWirePayloadKind::Unit;
+        // A unit variant must have no slots; this one references the valid Int so
+        // every id is reachable, but the payload structural check fails inside
+        // validate_node before the reserved-name gate.
+        bad_unit.slots.push_back(CoreWireSchemaField{"", CoreWireSchemaNodeId{0}});
+        en.variants.push_back(bad_unit);
+        nodes.push_back(CoreWireSchemaNode{en}); // 1
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
+        const auto diagnostics = verify_core_wire_schema_table_local(table);
+        CHECK(has_code(diagnostics, std::string(wire_schema::kInvalid)));
+        CHECK_FALSE(has_code(diagnostics, std::string(wire_schema::kUnsupported)));
+    }
+
+    SUBCASE("a genuine CoreWireSchemaOption stays legal") {
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});                        // 0
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
+        CHECK(verify_core_wire_schema_table_local(table).empty());
+    }
+
+    SUBCASE("an ordinary Struct with non-reserved field names stays legal") {
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0
+        CoreWireSchemaStruct st;
+        st.wire_name = "app::Point";
+        st.fields.push_back(CoreWireSchemaField{"n", CoreWireSchemaNodeId{0}});
+        nodes.push_back(CoreWireSchemaNode{st}); // 1 (root)
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
+        CHECK(verify_core_wire_schema_table_local(table).empty());
+    }
+
+    SUBCASE("an ordinary Enum with a non-reserved name stays legal") {
+        std::vector<CoreWireSchemaNode> nodes;
+        CoreWireSchemaEnum en;
+        en.wire_name = "app::Color";
+        en.variants.push_back(CoreWireSchemaVariant{"Red", CoreWirePayloadKind::Unit, {}});
+        nodes.push_back(CoreWireSchemaNode{en}); // 0 (root)
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{0});
+        CHECK(verify_core_wire_schema_table_local(table).empty());
+    }
+
+    SUBCASE("source projection of an ordinary Struct + Enum still succeeds") {
+        // kStructCap is Pair (struct) -> Color (enum): a real projection through
+        // build_struct/build_enum. The reserved-name gate must not touch these
+        // non-reserved names, so the projector publishes a table.
+        const CoreProgram program = make_wire_program();
+        const auto result = project_core_wire_schema(program, caps({kStructCap}));
+        CHECK(result.ok());
+        CHECK(result.table.has_value());
+    }
+}

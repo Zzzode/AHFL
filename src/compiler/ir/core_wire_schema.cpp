@@ -750,8 +750,27 @@ class LocalSchemaVerifier {
                         }
                         return false;
                     }
-                    return std::all_of(value.fields.begin(), value.fields.end(),
-                                       [&](const auto &field) { return valid_id(field.type); });
+                    for (const auto &field : value.fields) {
+                        if (!valid_id(field.type)) {
+                            return false;
+                        }
+                    }
+                    // Reserved-name gate (RFC 0026 C2b P0-11): the value_json writer
+                    // emits a "_type" discriminator before a struct's own fields, so
+                    // a field literally named "_type" would produce a duplicate wire
+                    // key and cannot round-trip. Normal source-derived Core never
+                    // produces this; any synthetic (projector-API) or transported
+                    // attempt is fail-closed here as legal-but-unsupported. This runs
+                    // AFTER the structural checks so a malformed struct still reports
+                    // its structural error first.
+                    for (const auto &field : value.fields) {
+                        if (field.wire_name == "_type") {
+                            fail_code(wire_schema::kUnsupported,
+                                      "wire-schema struct field uses the reserved wire name '_type'");
+                            return false;
+                        }
+                    }
+                    return true;
                 },
                 [&](const CoreWireSchemaEnum &value) {
                     if (value.wire_name.empty() || value.variants.empty()) {
@@ -791,6 +810,23 @@ class LocalSchemaVerifier {
                                 return false;
                             }
                         }
+                    }
+                    // Reserved-name gate (RFC 0026 C2b P0-11): an ordinary Enum
+                    // whose wire_name is "std::option::Option" collides with the
+                    // value_json Option special-case (value.hpp treats any EnumValue
+                    // with that enum_name as an Option and encodes None->null /
+                    // Some(x)->x), which is incompatible with the ordinary-enum
+                    // `_enum` object form the codec expects. A real Option projects
+                    // as the distinct CoreWireSchemaOption shape, so normal
+                    // source-derived Core never produces this; any synthetic
+                    // (projector-API) or transported attempt is fail-closed here as
+                    // legal-but-unsupported. Runs AFTER the structural checks so a
+                    // malformed enum reports first.
+                    if (value.wire_name == "std::option::Option") {
+                        fail_code(wire_schema::kUnsupported,
+                                  "wire-schema ordinary enum uses the reserved wire name "
+                                  "'std::option::Option'");
+                        return false;
                     }
                     return true;
                 },

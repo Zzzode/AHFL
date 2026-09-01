@@ -223,6 +223,18 @@ Examples:
     promises a round-trip for every *projectable* Option schema. The check is a
     single gate in `LocalSchemaVerifier::validate_node`, shared by both entry
     points, so no separate predicate can drift.
+  - **Reserved wire-name restriction (C2b P0-11):** the same local verifier also
+    rejects two writer-impossible reserved names with `core.wire.UNSUPPORTED`
+    (after the structural checks, so a malformed table reports its structural
+    error first): a Struct field named `_type` (collides with the value_json
+    struct discriminator, producing a duplicate wire key) and an ORDINARY Enum
+    whose `wire_name` is `std::option::Option` (collides with the value_json
+    Option special-case, which would encode it as `null`/inner rather than an
+    `_enum` object). A genuine Option is the distinct `CoreWireSchemaOption` shape
+    and is unaffected. Normal source-derived Core never produces either; any
+    synthetic (projector-API) or transported attempt is fail-closed by the same
+    `LocalSchemaVerifier::validate_node` gate, so no such table is published or
+    minted.
 - a struct must carry the exact `_type`, exact field set, and recursively valid
   field values;
 - an enum must carry the exact `_enum`, a declared `_variant`, the exact payload

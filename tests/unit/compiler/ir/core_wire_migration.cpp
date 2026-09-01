@@ -431,6 +431,58 @@ TEST_CASE("the transported-table factory rejects an Option with a null-encoding 
     CHECK(saw_unsupported);
 }
 
+TEST_CASE("the transported-table factory rejects reserved wire-name collisions (P0-11)") {
+    const auto mint = [](CoreWireSchemaTable table) {
+        CoreWireRootSelector selector;
+        selector.capability = CoreCapabilityId{0};
+        selector.expected_source_symbol = 77;
+        selector.kind = CoreWireRootKind::Result;
+        selector.param_index = 0;
+        std::vector<CoreLowerDiagnostic> diagnostics;
+        auto b = make_wire_binding_from_transported_table(std::move(table), selector, diagnostics);
+        bool saw_unsupported = false;
+        for (const auto &d : diagnostics) {
+            if (d.code == wire_schema::kUnsupported) {
+                saw_unsupported = true;
+            }
+        }
+        return std::make_pair(b.has_value(), saw_unsupported);
+    };
+
+    SUBCASE("Struct field named '_type'") {
+        CoreWireSchemaTable table;
+        table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0
+        CoreWireSchemaStruct st;
+        st.wire_name = "app::Bad";
+        st.fields.push_back(CoreWireSchemaField{"_type", CoreWireSchemaNodeId{0}});
+        table.nodes.push_back(CoreWireSchemaNode{st}); // 1
+        CoreWireCapabilitySchema cap;
+        cap.capability = CoreCapabilityId{0};
+        cap.source_symbol = 77;
+        cap.result = CoreWireSchemaNodeId{1};
+        table.capabilities.push_back(cap);
+        const auto [has_binding, saw_unsupported] = mint(std::move(table));
+        CHECK_FALSE(has_binding);
+        CHECK(saw_unsupported);
+    }
+
+    SUBCASE("ordinary Enum named 'std::option::Option'") {
+        CoreWireSchemaTable table;
+        CoreWireSchemaEnum en;
+        en.wire_name = "std::option::Option";
+        en.variants.push_back(CoreWireSchemaVariant{"Red", CoreWirePayloadKind::Unit, {}});
+        table.nodes.push_back(CoreWireSchemaNode{en}); // 0
+        CoreWireCapabilitySchema cap;
+        cap.capability = CoreCapabilityId{0};
+        cap.source_symbol = 77;
+        cap.result = CoreWireSchemaNodeId{0};
+        table.capabilities.push_back(cap);
+        const auto [has_binding, saw_unsupported] = mint(std::move(table));
+        CHECK_FALSE(has_binding);
+        CHECK(saw_unsupported);
+    }
+}
+
 TEST_CASE("migration projector lowers String-keyed Map and rejects a non-String key") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());

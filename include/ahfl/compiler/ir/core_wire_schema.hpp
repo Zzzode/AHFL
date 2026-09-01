@@ -209,6 +209,18 @@ verify_core_wire_schema_table(const CoreProgram &program,
 /// e.g. `Node{next: Option<Node>}`) remains legal. This restriction lives ONLY
 /// here, so both the source projector and a transported/hand-built table are
 /// gated by the same single check.
+///
+/// Reserved wire-name note (RFC 0026 C2b P0-11): two names are writer-impossible
+/// and rejected with `core.wire.UNSUPPORTED` (after all structural checks, so a
+/// malformed table still reports its structural error first): a Struct field
+/// named `_type` (the value_json writer uses `_type` as the struct discriminator,
+/// so a same-named field would be a duplicate wire key) and an ORDINARY Enum
+/// whose `wire_name` is `std::option::Option` (the value_json Option special-case
+/// keys off that name and would encode it as `null`/inner, not the ordinary
+/// `_enum` object). A genuine Option is a distinct `CoreWireSchemaOption` shape
+/// and is unaffected. Normal source-derived Core never produces either; any
+/// synthetic (projector-API) or transported attempt is fail-closed by this same
+/// local verifier, so no such table is published or minted.
 [[nodiscard]] std::vector<CoreLowerDiagnostic>
 verify_core_wire_schema_table_local(const CoreWireSchemaTable &table);
 
