@@ -1,21 +1,27 @@
 # Core-IR KR6.5 E4-B0: Wire Schema and Durable-Resume Seam -- Design
 
-> Status: **IMPLEMENTED through C2b G4d** (schema-guided wire codec + durable-resume
-> seam + full CLI/HTTP/gRPC/shim demotion; the legacy `response_schema_validator`
-> is deleted). B2 (the full durable-resume ABI/control-record, protected payload
-> store, atomic/crash, ownership/last-use, and node-order evidence work) remains
+> Status: **IMPLEMENTED through E4-B1** (schema-guided wire codec + durable-resume
+> seam + full CLI/HTTP/gRPC/shim demotion + the wire-schema Wasm transport chain:
+> C1 payload decoder `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime
+> module inspector `b75fc8ec`; the legacy `response_schema_validator` is deleted).
+> B2 (the full durable-resume ABI/control-record, protected payload store,
+> atomic/crash, ownership/last-use, and node-order evidence work) remains
 > design/pending.
 >
 > Scope: decide who decodes and type-checks RFC 0019/0021 `value_json`, define
 > one canonical wire-schema projection, and define the durable record's control
-> and sensitive-payload boundaries. This document does not add a resume export,
-> opcode, import, Core node, codegen path, or production dependency.
+> and sensitive-payload boundaries. The design is implemented through B1 (which
+> did add the reviewed E2 custom section and an internal runtime inspector symbol);
+> it does not by itself authorize IMPLEMENTING any B2 resume export, opcode, ABI,
+> control record, protected store, or digest (§3.2 still DESIGNS those future B2
+> artifacts), and it authorizes no E4-A dependency or CI change.
 >
-> Priority: the E4-B0 design gate is CLOSED and E4-B0-C1/C2 are implemented
-> (schema-guided wire codec + durable-resume seam + full ingress demotion; see the
-> Status line above). E4-A remains independent; it becomes the higher priority
-> ONLY after the owner approves its pinned Wasmtime environment. That approval has
-> not been given, so this slice touches no CI or dependency wiring for E4-A.
+> Priority: the E4-B0 design gate is CLOSED and E4-B0-C1/C2 and E4-B1 are
+> implemented (schema-guided wire codec + durable-resume seam + full ingress
+> demotion + wire-schema transport; see the Status line above). E4-A remains
+> independent; it becomes the higher priority ONLY after the owner approves its
+> pinned Wasmtime environment. That approval has not been given, so this slice
+> touches no CI or dependency wiring for E4-A.
 
 ## 0. Research result: the current checks cannot authorize Wasm resume
 
@@ -357,8 +363,11 @@ contents are required semantic wire data and its encoder is deterministic.
 The standard Wasm name section remains absent.
 
 Identity-only E1/E3 artifacts need no schema section and remain byte-identical.
-An E2 capability artifact gains the section only when the future E4-B transport
-slice is explicitly enabled; B0 design itself changes no byte.
+Only an E2 agent artifact whose `plan.imports` is non-empty appends exactly one
+target `ahfl.wire-schema.v1` section after the Code section (at module EOF); E1,
+E3, and no-import artifacts stay byte-identical. The runtime inspector extracts
+and verifies the section before instantiation (E4-B1: writer `a73a8991`, runtime
+inspector `b75fc8ec`).
 
 The host rejects:
 
@@ -484,9 +493,16 @@ Implementation is intentionally split before any resume ABI:
 2. **B0-C2 shared host codec**: schema-guided JSON decode plus native-Value
    validation policies; delete the shallow resume checker; migrate the response
    validator and native replay checks to the shared rules. No resume export.
-3. **B1 schema transport**: emit and parse `ahfl.wire-schema.v1`, strict import
-   cross-check, deterministic bytes, and a conforming-host live E2 check. This is
-   the first reviewed Wasm byte change.
+3. **B1 schema transport — LANDED** (C1 payload decoder `2d25aa3b`, C2
+   custom-section writer `a73a8991`, C3 runtime module inspector `b75fc8ec`):
+   C2's `core_wasm_codegen` emits exactly one `ahfl.wire-schema.v1` after the Code
+   section for a reachable-capability E2 artifact (E1/E3 byte-identical); C1's
+   `decode_core_wire_schema_table` is the payload admission authority; C3's
+   `core_wasm_schema_transport` inspector frames a transported module, cross-checks
+   the `ahfl_cap` import table against the schema table, and mints a verified
+   binding through the transported-table factory. This was the first reviewed Wasm
+   byte change. It adds NO resume export, opcode, ABI, control record, or digest —
+   those remain B2.
 4. **B2 durable resume**: separately design the append-only ABI, protected state
    store, atomic memo append, ownership, exact node-order observation, and
    execution evidence. B2 cannot start on an unchecked schema or plaintext
