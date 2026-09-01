@@ -2,10 +2,12 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
-#include <iomanip>
-#include <sstream>
-#include <vector>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace ahfl::support {
 namespace {
@@ -22,6 +24,11 @@ constexpr std::array<std::uint32_t, 64> kRoundConstants{
     0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U, 0x90befffaU, 0xa4506cebU, 0xbef9a3f7U,
     0xc67178f2U,
 };
+
+// SHA-256 processes 64-byte blocks; the total message length is encoded as a
+// 64-bit big-endian BIT count, so the message must be shorter than 2^64 bits.
+constexpr std::size_t kBlockBytes = 64;
+constexpr std::uint64_t kMaxMessageBytes = UINT64_MAX / 8ULL;
 
 [[nodiscard]] std::uint32_t read_be32(const std::uint8_t *bytes) noexcept {
     return (static_cast<std::uint32_t>(bytes[0]) << 24U) |
@@ -53,7 +60,7 @@ constexpr std::array<std::uint32_t, 64> kRoundConstants{
     return std::rotr(value, 17) ^ std::rotr(value, 19) ^ (value >> 10U);
 }
 
-void compress_block(const std::uint8_t *block, std::array<std::uint32_t, 8> &hash) {
+void compress_block(const std::uint8_t *block, std::array<std::uint32_t, 8> &hash) noexcept {
     std::array<std::uint32_t, 64> words{};
     for (std::size_t index = 0; index < 16; ++index) {
         words[index] = read_be32(block + (index * 4));
@@ -95,45 +102,123 @@ void compress_block(const std::uint8_t *block, std::array<std::uint32_t, 8> &has
     hash[7] += h;
 }
 
+// Allocation-free incremental SHA-256 state (internal only; NOT a public API).
+// Holds only the 8 hash words, a single 64-byte partial block, its fill count,
+// and the running total byte count. `update` may be called any number of times;
+// the total-length domain is enforced on every update BEFORE any state changes.
+class Sha256State {
+  public:
+    void update(std::span<const std::uint8_t> data) {
+        if (data.size() > kMaxMessageBytes - total_bytes_) {
+            // total_bytes_ + data.size() would exceed the 2^64-bit domain; reject
+            // before touching the compressor. Fixed text: no size/data echo.
+            throw std::length_error("sha256 input exceeds the supported message length");
+        }
+        total_bytes_ += data.size();
+
+        std::size_t offset = 0;
+        if (partial_len_ != 0) {
+            const std::size_t need = kBlockBytes - partial_len_;
+            const std::size_t take = data.size() < need ? data.size() : need;
+            for (std::size_t i = 0; i < take; ++i) {
+                partial_[partial_len_ + i] = data[i];
+            }
+            partial_len_ += take;
+            offset += take;
+            if (partial_len_ == kBlockBytes) {
+                compress_block(partial_.data(), hash_);
+                partial_len_ = 0;
+            }
+        }
+
+        while (data.size() - offset >= kBlockBytes) {
+            compress_block(data.data() + offset, hash_);
+            offset += kBlockBytes;
+        }
+
+        for (std::size_t i = offset; i < data.size(); ++i) {
+            partial_[partial_len_++] = data[i];
+        }
+    }
+
+    [[nodiscard]] Sha256Digest finalize() {
+        // FIPS 180-4 padding: 0x80, then zero bytes until 56 bytes into the final
+        // block, then the 64-bit big-endian message BIT length.
+        // total_bytes_ <= UINT64_MAX/8 is guaranteed by the update() domain check,
+        // so this multiply cannot overflow.
+        const std::uint64_t bit_length = total_bytes_ * 8ULL;
+        std::array<std::uint8_t, 1> one{0x80U};
+        append_padding(one);
+        while (partial_len_ != 56) {
+            std::array<std::uint8_t, 1> zero{0x00U};
+            append_padding(zero);
+        }
+        std::array<std::uint8_t, 8> length_be{};
+        for (int shift = 56, i = 0; shift >= 0; shift -= 8, ++i) {
+            length_be[static_cast<std::size_t>(i)] =
+                static_cast<std::uint8_t>((bit_length >> shift) & 0xffU);
+        }
+        append_padding(length_be);
+
+        Sha256Digest digest{};
+        for (std::size_t word = 0; word < hash_.size(); ++word) {
+            digest[word * 4 + 0] = static_cast<std::uint8_t>((hash_[word] >> 24U) & 0xffU);
+            digest[word * 4 + 1] = static_cast<std::uint8_t>((hash_[word] >> 16U) & 0xffU);
+            digest[word * 4 + 2] = static_cast<std::uint8_t>((hash_[word] >> 8U) & 0xffU);
+            digest[word * 4 + 3] = static_cast<std::uint8_t>(hash_[word] & 0xffU);
+        }
+        return digest;
+    }
+
+  private:
+    // Padding bytes are appended through the same partial-block machinery as data,
+    // but WITHOUT touching total_bytes_ or the domain check (padding is not message
+    // content). One block is flushed as soon as the partial buffer fills.
+    void append_padding(std::span<const std::uint8_t> pad) noexcept {
+        for (const std::uint8_t byte : pad) {
+            partial_[partial_len_++] = byte;
+            if (partial_len_ == kBlockBytes) {
+                compress_block(partial_.data(), hash_);
+                partial_len_ = 0;
+            }
+        }
+    }
+
+    std::array<std::uint32_t, 8> hash_{
+        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U,
+    };
+    std::array<std::uint8_t, kBlockBytes> partial_{};
+    std::size_t partial_len_{0};
+    std::uint64_t total_bytes_{0};
+};
+
+[[nodiscard]] std::string to_hex(const Sha256Digest &digest) {
+    static constexpr char kDigits[] = "0123456789abcdef";
+    std::string out;
+    out.resize(digest.size() * 2);
+    for (std::size_t i = 0; i < digest.size(); ++i) {
+        out[i * 2 + 0] = kDigits[(digest[i] >> 4U) & 0x0fU];
+        out[i * 2 + 1] = kDigits[digest[i] & 0x0fU];
+    }
+    return out;
+}
+
 } // namespace
 
+Sha256Digest sha256(std::span<const std::uint8_t> data) {
+    Sha256State state;
+    state.update(data);
+    return state.finalize();
+}
+
+std::string sha256_hex(std::span<const std::uint8_t> data) {
+    return to_hex(sha256(data));
+}
+
 std::string sha256_hex(std::string_view bytes) {
-    std::vector<std::uint8_t> message;
-    message.reserve(bytes.size() + 72);
-    for (const char byte : bytes) {
-        message.push_back(static_cast<std::uint8_t>(byte));
-    }
-
-    const auto bit_length = static_cast<std::uint64_t>(bytes.size()) * 8ULL;
-    message.push_back(0x80U);
-    while ((message.size() % 64U) != 56U) {
-        message.push_back(0U);
-    }
-    for (int shift = 56; shift >= 0; shift -= 8) {
-        message.push_back(static_cast<std::uint8_t>((bit_length >> shift) & 0xffU));
-    }
-
-    std::array<std::uint32_t, 8> hash{
-        0x6a09e667U,
-        0xbb67ae85U,
-        0x3c6ef372U,
-        0xa54ff53aU,
-        0x510e527fU,
-        0x9b05688cU,
-        0x1f83d9abU,
-        0x5be0cd19U,
-    };
-
-    for (std::size_t offset = 0; offset < message.size(); offset += 64) {
-        compress_block(message.data() + offset, hash);
-    }
-
-    std::ostringstream output;
-    output << std::hex << std::setfill('0');
-    for (const auto word : hash) {
-        output << std::setw(8) << word;
-    }
-    return output.str();
+    return sha256_hex(std::span<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size()));
 }
 
 } // namespace ahfl::support
