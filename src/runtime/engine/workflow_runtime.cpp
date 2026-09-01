@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <expected>
+#include <memory>
 #include <optional>
 #include <string>
 #include <set>
@@ -11,8 +13,13 @@
 #include <vector>
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
+#include "base/json/json_value.hpp"
 #include "runtime/engine/capability_eval.hpp"
+#include "runtime/engine/core_wire_codec.hpp"
+#include "runtime/engine/core_wire_codec_recovery.hpp"
 #include "runtime/evaluator/evaluator.hpp"
 #include "runtime/evaluator/value_json.hpp"
 
@@ -49,9 +56,17 @@ struct NodeMemoState {
     std::size_t pending_cap_id{0};             // pending call's capability SymbolId
     std::uint64_t pending_ordinal{0};          // pending call's ordinal
     // Resume replay (C7): when true, ordinals below pending_ordinal are served
-    // from `memo` instead of live-invoked, and pending_ordinal receives the
-    // host-supplied resume result.
+    // from `replay_source` instead of live-invoked, and pending_ordinal receives
+    // the host-supplied resume result.
     bool replaying{false};
+    // RFC 0026 C2b stage3 (P0-13): a READ-ONLY pointer into the recovery snapshot's
+    // suspended memo. Replay hits validate + decode the ORIGINAL persisted entry
+    // here (never pre-cloned into `memo`), so clone_value can never launder a
+    // hostile null-child collection before the trust gate. Each successful hit
+    // appends a FRESH NativeOnly canonical entry (the decoded Value) to `memo`,
+    // rebuilding a dense prefix for a subsequent suspension — the persisted source
+    // provenance (Legacy/Sidecar) is NEVER copied into `memo`.
+    const std::vector<CapabilityMemoEntry> *replay_source{nullptr};
 
     void reset() {
         next_ordinal = 0;
@@ -60,6 +75,7 @@ struct NodeMemoState {
         pending_cap_id = 0;
         pending_ordinal = 0;
         replaying = false;
+        replay_source = nullptr;
     }
 };
 
@@ -276,52 +292,6 @@ build_runtime_plan(const ir::WorkflowDecl &workflow,
     return hash;
 }
 
-// RFC 0022 slice 5 (fail-closed): does a runtime Value structurally match a
-// declared capability return type? Used to validate an injected resume result
-// and every memo Value before it re-enters evaluation. A mismatch means the
-// snapshot is corrupt / the host replied with the wrong shape — fail closed
-// (abort with a diagnostic), never coerce, never fall back to a live call.
-// `Unresolved`/`Any` accept anything (the type checker already vetted the
-// program; this guards the resume boundary, not the source).
-[[nodiscard]] bool value_matches_return_type(const evaluator::Value &value,
-                                             const ir::TypeRef &type) {
-    using namespace ahfl::evaluator;
-    switch (type.kind) {
-    case ir::TypeRefKind::Unresolved:
-    case ir::TypeRefKind::Any:
-    case ir::TypeRefKind::Never:
-        return true;
-    case ir::TypeRefKind::Unit:
-        return std::holds_alternative<UnitValue>(value.node) ||
-               std::holds_alternative<NoneValue>(value.node);
-    case ir::TypeRefKind::Bool:
-        return std::holds_alternative<BoolValue>(value.node);
-    case ir::TypeRefKind::Int:
-    case ir::TypeRefKind::BoundedInt:
-        return std::holds_alternative<IntValue>(value.node);
-    case ir::TypeRefKind::Float:
-        return std::holds_alternative<FloatValue>(value.node);
-    case ir::TypeRefKind::String:
-    case ir::TypeRefKind::BoundedString:
-        return std::holds_alternative<StringValue>(value.node);
-    case ir::TypeRefKind::UUID:
-        return std::holds_alternative<UuidValue>(value.node);
-    case ir::TypeRefKind::Timestamp:
-        return std::holds_alternative<TimestampValue>(value.node);
-    case ir::TypeRefKind::Duration:
-        return std::holds_alternative<DurationValue>(value.node);
-    case ir::TypeRefKind::Decimal:
-        return std::holds_alternative<DecimalValue>(value.node);
-    case ir::TypeRefKind::Struct:
-        return std::holds_alternative<StructValue>(value.node);
-    case ir::TypeRefKind::Enum:
-        return std::holds_alternative<EnumValue>(value.node);
-    case ir::TypeRefKind::Fn:
-        return std::holds_alternative<CallableValue>(value.node);
-    }
-    return false;
-}
-
 void finalize_report(WorkflowResult &result) {
     auto report = build_execution_report(result.events.events());
     if (report.has_value()) {
@@ -369,6 +339,216 @@ void finalize_report(WorkflowResult &result) {
 
 } // namespace
 
+// RFC 0026 C2b stage3: the immutable per-capability result wire-schema binding
+// cache, keyed by CapabilityDecl.symbol_ref.id. Built once at construction. Each
+// id maps to a BindingCacheEntry that is EITHER a verified binding OR a
+// schema_failure string (a fixed prefix + compiler/schema diagnostic code:message
+// — never runtime payload). `global_failure` is set when the whole type
+// environment failed to build, in which case every lookup reports that failure.
+// A cap with no cache entry at all is a genuine miss (unknown/absent id), kept
+// DISTINCT from a stored schema failure so consume and tests can tell them apart.
+struct BindingCacheEntry {
+    std::optional<ir::core::VerifiedWireSchemaBinding> binding;
+    std::string schema_failure; // non-empty iff projection failed; no payload
+};
+
+struct WireResultBindingCache {
+    std::string global_failure; // non-empty iff the type environment failed to build
+    std::unordered_map<std::size_t, BindingCacheEntry> by_symbol_id;
+
+    // Tri-state lookup outcome for a capability declaration symbol id.
+    enum class Status { Binding, MissingId, SchemaFailure };
+    struct Lookup {
+        Status status{Status::MissingId};
+        const ir::core::VerifiedWireSchemaBinding *binding{nullptr};
+        std::string failure; // set for SchemaFailure (or the global env failure)
+    };
+
+    [[nodiscard]] Lookup find(std::size_t cap_decl_symbol_id) const {
+        if (!global_failure.empty()) {
+            return {Status::SchemaFailure, nullptr, global_failure};
+        }
+        const auto it = by_symbol_id.find(cap_decl_symbol_id);
+        if (it == by_symbol_id.end()) {
+            return {Status::MissingId, nullptr, {}};
+        }
+        if (it->second.binding.has_value()) {
+            return {Status::Binding, &*it->second.binding, {}};
+        }
+        return {Status::SchemaFailure, nullptr, it->second.schema_failure};
+    }
+};
+
+namespace {
+
+// Compose a schema-only failure string from the first error diagnostic (fixed
+// prefix + code:message). Never includes runtime payload / observed values.
+[[nodiscard]] std::string
+schema_failure_text(const std::vector<ir::core::CoreLowerDiagnostic> &diagnostics) {
+    for (const auto &d : diagnostics) {
+        if (d.severity == ir::core::CoreDiagnosticSeverity::Error) {
+            return "wire-schema projection failed: " + d.code + ": " + d.message;
+        }
+    }
+    return "wire-schema projection failed";
+}
+
+// Build the immutable binding cache from the program. Never throws / never errors
+// construction: a failed environment sets global_failure; a capability whose
+// result type does not project (or whose SymbolId collides) stores a schema
+// failure; a capability without a symbol id is skipped (a later hit fails closed
+// on the missing identity). Fail-closed is applied lazily at consume, so an
+// unused capability never blocks a run.
+[[nodiscard]] std::shared_ptr<const WireResultBindingCache>
+build_wire_binding_cache(const ir::Program &program, const ir::ProgramIndex &index) {
+    auto cache = std::make_shared<WireResultBindingCache>();
+    auto env_result = ir::core::build_core_type_environment(program);
+    if (!env_result.ok() || !env_result.environment.has_value()) {
+        cache->global_failure = schema_failure_text(env_result.diagnostics);
+        if (cache->global_failure.empty()) {
+            cache->global_failure = "wire-schema type environment build failed";
+        }
+        return cache;
+    }
+    const auto &environment = *env_result.environment;
+    for (const auto *cap : index.capabilities()) {
+        if (cap == nullptr || !cap->symbol_ref.id.has_value()) {
+            // No name/0 fallback: a capability without a stable symbol id gets no
+            // entry, so a memo/pending hit that resolves to it is a MissingId miss.
+            continue;
+        }
+        const std::size_t id = *cap->symbol_ref.id;
+        // Reject a SymbolId collision (theoretically impossible, but never allow
+        // unordered_map last-write-wins to silently pick one binding): force a
+        // stored schema failure for that id.
+        if (cache->by_symbol_id.contains(id)) {
+            cache->by_symbol_id[id] =
+                BindingCacheEntry{std::nullopt, "wire-schema projection failed: duplicate "
+                                                "capability symbol id"};
+            continue;
+        }
+        auto migration =
+            ir::core::migrate_type_ref_to_wire_binding(cap->return_type_ref, environment);
+        if (migration.ok() && migration.binding.has_value()) {
+            cache->by_symbol_id.emplace(
+                id, BindingCacheEntry{std::move(*migration.binding), {}});
+        } else {
+            cache->by_symbol_id.emplace(
+                id, BindingCacheEntry{std::nullopt, schema_failure_text(migration.diagnostics)});
+        }
+    }
+    return cache;
+}
+
+// RFC 0026 C2b stage3 (P0-13/17/18): the trusted outcome of decoding a persisted
+// memo/pending result — the canonical native Value plus the RESOLVED presence bit.
+// `present==false` means a valueless success (the caller must return
+// CapabilityCallResult.value=nullopt so the evaluator still sees NoneValue), while
+// `canonical` still holds the schema-canonical Value (Unit) for the fresh
+// NativeOnly memo append. Carrying both preserves the historical observable
+// (valueless -> None at the call site) without losing the canonical shape.
+struct TrustedMemoResult {
+    evaluator::Value canonical;
+    bool present{true};
+};
+
+// RFC 0026 C2b stage3 (P0-13/17/19): validate a NATIVE trusted result (a
+// programmatic memo entry's Value or a host-supplied pending Value) against its
+// binding, on the ORIGINAL value WITHOUT cloning first — so a malformed
+// null-child List/Set/Struct/Map can never be laundered into a shorter "valid"
+// collection before the trust gate. Returns the canonical Value + resolved
+// presence, cloning ONLY after validation succeeds.
+[[nodiscard]] std::expected<TrustedMemoResult, std::string>
+validate_native_trusted_result(const evaluator::Value &original, bool present,
+                               const ir::core::VerifiedWireSchemaBinding &binding) {
+    const bool is_bare_none = std::holds_alternative<evaluator::NoneValue>(original.node);
+    const bool is_unit = std::holds_alternative<evaluator::UnitValue>(original.node);
+    if (!present) {
+        // Valueless: only NoneValue / UnitValue whose wire is exactly null, and
+        // only under an exact Unit root. Canonicalize to Unit, keep present=false.
+        if (!(is_bare_none || is_unit) || evaluator::value_to_json(original) != "null") {
+            return std::unexpected(std::string("valueless memo result is not a null Unit"));
+        }
+        auto probe = wire_codec::validate_value(evaluator::make_unit(), binding);
+        if (!probe.valid) {
+            return std::unexpected(probe.error);
+        }
+        return TrustedMemoResult{evaluator::make_unit(), false};
+    }
+    // present==true: the established compat case (true + bare None) is a legacy
+    // valueless success — normalize to Unit + present=false ONLY under an exact
+    // Unit root (never a strict-None reject, never present=true).
+    if (is_bare_none) {
+        auto probe = wire_codec::validate_value(evaluator::make_unit(), binding);
+        if (!probe.valid) {
+            return std::unexpected(probe.error);
+        }
+        return TrustedMemoResult{evaluator::make_unit(), false};
+    }
+    auto validation = wire_codec::validate_value(original, binding);
+    if (!validation.valid) {
+        return std::unexpected(validation.error);
+    }
+    return TrustedMemoResult{evaluator::clone_value(original), true};
+}
+
+// Decode a persisted memo/pending result under its verified binding into a
+// TrustedMemoResult. `binding` is for the capability this entry resolves to
+// (identity already confirmed by the caller). Runs the structural three-state gate
+// FIRST, then the source-specific decode/validate. Returns a schema-only error
+// string (no payload echo) on any fail-closed condition. The native `entry.result`
+// projection is trusted ONLY for a NativeOnly entry.
+[[nodiscard]] std::expected<TrustedMemoResult, std::string>
+decode_persisted_memo_result(const CapabilityMemoEntry &entry,
+                             const ir::core::VerifiedWireSchemaBinding &binding) {
+    // Structural state gate (same well-formedness as save/load; consume is a real
+    // fail-closed gate, not merely a construction convenience).
+    if (!memo_result_state_well_formed(entry)) {
+        return std::unexpected(std::string("memo entry result state is ill-formed"));
+    }
+    switch (entry.source) {
+    case PersistedMemoResultSource::NativeOnly:
+        // validate the ORIGINAL entry.result in place (no pre-clone laundering).
+        return validate_native_trusted_result(entry.result, *entry.result_present, binding);
+    case PersistedMemoResultSource::ExactSidecar: {
+        auto dom = ahfl::json::parse_json(*entry.authoritative_json);
+        if (!dom.has_value() || !*dom) {
+            return std::unexpected(std::string("memo entry authoritative wire result is malformed"));
+        }
+        const bool present = *entry.result_present; // well-formed => engaged
+        auto decoded = wire_codec::decode_json(**dom, binding);
+        if (!decoded.ok()) {
+            return std::unexpected(decoded.error);
+        }
+        if (!present && !std::holds_alternative<evaluator::UnitValue>(decoded.value->node)) {
+            return std::unexpected(
+                std::string("valueless memo result is not a Unit under its schema"));
+        }
+        return TrustedMemoResult{std::move(*decoded.value), present};
+    }
+    case PersistedMemoResultSource::LegacyV2: {
+        auto dom = ahfl::json::parse_json(*entry.authoritative_json);
+        if (!dom.has_value() || !*dom) {
+            return std::unexpected(std::string("memo entry authoritative wire result is malformed"));
+        }
+        // The pre-sidecar bytes may encode an integral Float as a bare int; the
+        // recovery-internal legacy decoder accepts SignedInteger -> Float.
+        auto decoded = wire_codec::decode_json_legacy_v2(**dom, binding);
+        if (!decoded.ok()) {
+            return std::unexpected(decoded.error);
+        }
+        // Presence is irreversibly unknown for pre-sidecar bytes; resolve by the
+        // chosen historical default: a decoded Unit -> present=false (old replay
+        // presented NoneValue), any other value -> present=true.
+        const bool present = !std::holds_alternative<evaluator::UnitValue>(decoded.value->node);
+        return TrustedMemoResult{std::move(*decoded.value), present};
+    }
+    }
+    return std::unexpected(std::string("memo entry has an unknown result source"));
+}
+
+} // namespace
+
 bool WorkflowResult::has_errors() const {
     return diagnostics.has_error();
 }
@@ -409,7 +589,8 @@ const Value *WorkflowResult::output() const noexcept {
 }
 
 WorkflowRuntime::WorkflowRuntime(const ir::Program &program, WorkflowRuntimeConfig config)
-    : program_(program), index_(program_), config_(std::move(config)) {}
+    : program_(program), index_(program_), config_(std::move(config)),
+      wire_binding_cache_(build_wire_binding_cache(program_, index_)) {}
 
 const ir::WorkflowDecl *WorkflowRuntime::find_workflow(const std::string &name) const {
     return index_.find_workflow(name);
@@ -644,10 +825,21 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             // cross-checked on cap_id + arg_hash — a mismatch is fail-closed
             // (non-deterministic replay), never a silent live re-invoke.
             if (node_memo.replaying && memo_ordinal < node_memo.pending_ordinal) {
-                const auto entry = std::find_if(
-                    node_memo.memo.begin(), node_memo.memo.end(),
-                    [&](const CapabilityMemoEntry &e) { return e.ordinal == memo_ordinal; });
-                if (entry == node_memo.memo.end() || entry->cap_id != cap_symbol_id ||
+                // Coordinate gate FIRST (unchanged diagnostic priority): find the
+                // ORIGINAL persisted entry by ordinal in the read-only replay
+                // source; a missing entry or cap_id/arg_hash mismatch is a
+                // non-deterministic replay divergence.
+                const auto *source = node_memo.replay_source;
+                const CapabilityMemoEntry *entry = nullptr;
+                if (source != nullptr) {
+                    for (const auto &e : *source) {
+                        if (e.ordinal == memo_ordinal) {
+                            entry = &e;
+                            break;
+                        }
+                    }
+                }
+                if (entry == nullptr || entry->cap_id != cap_symbol_id ||
                     entry->arg_hash != arg_hash) {
                     CapabilityCallResult mismatch;
                     mismatch.status = CapabilityCallStatus::Error;
@@ -663,21 +855,14 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     }
                     return mismatch;
                 }
-                CapabilityCallResult memo_hit;
-                memo_hit.status = CapabilityCallStatus::Success;
-                memo_hit.value = evaluator::clone_value(entry->result);
-                memo_hit.cache_hit = true;
-                // RFC 0022 slice 5: fail closed if the memo Value's shape does not
-                // match the capability's declared return type (corrupt snapshot).
-                if (const auto *cap = index_.find_capability(name);
-                    cap != nullptr && memo_hit.value.has_value() &&
-                    !value_matches_return_type(*memo_hit.value, cap->return_type_ref)) {
+                // Identity gate: presence-checked source symbol id, a resolvable
+                // decl, and its symbol id must equal the replay entry's cap_id.
+                // Fail closed BEFORE any decode/clone so a hostile entry can never
+                // borrow another same-name capability's binding.
+                auto fail = [&](std::string msg) -> CapabilityCallResult {
                     CapabilityCallResult bad;
                     bad.status = CapabilityCallStatus::Error;
-                    bad.error_message =
-                        "durable resume memo Value type mismatch for capability '" + name +
-                        "' (ordinal " + std::to_string(memo_ordinal) +
-                        "): recovery snapshot is corrupt";
+                    bad.error_message = std::move(msg);
                     bad.diagnostic_code = std::string(error_codes::backend::ExecutionError.id);
                     if (context.workflow_node_id.valid() &&
                         context.workflow_node_id.index() < node_capability_failures.size()) {
@@ -685,13 +870,99 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                             CapabilityFailureKind::Error;
                     }
                     return bad;
+                };
+                if (!context.source_capability_symbol_id.has_value()) {
+                    return fail("durable resume memo entry has no capability identity (ordinal " +
+                                std::to_string(memo_ordinal) + ")");
                 }
+                const auto *cap = index_.find_capability(name);
+                if (cap == nullptr || !cap->symbol_ref.id.has_value() ||
+                    *cap->symbol_ref.id != entry->cap_id) {
+                    return fail("durable resume memo capability identity mismatch (ordinal " +
+                                std::to_string(memo_ordinal) + ")");
+                }
+                // Binding lookup (identity already confirmed): a stored schema
+                // failure / MissingId is fail-closed with the schema-only text.
+                const auto lookup = wire_binding_cache_->find(entry->cap_id);
+                if (lookup.status != WireResultBindingCache::Status::Binding) {
+                    std::string msg =
+                        "durable resume memo result is not decodable under its schema (ordinal " +
+                        std::to_string(memo_ordinal) + ")";
+                    if (!lookup.failure.empty()) {
+                        msg += ": " + lookup.failure;
+                    }
+                    return fail(std::move(msg));
+                }
+                // Decode the ORIGINAL persisted entry under its binding (exact or
+                // legacy per source). The native projection is never trusted here.
+                auto decoded = decode_persisted_memo_result(*entry, *lookup.binding);
+                if (!decoded.has_value()) {
+                    return fail("durable resume memo Value type mismatch for capability '" + name +
+                                "' (ordinal " + std::to_string(memo_ordinal) +
+                                "): recovery snapshot is corrupt");
+                }
+                // Append a FRESH NativeOnly canonical entry to the dense prefix
+                // (never the persisted source/authoritative_json), carrying the
+                // RESOLVED presence bit, so a subsequent suspension re-serializes a
+                // correct prefix.
+                node_memo.memo.push_back(CapabilityMemoEntry{
+                    .ordinal = memo_ordinal,
+                    .cap_id = cap_symbol_id,
+                    .arg_hash = arg_hash,
+                    .result = evaluator::clone_value(decoded->canonical),
+                    .source = PersistedMemoResultSource::NativeOnly,
+                    .authoritative_json = std::nullopt,
+                    .result_present = decoded->present,
+                });
+                CapabilityCallResult memo_hit;
+                memo_hit.status = CapabilityCallStatus::Success;
+                // Preserve the historical observable: a valueless success returns
+                // no value (evaluator sees NoneValue); a present result returns it.
+                if (decoded->present) {
+                    memo_hit.value = std::move(decoded->canonical);
+                }
+                memo_hit.cache_hit = true;
                 return memo_hit;
             }
             if (node_memo.replaying && memo_ordinal == node_memo.pending_ordinal) {
-                // The previously-pending call: inject the host-supplied result and
-                // leave replay mode so later calls run live again.
-                node_memo.replaying = false;
+                // The previously-pending call. P0-15: verify the pending-call
+                // IDENTITY before reading / validating / cloning the host result, and
+                // before leaving replay mode, so a divergent pending ordinal can
+                // never inject another capability's result. pending record carries
+                // no arg_hash, so capability identity is the available integrity gate.
+                auto fail = [&](std::string msg) -> CapabilityCallResult {
+                    CapabilityCallResult bad;
+                    bad.status = CapabilityCallStatus::Error;
+                    bad.error_message = std::move(msg);
+                    bad.diagnostic_code = std::string(error_codes::backend::ExecutionError.id);
+                    if (context.workflow_node_id.valid() &&
+                        context.workflow_node_id.index() < node_capability_failures.size()) {
+                        node_capability_failures[context.workflow_node_id.index()] =
+                            CapabilityFailureKind::Error;
+                    }
+                    return bad;
+                };
+                if (!context.source_capability_symbol_id.has_value()) {
+                    return fail("durable resume pending call has no capability identity");
+                }
+                if (cap_symbol_id != node_memo.pending_cap_id) {
+                    return fail("durable resume pending-call identity mismatch");
+                }
+                const auto *cap = index_.find_capability(name);
+                if (cap == nullptr || !cap->symbol_ref.id.has_value() ||
+                    *cap->symbol_ref.id != node_memo.pending_cap_id) {
+                    return fail("durable resume pending-call identity mismatch");
+                }
+                const auto lookup = wire_binding_cache_->find(node_memo.pending_cap_id);
+                if (lookup.status != WireResultBindingCache::Status::Binding) {
+                    std::string msg = "durable resume pending result is not decodable under its "
+                                      "schema";
+                    if (!lookup.failure.empty()) {
+                        msg += ": " + lookup.failure;
+                    }
+                    return fail(std::move(msg));
+                }
+                // Identity confirmed: NOW leave replay mode and consume the result.
                 if (!config_.resume_pending_result.has_value()) {
                     CapabilityCallResult missing;
                     missing.status = CapabilityCallStatus::Error;
@@ -701,34 +972,34 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                         std::string(error_codes::backend::ExecutionError.id);
                     return missing;
                 }
-                // RFC 0022 slice 5: fail closed if the injected result's shape does
-                // not match the capability's declared return type — never coerce.
-                if (const auto *cap = index_.find_capability(name);
-                    cap != nullptr &&
-                    !value_matches_return_type(*config_.resume_pending_result,
-                                               cap->return_type_ref)) {
-                    CapabilityCallResult bad;
-                    bad.status = CapabilityCallStatus::Error;
-                    bad.error_message =
-                        "durable resume pending-result type mismatch for capability '" + name +
-                        "': host supplied a value of the wrong type";
-                    bad.diagnostic_code = std::string(error_codes::backend::ExecutionError.id);
-                    if (context.workflow_node_id.valid() &&
-                        context.workflow_node_id.index() < node_capability_failures.size()) {
-                        node_capability_failures[context.workflow_node_id.index()] =
-                            CapabilityFailureKind::Error;
-                    }
-                    return bad;
+                // Route the host/programmatic pending Value through the SAME presence
+                // rules as memo consumption (P0-17/19), validating the ORIGINAL Value
+                // in place (P0-13: never clone before the trust gate — a malformed
+                // null-child collection must not be laundered). A NativeOnly true+None
+                // under a Unit binding is the established legacy-valueless case ->
+                // canonical Unit + present=false, not a strict-None reject.
+                auto decoded = validate_native_trusted_result(*config_.resume_pending_result,
+                                                              /*present=*/true, *lookup.binding);
+                if (!decoded.has_value()) {
+                    return fail("durable resume pending-result type mismatch for capability '" +
+                                name + "': host supplied a value of the wrong type");
                 }
+                // All gates passed: leave replay mode and append the fresh entry.
+                node_memo.replaying = false;
                 node_memo.memo.push_back(CapabilityMemoEntry{
                     .ordinal = memo_ordinal,
                     .cap_id = cap_symbol_id,
                     .arg_hash = arg_hash,
-                    .result = evaluator::clone_value(*config_.resume_pending_result),
+                    .result = evaluator::clone_value(decoded->canonical),
+                    .source = PersistedMemoResultSource::NativeOnly,
+                    .authoritative_json = std::nullopt,
+                    .result_present = decoded->present,
                 });
                 CapabilityCallResult resumed;
                 resumed.status = CapabilityCallStatus::Success;
-                resumed.value = evaluator::clone_value(*config_.resume_pending_result);
+                if (decoded->present) {
+                    resumed.value = std::move(decoded->canonical);
+                }
                 return resumed;
             }
 
@@ -749,7 +1020,16 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             // crash between the host effect and the memo append is recoverable: on
             // resume the host sees the same idempotency key and dedups rather than
             // re-committing. Read-only / external-side-effect calls skip this.
-            if (config_.durable_write_intent_sink && cap_symbol_id != 0) {
+            //
+            // RFC 0026 C2b stage3 (presence-not-value): capability identity presence
+            // is decided by source_capability_symbol_id.has_value(), NEVER by
+            // cap_symbol_id != 0 — SymbolId 0 is a legal identity (same ruling as the
+            // resume id=0 path). Gating on != 0 would silently skip the write-ahead
+            // intent for a legitimate id=0 DurableWrite/FinancialWrite, leaving its
+            // effect non-idempotent across a crash. The dereferenced SymbolId
+            // (including 0) still flows into the idempotency key below.
+            if (config_.durable_write_intent_sink &&
+                context.source_capability_symbol_id.has_value()) {
                 if (const auto *cap = index_.find_capability(name);
                     cap != nullptr &&
                     (cap->effect.kind == ir::CapabilityEffectKind::DurableWrite ||
@@ -868,6 +1148,10 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 // later suspension in the same node can replay it deterministically
                 // instead of re-invoking. Keyed by the stable per-node ordinal;
                 // cap_id + arg_hash are integrity cross-checks asserted on replay.
+                // RFC 0026 C2b stage3 (P0-17): a NativeOnly entry; the presence bit
+                // records whether the live call actually produced a value (a
+                // valueless success stores a NoneValue placeholder + present=false,
+                // and does NOT change call_result / CapabilityCompleted.output).
                 node_memo.memo.push_back(CapabilityMemoEntry{
                     .ordinal = memo_ordinal,
                     .cap_id = cap_symbol_id,
@@ -875,6 +1159,9 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     .result = call_result.value.has_value()
                                   ? evaluator::clone_value(*call_result.value)
                                   : evaluator::make_none(),
+                    .source = PersistedMemoResultSource::NativeOnly,
+                    .authoritative_json = std::nullopt,
+                    .result_present = call_result.value.has_value(),
                 });
                 emit(CapabilityCompleted{
                     .invocation = previous,
@@ -959,14 +1246,12 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             node_memo.replaying = true;
             node_memo.pending_ordinal = record.pending_ordinal;
             node_memo.pending_cap_id = record.pending_cap_id;
-            for (const auto &entry : record.memo) {
-                node_memo.memo.push_back(CapabilityMemoEntry{
-                    .ordinal = entry.ordinal,
-                    .cap_id = entry.cap_id,
-                    .arg_hash = entry.arg_hash,
-                    .result = evaluator::clone_value(entry.result),
-                });
-            }
+            // RFC 0026 C2b stage3 (P0-13): point at the persisted memo READ-ONLY;
+            // do NOT pre-clone it into node_memo.memo (clone_value would silently
+            // drop null List/Set/Struct children, laundering a hostile snapshot
+            // before the per-ordinal trust gate). Each replay hit validates + decodes
+            // the ORIGINAL entry and appends a fresh NativeOnly canonical entry.
+            node_memo.replay_source = &record.memo;
         }
         CapabilityInvocationContext node_context{
             .workflow_name = workflow_name,
@@ -1073,8 +1358,13 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         if (config_.agent_input_hook) {
             config_.agent_input_hook(node.agent, agent_name, node_name, node_input);
         }
-        // RFC 0022 (C6): preserve the node input before it is moved into the
-        // agent — a suspension needs it verbatim to re-run the node on resume.
+        // RFC 0022 (C6): capture the node input before it is moved into the agent.
+        // NOTE (RFC 0026 C2b stage3 accuracy): this snapshot is PERSISTED into the v2
+        // record for format completeness / potential observation, but resume does NOT
+        // restore execution from it — the node-input expression is RE-EVALUATED on
+        // resume and its capability calls replayed from the memo (see the resume path
+        // at the top of this loop). It is informational today, NOT a trust authority;
+        // a reader must not assume it drives resume (residual risk if that changes).
         evaluator::Value node_input_snapshot = evaluator::clone_value(node_input);
         AgentResult agent_result = agent_rt.run(std::move(node_input));
 
@@ -1102,6 +1392,45 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         }
 
         if (agent_result.status == AgentStatus::Completed) {
+            // RFC 0026 C2b stage3 (P0-21): a resuming node MUST reach and consume
+            // its recorded pending capability call. If the recovered control flow
+            // completes WITHOUT ever hitting the pending ordinal, `replaying` is
+            // still true here — the replay diverged from the recorded run. Fail
+            // closed BEFORE any node_completed_hook / checkpoint / NodeCompleted,
+            // rather than silently completing. This only intercepts an
+            // otherwise-success completion; it never overrides an eval/agent failure
+            // (those are handled above) and performs no live invoke.
+            if (resuming_node && node_memo.replaying) {
+                // This branch is NOT routed through capability_eval, so build the
+                // diagnostic with the EXECUTION_ERROR code directly (add_runtime_error
+                // sets no code). No CapabilityFailed is emitted — there was no real
+                // capability invocation. Preserve the completed agent's non-error
+                // diagnostics first (the normal Completed path appends them), so a
+                // warning/notice is not silently dropped by failing here.
+                result.diagnostics.append(agent_result.diagnostics);
+                const DiagnosticId diagnostic{result.diagnostics.entries().size()};
+                result.diagnostics.error()
+                    .message("durable resume replay diverged: the recorded pending capability "
+                             "call (ordinal " +
+                             std::to_string(node_memo.pending_ordinal) +
+                             ") was never reached before the node completed")
+                    .code(std::string(error_codes::backend::ExecutionError.id))
+                    .emit();
+                failed_nodes[node.id.index()] = true;
+                if (node.id.valid() && node.id.index() < node_capability_failures.size()) {
+                    node_capability_failures[node.id.index()] = CapabilityFailureKind::Error;
+                }
+                emit(NodeFailed{
+                    .node = node.id,
+                    .diagnostic = diagnostic,
+                    .kind = NodeFailureKind::EvaluationFailed,
+                });
+                if (!workflow_failure.has_value()) {
+                    workflow_failure = WorkflowFailureKind::EvaluationFailed;
+                    workflow_diagnostic = diagnostic;
+                }
+                continue;
+            }
             std::optional<RuntimeValueId> output_id;
             if (agent_result.output.has_value()) {
                 if (config_.node_completed_hook) {

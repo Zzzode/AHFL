@@ -237,6 +237,17 @@ void test_unbound_capability_fails_closed() {
 Program make_node_capability_workflow() {
     Program program;
 
+    // RFC 0026 C2b stage3 (Option B): declare `is_ready` (Bool) with a stable
+    // SymbolId so the durable-resume trust boundary can resolve + identity-check it.
+    CapabilityDecl is_ready_decl;
+    is_ready_decl.name = "is_ready";
+    is_ready_decl.return_type_ref = TypeRef{.kind = TypeRefKind::Bool};
+    is_ready_decl.symbol_ref = SymbolRef{.kind = SymbolRefKind::Capability,
+                                         .canonical_name = "is_ready",
+                                         .local_name = "is_ready",
+                                         .id = 61};
+    program.declarations.push_back(std::move(is_ready_decl));
+
     AgentDecl agent;
     agent.name = "EchoAgent";
     agent.symbol_ref = SymbolRef{.kind = SymbolRefKind::Agent, .canonical_name = "EchoAgent",
@@ -281,6 +292,10 @@ Program make_node_capability_workflow() {
     node_input.type_name = "EchoInput";
     CallExpr ready_call;
     ready_call.callee = "is_ready";
+    ready_call.callee_ref = SymbolRef{.kind = SymbolRefKind::Capability,
+                                      .canonical_name = "is_ready",
+                                      .local_name = "is_ready",
+                                      .id = 61};
     node_input.fields.push_back(StructFieldInit{.name = "ready", .value = expr(std::move(ready_call))});
     node.input = expr(std::move(node_input));
     workflow.nodes.push_back(std::move(node));

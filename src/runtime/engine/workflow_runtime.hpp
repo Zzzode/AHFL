@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -23,6 +24,11 @@
 #include "runtime/evaluator/value.hpp"
 
 namespace ahfl::runtime {
+
+// RFC 0026 C2b stage3: opaque immutable per-capability result wire-schema binding
+// cache; defined in workflow_runtime.cpp so the core wire types stay out of this
+// header. WorkflowRuntime holds one by shared_ptr<const> (see below).
+struct WireResultBindingCache;
 
 // Workflow execution status
 enum class WorkflowStatus {
@@ -138,6 +144,14 @@ class WorkflowRuntime {
     const ir::Program &program_;
     ir::ProgramIndex index_;
     WorkflowRuntimeConfig config_;
+    // RFC 0026 C2b stage3: an immutable, SymbolId-keyed cache of per-capability
+    // result wire-schema bindings, built ONCE at construction from the program's
+    // type environment. Each entry is either a verified binding or a schema-only
+    // failure; a global environment-build failure yields an all-failure cache. It
+    // is consumed read-only during resume (durable memo/pending trust decode) and
+    // never blocks a run for an unused capability. Opaque here so the core wire
+    // types stay out of this header (defined in workflow_runtime.cpp).
+    std::shared_ptr<const WireResultBindingCache> wire_binding_cache_;
 
     // Source-boundary declaration lookup. Runtime execution materializes these
     // names into strong IDs before scheduling starts.

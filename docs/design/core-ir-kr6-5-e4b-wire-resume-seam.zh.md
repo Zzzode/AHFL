@@ -280,8 +280,8 @@ would change the RFC 0019/0021 byte contract.
 Two inputs must be checked without duplicating schema semantics:
 
 - raw JSON must be decoded into a typed `evaluator::Value`; and
-- an already materialized native memo/injected `Value` must be validated without
-  serializing it and thereby hiding an incorrect runtime variant.
+- an already materialized native `Value` must be validated without serializing it
+  and thereby hiding an incorrect runtime variant.
 
 The implementation uses one schema-kind dispatch with two policies:
 
@@ -291,9 +291,21 @@ RuntimeValuePolicy    -> consumes Value node, returns validation only
 ```
 
 Both policies use the same field/variant/child traversal and exact-kind rules.
+
+**Which policy applies is SOURCE-DEPENDENT, not "native memo/injected Value is
+always native-validated"** (that earlier phrasing was wrong; see §9 for the landed
+Stage-3 behavior). Concretely for durable resume:
+
+- a **persisted** memo entry's authority is its JSON (LegacyV2 raw `result` substring
+  or ExactSidecar sidecar wire), decoded by the `WireJsonDecodePolicy`
+  (`decode_json` / the legacy variant) — its schema-free materialized `result` Value
+  is a compat projection, NEVER the authority;
+- only a **programmatic NativeOnly** memo entry and the **host-supplied native
+  pending** result are checked by `RuntimeValuePolicy` on the ORIGINAL Value.
+
 The shallow `workflow_runtime.cpp::value_matches_return_type` is deleted. The
-TypeRef-based response validator is migrated to the shared schema API rather
-than becoming a third durable-resume authority.
+TypeRef-based response validator is migrated to the shared schema API rather than
+becoming a third durable-resume authority.
 
 ### 2.5 Legacy native callers do not define durable schema
 
@@ -527,3 +539,145 @@ B0 does not:
 The next review decides only this wire-schema and state boundary. Production
 resume remains fail-closed until B0, B1, and a separately reviewed B2 are all
 implemented.
+
+## 9. C2b Stage 3 as implemented: memo/pending result trust seam
+
+Stage 3 wires the RFC 0022 durable-resume memo/pending **result** boundary through
+the shared codec (§2.3/§2.4) and closes the persistence-format gaps a schema-free
+`value_to_json`/`value_from_json` round trip leaves open. This section records the
+landed facts so no reader re-derives them, and so the honest boundaries are explicit.
+
+### 9.1 Scope: memo-result-only seam
+
+The trust authority is the memo/pending **result** value; HOW it is carried depends
+on the entry's persisted source (§9.2), NOT a blanket "every `CapabilityMemoEntry`
+carries an exact wire + presence". A NativeOnly entry has NO `authoritative_json`
+(its native `result` is authority); a LegacyV2 entry's presence is UNKNOWN; only an
+ExactSidecar carries both the verbatim wire (`authoritative_json`) and a presence bit.
+For Legacy/ExactSidecar the native `result` Value is a compatibility projection only.
+
+Not in this seam (residual risks, stated honestly):
+
+- `node_input` is PERSISTED for format completeness / potential observation, but the
+  current `WorkflowRuntime` does NOT restore execution from it. On resume the
+  node-input expression is RE-EVALUATED and its capability calls are replayed from the
+  memo. `node_input` is informational, NOT a trust authority; assuming it drives
+  resume is the residual risk (a future B2 restore-from-input change). The
+  `SuspendedNodeState::node_input` and `node_input_snapshot` comments are corrected to
+  say so.
+- Completed-node output (`RecoveredNodeState::output`) restores via the P0-10
+  direct-DOM `value_from_json` path, NOT this schema-guided codec. Known asymmetry.
+- **Persistence is plaintext, NOT a protected/secret-free store (security scope).**
+  This slice only ADDS append-only `result_wire_json` / `result_present` to the memo
+  entries inside the existing native `WorkflowRecoveryStore` **plaintext v2 snapshot**.
+  Because the sidecar records the raw wire spelling of the same sensitive result that
+  the compat `result` already holds, a sensitive result is now stored TWICE in
+  plaintext (compat `result` + sidecar `result_wire_json`). This is NOT secret-free /
+  protected persistence per §4.3 and MUST NOT be described as a production-safe durable
+  store.
+- **This is NOT full B2, and B2 is NOT a single "restore-from-node-input" task.**
+  Full B2 still requires, each SEPARATELY reviewed: an append-only ABI / control
+  record (§4.2), a protected payload store (§4.3), atomic memo append + crash
+  semantics, ownership / last-use gating (§5), and exact node-order observation /
+  execution evidence — plus a future decision on whether `node_input` is ever actually
+  used. This slice adds NO resume export / custom section / Wasm byte change (§8
+  non-goals hold) and does NOT complete B2. See §4 / §5 / §6 for the full boundary;
+  the point here is only that Stage 3 is a memo-result trust seam on a plaintext store,
+  not the durable-security boundary. The G4 ingress demotion (CLI/gRPC/HTTP/shim entry
+  wiring through the codec) is also PENDING and NOT started in this slice.
+
+### 9.2 Three-state authority
+
+`PersistedMemoResultSource` = {NativeOnly, LegacyV2, ExactSidecar}, enforced
+fail-closed by `memo_result_state_well_formed` at the real save / load / consume entry
+points (NOT merely a construction convenience -- the aggregate is public):
+
+- NativeOnly: `authoritative_json` ABSENT, `result_present` SET; native `result` is
+  authority. Save UPGRADES it to an ExactSidecar (writes the `value_to_json` spelling
+  + presence bit).
+- LegacyV2: `authoritative_json` PRESENT (the raw legacy `result` substring, captured
+  by offset -- no serialize/reparse laundering), `result_present` ABSENT (UNKNOWN).
+- ExactSidecar: `authoritative_json` PRESENT (verbatim `value_to_json` bytes),
+  `result_present` SET; the JSON is authority, native `result` is a best-effort compat
+  placeholder (P0-20, never a load-admission gate).
+
+Why the sidecar: a schema-free round trip loses type on
+Decimal/Duration/Set/Map/Option/Unit, and cannot distinguish integral Float (bare
+int) from Int, nor explicit Unit from a valueless success (both spell JSON `null`).
+
+### 9.3 Consume gate ORDER (P0-13 / P0-15 / P0-21)
+
+Memo replay hit: coordinate gate -> identity gate -> binding lookup ->
+trust-state+decode.
+
+- P0-13: the persisted memo is READ-ONLY, never pre-cloned into the dense prefix
+  (`clone_value` drops null List/Set/Struct/Map children = laundering before the
+  trust gate). Each hit validates + decodes the ORIGINAL entry and appends a FRESH
+  NativeOnly canonical entry carrying the resolved presence bit.
+- P0-15: the pending-call identity is verified BEFORE the host result is
+  read/validated/cloned and BEFORE leaving replay mode (the pending record has no
+  arg_hash, so identity is the integrity gate).
+- P0-21: reaching terminal state while still replaying (recorded pending never
+  reached) fails closed as a replay divergence, never a silent completion.
+
+Coordinate mismatch is a "replay diverged" fail-close, never a silent live invoke; a
+cache `SchemaFailure` (a capability whose return type did not project to a schema) or
+the defensive `MissingId` branch (no cache entry for the id — unreachable once the
+identity gate has confirmed a resolvable decl, kept as a fail-closed guard) is a
+schema-only fail-close (no payload echo). Note `MissingId` is a cache-lookup status,
+not a stored entry.
+
+### 9.4 Legacy byte-stability save gate (P0 -- provenance laundering)
+
+The LegacyV2 save branch has no binding and MUST NOT re-canonicalize. `parse` + generic
+`serialize_json` is provenance-lossy: a hostile overflowing integer parses as
+`IntegerFallback`, re-serializes to exponent/float form, re-parses as `FloatSyntax`
+which the legacy Float decoder would ACCEPT -- re-saving an UNCONSUMED entry flips a
+reject into an accept. Rule: a LegacyV2 entry re-saves ONLY when
+`serialize_json(parse(bytes)) == bytes`; any would-canonicalize spelling
+(`1.0`, `1e3`, an overflowing integer, a bare `-0`) is `InvalidSnapshot` and must be
+upgraded THROUGH CONSUMPTION (P0-13 dense prefix -> fresh NativeOnly -> ExactSidecar).
+Honest statement: an old v2 snapshot still LOADS and CONSUMES; but a non-byte-stable,
+un-binding-consumed Legacy entry cannot be schema-less re-saved -- do not assume
+`save(load(old))` always rewrites.
+
+### 9.5 Integral-Float / Unit-null compat assumptions
+
+- `decode_json_legacy_v2` accepts `SignedInteger` -> Float ONLY under a Float binding,
+  recursively (Option child etc). Sole documented relaxation vs the exact codec.
+- Unit-null presence default for pre-sidecar bytes: decoded Unit -> presence=false
+  (old replay presented NoneValue), any other value -> presence=true.
+- Legacy negative-zero: an old v2 Float `-0.0` was ALREADY written to disk by the
+  outer generic serializer as bare `-0`, so the sign was lost at that old byte layer
+  BEFORE this seam ever sees it — a legacy Float widening of `-0` can only reconstruct
+  `+0.0`. Separately, the bare `-0` byte is not byte-stable, so it cannot be
+  schema-less re-saved (it must upgrade via consumption, which preserves whatever
+  canonical value is still decodable at that point). There is NO "-0.0 on re-save"
+  case: the sign is a pre-existing old-byte ambiguity, not something this stage
+  loses.
+
+### 9.6 Presence bit (P0-17 / P0-18 / P0-19) -- presence-not-value
+
+`result_present` is `optional<bool>` (LegacyV2 UNKNOWN). Save-local normalization:
+a present bare `NoneValue` (legacy valueless compat) persists as presence=false
+WITHOUT mutating the caller; a presence=false entry MUST spell exactly JSON `null`
+(only NoneValue/UnitValue qualify) or save fails closed. Consume: presence=false is
+legal ONLY under an exact Unit root. An Option-null does NOT ride the Unit presence
+seam -- under `Option<Int>` it exact-decodes to Option None then rejects (one-negative
+vs the rich-matrix Option None present=true one-positive).
+
+### 9.7 SymbolId 0 is a legal identity (durable intent included)
+
+Identity presence is `source_capability_symbol_id.has_value()`, NEVER `!= 0`. SymbolId
+0 resolves normally on resume, and the durable-write write-ahead intent gate keys off
+`has_value()` -- a legal id=0 DurableWrite/FinancialWrite still fires its intent before
+dispatch, with the dereferenced id (including 0) flowing into the same idempotency key.
+
+### 9.8 Rollback risk
+
+Reverting Stage 3 restores the pre-C2b schema-free trust path, re-opening BOTH the
+historical type losses (Decimal/Duration/Set/Map/Option/Unit degradation,
+integral-Float ambiguity, explicit-Unit vs valueless-success collision) AND the
+false-accept surface the trust gates close (hostile null-child collections,
+cross-capability binding borrow, Legacy IntegerFallback->FloatSyntax laundering). A
+rollback is therefore not behavior-neutral.

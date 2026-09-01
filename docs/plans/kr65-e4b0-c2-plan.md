@@ -1,10 +1,15 @@
 # B0-C2 Narrow Implementation Plan — rev4 (A′ + Codex Q1/Q2 rulings + must-fixes)
 
-Status: PLAN rev4, C2a APPROVED (do NOT implement C2b until C2a is accepted).
+Status: C2a LANDED; C2b IN PROGRESS. C2b-1/2 codec landed
+(`e97aa76d`); P0-9/P0-10/P0-11 shared-change fixes landed. C2b **Stage 3**
+(durable-resume memo/pending result trust seam, §12) is complete across G1
+(`9d35464f`, recovery format), G2 (`58c5ac57`, legacy codec), and this G3 change
+(runtime trust paths). **G4 (CLI/gRPC/HTTP/shim entry demotion) remains PENDING and
+NOT started**.
 RFC 0026
-KR6.5 E4-B0-C2. Parent HEAD cf3fa90e. Author: Claude (sole writer after sign-off).
+KR6.5 E4-B0-C2. Author: Claude (sole writer). Reviewer: Codex (read-only).
 
-rev2 A′ main architecture approved; rev3 rulings approved. rev4 closes 4
+rev2 A′ main architecture approved; rev3 rulings approved; rev4 closes 4
 documentation blocking pins Codex found on a line-by-line read (stdlib
 resolver contract, type-local gate scope, the actually-missing canonical
 aggregate table, and two fail-closed policies). Authority stays: one
@@ -309,16 +314,29 @@ with the C2b-1/2 codec commit, not the shared P0-10 commit.
 ## 8. Deletions / migrations (C2b)
 
 - DELETE `value_matches_return_type` (workflow_runtime.cpp:286) + uses @674/@708.
-  Both now: build the capability-return binding (from the runtime's type seed +
-  `cap->return_type_ref`), then `validate_value(memo/pending Value, binding)`.
-  Same fail-closed status / diagnostic_code / ownership — deeper check only.
+  **Stage-3 correction (this was the rev4 plan's mistake):** the replacement is NOT
+  a blanket `validate_value(materialized Value, binding)` on both memo and pending.
+  The authority is SOURCE-DEPENDENT (see §12 and design §9):
+  - a **disk** memo entry (LegacyV2 / ExactSidecar) is decoded from its
+    authoritative JSON via `decode_json_legacy_v2` / `decode_json` under the
+    capability binding — the schema-free materialized `result` Value is NEVER the
+    authority there;
+  - a **programmatic NativeOnly** memo entry AND the **host-supplied native pending**
+    result are validated on the ORIGINAL Value via `validate_value` (P0-13: validate
+    in place, clone only after success);
+  - all of this runs AFTER the coordinate + identity + binding-cache gates in the
+    §12 order, and only for the existing memo/pending trust paths. The G4 live /
+    CLI / shim ingress demotion is still PENDING.
+  Same fail-closed status / diagnostic_code / ownership — the check is deeper AND
+  source-aware.
 - `response_schema_validator`: old ad-hoc TypeRef recursion (Any-accept,
   Float-accepts-Int, enum-payload-unchecked, struct field.type_ref erasure,
   canonical-string stdlib match) DELETED. Public `validate_value_against_schema`
   MAY remain as a thin shim that internally does migration→verified binding→
   `validate_value`. `wire_capability` raw-JSON call site (@156-159, @309) MUST
   change to: parse body → raw `json::JsonValue` → `decode_json(raw, binding)`;
-  no schema-free decode on this trust path.
+  no schema-free decode on this trust path. (This wire_capability/CLI/shim change is
+  the PENDING G4 scope; Stage 3 landed the memo/pending paths only.)
 - KEEP `value_from_json` / `value_to_json` for non-trust callers untouched.
 - stdlib / user nominal identity follows `resolve_nominal_strict` verbatim (§0):
   a present id must hit by id with canonical agreement; the ONLY name-only match
@@ -361,3 +379,69 @@ String/BoundedString with bounds enforced; no-schema behavior unchanged.
 3. **C2b** on develop after C2a signs: codec + 2 policies + 3-path migration +
    delete shallow + demote response validator → cross-policy/round-trip/gate
    tests → ASan + dev + byte gate → @ Codex delta review.
+
+## 12. C2b Stage 3 — durable-resume trust seam (memo/pending result)
+
+Stage 3 wires the RFC 0022 durable-resume memo/pending **result** trust boundary
+through the shared codec and closes the persistence-format gaps a schema-free
+round-trip left open. Full design:
+`docs/design/core-ir-kr6-5-e4b-wire-resume-seam.zh.md` §9.
+
+Locked facts (each has a permanent regression):
+
+- **memo-result-only sidecar.** The trust authority is the memo/pending result, and
+  how it is carried depends on the entry's persisted source (three-state, below) —
+  NOT a blanket "every entry has an exact wire + presence". A NativeOnly entry has NO
+  `authoritative_json`; a LegacyV2 entry's presence is UNKNOWN. `node_input` and
+  completed-node output are NOT in this seam (see residual risks).
+- **three-state authority / compat projection.** `PersistedMemoResultSource` =
+  {NativeOnly, LegacyV2, ExactSidecar}, enforced fail-closed by
+  `memo_result_state_well_formed` at the real save / load / consume entry points (not
+  a construction convenience — the aggregate is public). NativeOnly's native `result`
+  is authority (no wire); LegacyV2's authority is the raw `result` substring (presence
+  UNKNOWN); ExactSidecar's authority is the sidecar wire + presence bit. The native
+  `result` is a compat projection for Legacy/Exact only.
+- **consume gate ORDER (P0-13/15/21).** coordinate → identity → binding lookup →
+  trust-state+decode. P0-13: persisted memo is read-only, never pre-cloned (clone
+  drops null collection children = laundering); validate ORIGINAL, append fresh
+  NativeOnly. P0-15: pending identity verified before read/clone and before leaving
+  replay. P0-21: residual-replay-not-consumed fails closed, never silently completes.
+- **Legacy byte-stability save gate (P0 provenance laundering).** LegacyV2 re-save is
+  permitted ONLY when `serialize_json(parse(bytes)) == bytes`; a would-canonicalize
+  entry (1.0 / 1e3 / an overflowing integer / a bare `-0`) is InvalidSnapshot and must
+  be upgraded through consumption. Prevents an IntegerFallback→FloatSyntax false accept.
+- **integral-Float / Unit-null compat.** `decode_json_legacy_v2` accepts
+  SignedInteger→Float ONLY under a Float binding (recursive); the sole relaxation vs
+  the exact codec. Unit-null presence defaults: decoded Unit → presence=false, else
+  true. Legacy negative-zero: an old v2 Float `-0.0` was already written by the outer
+  serializer as bare `-0` (sign lost at that old byte layer, before this seam), so a
+  legacy widening can only reconstruct `+0.0`; the bare `-0` itself is not byte-stable
+  and so cannot be schema-less re-saved (must upgrade via consumption).
+- **presence bit (P0-17/18/19).** `optional<bool>` (LegacyV2 UNKNOWN). Save-local
+  normalizes a present bare None → presence=false without mutating the caller; a
+  presence=false entry must spell exactly null. Consume: presence=false legal ONLY
+  under a Unit root; Option-null does NOT ride the Unit seam (one-negative vs the
+  rich-matrix Option None present=true one-positive).
+- **SymbolId 0 presence-not-value.** Identity presence = `has_value()`, never != 0;
+  covers resume id=0 AND the durable-write write-ahead intent (a legal id=0
+  DurableWrite still fires its intent; the dereferenced id, incl. 0, flows into the
+  idempotency key).
+- **residual risks (honest boundaries).** `node_input` is persisted but
+  informational — resume RE-EVALUATES the input expression and replays the memo; it
+  is NOT a trust authority (comments corrected). Completed-node output restores via
+  the P0-10 direct-DOM path, NOT this codec.
+- **plaintext persistence, NOT full B2 (security scope).** This slice only adds
+  append-only `result_wire_json` / `result_present` inside the existing native
+  `WorkflowRecoveryStore` PLAINTEXT v2 snapshot; the sidecar stores the same sensitive
+  result's raw wire spelling a SECOND time (compat `result` + sidecar), so it is NOT a
+  secret-free / protected store and must NOT be called production-safe durable
+  persistence (see design §4.3, §9.1). Full B2 is NOT one "restore-from-node-input"
+  task: it separately requires an append-only ABI/control record, a protected payload
+  store, atomic memo append + crash semantics, ownership/last-use gating, and exact
+  node-order observation/execution evidence (design §4/§5/§6), plus whether
+  `node_input` is ever truly used. No resume export / custom section / Wasm byte change
+  in this round; B2 is PENDING. G4 (CLI/gRPC/HTTP/shim demotion) is PENDING, not done.
+- **rollback risk.** Reverting re-opens both the historical type losses
+  (Decimal/Duration/Set/Map/Option/Unit, integral-Float, explicit-Unit vs valueless)
+  AND the false-accept surface the gates close (hostile null-child collections,
+  cross-capability binding borrow, Legacy laundering). Not behavior-neutral.
