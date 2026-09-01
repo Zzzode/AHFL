@@ -7,7 +7,7 @@ Status: C2a LANDED; C2b COMPLETE. C2b-1/2 codec landed
 (`0c599d94`, runtime trust paths). **G4 (CLI/gRPC/HTTP/shim entry demotion) is
 COMPLETE**: G4a (`9821046f`, live seam + admission helper), G4b (`471613af`,
 two-phase CLI admission), G4c (`187ca7ad`, raw pending-result subgate), and G4d
-(this change: delete the legacy `response_schema_validator`, so the schema-guided
+(`1bc21acc`: delete the legacy `response_schema_validator`, so the schema-guided
 codec is the sole validation authority). B2 (the full durable-resume
 ABI/control-record, protected payload store, atomic/crash, ownership/last-use,
 and node-order evidence work) remains PENDING.
@@ -331,7 +331,8 @@ with the C2b-1/2 codec commit, not the shared P0-10 commit.
     in place, clone only after success);
   - all of this runs AFTER the coordinate + identity + binding-cache gates in the
     §12 order, and only for the existing memo/pending trust paths. The G4 live /
-    CLI / shim ingress demotion is still PENDING.
+    CLI / shim ingress demotion landed in G4a-d
+    (`9821046f`/`471613af`/`187ca7ad`/`1bc21acc`).
   Same fail-closed status / diagnostic_code / ownership — the check is deeper AND
   source-aware.
 - `response_schema_validator`: old ad-hoc TypeRef recursion (Any-accept,

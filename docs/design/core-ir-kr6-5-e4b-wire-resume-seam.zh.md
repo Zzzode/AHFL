@@ -11,9 +11,11 @@
 > and sensitive-payload boundaries. This document does not add a resume export,
 > opcode, import, Core node, codegen path, or production dependency.
 >
-> Priority: if the owner approves E4-A's pinned Wasmtime environment, E4-A
-> implementation takes priority. E4-B0 stays design-only until this P0 boundary
-> is reviewed.
+> Priority: the E4-B0 design gate is CLOSED and E4-B0-C1/C2 are implemented
+> (schema-guided wire codec + durable-resume seam + full ingress demotion; see the
+> Status line above). E4-A remains independent; it becomes the higher priority
+> ONLY after the owner approves its pinned Wasmtime environment. That approval has
+> not been given, so this slice touches no CI or dependency wiring for E4-A.
 
 ## 0. Research result: the current checks cannot authorize Wasm resume
 
