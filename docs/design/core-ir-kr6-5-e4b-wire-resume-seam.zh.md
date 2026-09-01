@@ -1,6 +1,6 @@
 # Core-IR KR6.5 E4-B0: Wire Schema and Durable-Resume Seam -- Design
 
-> Status: **E4-B1 IMPLEMENTED; B2-S + B2-A-pre FOUNDATION slices landed**
+> Status: **E4-B1 IMPLEMENTED; B2-S / B2-A-pre / B2-A FOUNDATION slices landed**
 > (schema-guided wire codec + durable-resume seam + full CLI/HTTP/gRPC/shim
 > demotion + the wire-schema Wasm transport chain: C1 payload decoder
 > `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime module inspector
@@ -10,34 +10,43 @@
 > atomic/crash, ownership/last-use, and node-order evidence work) remains
 > design/pending: its **B2-0 FOUNDATION DESIGN is locked** (the full-workflow
 > replay ledger §4.2, execution manifest + resume state machine + node-event
-> buffer §4.4, transaction/recovery §5.1, and resource contract §5.2), but NO
-> B2-A+ durable-resume record/store/emitter/host code is implemented and B2 /
-> KR6.5 stay false. The confidential
+> buffer §4.4, transaction/recovery §5.1, and resource contract §5.2); the
+> B2-S / B2-A-pre / B2-A FOUNDATION slices have landed (record codec + runtime
+> module-context below), but NO B2-B+ store / capability-workflow emitter /
+> production host code is implemented and B2 / KR6.5 stay false. The confidential
 > `ProtectedPayloadStore`, a production key/KMS authority, real rollback
 > protection, and the production host are all named future gates (§6). The
 > B2-S security PRIMITIVE has landed as a base-support FOUNDATION — the NEW
 > raw SHA-256 span input + typed 32-byte `Sha256Digest` API (`b0628f25`) and
-> `hmac_sha256` (RFC 2104/FIPS 198-1, `147da993`); these new APIs have no B2
-> production consumer yet (the first planned one is B2-A), while the existing
+> `hmac_sha256` (RFC 2104/FIPS 198-1, `147da993`); the new `hmac_sha256` API is
+> now directly consumed by the A1 record codec below, while the existing
 > `sha256_hex(string_view)` production callers remain with preserved in-domain
-> behavior. B2 and KR6.5 stay false. The B2-A-pre shared verified-table
+> behavior; there is still no production persistence/key caller. B2 and KR6.5
+> stay false. The B2-A-pre shared verified-table
 > authority has also landed in `compiler_ir` (`5c9dd67c`): an opaque, copy-only
 > `VerifiedWireSchemaTable` that lets many bindings share one verified-once table
 > without per-mint re-verification/copy. Its new public-in-header factories
 > (`make_verified_wire_schema_table`, `make_wire_binding_from_verified_table`)
-> have no DIRECT production caller yet (the first planned one is B2-A), but the
-> existing `migrate_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
-> production paths already use the same shared backing internally. It is a
-> FOUNDATION with no runtime `VerifiedCoreWasmSchemaModule`, no record
-> codec/HMAC consumer, and no manifest/import parsing. B2 and KR6.5 stay false.
+> are now directly consumed by the A2 module-context below (the existing
+> `migrate_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
+> production paths continue to use the same shared backing internally); there is
+> still no production host caller. B2 and KR6.5 stay false.
+> The A1 record codec (`8a987ca1`) and the A2 runtime module-context
+> (`5bd812b2`) have landed as FOUNDATION runtime slices (see §4.2, §4.4, §6);
+> they add no protected/integrity store, no capability-workflow emitter, no
+> production host, and no artifact-digest comparison — those remain B2-B, B2-C,
+> B2-D, and the B2-D digest gate respectively.
 >
 > Scope: decide who decodes and type-checks RFC 0019/0021 `value_json`, define
 > one canonical wire-schema projection, and define the durable record's control
-> and sensitive-payload boundaries. The design is implemented through B1 (which
-> did add the reviewed E2 custom section and an internal runtime inspector symbol);
-> it does not by itself authorize IMPLEMENTING any B2 resume export, opcode, ABI,
-> control record, protected store, or digest (§3.2 still DESIGNS those future B2
-> artifacts), and it authorizes no E4-A dependency or CI change.
+> and sensitive-payload boundaries. The design is implemented through B1 plus the
+> B2-S / B2-A-pre / B2-A FOUNDATION slices (base-support HMAC, the shared
+> verified-table authority, the `ahfl.wasm-resume.v1` record codec, and the
+> runtime module-context + exec-manifest decoder). It does not by itself
+> authorize the remaining B2-B/C/D/E artifacts (protected store,
+> capability-workflow emitter, production host + artifact-digest gate, exact
+> events) or any E4-A dependency/CI change; §3.2 still DESIGNS the future
+> production-host artifact-digest comparison/gate.
 >
 > Priority: the E4-B0 design gate is CLOSED and E4-B0-C1/C2 and E4-B1 are
 > implemented (schema-guided wire codec + durable-resume seam + full ingress
@@ -436,9 +445,12 @@ a bare `CoreWireSchemaNodeId` is never persisted or accepted as authority.
 
 ### 4.2 Canonical control record — full-workflow replay ledger
 
-> Status: **B2-0 FOUNDATION DESIGN LOCKED; implementation NOT started.** This
-> subsection defines the target record; no encoder/decoder exists yet, and it does
-> not close B2 or KR6.5.
+> Status: **B2-0 design LOCKED; the A1 record codec + authenticator LANDED
+> (`8a987ca1`).** The `encode_and_authenticate` / `decode_and_authenticate`
+> codec, its two-pass HMAC admission, canonical re-encode, and record-internal
+> invariants are implemented; the protected store/persistence, the production
+> host, and the artifact-digest comparison are NOT implemented and this does not
+> close B2 or KR6.5.
 
 A fresh module instance re-runs the whole workflow from the start of its
 deterministic (Kahn) schedule, so a single-node record cannot locate a prior
@@ -618,7 +630,13 @@ identity or replay order.
 
 ### 4.4 Execution manifest, resume state machine, and node-event buffer (Approach A)
 
-> Status: **B2-0 FOUNDATION DESIGN LOCKED; implementation NOT started.**
+> Status: **B2-0 design LOCKED; the A2 exec-manifest decoder + runtime
+> module-context LANDED (`5bd812b2`).** The `ahfl.wasm-exec-manifest.v1` decoder,
+> the module framing + import/schema/manifest set-equality cross-check, and the
+> eager Param/Result call-site bindings are implemented; the compiler-side
+> manifest EMITTER, the resume state machine, the node-event buffer, and the
+> production host + artifact-digest gate are NOT implemented and this does not
+> close B2 or KR6.5.
 
 The chosen resume approach adds NO new module ABI SIGNATURE and no new import or
 export index. Precisely: the PUBLIC signatures and function indices of the
@@ -946,9 +964,9 @@ Implementation is intentionally split before any resume ABI:
    binding through the transported-table factory. This was the first reviewed Wasm
    byte change. It adds NO resume export, opcode, ABI, control record, or digest —
    those remain B2.
-4. **B2 durable resume — FOUNDATION DESIGN LOCKED (B2-0, docs only); the B2-S
-   security primitive has LANDED, but NO B2-A+ durable-resume record/store/
-   emitter/host code is implemented.** B2 is a slice ladder, each with an honest
+4. **B2 durable resume — the B2-S / B2-A-pre / B2-A FOUNDATION slices have
+   LANDED; NO B2-B+ store / capability-workflow emitter / production host code is
+   implemented.** B2 is a slice ladder, each with an honest
    FOUNDATION-vs-production closure and an explicit dependency order (no slice
    claims "non-inert" before a production host exists):
    - **B2-S security foundation — LANDED (base-support, FOUNDATION only)**: a
@@ -970,9 +988,10 @@ Implementation is intentionally split before any resume ABI:
      caller-owned scratch via `finalize_into(Sha256Digest&)`) with an explicit
      non-guarantee — it cannot erase register/compiler-hidden copies and is NOT
      production key erasure, constant-time compare, AEAD, or a keyring. Sequenced
-     FIRST; nothing that depends on it landed earlier. The first production
-     consumer of the new APIs remains future B2-A; this slice adds NO
-     keyring/KMS/AEAD/at-rest confidentiality/`PayloadStore`/record codec.
+     FIRST; nothing that depends on it landed earlier. `hmac_sha256` is now
+     directly consumed by the A1 record codec (§4.2); this slice itself adds NO
+     keyring/KMS/AEAD/at-rest confidentiality/`PayloadStore` and still has no
+     production persistence/key caller.
    - **B2-A-pre shared verified-table authority — LANDED (`compiler_ir`,
      FOUNDATION only)** (`5c9dd67c`): an opaque, copy-only `VerifiedWireSchemaTable`
      handle that PRIVATELY holds a `shared_ptr<const CoreWireSchemaTable>`; a
@@ -984,19 +1003,21 @@ Implementation is intentionally split before any resume ABI:
      only the existing root-derivation SSOT. The handle exposes NO raw-table / node
      / `NodeId` accessor and has no public/default ctor (verifying-factory-only);
      the existing `VerifiedWireSchemaBinding::table()` const-ref accessor is
-     preserved for codec compatibility. Its new public factories have no direct
-     production caller yet (the first planned one is B2-A), but the existing
+     preserved for codec compatibility. Its new public factories are now directly
+     consumed by the A2 module-context (§4.4, `5bd812b2`); the existing
      `migrate_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
-     production paths already route through the same shared backing internally;
+     production paths also route through the same shared backing internally;
      their source signatures, admission/root-derivation semantics, and diagnostic
      ordering/messages are preserved. `compiler_ir` gains NO Wasm/import/manifest/
-     call-sequence knowledge; the runtime module-context that wraps this authority
-     is future B2-A. Additive SOURCE API; installed C++ binary compatibility is NOT
+     call-sequence knowledge; there is still no production host caller. Additive
+     SOURCE API; installed C++ binary compatibility is NOT
      preserved — the private
      `Payload` representation + inline `table()` interpretation changed, so every
      already-compiled C++ consumer must be cleanly rebuilt; public C ABI, persisted
      formats, CLI, and emitted Wasm bytes are unchanged.
-   - **B2-A record codec + runtime module-context**: the `ahfl.wasm-resume.v1`
+   - **B2-A record codec + runtime module-context — LANDED (runtime, FOUNDATION
+     only)** (A1 record codec `8a987ca1`; A2 module-context `5bd812b2`): the
+     `ahfl.wasm-resume.v1`
      ledger codec (byte-mirror + canonical re-encode) + its authenticated digest
      FIELDS (A1 only encodes / parses / holds the three 64-hex digest fields; it
      does NOT compute or compare artifact digests — that comparison against the
@@ -1011,7 +1032,19 @@ Implementation is intentionally split before any resume ABI:
      security-sensitive artifact codec — not zero-blast) with no production
      persistence caller yet. A2's module-context is the call-site authority; the
      first production caller of both A1 and A2 is future B2-D. B2 and KR6.5 stay
-     false.
+     false. A1 is `encode_and_authenticate` / `decode_and_authenticate` with
+     two-pass admission + a single on-wire-prefix HMAC (record-internal invariants
+     only; no plan input); A2 is `make_verified_core_wasm_schema_module` framing
+     the exec-manifest immediately before the EOF wire-schema section + an exact
+     import/schema/manifest set-equality + eager Param{0}/Result mint, exposing
+     only narrow strong-typed coordinates. A1 is codec-only (no production
+     persistence caller); A2 is manifest consumer-only — it does NOT emit the
+     manifest (future B2-C) and makes NO artifact-digest comparison (future B2-D);
+     the C3 single-shot inspector's behavior is unchanged; the emitter dependency
+     is test-only (production runtime unchanged). Complexity is the honest two
+     linear wire-schema local verifies (C1 decode + authority admission), zero
+     per-mint verify/copy. No real-Wasm durable-resume is proven (the current
+     verification environment SKIPs the Wasmtime lanes); B2 and KR6.5 stay false.
    - **B2-B integrity-only local store foundation**: a bytes-only
      `PayloadStore` (integrity-store) foundation interface + an integrity-only
      LOCAL reference backend with HMAC integrity + advisory-lock/generation
