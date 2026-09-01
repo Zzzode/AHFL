@@ -6,8 +6,9 @@
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "ahfl/runtime/execution_renderer.hpp"
 #include "runtime/engine/capability_bridge.hpp"
-#include "runtime/engine/response_schema_validator.hpp"
+#include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/engine/standard_capabilities.hpp"
+#include "runtime/engine/wire_capability_admission.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/evaluator/value.hpp"
@@ -33,9 +34,11 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #if defined(_WIN32)
@@ -925,58 +928,77 @@ migration_error_suffix(const ahfl::ir::core::WireSchemaMigrationResult &migratio
     return {};
 }
 
-[[nodiscard]] std::shared_ptr<CapabilityRegistry>
-load_runtime_capability_bindings(const ahfl::ir::Program &program,
-                                 const CommandLineOptions &options,
-                                 std::shared_ptr<SecretManager> secrets,
-                                 std::ostream &err) {
+// RFC 0026 C2b G4b: one prepared capability binding — its parsed transport config
+// with the response wire-schema binding ALREADY projected, but NO secret manager
+// attached and NOT yet registered. Phase A produces these purely (no secret / no
+// network / no registry side effect); Phase B attaches secrets and mints them.
+struct PreparedRuntimeCapabilityBinding {
+    std::string capability_name;
+    std::variant<HTTPCapabilityConfig, GrpcJsonTranscodingCapabilityConfig> config;
+};
+
+struct PreparedRuntimeCapabilityBindings {
+    std::vector<PreparedRuntimeCapabilityBinding> bindings; // source order; dedup enforced
+};
+
+// Phase A (pure): read the --capability-bindings descriptor file ONCE, parse it
+// ONCE, and project each capability's declared response type into a verified wire
+// binding. No secret resolution, no network, no registry. Returns nullopt + a
+// diagnostic on any failure BEFORE any secret/network work. `build_env` is the
+// caller's single, memoized environment builder (returns nullptr on env-global
+// failure); it is invoked ONLY after the descriptor's file / JSON / schema /
+// bindings-array admission, so an env-global failure never preempts a descriptor
+// file/JSON error (matching the G4a ordering).
+template <typename BuildEnv>
+[[nodiscard]] std::optional<PreparedRuntimeCapabilityBindings>
+prepare_runtime_capability_bindings(const ahfl::ir::Program &program,
+                                    const CommandLineOptions &options,
+                                    BuildEnv &&build_env,
+                                    std::ostream &err) {
     if (!options.capability_bindings_descriptor.has_value()) {
-        return nullptr;
+        return std::nullopt;
     }
 
     const std::filesystem::path path{std::string(*options.capability_bindings_descriptor)};
     auto content = read_text_file(path, "runtime capability bindings", err);
     if (!content.has_value()) {
-        return nullptr;
+        return std::nullopt;
     }
 
     auto parsed = ahfl::json::parse_json(*content);
     if (!parsed.has_value() || !*parsed || !(**parsed).is_object()) {
         err << "error: failed to parse runtime capability bindings JSON\n";
-        return nullptr;
+        return std::nullopt;
     }
     const auto &root = **parsed;
 
     auto schema = required_json_string_field(root, "schema", "runtime capability bindings", err);
     if (!schema.has_value()) {
-        return nullptr;
+        return std::nullopt;
     }
     if (*schema != "ahfl.runtime_capability_bindings.v0") {
         err << "error: unsupported runtime capability bindings schema '" << *schema << "'\n";
-        return nullptr;
+        return std::nullopt;
     }
 
     const auto *bindings = root.get("bindings");
     if (bindings == nullptr || !bindings->is_array()) {
         err << "error: runtime capability bindings requires array field 'bindings'\n";
-        return nullptr;
+        return std::nullopt;
+    }
+
+    // Build the verified type environment only AFTER the descriptor's structural
+    // admission above, so an env-global failure never preempts a descriptor
+    // file/JSON error (the G4a error ordering). The wording matches G4a exactly.
+    const ahfl::ir::core::VerifiedCoreTypeEnvironment *env = build_env();
+    if (env == nullptr) {
+        err << "error: runtime capability bindings could not build a wire-schema type "
+               "environment\n";
+        return std::nullopt;
     }
 
     const ahfl::ir::ProgramIndex index{program};
-    // RFC 0026 C2b G4a: build the shared verified type environment ONCE and project
-    // each capability's declared response type into a verified wire-schema binding.
-    // A failed environment is fail-closed for the whole descriptor (no binding can
-    // be projected). This is the current-position wiring: the projection is pure
-    // (no secret/network); the two-phase reorder relative to secret resolution is a
-    // later G4 slice.
-    auto env_result = ahfl::ir::core::build_core_type_environment(program);
-    if (!env_result.ok() || !env_result.environment.has_value()) {
-        err << "error: runtime capability bindings could not build a wire-schema type "
-               "environment\n";
-        return nullptr;
-    }
-    const auto &type_environment = *env_result.environment;
-    auto registry = std::make_shared<CapabilityRegistry>();
+    PreparedRuntimeCapabilityBindings prepared;
     std::unordered_set<std::string> names;
     for (std::size_t binding_index = 0; binding_index < bindings->array_items.size();
          ++binding_index) {
@@ -984,60 +1006,60 @@ load_runtime_capability_bindings(const ahfl::ir::Program &program,
         const auto context = "runtime capability bindings[" + std::to_string(binding_index) + "]";
         if (item == nullptr || !item->is_object()) {
             err << "error: " << context << " must be an object\n";
-            return nullptr;
+            return std::nullopt;
         }
 
         auto capability_name = required_json_string_field(*item, "capability", context, err);
         if (!capability_name.has_value()) {
-            return nullptr;
+            return std::nullopt;
         }
         if (capability_name->empty()) {
             err << "error: " << context << " field 'capability' must not be empty\n";
-            return nullptr;
+            return std::nullopt;
         }
         if (!names.insert(*capability_name).second) {
             err << "error: duplicate runtime capability binding for '" << *capability_name << "'\n";
-            return nullptr;
+            return std::nullopt;
         }
 
         const auto *capability = index.find_capability(*capability_name);
         if (capability == nullptr) {
             err << "error: " << context << " references unknown capability '" << *capability_name
                 << "'\n";
-            return nullptr;
+            return std::nullopt;
         }
 
         auto transport = required_json_string_field(*item, "transport", context, err);
         if (!transport.has_value()) {
-            return nullptr;
+            return std::nullopt;
         }
         auto response_format = runtime_binding_response_format(*item, context, err);
         if (!response_format.has_value()) {
-            return nullptr;
+            return std::nullopt;
         }
 
         if (*transport == "http") {
             HTTPCapabilityConfig config;
             auto url = required_json_string_field(*item, "url", context, err);
             if (!url.has_value()) {
-                return nullptr;
+                return std::nullopt;
             }
             config.url = std::move(*url);
             if (auto method = optional_json_string_field(*item, "method", context, err);
                 item->get("method") != nullptr) {
                 if (!method.has_value()) {
-                    return nullptr;
+                    return std::nullopt;
                 }
                 if (method->empty()) {
                     err << "error: " << context << " field 'method' must not be empty\n";
-                    return nullptr;
+                    return std::nullopt;
                 }
                 config.method = std::move(*method);
             }
             if (auto headers = optional_string_map_field(*item, "headers", context, err);
                 item->get("headers") != nullptr) {
                 if (!headers.has_value()) {
-                    return nullptr;
+                    return std::nullopt;
                 }
                 config.headers = std::move(*headers);
             }
@@ -1045,28 +1067,43 @@ load_runtime_capability_bindings(const ahfl::ir::Program &program,
             if (!apply_timeout_config(*item, context, config.timeout, err) ||
                 !apply_retry_config(*item, context, config.retry, err) ||
                 !apply_circuit_breaker_config(*item, context, config.circuit_breaker, err)) {
-                return nullptr;
+                return std::nullopt;
             }
+            // Phase A parses auth into the config but MUST NOT attach a secret
+            // manager (that is Phase B, and only when auth is present). Reset it
+            // explicitly so the invariant does not depend on the config default.
+            config.secret_manager.reset();
             if (auto auth = runtime_binding_auth_config(*item, context, err);
                 item->get("auth") != nullptr) {
                 if (!auth.has_value()) {
-                    return nullptr;
+                    return std::nullopt;
                 }
                 config.auth = std::move(*auth);
-                config.secret_manager = secrets;
             }
+            auto migration = project_capability_response_binding(*capability, *env);
+            if (!migration.ok() || !migration.binding.has_value()) {
+                err << "error: " << context << " capability '" << *capability_name
+                    << "' response type is not projectable to a wire schema"
+                    << migration_error_suffix(migration) << '\n';
+                return std::nullopt;
+            }
+            config.response_wire_binding = std::move(*migration.binding);
+            // Route through the SINGLE admission authority (same gate the factory
+            // uses): the four-state resolution + TextPlain String-root check. This
+            // makes a TextPlain non-String-root failure a PHASE A (0-network) error,
+            // never a Phase B factory poison after secrets have resolved.
             {
-                auto migration = project_capability_response_binding(*capability, type_environment);
-                if (!migration.ok() || !migration.binding.has_value()) {
+                auto admission = ahfl::runtime::prepare_wire_response_schema(
+                    config.response_format, config.response_schema, config.response_wire_binding);
+                if (!admission.has_value()) {
                     err << "error: " << context << " capability '" << *capability_name
-                        << "' response type is not projectable to a wire schema"
-                        << migration_error_suffix(migration) << '\n';
-                    return nullptr;
+                        << "' response schema admission failed: " << admission.error() << '\n';
+                    return std::nullopt;
                 }
-                config.response_wire_binding = std::move(*migration.binding);
+                config.response_wire_binding = std::move(*admission);
             }
-            registry->register_capability(
-                make_http_capability(*capability_name, std::move(config)));
+            prepared.bindings.push_back(
+                PreparedRuntimeCapabilityBinding{*capability_name, std::move(config)});
             continue;
         }
 
@@ -1074,15 +1111,15 @@ load_runtime_capability_bindings(const ahfl::ir::Program &program,
             GrpcJsonTranscodingCapabilityConfig config;
             auto endpoint = required_json_string_field(*item, "endpoint", context, err);
             if (!endpoint.has_value()) {
-                return nullptr;
+                return std::nullopt;
             }
             auto service = required_json_string_field(*item, "service", context, err);
             if (!service.has_value()) {
-                return nullptr;
+                return std::nullopt;
             }
             auto method = required_json_string_field(*item, "method", context, err);
             if (!method.has_value()) {
-                return nullptr;
+                return std::nullopt;
             }
             config.endpoint = std::move(*endpoint);
             config.service = std::move(*service);
@@ -1091,36 +1128,71 @@ load_runtime_capability_bindings(const ahfl::ir::Program &program,
             if (!apply_timeout_config(*item, context, config.timeout, err) ||
                 !apply_retry_config(*item, context, config.retry, err) ||
                 !apply_circuit_breaker_config(*item, context, config.circuit_breaker, err)) {
-                return nullptr;
+                return std::nullopt;
             }
+            config.secret_manager.reset();
             if (auto auth = runtime_binding_auth_config(*item, context, err);
                 item->get("auth") != nullptr) {
                 if (!auth.has_value()) {
-                    return nullptr;
+                    return std::nullopt;
                 }
                 config.auth = std::move(*auth);
-                config.secret_manager = secrets;
             }
+            auto migration = project_capability_response_binding(*capability, *env);
+            if (!migration.ok() || !migration.binding.has_value()) {
+                err << "error: " << context << " capability '" << *capability_name
+                    << "' response type is not projectable to a wire schema"
+                    << migration_error_suffix(migration) << '\n';
+                return std::nullopt;
+            }
+            config.response_wire_binding = std::move(*migration.binding);
             {
-                auto migration = project_capability_response_binding(*capability, type_environment);
-                if (!migration.ok() || !migration.binding.has_value()) {
+                auto admission = ahfl::runtime::prepare_wire_response_schema(
+                    config.response_format, config.response_schema, config.response_wire_binding);
+                if (!admission.has_value()) {
                     err << "error: " << context << " capability '" << *capability_name
-                        << "' response type is not projectable to a wire schema"
-                        << migration_error_suffix(migration) << '\n';
-                    return nullptr;
+                        << "' response schema admission failed: " << admission.error() << '\n';
+                    return std::nullopt;
                 }
-                config.response_wire_binding = std::move(*migration.binding);
+                config.response_wire_binding = std::move(*admission);
             }
-            registry->register_capability(
-                make_grpc_json_transcoding_capability(*capability_name, std::move(config)));
+            prepared.bindings.push_back(
+                PreparedRuntimeCapabilityBinding{*capability_name, std::move(config)});
             continue;
         }
 
         err << "error: " << context
             << " field 'transport' must be 'http' or 'grpc_json_transcoding'\n";
-        return nullptr;
+        return std::nullopt;
     }
 
+    return prepared;
+}
+
+// Phase B: attach secrets (only where auth is present) and mint + register each
+// prepared binding. Phase A already performed every fallible admission step, so
+// there is no reachable error channel here (Occam): return the registry directly.
+[[nodiscard]] std::shared_ptr<CapabilityRegistry>
+instantiate_runtime_capability_bindings(PreparedRuntimeCapabilityBindings prepared,
+                                        std::shared_ptr<SecretManager> secrets) {
+    auto registry = std::make_shared<CapabilityRegistry>();
+    for (auto &entry : prepared.bindings) {
+        std::visit(
+            [&](auto &config) {
+                using ConfigT = std::decay_t<decltype(config)>;
+                if (config.auth.has_value()) {
+                    config.secret_manager = secrets;
+                }
+                if constexpr (std::is_same_v<ConfigT, HTTPCapabilityConfig>) {
+                    registry->register_capability(
+                        make_http_capability(entry.capability_name, std::move(config)));
+                } else {
+                    registry->register_capability(make_grpc_json_transcoding_capability(
+                        entry.capability_name, std::move(config)));
+                }
+            },
+            entry.config);
+    }
     return registry;
 }
 
@@ -1536,23 +1608,51 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         err << "error: " << *config_error << '\n';
         return 1;
     }
-    auto secrets = build_llm_secret_manager(llm_config, err);
-    if (secrets == nullptr) {
-        return 1;
-    }
-    if (!resolve_llm_credentials(llm_config, *secrets, err)) {
-        return 1;
-    }
 
-    std::shared_ptr<CapabilityRegistry> runtime_capability_bindings;
+    // RFC 0026 C2b G4b: two-phase admission. PHASE A is pure (no secret, no network,
+    // no registry): prepare all capability bindings (parse + project) and admit
+    // --input. It runs BEFORE build_llm_secret_manager / resolve_llm_credentials
+    // (which authenticate to Vault etc.), so any descriptor-projection or input
+    // schema failure aborts with ZERO secret/network side effects.
+    //
+    // The verified type environment has a SINGLE build point (`build_env`), invoked
+    // on demand: only a descriptor OR a resolved workflow needs it, and a
+    // no-descriptor + missing-workflow run never builds one. It is memoized so both
+    // the capability-response projection and the workflow-input projection share the
+    // same env (seed once).
+    const auto workflow_name = std::string(*options.workflow_name);
+    const ir::ProgramIndex program_index{program};
+    const ir::WorkflowDecl *workflow = program_index.find_workflow(workflow_name);
+
+    std::optional<ahfl::ir::core::VerifiedCoreTypeEnvironment> type_environment;
+    bool env_build_attempted = false;
+    auto build_env = [&]() -> const ahfl::ir::core::VerifiedCoreTypeEnvironment * {
+        if (!env_build_attempted) {
+            env_build_attempted = true;
+            auto env_result = ahfl::ir::core::build_core_type_environment(program);
+            if (env_result.ok() && env_result.environment.has_value()) {
+                type_environment = std::move(*env_result.environment);
+            }
+        }
+        return type_environment.has_value() ? &*type_environment : nullptr;
+    };
+
+    // PHASE A.1: descriptor admission FIRST (preserves the existing error priority
+    // where a bad descriptor is reported before an input problem). The env is built
+    // lazily INSIDE prepare_* — only after the descriptor's file-read / JSON / schema
+    // / bindings-array admission — so a (defensive) env-global failure never preempts
+    // a descriptor file/JSON error, matching the G4a ordering.
+    std::optional<PreparedRuntimeCapabilityBindings> prepared_bindings;
     if (options.capability_bindings_descriptor.has_value()) {
-        runtime_capability_bindings =
-            load_runtime_capability_bindings(program, options, secrets, err);
-        if (runtime_capability_bindings == nullptr) {
+        prepared_bindings = prepare_runtime_capability_bindings(program, options, build_env, err);
+        if (!prepared_bindings.has_value()) {
             return 1;
         }
     }
 
+    // PHASE A.2: parse --input raw JSON once. Descriptor admission (A.1) keeps
+    // priority; with no descriptor, the input SYNTAX check precedes the input env
+    // build (a malformed --input is reported before any input-schema env work).
     std::string runtime_input;
     if (options.runtime_input_json.has_value()) {
         runtime_input = std::string(*options.runtime_input_json);
@@ -1564,22 +1664,63 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         }
         runtime_input = std::move(*content);
     }
-    auto input_value = ahfl::evaluator::value_from_json(runtime_input);
-    if (!input_value.has_value()) {
+    auto input_dom = ahfl::json::parse_json(runtime_input);
+    if (!input_dom.has_value() || !*input_dom) {
         err << "error: failed to parse runtime input JSON\n";
         return 1;
     }
-
-    const auto workflow_name = std::string(*options.workflow_name);
-    const ir::ProgramIndex program_index{program};
-    if (const auto *workflow = program_index.find_workflow(workflow_name); workflow != nullptr) {
-        const auto input_validation = ahfl::runtime::validate_value_against_schema(
-            *input_value, workflow->input_type_ref, program);
-        if (!input_validation.valid) {
-            err << "error: --input does not match workflow input schema for '" << workflow_name
-                << "': " << input_validation.error << '\n';
+    std::optional<ahfl::evaluator::Value> input_value;
+    if (workflow != nullptr) {
+        // Resolved workflow: exact-decode the raw DOM under the workflow input's
+        // projected wire binding (a compat tightening vs the old schema-free
+        // materialization — Decimal/Set/Map/Option/Unit/integral-Float are now
+        // decoded exactly). Diagnostics carry schema/coordinate info only, never the
+        // payload bytes.
+        const auto *env = build_env();
+        if (env == nullptr) {
+            err << "error: could not build a wire-schema type environment\n";
             return 1;
         }
+        auto migration =
+            ahfl::ir::core::migrate_type_ref_to_wire_binding(workflow->input_type_ref, *env);
+        if (!migration.ok() || !migration.binding.has_value()) {
+            err << "error: --input schema for workflow '" << workflow_name
+                << "' is not projectable to a wire schema" << migration_error_suffix(migration)
+                << '\n';
+            return 1;
+        }
+        auto decoded = ahfl::runtime::wire_codec::decode_json(**input_dom, *migration.binding);
+        if (!decoded.ok()) {
+            err << "error: --input does not match workflow input schema for '" << workflow_name
+                << "': " << decoded.error << '\n';
+            return 1;
+        }
+        input_value = std::move(*decoded.value);
+    } else {
+        // Missing workflow: preserve the historical schema-free materialization
+        // (direct-DOM value_from_json / P0-10 admission); the run still reaches
+        // WorkflowRuntime, which emits the canonical not-found failure.
+        auto materialized = ahfl::evaluator::value_from_json(**input_dom);
+        if (!materialized.has_value()) {
+            err << "error: failed to parse runtime input JSON\n";
+            return 1;
+        }
+        input_value = std::move(*materialized);
+    }
+
+    // PHASE B: secrets + provider setup are allowed to touch the network now.
+    auto secrets = build_llm_secret_manager(llm_config, err);
+    if (secrets == nullptr) {
+        return 1;
+    }
+    if (!resolve_llm_credentials(llm_config, *secrets, err)) {
+        return 1;
+    }
+
+    std::shared_ptr<CapabilityRegistry> runtime_capability_bindings;
+    if (prepared_bindings.has_value()) {
+        runtime_capability_bindings =
+            instantiate_runtime_capability_bindings(std::move(*prepared_bindings), secrets);
     }
 
     LLMCapabilityProvider llm_provider(program, llm_config);

@@ -523,6 +523,299 @@ sys.stdout.write(json.dumps(payload) + "\\n200\\n")
     assert_success_artifact(observability_path, [])
 
 
+# RFC 0026 C2b G4b: two-phase CLI admission. `ahflc run` first runs a PURE
+# Phase A (parse the --capability-bindings descriptor, project each capability's
+# declared response type into a verified wire schema, and exact-decode --input)
+# BEFORE Phase B ever touches the network (build_llm_secret_manager /
+# resolve_llm_credentials authenticate to Vault etc.). The two cases below prove
+# that a Phase A failure aborts with ZERO secret-provider and ZERO LLM traffic:
+# both the local Vault server and the LLM server must observe request_count == 0.
+#
+# The complementary evidence — that the capability transport itself issues zero
+# requests on a fail-closed admission — lives in
+# runtime_capability_bindings_smoke.py, which proves that when a CLI Phase-A
+# TextPlain configuration is rejected the capability transport makes zero
+# requests (its fake-curl 0-request assertions). The factory-minted poison
+# binding's fine-grained properties (retry=0, CB-off, attempts==1, zero
+# transport) are pinned separately by the capability_bridge unit test. These
+# layers are intentionally complementary: this file proves 0 secret/LLM network,
+# that file proves 0 capability transport network.
+_A1_PACKAGE_MANIFEST = """manifest_version = 1
+
+[package]
+name = "g4b-two-phase-admission"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "smoke"
+root = "."
+
+[targets.workflow]
+kind = "handoff"
+entry = "smoke::main::SmokeWorkflow"
+exports = [
+  { kind = "workflow", name = "smoke::main::SmokeWorkflow" },
+  { kind = "agent", name = "smoke::main::EchoAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }
+"""
+
+# A legal, fully compilable producer. `BadMap` returns std::collections::Map with
+# a non-String key (`Map<Int, Int>`), which is a legal AHFL type but NOT
+# projectable to a wire schema (core.wire.UNSUPPORTED_MAP_KEY). The workflow never
+# calls BadMap; the descriptor merely binds it, so admission fails purely on the
+# projection, proving "legal producer + independent wire-projection failure".
+_A1_PACKAGE_SOURCE = """module smoke::main;
+
+import std::collections as collections;
+
+pub struct Request {
+    value: String;
+}
+
+pub struct Context {
+    value: String = "pending";
+}
+
+pub struct Response {
+    value: String;
+}
+
+pub capability Echo(request: Request) -> Response;
+pub capability BadMap(n: Int) -> collections::Map<Int, Int>(4);
+
+pub agent EchoAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+
+flow for EchoAgent {
+    state Init {
+        let reply = Echo(Request { value: input.value });
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return Response { value: ctx.value };
+    }
+}
+
+pub workflow SmokeWorkflow {
+    input: Request;
+    output: Response;
+
+    node first: EchoAgent(input);
+
+    return: Response { value: first.value };
+}
+"""
+
+
+def sysroot_root():
+    # The std sysroot (std/ahfl.toml) lives at the repo root; this script is at
+    # <repo>/tests/scripts/llm_secret_manager_smoke.py.
+    repo_root = Path(__file__).resolve().parents[2]
+    std_manifest = repo_root / "std" / "ahfl.toml"
+    if not std_manifest.is_file():
+        raise AssertionError(f"std sysroot manifest not found at {std_manifest}")
+    return repo_root
+
+
+def write_a1_package(pkg_dir):
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    (pkg_dir / "ahfl.toml").write_text(_A1_PACKAGE_MANIFEST, encoding="utf-8")
+    (pkg_dir / "main.ahfl").write_text(_A1_PACKAGE_SOURCE, encoding="utf-8")
+
+
+def run_two_phase_admission_case(
+    ahflc, run_dir, label, *, bindings, input_json, forbidden_payload_tokens=()
+):
+    # Drive `ahflc run` on the A1 package with a live Vault-backed LLM config, so
+    # a run that reaches Phase B WOULD authenticate to Vault and call the LLM. The
+    # case asserts that a Phase A admission failure keeps BOTH counters at 0.
+    #
+    # `forbidden_payload_tokens` are unique markers embedded in the user-controlled
+    # request payload / descriptor; a Phase A diagnostic must never echo them, so
+    # they are added to the no-echo forbidden set alongside the Vault/LLM secrets.
+    pkg_dir = run_dir / f"two_phase_{label}_pkg"
+    if pkg_dir.exists():
+        shutil.rmtree(pkg_dir)
+    write_a1_package(pkg_dir)
+
+    expected_token = "vault-secret-token"
+    api_key = "vault-resolved-api-key"
+    vault_server = start_server(
+        make_vault_secret_handler("success", expected_token, api_key)
+    )
+    llm_server = start_server(make_llm_handler(api_key, "should-not-run"))
+    try:
+        config_path = run_dir / f"two_phase_{label}_config.json"
+        write_config(
+            config_path,
+            f"http://127.0.0.1:{llm_server.server_port}/v1",
+            "vault",
+            f"http://127.0.0.1:{vault_server.server_port}",
+            "AHFL_TEST_VAULT_SECRET_TOKEN",
+            "vault:llm/api-key",
+            refresh_secrets_before_use=True,
+        )
+
+        args = [
+            ahflc,
+            "run",
+            "--manifest",
+            str(pkg_dir / "ahfl.toml"),
+            "--target",
+            "workflow",
+            "--sysroot",
+            str(sysroot_root()),
+            "--workflow",
+            "smoke::main::SmokeWorkflow",
+            "--input",
+            input_json,
+            "--llm-config",
+            str(config_path),
+        ]
+        if bindings is not None:
+            bindings_path = run_dir / f"two_phase_{label}_bindings.json"
+            bindings_path.write_text(json.dumps(bindings), encoding="utf-8")
+            args += ["--capability-bindings", str(bindings_path)]
+
+        env = os.environ.copy()
+        env["AHFL_TEST_VAULT_SECRET_TOKEN"] = expected_token
+        result = subprocess.run(
+            args,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20,
+        )
+    finally:
+        stop_servers(vault_server, llm_server)
+
+    combined_output = result.stdout + result.stderr
+    # No secret material may leak into diagnostics — Vault token, resolved API
+    # key, and any unique user-payload / descriptor markers.
+    forbidden = [expected_token, api_key, *forbidden_payload_tokens]
+    assert_secret_free_text(combined_output, forbidden, f"{label} output")
+    return result, combined_output, vault_server, llm_server
+
+
+def run_a1_non_projectable_binding_case(ahflc, run_dir):
+    # A1: the descriptor binds `smoke::main::BadMap`, whose Map<Int, Int> response
+    # is not projectable to a wire schema. Phase A migration rejects it before any
+    # secret/network work — Vault and LLM counters stay 0.
+    bindings = {
+        "schema": "ahfl.runtime_capability_bindings.v0",
+        "bindings": [
+            {
+                "capability": "smoke::main::BadMap",
+                "transport": "http",
+                # The URL path carries a unique marker so the no-echo assertion
+                # proves the projection diagnostic never reflects descriptor
+                # payload back to the user.
+                "url": "http://capability.example.test/G4B_A1_URL_SECRET",
+                "method": "POST",
+                "timeout_ms": 1000,
+                "retry": {
+                    "max_retries": 0,
+                    "initial_delay_ms": 0,
+                    "backoff_multiplier": 1.0,
+                },
+            }
+        ],
+    }
+    result, combined_output, vault_server, llm_server = run_two_phase_admission_case(
+        ahflc,
+        run_dir,
+        "a1_non_projectable",
+        bindings=bindings,
+        input_json='{"_type":"smoke::main::Request","value":"hello"}',
+        forbidden_payload_tokens=["G4B_A1_URL_SECRET"],
+    )
+    if result.returncode == 0:
+        raise AssertionError(
+            "A1 non-projectable binding unexpectedly succeeded\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    expected = "core.wire.UNSUPPORTED_MAP_KEY"
+    if expected not in combined_output:
+        raise AssertionError(
+            f"A1 missing projection diagnostic {expected!r}:\n{combined_output}"
+        )
+    if "not projectable to a wire schema" not in combined_output:
+        raise AssertionError(
+            f"A1 missing 'not projectable to a wire schema' phrasing:\n{combined_output}"
+        )
+    if vault_server.request_count != 0:
+        raise AssertionError(
+            f"A1 admission failure called Vault before Phase A completed: "
+            f"{vault_server.request_count}, paths={vault_server.paths!r}"
+        )
+    if llm_server.request_count != 0:
+        raise AssertionError(
+            f"A1 admission failure called LLM before Phase A completed: "
+            f"{llm_server.request_count}, paths={llm_server.paths!r}"
+        )
+
+
+def run_a2_resolved_input_mismatch_case(ahflc, run_dir):
+    # A2: no descriptor at all; the resolved SmokeWorkflow rejects a hostile
+    # --input during Phase A exact decode. The input is a wrong-kind OBJECT where
+    # Request.value is String, carrying a unique token in the payload so the
+    # no-echo assertion proves the exact-decode diagnostic never reflects the user
+    # payload back. No secret/network work runs — Vault and LLM counters stay 0.
+    input_token = "G4B_A2_INPUT_SECRET"
+    result, combined_output, vault_server, llm_server = run_two_phase_admission_case(
+        ahflc,
+        run_dir,
+        "a2_input_mismatch",
+        bindings=None,
+        input_json=(
+            '{"_type":"smoke::main::Request",'
+            '"value":{"_type":"hostile::Payload","secret":"' + input_token + '"}}'
+        ),
+        forbidden_payload_tokens=[input_token],
+    )
+    if result.returncode == 0:
+        raise AssertionError(
+            "A2 hostile --input unexpectedly succeeded\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    expected = "does not match workflow input schema"
+    if expected not in combined_output:
+        raise AssertionError(
+            f"A2 missing input-schema diagnostic {expected!r}:\n{combined_output}"
+        )
+    if "wire-codec: expected string" not in combined_output:
+        raise AssertionError(
+            f"A2 missing exact-decode diagnostic 'wire-codec: expected string':\n"
+            f"{combined_output}"
+        )
+    if vault_server.request_count != 0:
+        raise AssertionError(
+            f"A2 input mismatch called Vault before Phase A completed: "
+            f"{vault_server.request_count}, paths={vault_server.paths!r}"
+        )
+    if llm_server.request_count != 0:
+        raise AssertionError(
+            f"A2 input mismatch called LLM before Phase A completed: "
+            f"{llm_server.request_count}, paths={llm_server.paths!r}"
+        )
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit("usage: llm_secret_manager_smoke.py <ahflc> <work-dir>")
@@ -543,6 +836,9 @@ def main():
             run_secret_case(ahflc, run_dir, source_path, provider_kind, mode)
     run_oauth2_token_secret_case(ahflc, run_dir, source_path)
     run_mtls_curl_config_case(ahflc, run_dir, source_path)
+    # RFC 0026 C2b G4b: two-phase admission fails BEFORE any secret/LLM network.
+    run_a1_non_projectable_binding_case(ahflc, run_dir)
+    run_a2_resolved_input_mismatch_case(ahflc, run_dir)
 
 
 if __name__ == "__main__":

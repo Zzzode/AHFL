@@ -332,6 +332,451 @@ def assert_failure(
             )
 
 
+# RFC 0026 C2b G4b: the rich --input matrix. `ahflc run` exact-decodes --input
+# under the resolved workflow's projected wire binding (the schema-guided codec
+# path: decode_json builds the canonical native Value directly) instead of the
+# old schema-free value_from_json materialization + validator, which would
+# false-reject variant-carrying shapes (Decimal/Duration/Set/Map/Option) and
+# accept an Int where a Float is required. The cases below run a capability-free
+# echo workflow so the decoded native Value flows all the way through the
+# evaluator to the workflow output, and assert against the canonical
+# --output-format json result (immune to CLI-arg / warning / human-renderer
+# false hits). Because there is no capability binding, no transport is ever
+# constructed; a sentinel fake-curl on PATH proves ZERO curl invocations.
+#
+# Honest evidence boundary: value_to_json serializes FloatValue(1.0) as bare `1`
+# and both UnitValue and NoneValue as `null` (P0-16). So a JSON echo cannot by
+# itself distinguish a FloatValue from an IntValue, nor a UnitValue from a
+# NoneValue. The Float native-variant proof is therefore an accept->reject FLIP
+# (1.0 completes; bare `1` is exact-rejected — the old validator accepted it),
+# and the Unit proof is explicitly two-layer (CLI null positive completes here;
+# the native UnitValue variant is pinned by the core codec unit matrix, not by
+# this JSON output).
+_RICH_PACKAGE_MANIFEST = """manifest_version = 1
+
+[package]
+name = "g4b-rich-input"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "rich"
+root = "."
+
+[targets.workflow]
+kind = "handoff"
+entry = "rich::main::EchoWorkflow"
+exports = [
+  { kind = "workflow", name = "rich::main::EchoWorkflow" },
+  { kind = "agent", name = "rich::main::EchoAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }
+"""
+
+# A capability-free echo workflow (mirrors the golden e3 identity workflow:
+# capabilities: [], Init -> Done, Done returns the input). RichInput aggregates
+# every lossy shape the exact codec must round-trip; RichOutput echoes them back.
+_RICH_PACKAGE_SOURCE = """module rich::main;
+
+import std::collections as collections;
+import std::option as option;
+
+pub struct RichInput {
+    dec: Decimal(2);
+    dur: Duration;
+    nums: collections::Set<Int>(8);
+    tags: collections::Map<String, Int>(8);
+    opt: option::Option<Int>;
+    nothing: Unit;
+    flag: Float;
+    count: Int;
+    note: String;
+}
+
+pub struct RichOutput {
+    dec: Decimal(2);
+    dur: Duration;
+    nums: collections::Set<Int>(8);
+    tags: collections::Map<String, Int>(8);
+    opt: option::Option<Int>;
+    nothing: Unit;
+    flag: Float;
+    count: Int;
+    note: String;
+}
+
+pub agent EchoAgent {
+    input: RichInput;
+    context: Unit;
+    output: RichOutput;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for EchoAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return RichOutput {
+            dec: input.dec,
+            dur: input.dur,
+            nums: input.nums,
+            tags: input.tags,
+            opt: input.opt,
+            nothing: input.nothing,
+            flag: input.flag,
+            count: input.count,
+            note: input.note,
+        };
+    }
+}
+
+pub workflow EchoWorkflow {
+    input: RichInput;
+    output: RichOutput;
+
+    node first: EchoAgent(input);
+
+    return: RichOutput {
+        dec: first.dec,
+        dur: first.dur,
+        nums: first.nums,
+        tags: first.tags,
+        opt: first.opt,
+        nothing: first.nothing,
+        flag: first.flag,
+        count: first.count,
+        note: first.note,
+    };
+}
+"""
+
+
+def sysroot_root() -> Path:
+    # The std sysroot (std/ahfl.toml) lives at the repo root; this script is at
+    # <repo>/tests/scripts/runtime_capability_bindings_smoke.py.
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / "std" / "ahfl.toml").is_file():
+        raise AssertionError(f"std sysroot manifest not found under {repo_root}")
+    return repo_root
+
+
+def write_rich_package(pkg_dir: Path) -> None:
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    (pkg_dir / "ahfl.toml").write_text(_RICH_PACKAGE_MANIFEST, encoding="utf-8")
+    (pkg_dir / "main.ahfl").write_text(_RICH_PACKAGE_SOURCE, encoding="utf-8")
+
+
+def rich_input_dict(overrides: dict) -> dict:
+    # A fully-valid RichInput; each case overrides one field with the shape under
+    # test. `note` carries a unique secret marker so negatives can assert the
+    # exact-decode diagnostic never echoes the user payload.
+    payload = {
+        "_type": "rich::main::RichInput",
+        "dec": "1.23",
+        "dur": "5s",
+        "nums": [1, 2, 3],
+        "tags": {"_timestamp": 7, "plain": 9},
+        "opt": 42,
+        "nothing": None,
+        "flag": 1.0,
+        "count": 5,
+        "note": "ok",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def rich_input_json(overrides: dict) -> str:
+    return json.dumps(rich_input_dict(overrides))
+
+
+def run_rich_input(ahflc: str, pkg_dir: Path, run_dir: Path, input_json: str):
+    # Drive `ahflc run` on the rich echo package with a sentinel fake-curl on
+    # PATH. The workflow calls no capability, so a well-behaved exact-decode run
+    # must NEVER invoke curl; the curl-config capture file must not appear.
+    config_path = run_dir / "rich_llm_config.json"
+    curl_capture_path = run_dir / "rich_curl_config.txt"
+    fake_bin_dir = run_dir / "rich-fake-curl-bin"
+    if fake_bin_dir.exists():
+        shutil.rmtree(fake_bin_dir)
+    if curl_capture_path.exists():
+        curl_capture_path.unlink()
+    write_fake_curl(fake_bin_dir)
+    write_llm_config(config_path)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["AHFL_RUNTIME_BINDING_CURL_CONFIG"] = str(curl_capture_path)
+    env["AHFL_RUNTIME_BINDING_LLM_KEY"] = "dummy-llm-key"
+    env["AHFL_RUNTIME_BINDING_MODE"] = "http_success"
+    env["AHFL_RUNTIME_BINDING_VALUE"] = "unused"
+
+    result = subprocess.run(
+        [
+            ahflc,
+            "run",
+            "--manifest",
+            str(pkg_dir / "ahfl.toml"),
+            "--target",
+            "workflow",
+            "--sysroot",
+            str(sysroot_root()),
+            "--workflow",
+            "rich::main::EchoWorkflow",
+            "--input",
+            input_json,
+            "--llm-config",
+            str(config_path),
+            "--output-format",
+            "json",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=20,
+    )
+    return result, curl_capture_path
+
+
+def assert_rich_positive(ahflc, pkg_dir, run_dir, tag, overrides):
+    # Positive: exact-decode succeeds, the workflow COMPLETES, and the canonical
+    # --output-format json result DEEP-EQUALS the echoed input (with _type flipped
+    # to RichOutput). Proves the decoded native Value flowed through the evaluator
+    # to the workflow output — not just that admission did not error. The compare
+    # is exact-field-set (== on the whole dict), so a missing/extra field fails.
+    #
+    # NOTE: Python's 1.0 == 1, so a Float field does NOT carry native-variant
+    # provenance in this deep-equal; that proof is the paired bare-`1` negative.
+    input_payload = rich_input_dict(overrides)
+    expected = dict(input_payload)
+    expected["_type"] = "rich::main::RichOutput"
+
+    result, curl_capture_path = run_rich_input(ahflc, pkg_dir, run_dir, json.dumps(input_payload))
+    if result.returncode != 0:
+        raise AssertionError(
+            f"rich positive [{tag}] failed with {result.returncode}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    if curl_capture_path.exists():
+        raise AssertionError(
+            f"rich positive [{tag}] invoked curl for a capability-free workflow:\n"
+            f"{curl_capture_path.read_text(encoding='utf-8')}"
+        )
+    try:
+        document = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"rich positive [{tag}] did not emit JSON output: {exc}\n{result.stdout}"
+        )
+    if document.get("run", {}).get("status") != "completed":
+        raise AssertionError(
+            f"rich positive [{tag}] workflow did not complete: {document.get('run')!r}"
+        )
+    output = document.get("result")
+    if output != expected:
+        raise AssertionError(
+            f"rich positive [{tag}] result mismatch\n"
+            f"expected: {expected!r}\n     got: {output!r}"
+        )
+
+
+def assert_rich_negative(ahflc, pkg_dir, run_dir, tag, overrides, expected_diagnostic):
+    # Negative: real CLI exact-decode gate rejects the hostile shape BEFORE any
+    # transport. A unique secret marker rides in `note`; the diagnostic must hit
+    # the expected codec wording, fail closed (exit != 0), invoke zero curl, and
+    # never echo the payload marker anywhere in stdout+stderr.
+    secret_marker = f"G4B_RICH_SECRET_{tag.upper()}"
+    payload = dict(overrides)
+    payload["note"] = secret_marker
+    result, curl_capture_path = run_rich_input(
+        ahflc, pkg_dir, run_dir, rich_input_json(payload)
+    )
+    if result.returncode == 0:
+        raise AssertionError(
+            f"rich negative [{tag}] unexpectedly succeeded\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    combined_output = result.stdout + result.stderr
+    # Attribution: the failure must be at the CLI Phase-A --input seam, not merely
+    # some place a codec string happens to appear.
+    seam = "--input does not match workflow input schema"
+    if seam not in combined_output:
+        raise AssertionError(
+            f"rich negative [{tag}] not attributed to the --input seam ({seam!r}):\n"
+            f"{combined_output}"
+        )
+    if expected_diagnostic not in combined_output:
+        raise AssertionError(
+            f"rich negative [{tag}] missing diagnostic {expected_diagnostic!r}:\n"
+            f"{combined_output}"
+        )
+    if secret_marker in combined_output:
+        raise AssertionError(
+            f"rich negative [{tag}] echoed the payload marker {secret_marker!r}:\n"
+            f"{combined_output}"
+        )
+    if curl_capture_path.exists():
+        raise AssertionError(
+            f"rich negative [{tag}] invoked curl before failing closed:\n"
+            f"{curl_capture_path.read_text(encoding='utf-8')}"
+        )
+
+
+def run_rich_input_matrix(ahflc: str, run_dir: Path) -> None:
+    pkg_dir = run_dir / "rich_input_pkg"
+    if pkg_dir.exists():
+        shutil.rmtree(pkg_dir)
+    write_rich_package(pkg_dir)
+
+    # POSITIVES — the default rich_input_dict already carries every lossy shape
+    # at once (Decimal "1.23", Duration "5s", Set [1,2,3], Map with a
+    # reserved-marker-LOOKING String key, Option Some(42), Unit null, Float 1.0),
+    # so ONE baseline run whose full result deep-equals the echoed input proves
+    # the decoder traversed and rebuilt all of them. The old schema-free validator
+    # would false-reject the variant-carrying shapes, so this completed deep-equal
+    # is the caller-adaptation regression proof; any single shape regressing fails
+    # the whole compare (the error prints the exact expected/got dicts). Only the
+    # shapes NOT expressible by the baseline get their own run.
+    assert_rich_positive(ahflc, pkg_dir, run_dir, "baseline_all_shapes", {})
+    # Option<Int> None (the baseline covers Some); null decodes to None.
+    assert_rich_positive(ahflc, pkg_dir, run_dir, "option_none", {"opt": None})
+    # Float 1.5: an unambiguous fractional value that (unlike 1.0 -> bare `1`)
+    # survives value_to_json, so the result deep-equal directly observes it.
+    assert_rich_positive(ahflc, pkg_dir, run_dir, "float_fractional", {"flag": 1.5})
+
+    # NEGATIVES — real CLI exact-decode gate. Numeric provenance triad (all report
+    # "expected integer", but the boundary literals themselves are the provenance
+    # evidence): UINT64_MAX (UnsignedInteger, > INT64_MAX), UINT64_MAX+1 (positive
+    # IntegerFallback), INT64_MIN-1 (negative IntegerFallback).
+    assert_rich_negative(
+        ahflc, pkg_dir, run_dir, "high_uint",
+        {"count": 18446744073709551615}, "wire-codec: expected integer",
+    )
+    assert_rich_negative(
+        ahflc, pkg_dir, run_dir, "pos_integer_fallback",
+        {"count": 18446744073709551616}, "wire-codec: expected integer",
+    )
+    assert_rich_negative(
+        ahflc, pkg_dir, run_dir, "neg_integer_fallback",
+        {"count": -9223372036854775809}, "wire-codec: expected integer",
+    )
+    # Float accept->reject FLIP: bare integer `1` where the schema wants Float.
+    # The old schema-free validator ACCEPTED this; the exact codec rejects it.
+    assert_rich_negative(
+        ahflc, pkg_dir, run_dir, "float_bare_int",
+        {"flag": 1}, "wire-codec: expected float (no int widening)",
+    )
+    # Unit wrong-kind: CLI exact admission evidence (not a native-variant claim).
+    assert_rich_negative(
+        ahflc, pkg_dir, run_dir, "unit_wrong_kind",
+        {"nothing": 5}, "wire-codec: expected null for Unit",
+    )
+
+
+def run_structural_priority_cases(ahflc: str, run_dir: Path) -> None:
+    pkg_dir = run_dir / "rich_input_pkg"
+    if not pkg_dir.exists():
+        write_rich_package(pkg_dir)
+
+    # missing-workflow: a legal input DOM but a workflow name absent from the
+    # program. Admission passes structurally; the run reaches the canonical
+    # not-found failure rather than an input error.
+    config_path = run_dir / "rich_llm_config.json"
+    write_llm_config(config_path)
+    env = os.environ.copy()
+    env["AHFL_RUNTIME_BINDING_LLM_KEY"] = "dummy-llm-key"
+    missing = subprocess.run(
+        [
+            ahflc,
+            "run",
+            "--manifest",
+            str(pkg_dir / "ahfl.toml"),
+            "--target",
+            "workflow",
+            "--sysroot",
+            str(sysroot_root()),
+            "--workflow",
+            "rich::main::NoSuchWorkflow",
+            "--input",
+            rich_input_json({}),
+            "--llm-config",
+            str(config_path),
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=20,
+    )
+    if missing.returncode == 0:
+        raise AssertionError("missing-workflow run unexpectedly succeeded")
+    missing_output = missing.stdout + missing.stderr
+    if "not found in program" not in missing_output:
+        raise AssertionError(
+            f"missing-workflow missing canonical not-found diagnostic:\n{missing_output}"
+        )
+    # A legal DOM must NOT trip an input-schema or parse diagnostic: the run got
+    # far enough to reach the runtime's not-found seam.
+    competing_diagnostics = (
+        "does not match workflow input schema",
+        "failed to parse runtime input JSON",
+    )
+    for competing in competing_diagnostics:
+        if competing in missing_output:
+            raise AssertionError(
+                f"missing-workflow leaked competing diagnostic {competing!r}:\n{missing_output}"
+            )
+
+    # malformed input SYNTAX takes priority over everything downstream. Use a
+    # BOGUS --workflow name too, so the parse error must beat the not-found seam:
+    # if syntax were not checked first, this would report not-found instead.
+    malformed = subprocess.run(
+        [
+            ahflc,
+            "run",
+            "--manifest",
+            str(pkg_dir / "ahfl.toml"),
+            "--target",
+            "workflow",
+            "--sysroot",
+            str(sysroot_root()),
+            "--workflow",
+            "rich::main::NoSuchWorkflow",
+            "--input",
+            "{not-json",
+            "--llm-config",
+            str(config_path),
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=20,
+    )
+    if malformed.returncode == 0:
+        raise AssertionError("malformed --input run unexpectedly succeeded")
+    malformed_output = malformed.stdout + malformed.stderr
+    if "failed to parse runtime input JSON" not in malformed_output:
+        raise AssertionError(
+            f"malformed --input missing parse diagnostic:\n{malformed_output}"
+        )
+    # Parse priority: the competing not-found diagnostic must NOT appear.
+    if "not found in program" in malformed_output:
+        raise AssertionError(
+            f"malformed --input let not-found preempt the syntax error:\n{malformed_output}"
+        )
+
+
 def main() -> None:
     if len(sys.argv) != 3:
         raise SystemExit("usage: runtime_capability_bindings_smoke.py <ahflc> <work-dir>")
@@ -462,22 +907,29 @@ def main() -> None:
     )
     assert_failure(result, curl_capture_path, "response schema validation failed")
 
-    # G4a factory-poison NEGATIVE: a text_plain response format on a capability whose
-    # declared response is the user struct smoke::Response. The admission gate rejects
-    # a non-String verified root, so make_http_capability mints a poison binding that
-    # fails closed BEFORE any transport — even with retries requested and the circuit
-    # breaker enabled. Assert the admission diagnostic, zero fake-curl requests, and
-    # that the poison never degrades into retry_exhausted (CLI-level proof the retry=0
-    # pin holds).
-    textplain_poison_path = run_dir / "http_textplain_poison_bindings.json"
+    # RFC 0026 C2b G4b: shared-admission Phase-A NEGATIVE. A text_plain response
+    # format on a capability whose declared response is the user struct
+    # smoke::Response. Under G4b the CLI runs prepare_wire_response_schema in
+    # Phase A (before any secret/network/registry work), so the shared admission
+    # helper rejects the non-String verified root and returns an error directly —
+    # the run NEVER reaches make_http_capability, and no factory poison binding is
+    # minted here. This CLI case therefore proves: the shared admission helper
+    # fails closed in Phase A, zero fake-curl requests occur, and the failure
+    # never enters retry / circuit-breaker / RetryExhausted (even with retries
+    # requested and the breaker enabled).
+    #
+    # The factory-minted poison binding's own properties (retry=0, CB-off,
+    # attempts==1, zero transport) are proven separately by the capability_bridge
+    # unit test (G4a); this CLI case does not re-claim that evidence.
+    textplain_phase_a_admission_path = run_dir / "http_textplain_phase_a_admission_bindings.json"
     write_http_bindings(
-        textplain_poison_path,
+        textplain_phase_a_admission_path,
         max_retries=3,
         response_format="text_plain",
         circuit_breaker={"enabled": True, "failure_threshold": 1},
     )
     result, curl_capture_path = run_ahflc(
-        ahflc, run_dir, source_path, textplain_poison_path, "http_success"
+        ahflc, run_dir, source_path, textplain_phase_a_admission_path, "http_success"
     )
     assert_failure(
         result,
@@ -487,6 +939,12 @@ def main() -> None:
         expected_request_count=0,
         forbidden_fragment="retry_exhausted",
     )
+
+    # RFC 0026 C2b G4b: the rich --input exact-decode matrix (schema-guided codec
+    # path through a real package/sysroot) and the structural error-priority
+    # cases (missing-workflow not-found, malformed-input syntax priority).
+    run_rich_input_matrix(ahflc, run_dir)
+    run_structural_priority_cases(ahflc, run_dir)
 
 
 if __name__ == "__main__":
