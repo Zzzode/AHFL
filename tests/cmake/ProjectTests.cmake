@@ -1063,6 +1063,10 @@ add_test(NAME ahfl.runtime.core_wire_codec
     COMMAND $<TARGET_FILE:ahfl_core_wire_codec_tests>
 )
 
+add_test(NAME ahfl.runtime.core_wasm_resume_record
+    COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_record_tests>
+)
+
 add_test(NAME ahfl.runtime.e2e_workflow
     COMMAND $<TARGET_FILE:ahfl_e2e_workflow_tests>
             "${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"

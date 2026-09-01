@@ -25,6 +25,7 @@ add_library(ahfl_runtime_engine STATIC
     wire_transport_adapter.cpp
     core_wire_codec.cpp
     core_wasm_schema_transport.cpp
+    core_wasm_resume_record.cpp
 )
 
 target_link_libraries(ahfl_runtime_engine
