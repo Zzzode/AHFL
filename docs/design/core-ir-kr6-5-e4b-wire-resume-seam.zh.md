@@ -455,18 +455,29 @@ body:
   module_sha256         (64 lowercase hex; whole emitted module)
   wire_schema_sha256    (64 lowercase hex; raw AHFLWS table payload, no custom-name framing)
   exec_manifest_sha256  (64 lowercase hex; raw exec-manifest section payload)
-  entry = { kind = Workflow, id }
-  suspended_node_id
+  entry = { kind = Workflow, id }            (id: CoreWorkflowId)
+  suspended_node_id                          (CoreWorkflowNodeId)
   resume_state          (u8: 0 = Suspended, 1 = Injected)
   node_count
   nodes = [ {
-    workflow_node_id      (identity; UNIQUE + consistent with the plan; NOT numerically dense)
-    schedule_pos          (dense 0..frontier; nodes[] ordered strictly ascending by schedule_pos)
+    workflow_node_id      (CoreWorkflowNodeId; identity; globally UNIQUE
+                           within the record; NOT numerically dense)
+    schedule_pos          (dense 0..frontier; nodes[i].schedule_pos == i,
+                           so nodes[] is strictly ascending and gap-free)
     node_kind             (u8: 0 = identity, 1 = capability)
     memo_count
-    memo = [ { invocation_ordinal, capability, source_symbol, arg_hash, result_slot }, ... ]
-    pending?              (present ONLY for suspended_node_id when resume_state = Suspended:
-                           { invocation_ordinal, capability, source_symbol, arg_hash })
+    memo = [ {
+      invocation_ordinal  (InvocationOrdinal)
+      capability          (CoreCapabilityId)
+      source_symbol
+      arg_hash
+      result_slot         (PayloadSlotId)
+    }, ... ]
+    pending?              (present ONLY for suspended_node_id when
+                           resume_state = Suspended:
+                           { invocation_ordinal (InvocationOrdinal),
+                             capability (CoreCapabilityId),
+                             source_symbol, arg_hash })
   }, ... ]
 auth_header = { alg_version = 1 (HMAC-SHA256), key_id (16 bytes), generation (u64) }
 tag         = 32 bytes (HMAC-SHA256)
@@ -480,23 +491,81 @@ RFC 0022 SymbolId cross-check; both are matched strictly (0 legal; presence via
 module import table / manifest) is a DISTINCT concept from this per-node
 INVOCATION ordinal and never shares a field or diagnostic.
 
+Every persisted identity is a distinct strong type in the C++/semantic model
+(`CoreWorkflowId`, `CoreWorkflowNodeId`, `CoreCapabilityId`, `PayloadSlotId`, and a
+distinct `InvocationOrdinal` separate from `CapabilityImportOrdinal` and the A2
+`ManifestCallSiteIndex`); the model never exposes interchangeable bare integer
+identities. Their ON-WIRE representation remains the canonical ULEB widths already
+specified. Admission rejects the `UINT32_MAX` invalid sentinel of `CoreWorkflowId`
+/ `CoreWorkflowNodeId` / `CoreCapabilityId` and the defined invalid sentinel of
+`PayloadSlotId`; `CoreCapabilityId{0}` and `SymbolId{0}` stay legal and
+`source_symbol` has no invented invalid sentinel; every ULEB-to-index/`size_t`
+conversion is checked and `pending.invocation_ordinal == frontier.memo.size()` is
+compared without narrowing or overflow.
+
 Per-node memo entries are strictly ascending and dense by `invocation_ordinal`.
 `pending` (Suspended state) belongs to exactly `suspended_node_id` on its highest
 ordinal and its `(node, ordinal)` is NOT yet in that node's memo; in the Injected
-state there is no `pending` and that ordinal is already the last memo entry — a
-given `(workflow_node_id, invocation_ordinal)` appears in EXACTLY ONE of memo or
-pending, never both. The control record's `resume_state` has only two values
+state there is no `pending` and that ordinal is already the last memo entry — no
+carried `(workflow_node_id, invocation_ordinal)` may appear in both memo and
+pending (the enumerated invariant list below is the authority). The control
+record's `resume_state` has only two values
 (0 = Suspended, 1 = Injected); a completed workflow is NOT a third record state —
 completion is recorded as a Consumed tombstone in the commit manifest (§5.1), not
 as `resume_state = 2`. Every coordinate is cross-checked on replay; unknown,
 duplicate, missing, reordered, non-canonical, out-of-bounds, or trailing bytes
 fail before a module resumes, and a canonical re-encode-equality gate rejects any
-non-shortest encoding. `arg_hash` is the exact RFC 0022 `evaluator::hash_values`
+non-shortest encoding.
+
+Record-internal structural invariants (A1 admission, all fail-closed): `nodes` is
+non-empty; `nodes[i].schedule_pos == i` (dense, gap-free); every
+`workflow_node_id` is globally unique within the record;
+`nodes.back().workflow_node_id == suspended_node_id` and that frontier node is a
+capability node; an identity node has an empty memo and never a pending; each
+node's memo `invocation_ordinal`s are exactly `0..memo_count-1`. A
+`(workflow_node_id, invocation_ordinal)` LEDGER COORDINATE that the record carries
+appears in EXACTLY ONE of memo or pending — a no-overlap rule over the coordinates
+actually present, NOT a requirement that every possible ordinal appear. Suspended:
+the whole record has EXACTLY ONE pending, only on the frontier, with
+`pending.invocation_ordinal == frontier.memo.size()` and not present in memo.
+Injected: the record has NO pending, the frontier memo is non-empty, and its last
+entry is the committed injected ordinal (the semantics `resume_state` gives that
+last memo entry). A non-frontier node never carries a pending. A1 verifies ONLY
+these record-internal properties; consistency with the compiled plan/manifest is
+NOT an A1 concern (see the ownership chain in §4.4).
+
+`arg_hash` is the exact RFC 0022 `evaluator::hash_values`
 algorithm and `pending.arg_hash` is REQUIRED (the host holds schema-decoded args
 at suspend and persists it immediately; no `pending_args_slot` is forced). The
-record's own trust root is the HMAC tag over `"AHFLWR-v1" || body || auth_header`
-(only the tag is excluded); the artifact digests are integrity of the module and
-schema, not of the record. Node identity-only nodes carry no output slot: on
+record's own trust root is the HMAC-SHA256 tag over the exact on-wire record
+prefix `[0, tag)` — i.e. `body || auth_header`, the tag excluded. The prefix's
+FIRST authenticated bytes are `magic` (`AHFLWR`) then `format_version`: a record
+of a different artifact class or version has a different prefix, so its tag fails
+verification under this class/version unless the MAC itself is forged.
+(Implementation benefit: that contiguous prefix is passed directly to the
+one-span `hmac_sha256` — no scatter/gather MAC API and no pre-authentication copy
+of the whole record.) The artifact digests are integrity of the module and
+schema, not of the record.
+
+Admission is TWO-PASS. Layout `body || auth_header || tag` with a FIXED 57-byte
+tail (`auth_header` 25 bytes = {`alg_version` u8, `key_id` 16 bytes, `generation`
+u64 little-endian} + `tag` 32 bytes), located from EOF. PASS 1 (untrusted) checks
+ONLY: minimum total length, `magic` + `format_version`, the fixed tail offsets,
+`alg_version` in its allowed set, and equality of the record `key_id` against the
+caller-supplied `expected_key_id` — it NEVER reads a body count and NEVER
+reserves or allocates on any attacker-supplied count. `key_id` and `tag` are
+compared with a fixed-work, no-early-exit BEST-EFFORT routine (portable C++
+cannot prove constant-time). Only AFTER the tag verifies does PASS 2 decode the
+body's ULEB fields/counts and enforce the structural invariants. The caller
+explicitly provides the candidate `expected_key_id` and borrowed key bytes; this
+slice has NO keyring, KMS, or key resolver. Canonical admission does NOT re-run
+HMAC: pass 2 still validates the header (`alg_version` allowed set; `key_id` /
+`generation` fixed shape), then the decoder re-encodes the parsed, validated
+model's canonical `body || auth_header` and compares it byte-for-byte against the
+already-authenticated prefix `[0, tag)` (the fixed-width `auth_header` / `tag`
+have no alternative canonical form), so no second HMAC runs.
+
+Node identity-only nodes carry no output slot: on
 resume every node output and downstream node input is DETERMINISTICALLY
 RECOMPUTED from validated memo results plus pure (Goto/Identity) runners, so a
 `node_input_slot` is neither authority nor required and is omitted from this
@@ -571,10 +640,23 @@ control record. Grammar: magic `AHFLXM`, version u8 `1`, `entry{kind: u8, id: u3
 cap_call_count: u8 (statically 0 or 1 today), and if 1: capability: u32,
 source_symbol: u64 }`. It carries NO Param/Result kind and NO bare
 `CoreWireSchemaNodeId`: a capability call always needs BOTH a Param and a Result
-binding, so the runtime typed-mints Param{param_index 0} and Result{param_index 0}
-from the verified table for that `(capability, source_symbol)` — the manifest never
-stores a root, a kind, or a bare node id. `schedule_pos` is dense;
-`workflow_node_id` is unique and cross-checked against the plan. Wire encoding
+binding. The runtime module-context is the CALL-SITE AUTHORITY: a caller cannot
+submit an arbitrary `(capability, source_symbol)` to mint. The context's
+`resolve(ManifestCallSiteIndex)` returns a privately-constructed
+`VerifiedCoreWasmCallSite` token that shares the module authority's immutable
+payload; the token exposes only
+the narrow host coordinates (`workflow_node_id`, `schedule_pos`,
+`invocation_ordinal`, `capability`, `source_symbol`, `import_ordinal`) and mints
+Param{param_index 0} / Result from its OWN authority. `ManifestCallSiteIndex`,
+`CapabilityImportOrdinal`, and `InvocationOrdinal` are three DISTINCT strong types
+that never share a variable or diagnostic. A token is bound to its source module
+(not usable against another module), stays valid after the module handle is
+destroyed (shared immutable payload), and exposes no raw table,
+`CoreWireSchemaNodeId`, or manifest internals. The manifest never
+stores a root, a kind, or a bare node id. `schedule_pos` is dense and
+`workflow_node_id` is unique WITHIN the manifest; the manifest is NOT cross-checked
+against a plan here (the runtime holds no verified plan — see the ownership chain
+below). Wire encoding
 (same discipline as the control record): `version` / `entry.kind` /
 `cap_call_count` are exact u8 with enumerated allowed sets, every other integer
 (`entry.id`, `node_count`, `workflow_node_id`, `schedule_pos`, `capability`,
@@ -583,6 +665,37 @@ remaining / min-entry-bytes + checked arithmetic BEFORE any reserve or growth;
 decode requires exact EOF and a canonical re-encode byte-equality gate; unknown,
 out-of-set, non-canonical, or trailing bytes fail closed. Thus
 `exec_manifest_sha256` anchors a single canonical payload.
+
+Consistency ownership chain (no single stage over-claims): A1 verifies ONLY the
+record's INTERNAL uniqueness/structure (it has no plan or manifest input). B2-C's
+emitter generates the `ahfl.wasm-exec-manifest.v1` section from the verified
+canonical workflow plan. A2 verifies ONLY the manifest's OWN canonical invariants
+(`schedule_pos` dense, `workflow_node_id` unique within the manifest,
+`cap_call_count` in {0,1}, `entry.kind == Workflow`, `entry.id` a non-invalid
+`CoreWorkflowId`) plus manifest capability-identity consistency against the schema
+capability table and the Wasm import ordinals, and BINDS the typed manifest into
+the module authority; A2 holds no verified plan and no second entry/node mapping,
+so it does NOT validate the manifest against a plan and takes NO expected-entry
+parameter (it only checks `entry.kind == Workflow` and a non-invalid
+`CoreWorkflowId`, and binds that typed entry into the authority). B2-D — only after
+record authentication + artifact-digest match — compares coordinate-by-coordinate
+that `record.entry == module_context.entry == host-selected entry` and the
+manifest-provable identity components (entry / node / schedule_pos / call-site /
+invocation_ordinal / capability / source_symbol) of each record ledger coordinate;
+`arg_hash` is instead recomputed in the import callback from the module-produced
+Param frame and compared to the ledger, and `result_slot` / source-state / payload
+go through their own later gates (the manifest carries NO `arg_hash`, `result_slot`,
+or memo payload).
+
+Canonical section placement (capability-workflow artifact): the custom section
+NAMED `ahfl.wasm-exec-manifest.v1` (whose raw payload begins with the magic
+`AHFLXM`) appears EXACTLY ONCE, IMMEDIATELY BEFORE the custom section NAMED
+`ahfl.wire-schema.v1` (whose raw payload begins with `AHFLWS`), which remains the
+module's FINAL section at EOF (the E4-B1 landed invariant is preserved). The
+runtime module-context frames the module and admits both sections in this fixed
+order; a missing, duplicated, misordered, name-framing-malformed, or
+payload-magic-wrong manifest/schema section fails closed. No other custom section
+may follow `ahfl.wire-schema.v1`.
 
 Manifest determinism (why Approach A is total, not a menu): the schedule is a
 deterministic Kahn order over node ids, and each node's capability call sites are
@@ -715,7 +828,11 @@ returns the current reservation + lease to a single fenced winner so a crashed
 reserver's work is recoverable, and `FINALIZE`/`ABORT` require the lease. Each
 transaction artifact type (control record, COMMIT manifest, slot, generation
 pointer) is HMAC-bound with a distinct domain separator + `key_id` + `generation`
-so no cross-type or cross-generation substitution is possible. (The compiler
+so no cross-type or cross-generation substitution is possible — for the control
+record that domain separator is its intrinsic leading `magic || format_version`
+authenticated as the prefix's first bytes (§4.2), not a prepended string literal,
+and the future `commit_manifest` and slot artifacts (B2-B) each carry their OWN
+distinct magic. (The compiler
 `exec_manifest` is a DIFFERENT artifact — a build-time custom section with no
 runtime HMAC, anchored only by `exec_manifest_sha256` in the control record §4.4;
 it is never the transaction `commit_manifest`.) The commit sequence is: write each
@@ -880,11 +997,21 @@ Implementation is intentionally split before any resume ABI:
      already-compiled C++ consumer must be cleanly rebuilt; public C ABI, persisted
      formats, CLI, and emitted Wasm bytes are unchanged.
    - **B2-A record codec + runtime module-context**: the `ahfl.wasm-resume.v1`
-     ledger codec (byte-mirror + canonical re-encode) + digests, and the runtime
+     ledger codec (byte-mirror + canonical re-encode) + its authenticated digest
+     FIELDS (A1 only encodes / parses / holds the three 64-hex digest fields; it
+     does NOT compute or compare artifact digests — that comparison against the
+     loaded module/schema is future B2-D), and the runtime
      `VerifiedCoreWasmSchemaModule` (one frame/decode/cross-check; mints Param/
      Result bindings by typed selector; holds the verified table + manifest map;
      the manifest/import/call-sequence cross-check lives ONLY here, never in
-     `compiler_ir`). FOUNDATION.
+     `compiler_ir`). FOUNDATION. A1 introduces a GREENFIELD internal on-wire
+     format codec (`ahfl.wasm-resume.v1`); it does not modify the existing
+     `ahfl.workflow-recovery.v1|v2` JSON store and performs no persisted-format
+     migration, but it is additive (it touches runtime + test CMake and adds a
+     security-sensitive artifact codec — not zero-blast) with no production
+     persistence caller yet. A2's module-context is the call-site authority; the
+     first production caller of both A1 and A2 is future B2-D. B2 and KR6.5 stay
+     false.
    - **B2-B integrity-only local store foundation**: a bytes-only
      `PayloadStore` (integrity-store) foundation interface + an integrity-only
      LOCAL reference backend with HMAC integrity + advisory-lock/generation
