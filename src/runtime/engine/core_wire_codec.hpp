@@ -47,10 +47,11 @@
 
 namespace ahfl::runtime {
 
-// The shared {valid, error} validation result. Owned here so this codec is the
-// single authority for schema-guided native-Value validation; the legacy
-// response_schema_validator reuses THIS type (it will be demoted to a thin shim
-// in a later C2b stage) rather than defining a parallel one.
+// The shared {valid, error} validation result. Owned here because this codec is
+// the SOLE schema-guided authority for native-Value validation across the runtime
+// (RFC 0026 C2b G4d: the legacy TypeRef-based response_schema_validator has been
+// deleted; all validation now flows through validate_value / decode_json against a
+// verified wire binding).
 struct SchemaValidationResult {
     bool valid{true};
     std::string error;

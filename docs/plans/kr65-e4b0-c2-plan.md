@@ -1,11 +1,16 @@
 # B0-C2 Narrow Implementation Plan — rev4 (A′ + Codex Q1/Q2 rulings + must-fixes)
 
-Status: C2a LANDED; C2b IN PROGRESS. C2b-1/2 codec landed
+Status: C2a LANDED; C2b COMPLETE. C2b-1/2 codec landed
 (`e97aa76d`); P0-9/P0-10/P0-11 shared-change fixes landed. C2b **Stage 3**
-(durable-resume memo/pending result trust seam, §12) is complete across G1
-(`9d35464f`, recovery format), G2 (`58c5ac57`, legacy codec), and this G3 change
-(runtime trust paths). **G4 (CLI/gRPC/HTTP/shim entry demotion) remains PENDING and
-NOT started**.
+(durable-resume memo/pending result trust seam, §12) landed across G1
+(`9d35464f`, recovery format), G2 (`58c5ac57`, legacy codec), and G3
+(`0c599d94`, runtime trust paths). **G4 (CLI/gRPC/HTTP/shim entry demotion) is
+COMPLETE**: G4a (`9821046f`, live seam + admission helper), G4b (`471613af`,
+two-phase CLI admission), G4c (`187ca7ad`, raw pending-result subgate), and G4d
+(this change: delete the legacy `response_schema_validator`, so the schema-guided
+codec is the sole validation authority). B2 (the full durable-resume
+ABI/control-record, protected payload store, atomic/crash, ownership/last-use,
+and node-order evidence work) remains PENDING.
 RFC 0026
 KR6.5 E4-B0-C2. Author: Claude (sole writer). Reviewer: Codex (read-only).
 
@@ -331,19 +336,19 @@ with the C2b-1/2 codec commit, not the shared P0-10 commit.
   source-aware.
 - `response_schema_validator`: old ad-hoc TypeRef recursion (Any-accept,
   Float-accepts-Int, enum-payload-unchecked, struct field.type_ref erasure,
-  canonical-string stdlib match) DELETED. Public `validate_value_against_schema`
-  MAY remain as a thin shim that internally does migration→verified binding→
-  `validate_value`. `wire_capability` raw-JSON call site (@156-159, @309) MUST
-  change to: parse body → raw `json::JsonValue` → `decode_json(raw, binding)`;
-  no schema-free decode on this trust path. (This wire_capability/CLI/shim change is
-  the PENDING G4 scope; Stage 3 landed the memo/pending paths only.)
+  canonical-string stdlib match) DELETED (RFC 0026 C2b G4d). The file and its
+  `validate_value_against_schema` entry points are removed entirely — NOT kept as
+  a thin shim; every trust path now migrates the declared type to a verified wire
+  binding and calls `decode_json` / `validate_value`. The `wire_capability`
+  raw-JSON call sites and the CLI resume path were flipped to that codec path in
+  G4a/G4b/G4c; G4d removes the last legacy validator symbol.
 - KEEP `value_from_json` / `value_to_json` for non-trust callers untouched.
 - stdlib / user nominal identity follows `resolve_nominal_strict` verbatim (§0):
   a present id must hit by id with canonical agreement; the ONLY name-only match
   is the descriptor-backed synthetic builtin exception. The old
-  `is_nominal_std_*` canonical-STRING matching in response_schema_validator is
-  removed (it was an independent, weaker matcher); identity now flows through the
-  one resolver via the migration projector.
+  `is_nominal_std_*` canonical-STRING matching that lived in the now-deleted
+  response_schema_validator was an independent, weaker matcher; identity now flows
+  through the one resolver via the migration projector.
 
 ## 9. Non-goals — unchanged
 
@@ -440,8 +445,17 @@ Locked facts (each has a permanent regression):
   store, atomic memo append + crash semantics, ownership/last-use gating, and exact
   node-order observation/execution evidence (design §4/§5/§6), plus whether
   `node_input` is ever truly used. No resume export / custom section / Wasm byte change
-  in this round; B2 is PENDING. G4 (CLI/gRPC/HTTP/shim demotion) is PENDING, not done.
+  in this round; B2 is PENDING. G4 (CLI/gRPC/HTTP/shim demotion) is COMPLETE
+  (G4a-d landed; the legacy `response_schema_validator` is deleted).
 - **rollback risk.** Reverting re-opens both the historical type losses
   (Decimal/Duration/Set/Map/Option/Unit, integral-Float, explicit-Unit vs valueless)
   AND the false-accept surface the gates close (hostile null-child collections,
   cross-capability binding borrow, Legacy laundering). Not behavior-neutral.
+- **G4d ABI/symbol risk.** Deleting `response_schema_validator.{hpp,cpp}` removes
+  two internal `ahfl_runtime_engine` symbols (`validate_value_against_schema`
+  overloads). The header was never in installed `include/ahfl` and there is no
+  supported public source-header contract, and there are zero in-tree production
+  callers; but any downstream that enabled installing the internal engine target
+  or linked those symbols directly must rebuild / migrate to the codec's
+  `validate_value`. Not a public-API break, but not a pure no-op for such
+  consumers.

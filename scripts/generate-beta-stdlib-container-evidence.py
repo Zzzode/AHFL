@@ -55,7 +55,7 @@ def main() -> int:
             (
                 "^(ahfl\\.semantics\\.(typed_hir_all|type_resolver_all)|"
                 "ahfl\\.evaluator\\.eval_all|ahfl\\.executor\\.exec_all|"
-                "ahfl\\.runtime\\.(value_json_all|response_schema_validator|"
+                "ahfl\\.runtime\\.(value_json_all|core_wire_codec|"
                 "capability_bridge_all)|ahflc\\.check\\.stdlib_api_smoke)$"
             ),
         ],
@@ -106,7 +106,7 @@ def main() -> int:
         raise RuntimeError("legacy container desugar pass remains in the production build")
 
     schema_test = (
-        repo / "tests/unit/runtime/engine/response_schema_validator.cpp"
+        repo / "tests/unit/runtime/engine/core_wire_codec.cpp"
     ).read_text(encoding="utf-8")
     for marker in ("optional.raw_none_rejected", "optional.raw_inner_rejected"):
         if marker not in schema_test:
@@ -136,7 +136,7 @@ def main() -> int:
             f"ctest --test-dir {build} --output-on-failure -R "
             "'^(ahfl\\.semantics\\.(typed_hir_all|type_resolver_all)|"
             "ahfl\\.evaluator\\.eval_all|ahfl\\.executor\\.exec_all|"
-            "ahfl\\.runtime\\.(value_json_all|response_schema_validator|capability_bridge_all)|"
+            "ahfl\\.runtime\\.(value_json_all|core_wire_codec|capability_bridge_all)|"
             "ahflc\\.check\\.stdlib_api_smoke)$'"
         ),
     }

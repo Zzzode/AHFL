@@ -408,8 +408,15 @@ void test_option() {
     check(validate_value(evaluator::make_option_none(), *b).valid, "validate option None");
     check(validate_value(evaluator::make_option_some(evaluator::make_int(1)), *b).valid,
           "validate option Some");
-    check(!validate_value(evaluator::make_none(), *b).valid,
-          "validate rejects bare NoneValue as Option");
+    // RFC 0026 C2b G4d: the two raw-fallback rejection markers migrated 1:1 from
+    // the deleted response_schema_validator test — the authoritative proof that a
+    // native bare value (no Option wrapper) is rejected under an Option<Int> schema.
+    // Both are native validate_value calls (NOT decode_json). The generator
+    // scripts/generate-beta-stdlib-container-evidence.py reads these marker names.
+    // (The bare-None reject already existed here; its label is renamed to the
+    // stable marker rather than duplicating the check.)
+    check(!validate_value(evaluator::make_none(), *b).valid, "optional.raw_none_rejected");
+    check(!validate_value(evaluator::make_int(42), *b).valid, "optional.raw_inner_rejected");
     // Some with wrong child type.
     check(!validate_value(evaluator::make_option_some(evaluator::make_bool(true)), *b).valid,
           "validate option Some wrong child type");

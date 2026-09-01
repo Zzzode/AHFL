@@ -1,6 +1,10 @@
 # Core-IR KR6.5 E4-B0: Wire Schema and Durable-Resume Seam -- Design
 
-> Status: **DRAFT rev 1** (design and research only).
+> Status: **IMPLEMENTED through C2b G4d** (schema-guided wire codec + durable-resume
+> seam + full CLI/HTTP/gRPC/shim demotion; the legacy `response_schema_validator`
+> is deleted). B2 (the full durable-resume ABI/control-record, protected payload
+> store, atomic/crash, ownership/last-use, and node-order evidence work) remains
+> design/pending.
 >
 > Scope: decide who decodes and type-checks RFC 0019/0021 `value_json`, define
 > one canonical wire-schema projection, and define the durable record's control
@@ -32,6 +36,10 @@ authority for E4-B:
    Typed-to-AHFL bridge; P4-C had to persist member templates specifically to
    avoid reconstructing them from those TypeRefs. The validator also checks
    only enum variant existence, not positional/named payload arity and types.
+   (Historical: RFC 0026 C2b G4d DELETED `response_schema_validator.cpp`
+   entirely; the schema-guided `core_wire_codec` `validate_value` / `decode_json`
+   against a verified wire binding is now the sole native-Value validation
+   authority. This numbered item records the original motivation.)
 3. `value_from_json` is intentionally schema-free. A JSON string could mean
    `String`, `Decimal`, or `Duration`; an array could mean `List` or `Set`; and
    `null` could mean `Unit`, `Option::None`, or a legacy `NoneValue`. Decoding
@@ -584,7 +592,9 @@ Not in this seam (residual risks, stated honestly):
   non-goals hold) and does NOT complete B2. See §4 / §5 / §6 for the full boundary;
   the point here is only that Stage 3 is a memo-result trust seam on a plaintext store,
   not the durable-security boundary. The G4 ingress demotion (CLI/gRPC/HTTP/shim entry
-  wiring through the codec) is also PENDING and NOT started in this slice.
+  wiring through the codec) is COMPLETE: G4a (`9821046f`), G4b (`471613af`), G4c
+  (`187ca7ad`), and G4d (delete the legacy `response_schema_validator` so the codec is
+  the sole schema-guided validation authority).
 
 ### 9.2 Three-state authority
 

@@ -1059,10 +1059,6 @@ add_test(NAME ahfl.runtime.native_wasm_differential
     COMMAND $<TARGET_FILE:ahfl_native_wasm_differential_tests>
 )
 
-add_test(NAME ahfl.runtime.response_schema_validator
-    COMMAND $<TARGET_FILE:ahfl_response_schema_validator_tests>
-)
-
 add_test(NAME ahfl.runtime.core_wire_codec
     COMMAND $<TARGET_FILE:ahfl_core_wire_codec_tests>
 )

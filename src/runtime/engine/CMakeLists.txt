@@ -24,7 +24,6 @@ add_library(ahfl_runtime_engine STATIC
     wire_value.cpp
     wire_transport_adapter.cpp
     core_wire_codec.cpp
-    response_schema_validator.cpp
 )
 
 target_link_libraries(ahfl_runtime_engine

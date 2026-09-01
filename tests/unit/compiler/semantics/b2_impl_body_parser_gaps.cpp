@@ -41,7 +41,6 @@
 #include "runtime/evaluator/runtime_fn_table.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/evaluator/value_json.hpp"
-#include "runtime/engine/response_schema_validator.hpp"
 #include "tooling/formatter/formatter.hpp"
 
 #include "common/test_support.hpp"
@@ -863,17 +862,6 @@ TEST_CASE("P3-gaps-B value_to_json serializes unit as null") {
     const auto unit = ahfl::evaluator::make_unit();
     const std::string json = ahfl::evaluator::value_to_json(unit);
     CHECK_EQ(json, "null");
-}
-
-// ============================================================================
-// B3: response_schema_validator accepts UnitValue against Unit schema
-// ============================================================================
-
-TEST_CASE("P3-gaps-B response_schema_validator accepts unit value") {
-    const auto unit = ahfl::evaluator::make_unit();
-    const auto schema = unit_type_ref();
-    const auto result = ahfl::runtime::validate_value_against_schema(unit, schema);
-    CHECK(result.valid);
 }
 
 // ============================================================================
