@@ -115,3 +115,132 @@ TEST_CASE("SHA-256 empty span equals empty string_view") {
     CHECK(ahfl::support::sha256(std::span<const std::uint8_t>(empty)) ==
           digest_from_hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
 }
+
+TEST_CASE("HMAC-SHA-256 RFC 4231 known-answer vectors") {
+    // Fixed expected digests from RFC 4231 (test cases 1-4, 6, 7). Case 5 is a
+    // truncated-output vector, which this fixed-32-byte API does not implement.
+    // Cases 6 and 7 use a 131-byte key (> the 64-byte block), exercising the
+    // hash-the-key-first path.
+
+    // Case 1: 20-byte 0x0b key, data "Hi There".
+    {
+        const std::vector<std::uint8_t> key(20, 0x0b);
+        const auto expected =
+            digest_from_hex("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+        CHECK(ahfl::support::hmac_sha256(std::span<const std::uint8_t>(key),
+                                         bytes_of("Hi There")) == expected);
+    }
+
+    // Case 2: key "Jefe", data "what do ya want for nothing?".
+    {
+        const auto expected =
+            digest_from_hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+        CHECK(ahfl::support::hmac_sha256(bytes_of("Jefe"),
+                                         bytes_of("what do ya want for nothing?")) == expected);
+    }
+
+    // Case 3: 20-byte 0xaa key, 50-byte 0xdd data.
+    {
+        const std::vector<std::uint8_t> key(20, 0xaa);
+        const std::vector<std::uint8_t> data(50, 0xdd);
+        const auto expected =
+            digest_from_hex("773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe");
+        CHECK(ahfl::support::hmac_sha256(std::span<const std::uint8_t>(key),
+                                         std::span<const std::uint8_t>(data)) == expected);
+    }
+
+    // Case 4: 25-byte key 0x01..0x19, 50-byte 0xcd data.
+    {
+        std::vector<std::uint8_t> key(25);
+        for (std::size_t i = 0; i < key.size(); ++i) {
+            key[i] = static_cast<std::uint8_t>(i + 1);
+        }
+        const std::vector<std::uint8_t> data(50, 0xcd);
+        const auto expected =
+            digest_from_hex("82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b");
+        CHECK(ahfl::support::hmac_sha256(std::span<const std::uint8_t>(key),
+                                         std::span<const std::uint8_t>(data)) == expected);
+    }
+
+    // Case 6: 131-byte 0xaa key (> block), hashed first.
+    {
+        const std::vector<std::uint8_t> key(131, 0xaa);
+        const auto expected =
+            digest_from_hex("60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54");
+        CHECK(ahfl::support::hmac_sha256(
+                  std::span<const std::uint8_t>(key),
+                  bytes_of("Test Using Larger Than Block-Size Key - Hash Key First")) == expected);
+    }
+
+    // Case 7: 131-byte 0xaa key (> block) with a larger-than-block-size message.
+    {
+        const std::vector<std::uint8_t> key(131, 0xaa);
+        const auto expected =
+            digest_from_hex("9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2");
+        CHECK(ahfl::support::hmac_sha256(
+                  std::span<const std::uint8_t>(key),
+                  bytes_of("This is a test using a larger than block-size key and a larger "
+                           "than block-size data. The key needs to be hashed before being "
+                           "used by the HMAC algorithm.")) == expected);
+    }
+}
+
+TEST_CASE("HMAC-SHA-256 key block-size boundary (64 vs 65 bytes)") {
+    // Locks the >64-byte "hash the key first" threshold: a 64-byte key is used
+    // as-is, a 65-byte key is SHA-256'd first, so the two must differ. Expected
+    // digests independently computed with system OpenSSL, hardcoded here.
+    const std::vector<std::uint8_t> key64(64, 0xaa);
+    const std::vector<std::uint8_t> key65(65, 0xaa);
+    const auto expected64 =
+        digest_from_hex("75eb5ffe3a1f602eab7e09004e78064769aa0eed261e4a3888dfe62d6a945b4e");
+    const auto expected65 =
+        digest_from_hex("8667c9376a80b4946a91a671f539eb3769a0928f3ccbf5c819a0b5af61f86d10");
+    CHECK(ahfl::support::hmac_sha256(std::span<const std::uint8_t>(key64),
+                                     bytes_of("boundary")) == expected64);
+    CHECK(ahfl::support::hmac_sha256(std::span<const std::uint8_t>(key65),
+                                     bytes_of("boundary")) == expected65);
+    CHECK(expected64 != expected65);
+}
+
+TEST_CASE("HMAC-SHA-256 accepts empty key and empty data") {
+    const std::array<std::uint8_t, 0> empty{};
+    // Externally computed (Python hashlib / OpenSSL) HMAC of empty data under an
+    // empty key; hardcoded, not generated from this implementation.
+    const auto expected =
+        digest_from_hex("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad");
+    CHECK(ahfl::support::hmac_sha256(std::span<const std::uint8_t>(empty),
+                                     std::span<const std::uint8_t>(empty)) == expected);
+}
+
+TEST_CASE("HMAC-SHA-256 hashes embedded NUL in key and data without truncation") {
+    // key = "k\0k", data = "d\0d"; a C-string length walk would stop at the NUL.
+    const std::vector<std::uint8_t> key{0x6b, 0x00, 0x6b};
+    const std::vector<std::uint8_t> data{0x64, 0x00, 0x64};
+    const auto expected =
+        digest_from_hex("adc3b85ca8477654e0e128471825864b0667fb809ef498607f0f06e609c7cf2f");
+    CHECK(ahfl::support::hmac_sha256(std::span<const std::uint8_t>(key),
+                                     std::span<const std::uint8_t>(data)) == expected);
+
+    // Truncating either input at the NUL would change the result.
+    const std::vector<std::uint8_t> key_head{0x6b};
+    const std::vector<std::uint8_t> data_head{0x64};
+    CHECK(ahfl::support::hmac_sha256(std::span<const std::uint8_t>(key_head),
+                                     std::span<const std::uint8_t>(data_head)) != expected);
+}
+
+TEST_CASE("HMAC-SHA-256 does not modify its key or data buffers") {
+    // Use a > block-size key so the hash-key-first path runs, plus embedded NUL.
+    std::vector<std::uint8_t> key(131);
+    for (std::size_t i = 0; i < key.size(); ++i) {
+        key[i] = static_cast<std::uint8_t>(i * 7U + 3U);
+    }
+    std::vector<std::uint8_t> data{0x00, 0x11, 0x00, 0x22, 0x33};
+    const std::vector<std::uint8_t> key_before = key;
+    const std::vector<std::uint8_t> data_before = data;
+
+    (void)ahfl::support::hmac_sha256(std::span<const std::uint8_t>(key),
+                                     std::span<const std::uint8_t>(data));
+
+    CHECK(key == key_before);
+    CHECK(data == data_before);
+}

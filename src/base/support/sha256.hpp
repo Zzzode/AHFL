@@ -34,4 +34,17 @@ using Sha256Digest = std::array<std::uint8_t, 32>;
 /// allocation/length failure).
 [[nodiscard]] std::string sha256_hex(std::string_view bytes);
 
+/// HMAC-SHA-256 (RFC 2104 / FIPS 198-1) of `data` under `key`. Block size 64,
+/// output 32 bytes. A key longer than 64 bytes is first SHA-256'd (then zero-padded
+/// to 64); a shorter key is zero-padded to 64. `key` and `data` may be empty,
+/// contain embedded NUL, or hold arbitrary bytes; neither is modified. Throws
+/// `std::length_error` (fixed text, no key/data/size echo) if `key` or the inner
+/// `64 + data.size()` message would exceed SHA-256's `floor(UINT64_MAX / 8)`-byte
+/// domain — checked before any key derivation. The implementation best-effort wipes
+/// its internal key-derived buffers (see the .cpp `best_effort_wipe` note; it
+/// cannot erase register/compiler-hidden copies and is not a production
+/// key-erasure guarantee).
+[[nodiscard]] Sha256Digest hmac_sha256(std::span<const std::uint8_t> key,
+                                       std::span<const std::uint8_t> data);
+
 } // namespace ahfl::support

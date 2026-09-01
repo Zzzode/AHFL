@@ -30,6 +30,21 @@ constexpr std::array<std::uint32_t, 64> kRoundConstants{
 constexpr std::size_t kBlockBytes = 64;
 constexpr std::uint64_t kMaxMessageBytes = UINT64_MAX / 8ULL;
 
+// Best-effort in-place scrub of an object's raw bytes. It writes zeros through a
+// `volatile unsigned char*` — `unsigned char` is the type the standard blesses for
+// aliasing any object's representation, and the volatile stores resist dead-store
+// elimination. This is why plain `x = 0` on the scalars is not enough; route every
+// secret member (arrays AND scalar counters) through this one path.
+// HONEST LIMITS: this is best-effort only — it cannot erase copies the compiler
+// may have spilled to registers or other stack slots, and it is NOT a production
+// key-erasure guarantee.
+void best_effort_wipe(void *ptr, std::size_t bytes) noexcept {
+    volatile unsigned char *p = static_cast<volatile unsigned char *>(ptr);
+    for (std::size_t i = 0; i < bytes; ++i) {
+        p[i] = 0U;
+    }
+}
+
 [[nodiscard]] std::uint32_t read_be32(const std::uint8_t *bytes) noexcept {
     return (static_cast<std::uint32_t>(bytes[0]) << 24U) |
            (static_cast<std::uint32_t>(bytes[1]) << 16U) |
@@ -100,14 +115,33 @@ void compress_block(const std::uint8_t *block, std::array<std::uint32_t, 8> &has
     hash[5] += f;
     hash[6] += g;
     hash[7] += h;
+
+    // The 64-word message schedule is derived from (possibly key-derived) input;
+    // scrub it before returning. Working registers a..h/t1/t2 may live in CPU
+    // registers and are covered only by the honest best-effort caveat.
+    best_effort_wipe(words.data(), words.size() * sizeof(std::uint32_t));
 }
 
 // Allocation-free incremental SHA-256 state (internal only; NOT a public API).
 // Holds only the 8 hash words, a single 64-byte partial block, its fill count,
 // and the running total byte count. `update` may be called any number of times;
 // the total-length domain is enforced on every update BEFORE any state changes.
+// Non-copyable/non-movable so a key-derived state is never silently duplicated;
+// its destructor best-effort wipes every member's object representation.
 class Sha256State {
   public:
+    Sha256State() = default;
+    Sha256State(const Sha256State &) = delete;
+    Sha256State &operator=(const Sha256State &) = delete;
+    Sha256State(Sha256State &&) = delete;
+    Sha256State &operator=(Sha256State &&) = delete;
+    ~Sha256State() {
+        best_effort_wipe(hash_.data(), hash_.size() * sizeof(std::uint32_t));
+        best_effort_wipe(partial_.data(), partial_.size());
+        best_effort_wipe(&partial_len_, sizeof(partial_len_));
+        best_effort_wipe(&total_bytes_, sizeof(total_bytes_));
+    }
+
     void update(std::span<const std::uint8_t> data) {
         if (data.size() > kMaxMessageBytes - total_bytes_) {
             // total_bytes_ + data.size() would exceed the 2^64-bit domain; reject
@@ -141,7 +175,11 @@ class Sha256State {
         }
     }
 
-    [[nodiscard]] Sha256Digest finalize() {
+    // Emit the final digest into a caller-owned output. Taking the output by
+    // reference (instead of returning by value) means an HMAC caller can finalize
+    // directly into a guarded scratch buffer, leaving no unguarded key-derived
+    // temporary for the compiler to place on the stack.
+    void finalize_into(Sha256Digest &out) {
         // FIPS 180-4 padding: 0x80, then zero bytes until 56 bytes into the final
         // block, then the 64-bit big-endian message BIT length.
         // total_bytes_ <= UINT64_MAX/8 is guaranteed by the update() domain check,
@@ -160,14 +198,12 @@ class Sha256State {
         }
         append_padding(length_be);
 
-        Sha256Digest digest{};
         for (std::size_t word = 0; word < hash_.size(); ++word) {
-            digest[word * 4 + 0] = static_cast<std::uint8_t>((hash_[word] >> 24U) & 0xffU);
-            digest[word * 4 + 1] = static_cast<std::uint8_t>((hash_[word] >> 16U) & 0xffU);
-            digest[word * 4 + 2] = static_cast<std::uint8_t>((hash_[word] >> 8U) & 0xffU);
-            digest[word * 4 + 3] = static_cast<std::uint8_t>(hash_[word] & 0xffU);
+            out[word * 4 + 0] = static_cast<std::uint8_t>((hash_[word] >> 24U) & 0xffU);
+            out[word * 4 + 1] = static_cast<std::uint8_t>((hash_[word] >> 16U) & 0xffU);
+            out[word * 4 + 2] = static_cast<std::uint8_t>((hash_[word] >> 8U) & 0xffU);
+            out[word * 4 + 3] = static_cast<std::uint8_t>(hash_[word] & 0xffU);
         }
-        return digest;
     }
 
   private:
@@ -204,12 +240,47 @@ class Sha256State {
     return out;
 }
 
+// HMAC block/pad constants (RFC 2104 / FIPS 198-1). The inner and outer pads are
+// the derived key XOR'd with these fixed bytes.
+constexpr std::uint8_t kIpadByte = 0x36U;
+constexpr std::uint8_t kOpadByte = 0x5cU;
+
+// Owns every key-derived HMAC scratch buffer and best-effort wipes them all on
+// scope exit (normal return OR exception), covering the normalized key block, the
+// inner/outer padded blocks, and the inner digest. Digests are produced directly
+// into these buffers via `Sha256State::finalize_into`, so no unguarded key-derived
+// temporary is ever materialized. See `best_effort_wipe`'s HONEST LIMITS: it still
+// cannot erase copies the compiler may spill to registers or other stack slots,
+// and it is not a key-erasure guarantee.
+struct HmacScratch {
+    std::array<std::uint8_t, kBlockBytes> block_key{};
+    std::array<std::uint8_t, kBlockBytes> ipad{};
+    std::array<std::uint8_t, kBlockBytes> opad{};
+    Sha256Digest hashed_key{};
+    Sha256Digest inner{};
+
+    HmacScratch() = default;
+    HmacScratch(const HmacScratch &) = delete;
+    HmacScratch &operator=(const HmacScratch &) = delete;
+    HmacScratch(HmacScratch &&) = delete;
+    HmacScratch &operator=(HmacScratch &&) = delete;
+    ~HmacScratch() {
+        best_effort_wipe(block_key.data(), block_key.size());
+        best_effort_wipe(ipad.data(), ipad.size());
+        best_effort_wipe(opad.data(), opad.size());
+        best_effort_wipe(hashed_key.data(), hashed_key.size());
+        best_effort_wipe(inner.data(), inner.size());
+    }
+};
+
 } // namespace
 
 Sha256Digest sha256(std::span<const std::uint8_t> data) {
     Sha256State state;
+    Sha256Digest digest{};
     state.update(data);
-    return state.finalize();
+    state.finalize_into(digest);
+    return digest;
 }
 
 std::string sha256_hex(std::span<const std::uint8_t> data) {
@@ -219,6 +290,62 @@ std::string sha256_hex(std::span<const std::uint8_t> data) {
 std::string sha256_hex(std::string_view bytes) {
     return sha256_hex(std::span<const std::uint8_t>(
         reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size()));
+}
+
+Sha256Digest hmac_sha256(std::span<const std::uint8_t> key, std::span<const std::uint8_t> data) {
+    // Preflight the total-length domain BEFORE deriving the key, with fixed text
+    // that echoes neither key/data bytes nor sizes. Two independent bounds:
+    //   1. The inner hash consumes `kBlockBytes + data.size()` bytes.
+    //   2. A > kBlockBytes key is itself SHA-256'd, consuming `key.size()` bytes.
+    // Checking both here means the derivation path below normally never throws.
+    if (data.size() > kMaxMessageBytes - kBlockBytes) {
+        throw std::length_error("sha256 input exceeds the supported message length");
+    }
+    if (key.size() > kMaxMessageBytes) {
+        throw std::length_error("sha256 input exceeds the supported message length");
+    }
+
+    HmacScratch scratch;
+    // Normalize the key into a fixed 64-byte block: keys longer than the block are
+    // replaced by their SHA-256 digest, then everything is zero-padded (the block
+    // is value-initialized to zero, so we only copy the significant bytes). The
+    // key digest is written straight into the guarded scratch buffer, never a
+    // by-value temporary.
+    if (key.size() > kBlockBytes) {
+        Sha256State key_state;
+        key_state.update(key);
+        key_state.finalize_into(scratch.hashed_key);
+        for (std::size_t i = 0; i < scratch.hashed_key.size(); ++i) {
+            scratch.block_key[i] = scratch.hashed_key[i];
+        }
+    } else {
+        for (std::size_t i = 0; i < key.size(); ++i) {
+            scratch.block_key[i] = key[i];
+        }
+    }
+
+    for (std::size_t i = 0; i < kBlockBytes; ++i) {
+        scratch.ipad[i] = static_cast<std::uint8_t>(scratch.block_key[i] ^ kIpadByte);
+        scratch.opad[i] = static_cast<std::uint8_t>(scratch.block_key[i] ^ kOpadByte);
+    }
+
+    // inner = H(ipad || data); no buffer concatenation — feed both spans in turn,
+    // finalizing straight into the guarded inner buffer.
+    {
+        Sha256State inner_state;
+        inner_state.update(std::span<const std::uint8_t>(scratch.ipad));
+        inner_state.update(data);
+        inner_state.finalize_into(scratch.inner);
+    }
+
+    // outer = H(opad || inner). The tag is the public return value, so it may be a
+    // plain local output.
+    Sha256Digest tag{};
+    Sha256State outer_state;
+    outer_state.update(std::span<const std::uint8_t>(scratch.opad));
+    outer_state.update(std::span<const std::uint8_t>(scratch.inner));
+    outer_state.finalize_into(tag);
+    return tag;
 }
 
 } // namespace ahfl::support
