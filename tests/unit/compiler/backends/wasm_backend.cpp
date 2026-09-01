@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -11,6 +12,7 @@
 
 #include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
+#include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
 #include "compiler/backends/infra/wasm_backend.hpp"
 #include "compiler/backends/infra/wasm_runtime.hpp"
@@ -380,6 +382,50 @@ static std::optional<std::vector<std::uint8_t>> wasm_section(
     return std::nullopt;
 }
 
+// RFC 0026 E4-B1: count the module's custom sections and, for the sole trailing
+// wire-schema section, strip its Wasm name framing (name-length LEB + name) to
+// hand the raw `AHFLWS...` table bytes to the C1 decoder. Returns the number of
+// custom sections observed and, when exactly one carries the wire-schema name,
+// its raw table payload.
+struct WireSchemaCustomSection {
+    std::size_t custom_count = 0;
+    std::optional<std::vector<std::uint8_t>> table_bytes;
+};
+
+static WireSchemaCustomSection wire_schema_custom_section(
+    const std::vector<std::uint8_t> &bytes) {
+    WireSchemaCustomSection found;
+    std::size_t offset = 8;
+    while (offset < bytes.size()) {
+        const auto section = bytes[offset++];
+        const auto size = read_u32_leb(bytes, offset);
+        if (!size || *size > bytes.size() - offset) {
+            return found;
+        }
+        const auto section_end = offset + *size;
+        if (section != 0) {
+            offset = section_end;
+            continue;
+        }
+        ++found.custom_count;
+        auto name_offset = offset;
+        const auto name_size = read_u32_leb(bytes, name_offset);
+        if (name_size && name_offset + *name_size <= section_end) {
+            const std::string name(
+                bytes.begin() + static_cast<std::ptrdiff_t>(name_offset),
+                bytes.begin() + static_cast<std::ptrdiff_t>(name_offset + *name_size));
+            if (name == "ahfl.wire-schema.v1") {
+                found.table_bytes = std::vector<std::uint8_t>(
+                    bytes.begin() +
+                        static_cast<std::ptrdiff_t>(name_offset + *name_size),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(section_end));
+            }
+        }
+        offset = section_end;
+    }
+    return found;
+}
+
 static bool contains_bytes(const std::vector<std::uint8_t> &bytes,
                            std::initializer_list<std::uint8_t> needle) {
     return std::search(bytes.begin(), bytes.end(), needle.begin(), needle.end()) != bytes.end();
@@ -699,6 +745,17 @@ int main() {
                       *layout.table == layout_snapshot,
                   "E1 emission does not mutate Core or the P4-D side artifact");
 
+            // RFC 0026 E4-B1: an identity-only E1 agent has no reachable
+            // capability import, so it carries no wire-schema (or any) custom
+            // section and its imports set is empty.
+            const auto e1_custom = first.ok()
+                                       ? wire_schema_custom_section(first.artifact->bytes)
+                                       : WireSchemaCustomSection{};
+            check(first.ok() && first.artifact->imports.empty() &&
+                      e1_custom.custom_count == 0 &&
+                      !e1_custom.table_bytes.has_value(),
+                  "E1 no-import artifact carries no custom section at all");
+
             // Function index 5 is run by the fixed E1 index table. Its body
             // must end in local.get 0; end and contain no frame load/store.
             // This is BINARY/STRUCTURAL evidence, not execution evidence.
@@ -942,12 +999,161 @@ int main() {
             check(least.ok() && least.artifact->imports ==
                                     std::vector<std::string>{"ahfl_cap.cap_42"},
                   "E2 omits an unreachable final capability from the import authority set");
+
+            // RFC 0026 E4-B1: the E2 capability artifact carries exactly one
+            // wire-schema custom section. This block proves exactly-one target
+            // section + that its raw table (name framing stripped) decodes and
+            // re-encodes through the C1 authority; the trailing placement and the
+            // byte-identical pre-B1 prefix are locked by wasm_e2_binary_gate.py.
+            const auto e2_custom = first.ok()
+                                       ? wire_schema_custom_section(first.artifact->bytes)
+                                       : WireSchemaCustomSection{};
+            check(e2_custom.custom_count == 1 && e2_custom.table_bytes.has_value(),
+                  "E2 artifact carries exactly one wire-schema custom section");
+
+            if (e2_custom.table_bytes.has_value()) {
+                const auto decoded = ahfl::ir::core::decode_core_wire_schema_table(
+                    std::span<const std::uint8_t>(*e2_custom.table_bytes));
+                check(decoded.ok() && decoded.table.has_value(),
+                      "E2 wire-schema payload decodes through the C1 admission authority");
+                if (decoded.table.has_value()) {
+                    const auto &table = *decoded.table;
+                    check(table.format_version == 1,
+                          "E2 decoded wire-schema table is format version 1");
+                    check(table.capabilities.size() == 1,
+                          "E2 decoded table exposes exactly the one reachable capability");
+                    if (table.capabilities.size() == 1) {
+                        const auto &cap = table.capabilities.front();
+                        check(cap.capability.value == 0 && cap.source_symbol == 42 &&
+                                  cap.params.size() == 1,
+                              "E2 capability entry is id 0 / source_symbol 42 with one param root");
+                        // The fixture's Echo capability is app::Input -> app::Output,
+                        // both structs. Assert the transported roots resolve to the
+                        // exact wire structs, not merely to any in-range node id.
+                        const auto struct_wire_name =
+                            [&](ahfl::ir::core::CoreWireSchemaNodeId id)
+                            -> std::optional<std::string> {
+                            if (id.value >= table.nodes.size()) {
+                                return std::nullopt;
+                            }
+                            const auto *s =
+                                std::get_if<ahfl::ir::core::CoreWireSchemaStruct>(
+                                    &table.nodes[id.value].shape);
+                            if (s == nullptr) {
+                                return std::nullopt;
+                            }
+                            return s->wire_name;
+                        };
+                        const auto param_name =
+                            cap.params.size() == 1
+                                ? struct_wire_name(cap.params.front())
+                                : std::nullopt;
+                        const auto result_name = struct_wire_name(cap.result);
+                        check(param_name == std::optional<std::string>{"app::Input"} &&
+                                  result_name == std::optional<std::string>{"app::Output"},
+                              "E2 transported param/result roots are the "
+                              "app::Input/app::Output wire structs");
+                    }
+                    // Re-encode byte equality: the transported bytes are exactly
+                    // the canonical encoding of the decoded table.
+                    const auto reencoded =
+                        ahfl::ir::core::encode_core_wire_schema_table(table);
+                    check(reencoded.ok() && reencoded.bytes.has_value() &&
+                              *reencoded.bytes == *e2_custom.table_bytes,
+                          "E2 wire-schema section is the canonical re-encoding of its table");
+                }
+            }
+
+            // Least-privilege: the extra unreachable capability appears in
+            // neither the imports nor the decoded wire-schema table.
+            const auto least_custom = least.ok()
+                                          ? wire_schema_custom_section(least.artifact->bytes)
+                                          : WireSchemaCustomSection{};
+            check(least_custom.custom_count == 1 && least_custom.table_bytes.has_value(),
+                  "E2 least-privilege artifact still carries one wire-schema section");
+            if (least_custom.table_bytes.has_value()) {
+                const auto decoded = ahfl::ir::core::decode_core_wire_schema_table(
+                    std::span<const std::uint8_t>(*least_custom.table_bytes));
+                check(decoded.ok() && decoded.table.has_value() &&
+                          decoded.table->capabilities.size() == 1 &&
+                          decoded.table->capabilities.front().capability.value == 0 &&
+                          decoded.table->capabilities.front().source_symbol == 42,
+                      "E2 least-privilege wire-schema table exposes only the "
+                      "reachable cap 0/source 42");
+            }
         }
     }
 
     // Test 12: capability ABI and frame-subset failures publish no artifact.
     {
         using namespace ahfl::ir::core;
+
+        // RFC 0026 E4-B1: a capability whose reachable type closure is verified
+        // Core + layoutable but NOT wire-transportable fails closed with no
+        // artifact. Here app::Output gains a Map<Int,Int> field (Int keys are
+        // legal Core but the wire value_json encoder supports only String map
+        // keys), so the wire projector rejects the transitive closure. The agent
+        // shell stays a plain struct; only the field closure is unprojectable.
+        auto unprojectable = make_e2_core_program();
+        const CoreTypeId map_type_id{
+            static_cast<std::uint32_t>(unprojectable.types.size())};
+        CoreTypeDecl map_decl;
+        map_decl.kind = CoreTypeDecl::Kind::Struct;
+        map_decl.name = "std::collections::Map";
+        map_decl.role = CoreNominalRole::Map;
+        map_decl.type_param_count = 2;
+        map_decl.variances = {CoreVariance::Invariant, CoreVariance::Covariant};
+        unprojectable.types.push_back(std::move(map_decl));
+        const CoreValueTypeId int_vt{
+            static_cast<std::uint32_t>(unprojectable.value_types.size())};
+        unprojectable.value_types.push_back(CoreValueType{CoreVtInt{}});
+        const CoreValueTypeId map_vt{
+            static_cast<std::uint32_t>(unprojectable.value_types.size())};
+        unprojectable.value_types.push_back(CoreValueType{
+            CoreVtNominal{map_type_id, {int_vt, int_vt}, std::uint64_t{4}}});
+        // app::Output (types[1]) gains one Map<Int,Int> field "items".
+        auto &output = unprojectable.types[1];
+        output.fields = {"items"};
+        output.field_nominal_types = {map_type_id};
+        output.field_has_default = {false};
+        CoreMemberTypeTemplateNode items_template;
+        items_template.kind = CoreMemberTypeTemplateKind::Concrete;
+        items_template.concrete = map_vt;
+        output.member_type_templates = {std::move(items_template)};
+        output.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+
+        const auto unprojectable_verified = verify_core_program(unprojectable);
+        const auto unprojectable_layout = compute_core_layouts(unprojectable);
+        const auto unprojectable_result =
+            (unprojectable_verified.ok() && unprojectable_layout.ok())
+                ? ahfl::backends::emit_core_wasm(
+                      unprojectable,
+                      *unprojectable_layout.table,
+                      {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi})
+                : ahfl::backends::CoreWasmCodegenResult{};
+        check(unprojectable_verified.ok() && unprojectable_layout.ok(),
+              "E2 Map<Int,Int>-field fixture is verified Core + P4-D layout");
+        check(unprojectable_verified.ok() && unprojectable_layout.ok() &&
+                  !unprojectable_result.artifact.has_value() &&
+                  has_codegen_code(unprojectable_result,
+                                   ahfl::backends::core_wasm_diag::kInvalidCapabilityAbi),
+              "E2 rejects a wire-unprojectable reachable capability with no artifact");
+        // The INVALID_CAPABILITY_ABI diagnostic attributes the underlying
+        // projector code so the failure is not conflated with an index-domain
+        // ABI overflow.
+        bool cites_map_key = false;
+        for (const auto &diagnostic : unprojectable_result.diagnostics) {
+            if (diagnostic.code ==
+                    ahfl::backends::core_wasm_diag::kInvalidCapabilityAbi &&
+                diagnostic.message.find(std::string(
+                    ahfl::ir::core::wire_schema::kUnsupportedMapKey)) !=
+                    std::string::npos) {
+                cites_map_key = true;
+            }
+        }
+        check(cites_map_key,
+              "E2 unprojectable diagnostic cites the underlying core.wire.UNSUPPORTED_MAP_KEY");
+
         auto wide_symbol = make_e2_core_program();
         wide_symbol.capabilities[0].symbol_ref.id =
             static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1u;
@@ -1275,6 +1481,16 @@ int main() {
                   packaged_exactly && valid_result.artifact->imports.empty() &&
                   valid_layouts.table == valid_layout_snapshot,
               "E3-C2 emits deterministic workflow bytes without mutating layout or expanding authority");
+
+        // RFC 0026 E4-B1: the E3 workflow artifact is not a capability agent and
+        // never carries a wire-schema custom section (the writer runs only on the
+        // agent path). Assert on the section walk, not merely on imports.empty().
+        const auto e3_custom = valid_result.ok()
+                                   ? wire_schema_custom_section(valid_result.artifact->bytes)
+                                   : WireSchemaCustomSection{};
+        check(valid_result.ok() && e3_custom.custom_count == 0 &&
+                  !e3_custom.table_bytes.has_value(),
+              "E3 workflow artifact carries no wire-schema custom section");
 
         auto bad_workflow_layout = *valid_layouts.table;
         bad_workflow_layout.target.pointer_size = 8;

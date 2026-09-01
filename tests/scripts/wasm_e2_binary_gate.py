@@ -2,9 +2,20 @@
 """Always-on KR6.5 E2 binary/structural gate (not execution evidence)."""
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
+
+# RFC 0026 E4-B1: the E2 capability artifact is the byte-identical pre-B1 module
+# (its complete old bytes) followed by exactly one trailing wire-schema custom
+# section. The pre-B1 module was independently locked at this length/digest, so
+# the gate asserts full-prefix equality against it rather than re-deriving the
+# boundary from the known-section walk.
+E2_PREFIX_LEN = 435
+E2_PREFIX_MD5 = "52cc6848ff4875be32a4adc455bcbae2"
+WIRE_SCHEMA_SECTION_NAME = "ahfl.wire-schema.v1"
+WIRE_SCHEMA_TABLE_MAGIC = b"AHFLWS"
 
 
 def fail(message: str) -> None:
@@ -38,25 +49,44 @@ def read_name(data: bytes, offset: int) -> tuple[str, int]:
         fail(f"invalid UTF-8 wasm name: {exc}")
 
 
-def sections(data: bytes) -> dict[int, bytes]:
+def sections(data: bytes) -> tuple[dict[int, bytes], int, bytes]:
+    """Parse a B1 E2 module into its known sections plus the sole trailing
+    custom section. Returns (known-section payloads, custom-section start offset,
+    custom-section payload). Fails closed on any custom section that is not the
+    single wire-schema section fixed after the code section."""
     if data[:8] != b"\0asm\x01\0\0\0":
         fail("CLI output is not wasm v1")
     result: dict[int, bytes] = {}
     order: list[int] = []
+    custom_start: int | None = None
+    custom_payload: bytes | None = None
     offset = 8
     while offset < len(data):
+        section_start = offset
         section_id = data[offset]
         offset += 1
         size, offset = read_u32(data, offset)
         end = offset + size
-        if end > len(data) or section_id == 0 or section_id in result:
-            fail("custom, duplicate, or truncated wasm section")
-        order.append(section_id)
-        result[section_id] = data[offset:end]
+        if end > len(data):
+            fail("truncated wasm section")
+        if section_id == 0:
+            if custom_start is not None:
+                fail("more than one custom section in E2 artifact")
+            custom_start = section_start
+            custom_payload = data[offset:end]
+        else:
+            if custom_start is not None:
+                fail("known section follows the trailing custom section")
+            if section_id in result:
+                fail("duplicate wasm section")
+            order.append(section_id)
+            result[section_id] = data[offset:end]
         offset = end
     if order != [1, 2, 3, 5, 6, 7, 10]:
         fail(f"non-canonical E2 section order: {order}")
-    return result
+    if custom_start is None or custom_payload is None:
+        fail("E2 capability artifact is missing its wire-schema custom section")
+    return result, custom_start, custom_payload
 
 
 def function_types(payload: bytes) -> list[tuple[list[int], list[int]]]:
@@ -156,7 +186,44 @@ def main(argv: list[str]) -> int:
     if first != browser:
         fail("E2 wasi/browser artifacts differ")
 
-    parsed = sections(first)
+    parsed, custom_start, custom_payload = sections(first)
+
+    # Full old-prefix equality: the pre-B1 module bytes must survive verbatim as
+    # the prefix, and the sole custom section must begin exactly where the old
+    # module ended and run to EOF.
+    prefix = first[:E2_PREFIX_LEN]
+    if custom_start != E2_PREFIX_LEN:
+        fail(
+            f"wire-schema custom section starts at {custom_start}, "
+            f"expected the locked pre-B1 prefix length {E2_PREFIX_LEN}"
+        )
+    if len(prefix) != E2_PREFIX_LEN:
+        fail(f"E2 module shorter than the locked pre-B1 prefix: {len(first)} bytes")
+    # MD5 here is a non-security golden checksum; usedforsecurity=False keeps the
+    # gate alive on FIPS-restricted interpreters (Python >= 3.9).
+    prefix_md5 = hashlib.md5(prefix, usedforsecurity=False).hexdigest()
+    if prefix_md5 != E2_PREFIX_MD5:
+        fail(
+            f"E2 pre-B1 prefix changed: md5 {prefix_md5} != locked {E2_PREFIX_MD5}"
+        )
+
+    # The custom section runs to EOF; its payload is name framing + raw table.
+    name, name_end = read_name(custom_payload, 0)
+    if name != WIRE_SCHEMA_SECTION_NAME:
+        fail(f"unexpected custom section name: {name!r}")
+    table = custom_payload[name_end:]
+    if not table.startswith(WIRE_SCHEMA_TABLE_MAGIC):
+        fail("wire-schema custom payload does not start with the AHFLWS table magic")
+    # magic (6) + canonical single-byte LEB format_version == 1 for the current
+    # v1. Assert the version consumes exactly one byte so a non-canonical overlong
+    # encoding (e.g. 0x81 0x00) cannot masquerade as version 1.
+    version_offset = len(WIRE_SCHEMA_TABLE_MAGIC)
+    version, version_end = read_u32(table, version_offset)
+    if version != 1:
+        fail(f"wire-schema table format version {version} != 1")
+    if version_end != version_offset + 1:
+        fail("wire-schema table format version is not a canonical single-byte LEB")
+
     types = function_types(parsed[1])
     if len(types) != 5 or types[4] != ([0x7F, 0x7F], [0x7F, 0x7F, 0x7F]):
         fail("run2/ahfl_cap multi-value function type mismatch")

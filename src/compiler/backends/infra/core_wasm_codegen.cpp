@@ -1,12 +1,14 @@
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
 
 #include "ahfl/compiler/ir/core_verify.hpp"
+#include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/runtime/ahfl_host.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -41,6 +43,7 @@ constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kEmptyBlock = 0x40;
 constexpr std::uint8_t kFuncType = 0x60;
 
+constexpr std::uint8_t kSectionCustom = 0;
 constexpr std::uint8_t kSectionType = 1;
 constexpr std::uint8_t kSectionImport = 2;
 constexpr std::uint8_t kSectionFunction = 3;
@@ -48,6 +51,12 @@ constexpr std::uint8_t kSectionMemory = 5;
 constexpr std::uint8_t kSectionGlobal = 6;
 constexpr std::uint8_t kSectionExport = 7;
 constexpr std::uint8_t kSectionCode = 10;
+
+// RFC 0026 E4-B1 wire-schema transport (seam doc §3.1): the deterministic
+// logical wire schema for an E2 agent's reachable capability imports rides in a
+// single Wasm custom section, keyed by this canonical name, appended once after
+// the Code section. E1 no-import agents and E3 workflows never carry it.
+constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema.v1";
 
 constexpr std::uint8_t kImportFunction = 0;
 constexpr std::uint8_t kExportFunction = 0;
@@ -1081,6 +1090,9 @@ class ByteBuffer {
     void raw(std::initializer_list<std::uint8_t> values) {
         bytes_.insert(bytes_.end(), values.begin(), values.end());
     }
+    void raw_span(std::span<const std::uint8_t> values) {
+        bytes_.insert(bytes_.end(), values.begin(), values.end());
+    }
     void u32(std::uint32_t value) {
         do {
             std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
@@ -1420,7 +1432,9 @@ void append_capability_return(ByteBuffer &body,
 }
 
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
-encode_module(const CoreProgram &program, const AgentPlan &plan) {
+encode_module(const CoreProgram &program,
+              const AgentPlan &plan,
+              std::span<const std::uint8_t> wire_schema_payload) {
     const FunctionTable functions{static_cast<std::uint32_t>(plan.imports.size())};
     ByteBuffer module;
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
@@ -1525,6 +1539,22 @@ encode_module(const CoreProgram &program, const AgentPlan &plan) {
         !code.sized(final) || !code.sized(step) || !code.sized(run) ||
         !code.sized(run2) || !append_section(module, kSectionCode, code)) {
         return std::nullopt;
+    }
+
+    // RFC 0026 E4-B1: exactly one wire-schema custom section, fixed after the
+    // Code section, present iff the agent has reachable capability imports (the
+    // caller passes an empty payload otherwise). The custom payload is the
+    // canonical Wasm custom-section framing (name-length LEB + name) followed by
+    // the encoded table bytes (`AHFLWS...`) verbatim; no re-projection here.
+    if (!wire_schema_payload.empty()) {
+        ByteBuffer custom;
+        if (!custom.name(kWireSchemaSectionName)) {
+            return std::nullopt;
+        }
+        custom.raw_span(wire_schema_payload);
+        if (!append_section(module, kSectionCustom, custom)) {
+            return std::nullopt;
+        }
     }
     return std::move(module).take();
 }
@@ -2029,7 +2059,53 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     if (!plan.has_value()) {
         return result;
     }
-    auto bytes = encode_module(program, *plan);
+
+    // RFC 0026 E4-B1: project the deterministic logical wire schema for exactly
+    // the reachable capability imports (already sorted/unique in the plan), then
+    // encode it to its canonical section payload. E1 no-import agents skip this
+    // entirely and stay byte-identical. Any projection or encode failure fails
+    // closed: no partial artifact, no silent section drop.
+    std::vector<std::uint8_t> wire_schema_payload;
+    if (!plan->imports.empty()) {
+        auto projection = ir::core::project_core_wire_schema(program, plan->imports);
+        if (!projection.ok()) {
+            // Fail-closed seam: never assume a diagnostic is present. A future or
+            // defensive empty-diagnostics result must still reject with a fixed
+            // code, not deref an empty vector.
+            std::string message =
+                "reachable capability import ABI is not wire-transportable";
+            ir::SourceRangeOpt range;
+            if (!projection.diagnostics.empty()) {
+                const auto &first = projection.diagnostics.front();
+                message += " (" + first.code + ")";
+                range = first.source_range;
+            }
+            add_diag(result,
+                     core_wasm_diag::kInvalidCapabilityAbi,
+                     std::move(message),
+                     range);
+            return result;
+        }
+        auto encoded = ir::core::encode_core_wire_schema_table(*projection.table);
+        if (!encoded.ok()) {
+            std::string message =
+                "wire-schema section payload exceeds the encoding domain";
+            ir::SourceRangeOpt range;
+            if (!encoded.diagnostics.empty()) {
+                const auto &first = encoded.diagnostics.front();
+                message += " (" + first.code + ")";
+                range = first.source_range;
+            }
+            add_diag(result,
+                     core_wasm_diag::kBinaryOverflow,
+                     std::move(message),
+                     range);
+            return result;
+        }
+        wire_schema_payload = std::move(*encoded.bytes);
+    }
+
+    auto bytes = encode_module(program, *plan, wire_schema_payload);
     if (!bytes.has_value()) {
         add_diag(result,
                  core_wasm_diag::kBinaryOverflow,
