@@ -23,6 +23,7 @@ add_library(ahfl_runtime_engine STATIC
     wire_capability.cpp
     wire_value.cpp
     wire_transport_adapter.cpp
+    core_wire_codec.cpp
     response_schema_validator.cpp
 )
 

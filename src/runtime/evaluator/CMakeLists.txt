@@ -1,6 +1,7 @@
 add_library(ahfl_runtime_evaluator STATIC
     value.cpp
     value_json.cpp
+    scalar_spelling.cpp
     eval_context.cpp
     pattern_match.cpp
     evaluator.cpp

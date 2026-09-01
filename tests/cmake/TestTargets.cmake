@@ -273,6 +273,16 @@ target_link_libraries(ahfl_response_schema_validator_tests
 )
 ahfl_apply_project_warnings(ahfl_response_schema_validator_tests)
 
+add_executable(ahfl_core_wire_codec_tests
+    unit/runtime/engine/core_wire_codec.cpp
+)
+target_link_libraries(ahfl_core_wire_codec_tests
+    PRIVATE
+        ahfl_runtime_engine
+        ahfl_base_json
+)
+ahfl_apply_project_warnings(ahfl_core_wire_codec_tests)
+
 add_executable(ahfl_e2e_workflow_tests
     unit/runtime/engine/e2e_workflow.cpp
 )
@@ -1324,6 +1334,7 @@ foreach(_tgt
     ahfl_native_host_binding_tests
     ahfl_native_wasm_differential_tests
     ahfl_response_schema_validator_tests
+    ahfl_core_wire_codec_tests
     ahfl_e2e_workflow_tests
     ahfl_enum_variant_e2e_tests
     ahfl_if_let_e2e_tests

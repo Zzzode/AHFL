@@ -2,23 +2,17 @@
 
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/types.hpp"
+#include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/evaluator/value.hpp"
 
 #include <string>
 
 namespace ahfl::runtime {
 
-struct SchemaValidationResult {
-    bool valid{true};
-    std::string error;
-
-    [[nodiscard]] static SchemaValidationResult ok() {
-        return {true, {}};
-    }
-    [[nodiscard]] static SchemaValidationResult fail(std::string msg) {
-        return {false, std::move(msg)};
-    }
-};
+// SchemaValidationResult is owned by the shared wire codec (core_wire_codec.hpp)
+// so there is one {valid,error} validation-result type across the runtime. This
+// legacy TypeRef-based validator reuses it; it will be demoted to a thin shim
+// over the codec in a later C2b stage.
 
 [[nodiscard]] SchemaValidationResult validate_value_against_schema(const evaluator::Value &value,
                                                                    const ir::TypeRef &expected);

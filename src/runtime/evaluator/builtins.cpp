@@ -1,5 +1,6 @@
 #include "runtime/evaluator/builtins.hpp"
 #include "runtime/evaluator/evaluator.hpp"
+#include "runtime/evaluator/scalar_spelling.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -35,29 +36,27 @@ EvalResult arg_count_error(size_t expected, size_t got) {
                       std::to_string(got));
 }
 
+// Convert a Duration Value spelling to milliseconds through the single runtime
+// scalar-spelling authority (RFC 0026 C2b). This accepts BOTH the source-unit
+// family `DIGIT+(ms|s|m|h)` and the bare-millis family that `duration_between`
+// emits. Behavior changes over the previous inline `stoll`-based parser, all
+// intentional tightenings aligned with the approved C2b canonical policy now that
+// timestamp_add/sub share this one owner — NOT "otherwise unchanged":
+//   * `m` (minutes) and `h` (hours) are now honored instead of silently failing;
+//   * the second/minute/hour multiplication is overflow-checked instead of UB;
+//   * a signed source-unit spelling (`+5s`, `-5s`) is now rejected (the grammar
+//     has no sign; the old parser let `stoll` eat one);
+//   * a bare-millis spelling must be exactly `std::to_string(i64)` — a leading
+//     `+`, a leading zero (`0500`), and `-0` are now rejected (negatives, which
+//     `duration_between` can emit, remain accepted).
+// Source-unit leading zeros (`005s`) remain accepted, per policy. It does NOT
+// change any spelling and does not touch value_json.
 [[nodiscard]] std::optional<int64_t> duration_to_millis(const DurationValue &duration) {
-    std::string spelling = duration.spelling;
-    bool seconds = false;
-    if (spelling.size() >= 2 && spelling.substr(spelling.size() - 2) == "ms") {
-        spelling = spelling.substr(0, spelling.size() - 2);
-    } else if (!spelling.empty() && spelling.back() == 's') {
-        spelling = spelling.substr(0, spelling.size() - 1);
-        seconds = true;
-    }
-
-    try {
-        std::size_t consumed = 0;
-        auto millis = std::stoll(spelling, &consumed);
-        if (consumed != spelling.size()) {
-            return std::nullopt;
-        }
-        if (seconds) {
-            millis *= 1000;
-        }
-        return millis;
-    } catch (...) {
+    const auto decoded = scalar_spelling::parse_duration(duration.spelling);
+    if (!decoded.has_value()) {
         return std::nullopt;
     }
+    return decoded->millis;
 }
 
 // ----------------------------------------------------------------------------
@@ -920,7 +919,10 @@ EvalResult builtin_timestamp_add(const std::vector<Value> &args, const EvalConte
     const auto ms = duration_to_millis(*dv);
     if (!ms.has_value())
         return make_error("timestamp_add: cannot parse duration");
-    return EvalResult{make_timestamp(tv->unix_ms + *ms), {}};
+    std::int64_t result = 0;
+    if (__builtin_add_overflow(tv->unix_ms, *ms, &result))
+        return make_error("timestamp_add: timestamp overflow");
+    return EvalResult{make_timestamp(result), {}};
 }
 
 EvalResult builtin_timestamp_sub(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
@@ -935,7 +937,10 @@ EvalResult builtin_timestamp_sub(const std::vector<Value> &args, const EvalConte
     const auto ms = duration_to_millis(*dv);
     if (!ms.has_value())
         return make_error("timestamp_sub: cannot parse duration");
-    return EvalResult{make_timestamp(tv->unix_ms - *ms), {}};
+    std::int64_t result = 0;
+    if (__builtin_sub_overflow(tv->unix_ms, *ms, &result))
+        return make_error("timestamp_sub: timestamp overflow");
+    return EvalResult{make_timestamp(result), {}};
 }
 
 EvalResult builtin_duration_between(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
@@ -946,7 +951,10 @@ EvalResult builtin_duration_between(const std::vector<Value> &args, const EvalCo
     if (start == nullptr || end == nullptr) {
         return make_error("time_duration_between: both arguments must be Timestamps");
     }
-    return EvalResult{make_duration(std::to_string(end->unix_ms - start->unix_ms)), {}};
+    std::int64_t delta = 0;
+    if (__builtin_sub_overflow(end->unix_ms, start->unix_ms, &delta))
+        return make_error("time_duration_between: duration overflow");
+    return EvalResult{make_duration(std::to_string(delta)), {}};
 }
 
 // ----------------------------------------------------------------------------
@@ -1379,10 +1387,12 @@ EvalResult builtin_json_emit_raw(const std::vector<Value> &args, const EvalConte
 // ----------------------------------------------------------------------------
 // Decimal builtins — naive Int64 mantissa / Int32 scale arithmetic.
 //
-// Runtime representation: DecimalValue.spelling carries a canonical encoding
-// "<mantissa>e<scale>" (signed mantissa, signed scale). This keeps precision
-// semantics stable without third-party decimal libraries. All helpers parse /
-// emit this canonical spelling.
+// Runtime representation: DecimalValue.spelling carries the canonical builtin
+// encoding "s<scale>:<mantissa>" (signed mantissa, signed scale) — e.g. "s2:123"
+// is 1.23. This keeps precision semantics stable without third-party decimal
+// libraries. Parsing and emission of that spelling live in the single runtime
+// scalar-spelling authority (scalar_spelling.hpp); these helpers only do the
+// mantissa/scale arithmetic on the parsed integers.
 // ----------------------------------------------------------------------------
 
 namespace decimal_impl {
@@ -1391,42 +1401,29 @@ struct Dec {
     int64_t mant{0};
     int32_t scale{0};
 
-    // Canonical encoding used by decimal builtins for DecimalValue.spelling.
-    // Format: "s<scale>:<mantissa>" — e.g. "s2:123" represents 1.23,
-    // "s0:-45" represents -45, "s-3:7" represents 7000.  The "s:" prefix is
-    // intentionally disjoint from user literal spellings ("1.23d") so the
-    // builtin encoding and source-level literals never collide in equality
-    // without normalization.
-
+    // Emit / parse the canonical builtin spelling through the single runtime
+    // scalar-spelling authority so the codec and the decimal builtins never
+    // diverge (RFC 0026 C2b policy rev2, P0-2). Decimal builtins consume ONLY the
+    // raw builtin (`s<scale>:<mantissa>`) family; the source-literal family is
+    // handled by the codec's parse_decimal entry point, not here.
+    //
+    // Tightening vs the previous inline `stoll` parser (intentional, aligned with
+    // the approved canonical policy — NOT "otherwise unchanged"): the raw parse
+    // now requires spell(parse(x)) == x, so a leading `+` on either field
+    // (`s+2:+3`), a leading zero, and `-0` are rejected where `stoll` accepted
+    // them. No permissive fallback is kept.
     static std::string spell(int64_t m, int32_t s) {
-        std::string out = "s";
-        out += std::to_string(s);
-        out.push_back(':');
-        out += std::to_string(m);
-        return out;
+        return scalar_spelling::spell_builtin_decimal(m, s);
     }
 
     static bool parse(std::string_view v, Dec &out) {
-        if (!v.starts_with('s')) return false;
-        v.remove_prefix(1);
-        auto colon = v.find(':');
-        if (colon == std::string_view::npos) return false;
-        auto scale_str = v.substr(0, colon);
-        auto mant_str = v.substr(colon + 1);
-        try {
-            size_t p1 = 0, p2 = 0;
-            long long s = std::stoll(std::string(scale_str), &p1);
-            long long m = std::stoll(std::string(mant_str), &p2);
-            if (p1 != scale_str.size() || p2 != mant_str.size()) return false;
-            if (s > std::numeric_limits<int32_t>::max() ||
-                s < std::numeric_limits<int32_t>::min())
-                return false;
-            out.mant = static_cast<int64_t>(m);
-            out.scale = static_cast<int32_t>(s);
-            return true;
-        } catch (...) {
+        const auto parts = scalar_spelling::parse_builtin_decimal(v);
+        if (!parts.has_value()) {
             return false;
         }
+        out.mant = parts->mantissa;
+        out.scale = parts->scale;
+        return true;
     }
 };
 
