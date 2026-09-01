@@ -4004,6 +4004,375 @@ void test_resume_p0_19_valueless_none_rejected_under_non_unit_binding() {
     std::filesystem::remove_all(store_path.parent_path());
 }
 
+// RFC 0026 C2b G4c: raw wire-JSON pending result (WorkflowRuntimeConfig::
+// resume_pending_result_wire_json). A single-node workflow whose only capability
+// call is the pending one; on resume the host supplies the result as RAW wire
+// JSON, decoded EXACTLY under the capability's verified binding at the consume
+// gate — never via the schema-free value_from_json materialization.
+[[nodiscard]] Program make_typed_pending_node_program(const std::string &workflow_name,
+                                                      const std::string &capability,
+                                                      std::size_t capability_id,
+                                                      TypeRef return_type) {
+    Program program;
+    CapabilityDecl cap;
+    cap.name = capability;
+    cap.return_type_ref = std::move(return_type);
+    cap.symbol_ref = SymbolRef{.kind = SymbolRefKind::Capability,
+                               .canonical_name = capability,
+                               .local_name = capability,
+                               .id = capability_id};
+    program.declarations.push_back(std::move(cap));
+    program.declarations.push_back(make_echo_agent("EchoAgent"));
+    program.declarations.push_back(make_input_field_return_flow("EchoAgent", "value"));
+
+    WorkflowDecl workflow;
+    workflow.name = workflow_name;
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
+    WorkflowNode node;
+    node.name = "n";
+    node.target_ref = make_agent_ref("EchoAgent");
+    StructLiteralExpr node_input;
+    node_input.type_name = "NodeInput";
+    CallExpr call;
+    call.callee = capability;
+    call.callee_ref = make_capability_ref(capability, capability_id);
+    node_input.fields.push_back(
+        StructFieldInit{.name = "value", .value = make_expr_ptr(std::move(call))});
+    node.input = make_expr_ptr(std::move(node_input));
+    workflow.nodes.push_back(std::move(node));
+    PathExpr return_path;
+    return_path.path.root_kind = PathRootKind::Identifier;
+    return_path.path.root_name = "n";
+    workflow.return_value = make_expr_ptr(std::move(return_path));
+    program.declarations.push_back(std::move(workflow));
+    return program;
+}
+
+struct RawPendingOutcome {
+    WorkflowResult result;
+    std::size_t live_calls{0};
+    bool suspended_ok{false};
+};
+
+// Suspend a single-node workflow on its only (pending) capability, then resume by
+// supplying the result as raw wire JSON. `native_override`, when set, is ALSO
+// supplied on resume (to exercise the both-source conflict). When `raw_wire` is
+// nullopt AND `native_override` is unset, neither source is supplied on resume
+// (replay-neither).
+[[nodiscard]] RawPendingOutcome
+raw_pending_resume(const std::string &workflow_name, std::size_t cap_id, TypeRef return_type,
+                   std::optional<std::string> raw_wire,
+                   std::optional<Value> native_override = std::nullopt) {
+    RawPendingOutcome out;
+    auto suspend_program = make_typed_pending_node_program(workflow_name, "answer", cap_id,
+                                                           clone_type_ref(return_type));
+    WorkflowRuntimeConfig c1;
+    c1.contextual_capability_invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult pending;
+        pending.status = CapabilityCallStatus::Pending;
+        return pending;
+    };
+    WorkflowRuntime r1(suspend_program, std::move(c1));
+    auto s1 = r1.run(workflow_name, make_none());
+    out.suspended_ok = s1.suspended.has_value();
+    if (!out.suspended_ok) {
+        return out;
+    }
+
+    auto resume_program = make_typed_pending_node_program(workflow_name, "answer", cap_id,
+                                                          clone_type_ref(return_type));
+    WorkflowRuntimeConfig c2;
+    c2.recovery_snapshot = std::move(s1.suspended);
+    if (raw_wire.has_value()) {
+        c2.resume_pending_result_wire_json = std::move(*raw_wire);
+    }
+    if (native_override.has_value()) {
+        c2.resume_pending_result = std::move(*native_override);
+    }
+    std::size_t live_calls = 0;
+    c2.contextual_capability_invoker =
+        [&live_calls](const CapabilityInvocationContext &, const std::string &,
+                      const std::vector<Value> &) -> CapabilityCallResult {
+        ++live_calls;
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = make_int(-1);
+        return r;
+    };
+    WorkflowRuntime r2(resume_program, std::move(c2));
+    out.result = r2.run(workflow_name, make_none());
+    out.live_calls = live_calls;
+    return out;
+}
+
+void test_resume_raw_pending_wire_matrix() {
+    // --- POSITIVES: raw wire decodes EXACTLY under the binding, present=true.
+    // Each asserts suspended_ok + Completed + 0 live invoke, then the NATIVE
+    // VARIANT of the output (not merely its JSON spelling — value_to_json collapses
+    // FloatValue(1.0)->1 and both Unit/None->null, so JSON alone cannot prove the
+    // variant). ---
+    // Int scalar.
+    {
+        auto o = raw_pending_resume("RawIntWf", 801, int_type(), std::string("42"));
+        check(o.suspended_ok, "raw.int.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.int.completed");
+        check(o.live_calls == 0, "raw.int.no_live_invoke");
+        const auto *out = o.result.output();
+        check(out != nullptr && std::holds_alternative<IntValue>(out->node) &&
+                  std::get<IntValue>(out->node).value == 42,
+              "raw.int.value_42");
+    }
+    // Decimal(2): raw String "1.23" -> DecimalValue (schema-free would keep String).
+    {
+        auto o = raw_pending_resume("RawDecWf", 802, decimal_type(2), std::string("\"1.23\""));
+        check(o.suspended_ok, "raw.decimal.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.decimal.completed");
+        check(o.live_calls == 0, "raw.decimal.no_live_invoke");
+        const auto *out = o.result.output();
+        check(out != nullptr && std::holds_alternative<DecimalValue>(out->node) &&
+                  std::get<DecimalValue>(out->node).spelling == "1.23",
+              "raw.decimal.spelling_1_23");
+    }
+    // Duration: raw String "5s" -> DurationValue.
+    {
+        auto o = raw_pending_resume("RawDurWf", 803, duration_type(), std::string("\"5s\""));
+        check(o.suspended_ok, "raw.duration.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.duration.completed");
+        check(o.live_calls == 0, "raw.duration.no_live_invoke");
+        const auto *out = o.result.output();
+        check(out != nullptr && std::holds_alternative<DurationValue>(out->node) &&
+                  std::get<DurationValue>(out->node).spelling == "5s",
+              "raw.duration.spelling_5s");
+    }
+    // Set<Int>: raw array -> SetValue (schema-free would degrade to List).
+    {
+        auto o = raw_pending_resume("RawSetWf", 804, set_of(int_type()), std::string("[1,2]"));
+        check(o.suspended_ok, "raw.set.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.set.completed");
+        check(o.live_calls == 0, "raw.set.no_live_invoke");
+        const auto *out = o.result.output();
+        check(out != nullptr && std::holds_alternative<SetValue>(out->node), "raw.set.is_set");
+        check(out != nullptr && value_to_json(*out) == "[1,2]", "raw.set.elements_1_2");
+    }
+    // Map<String,Int> incl a reserved-marker-LOOKING key -> MapValue (ordinary key).
+    {
+        auto o = raw_pending_resume("RawMapWf", 805,
+                                    map_of(TypeRef{.kind = TypeRefKind::String}, int_type()),
+                                    std::string(R"({"_timestamp":7,"plain":9})"));
+        check(o.suspended_ok, "raw.map.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.map.completed");
+        check(o.live_calls == 0, "raw.map.no_live_invoke");
+        const auto *out = o.result.output();
+        check(out != nullptr && std::holds_alternative<MapValue>(out->node), "raw.map.is_map");
+        check(out != nullptr && value_to_json(*out) == R"({"_timestamp":7,"plain":9})",
+              "raw.map.keys_and_values");
+    }
+    // Option<Int> None: raw `null` -> Option None as an EnumValue (is_optional_none),
+    // present=TRUE (a PRESENT token, NOT the native valueless present=false compat and
+    // NOT a bare NoneValue/UnitValue).
+    {
+        auto o = raw_pending_resume("RawOptNoneWf", 806, option_of(int_type()),
+                                    std::string("null"));
+        check(o.suspended_ok, "raw.option_none.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.option_none.completed");
+        check(o.live_calls == 0, "raw.option_none.no_live_invoke");
+        const auto *out = o.result.output();
+        check(out != nullptr && evaluator::is_optional_none(*out),
+              "raw.option_none.is_optional_none");
+        check(out != nullptr && !std::holds_alternative<evaluator::NoneValue>(out->node) &&
+                  !std::holds_alternative<evaluator::UnitValue>(out->node),
+              "raw.option_none.not_bare_none_or_unit");
+    }
+    // Option<Int> Some: raw `7` -> Option Some(7) (is_some + inner Int 7).
+    {
+        auto o = raw_pending_resume("RawOptSomeWf", 807, option_of(int_type()), std::string("7"));
+        check(o.suspended_ok, "raw.option_some.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.option_some.completed");
+        check(o.live_calls == 0, "raw.option_some.no_live_invoke");
+        const auto *out = o.result.output();
+        check(out != nullptr && evaluator::is_some(*out), "raw.option_some.is_some");
+        const auto *inner = out != nullptr ? evaluator::optional_inner(*out) : nullptr;
+        check(inner != nullptr && std::holds_alternative<IntValue>(inner->node) &&
+                  std::get<IntValue>(inner->node).value == 7,
+              "raw.option_some.inner_int_7");
+    }
+    // Unit: raw `null` -> UnitValue, present=TRUE (raw PRESENT token). Contrast with
+    // the native valueless Unit (present=false) covered by the live-valueless test.
+    {
+        auto o = raw_pending_resume("RawUnitWf", 808, unit_type(), std::string("null"));
+        check(o.suspended_ok, "raw.unit.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.unit.completed");
+        check(o.live_calls == 0, "raw.unit.no_live_invoke");
+        const auto *out = o.result.output();
+        // present=true: the resumed call yields a real UnitValue (not absent/None).
+        check(out != nullptr && std::holds_alternative<evaluator::UnitValue>(out->node),
+              "raw.unit.is_unit_value");
+    }
+    // Float 1.0: raw `1.0` (FloatSyntax) accepted -> FloatValue.
+    {
+        auto o = raw_pending_resume("RawFloatWf", 809, float_type(), std::string("1.0"));
+        check(o.suspended_ok, "raw.float_1_0.suspended");
+        check(o.result.status() == WorkflowStatus::Completed, "raw.float_1_0.completed");
+        check(o.live_calls == 0, "raw.float_1_0.no_live_invoke");
+        const auto *out = o.result.output();
+        check(out != nullptr && std::holds_alternative<FloatValue>(out->node),
+              "raw.float_1_0.is_float");
+    }
+
+    // --- NEGATIVES: exact gate rejects; suspended_ok, NOT Completed, 0 live invoke,
+    // not a replay divergence. `echo_token` (optional) is asserted absent from the
+    // whole diagnostic bag; a degenerate token like bare "1" is NOT usable as a
+    // no-echo secret (it appears in ids/coordinates), so those cases pass nullopt. ---
+    auto raw_negative = [](const std::string &wf, std::size_t id, TypeRef ret,
+                           const std::string &wire, const std::string &tag,
+                           std::optional<std::string> echo_token) {
+        auto o = raw_pending_resume(wf, id, std::move(ret), std::string(wire));
+        check(o.suspended_ok, tag + ".suspended");
+        check(o.result.status() != WorkflowStatus::Completed, tag + ".not_completed");
+        check(diagnostic_has_execution_error_code(o.result.diagnostics), tag + ".execution_error");
+        check(o.live_calls == 0, tag + ".no_live_invoke");
+        check(!diagnostic_message_contains(o.result.diagnostics, "replay diverged"),
+              tag + ".not_coordinate_divergence");
+        if (echo_token.has_value()) {
+            check(no_diagnostic_echoes(o.result.diagnostics, *echo_token), tag + ".no_payload_echo");
+        }
+    };
+    // Float accept->reject FLIP: bare int `1` where the schema wants Float. The old
+    // schema-free validator accepted this; the exact codec rejects it. (No no-echo
+    // token: "1" is too degenerate to be a payload secret.)
+    raw_negative("RawFloatBareIntWf", 810, float_type(), "1", "raw.float_bare_int", std::nullopt);
+    // Numeric provenance triad under an Int binding (all report expected integer; the
+    // boundary literals themselves are the provenance evidence). Each hostile literal
+    // is a distinctive multi-digit token, so no-echo is meaningful.
+    raw_negative("RawHighUintWf", 811, int_type(), "18446744073709551615", "raw.high_uint",
+                 std::string("18446744073709551615"));
+    raw_negative("RawPosFallbackWf", 812, int_type(), "18446744073709551616",
+                 "raw.pos_integer_fallback", std::string("18446744073709551616"));
+    raw_negative("RawNegFallbackWf", 813, int_type(), "-9223372036854775809",
+                 "raw.neg_integer_fallback", std::string("-9223372036854775809"));
+    // Malformed raw JSON.
+    raw_negative("RawMalformedWf", 814, int_type(), "{not json", "raw.malformed", std::nullopt);
+
+    // --- IDENTITY BEFORE PAYLOAD: a divergent pending identity must fail on identity,
+    // never on the (hostile) raw payload, and must not echo it. Mirrors the P0-15
+    // native fixture: SAME program/callee id; only the SNAPSHOT's pending_cap_id is
+    // corrupted to another still-declared id, so the id mismatch fires before decode. ---
+    {
+        auto program =
+            make_two_capability_node_program("RawPendIdentityWf", "first", 851, "second", 852);
+        WorkflowRuntimeConfig c1;
+        c1.contextual_capability_invoker =
+            [](const CapabilityInvocationContext &, const std::string &name,
+               const std::vector<Value> &) -> CapabilityCallResult {
+            CapabilityCallResult r;
+            if (name == "second") {
+                r.status = CapabilityCallStatus::Pending;
+            } else {
+                r.status = CapabilityCallStatus::Success;
+                r.value = make_int(0);
+            }
+            return r;
+        };
+        WorkflowRuntime r1(program, std::move(c1));
+        auto s1 = r1.run("RawPendIdentityWf", make_none());
+        check(s1.suspended.has_value() && s1.suspended->suspended.has_value(),
+              "raw.identity.suspended");
+        // Corrupt the recorded pending_cap_id to `first` (851): a DIFFERENT, still-
+        // declared Int capability. The live pending call is `second` (852), so the
+        // identity gate must reject on 852 != 851 BEFORE reading the raw payload.
+        if (s1.suspended.has_value() && s1.suspended->suspended.has_value()) {
+            s1.suspended->suspended->pending_cap_id = 851;
+        }
+        auto resume_program =
+            make_two_capability_node_program("RawPendIdentityWf", "first", 851, "second", 852);
+        WorkflowRuntimeConfig c2;
+        c2.recovery_snapshot = std::move(s1.suspended);
+        const std::string hostile = "18446744073709551616"; // would reject IF reached
+        c2.resume_pending_result_wire_json = hostile;
+        std::size_t live_calls = 0;
+        c2.contextual_capability_invoker =
+            [&live_calls](const CapabilityInvocationContext &, const std::string &,
+                          const std::vector<Value> &) -> CapabilityCallResult {
+            ++live_calls;
+            CapabilityCallResult r;
+            r.status = CapabilityCallStatus::Success;
+            r.value = make_int(-1);
+            return r;
+        };
+        WorkflowRuntime r2(resume_program, std::move(c2));
+        auto resumed = r2.run("RawPendIdentityWf", make_none());
+        check(resumed.status() != WorkflowStatus::Completed, "raw.identity.not_completed");
+        check(diagnostic_has_execution_error_code(resumed.diagnostics),
+              "raw.identity.execution_error");
+        check(diagnostic_message_contains(resumed.diagnostics, "pending-call identity mismatch"),
+              "raw.identity.identity_mismatch_message");
+        check(!diagnostic_message_contains(resumed.diagnostics, "replay diverged"),
+              "raw.identity.not_coordinate_divergence");
+        check(live_calls == 0, "raw.identity.no_live_invoke");
+        check(no_diagnostic_echoes(resumed.diagnostics, hostile), "raw.identity.no_payload_echo");
+    }
+
+    // --- BOTH-SOURCE CONFLICT: identity-correct, but BOTH native and raw supplied ->
+    // fail closed AFTER identity+binding, 0 live invoke, no raw payload echo. ---
+    {
+        const std::string raw_secret = "18446744073709551616"; // distinctive raw token
+        auto o = raw_pending_resume("RawBothWf", 816, int_type(), raw_secret,
+                                    /*native_override=*/make_int(42));
+        check(o.suspended_ok, "raw.both.suspended");
+        check(o.result.status() != WorkflowStatus::Completed, "raw.both.not_completed");
+        check(diagnostic_has_execution_error_code(o.result.diagnostics), "raw.both.execution_error");
+        check(diagnostic_message_contains(o.result.diagnostics,
+                                          "both a native and a raw wire pending result"),
+              "raw.both.conflict_message");
+        check(!diagnostic_message_contains(o.result.diagnostics, "replay diverged"),
+              "raw.both.not_coordinate_divergence");
+        check(o.live_calls == 0, "raw.both.no_live_invoke");
+        check(no_diagnostic_echoes(o.result.diagnostics, raw_secret), "raw.both.no_payload_echo");
+    }
+
+    // --- REPLAY NEITHER: a resume with neither source supplied keeps the existing
+    // exact missing-result Error at the pending ordinal (identity+binding pass). ---
+    {
+        auto o = raw_pending_resume("RawNeitherWf", 817, int_type(), /*raw_wire=*/std::nullopt);
+        check(o.suspended_ok, "raw.neither.suspended");
+        check(o.result.status() != WorkflowStatus::Completed, "raw.neither.not_completed");
+        check(diagnostic_has_execution_error_code(o.result.diagnostics),
+              "raw.neither.execution_error");
+        check(diagnostic_message_contains(o.result.diagnostics,
+                                          "missing the pending capability result"),
+              "raw.neither.missing_result_message");
+        check(!diagnostic_message_contains(o.result.diagnostics, "replay diverged"),
+              "raw.neither.not_coordinate_divergence");
+        check(o.live_calls == 0, "raw.neither.no_live_invoke");
+    }
+
+    // --- FRESH / NON-REPLAY, BOTH ABSENT: a normal first run (no recovery snapshot)
+    // with neither pending source is NOT an error — the capability is invoked live;
+    // if the host returns Pending the workflow suspends normally. Proves the
+    // source-state gate is NOT a global/ctor admission. ---
+    {
+        auto program = make_typed_pending_node_program("RawFreshWf", "answer", 818, int_type());
+        WorkflowRuntimeConfig c1;
+        std::size_t live_calls = 0;
+        c1.contextual_capability_invoker =
+            [&live_calls](const CapabilityInvocationContext &, const std::string &,
+                          const std::vector<Value> &) -> CapabilityCallResult {
+            ++live_calls;
+            CapabilityCallResult pending;
+            pending.status = CapabilityCallStatus::Pending;
+            return pending;
+        };
+        // No recovery_snapshot, no resume_pending_result, no wire json.
+        WorkflowRuntime r1(program, std::move(c1));
+        auto s1 = r1.run("RawFreshWf", make_none());
+        check(s1.status() == WorkflowStatus::Suspended, "raw.fresh.suspended_not_error");
+        check(!diagnostic_has_execution_error_code(s1.diagnostics), "raw.fresh.no_execution_error");
+        check(live_calls == 1, "raw.fresh.live_invoked_once");
+    }
+}
 
 } // anonymous namespace
 
@@ -4050,6 +4419,7 @@ int main() {
     test_resume_live_valueless_vs_explicit_unit();
     test_resume_consume_rejects_illformed_trust_state();
     test_resume_p0_19_valueless_none_rejected_under_non_unit_binding();
+    test_resume_raw_pending_wire_matrix();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

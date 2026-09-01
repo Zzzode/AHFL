@@ -639,15 +639,23 @@ def write_a1_package(pkg_dir):
 
 
 def run_two_phase_admission_case(
-    ahflc, run_dir, label, *, bindings, input_json, forbidden_payload_tokens=()
+    ahflc,
+    run_dir,
+    label,
+    *,
+    bindings,
+    input_json,
+    forbidden_payload_tokens=(),
+    resume_pending_result_json=None,
 ):
     # Drive `ahflc run` on the A1 package with a live Vault-backed LLM config, so
     # a run that reaches Phase B WOULD authenticate to Vault and call the LLM. The
     # case asserts that a Phase A admission failure keeps BOTH counters at 0.
     #
     # `forbidden_payload_tokens` are unique markers embedded in the user-controlled
-    # request payload / descriptor; a Phase A diagnostic must never echo them, so
-    # they are added to the no-echo forbidden set alongside the Vault/LLM secrets.
+    # request / descriptor / raw pending payload; a Phase A diagnostic must never
+    # echo them, so they are added to the no-echo forbidden set alongside the
+    # Vault/LLM secrets.
     pkg_dir = run_dir / f"two_phase_{label}_pkg"
     if pkg_dir.exists():
         shutil.rmtree(pkg_dir)
@@ -691,6 +699,8 @@ def run_two_phase_admission_case(
             bindings_path = run_dir / f"two_phase_{label}_bindings.json"
             bindings_path.write_text(json.dumps(bindings), encoding="utf-8")
             args += ["--capability-bindings", str(bindings_path)]
+        if resume_pending_result_json is not None:
+            args += ["--resume-pending-result", resume_pending_result_json]
 
         env = os.environ.copy()
         env["AHFL_TEST_VAULT_SECRET_TOKEN"] = expected_token
@@ -816,6 +826,45 @@ def run_a2_resolved_input_mismatch_case(ahflc, run_dir):
         )
 
 
+def run_a3_malformed_pending_case(ahflc, run_dir):
+    # A3: a malformed --resume-pending-result is rejected by the Phase A.3 syntax
+    # admission, which runs BEFORE Phase B secrets/network. Because no descriptor is
+    # supplied (A1 skipped) and the input fixture is valid (A2 passes), this case's
+    # expected failure is the A3 pending-syntax admission — Vault and LLM counters
+    # must stay 0. (Env/input steps remain theoretically fallible; this case simply
+    # does not trip them.) A distinctive token in the malformed payload must not
+    # leak into the diagnostic.
+    pending_token = "G4C_A3_PENDING_SECRET"
+    result, combined_output, vault_server, llm_server = run_two_phase_admission_case(
+        ahflc,
+        run_dir,
+        "a3_malformed_pending",
+        bindings=None,
+        input_json='{"_type":"smoke::main::Request","value":"hello"}',
+        forbidden_payload_tokens=[pending_token],
+        resume_pending_result_json='{"secret":"' + pending_token + '",',  # malformed JSON
+    )
+    if result.returncode == 0:
+        raise AssertionError(
+            "A3 malformed --resume-pending-result unexpectedly succeeded\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    if "resume-pending-result is not valid JSON" not in combined_output:
+        raise AssertionError(
+            f"A3 missing targeted admission diagnostic:\n{combined_output}"
+        )
+    if vault_server.request_count != 0:
+        raise AssertionError(
+            f"A3 malformed pending called Vault before Phase A completed: "
+            f"{vault_server.request_count}, paths={vault_server.paths!r}"
+        )
+    if llm_server.request_count != 0:
+        raise AssertionError(
+            f"A3 malformed pending called LLM before Phase A completed: "
+            f"{llm_server.request_count}, paths={llm_server.paths!r}"
+        )
+
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit("usage: llm_secret_manager_smoke.py <ahflc> <work-dir>")
@@ -839,6 +888,9 @@ def main():
     # RFC 0026 C2b G4b: two-phase admission fails BEFORE any secret/LLM network.
     run_a1_non_projectable_binding_case(ahflc, run_dir)
     run_a2_resolved_input_mismatch_case(ahflc, run_dir)
+    # RFC 0026 C2b G4c: a malformed --resume-pending-result fails at Phase A.3
+    # syntax admission, before any secret/LLM network.
+    run_a3_malformed_pending_case(ahflc, run_dir)
 
 
 if __name__ == "__main__":

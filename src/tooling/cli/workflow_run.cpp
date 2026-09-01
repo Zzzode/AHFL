@@ -1708,6 +1708,29 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         input_value = std::move(*materialized);
     }
 
+    // PHASE A.3: admit --resume-pending-result as RAW wire JSON. This is a pure
+    // SYNTAX admission (parse_json rejects malformed bytes AND duplicate object
+    // keys) that runs BEFORE Phase B secrets/network — a malformed pending payload
+    // aborts with zero secret/network side effects. We do NOT materialize or
+    // schema-decode here: the exact decode under the capability's verified binding
+    // happens in the runtime's pending-consume gate, AFTER pending-call identity
+    // (P0-15) and binding lookup, so a payload/schema error can never preempt the
+    // identity diagnostic. A well-formed but unused pending flag (fresh run, no
+    // suspension) is simply owned and forwarded — never schema-gated here.
+    std::optional<std::string> resume_pending_result_wire_json;
+    if (options.resume_pending_result_json.has_value()) {
+        // Copy the flag bytes into the owned string FIRST, then admit that exact
+        // owned copy — so the bytes that were admitted are provably the bytes that
+        // get forwarded (authority continuity), independent of the source
+        // string_view's stability between the two steps.
+        resume_pending_result_wire_json = std::string(*options.resume_pending_result_json);
+        auto pending_dom = ahfl::json::parse_json(*resume_pending_result_wire_json);
+        if (!pending_dom.has_value() || !*pending_dom) {
+            err << "error: --resume-pending-result is not valid JSON\n";
+            return 2;
+        }
+    }
+
     // PHASE B: secrets + provider setup are allowed to touch the network now.
     auto secrets = build_llm_secret_manager(llm_config, err);
     if (secrets == nullptr) {
@@ -1766,13 +1789,12 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
             runtime_config.recovery_snapshot = std::move(*loaded);
         }
     }
-    if (options.resume_pending_result_json.has_value()) {
-        auto pending = ahfl::evaluator::value_from_json(*options.resume_pending_result_json);
-        if (!pending.has_value()) {
-            err << "error: --resume-pending-result is not valid JSON\n";
-            return 2;
-        }
-        runtime_config.resume_pending_result = std::move(*pending);
+    if (resume_pending_result_wire_json.has_value()) {
+        // Forward the owned raw wire bytes verbatim (admitted for syntax in Phase
+        // A.3); the runtime decodes them exactly under the pending capability's
+        // verified binding at the consume gate.
+        runtime_config.resume_pending_result_wire_json =
+            std::move(*resume_pending_result_wire_json);
     }
 
     // RFC 0022 slice 4 (exactly-once): --intent-log installs a write-ahead intent

@@ -86,6 +86,94 @@ workflow SmokeWorkflow {
 """
 
 
+# RFC 0026 C2b G4c: a package fixture whose pending capability returns a RICH
+# struct (Int / Float / Option<Int> / Unit alongside a String), so a real
+# suspend -> resume round-trip proves the raw --resume-pending-result bytes are
+# decoded EXACTLY under the capability's verified wire binding (schema-guided
+# codec) and flow through to a Completed workflow output. std::option needs an
+# import, which needs a package manifest + std sysroot (a detached single file
+# cannot express it).
+_RICH_MANIFEST = """manifest_version = 1
+
+[package]
+name = "g4c-durable-rich"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "smoke"
+root = "."
+
+[targets.workflow]
+kind = "handoff"
+entry = "smoke::main::RichWorkflow"
+exports = [
+  { kind = "workflow", name = "smoke::main::RichWorkflow" },
+  { kind = "agent", name = "smoke::main::RichAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }
+"""
+
+_RICH_SOURCE = """module smoke::main;
+
+import std::option as option;
+
+pub struct Request { value: String; }
+pub struct RichReply {
+    value: String;
+    count: Int;
+    ratio: Float;
+    note: option::Option<Int>;
+    nothing: Unit;
+}
+
+pub capability DraftReply(request: Request) -> RichReply;
+
+pub agent RichAgent {
+    input: Request;
+    context: Unit;
+    output: RichReply;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [DraftReply];
+    transition Init -> Done;
+}
+
+flow for RichAgent {
+    state Init {
+        goto Done;
+    }
+    state Done { return DraftReply(Request { value: input.value }); }
+}
+
+pub workflow RichWorkflow {
+    input: Request;
+    output: RichReply;
+    node only: RichAgent(input);
+    return: only;
+}
+"""
+
+
+def sysroot_root() -> Path:
+    # std/ahfl.toml lives at the repo root; this script is at
+    # <repo>/tests/scripts/durable_resume_cli_smoke.py.
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / "std" / "ahfl.toml").is_file():
+        raise AssertionError(f"std sysroot manifest not found under {repo_root}")
+    return repo_root
+
+
+def write_rich_package(pkg_dir: Path) -> None:
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    (pkg_dir / "ahfl.toml").write_text(_RICH_MANIFEST, encoding="utf-8")
+    (pkg_dir / "main.ahfl").write_text(_RICH_SOURCE, encoding="utf-8")
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print("usage: durable_resume_cli_smoke.py <ahflc> <work-dir> [<repo-root>]",
@@ -185,7 +273,114 @@ def main() -> int:
         require(result is not None and result.get("value") == "resumed-ok",
                 f"resumed output must be the injected result, got {result}")
 
-        # (3): invalid --resume-pending-result JSON is rejected with exit 2.
+        # (2c): a RICH schema-guided round-trip. The pending capability returns a
+        # struct carrying Int / Float / Option<Int> / Unit; on resume the raw
+        # --resume-pending-result object is decoded EXACTLY under that binding and
+        # the workflow completes with the deep result. Proves the G4c raw path runs
+        # decode_json (not the old schema-free materialization) end to end.
+        rich_pkg = work / "rich_pkg"
+        write_rich_package(rich_pkg)
+        rich_snapshot = work / "rich.snapshot"
+        if rich_snapshot.exists():
+            rich_snapshot.unlink()
+        rich_base = [
+            str(ahflc), "run",
+            "--manifest", str(rich_pkg / "ahfl.toml"),
+            "--target", "workflow",
+            "--sysroot", str(sysroot_root()),
+            "--workflow", "smoke::main::RichWorkflow",
+            "--input", '{"_type":"smoke::main::Request","value":"hi"}',
+            "--llm-config", str(config),
+            "--recovery-store", str(rich_snapshot),
+            "--output-format", "json",
+        ]
+        rich_suspend = subprocess.run(
+            rich_base + ["--suspend-capability", "smoke::main::DraftReply"],
+            env=env, check=False, capture_output=True, text=True, timeout=30,
+        )
+        require(rich_suspend.returncode == 0,
+                f"rich suspend should exit 0, got {rich_suspend.returncode}: {rich_suspend.stderr}")
+        require(rich_snapshot.exists(), "rich suspend must persist a resume record")
+        require(json.loads(rich_suspend.stdout)["audit"]["workflow_completed"] == 0,
+                "rich suspend must not complete")
+        # Resume with a raw object exercising every rich shape: Int, Float 1.0,
+        # Option<Int> None, Unit null, alongside the String.
+        rich_resume = subprocess.run(
+            rich_base + ["--resume-pending-result",
+                         '{"_type":"smoke::main::RichReply","value":"rich-ok","count":5,'
+                         '"ratio":1.0,"note":null,"nothing":null}'],
+            env=env, check=False, capture_output=True, text=True, timeout=30,
+        )
+        require(rich_resume.returncode == 0,
+                f"rich resume should exit 0, got {rich_resume.returncode}: {rich_resume.stderr}")
+        rich_report = json.loads(rich_resume.stdout)
+        require(rich_report["audit"]["workflow_completed"] == 1, "rich resume must complete")
+        rich_out = rich_report.get("result", rich_report.get("output"))
+        # Deep field check. value_to_json folds Float 1.0 -> 1 and Unit/None -> null
+        # (P0-16), so the completed decode itself is the schema-guided evidence; the
+        # fields still deep-match the injected object under that canonical folding.
+        require(rich_out == {
+            "_type": "smoke::main::RichReply",
+            "value": "rich-ok",
+            "count": 5,
+            "ratio": 1,
+            "note": None,
+            "nothing": None,
+        }, f"rich resume output mismatch, got {rich_out}")
+
+        # (2d): the SAME rich fixture with Option<Int> Some(9), proving the Some
+        # variant decodes through the raw path. Full suspend->resume authority chain
+        # + deep-equal (not sparse .get()) so a missing suspend / field drift fails.
+        rich_snapshot_some = work / "rich_some.snapshot"
+        if rich_snapshot_some.exists():
+            rich_snapshot_some.unlink()
+        rich_base_some = [
+            str(ahflc), "run",
+            "--manifest", str(rich_pkg / "ahfl.toml"),
+            "--target", "workflow",
+            "--sysroot", str(sysroot_root()),
+            "--workflow", "smoke::main::RichWorkflow",
+            "--input", '{"_type":"smoke::main::Request","value":"hi"}',
+            "--llm-config", str(config),
+            "--recovery-store", str(rich_snapshot_some),
+            "--output-format", "json",
+        ]
+        some_suspend = subprocess.run(
+            rich_base_some + ["--suspend-capability", "smoke::main::DraftReply"],
+            env=env, check=False, capture_output=True, text=True, timeout=30,
+        )
+        require(some_suspend.returncode == 0,
+                f"rich Some suspend should exit 0, got {some_suspend.returncode}: "
+                f"{some_suspend.stderr}")
+        require(rich_snapshot_some.exists(), "rich Some suspend must persist a resume record")
+        require(json.loads(some_suspend.stdout)["audit"]["workflow_completed"] == 0,
+                "rich Some suspend must not complete")
+        rich_resume_some = subprocess.run(
+            rich_base_some + ["--resume-pending-result",
+                              '{"_type":"smoke::main::RichReply","value":"some-ok","count":1,'
+                              '"ratio":2.5,"note":9,"nothing":null}'],
+            env=env, check=False, capture_output=True, text=True, timeout=30,
+        )
+        require(rich_resume_some.returncode == 0,
+                f"rich Some resume should exit 0, got {rich_resume_some.returncode}: "
+                f"{rich_resume_some.stderr}")
+        some_report = json.loads(rich_resume_some.stdout)
+        require(some_report["audit"]["workflow_completed"] == 1, "rich Some resume must complete")
+        some_out = some_report.get("result", some_report.get("output"))
+        require(some_out == {
+            "_type": "smoke::main::RichReply",
+            "value": "some-ok",
+            "count": 1,
+            "ratio": 2.5,
+            "note": 9,
+            "nothing": None,
+        }, f"rich Some resume output mismatch, got {some_out}")
+
+        # (3): a malformed --resume-pending-result is rejected by the Phase A.3
+        # syntax admission (before secrets/network) with a NONZERO exit and a
+        # targeted diagnostic. The public process exit is 1: run_workflow_with_llm
+        # returns 2 internally, but cli_driver maps every nonzero to
+        # ExitCode::CompileError — so we assert nonzero, not == 2.
         bad = subprocess.run(
             [
                 str(ahflc), "run",
@@ -201,6 +396,43 @@ def main() -> int:
                 f"invalid --resume-pending-result JSON should fail, got exit {bad.returncode}")
         require("resume-pending-result" in bad.stderr,
                 "invalid resume-pending-result must produce a targeted diagnostic")
+        # The failure is the A3 admission error, not a downstream runtime/schema/
+        # not-found diagnostic (no descriptor / no snapshot were involved).
+        bad_combined = bad.stdout + bad.stderr
+        for competing in ("not found in program", "does not match workflow input schema",
+                          "pending-call identity mismatch"):
+            require(competing not in bad_combined,
+                    f"malformed pending leaked competing diagnostic {competing!r}:\n{bad_combined}")
+
+        # (3b): a DUPLICATE object key in --resume-pending-result is also rejected by
+        # the Phase A.3 syntax admission (parse_json rejects duplicate keys), same
+        # nonzero targeted contract — no recovery store needed. A distinctive token
+        # in the payload proves the fixed admission diagnostic does not echo it.
+        dup_token = "G4C_DUP_KEY_SECRET"
+        dup = subprocess.run(
+            [
+                str(ahflc), "run",
+                "--workflow", "smoke::SmokeWorkflow",
+                "--input", '{"_type":"smoke::Request","value":"hi"}',
+                "--llm-config", str(config),
+                "--resume-pending-result",
+                '{"value":"' + dup_token + '","value":"other"}',
+                str(source),
+            ],
+            env=env, check=False, capture_output=True, text=True, timeout=30,
+        )
+        require(dup.returncode != 0,
+                f"duplicate-key --resume-pending-result should fail, got exit {dup.returncode}")
+        require("resume-pending-result" in dup.stderr,
+                "duplicate-key resume-pending-result must produce a targeted diagnostic")
+        dup_combined = dup.stdout + dup.stderr
+        require(dup_token not in dup_combined,
+                f"duplicate-key admission diagnostic must not echo the payload token:\n{dup_combined}")
+        for competing in ("not found in program", "does not match workflow input schema",
+                          "pending-call identity mismatch"):
+            require(competing not in dup_combined,
+                    f"duplicate-key pending leaked competing diagnostic {competing!r}:\n"
+                    f"{dup_combined}")
 
         # (4): the shipped examples/durable-resume package round-trips end to end.
         if len(sys.argv) >= 4:

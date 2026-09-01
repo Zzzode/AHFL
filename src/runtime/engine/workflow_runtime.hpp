@@ -52,7 +52,9 @@ struct WorkflowResult {
     // record for the suspended node — its input Value plus the memo table of
     // capability results already produced — so the run can be continued by
     // passing this snapshot back via WorkflowRuntimeConfig::recovery_snapshot
-    // together with resume_pending_result.
+    // together with exactly one pending-result source: the native
+    // resume_pending_result Value or the raw resume_pending_result_wire_json bytes
+    // (mutually exclusive; the runtime rejects supplying both at the consume gate).
     std::optional<WorkflowRecoverySnapshot> suspended{};
 
     [[nodiscard]] bool has_errors() const;
@@ -84,6 +86,15 @@ struct WorkflowRuntimeConfig {
     // its captured input, replays completed calls from the memo, and injects
     // this value at the pending ordinal instead of re-invoking the host.
     std::optional<Value> resume_pending_result;
+    // RFC 0026 C2b G4c: the host-supplied pending result as RAW wire JSON bytes,
+    // decoded exactly under the capability's verified wire binding at the pending
+    // consume gate (instead of the schema-free value_from_json materialization).
+    // Mutually exclusive with resume_pending_result: supplying both is a
+    // fail-closed conflict resolved AFTER pending-call identity + binding lookup,
+    // never as a global/ctor admission. A present flag is always a PRESENT token
+    // (present=true): raw `null` decodes to canonical Unit / Option None under its
+    // binding, never the native valueless (present=false) compat path.
+    std::optional<std::string> resume_pending_result_wire_json;
     std::function<void(const CapabilityInvocationContext &, const CapabilityCallResult &)>
         capability_result_observer;
     // RFC 0022 slice 4 (exactly-once): invoked with (idempotency_key, capability

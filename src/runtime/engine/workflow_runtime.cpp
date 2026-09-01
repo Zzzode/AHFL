@@ -962,8 +962,20 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     }
                     return fail(std::move(msg));
                 }
-                // Identity confirmed: NOW leave replay mode and consume the result.
-                if (!config_.resume_pending_result.has_value()) {
+                // Identity + binding confirmed. Resolve the pending result source
+                // NOW (still in replay mode), after identity (P0-15) and binding
+                // lookup — this source-state gate runs ONLY here, inside the replay
+                // pending-ordinal branch, never as a global/ctor admission. The
+                // native programmatic Value and the raw wire JSON are mutually
+                // exclusive; supplying both is a fail-closed conflict.
+                const bool has_native = config_.resume_pending_result.has_value();
+                const bool has_raw = config_.resume_pending_result_wire_json.has_value();
+                if (has_native && has_raw) {
+                    return fail("durable resume received both a native and a raw wire "
+                                "pending result for capability '" +
+                                name + "'");
+                }
+                if (!has_native && !has_raw) {
                     CapabilityCallResult missing;
                     missing.status = CapabilityCallStatus::Error;
                     missing.error_message =
@@ -972,33 +984,55 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                         std::string(error_codes::backend::ExecutionError.id);
                     return missing;
                 }
-                // Route the host/programmatic pending Value through the SAME presence
-                // rules as memo consumption (P0-17/19), validating the ORIGINAL Value
-                // in place (P0-13: never clone before the trust gate — a malformed
-                // null-child collection must not be laundered). A NativeOnly true+None
-                // under a Unit binding is the established legacy-valueless case ->
-                // canonical Unit + present=false, not a strict-None reject.
-                auto decoded = validate_native_trusted_result(*config_.resume_pending_result,
-                                                              /*present=*/true, *lookup.binding);
-                if (!decoded.has_value()) {
-                    return fail("durable resume pending-result type mismatch for capability '" +
-                                name + "': host supplied a value of the wrong type");
+
+                TrustedMemoResult trusted{evaluator::make_unit(), false};
+                if (has_raw) {
+                    // Raw wire path: a PRESENT flag is ALWAYS present=true. Parse the
+                    // bytes and decode EXACTLY under the verified binding (schema-only
+                    // errors, no payload echo). No native None/Unit compat and no
+                    // `!present` valueless handling ride this token: raw `null`
+                    // decodes to canonical Unit / Option None per the binding, both
+                    // present=true.
+                    auto dom = ahfl::json::parse_json(*config_.resume_pending_result_wire_json);
+                    if (!dom.has_value() || !*dom) {
+                        return fail("durable resume pending result is not valid wire JSON");
+                    }
+                    auto decoded = wire_codec::decode_json(**dom, *lookup.binding);
+                    if (!decoded.ok()) {
+                        return fail(decoded.error);
+                    }
+                    trusted = TrustedMemoResult{std::move(*decoded.value), true};
+                } else {
+                    // Native programmatic path: validate the ORIGINAL Value in place
+                    // (P0-13: never clone before the trust gate — a malformed
+                    // null-child collection must not be laundered). A NativeOnly
+                    // true+None under a Unit binding is the established legacy-valueless
+                    // case -> canonical Unit + present=false, not a strict-None reject.
+                    auto decoded = validate_native_trusted_result(
+                        *config_.resume_pending_result, /*present=*/true, *lookup.binding);
+                    if (!decoded.has_value()) {
+                        return fail("durable resume pending-result type mismatch for capability '" +
+                                    name + "': host supplied a value of the wrong type");
+                    }
+                    trusted = std::move(*decoded);
                 }
-                // All gates passed: leave replay mode and append the fresh entry.
-                node_memo.replaying = false;
+                // All gates passed: append the fresh entry FIRST, then leave replay
+                // mode. Every failure above kept replaying=true so a corrected resume
+                // can retry the same pending call (P0-3 ordering).
                 node_memo.memo.push_back(CapabilityMemoEntry{
                     .ordinal = memo_ordinal,
                     .cap_id = cap_symbol_id,
                     .arg_hash = arg_hash,
-                    .result = evaluator::clone_value(decoded->canonical),
+                    .result = evaluator::clone_value(trusted.canonical),
                     .source = PersistedMemoResultSource::NativeOnly,
                     .authoritative_json = std::nullopt,
-                    .result_present = decoded->present,
+                    .result_present = trusted.present,
                 });
+                node_memo.replaying = false;
                 CapabilityCallResult resumed;
                 resumed.status = CapabilityCallStatus::Success;
-                if (decoded->present) {
-                    resumed.value = std::move(decoded->canonical);
+                if (trusted.present) {
+                    resumed.value = std::move(trusted.canonical);
                 }
                 return resumed;
             }
