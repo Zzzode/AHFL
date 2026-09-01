@@ -211,6 +211,18 @@ Examples:
   validates every element;
 - `null` under `Unit` or `Option::None` is interpreted only by that root;
 - an Option non-null value is decoded under its `Some` child;
+  - **Nullable-child restriction (C2b P0-9):** because `Option::None` encodes as
+    `null` and `Some(x)` encodes as x's own bytes, an `Option` whose direct child
+    itself encodes as `null` — a `Unit`, or a nested `Option` — would make `None`
+    and `Some(child-null)` indistinguishable. Such a schema (`Option<Unit>`,
+    `Option<Option<T>>`) is rejected up front by the wire-schema local verifier
+    (`core.wire.UNSUPPORTED`), so it is neither projectable from Core nor
+    admissible as a transported table. `Option` of any non-null-encoding shape,
+    including a recursive `Struct` (`Node{next: Option<Node>}`), remains legal.
+    Consequently E4-B0 does NOT promise an unconditional `Option` round-trip; it
+    promises a round-trip for every *projectable* Option schema. The check is a
+    single gate in `LocalSchemaVerifier::validate_node`, shared by both entry
+    points, so no separate predicate can drift.
 - a struct must carry the exact `_type`, exact field set, and recursively valid
   field values;
 - an enum must carry the exact `_enum`, a declared `_variant`, the exact payload

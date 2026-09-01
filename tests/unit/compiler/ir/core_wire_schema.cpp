@@ -969,3 +969,204 @@ TEST_CASE("public verifier and encoder reject an unknown wire enum underlying va
         CHECK_FALSE(encode_core_wire_schema_table(table).ok());
     }
 }
+
+// RFC 0026 C2b P0-9: an Option whose DIRECT child itself encodes as JSON null
+// (Unit, or another Option) makes None and Some(child-null) indistinguishable on
+// the wire. The single owning gate lives in the local verifier's Option branch,
+// so it covers BOTH the source projector (which runs verify_local before
+// publishing and resets its table on failure) and any transported/hand-built
+// table (which is admitted only through the same public local verifier).
+namespace {
+
+// Wrap a finished node vector + result node in a one-capability table so the
+// public local verifier can be exercised on a hand-built (transported) table.
+[[nodiscard]] CoreWireSchemaTable
+wrap_result_table(std::vector<CoreWireSchemaNode> nodes, CoreWireSchemaNodeId result) {
+    CoreWireSchemaTable table;
+    table.nodes = std::move(nodes);
+    CoreWireCapabilitySchema cap;
+    cap.capability = CoreCapabilityId{0};
+    cap.source_symbol = 7;
+    cap.result = result;
+    table.capabilities.push_back(cap);
+    return table;
+}
+
+} // namespace
+
+TEST_CASE("local verifier rejects an Option with a null-encoding direct child (P0-9)") {
+    SUBCASE("Option<Unit> is rejected as UNSUPPORTED") {
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});                       // 0
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
+        const auto diagnostics = verify_core_wire_schema_table_local(table);
+        CHECK(has_code(diagnostics, std::string(wire_schema::kUnsupported)));
+        CHECK(has_message(diagnostics, "encodes as JSON null"));
+    }
+
+    SUBCASE("Option<Option<Int>> is rejected as UNSUPPORTED") {
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});                        // 0
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1 inner
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{1}}}); // 2 outer
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{2});
+        const auto diagnostics = verify_core_wire_schema_table_local(table);
+        CHECK(has_code(diagnostics, std::string(wire_schema::kUnsupported)));
+        CHECK(has_message(diagnostics, "encodes as JSON null"));
+    }
+
+    SUBCASE("a self-referential Option cycle is rejected") {
+        // node 0 = Option whose child is itself: a legal cyclic graph, but the
+        // child shape is Option, so the nullable-child gate rejects it.
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 0
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{0});
+        const auto diagnostics = verify_core_wire_schema_table_local(table);
+        CHECK(has_code(diagnostics, std::string(wire_schema::kUnsupported)));
+    }
+}
+
+TEST_CASE("local verifier still accepts Option of a non-null-encoding child (P0-9)") {
+    SUBCASE("Option<Int> stays legal") {
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});                        // 0
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{1});
+        CHECK(verify_core_wire_schema_table_local(table).empty());
+    }
+
+    SUBCASE("recursive Struct with an Option<Struct> field stays legal") {
+        // Node { next: Option<Node> } — the Option child is a Struct, which never
+        // encodes as null, so this recursive schema must NOT be false-rejected.
+        std::vector<CoreWireSchemaNode> nodes;
+        CoreWireSchemaStruct node_struct;
+        node_struct.wire_name = "app::Node";
+        node_struct.fields.push_back(CoreWireSchemaField{"next", CoreWireSchemaNodeId{1}});
+        nodes.push_back(CoreWireSchemaNode{node_struct});                                   // 0 Node
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1 Option<Node>
+        const auto table = wrap_result_table(std::move(nodes), CoreWireSchemaNodeId{0});
+        CHECK(verify_core_wire_schema_table_local(table).empty());
+    }
+}
+
+TEST_CASE("source projector accepts a recursive Struct with an Option<Struct> field (P0-9)") {
+    // struct Node { next: Option<Node> } — the Option child is a Struct (never
+    // null-encoding), so this recursive schema must project. It also exercises the
+    // builder's reserve-placeholder-then-backfill path (Node reserved while its
+    // Option<Node> field projects), guarding against a future regression that
+    // moves the nullable-child gate into build_nominal and mistakes a reserved
+    // default-Unit node for a real Unit child.
+    CoreProgram program;
+
+    // [0] std::option::Option<T> — full metadata so verify_core_program passes.
+    CoreTypeDecl option;
+    option.kind = CoreTypeDecl::Kind::Enum;
+    option.name = "std::option::Option";
+    option.role = CoreNominalRole::Option;
+    option.symbol_ref.kind = ir::SymbolRefKind::Type;
+    option.symbol_ref.canonical_name = "std::option::Option";
+    option.symbol_ref.id = 1;
+    option.type_param_count = 1;
+    option.variances = {CoreVariance::Covariant};
+    option.variants = {"Some", "None"};
+    option.member_type_templates = {param(0)};
+    CoreTypeDecl::VariantPayload some;
+    some.kind = CoreTypeDecl::VariantPayload::Kind::Tuple;
+    some.slot_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+    option.variant_payloads = {std::move(some), CoreTypeDecl::VariantPayload{}};
+    program.types.push_back(std::move(option));
+    constexpr std::uint32_t kNodeOptionTy = 0;
+
+    // [1] struct Node { next: Option<Node> }.
+    CoreTypeDecl node;
+    node.kind = CoreTypeDecl::Kind::Struct;
+    node.name = "app::Node";
+    node.symbol_ref.kind = ir::SymbolRefKind::Type;
+    node.symbol_ref.canonical_name = "app::Node";
+    node.symbol_ref.id = 2;
+    node.fields = {"next"};
+    node.field_nominal_types = {CoreTypeId{kNodeOptionTy}};
+    node.field_has_default = {false};
+    constexpr std::uint32_t kNodeTy = 1;
+    // templates: [0] Nominal Node (self), [1] Option<Node>.
+    CoreMemberTypeTemplateNode self;
+    self.kind = CoreMemberTypeTemplateKind::Nominal;
+    self.nominal = CoreTypeId{kNodeTy};
+    node.member_type_templates = {self};
+    CoreMemberTypeTemplateNode option_node;
+    option_node.kind = CoreMemberTypeTemplateKind::Nominal;
+    option_node.nominal = CoreTypeId{kNodeOptionTy};
+    option_node.children = {CoreMemberTypeTemplateNodeId{0}};
+    node.member_type_templates.push_back(option_node);
+    node.field_type_template_roots = {CoreMemberTypeTemplateNodeId{1}};
+    program.types.push_back(std::move(node));
+
+    // value-type arena: just the Node nominal root.
+    program.value_types = {
+        CoreValueType{CoreVtNominal{CoreTypeId{kNodeTy}, {}, std::nullopt}}, // 0 Node
+    };
+
+    CoreCapabilityDecl cap;
+    cap.symbol_ref.kind = ir::SymbolRefKind::Capability;
+    cap.symbol_ref.canonical_name = "app::NodeCap";
+    cap.symbol_ref.id = 100;
+    cap.name = "NodeCap";
+    cap.return_type = CoreValueTypeId{0};
+    program.capabilities.push_back(std::move(cap));
+
+    REQUIRE(verify_core_program(program).ok());
+
+    const auto result = project_core_wire_schema(program, caps({0}));
+    REQUIRE(result.ok());
+    REQUIRE(result.table.has_value());
+    CHECK(verify_core_wire_schema_table_local(*result.table).empty());
+
+    // root is a Struct whose `next` field points at an Option whose child points
+    // back at the same Struct node (recursive cycle round-trips).
+    const auto &table = *result.table;
+    const auto &cap_schema = table.capabilities.at(0);
+    const auto &root_shape = shape_of(table, cap_schema.result);
+    const auto *node_struct = std::get_if<CoreWireSchemaStruct>(&root_shape);
+    REQUIRE(node_struct != nullptr);
+    REQUIRE(node_struct->fields.size() == 1);
+    const auto &next_shape = shape_of(table, node_struct->fields[0].type);
+    const auto *next_option = std::get_if<CoreWireSchemaOption>(&next_shape);
+    REQUIRE(next_option != nullptr);
+    // The Option child closes the schema graph by back-referencing the Node root.
+    CHECK(next_option->value == cap_schema.result);
+}
+
+TEST_CASE("source projector fails closed on Option<Unit> without publishing a table (P0-9)") {
+    // Reuse the fully-valid std Option fixture and append a Unit value type + an
+    // Option<Unit> value type + a capability returning it, so the program passes
+    // verify_core_program and the projector reaches the nullable-child gate (a
+    // half-built hand fixture would fail earlier with INVALID_CORE and prove
+    // nothing).
+    CoreProgram program = make_wire_program();
+    REQUIRE(verify_core_program(program).ok());
+
+    const auto unit_vt = CoreValueTypeId{static_cast<std::uint32_t>(program.value_types.size())};
+    program.value_types.push_back(CoreValueType{CoreVtUnit{}});
+    const auto option_unit_vt =
+        CoreValueTypeId{static_cast<std::uint32_t>(program.value_types.size())};
+    program.value_types.push_back(
+        CoreValueType{CoreVtNominal{CoreTypeId{kOptionTy}, {unit_vt}, std::nullopt}});
+
+    const auto cap_index = static_cast<std::uint32_t>(program.capabilities.size());
+    CoreCapabilityDecl cap;
+    cap.symbol_ref.kind = ir::SymbolRefKind::Capability;
+    cap.symbol_ref.canonical_name = "app::MaybeUnitCap";
+    cap.symbol_ref.id = 100;
+    cap.name = "MaybeUnitCap";
+    cap.return_type = option_unit_vt;
+    program.capabilities.push_back(std::move(cap));
+
+    REQUIRE(verify_core_program(program).ok()); // the extended program is still valid Core
+
+    const auto result = project_core_wire_schema(program, caps({cap_index}));
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.table.has_value()); // no partial table published
+    CHECK(has_code(result.diagnostics, std::string(wire_schema::kUnsupported)));
+    CHECK_FALSE(has_code(result.diagnostics, std::string(wire_schema::kInvalidCore)));
+}

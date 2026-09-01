@@ -199,6 +199,16 @@ verify_core_wire_schema_table(const CoreProgram &program,
 /// shapes. It does NOT re-derive from a CoreProgram (that stronger reprojection
 /// check is `verify_core_wire_schema_table`, available only when the Core source
 /// is present). Empty diagnostics == locally valid.
+///
+/// Structural-legality note (RFC 0026 C2b): an `Option` node whose DIRECT child
+/// itself encodes as JSON `null` — a `Unit`, or another `Option` (whose `None`
+/// is `null`) — is rejected with `core.wire.UNSUPPORTED`. The canonical value
+/// encoding writes `Option::None` as `null` and `Some(x)` as x's own encoding, so
+/// such a child would make `None` and `Some(child-null)` indistinguishable on the
+/// wire. `Option` of any non-null-encoding shape (including a recursive Struct,
+/// e.g. `Node{next: Option<Node>}`) remains legal. This restriction lives ONLY
+/// here, so both the source projector and a transported/hand-built table are
+/// gated by the same single check.
 [[nodiscard]] std::vector<CoreLowerDiagnostic>
 verify_core_wire_schema_table_local(const CoreWireSchemaTable &table);
 

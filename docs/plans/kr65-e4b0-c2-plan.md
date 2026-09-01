@@ -177,6 +177,17 @@ Corrected exact rules (verified against value_json.cpp):
   std::option::Option::None), NOT a bare `NoneValue`. Non-null → `make_option_some(child)`.
   RuntimeValuePolicy accepts ONLY the exact Option `EnumValue` (Some/None), not a
   bare NoneValue.
+  - **Nullable-child restriction (P0-9)**: an `Option` whose DIRECT child itself
+    encodes as JSON `null` — a `Unit`, or another `Option` — is rejected by the
+    wire-schema local verifier with `core.wire.UNSUPPORTED`. Because `None` writes
+    `null` and `Some(x)` writes x's own encoding, a null-encoding child makes
+    `None` and `Some(child-null)` indistinguishable on the wire, so `Option<Unit>`
+    and `Option<Option<T>>` are NOT projectable/transportable. `Option` of any
+    non-null-encoding shape (scalars, String, List/Set/Map, Struct — including a
+    recursive `Node{next: Option<Node>}` — Enum, Tuple) stays legal. This is the
+    reason C2b does NOT claim an unconditional Option round-trip. The gate lives
+    only in `LocalSchemaVerifier::validate_node`, covering both the source
+    projector and any transported table.
 - **UUID**: canonical wire is the object `{"_uuid":"<32 lowercase hex>"}`
   (value_json.cpp:174-178), NOT a bare string. decode requires that object.
 - **Timestamp**: canonical wire is `{"_timestamp":<int64 unix_ms>}` (:179-184),

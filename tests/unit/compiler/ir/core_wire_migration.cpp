@@ -398,6 +398,39 @@ TEST_CASE("the transported-table factory applies the public local verifier gate"
     CHECK_FALSE(diagnostics.empty());
 }
 
+TEST_CASE("the transported-table factory rejects an Option with a null-encoding child (P0-9)") {
+    // A hand-built transported table whose capability result is Option<Unit>. The
+    // public local verifier's nullable-child gate must reject it, so no binding is
+    // minted (the transport entry point shares the same single gate as the source
+    // projector).
+    CoreWireSchemaTable table;
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});                        // 0
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}}); // 1
+    CoreWireCapabilitySchema cap;
+    cap.capability = CoreCapabilityId{0};
+    cap.source_symbol = 55;
+    cap.result = CoreWireSchemaNodeId{1};
+    table.capabilities.push_back(cap);
+
+    CoreWireRootSelector selector;
+    selector.capability = CoreCapabilityId{0};
+    selector.expected_source_symbol = 55;
+    selector.kind = CoreWireRootKind::Result;
+    selector.param_index = 0;
+
+    std::vector<CoreLowerDiagnostic> diagnostics;
+    const auto rejected =
+        make_wire_binding_from_transported_table(std::move(table), selector, diagnostics);
+    CHECK_FALSE(rejected.has_value());
+    bool saw_unsupported = false;
+    for (const auto &d : diagnostics) {
+        if (d.code == wire_schema::kUnsupported) {
+            saw_unsupported = true;
+        }
+    }
+    CHECK(saw_unsupported);
+}
+
 TEST_CASE("migration projector lowers String-keyed Map and rejects a non-String key") {
     const auto program = lower_fixture(__func__);
     REQUIRE(program.has_value());

@@ -576,6 +576,17 @@ class LocalSchemaVerifier {
         }
     }
 
+    // Code-aware failure for the rare case where a legal-but-unsupported wire
+    // shape must be rejected with a code other than the default kInvalid (e.g.
+    // the Option nullable-child gate, which reports kUnsupported). Existing fail()
+    // callers keep kInvalid and their ordering; only the explicitly code-tagged
+    // sites differ.
+    void fail_code(std::string_view code, std::string message) {
+        if (diagnostics_.empty()) {
+            diagnostics_.push_back(diagnostic(code, std::move(message)));
+        }
+    }
+
     [[nodiscard]] bool valid_id(CoreWireSchemaNodeId id) {
         if (id.value >= table_.nodes.size()) {
             fail("wire-schema node reference is out of range");
@@ -687,7 +698,31 @@ class LocalSchemaVerifier {
                 [](const CoreWireSchemaDuration &) { return true; },
                 [](const CoreWireSchemaTimestamp &) { return true; },
                 [](const CoreWireSchemaUuid &) { return true; },
-                [&](const CoreWireSchemaOption &value) { return valid_id(value.value); },
+                [&](const CoreWireSchemaOption &value) {
+                    if (!valid_id(value.value)) {
+                        return false;
+                    }
+                    // Nullable-child gate (RFC 0026 C2b P0-9): value_json encodes
+                    // Option::None as JSON `null` AND Option::Some(x) as `x`'s own
+                    // encoding. If the direct child itself encodes as `null` — a
+                    // Unit (encodes null) or another Option (its None encodes null)
+                    // — then None and Some(child-null) collide on the wire and the
+                    // decoder cannot recover which was meant. Reject such a schema
+                    // as legal-but-unsupported rather than silently lose data. Only
+                    // the DIRECT child needs checking: any nested Option already
+                    // trips this rule at its own node. A recursive Struct child
+                    // (e.g. Node{next: Option<Node>}) stays legal — Struct does not
+                    // encode as null.
+                    const auto &child_shape = table_.nodes[value.value.value].shape;
+                    if (std::holds_alternative<CoreWireSchemaUnit>(child_shape) ||
+                        std::holds_alternative<CoreWireSchemaOption>(child_shape)) {
+                        fail_code(wire_schema::kUnsupported,
+                                  "Option wire schema child encodes as JSON null (Unit or Option); "
+                                  "None and Some would be indistinguishable");
+                        return false;
+                    }
+                    return true;
+                },
                 [&](const CoreWireSchemaSequence &value) {
                     switch (value.kind) {
                     case CoreWireSequenceKind::List:
