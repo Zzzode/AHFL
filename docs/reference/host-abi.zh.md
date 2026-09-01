@@ -84,6 +84,6 @@ recovery schema v2 是 **stable-artifact**:已持久化的 v2 resume record 在�
 
 ## 一致性保证
 
-同一个带 capability 的 workflow,经原生绑定与经"直连 invoker 返回同值"在 L1(workflow status + 确定性 `value_json` 逐字节输出)与 L2(capability 调用序列)上**可观察等价**——由 `tests/unit/runtime/engine/native_wasm_differential.cpp` 验证。端到端"挂起 → 跨进程冷启动 → 确定恢复"由 `tests/integration/durable_resume_capstone.cpp` 验证。
+同一个带 capability 的 workflow,经原生绑定与经"直连 invoker 返回同值"在 L1(workflow status + 确定性 `value_json` 逐字节输出)与 L2(capability 调用序列)上**可观察等价**——由 `tests/unit/runtime/engine/native_wasm_differential.cpp` 验证。`tests/integration/durable_resume_capstone.cpp` 验证的是**同一进程内**两个 fresh `WorkflowRuntime` scope 的 suspend → 落盘快照 → 重新加载 → 确定恢复(非跨进程)。真正的**跨进程冷启动 + 崩溃(SIGKILL)** 证据来自 `tests/scripts/reference_workflow_recovery_smoke.py` + `tests/integration/reference_workflow_recovery_worker.cpp`。以上全部为**原生 evaluator** 证据,均不执行真实 WASM 模块。
 
-> **范围说明**:AHFL 只 emit WAT、不内嵌 WASM 运行时([RFC 0019](../rfcs/0019-wasm-runtime-model.zh.md) / [RFC 0021](../rfcs/0021-capability-embedding-abi.zh.md)),故差分是"原生绑定 vs 直连 invoker",而非 vs 执行中的 WASM 模块。各语言宿主 SDK(Rust/Go/Node)与完整 WASM codegen 是 RFC 0021 声明的后续工作,不在本契约的当前投影内。
+> **范围说明**:仓内现在能 emit Core Wasm 二进制(`core_wasm_codegen`),并有 Node / reference-host(module-byte inspector)证据;但仍无 production WASM 运行时 / generic embedder([RFC 0019](../rfcs/0019-wasm-runtime-model.zh.md) / [RFC 0021](../rfcs/0021-capability-embedding-abi.zh.md))。故本节的差分与 capstone 是"原生绑定 vs 直连 invoker" / 原生 suspend-resume,**不能**冒充执行中的 WASM 模块的 durable resume。各语言宿主 SDK(Rust/Go/Node)与完整 production Wasm host / durable resume 是 RFC 0021 / RFC 0026 E4-B2 声明的后续工作,不在本契约的当前投影内。
