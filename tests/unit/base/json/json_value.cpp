@@ -322,6 +322,175 @@ bool test_nested_structures() {
     return true;
 }
 
+// RFC 0026 C2b P0-10: numeric provenance classification, accessor behavior,
+// serializer round-trip, and invalid-combination fail-closed.
+bool test_provenance_classification() {
+    auto s = parse_json("42");
+    if (!s || (*s)->kind != Kind::Int ||
+        (*s)->number_provenance != NumberProvenance::SignedInteger) {
+        return false;
+    }
+    auto neg = parse_json("-100");
+    if (!neg || (*neg)->number_provenance != NumberProvenance::SignedInteger) {
+        return false;
+    }
+    auto u = parse_json("18446744073709551615"); // UINT64_MAX
+    if (!u || (*u)->kind != Kind::Int ||
+        (*u)->number_provenance != NumberProvenance::UnsignedInteger ||
+        (*u)->uint_val != 18446744073709551615ULL) {
+        return false;
+    }
+    auto big = parse_json("99999999999999999999999"); // > uint64
+    if (!big || (*big)->kind != Kind::Float ||
+        (*big)->number_provenance != NumberProvenance::IntegerFallback) {
+        return false;
+    }
+    auto bigneg = parse_json("-99999999999999999999999");
+    if (!bigneg || (*bigneg)->number_provenance != NumberProvenance::IntegerFallback) {
+        return false;
+    }
+    auto f = parse_json("1.5");
+    if (!f || (*f)->kind != Kind::Float ||
+        (*f)->number_provenance != NumberProvenance::FloatSyntax) {
+        return false;
+    }
+    auto fe = parse_json("1e3");
+    if (!fe || (*fe)->number_provenance != NumberProvenance::FloatSyntax) {
+        return false;
+    }
+    auto str = parse_json("\"hi\"");
+    if (!str || (*str)->number_provenance != NumberProvenance::NotNumeric) {
+        return false;
+    }
+    return true;
+}
+
+bool test_provenance_accessors() {
+    auto s = parse_json("42");
+    if (!s || (*s)->as_int() != 42 || (*s)->as_uint() != 42ULL || (*s)->as_float() != 42.0) {
+        return false;
+    }
+    auto neg = parse_json("-5");
+    if (!neg || (*neg)->as_int() != -5 || (*neg)->as_uint().has_value()) {
+        return false;
+    }
+    auto u = parse_json("18446744073709551615");
+    if (!u || (*u)->as_int().has_value() || (*u)->as_uint() != 18446744073709551615ULL ||
+        !(*u)->as_float().has_value()) {
+        return false;
+    }
+    auto big = parse_json("99999999999999999999999");
+    if (!big || (*big)->as_int().has_value() || (*big)->as_uint().has_value() ||
+        !(*big)->as_float().has_value()) {
+        return false;
+    }
+    auto f = parse_json("1.5");
+    if (!f || (*f)->as_int().has_value() || (*f)->as_uint().has_value() ||
+        (*f)->as_float() != 1.5) {
+        return false;
+    }
+    return true;
+}
+
+bool test_high_uint_roundtrip() {
+    const std::string src = "18446744073709551615";
+    auto v = parse_json(src);
+    if (!v) {
+        return false;
+    }
+    auto text = serialize_json(**v);
+    if (text != src) { // exact decimal, NOT a negative
+        return false;
+    }
+    auto again = parse_json(text);
+    if (!again || (*again)->number_provenance != NumberProvenance::UnsignedInteger ||
+        (*again)->as_uint() != 18446744073709551615ULL) {
+        return false;
+    }
+    return true;
+}
+
+bool test_floatsyntax_serializer_unchanged() {
+    // A FloatSyntax integral value still serializes as bare `1` (A does NOT add
+    // `.0`; v1/v2 snapshot integral-Float byte baseline preserved).
+    auto v = parse_json("1.0");
+    if (!v || (*v)->number_provenance != NumberProvenance::FloatSyntax) {
+        return false;
+    }
+    return serialize_json(**v) == "1";
+}
+
+bool test_invalid_combo_serialize_failclosed() {
+    JsonValue bad_string;
+    bad_string.kind = Kind::String;
+    bad_string.string_val = "x";
+    bad_string.number_provenance = NumberProvenance::SignedInteger; // invalid
+    if (!serialize_json(bad_string).empty()) {
+        return false;
+    }
+    JsonValue bad_int;
+    bad_int.kind = Kind::Int;
+    bad_int.int_val = 1;
+    bad_int.number_provenance = NumberProvenance::FloatSyntax; // invalid on Int
+    if (!serialize_json(bad_int).empty()) {
+        return false;
+    }
+    JsonValue ok_string; // NotNumeric default still serializes fine
+    ok_string.kind = Kind::String;
+    ok_string.string_val = "x";
+    return serialize_json(ok_string) == "\"x\"";
+}
+
+bool test_invalid_combo_accessors_nullopt() {
+    // Numeric accessors return nullopt for invalid (Kind, provenance) pairings.
+    JsonValue float_signed; // Float carrying SignedInteger provenance
+    float_signed.kind = Kind::Float;
+    float_signed.float_val = 1.5;
+    float_signed.number_provenance = NumberProvenance::SignedInteger;
+    if (float_signed.as_int().has_value() || float_signed.as_uint().has_value() ||
+        float_signed.as_float().has_value()) {
+        return false;
+    }
+    JsonValue int_notnumeric; // Int left at the default NotNumeric provenance
+    int_notnumeric.kind = Kind::Int;
+    int_notnumeric.int_val = 7;
+    if (int_notnumeric.as_int().has_value() || int_notnumeric.as_uint().has_value() ||
+        int_notnumeric.as_float().has_value()) {
+        return false;
+    }
+    return true;
+}
+
+bool test_generic_serialize_loses_float_provenance() {
+    // A DOCUMENTED boundary of plan A: FloatSyntax/IntegerFallback provenance is
+    // NOT preserved across a generic serialize -> parse round-trip. The generic
+    // Float branch and legal-producer bytes are unchanged (the only byte the
+    // serializer now changes is a formerly-corrupt high-uint Int, which emits its
+    // correct unsigned decimal instead of a negative). Trust paths therefore decode
+    // the DOM directly instead of serialize->reparse. A FloatSyntax `1.0` serializes
+    // to `1` and re-parses as SignedInteger; an IntegerFallback serializes via the
+    // float formatter and re-parses as FloatSyntax.
+    auto f = parse_json("1.0");
+    if (!f || (*f)->number_provenance != NumberProvenance::FloatSyntax) {
+        return false;
+    }
+    auto reparsed_f = parse_json(serialize_json(**f)); // "1"
+    if (!reparsed_f ||
+        (*reparsed_f)->number_provenance != NumberProvenance::SignedInteger) {
+        return false;
+    }
+    auto big = parse_json("99999999999999999999999");
+    if (!big || (*big)->number_provenance != NumberProvenance::IntegerFallback) {
+        return false;
+    }
+    auto reparsed_big = parse_json(serialize_json(**big));
+    if (!reparsed_big ||
+        (*reparsed_big)->number_provenance != NumberProvenance::FloatSyntax) {
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -350,6 +519,14 @@ int main() {
     run(test_as_bool, "test_as_bool");
     run(test_unicode_escape, "test_unicode_escape");
     run(test_nested_structures, "test_nested_structures");
+    run(test_provenance_classification, "test_provenance_classification");
+    run(test_provenance_accessors, "test_provenance_accessors");
+    run(test_high_uint_roundtrip, "test_high_uint_roundtrip");
+    run(test_floatsyntax_serializer_unchanged, "test_floatsyntax_serializer_unchanged");
+    run(test_invalid_combo_serialize_failclosed, "test_invalid_combo_serialize_failclosed");
+    run(test_invalid_combo_accessors_nullopt, "test_invalid_combo_accessors_nullopt");
+    run(test_generic_serialize_loses_float_provenance,
+        "test_generic_serialize_loses_float_provenance");
 
     if (failures > 0) {
         std::cerr << failures << " test(s) failed\n";

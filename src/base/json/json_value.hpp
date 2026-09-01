@@ -21,6 +21,30 @@ enum class Kind {
     Object
 };
 
+/// Provenance of a number node's value (RFC 0026 C2b P0-10). The JSON DOM cannot
+/// distinguish, from `Kind` alone, a legal `INT64_MIN` from a high-bit unsigned
+/// magnitude folded into a signed slot, nor a genuine float token from an integer
+/// literal too large for any 64-bit integer. Recording the parser's decision (and
+/// how a value was hand-built) lets trust-boundary consumers fail closed on the
+/// ambiguous cases without a raw lexeme.
+///
+/// The ONLY legal (Kind, NumberProvenance) combinations are:
+///   * any non-numeric Kind (Null/Bool/String/Array/Object) + NotNumeric
+///   * Int   + SignedInteger      (value in int_val, within [INT64_MIN, INT64_MAX])
+///   * Int   + UnsignedInteger    (value in uint_val, within (INT64_MAX, UINT64_MAX])
+///   * Float + FloatSyntax        (a `.`/`e`/`E` token; value in float_val)
+///   * Float + IntegerFallback    (an integer token too large for int64 or uint64;
+///                                  approximate value in float_val)
+/// Any other pairing is invalid; numeric accessors return nullopt for it and
+/// serialize_json fails closed (see json_value.cpp).
+enum class NumberProvenance {
+    NotNumeric,
+    SignedInteger,
+    UnsignedInteger,
+    FloatSyntax,
+    IntegerFallback,
+};
+
 /// A generic JSON DOM node (zero external dependency).
 struct JsonValue {
     Kind kind{Kind::Null};
@@ -30,7 +54,9 @@ struct JsonValue {
 
     bool bool_val{};
     int64_t int_val{};
+    uint64_t uint_val{}; // holds the value iff number_provenance == UnsignedInteger
     double float_val{};
+    NumberProvenance number_provenance{NumberProvenance::NotNumeric};
     std::string string_val;
     std::vector<std::unique_ptr<JsonValue>> array_items;
     std::vector<std::pair<std::string, std::unique_ptr<JsonValue>>> object_fields;
@@ -44,11 +70,16 @@ struct JsonValue {
     [[nodiscard]] JsonValue *get_mut(std::string_view key);
 
     [[nodiscard]] std::optional<std::string_view> as_string() const;
+    /// A signed 64-bit integer. Returns nullopt for an UnsignedInteger (use
+    /// as_uint), an IntegerFallback, or a non-integer node.
     [[nodiscard]] std::optional<int64_t> as_int() const;
-    // Reads an integer JSON value as a full 64-bit unsigned magnitude. Values
-    // above INT64_MAX (e.g. a size_t identity with the high bit set) round-trip
-    // losslessly through this accessor; as_int() would reject them as overflow.
+    /// A full 64-bit unsigned magnitude. Accepts an UnsignedInteger node and a
+    /// non-negative SignedInteger node; returns nullopt for a true-negative
+    /// SignedInteger, an IntegerFallback, or a non-integer node.
     [[nodiscard]] std::optional<uint64_t> as_uint() const;
+    /// A double. Widens SignedInteger/UnsignedInteger and returns the (approximate)
+    /// float_val for FloatSyntax/IntegerFallback. A codec that must reject an
+    /// integer-token fallback has to inspect number_provenance directly.
     [[nodiscard]] std::optional<double> as_float() const;
     [[nodiscard]] std::optional<bool> as_bool() const;
 

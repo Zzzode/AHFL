@@ -1,6 +1,8 @@
 #include "runtime/evaluator/value_json.hpp"
 #include "runtime/evaluator/value.hpp"
 
+#include "base/json/json_value.hpp"
+
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -477,6 +479,82 @@ void test_parse_errors() {
     check(!value_from_json(R"({"field":1,"field":2})").has_value(), "error.duplicate_object_field");
 }
 
+// RFC 0026 C2b P0-10: schema-free decode fails closed on ambiguous numbers via
+// BOTH entry points (string and direct DOM), including inside nested containers.
+void test_provenance_string_entry() {
+    // Signed / FloatSyntax accepted.
+    check(value_from_json("42").has_value(), "prov.string.signed_ok");
+    check(value_from_json("1.5").has_value(), "prov.string.float_ok");
+    // Unsigned (> INT64_MAX) fails closed as a bare Int.
+    check(!value_from_json("18446744073709551615").has_value(), "prov.string.unsigned_reject");
+    // IntegerFallback (> uint64) fails closed.
+    check(!value_from_json("99999999999999999999999").has_value(),
+          "prov.string.fallback_reject");
+    // Nested container must not smuggle an ambiguous number through.
+    check(!value_from_json("[1, 18446744073709551615]").has_value(),
+          "prov.string.nested_unsigned_reject");
+    check(!value_from_json(R"({"_type":"T","n":99999999999999999999999})").has_value(),
+          "prov.string.nested_fallback_reject");
+    // Timestamp marker requires a signed int.
+    check(value_from_json(R"({"_timestamp":1000})").has_value(), "prov.string.ts_ok");
+    check(!value_from_json(R"({"_timestamp":18446744073709551615})").has_value(),
+          "prov.string.ts_unsigned_reject");
+    // Negative IntegerFallback (below INT64_MIN, not uint-representable) fails closed.
+    check(!value_from_json("-99999999999999999999999").has_value(),
+          "prov.string.negative_fallback_reject");
+    // Timestamp IntegerFallback, positive and negative, both fail closed.
+    check(!value_from_json(R"({"_timestamp":99999999999999999999999})").has_value(),
+          "prov.string.ts_fallback_pos_reject");
+    check(!value_from_json(R"({"_timestamp":-99999999999999999999999})").has_value(),
+          "prov.string.ts_fallback_neg_reject");
+}
+
+void test_provenance_dom_entry() {
+    // The direct DOM overload applies the same provenance gates.
+    auto ok = ahfl::json::parse_json("42");
+    check(ok.has_value() && value_from_json(**ok).has_value(), "prov.dom.signed_ok");
+    auto u = ahfl::json::parse_json("18446744073709551615");
+    check(u.has_value() && !value_from_json(**u).has_value(), "prov.dom.unsigned_reject");
+    auto big = ahfl::json::parse_json("99999999999999999999999");
+    check(big.has_value() && !value_from_json(**big).has_value(), "prov.dom.fallback_reject");
+    auto ts = ahfl::json::parse_json(R"({"_timestamp":18446744073709551615})");
+    check(ts.has_value() && !value_from_json(**ts).has_value(), "prov.dom.ts_unsigned_reject");
+    // Timestamp IntegerFallback, positive and negative, both fail closed on the
+    // direct-DOM entry (mirror of the string-entry ts_fallback matrix).
+    auto ts_fb_pos = ahfl::json::parse_json(R"({"_timestamp":99999999999999999999999})");
+    check(ts_fb_pos.has_value() && !value_from_json(**ts_fb_pos).has_value(),
+          "prov.dom.ts_fallback_pos_reject");
+    auto ts_fb_neg = ahfl::json::parse_json(R"({"_timestamp":-99999999999999999999999})");
+    check(ts_fb_neg.has_value() && !value_from_json(**ts_fb_neg).has_value(),
+          "prov.dom.ts_fallback_neg_reject");
+    // A bare (non-nested) negative IntegerFallback also fails closed, isolating the
+    // scalar gate from the nested-container cases below.
+    auto bare_neg_fb = ahfl::json::parse_json("-99999999999999999999999");
+    check(bare_neg_fb.has_value() && !value_from_json(**bare_neg_fb).has_value(),
+          "prov.dom.bare_negfallback_reject");
+    // A FloatSyntax 1.0 DOM stays a FloatValue (not laundered into an Int by a
+    // serialize->reparse), proving the direct-DOM path preserves the source kind.
+    auto f = ahfl::json::parse_json("1.0");
+    auto decoded = f.has_value() ? value_from_json(**f) : std::nullopt;
+    check(decoded.has_value() && std::holds_alternative<FloatValue>(decoded->node),
+          "prov.dom.float_stays_float");
+    // Nested containers via the direct-DOM entry must not smuggle an ambiguous
+    // number through: an array element or an object field carrying Unsigned /
+    // IntegerFallback fails closed.
+    auto arr_u = ahfl::json::parse_json("[1, 18446744073709551615]");
+    check(arr_u.has_value() && !value_from_json(**arr_u).has_value(),
+          "prov.dom.nested_array_unsigned_reject");
+    auto arr_fb = ahfl::json::parse_json("[1, 99999999999999999999999]");
+    check(arr_fb.has_value() && !value_from_json(**arr_fb).has_value(),
+          "prov.dom.nested_array_fallback_reject");
+    auto obj_u = ahfl::json::parse_json(R"({"_type":"T","n":18446744073709551615})");
+    check(obj_u.has_value() && !value_from_json(**obj_u).has_value(),
+          "prov.dom.nested_object_unsigned_reject");
+    auto obj_fb = ahfl::json::parse_json(R"({"_type":"T","n":-99999999999999999999999})");
+    check(obj_fb.has_value() && !value_from_json(**obj_fb).has_value(),
+          "prov.dom.nested_object_negfallback_reject");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -510,6 +588,9 @@ int main() {
     test_parse_canonical_list_shape();
     test_parse_canonical_optional_shape();
     test_legacy_wrapper_keys_are_rejected();
+
+    test_provenance_string_entry();
+    test_provenance_dom_entry();
 
     test_parse_errors();
 

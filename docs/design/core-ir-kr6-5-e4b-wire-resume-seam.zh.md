@@ -247,6 +247,29 @@ canonical float JSON spelling, while Decimal uses its canonical string spelling.
 Accepting an Int as Float or Int/Float as Decimal and leaving the wrong runtime
 variant, as the legacy response validator currently permits, is forbidden.
 
+Numeric provenance (C2b P0-10). The base JSON DOM records how each number was
+parsed — `SignedInteger`, `UnsignedInteger` (a high-bit magnitude stored in a
+dedicated `uint_val`, not a signed bit pattern), `FloatSyntax`, or
+`IntegerFallback` (an integer token beyond both 64-bit integer ranges) — because
+`Kind` alone cannot distinguish a legal `INT64_MIN` from a folded unsigned value,
+nor a genuine float token from an over-large integer. `as_int` accepts only
+`SignedInteger`; `as_uint` accepts `UnsignedInteger` and non-negative
+`SignedInteger`; the schema-free `value_from_json` (both the string and the direct
+`const JsonValue&` overload) constructs an `IntValue`/`TimestampValue` only from a
+`SignedInteger` and a `FloatValue` only from a `FloatSyntax`, failing closed on
+`UnsignedInteger`/`IntegerFallback` at any depth. Trust-boundary consumers that
+already hold a parsed subtree (durable resume load, the CLI tool catalog) decode
+that DOM directly rather than `serialize_json` then re-parse, because a generic
+serialize→parse round-trip does NOT preserve `FloatSyntax`/`IntegerFallback`
+provenance. The generic serializer's Float branch and every legal-producer
+snapshot byte are unchanged (an integral `FloatSyntax` still emits bare `1`, so
+v1/v2 snapshot bytes and `arg_hash`, which hashes the evaluator `value_to_json`
+output directly, are unaffected); the only byte change the serializer makes is
+that a formerly-corrupt high-bit unsigned integer now serializes as its correct
+unsigned decimal instead of a negative. A fully provenance-preserving serializer
+(option B) was considered and rejected as an out-of-scope persisted-format
+change.
+
 Until a separately reviewed map encoding exists, E4-B accepts only
 `Map<String,V>`. Any other Map key schema fails projection with a stable
 `wire.UNSUPPORTED_MAP_KEY` diagnostic. Silently stringifying an arbitrary key

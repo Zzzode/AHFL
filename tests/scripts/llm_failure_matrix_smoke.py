@@ -307,6 +307,28 @@ class ToolCatalogSuccessHandler(BaseHTTPRequestHandler):
         return
 
 
+class SideEffectRecordingHandler(BaseHTTPRequestHandler):
+    # Records every inbound provider request so a test can assert that a
+    # catalog-admission failure never reaches the LLM provider.
+    request_bodies = []
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
+        self.__class__.request_bodies.append(True)
+        payload = json.dumps(
+            {"choices": [{"message": {"content": json.dumps({"value": "unexpected"})}}]}
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, fmt, *args):
+        return
+
+
 def start_server(handler):
     server = HTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -901,6 +923,94 @@ def run_tool_catalog_timeout(ahflc, work_dir, source_path):
     assert_terminal_execution(events_path, "failed")
 
 
+def run_tool_catalog_ambiguous_number(ahflc, work_dir, source_path):
+    # RFC 0026 C2b P0-10: a tool-catalog `result` carrying a number that the base
+    # JSON DOM cannot classify as a signed integer (a high-bit unsigned magnitude,
+    # or an integer token beyond uint64 in either sign) must fail closed at catalog
+    # admission -- before any provider request -- via the direct-DOM value_from_json
+    # decode. The recording handler proves zero provider side effect.
+    ambiguous_results = {
+        "high_uint": "18446744073709551615",
+        "pos_integer_fallback": "99999999999999999999999",
+        "neg_integer_fallback": "-99999999999999999999999",
+    }
+    for label, literal in ambiguous_results.items():
+        SideEffectRecordingHandler.request_bodies = []
+        server = start_server(SideEffectRecordingHandler)
+        try:
+            config_path = work_dir / f"tool_catalog_ambiguous_{label}_config.json"
+            tool_catalog_path = work_dir / f"tool_catalog_ambiguous_{label}_catalog.json"
+            events_path = work_dir / f"tool_catalog_ambiguous_{label}_events.jsonl"
+            # Hand-write the catalog so the ambiguous number stays a bare JSON
+            # numeric literal (json.dumps would emit the same token, but writing it
+            # verbatim documents the exact byte under test).
+            tool_catalog_path.write_text(
+                '{"schema":"ahfl.llm_tool_catalog.v0","tools":[{'
+                '"name":"lookup_context",'
+                '"description":"Return deterministic smoke-test context",'
+                '"parameters":{"type":"object",'
+                '"properties":{"query":{"type":"string"}},'
+                '"required":["query"],"additionalProperties":false},'
+                f'"result":{{"value":{literal}}}}}]}}',
+                encoding="utf-8",
+            )
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "endpoint": f"http://127.0.0.1:{server.server_port}/v1",
+                        "model": "tool-catalog-model",
+                        "api_key_secret": "AHFL_TEST_LLM_FAILURE_MATRIX_KEY",
+                        "max_retries": 0,
+                        "max_tool_rounds": 2,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = run_ahflc(
+                ahflc,
+                source_path,
+                config_path,
+                events_path,
+                tool_catalog_path=tool_catalog_path,
+            )
+        finally:
+            stop_servers(server)
+
+        if result.returncode == 0:
+            raise AssertionError(
+                f"catalog ambiguous-number run ({label}) unexpectedly succeeded"
+            )
+        combined_output = result.stdout + result.stderr
+        expected = (
+            "error: LLM tool catalog tools[0] field 'result' must be AHFL value JSON"
+        )
+        if expected not in combined_output:
+            raise AssertionError(
+                f"missing catalog ambiguous-number ({label}) admission diagnostic:\n"
+                f"{combined_output}"
+            )
+        # The raw ambiguous literal must NOT be echoed into the diagnostic (P0-8:
+        # trust-boundary diagnostics never reflect payload bytes).
+        if literal in combined_output:
+            raise AssertionError(
+                f"catalog ambiguous-number ({label}) diagnostic echoed the payload literal:\n"
+                f"{combined_output}"
+            )
+        if SideEffectRecordingHandler.request_bodies:
+            raise AssertionError(
+                f"catalog ambiguous-number ({label}) contacted the provider "
+                f"({len(SideEffectRecordingHandler.request_bodies)} request(s)) "
+                "instead of failing closed at admission"
+            )
+        # Admission failure aborts before the run starts, so no canonical event
+        # stream is materialized.
+        if events_path.exists() and events_path.read_text(encoding="utf-8").strip():
+            raise AssertionError(
+                f"catalog ambiguous-number ({label}) produced a run event stream "
+                "despite failing at admission"
+            )
+
+
 def run_tool_invalid_args(ahflc, work_dir, source_path):
     server = start_server(InvalidToolArgsHandler)
     try:
@@ -1000,6 +1110,7 @@ def main():
     run_tool_catalog_unknown_tool(ahflc, run_dir, source_path)
     run_tool_catalog_error(ahflc, run_dir, source_path)
     run_tool_catalog_timeout(ahflc, run_dir, source_path)
+    run_tool_catalog_ambiguous_number(ahflc, run_dir, source_path)
     run_tool_invalid_args(ahflc, run_dir, source_path)
     run_unknown_tool(ahflc, run_dir, source_path)
 

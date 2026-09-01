@@ -303,9 +303,12 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
         return Value{UuidValue{*uuid_hex}};
     }
 
-    // RFC P7: Timestamp marker.
+    // RFC P7: Timestamp marker. RFC 0026 C2b P0-10: only a genuine signed integer
+    // is a valid unix-ms timestamp; an UnsignedInteger / IntegerFallback fails
+    // closed rather than reading an unset / approximate field.
     if (const auto *ts_field = object.get("_timestamp")) {
-        if (ts_field->kind == ahfl::json::Kind::Int) {
+        if (ts_field->kind == ahfl::json::Kind::Int &&
+            ts_field->number_provenance == ahfl::json::NumberProvenance::SignedInteger) {
             return Value{TimestampValue{ts_field->int_val}};
         }
         return std::nullopt;
@@ -340,8 +343,20 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
     case ahfl::json::Kind::Bool:
         return Value{BoolValue{json_value.bool_val}};
     case ahfl::json::Kind::Int:
+        // RFC 0026 C2b P0-10: a schema-free Int becomes an IntValue ONLY when it
+        // is a genuine signed integer. An UnsignedInteger (high-bit magnitude) or
+        // an IntegerFallback is not representable and fails closed here rather than
+        // silently degrading (the trust-boundary consumers rely on this).
+        if (json_value.number_provenance != ahfl::json::NumberProvenance::SignedInteger) {
+            return std::nullopt;
+        }
         return Value{IntValue{json_value.int_val}};
     case ahfl::json::Kind::Float:
+        // Only a genuine FloatSyntax float is accepted; an IntegerFallback (an
+        // integer token too large for any 64-bit integer) fails closed.
+        if (json_value.number_provenance != ahfl::json::NumberProvenance::FloatSyntax) {
+            return std::nullopt;
+        }
         return Value{FloatValue{json_value.float_val}};
     case ahfl::json::Kind::String:
         return Value{StringValue{json_value.string_val}};
@@ -375,6 +390,13 @@ std::optional<Value> value_from_json(std::string_view json) {
         return std::nullopt;
     }
     return value_from_json_value(**parsed);
+}
+
+std::optional<Value> value_from_json(const ahfl::json::JsonValue &json_value) {
+    // Direct DOM entry (RFC 0026 C2b P0-10): decode the already-parsed subtree
+    // without a serialize -> reparse round-trip, so numeric provenance survives and
+    // ambiguous numbers fail closed rather than silently degrade.
+    return value_from_json_value(json_value);
 }
 
 } // namespace ahfl::evaluator

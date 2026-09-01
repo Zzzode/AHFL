@@ -1126,7 +1126,10 @@ load_runtime_capability_bindings(const ahfl::ir::Program &program,
     }
 
     if (result_field != nullptr) {
-        auto result = value_from_json(ahfl::json::serialize_json(*result_field));
+        // Direct DOM decode (RFC 0026 C2b P0-10): avoid serialize_json ->
+        // value_from_json, which would discard numeric provenance and let an
+        // ambiguous number degrade instead of failing closed.
+        auto result = value_from_json(*result_field);
         if (!result.has_value()) {
             err << "error: " << context << " field 'result' must be AHFL value JSON\n";
             return std::nullopt;

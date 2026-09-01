@@ -186,8 +186,11 @@ WorkflowRecoveryStore::load() const {
             .agent = AgentId{*agent_id},
         };
         if (output->kind != ahfl::json::Kind::Null) {
-            const auto output_text = ahfl::json::serialize_json(*output);
-            auto value = evaluator::value_from_json(output_text);
+            // Direct DOM decode (RFC 0026 C2b P0-10): decode the subtree in place
+            // instead of serialize_json -> value_from_json, so numeric provenance
+            // is preserved and an ambiguous number in a corrupt snapshot fails
+            // closed rather than silently degrading.
+            auto value = evaluator::value_from_json(*output);
             if (!value.has_value()) {
                 return std::unexpected(WorkflowRecoveryError::InvalidSnapshot);
             }
@@ -220,7 +223,7 @@ WorkflowRecoveryStore::load() const {
             .pending_ordinal = static_cast<std::uint64_t>(*pending_ordinal),
         };
         if (node_input->kind != ahfl::json::Kind::Null) {
-            auto value = evaluator::value_from_json(ahfl::json::serialize_json(*node_input));
+            auto value = evaluator::value_from_json(*node_input); // direct DOM (P0-10)
             if (!value.has_value()) {
                 return std::unexpected(WorkflowRecoveryError::InvalidSnapshot);
             }
@@ -245,7 +248,7 @@ WorkflowRecoveryStore::load() const {
             } catch (const std::exception &) {
                 return std::unexpected(WorkflowRecoveryError::InvalidSnapshot);
             }
-            auto result_value = evaluator::value_from_json(ahfl::json::serialize_json(*value));
+            auto result_value = evaluator::value_from_json(*value); // direct DOM (P0-10)
             if (!result_value.has_value()) {
                 return std::unexpected(WorkflowRecoveryError::InvalidSnapshot);
             }

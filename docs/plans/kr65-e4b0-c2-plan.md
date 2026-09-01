@@ -267,6 +267,32 @@ The JSON DOM distinguishes `Kind::Int` from `Kind::Float` (json_value.hpp:17-18)
   AND native IntValue under Float BOTH reject. (Removes the rev2 table's internal
   contradiction.)
 
+### 6.1 Numeric provenance (P0-10, plan A — landed as its own shared commit)
+
+The base JSON DOM now tags every number with a `NumberProvenance`
+(`NotNumeric` default / `SignedInteger` / `UnsignedInteger` [dedicated
+`uint_val`] / `FloatSyntax` / `IntegerFallback`). Legal pairings: non-numeric
+Kind + `NotNumeric`; `Int` + `Signed`/`Unsigned`; `Float` +
+`FloatSyntax`/`IntegerFallback`. `as_int` → `Signed` only; `as_uint` → `Unsigned`
++ non-negative `Signed`; numeric accessors return nullopt for any invalid pairing
+and `serialize_json` fails closed (empty string) on one. The generic
+serializer's Float branch and every legal-producer snapshot byte are unchanged
+(integral `FloatSyntax` still emits bare `1`), so v1/v2 snapshot bytes and
+`arg_hash` (hashes `value_to_json` directly, never the base serializer) are
+unaffected; the only byte the serializer now changes is a formerly-corrupt
+high-bit unsigned, which serializes as its correct unsigned decimal instead of a
+negative. Schema-free `value_from_json` gains a
+direct `const JsonValue&` overload; both overloads build `IntValue`/`Timestamp`
+only from `Signed` and `FloatValue` only from `FloatSyntax`, failing closed on
+`Unsigned`/`IntegerFallback` at any depth. Trust paths decode the DOM directly
+(durable resume load workflow_recovery.cpp:190/223/248, CLI tool catalog
+workflow_run.cpp) rather than `serialize_json`→reparse, because a generic
+serialize→parse round-trip loses `FloatSyntax`/`IntegerFallback` provenance (a
+documented A boundary). Option B (a fully provenance-preserving serializer) was
+rejected as an out-of-scope persisted-format change. Codec consumption of
+provenance (Int/Timestamp via `as_int`, Float rejecting `IntegerFallback`) lands
+with the C2b-1/2 codec commit, not the shared P0-10 commit.
+
 ## 7. rev3 must-fix 4 — projector-equivalence + policy phrasing precise
 
 - The AHFL synthetic-cap table and the real Core-cap table may differ in

@@ -49,29 +49,50 @@ std::optional<std::string_view> JsonValue::as_string() const {
 }
 
 std::optional<int64_t> JsonValue::as_int() const {
-    if (kind != Kind::Int) {
+    // Signed only: an UnsignedInteger high-bit value or an IntegerFallback is not
+    // representable as int64 and must be rejected here (use as_uint / inspect
+    // number_provenance).
+    if (kind != Kind::Int || number_provenance != NumberProvenance::SignedInteger) {
         return std::nullopt;
     }
     return int_val;
 }
 
 std::optional<uint64_t> JsonValue::as_uint() const {
-    // Integer JSON values above INT64_MAX are stored as the two's-complement
-    // bit pattern in `int_val` (see the number parser's uint64 fallback), so a
-    // full 64-bit unsigned magnitude — e.g. a size_t symbol id with the high
-    // bit set — round-trips losslessly through this accessor.
+    // Accepts the full 64-bit unsigned magnitude: an UnsignedInteger node (stored
+    // in uint_val) and a non-negative SignedInteger node. A true-negative signed
+    // value, an IntegerFallback, or a non-integer node returns nullopt.
     if (kind != Kind::Int) {
         return std::nullopt;
     }
-    return static_cast<uint64_t>(int_val);
+    if (number_provenance == NumberProvenance::UnsignedInteger) {
+        return uint_val;
+    }
+    if (number_provenance == NumberProvenance::SignedInteger && int_val >= 0) {
+        return static_cast<uint64_t>(int_val);
+    }
+    return std::nullopt;
 }
 
 std::optional<double> JsonValue::as_float() const {
+    // Compatibility widening: signed/unsigned integers widen to double, and both
+    // float provenances return their (possibly approximate) float_val. A consumer
+    // that must reject an integer-token fallback inspects number_provenance.
     if (kind == Kind::Float) {
-        return float_val;
+        if (number_provenance == NumberProvenance::FloatSyntax ||
+            number_provenance == NumberProvenance::IntegerFallback) {
+            return float_val;
+        }
+        return std::nullopt;
     }
     if (kind == Kind::Int) {
-        return static_cast<double>(int_val);
+        if (number_provenance == NumberProvenance::SignedInteger) {
+            return static_cast<double>(int_val);
+        }
+        if (number_provenance == NumberProvenance::UnsignedInteger) {
+            return static_cast<double>(uint_val);
+        }
+        return std::nullopt;
     }
     return std::nullopt;
 }
@@ -104,6 +125,7 @@ std::unique_ptr<JsonValue> JsonValue::make_int(int64_t i) {
     auto v = std::make_unique<JsonValue>();
     v->kind = Kind::Int;
     v->int_val = i;
+    v->number_provenance = NumberProvenance::SignedInteger;
     return v;
 }
 
@@ -111,6 +133,7 @@ std::unique_ptr<JsonValue> JsonValue::make_float(double d) {
     auto v = std::make_unique<JsonValue>();
     v->kind = Kind::Float;
     v->float_val = d;
+    v->number_provenance = NumberProvenance::FloatSyntax;
     return v;
 }
 
@@ -341,13 +364,19 @@ class Parser {
 
         std::string_view num_str = input_.substr(start, pos_ - start);
 
+        // Syntax-first (RFC 0026 C2b P0-10): a `.`/`e`/`E` token is a FloatSyntax
+        // float. A pure integer token is classified int64 (SignedInteger) ->
+        // uint64 (UnsignedInteger, stored in uint_val, NOT a signed bit pattern)
+        // -> otherwise IntegerFallback (a float-approximated value whose exact
+        // magnitude exceeds both 64-bit integer ranges). Provenance lets trust
+        // consumers fail closed on the ambiguous forms.
         if (is_float) {
             auto val = parse_json_number_float(num_str);
             if (!val) {
                 pos_ = start;
                 return std::nullopt;
             }
-            auto value = JsonValue::make_float(*val);
+            auto value = JsonValue::make_float(*val); // FloatSyntax
             value->begin_offset = start;
             value->end_offset = pos_;
             return value;
@@ -356,31 +385,38 @@ class Parser {
         int64_t val{};
         const auto end = num_str.data() + num_str.size();
         auto [ptr, ec] = std::from_chars(num_str.data(), end, val);
-        if (ec != std::errc{} || ptr != end) {
-            // Signed overflow: an integer literal above INT64_MAX (e.g. a
-            // size_t identity with the high bit set). Retry as uint64 and store
-            // the two's-complement bit pattern so as_uint() recovers it
-            // losslessly; only fall back to float when it is not an integer at
-            // all (fractional / exponent forms are handled above).
-            uint64_t uval{};
-            auto [uptr, uec] = std::from_chars(num_str.data(), end, uval);
-            if (uec == std::errc{} && uptr == end) {
-                auto value = JsonValue::make_int(static_cast<int64_t>(uval));
-                value->begin_offset = start;
-                value->end_offset = pos_;
-                return value;
-            }
-            auto fval = parse_json_number_float(num_str);
-            if (!fval) {
-                pos_ = start;
-                return std::nullopt;
-            }
-            auto value = JsonValue::make_float(*fval);
+        if (ec == std::errc{} && ptr == end) {
+            auto value = JsonValue::make_int(val); // SignedInteger
             value->begin_offset = start;
             value->end_offset = pos_;
             return value;
         }
-        auto value = JsonValue::make_int(val);
+
+        // Too large for int64: try uint64 (a high-bit unsigned magnitude).
+        uint64_t uval{};
+        auto [uptr, uec] = std::from_chars(num_str.data(), end, uval);
+        if (uec == std::errc{} && uptr == end) {
+            auto value = std::make_unique<JsonValue>();
+            value->kind = Kind::Int;
+            value->uint_val = uval;
+            value->number_provenance = NumberProvenance::UnsignedInteger;
+            value->begin_offset = start;
+            value->end_offset = pos_;
+            return value;
+        }
+
+        // A pure integer token beyond both int64 and uint64 (very large, or a
+        // large negative below INT64_MIN): keep an approximate float value but
+        // tag it IntegerFallback so consumers can reject it.
+        auto fval = parse_json_number_float(num_str);
+        if (!fval) {
+            pos_ = start;
+            return std::nullopt;
+        }
+        auto value = std::make_unique<JsonValue>();
+        value->kind = Kind::Float;
+        value->float_val = *fval;
+        value->number_provenance = NumberProvenance::IntegerFallback;
         value->begin_offset = start;
         value->end_offset = pos_;
         return value;
@@ -584,6 +620,16 @@ class Parser {
 };
 
 void serialize_impl(const JsonValue &v, std::ostringstream &out) {
+    // Reject invalid (Kind, NumberProvenance) pairings up front (RFC 0026 C2b
+    // P0-10). A non-numeric Kind must carry NotNumeric; a numeric provenance on a
+    // Null/Bool/String/Array/Object node is a corrupt/hand-built state and fails
+    // closed via the stream failbit (serialize_json then returns an empty string).
+    // The Int/Float branches below check their own numeric-provenance validity.
+    const bool numeric_kind = (v.kind == Kind::Int || v.kind == Kind::Float);
+    if (!numeric_kind && v.number_provenance != NumberProvenance::NotNumeric) {
+        out.setstate(std::ios_base::failbit);
+        return;
+    }
     switch (v.kind) {
     case Kind::Null:
         out << "null";
@@ -592,9 +638,27 @@ void serialize_impl(const JsonValue &v, std::ostringstream &out) {
         out << (v.bool_val ? "true" : "false");
         break;
     case Kind::Int:
-        out << v.int_val;
+        // SignedInteger -> int_val; UnsignedInteger -> uint_val (exact decimal,
+        // not a signed bit pattern). Any other provenance on an Int node is an
+        // invalid combination: fail closed via the stream's failbit.
+        if (v.number_provenance == NumberProvenance::SignedInteger) {
+            out << v.int_val;
+        } else if (v.number_provenance == NumberProvenance::UnsignedInteger) {
+            out << v.uint_val;
+        } else {
+            out.setstate(std::ios_base::failbit);
+        }
         break;
     case Kind::Float: {
+        // FloatSyntax and IntegerFallback both serialize through the existing
+        // shortest-round-trip float formatter (A does NOT change these bytes; a
+        // FloatSyntax integral value stays a bare integer, so v1/v2 snapshot bytes
+        // are unchanged). Any other provenance on a Float node is invalid.
+        if (v.number_provenance != NumberProvenance::FloatSyntax &&
+            v.number_provenance != NumberProvenance::IntegerFallback) {
+            out.setstate(std::ios_base::failbit);
+            break;
+        }
         char buf[64];
         auto [ptr, ec] = std::to_chars(buf,
                                        buf + sizeof(buf),
@@ -703,6 +767,12 @@ std::optional<std::unique_ptr<JsonValue>> parse_json(std::string_view input) {
 std::string serialize_json(const JsonValue &v) {
     std::ostringstream out;
     serialize_impl(v, out);
+    // A node carrying an invalid (Kind, NumberProvenance) combination sets the
+    // stream's failbit (see serialize_impl). Fail closed: return an empty string
+    // rather than emit a partial / misleading serialization.
+    if (out.fail()) {
+        return {};
+    }
     return out.str();
 }
 
