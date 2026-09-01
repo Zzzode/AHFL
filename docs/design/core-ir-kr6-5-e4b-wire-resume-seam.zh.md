@@ -1,18 +1,26 @@
 # Core-IR KR6.5 E4-B0: Wire Schema and Durable-Resume Seam -- Design
 
-> Status: **IMPLEMENTED through E4-B1** (schema-guided wire codec + durable-resume
-> seam + full CLI/HTTP/gRPC/shim demotion + the wire-schema Wasm transport chain:
-> C1 payload decoder `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime
-> module inspector `b75fc8ec`; the legacy `response_schema_validator` is deleted).
+> Status: **E4-B1 IMPLEMENTED; B2-S security-primitive FOUNDATION landed**
+> (schema-guided wire codec + durable-resume seam + full CLI/HTTP/gRPC/shim
+> demotion + the wire-schema Wasm transport chain: C1 payload decoder
+> `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime module inspector
+> `b75fc8ec`; the legacy `response_schema_validator` is deleted; plus the B2-S
+> base-support SHA-256/HMAC primitive below).
 > B2 (the full durable-resume ABI/control-record, protected payload store,
 > atomic/crash, ownership/last-use, and node-order evidence work) remains
 > design/pending: its **B2-0 FOUNDATION DESIGN is locked** (the full-workflow
 > replay ledger §4.2, execution manifest + resume state machine + node-event
-> buffer §4.4, transaction/recovery §5.1, and resource contract §5.2), but NO B2
-> code is implemented and B2 / KR6.5 stay false. The confidential
+> buffer §4.4, transaction/recovery §5.1, and resource contract §5.2), but NO
+> B2-A+ durable-resume record/store/emitter/host code is implemented and B2 /
+> KR6.5 stay false. The confidential
 > `ProtectedPayloadStore`, a production key/KMS authority, real rollback
-> protection, the security-primitive implementation, and the production host are
-> all named future gates (§6).
+> protection, and the production host are all named future gates (§6). The
+> B2-S security PRIMITIVE has landed as a base-support FOUNDATION — the NEW
+> raw SHA-256 span input + typed 32-byte `Sha256Digest` API (`b0628f25`) and
+> `hmac_sha256` (RFC 2104/FIPS 198-1, `147da993`); these new APIs have no B2
+> production consumer yet (the first planned one is B2-A), while the existing
+> `sha256_hex(string_view)` production callers remain with preserved in-domain
+> behavior. B2 and KR6.5 stay false.
 >
 > Scope: decide who decodes and type-checks RFC 0019/0021 `value_json`, define
 > one canonical wire-schema projection, and define the durable record's control
@@ -812,14 +820,33 @@ Implementation is intentionally split before any resume ABI:
    binding through the transported-table factory. This was the first reviewed Wasm
    byte change. It adds NO resume export, opcode, ABI, control record, or digest —
    those remain B2.
-4. **B2 durable resume — FOUNDATION DESIGN LOCKED (B2-0, docs only);
-   implementation NOT started.** B2 is a slice ladder, each with an honest
+4. **B2 durable resume — FOUNDATION DESIGN LOCKED (B2-0, docs only); the B2-S
+   security primitive has LANDED, but NO B2-A+ durable-resume record/store/
+   emitter/host code is implemented.** B2 is a slice ladder, each with an honest
    FOUNDATION-vs-production closure and an explicit dependency order (no slice
    claims "non-inert" before a production host exists):
-   - **B2-S security foundation**: a raw-bytes SHA-256 + `hmac_sha256`
-     base-support API as a dedicated security shared gate (RFC 4231 / FIPS 180-4
-     known-answer vectors, length/edge, key handling, no-echo, independent
-     cross-check). Sequenced FIRST; nothing that depends on it may land earlier.
+   - **B2-S security foundation — LANDED (base-support, FOUNDATION only)**: a
+     raw-bytes SHA-256 + `hmac_sha256` base-support API as a dedicated security
+     shared gate. S1 `b0628f25` added the raw-byte span input + typed 32-byte
+     `Sha256Digest` output and preserved `sha256_hex(string_view)` byte-for-byte
+     (its existing package/registry/cache/LSP/CLI/compiler callers keep their
+     in-domain behavior); S2 `147da993` added the additive one-shot `hmac_sha256`
+     (RFC 2104 / FIPS 198-1, block 64 / digest 32, key > 64 hash-then-pad). The
+     `sha256(span)` incremental digest core and the `hmac_sha256` digest path are
+     allocation-free (no whole-message concat) — `sha256_hex` still allocates its
+     returned `std::string`. Both carry a fixed no-echo `std::length_error` length
+     domain. Known-answer vectors: the published FIPS 180-4 vectors for SHA-256 and
+     the published RFC 4231 vectors for HMAC (cases 1/2/3/4/6/7); the > block
+     64/65-byte key boundary, embedded-NUL, and input-immutability vectors are
+     independently fixed and OpenSSL cross-checked (not verbatim FIPS/RFC entries).
+     Key-derived scratch is scrubbed by a best-effort volatile-`unsigned char` wipe
+     (routed through a single `best_effort_wipe`; the state finalizes directly into
+     caller-owned scratch via `finalize_into(Sha256Digest&)`) with an explicit
+     non-guarantee — it cannot erase register/compiler-hidden copies and is NOT
+     production key erasure, constant-time compare, AEAD, or a keyring. Sequenced
+     FIRST; nothing that depends on it landed earlier. The first production
+     consumer of the new APIs remains future B2-A; this slice adds NO
+     keyring/KMS/AEAD/at-rest confidentiality/`PayloadStore`/record codec.
    - **B2-A-pre shared verified-table authority**: a factory-only,
      copy-only `shared_ptr<const VerifiedWireSchemaTable>` in `compiler_ir` so
      bindings can share one immutable verified table without per-mint copies; a
