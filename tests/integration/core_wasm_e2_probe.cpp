@@ -9,7 +9,10 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "base/json/json_value.hpp"
 #include "runtime/engine/agent_runtime.hpp"
+#include "runtime/engine/core_wasm_schema_transport.hpp"
+#include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/evaluator/value_json.hpp"
 
@@ -176,6 +179,61 @@ int main(int argc, char **argv) {
     if (core.program.capabilities.size() != 1 ||
         !core.program.capabilities[0].symbol_ref.id.has_value()) {
         std::cerr << "E2 Core capability identity is missing\n";
+        return 1;
+    }
+
+    // RFC 0026 E4-B1 C3 reference host: a generic host holds only the emitted
+    // module bytes. Inspect them ONCE to mint the sole capability's Result binding
+    // (ordinal 0), then prove the binding drives the codec: decode_json rebuilds
+    // the exact Output native shape from its JSON DOM, and validate_value accepts
+    // the original expected Output Value. Any mismatch is a nonzero exit.
+    const auto binding_result =
+        runtime::core_wasm_schema::make_wire_binding_from_core_wasm(
+            bytes, /*capability_import_ordinal=*/0, ir::core::CoreWireRootKind::Result,
+            /*param_index=*/0);
+    if (!binding_result.ok() || !binding_result.binding.has_value()) {
+        std::cerr << "E2 reference host failed to mint a wire binding from module bytes\n";
+        return 1;
+    }
+    const auto &binding = *binding_result.binding;
+    const auto &selector = binding.selector();
+    if (selector.capability != ir::core::CoreCapabilityId{0} ||
+        selector.expected_source_symbol != *core.program.capabilities[0].symbol_ref.id ||
+        selector.kind != ir::core::CoreWireRootKind::Result || selector.param_index != 0) {
+        std::cerr << "E2 minted binding selector does not match the Result capability identity\n";
+        return 1;
+    }
+
+    auto expected_dom = json::parse_json(expected_json);
+    if (!expected_dom.has_value() || *expected_dom == nullptr) {
+        std::cerr << "E2 reference host could not parse the expected Output JSON\n";
+        return 1;
+    }
+    const auto decoded = runtime::wire_codec::decode_json(**expected_dom, binding);
+    if (!decoded.ok() || !decoded.value.has_value()) {
+        std::cerr << "E2 reference host decode_json failed to produce a value\n";
+        return 1;
+    }
+    // Assert the decoded native shape directly (not only canonical-JSON equality),
+    // so a variant-folding regression cannot pass: it must be the OutputFrame
+    // struct whose "value" field holds the echoed string.
+    const auto *decoded_struct = std::get_if<evaluator::StructValue>(&decoded.value->node);
+    const auto *decoded_field =
+        decoded_struct != nullptr ? decoded_struct->fields.get("value") : nullptr;
+    const auto *decoded_string =
+        decoded_field != nullptr ? std::get_if<evaluator::StringValue>(&decoded_field->node)
+                                 : nullptr;
+    if (decoded_struct == nullptr ||
+        decoded_struct->type_name != "wasm::e2_capability::OutputFrame" ||
+        decoded_string == nullptr || decoded_string->value != "echo" ||
+        evaluator::value_to_json(*decoded.value) != expected_json) {
+        std::cerr << "E2 reference host decode_json did not rebuild the Output native shape\n";
+        return 1;
+    }
+    const auto validated = runtime::wire_codec::validate_value(expected, binding);
+    if (!validated.valid) {
+        std::cerr << "E2 reference host validate_value rejected the expected Output: "
+                  << validated.error << "\n";
         return 1;
     }
 
