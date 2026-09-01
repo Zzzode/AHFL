@@ -1,6 +1,6 @@
 # Core-IR KR6.5 E4-B0: Wire Schema and Durable-Resume Seam -- Design
 
-> Status: **E4-B1 IMPLEMENTED; B2-S security-primitive FOUNDATION landed**
+> Status: **E4-B1 IMPLEMENTED; B2-S + B2-A-pre FOUNDATION slices landed**
 > (schema-guided wire codec + durable-resume seam + full CLI/HTTP/gRPC/shim
 > demotion + the wire-schema Wasm transport chain: C1 payload decoder
 > `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime module inspector
@@ -20,7 +20,16 @@
 > `hmac_sha256` (RFC 2104/FIPS 198-1, `147da993`); these new APIs have no B2
 > production consumer yet (the first planned one is B2-A), while the existing
 > `sha256_hex(string_view)` production callers remain with preserved in-domain
-> behavior. B2 and KR6.5 stay false.
+> behavior. B2 and KR6.5 stay false. The B2-A-pre shared verified-table
+> authority has also landed in `compiler_ir` (`5c9dd67c`): an opaque, copy-only
+> `VerifiedWireSchemaTable` that lets many bindings share one verified-once table
+> without per-mint re-verification/copy. Its new public-in-header factories
+> (`make_verified_wire_schema_table`, `make_wire_binding_from_verified_table`)
+> have no DIRECT production caller yet (the first planned one is B2-A), but the
+> existing `migrate_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
+> production paths already use the same shared backing internally. It is a
+> FOUNDATION with no runtime `VerifiedCoreWasmSchemaModule`, no record
+> codec/HMAC consumer, and no manifest/import parsing. B2 and KR6.5 stay false.
 >
 > Scope: decide who decodes and type-checks RFC 0019/0021 `value_json`, define
 > one canonical wire-schema projection, and define the durable record's control
@@ -847,11 +856,29 @@ Implementation is intentionally split before any resume ABI:
      FIRST; nothing that depends on it landed earlier. The first production
      consumer of the new APIs remains future B2-A; this slice adds NO
      keyring/KMS/AEAD/at-rest confidentiality/`PayloadStore`/record codec.
-   - **B2-A-pre shared verified-table authority**: a factory-only,
-     copy-only `shared_ptr<const VerifiedWireSchemaTable>` in `compiler_ir` so
-     bindings can share one immutable verified table without per-mint copies; a
-     protected shared change to the binding-authority model, no external semantic
-     drift for the existing single-mint APIs. FOUNDATION.
+   - **B2-A-pre shared verified-table authority — LANDED (`compiler_ir`,
+     FOUNDATION only)** (`5c9dd67c`): an opaque, copy-only `VerifiedWireSchemaTable`
+     handle that PRIVATELY holds a `shared_ptr<const CoreWireSchemaTable>`; a
+     binding's `Payload` shares that SAME `CoreWireSchemaTable` backing, so many
+     typed Param/Result bindings mint from one authority without per-mint table
+     verification/copy. `make_verified_wire_schema_table` runs the public local
+     verifier ONCE per authority and mints only when the diagnostic bag is empty;
+     `make_wire_binding_from_verified_table` does NO local re-verification and runs
+     only the existing root-derivation SSOT. The handle exposes NO raw-table / node
+     / `NodeId` accessor and has no public/default ctor (verifying-factory-only);
+     the existing `VerifiedWireSchemaBinding::table()` const-ref accessor is
+     preserved for codec compatibility. Its new public factories have no direct
+     production caller yet (the first planned one is B2-A), but the existing
+     `migrate_type_ref_to_wire_binding` / `make_wire_binding_from_transported_table`
+     production paths already route through the same shared backing internally;
+     their source signatures, admission/root-derivation semantics, and diagnostic
+     ordering/messages are preserved. `compiler_ir` gains NO Wasm/import/manifest/
+     call-sequence knowledge; the runtime module-context that wraps this authority
+     is future B2-A. Additive SOURCE API; installed C++ binary compatibility is NOT
+     preserved — the private
+     `Payload` representation + inline `table()` interpretation changed, so every
+     already-compiled C++ consumer must be cleanly rebuilt; public C ABI, persisted
+     formats, CLI, and emitted Wasm bytes are unchanged.
    - **B2-A record codec + runtime module-context**: the `ahfl.wasm-resume.v1`
      ledger codec (byte-mirror + canonical re-encode) + digests, and the runtime
      `VerifiedCoreWasmSchemaModule` (one frame/decode/cross-check; mints Param/
