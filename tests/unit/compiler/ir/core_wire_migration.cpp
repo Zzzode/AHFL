@@ -856,3 +856,268 @@ TEST_CASE("migration resolves an un-inlined std builtin via the descriptor-backe
         shape_of(*result.binding, result.binding->root()));
     CHECK(std::holds_alternative<CoreWireSchemaInt>(shape_of(*result.binding, opt.value)));
 }
+
+namespace {
+
+// A legal, self-contained two-capability wire table with SPARSE program-global
+// ids {3, 7} and SymbolId 0 on the first entry. Reused by the B2-A-pre
+// verified-table authority tests. Not a runtime artifact — hand-built and asserted
+// legal via the public local verifier.
+//   nodes: [0] Int, [1] Bool, [2] String
+//   cap 3 (symbol 0):   params [Int],    result Bool
+//   cap 7 (symbol 700): params [String], result String
+[[nodiscard]] ahfl::ir::core::CoreWireSchemaTable make_sparse_authority_table() {
+    using namespace ahfl::ir::core;
+    CoreWireSchemaTable table;
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});    // 0
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaBool{}});   // 1
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaString{}}); // 2
+    CoreWireCapabilitySchema cap3;
+    cap3.capability = CoreCapabilityId{3};
+    cap3.source_symbol = 0; // SymbolId{0} is a legal source symbol
+    cap3.params = {CoreWireSchemaNodeId{0}};
+    cap3.result = CoreWireSchemaNodeId{1};
+    table.capabilities.push_back(cap3);
+    CoreWireCapabilitySchema cap7;
+    cap7.capability = CoreCapabilityId{7};
+    cap7.source_symbol = 700;
+    cap7.params = {CoreWireSchemaNodeId{2}};
+    cap7.result = CoreWireSchemaNodeId{2};
+    table.capabilities.push_back(cap7);
+    return table;
+}
+
+} // namespace
+
+// ---- B2-A-pre: shared verified-table authority -----------------------------
+
+// Copy-only / no-move contract for BOTH the authority and the binding. We do NOT
+// assert !is_move_constructible: a user-declared copy ctor makes an rvalue bind to
+// the copy ctor, so is_move_constructible is legitimately TRUE. We pin the intended
+// contract: copy-constructible + copy-assignable, and not default-constructible
+// (the only way in is a verifying factory). The runtime no-hollow-state behavior is
+// exercised by the move-construction tests below.
+static_assert(std::is_copy_constructible_v<ahfl::ir::core::VerifiedWireSchemaTable>);
+static_assert(std::is_copy_assignable_v<ahfl::ir::core::VerifiedWireSchemaTable>);
+static_assert(std::is_copy_constructible_v<ahfl::ir::core::VerifiedWireSchemaBinding>);
+static_assert(std::is_copy_assignable_v<ahfl::ir::core::VerifiedWireSchemaBinding>);
+static_assert(!std::is_default_constructible_v<ahfl::ir::core::VerifiedWireSchemaTable>);
+static_assert(!std::is_default_constructible_v<ahfl::ir::core::VerifiedWireSchemaBinding>);
+
+TEST_CASE("make_verified_wire_schema_table admits a legal table and rejects a tampered one") {
+    SUBCASE("a legal sparse-id table is admitted with an empty diagnostic bag") {
+        auto admitted = make_verified_wire_schema_table(make_sparse_authority_table());
+        CHECK(admitted.ok());
+        CHECK(admitted.table.has_value());
+        CHECK(admitted.diagnostics.empty());
+    }
+
+    SUBCASE("a table with a dangling node reference is rejected, no authority minted") {
+        auto table = make_sparse_authority_table();
+        table.capabilities[0].result = CoreWireSchemaNodeId{9999}; // past the arena
+        auto admitted = make_verified_wire_schema_table(std::move(table));
+        CHECK_FALSE(admitted.ok());
+        CHECK_FALSE(admitted.table.has_value());
+        CHECK_FALSE(admitted.diagnostics.empty()); // exact local-verifier bag
+    }
+
+    SUBCASE("an Option with a null-encoding child is rejected (shares the P0-9 gate)") {
+        CoreWireSchemaTable table;
+        table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaUnit{}});
+        table.nodes.push_back(
+            CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}});
+        CoreWireCapabilitySchema cap;
+        cap.capability = CoreCapabilityId{0};
+        cap.source_symbol = 1;
+        cap.result = CoreWireSchemaNodeId{1};
+        table.capabilities.push_back(cap);
+        auto admitted = make_verified_wire_schema_table(std::move(table));
+        CHECK_FALSE(admitted.ok());
+        CHECK_FALSE(admitted.table.has_value());
+        CHECK_FALSE(admitted.diagnostics.empty());
+    }
+}
+
+TEST_CASE("one verified authority mints many bindings sharing a single table backing") {
+    auto admitted = make_verified_wire_schema_table(make_sparse_authority_table());
+    REQUIRE(admitted.ok());
+    const auto &authority = *admitted.table;
+
+    std::vector<CoreLowerDiagnostic> diag_a;
+    auto result_binding = make_wire_binding_from_verified_table(
+        authority, {CoreCapabilityId{3}, 0, CoreWireRootKind::Result, 0}, diag_a);
+    std::vector<CoreLowerDiagnostic> diag_b;
+    auto param_binding = make_wire_binding_from_verified_table(
+        authority, {CoreCapabilityId{3}, 0, CoreWireRootKind::Param, 0}, diag_b);
+
+    REQUIRE(result_binding.has_value());
+    REQUIRE(param_binding.has_value());
+    CHECK(diag_a.empty());
+    CHECK(diag_b.empty());
+    // Selector/root correctness: cap 3 result is Bool node 1, param 0 is Int node 0.
+    CHECK(result_binding->root() == CoreWireSchemaNodeId{1});
+    CHECK(param_binding->root() == CoreWireSchemaNodeId{0});
+
+    // Pointer-identical backing: both bindings' table() alias the SAME allocation,
+    // proving no per-mint copy. (Uses only the existing binding accessor.)
+    CHECK(&result_binding->table() == &param_binding->table());
+
+    // A Result selector from cap 7 (SymbolId 700) shares the same backing too.
+    std::vector<CoreLowerDiagnostic> diag_c;
+    auto cap7_binding = make_wire_binding_from_verified_table(
+        authority, {CoreCapabilityId{7}, 700, CoreWireRootKind::Result, 0}, diag_c);
+    REQUIRE(cap7_binding.has_value());
+    CHECK(cap7_binding->root() == CoreWireSchemaNodeId{2}); // String
+    CHECK(&cap7_binding->table() == &result_binding->table());
+}
+
+TEST_CASE("a minted binding outlives the authority and its source table") {
+    std::optional<VerifiedWireSchemaBinding> binding;
+    {
+        auto admitted = make_verified_wire_schema_table(make_sparse_authority_table());
+        REQUIRE(admitted.ok());
+        std::vector<CoreLowerDiagnostic> diagnostics;
+        binding = make_wire_binding_from_verified_table(
+            *admitted.table, {CoreCapabilityId{7}, 700, CoreWireRootKind::Param, 0}, diagnostics);
+        REQUIRE(binding.has_value());
+        // `admitted` (and the only VerifiedWireSchemaTable handle) is destroyed here.
+    }
+    // The shared_ptr backing keeps the arena alive: the binding is still usable.
+    CHECK(binding->root() == CoreWireSchemaNodeId{2}); // String
+    CHECK(std::holds_alternative<CoreWireSchemaString>(
+        binding->table().nodes[binding->root().value].shape));
+}
+
+TEST_CASE("copying the authority or a binding shares the backing; the source stays usable") {
+    auto admitted = make_verified_wire_schema_table(make_sparse_authority_table());
+    REQUIRE(admitted.ok());
+
+    // Copy the authority; mint from the COPY, then mint from the ORIGINAL. Both
+    // mints must succeed (source still usable) and share ONE backing.
+    VerifiedWireSchemaTable authority_copy = *admitted.table; // copy ctor
+
+    // Move-CONSTRUCT a second authority. The type is copy-only (no move declared),
+    // so `std::move` binds to the copy ctor — the source is therefore NOT hollowed:
+    // it copies the shared_ptr and both remain fully usable. We keep a separate
+    // source we are willing to move FROM, then mint from BOTH it and the move-copy.
+    VerifiedWireSchemaTable move_source = *admitted.table;
+    VerifiedWireSchemaTable authority_move_copy = std::move(move_source); // binds copy ctor
+
+    std::vector<CoreLowerDiagnostic> d1;
+    auto from_copy = make_wire_binding_from_verified_table(
+        authority_copy, {CoreCapabilityId{3}, 0, CoreWireRootKind::Result, 0}, d1);
+    std::vector<CoreLowerDiagnostic> d2;
+    auto from_original = make_wire_binding_from_verified_table(
+        *admitted.table, {CoreCapabilityId{3}, 0, CoreWireRootKind::Param, 0}, d2);
+    std::vector<CoreLowerDiagnostic> d3;
+    auto from_move_copy = make_wire_binding_from_verified_table(
+        authority_move_copy, {CoreCapabilityId{7}, 700, CoreWireRootKind::Result, 0}, d3);
+    // The move SOURCE is still usable (no hollow state) and shares the same backing.
+    std::vector<CoreLowerDiagnostic> d4;
+    auto from_move_source = make_wire_binding_from_verified_table(
+        move_source, {CoreCapabilityId{7}, 700, CoreWireRootKind::Param, 0}, d4);
+
+    REQUIRE(from_copy.has_value());
+    REQUIRE(from_original.has_value());
+    REQUIRE(from_move_copy.has_value());
+    REQUIRE(from_move_source.has_value());
+    CHECK(&from_copy->table() == &from_original->table());
+    CHECK(&from_copy->table() == &from_move_copy->table());
+    CHECK(&from_copy->table() == &from_move_source->table());
+
+    // Copy a binding; the copy aliases the same backing and the source is unchanged.
+    VerifiedWireSchemaBinding binding_copy = *from_copy; // copy ctor
+    CHECK(&binding_copy.table() == &from_copy->table());
+    CHECK(binding_copy.root() == from_copy->root());
+
+    // Move-CONSTRUCT a binding from a source we then still read (copy-only => the
+    // source is not hollowed).
+    VerifiedWireSchemaBinding binding_move_source = *from_original;
+    VerifiedWireSchemaBinding binding_move_copy = std::move(binding_move_source); // copy ctor
+    CHECK(&binding_move_copy.table() == &from_original->table());
+    CHECK(binding_move_copy.root() == CoreWireSchemaNodeId{0});
+    CHECK(binding_move_source.root() == CoreWireSchemaNodeId{0}); // source still usable
+    CHECK(&binding_move_source.table() == &from_original->table());
+    CHECK(from_original->root() == CoreWireSchemaNodeId{0}); // original untouched
+}
+
+TEST_CASE("the verified-table mint enforces the selector SSOT and clears pre-seeded diagnostics") {
+    auto admitted = make_verified_wire_schema_table(make_sparse_authority_table());
+    REQUIRE(admitted.ok());
+    const auto &authority = *admitted.table;
+
+    const auto mint = [&](CoreWireRootSelector selector) {
+        std::vector<CoreLowerDiagnostic> diagnostics;
+        // Pre-seed the bag: the mint MUST clear it on entry (success AND failure).
+        diagnostics.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
+                                                  "pre.seeded", "stale", std::nullopt});
+        auto b = make_wire_binding_from_verified_table(authority, selector, diagnostics);
+        return std::make_pair(std::move(b), std::move(diagnostics));
+    };
+    // A failure bag must be nonempty AND must NOT contain the stale pre-seeded
+    // entry (nonempty alone would pass even if clear() were broken).
+    const auto is_fresh_failure = [](const std::vector<CoreLowerDiagnostic> &diagnostics) {
+        if (diagnostics.empty()) {
+            return false;
+        }
+        for (const auto &d : diagnostics) {
+            if (d.code == "pre.seeded") {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    SUBCASE("success clears the pre-seeded diagnostic") {
+        auto [binding, diagnostics] = mint({CoreCapabilityId{3}, 0, CoreWireRootKind::Result, 0});
+        REQUIRE(binding.has_value());
+        CHECK(diagnostics.empty()); // stale entry gone; never nullopt with empty bag
+    }
+    SUBCASE("wrong source_symbol is rejected") {
+        auto [binding, diagnostics] = mint({CoreCapabilityId{3}, 999, CoreWireRootKind::Result, 0});
+        CHECK_FALSE(binding.has_value());
+        CHECK(is_fresh_failure(diagnostics));
+    }
+    SUBCASE("an absent capability id is rejected") {
+        auto [binding, diagnostics] = mint({CoreCapabilityId{1}, 700, CoreWireRootKind::Param, 0});
+        CHECK_FALSE(binding.has_value());
+        CHECK(is_fresh_failure(diagnostics));
+    }
+    SUBCASE("a Result selector with a nonzero param index is rejected") {
+        auto [binding, diagnostics] = mint({CoreCapabilityId{3}, 0, CoreWireRootKind::Result, 1});
+        CHECK_FALSE(binding.has_value());
+        CHECK(is_fresh_failure(diagnostics));
+    }
+    SUBCASE("a Param selector with an out-of-range index is rejected") {
+        auto [binding, diagnostics] = mint({CoreCapabilityId{3}, 0, CoreWireRootKind::Param, 9});
+        CHECK_FALSE(binding.has_value());
+        CHECK(is_fresh_failure(diagnostics));
+    }
+    SUBCASE("an invalid selector kind is rejected") {
+        CoreWireRootSelector selector{CoreCapabilityId{3}, 0, CoreWireRootKind::Result, 0};
+        selector.kind = static_cast<CoreWireRootKind>(0xff);
+        auto [binding, diagnostics] = mint(selector);
+        CHECK_FALSE(binding.has_value());
+        CHECK(is_fresh_failure(diagnostics));
+    }
+}
+
+TEST_CASE("the legacy transported-table wrapper still verifies-then-mints unchanged") {
+    // The old one-shot path delegates through the same admission + mint, so a legal
+    // table still mints and a tampered table is still rejected with a nonempty bag.
+    std::vector<CoreLowerDiagnostic> ok_diag;
+    auto ok_binding = make_wire_binding_from_transported_table(
+        make_sparse_authority_table(), {CoreCapabilityId{3}, 0, CoreWireRootKind::Result, 0},
+        ok_diag);
+    REQUIRE(ok_binding.has_value());
+    CHECK(ok_binding->root() == CoreWireSchemaNodeId{1});
+    CHECK(ok_diag.empty());
+
+    auto tampered = make_sparse_authority_table();
+    tampered.capabilities[1].params[0] = CoreWireSchemaNodeId{9999};
+    std::vector<CoreLowerDiagnostic> bad_diag;
+    auto bad_binding = make_wire_binding_from_transported_table(
+        std::move(tampered), {CoreCapabilityId{3}, 0, CoreWireRootKind::Result, 0}, bad_diag);
+    CHECK_FALSE(bad_binding.has_value());
+    CHECK_FALSE(bad_diag.empty());
+}

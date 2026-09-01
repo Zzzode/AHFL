@@ -45,27 +45,64 @@ struct CoreWireRootSelector {
     std::uint32_t param_index{0};
 };
 
+/// An opaque, immutable, copy-only authority proving that ONE `CoreWireSchemaTable`
+/// passed the public local verifier. It is the B2-A-pre shared-authority handle:
+/// many typed Param/Result bindings can be minted from a single instance
+/// (`make_wire_binding_from_verified_table`) WITHOUT re-verifying or re-copying the
+/// table — every minted binding shares this handle's one `shared_ptr<const>`
+/// backing. The only way to obtain one is `make_verified_wire_schema_table`, which
+/// mints a handle ONLY when the local verifier's diagnostic bag is empty.
+///
+/// The handle is deliberately OPAQUE: it exposes NO table / node / capability
+/// accessor, so it can never leak a raw `CoreWireSchemaNodeId` or an unminted table
+/// view. Reading verified shape is done only through a minted
+/// `VerifiedWireSchemaBinding::table()`. Copy-only (no move declared, no default
+/// ctor, private ctor): a copy shares the same immutable backing, and an rvalue
+/// copies the cheap shared_ptr, so a source instance stays fully usable after a
+/// copy and there is no moved-from state.
+class VerifiedWireSchemaTable {
+  public:
+    VerifiedWireSchemaTable(const VerifiedWireSchemaTable &) = default;
+    VerifiedWireSchemaTable &operator=(const VerifiedWireSchemaTable &) = default;
+    // Intentionally NO move ctor/assignment: copy-only immutable authority.
+
+  private:
+    friend struct WireSchemaBindingFactory;
+    explicit VerifiedWireSchemaTable(std::shared_ptr<const CoreWireSchemaTable> table)
+        : table_(std::move(table)) {}
+
+    std::shared_ptr<const CoreWireSchemaTable> table_;
+};
+
 /// An immutable, copy-only binding of a verified wire-schema table to a single
 /// capability signature slot. The ONLY ways to obtain one are the verifying
-/// factories below (TypeRef migration in C2, transported-table in E4-B1); both
-/// run the public local verifier AND derive the root from a typed
-/// `CoreWireRootSelector` whose capability id + source_symbol are cross-checked
-/// against the table (a reachable descendant or another capability's root is NOT
-/// a valid binding root). The codec consumes ONLY this type, so a hand-built /
-/// tampered `CoreWireSchemaTable` can never reach the decode/validate rule engine.
+/// factories below. The legacy/source and transport paths (TypeRef migration in
+/// C2, transported-table in E4-B1) run the public local verifier AND derive the
+/// root from a typed `CoreWireRootSelector`. The B2-A-pre verified-table mint
+/// (`make_wire_binding_from_verified_table`) performs NO local re-verification —
+/// it relies on the prior one-time admission that produced the immutable
+/// `VerifiedWireSchemaTable` authority and only derives the root. In every case
+/// the root comes from a typed `CoreWireRootSelector` whose capability id +
+/// source_symbol are cross-checked against the table (a reachable descendant or
+/// another capability's root is NOT a valid binding root). The codec consumes ONLY
+/// this type, so a hand-built / tampered `CoreWireSchemaTable` can never reach the
+/// decode/validate rule engine.
 ///
-/// The payload is a `shared_ptr<const>`: the type is copy-only (no move ctor /
-/// assignment is declared, so a user-declared copy suppresses the implicit move
+/// The outer payload is a `shared_ptr<const>`: the type is copy-only (no move ctor
+/// / assignment is declared, so a user-declared copy suppresses the implicit move
 /// and an rvalue copies the cheap shared_ptr). There is therefore NO public
 /// moved-from state whose invariant could be violated — every live instance holds
 /// a fully-verified payload with a selector and its derived root pinned together.
+/// The payload holds the verified `CoreWireSchemaTable` behind ITS OWN
+/// `shared_ptr<const>`, so many bindings minted from one `VerifiedWireSchemaTable`
+/// share a single verified-once table allocation (see `table()` identity below).
 class VerifiedWireSchemaBinding {
   public:
     VerifiedWireSchemaBinding(const VerifiedWireSchemaBinding &) = default;
     VerifiedWireSchemaBinding &operator=(const VerifiedWireSchemaBinding &) = default;
     // Intentionally NO move ctor/assignment: copy-only immutable handle.
 
-    [[nodiscard]] const CoreWireSchemaTable &table() const noexcept { return payload_->table; }
+    [[nodiscard]] const CoreWireSchemaTable &table() const noexcept { return *payload_->table; }
     [[nodiscard]] CoreWireSchemaNodeId root() const noexcept { return payload_->root; }
     [[nodiscard]] const CoreWireRootSelector &selector() const noexcept {
         return payload_->selector;
@@ -74,7 +111,7 @@ class VerifiedWireSchemaBinding {
   private:
     friend struct WireSchemaBindingFactory;
     struct Payload {
-        CoreWireSchemaTable table;
+        std::shared_ptr<const CoreWireSchemaTable> table; // shared verified backing
         CoreWireRootSelector selector;
         CoreWireSchemaNodeId root; // derived from selector; pinned with it
     };
@@ -98,6 +135,34 @@ struct WireSchemaMigrationResult {
     }
     [[nodiscard]] bool ok() const noexcept { return binding.has_value() && !has_errors(); }
 };
+
+/// Result of admitting a `CoreWireSchemaTable` into a `VerifiedWireSchemaTable`
+/// authority. Shape mirrors `WireSchemaMigrationResult`: on success `table` holds
+/// the opaque handle and `diagnostics` is empty; on rejection `table` is nullopt
+/// and `diagnostics` carries the local verifier's exact bag.
+struct VerifiedWireSchemaTableResult {
+    std::optional<VerifiedWireSchemaTable> table;
+    std::vector<CoreLowerDiagnostic> diagnostics;
+
+    [[nodiscard]] bool has_errors() const noexcept {
+        for (const auto &d : diagnostics) {
+            if (d.severity == CoreDiagnosticSeverity::Error) {
+                return true;
+            }
+        }
+        return false;
+    }
+    [[nodiscard]] bool ok() const noexcept { return table.has_value() && !has_errors(); }
+};
+
+/// B2-A-pre admission factory: run the public local verifier over `table` ONCE and,
+/// iff its diagnostic bag is EMPTY (preserving today's reject-on-any-diagnostic
+/// behavior, not merely no-Error), mint an opaque `VerifiedWireSchemaTable`
+/// authority backed by one `shared_ptr<const CoreWireSchemaTable>`. This is the
+/// ONLY way to obtain the authority. It performs local verification exactly once
+/// per authority; per-binding mints below add NO further table verification/copy.
+[[nodiscard]] VerifiedWireSchemaTableResult
+make_verified_wire_schema_table(CoreWireSchemaTable table);
 
 /// Migrate one AHFL `ir::TypeRef` into a verified wire-schema binding, using a
 /// verified type environment (its type declarations resolve user nominals
@@ -126,5 +191,17 @@ migrate_type_ref_to_wire_binding(const ir::TypeRef &type, const AhflIr &program)
 make_wire_binding_from_transported_table(CoreWireSchemaTable table,
                                          const CoreWireRootSelector &selector,
                                          std::vector<CoreLowerDiagnostic> &diagnostics);
+
+/// B2-A-pre shared-authority mint: derive a typed binding root from `selector` and
+/// mint a `VerifiedWireSchemaBinding` that SHARES `verified`'s one immutable table
+/// backing. This performs NO local table re-verification (the authority is
+/// verified-once and immutable); it runs only the unchanged root-derivation SSOT
+/// (`derive_root`: capability id present + source_symbol cross-check + kind/param).
+/// `diagnostics` is cleared on entry; a returned nullopt therefore carries exactly
+/// this call's derivation failure (and can never be nullopt with an empty bag).
+[[nodiscard]] std::optional<VerifiedWireSchemaBinding>
+make_wire_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
+                                      const CoreWireRootSelector &selector,
+                                      std::vector<CoreLowerDiagnostic> &diagnostics);
 
 } // namespace ahfl::ir::core
