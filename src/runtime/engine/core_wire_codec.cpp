@@ -1,5 +1,6 @@
 #include "runtime/engine/core_wire_codec.hpp"
 
+#include "runtime/engine/core_wire_codec_recovery.hpp"
 #include "runtime/evaluator/scalar_spelling.hpp"
 
 #include <cmath>
@@ -42,6 +43,15 @@ using evaluator::Value;
 namespace scalar_spelling = evaluator::scalar_spelling;
 
 constexpr std::string_view kOptionEnumName = "std::option::Option";
+
+// Decode policy for the shared Decoder traversal (internal detail; never exposed
+// on the public codec surface). Exact is the only policy live trust paths use;
+// LegacyV2 is reachable ONLY via decode_json_legacy_v2 (durable-resume loader),
+// and relaxes exactly one rule: SignedInteger -> Float at a Float schema node.
+enum class DecodePolicy {
+    Exact,
+    LegacyV2,
+};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -113,7 +123,8 @@ constexpr std::string_view kOptionEnumName = "std::option::Option";
 
 class Decoder {
   public:
-    explicit Decoder(const CoreWireSchemaTable &table) : table_(table) {}
+    explicit Decoder(const CoreWireSchemaTable &table, DecodePolicy policy)
+        : table_(table), policy_(policy) {}
 
     [[nodiscard]] WireDecodeResult decode(const json::JsonValue &json, CoreWireSchemaNodeId id) {
         const auto *shape = shape_at(table_, id);
@@ -125,6 +136,7 @@ class Decoder {
 
   private:
     const CoreWireSchemaTable &table_;
+    DecodePolicy policy_;
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
                                                 const CoreWireSchemaUnit &) {
@@ -160,6 +172,23 @@ class Decoder {
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
                                                 const CoreWireSchemaFloat &) {
+        // LegacyV2 compat (P0-16, recovery-internal only): an old pre-sidecar
+        // snapshot serialized an integral Float (1.0) as the bare int `1` through
+        // the generic serializer. Under LegacyV2 ONLY, accept a SignedInteger
+        // Kind::Int at a Float node as that historical artifact. UnsignedInteger /
+        // IntegerFallback / real Float rules below are NOT relaxed, and this never
+        // applies under the exact policy.
+        if (policy_ == DecodePolicy::LegacyV2 && json.kind == json::Kind::Int) {
+            const auto signed_int = json.as_int(); // SignedInteger provenance only
+            if (!signed_int.has_value()) {
+                return WireDecodeResult::failure("wire-codec: expected float (no int widening)");
+            }
+            const double widened = static_cast<double>(*signed_int);
+            if (!std::isfinite(widened)) {
+                return WireDecodeResult::failure("wire-codec: float must be finite");
+            }
+            return WireDecodeResult::success(evaluator::make_float(widened));
+        }
         // Must be a JSON float with float syntax and finite — never an Int widened
         // to float, and never an IntegerFallback (an out-of-uint64 integer token the
         // DOM stores as an approximate Float) laundered through the float branch
@@ -921,7 +950,15 @@ class Validator {
 
 WireDecodeResult decode_json(const json::JsonValue &json,
                              const ir::core::VerifiedWireSchemaBinding &binding) {
-    Decoder decoder(binding.table());
+    Decoder decoder(binding.table(), DecodePolicy::Exact);
+    return decoder.decode(json, binding.root());
+}
+
+WireDecodeResult decode_json_legacy_v2(const json::JsonValue &json,
+                                       const ir::core::VerifiedWireSchemaBinding &binding) {
+    // Same traversal, LegacyV2 policy: the ONLY relaxation is SignedInteger -> Float
+    // at a Float node (see the Float decode_shape). Recovery/runtime-internal only.
+    Decoder decoder(binding.table(), DecodePolicy::LegacyV2);
     return decoder.decode(json, binding.root());
 }
 

@@ -3,6 +3,7 @@
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "base/json/json_value.hpp"
+#include "runtime/engine/core_wire_codec_recovery.hpp"
 #include "runtime/evaluator/builtins.hpp"
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/scalar_spelling.hpp"
@@ -39,6 +40,7 @@ namespace {
 using namespace ahfl;
 using namespace ahfl::ir::core;
 using ahfl::runtime::wire_codec::decode_json;
+using ahfl::runtime::wire_codec::decode_json_legacy_v2;
 using ahfl::runtime::wire_codec::validate_value;
 using ahfl::runtime::wire_codec::WireDecodeResult;
 using ahfl::runtime::SchemaValidationResult;
@@ -1221,6 +1223,75 @@ void test_round_trip() {
 
 } // namespace
 
+// RFC 0026 C2b stage3 (P0-16, G2): the recovery-internal LegacyV2 decoder relaxes
+// EXACTLY one rule — a SignedInteger at a Float schema node is accepted as a
+// historical integral-Float artifact (an old snapshot serialized 1.0 as bare 1).
+// Everything else stays exact; the exact decoder still rejects the widening.
+void test_legacy_v2_decoder() {
+    { // top-level Float node: exact rejects bare int, legacy accepts it as float
+        auto b = mint_leaf(CoreWireSchemaFloat{});
+        check(b.has_value(), "legacy.float_binding_minted");
+        if (!b) {
+            return;
+        }
+        check(!decode_json(*parse("1"), *b).ok(), "legacy.exact_rejects_bare_int");
+        auto legacy = decode_json_legacy_v2(*parse("1"), *b);
+        check(legacy.ok() && std::holds_alternative<evaluator::FloatValue>(legacy.value->node),
+              "legacy.accepts_bare_int_as_float");
+        // A genuine float is accepted by both.
+        check(decode_json(*parse("1.5"), *b).ok(), "legacy.exact_accepts_real_float");
+        check(decode_json_legacy_v2(*parse("1.5"), *b).ok(), "legacy.legacy_accepts_real_float");
+        // high-uint / +fallback / -fallback are rejected by BOTH (not signed ints).
+        check(!decode_json(*parse("18446744073709551615"), *b).ok(),
+              "legacy.exact_rejects_high_uint");
+        check(!decode_json_legacy_v2(*parse("18446744073709551615"), *b).ok(),
+              "legacy.legacy_rejects_high_uint");
+        check(!decode_json(*parse("99999999999999999999999"), *b).ok(),
+              "legacy.exact_rejects_pos_fallback");
+        check(!decode_json_legacy_v2(*parse("99999999999999999999999"), *b).ok(),
+              "legacy.legacy_rejects_pos_fallback");
+        check(!decode_json(*parse("-99999999999999999999999"), *b).ok(),
+              "legacy.exact_rejects_neg_fallback");
+        check(!decode_json_legacy_v2(*parse("-99999999999999999999999"), *b).ok(),
+              "legacy.legacy_rejects_neg_fallback");
+        // Inf/NaN native floats are not integers; unaffected by the relaxation.
+        auto inf = json::JsonValue::make_float(std::numeric_limits<double>::infinity());
+        check(!decode_json_legacy_v2(*inf, *b).ok(), "legacy.legacy_rejects_inf");
+    }
+    { // nested Float inside a Struct field: relaxation applies recursively, exact
+      // still rejects, and a NON-Float node (Int) is NOT affected by the policy.
+        std::vector<CoreWireSchemaNode> nodes;
+        nodes.push_back(CoreWireSchemaNode{CoreWireSchemaFloat{}}); // node 0: field float
+        CoreWireSchemaStruct st;
+        st.wire_name = "app::P";
+        st.fields.push_back(CoreWireSchemaField{"f", CoreWireSchemaNodeId{0}});
+        nodes.push_back(CoreWireSchemaNode{st});                    // node 1: struct
+        auto b = mint_result_binding(std::move(nodes), CoreWireSchemaNodeId{1});
+        check(b.has_value(), "legacy.nested_binding_minted");
+        if (!b) {
+            return;
+        }
+        const std::string integral = R"({"_type":"app::P","f":2})";
+        check(!decode_json(*parse(integral), *b).ok(), "legacy.nested_exact_rejects_int_float");
+        auto legacy = decode_json_legacy_v2(*parse(integral), *b);
+        check(legacy.ok(), "legacy.nested_accepts_int_float");
+        const std::string real = R"({"_type":"app::P","f":2.5})";
+        check(decode_json(*parse(real), *b).ok(), "legacy.nested_exact_accepts_real_float");
+    }
+    { // an Int schema node is NEVER relaxed by the policy: bare int stays an int,
+      // and a float is rejected under both policies.
+        auto b = mint_leaf(CoreWireSchemaInt{});
+        check(b.has_value(), "legacy.int_binding_minted");
+        if (!b) {
+            return;
+        }
+        auto legacy = decode_json_legacy_v2(*parse("7"), *b);
+        check(legacy.ok() && std::holds_alternative<evaluator::IntValue>(legacy.value->node),
+              "legacy.int_node_stays_int");
+        check(!decode_json_legacy_v2(*parse("1.5"), *b).ok(), "legacy.int_node_rejects_float");
+    }
+}
+
 int main() {
     test_scalar_spelling();
     test_scalars();
@@ -1230,6 +1301,7 @@ int main() {
     test_recursive_binding();
     test_set_map();
     test_struct_enum();
+    test_legacy_v2_decoder();
     test_builtin_callers();
     test_error_no_payload_echo();
     test_round_trip();
