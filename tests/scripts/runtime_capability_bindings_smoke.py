@@ -157,7 +157,12 @@ def retry_config(max_retries: int = 0) -> dict:
 
 
 def write_http_bindings(
-    bindings_path: Path, *, auth: dict | None = None, max_retries: int = 0
+    bindings_path: Path,
+    *,
+    auth: dict | None = None,
+    max_retries: int = 0,
+    response_format: str | None = None,
+    circuit_breaker: dict | None = None,
 ) -> None:
     binding = {
         "capability": "smoke::Echo",
@@ -168,6 +173,10 @@ def write_http_bindings(
         "timeout_ms": 1000,
         "retry": retry_config(max_retries),
     }
+    if response_format is not None:
+        binding["response_format"] = response_format
+    if circuit_breaker is not None:
+        binding["circuit_breaker"] = circuit_breaker
     if auth is not None:
         binding["auth"] = auth
     bindings_path.write_text(
@@ -289,6 +298,7 @@ def assert_failure(
     *,
     expect_curl_invoked: bool = True,
     expected_request_count: int | None = None,
+    forbidden_fragment: str | None = None,
 ):
     if result.returncode == 0:
         raise AssertionError(
@@ -300,6 +310,11 @@ def assert_failure(
         raise AssertionError(
             f"failing capability binding missing diagnostic {expected_diagnostic_fragment!r}\\n"
             f"stdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}"
+        )
+    if forbidden_fragment is not None and forbidden_fragment in combined_output:
+        raise AssertionError(
+            f"failing capability binding diagnostic unexpectedly contained "
+            f"{forbidden_fragment!r}\\nstdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}"
         )
     if expect_curl_invoked and not curl_capture_path.exists():
         raise AssertionError("fake curl was not invoked by failing runtime capability binding")
@@ -333,6 +348,9 @@ def main() -> None:
 
     http_bindings_path = run_dir / "http_runtime_bindings.json"
     write_http_bindings(http_bindings_path)
+    # G4a user-nominal POSITIVE: smoke::Echo returns the user struct smoke::Response;
+    # the JSON body decodes exactly under the projected response_wire_binding and the
+    # workflow emits the bound value.
     result, curl_capture_path = run_ahflc(
         ahflc, run_dir, source_path, http_bindings_path, "http_success", "bound-hello"
     )
@@ -381,6 +399,7 @@ def main() -> None:
 
     grpc_bindings_path = run_dir / "grpc_runtime_bindings.json"
     write_grpc_bindings(grpc_bindings_path)
+    # G4a user-nominal POSITIVE (gRPC): same smoke::Response struct decoded exactly.
     result, curl_capture_path = run_ahflc(
         ahflc, run_dir, source_path, grpc_bindings_path, "grpc_success", "grpc-bound-hello"
     )
@@ -442,6 +461,32 @@ def main() -> None:
         "should-not-complete",
     )
     assert_failure(result, curl_capture_path, "response schema validation failed")
+
+    # G4a factory-poison NEGATIVE: a text_plain response format on a capability whose
+    # declared response is the user struct smoke::Response. The admission gate rejects
+    # a non-String verified root, so make_http_capability mints a poison binding that
+    # fails closed BEFORE any transport — even with retries requested and the circuit
+    # breaker enabled. Assert the admission diagnostic, zero fake-curl requests, and
+    # that the poison never degrades into retry_exhausted (CLI-level proof the retry=0
+    # pin holds).
+    textplain_poison_path = run_dir / "http_textplain_poison_bindings.json"
+    write_http_bindings(
+        textplain_poison_path,
+        max_retries=3,
+        response_format="text_plain",
+        circuit_breaker={"enabled": True, "failure_threshold": 1},
+    )
+    result, curl_capture_path = run_ahflc(
+        ahflc, run_dir, source_path, textplain_poison_path, "http_success"
+    )
+    assert_failure(
+        result,
+        curl_capture_path,
+        "response schema admission failed",
+        expect_curl_invoked=False,
+        expected_request_count=0,
+        forbidden_fragment="retry_exhausted",
+    )
 
 
 if __name__ == "__main__":

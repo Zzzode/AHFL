@@ -902,10 +902,27 @@ optional_string_map_field(const ahfl::json::JsonValue &object,
     return config;
 }
 
-[[nodiscard]] std::shared_ptr<const ahfl::ir::TypeRef>
-capability_response_schema(const ahfl::ir::CapabilityDecl &capability) {
-    auto clone = ahfl::ir::clone_type_ref(&capability.return_type_ref);
-    return std::shared_ptr<const ahfl::ir::TypeRef>(std::move(clone));
+// RFC 0026 C2b G4a: project a capability's declared response type into a verified
+// wire-schema binding using the SHARED, already-built type environment (seed once).
+// Returns the full migration result so the caller can surface a capability-scoped,
+// schema-only diagnostic (first Error code/message) rather than a context-free
+// failure. The binding, when present, becomes the config's response_wire_binding.
+[[nodiscard]] ahfl::ir::core::WireSchemaMigrationResult
+project_capability_response_binding(const ahfl::ir::CapabilityDecl &capability,
+                                    const ahfl::ir::core::VerifiedCoreTypeEnvironment &env) {
+    return ahfl::ir::core::migrate_type_ref_to_wire_binding(capability.return_type_ref, env);
+}
+
+// Compose a schema-only migration diagnostic suffix (first Error code:message) for a
+// failed capability response projection. Never echoes any response payload.
+[[nodiscard]] std::string
+migration_error_suffix(const ahfl::ir::core::WireSchemaMigrationResult &migration) {
+    for (const auto &d : migration.diagnostics) {
+        if (d.severity == ahfl::ir::core::CoreDiagnosticSeverity::Error) {
+            return ": " + std::string(d.code) + ": " + d.message;
+        }
+    }
+    return {};
 }
 
 [[nodiscard]] std::shared_ptr<CapabilityRegistry>
@@ -946,6 +963,19 @@ load_runtime_capability_bindings(const ahfl::ir::Program &program,
     }
 
     const ahfl::ir::ProgramIndex index{program};
+    // RFC 0026 C2b G4a: build the shared verified type environment ONCE and project
+    // each capability's declared response type into a verified wire-schema binding.
+    // A failed environment is fail-closed for the whole descriptor (no binding can
+    // be projected). This is the current-position wiring: the projection is pure
+    // (no secret/network); the two-phase reorder relative to secret resolution is a
+    // later G4 slice.
+    auto env_result = ahfl::ir::core::build_core_type_environment(program);
+    if (!env_result.ok() || !env_result.environment.has_value()) {
+        err << "error: runtime capability bindings could not build a wire-schema type "
+               "environment\n";
+        return nullptr;
+    }
+    const auto &type_environment = *env_result.environment;
     auto registry = std::make_shared<CapabilityRegistry>();
     std::unordered_set<std::string> names;
     for (std::size_t binding_index = 0; binding_index < bindings->array_items.size();
@@ -1025,7 +1055,16 @@ load_runtime_capability_bindings(const ahfl::ir::Program &program,
                 config.auth = std::move(*auth);
                 config.secret_manager = secrets;
             }
-            config.response_schema = capability_response_schema(*capability);
+            {
+                auto migration = project_capability_response_binding(*capability, type_environment);
+                if (!migration.ok() || !migration.binding.has_value()) {
+                    err << "error: " << context << " capability '" << *capability_name
+                        << "' response type is not projectable to a wire schema"
+                        << migration_error_suffix(migration) << '\n';
+                    return nullptr;
+                }
+                config.response_wire_binding = std::move(*migration.binding);
+            }
             registry->register_capability(
                 make_http_capability(*capability_name, std::move(config)));
             continue;
@@ -1062,7 +1101,16 @@ load_runtime_capability_bindings(const ahfl::ir::Program &program,
                 config.auth = std::move(*auth);
                 config.secret_manager = secrets;
             }
-            config.response_schema = capability_response_schema(*capability);
+            {
+                auto migration = project_capability_response_binding(*capability, type_environment);
+                if (!migration.ok() || !migration.binding.has_value()) {
+                    err << "error: " << context << " capability '" << *capability_name
+                        << "' response type is not projectable to a wire schema"
+                        << migration_error_suffix(migration) << '\n';
+                    return nullptr;
+                }
+                config.response_wire_binding = std::move(*migration.binding);
+            }
             registry->register_capability(
                 make_grpc_json_transcoding_capability(*capability_name, std::move(config)));
             continue;

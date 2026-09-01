@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/types.hpp"
 #include "ahfl/runtime/execution_event.hpp"
 #include "runtime/engine/capability_transport_adapter.hpp"
@@ -189,6 +190,12 @@ struct HTTPCapabilityConfig {
     std::optional<ahfl::secret::AuthConfig> auth;
     std::shared_ptr<ahfl::secret::SecretManager> secret_manager;
     std::shared_ptr<const ir::TypeRef> response_schema;
+    // RFC 0026 C2b G4a: the projected, verified wire-schema binding for this
+    // capability's response. When engaged it is the response decode/validate
+    // authority (exact codec path); `response_schema` above is the legacy TypeRef
+    // input to the admission gate (prepare_wire_response_schema). The two are
+    // mutually exclusive — supplying both is a fail-closed conflict.
+    std::optional<ir::core::VerifiedWireSchemaBinding> response_wire_binding;
 };
 [[nodiscard]] CapabilityBinding make_http_capability(const std::string &name,
                                                      HTTPCapabilityConfig config);
@@ -208,6 +215,8 @@ struct GrpcJsonTranscodingCapabilityConfig {
     std::optional<ahfl::secret::AuthConfig> auth;
     std::shared_ptr<ahfl::secret::SecretManager> secret_manager;
     std::shared_ptr<const ir::TypeRef> response_schema;
+    // RFC 0026 C2b G4a: see HTTPCapabilityConfig::response_wire_binding.
+    std::optional<ir::core::VerifiedWireSchemaBinding> response_wire_binding;
 };
 [[nodiscard]] CapabilityBinding
 make_grpc_json_transcoding_capability(const std::string &name,
