@@ -1071,6 +1071,10 @@ add_test(NAME ahfl.runtime.core_wasm_schema_module
     COMMAND $<TARGET_FILE:ahfl_core_wasm_schema_module_tests>
 )
 
+add_test(NAME ahfl.runtime.payload_store_codec
+    COMMAND $<TARGET_FILE:ahfl_payload_store_codec_tests>
+)
+
 add_test(NAME ahfl.runtime.e2e_workflow
     COMMAND $<TARGET_FILE:ahfl_e2e_workflow_tests>
             "${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"

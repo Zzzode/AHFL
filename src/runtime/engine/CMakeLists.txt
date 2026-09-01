@@ -27,6 +27,7 @@ add_library(ahfl_runtime_engine STATIC
     core_wasm_schema_transport.cpp
     core_wasm_resume_record.cpp
     core_wasm_schema_module.cpp
+    payload_store_codec.cpp
 )
 
 target_link_libraries(ahfl_runtime_engine
