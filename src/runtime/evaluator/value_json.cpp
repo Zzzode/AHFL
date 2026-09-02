@@ -1,5 +1,6 @@
 #include "runtime/evaluator/value_json.hpp"
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -21,6 +22,19 @@ namespace ahfl::evaluator {
 // ============================================================================
 
 namespace {
+
+// Locale-independent fixed-decimal int64 spelling. std::to_chars never consults
+// the stream's imbued locale, basefield, showbase, or showpos, so the canonical
+// wire JSON for an integer is identical across cold starts and unaffected by a
+// caller stream's integer formatting flags — unlike `out << (int64_t)`, which
+// routes through the locale's num_put facet and can emit grouped/hex/prefixed
+// digits. This is the serialization SSOT for both IntValue and TimestampValue.
+void write_int64(std::ostream &out, std::int64_t value) {
+    char buf[20]; // int64 min "-9223372036854775808" is exactly 20 chars.
+    auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
+    (void)ec; // 20 bytes always suffice for a base-10 int64.
+    out.write(buf, static_cast<std::streamsize>(ptr - buf));
+}
 
 void write_json_impl(const Value &v, std::ostream &out) {
     if (const auto *items = list_items(v)) {
@@ -54,7 +68,7 @@ void write_json_impl(const Value &v, std::ostream &out) {
             } else if constexpr (std::is_same_v<T, BoolValue>) {
                 out << (inner.value ? "true" : "false");
             } else if constexpr (std::is_same_v<T, IntValue>) {
-                out << inner.value;
+                write_int64(out, inner.value);
             } else if constexpr (std::is_same_v<T, FloatValue>) {
                 out << format_double(inner.value, /*json_mode=*/true);
             } else if constexpr (std::is_same_v<T, StringValue>) {
@@ -180,7 +194,7 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 out << '{';
                 ahfl::write_escaped_json_string(out, "_timestamp");
                 out << ':';
-                out << inner.unix_ms;
+                write_int64(out, inner.unix_ms);
                 out << '}';
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // B3 (RFC 0013 P3-gaps-B): unit serializes as JSON null,

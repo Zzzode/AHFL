@@ -4,8 +4,12 @@
 #include "base/json/json_value.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <variant>
 
@@ -557,6 +561,121 @@ void test_provenance_dom_entry() {
 
 } // anonymous namespace
 
+// ============================================================================
+// Locale independence (RFC 0026 E4-B2-D1a-4 prerequisite): the canonical wire
+// JSON for IntValue / TimestampValue must be fixed base-10 with no locale
+// grouping and no dependence on a caller stream's integer format flags, so the
+// same logical arguments serialize and hash identically across cold starts. The
+// serializer routes both integer sites through std::to_chars (locale-blind),
+// never the stream's num_put facet.
+// ============================================================================
+
+namespace {
+
+// A thousands-grouping punctuation facet: if any integer path consulted the
+// locale, an i64 would gain ',' separators (and thus more bytes / non-JSON).
+class GroupingNumpunct : public std::numpunct<char> {
+  protected:
+    char do_thousands_sep() const override { return ','; }
+    std::string do_grouping() const override { return "\3"; }
+};
+
+// Restores the previous global C++ locale on every exit path (including an
+// exception), so a failing assertion never leaks a grouped global locale into
+// the rest of the suite.
+class ScopedGlobalLocale {
+  public:
+    explicit ScopedGlobalLocale(const std::locale &loc) : previous_(std::locale::global(loc)) {}
+    ~ScopedGlobalLocale() { std::locale::global(previous_); }
+    ScopedGlobalLocale(const ScopedGlobalLocale &) = delete;
+    ScopedGlobalLocale &operator=(const ScopedGlobalLocale &) = delete;
+
+  private:
+    std::locale previous_;
+};
+
+void test_locale_independent_integers() {
+    constexpr std::int64_t kMax = std::numeric_limits<std::int64_t>::max(); // 9223372036854775807
+    constexpr std::int64_t kMin = std::numeric_limits<std::int64_t>::min(); // -9223372036854775808
+
+    // Baseline bytes/hash captured under the default (classic) locale.
+    const std::string int_max_classic = value_to_json(make_int(kMax));
+    const std::string int_min_classic = value_to_json(make_int(kMin));
+    const std::string ts_classic = value_to_json(make_timestamp(kMax));
+    const std::string ts_min_classic = value_to_json(make_timestamp(kMin));
+    // Value is move-only, so the hash argument vector is built by push_back
+    // rather than an initializer_list (which would copy).
+    const auto make_hash_args = []() {
+        std::vector<Value> args;
+        args.push_back(make_int(kMax));
+        args.push_back(make_timestamp(kMin));
+        return args;
+    };
+    const std::uint64_t hash_classic = hash_values(make_hash_args());
+
+    // Sanity: the classic spelling is fixed decimal with no separators.
+    check(int_max_classic == "9223372036854775807", "locale.classic_int_max_bytes");
+    check(int_min_classic == "-9223372036854775808", "locale.classic_int_min_bytes");
+    check(ts_classic == R"({"_timestamp":9223372036854775807})", "locale.classic_ts_bytes");
+    check(ts_min_classic == R"({"_timestamp":-9223372036854775808})",
+          "locale.classic_ts_min_bytes");
+
+    {
+        const std::locale grouped(std::locale::classic(), new GroupingNumpunct());
+        ScopedGlobalLocale scoped(grouped);
+
+        // value_to_json (string path) is byte-inert under a grouping global locale.
+        check(value_to_json(make_int(kMax)) == int_max_classic, "locale.grouped_int_max_inert");
+        check(value_to_json(make_int(kMin)) == int_min_classic, "locale.grouped_int_min_inert");
+        check(value_to_json(make_timestamp(kMax)) == ts_classic, "locale.grouped_ts_inert");
+        check(value_to_json(make_timestamp(kMin)) == ts_min_classic, "locale.grouped_ts_min_inert");
+
+        // hash_values (durable-resume arg_hash SSOT) is frozen.
+        check(hash_values(make_hash_args()) == hash_classic, "locale.grouped_hash_frozen");
+
+        // write_value_json to a caller stream is byte-inert even when the stream
+        // itself is imbued with the grouping locale.
+        {
+            std::ostringstream oss;
+            oss.imbue(grouped);
+            write_value_json(make_int(kMax), oss);
+            check(oss.str() == int_max_classic, "locale.stream_imbued_int_inert");
+        }
+        {
+            std::ostringstream oss;
+            oss.imbue(grouped);
+            write_value_json(make_timestamp(kMax), oss);
+            check(oss.str() == ts_classic, "locale.stream_imbued_ts_inert");
+        }
+        {
+            std::ostringstream oss;
+            oss.imbue(grouped);
+            write_value_json(make_timestamp(kMin), oss);
+            check(oss.str() == ts_min_classic, "locale.stream_imbued_ts_min_inert");
+        }
+
+        // Non-default integer format flags on the caller stream (hex / showbase /
+        // showpos) must not leak into the canonical decimal spelling.
+        {
+            std::ostringstream oss;
+            oss << std::hex << std::showbase << std::showpos;
+            write_value_json(make_int(255), oss);
+            check(oss.str() == "255", "locale.stream_fmtflags_int_inert");
+        }
+        {
+            std::ostringstream oss;
+            oss << std::hex << std::showbase << std::showpos;
+            write_value_json(make_timestamp(255), oss);
+            check(oss.str() == R"({"_timestamp":255})", "locale.stream_fmtflags_ts_inert");
+        }
+    }
+
+    // The global locale is restored: a fresh serialization matches the baseline.
+    check(value_to_json(make_int(kMax)) == int_max_classic, "locale.restored_after_scope");
+}
+
+} // anonymous namespace
+
 int main() {
     test_serialize_none();
     test_serialize_bool();
@@ -571,6 +690,7 @@ int main() {
     test_serialize_struct_deterministic();
     test_serialize_enum_named_payload_deterministic();
     test_serialize_optional();
+    test_locale_independent_integers();
 
     test_parse_null();
     test_parse_bool();
