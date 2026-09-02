@@ -955,43 +955,130 @@ The required host transaction for that later slice follows the SINGLE admission
 order defined in §5.1 (framing -> record HMAC/canonical -> artifact digests ->
 coordinates -> staged exact-slot/typed payload [entry frame opaque] -> transition
 eligibility -> TOTAL result-size preflight -> effect-free replay of below-frontier
-imports to the pending coordinate -> CAS publish + pending ownership transfer ->
-frontier-forward live import; the effect-free replay is BEFORE any CAS so a trap
-during replay never leaves a mutation, and every CAS/mutation/live effect is AFTER
-the preflight); the ordered steps below are its resume-side view:
+imports to the frontier -> then CONDITIONAL on the frontier state: an Injected
+frontier is a ReturnMemo of its already-committed injected memo (NO CAS), while a
+Suspended frontier emits a PublishInjected command whose adapter CAS + explicit
+success ACK precede the pending ownership transfer (a Suspended record with no
+supplied injected frame stops at NeedsInjectedResult, before the preflight) ->
+then ReadyForLive command(s) for imports strictly after the frontier; the
+effect-free replay is BEFORE any CAS so a trap during replay never leaves a
+mutation, and every CAS/mutation/live effect is AFTER the preflight); the ordered
+steps below are its resume-side view:
 
 1. minimal-frame the control record, verify its HMAC authenticity, then compare
    the module + schema (+ exec_manifest) digests — a mismatch fails even when
    numeric ids coincide;
-2. parse + validate the full-workflow ledger and every per-node memo coordinate;
+2. parse + validate the full-workflow ledger and every per-node memo coordinate,
+   and cross-check it against the module + AHFLXM manifest with the A2-BASELINE
+   coordinate gate (the module cannot witness a record richer than its manifest, so
+   fail closed on anything it cannot produce — this is a baseline gate, NOT an
+   A1-grammar relaxation): record prefix node_count <= module node_count; an
+   identity node has empty memo + no pending; every NON-frontier capability node has
+   EXACTLY one memo at ordinal 0; a Suspended frontier has empty memo + exactly one
+   pending at ordinal 0; an Injected frontier has exactly one memo at ordinal 0 + no
+   pending; any capability node with memo_count > 1 or any memo/pending ordinal != 0
+   fails closed (host code `resume.coordinate.mismatch`; an internal typed reason may
+   distinguish it). A repeated result_slot across DIFFERENT nodes/occurrences stays
+   legal — each node keeps its own ordinal-0 memo counted per occurrence;
 3. retrieve the ledger-referenced slots from protected storage: the single
    `entry_input_slot` (the workflow ENTRY frame) plus every memo result slot.
    Approach A persists NO PER-NODE input slot — downstream node inputs are
    reconstructed by the fresh replay from the entry frame + validated memo results
    + pure runners; only the workflow entry frame slot is restored, never recomputed;
 4. admit the `entry_input_slot` as OPAQUE bytes (slot-artifact authenticity +
-   length + cap only — it carries no transported schema); schema-decode each
-   store-loaded memo RESULT and the externally-supplied injected/live pending
-   RESULT against the Verified Result root before allocating it in target memory
-   (a module-produced Param frame is instead Verified-Param-decoded +
-   arg_hash-recomputed inside its import callback, §4.4);
+   length + cap only — it carries no transported schema — replayed VERBATIM, never
+   decoded); Verified-decode each store-loaded memo RESULT against its coordinate's
+   Verified Result binding for TYPE authority. A committed memo (and an Injected
+   record's committed injected memo) is replayed as its EXACT authenticated bytes
+   and reserved by ACTUAL length — it is NOT re-canonicalized (that would change
+   B2-C's opaque output spelling). A Suspended record's externally-supplied
+   injected frame, though a NEW input, is Verified-decoded against the FRONTIER
+   Result binding but published/replayed as its EXACT bytes and reserved by ACTUAL
+   length, NOT via the canonical bound. Only an UNKNOWN FUTURE LIVE result relies on
+   the D1a-4 canonical upper bound: after the live call returns it MUST be
+   Verified-decoded against that call-site's Result binding, canonically
+   re-encoded, and its canonical byte length checked <= that call-site's
+   already-reserved bound BEFORE the adapter allocs / transfers / persists it (a
+   schema-invalid decode or a length exceeding the reserved bound fails closed with
+   no transfer/persist). A module-produced Param frame is instead
+   Verified-Param-decoded + arg_hash-recomputed inside its import callback (§4.4);
 5. validate transition ELIGIBILITY only (Suspended re-offers pending; Injected has
    the committed injected ordinal as last memo; no live mutation yet);
-6. run the TOTAL result-size preflight (§5.2) over the worst case — event region +
-   entry frame + all memo frames + the current live/injected Result + allocator
-   framing — BEFORE any commit, ownership transfer, or live call; if it does not
-   fit, fail closed with no effect;
-7. run the fresh instance from schedule_pos 0; for each below-frontier import
-   return its OLD committed memo-result frame as the module reaches it (independent
-   already-committed authority, transferred per import), invoking no live
-   capability; at the pending import validate the injected result against the
-   capability Result root, CAS-append that NEW pending memo entry atomically, and
-   only AFTER the atomic append transfer the NEW pending-result frame's ownership
-   to the instance (only this new frame is append-gated), then continue past the
-   frontier to genuine live calls.
+6. run the TOTAL result-size preflight (§5.2) BEFORE any commit, ownership
+   transfer, or live call, reserving one fresh instance's actual bump allocations
+   exactly once: checked_total = the event layout's heap_base (which already covers
+   the [0,1024) baseline, the event header + all node-record slots, and 8-byte
+   align) + the entry_input_slot's ACTUAL bytes + every memo occurrence's ACTUAL
+   slot length (with multiplicity) + (Suspended only) the Verified-decoded injected
+   frame's ACTUAL bytes + the future UNKNOWN live Result bounds for call sites
+   STRICTLY AFTER the frontier; require checked_total <= the linear-memory capacity.
+   Identity nodes add zero; the frontier is counted once (Suspended actual injected,
+   or Injected committed memo), never both actual and bound; there is NO per-alloc
+   framing/alignment overhead (the cap-private checked bump advances heap_next by
+   exactly len). If it does not fit, fail closed with no effect;
+7. run the fresh instance from schedule_pos 0. COMMON to EVERY import
+   (below-frontier, frontier, after-frontier): verify the observed call-site +
+   cursor (the import maps to the current expected coordinate) and the current
+   node-event prefix (decode + manifest join, event_count == the CURRENT expected
+   call-site's schedule_pos); Verified-Param-decode the module frame via
+   `param_binding()`; form the EXACT arity-1 `std::vector<Value>` (A2 mints exactly
+   one Param; `hash_values` mixes the vector length first, so the arity MUST be 1);
+   COMPUTE arg_hash via `evaluator::hash_values`; and match capability +
+   source_symbol + invocation_ordinal against the A2 manifest call-site. Then, by
+   coordinate:
+   - a below-frontier capability import, AND an Injected record's frontier import:
+     ReturnMemo — additionally compare the COMPUTED arg_hash against that memo
+     entry's arg_hash (ledger equality); return the OLD committed memo-result frame
+     as EXACT authenticated bytes (independent already-committed authority,
+     transferred per import), invoking no live capability and performing no CAS (the
+     Injected frontier is ReturnMemo of its already-committed injected memo — NO
+     second CAS);
+   - a Suspended record's frontier import: compare the COMPUTED arg_hash against the
+     PENDING entry's arg_hash (ledger equality); only if the event prefix satisfies
+     event_count == frontier.schedule_pos, produce a PublishInjected command; the
+     D2a adapter CAS-appends the NEW pending memo entry atomically and, ONLY after an
+     explicit CAS-success acknowledgement, transfers the NEW pending-result frame's
+     ownership to the instance (only this new frame is append-gated); a CAS failure
+     transfers nothing and leaves the generation Available / record unconsumed;
+   - imports STRICTLY AFTER the frontier: ReadyForLive — the record holds NO expected
+     arg_hash for these coordinates, so there is NO record-hash equality. The
+     computed 64-bit arg_hash is NOT the D2b IdempotencyToken (D0 locks that token as
+     SHA-256 of the canonical typed Param bytes, NOT arg_hash); it is retained only
+     so that IF this live call later forms a NEW pending/memo ledger coordinate, that
+     new entry's arg_hash field can be written/checked from it. ReadyForLive is
+     ONLY the typed "adapter MAY initiate a live call" command; it does NOT imply the
+     next step is terminal OK. The real live call returns OK / PENDING / ERROR: OK ->
+     the Result is Verified-decoded + canonically re-encoded + its canonical length
+     checked <= the reserved bound before alloc/transfer/persist, then execution
+     continues; PENDING -> no Result frame is fabricated, a follow-on typed
+     suspend/persist decision forms a new pending coordinate carrying this step's
+     computed arg_hash (its durable publication/authority is D2b); ERROR / unknown /
+     trap -> fail closed, no transfer/persist/live-success claim. This OK/PENDING/
+     ERROR response API is a D1b/D2b FOLLOW-ON, not defined complete in this slice —
+     the contract does NOT narrate straight from ReadyForLive to terminal OK.
+   Only when `run2` finally returns OK is the FULL node-event prefix verified (all
+   node_count events present, dense, joined). Any trap / extra / out-of-order
+   import-or-event / gate mismatch prevents the FAILING step from emitting any
+   additional frame / publish / live command and fails the controller closed; it
+   does NOT erase an earlier acknowledged PublishInjected command or an earlier
+   ReadyForLive / live effect — the newest authenticated generation remains
+   Available / unconsumed. D1b DECIDES these steps (the typed
+   commands + the terminal verdict); VM instantiation, Param-frame production, CAS
+   execution, and the live call are D2a/D2b adapter actions — D1b never executes
+   them.
 
-Any failure leaves the record unconsumed and invokes no live capability. §5.3
-defines the five frame lifetimes; §5.1 defines crash atomicity and §5.2 the
+Failure handling is bounded by WHEN it occurs, not a blanket "no live capability":
+a gate that fails BEFORE the current step emits any command produces no frame
+transfer / CAS / live command for that step; a failure BEFORE the first
+PublishInjected or ReadyForLive leaves the current authenticated generation
+Available with no new CAS or live effect; a failure AFTER a PublishInjected CAS has
+succeeded never rolls back or masquerades as the old generation — the newest
+authenticated generation stays Available/unconsumed; and a failure AFTER one or
+more live calls have already happened only fails closed (no fabricated result
+transfer/persist, no success claim) and CANNOT claim "no live capability was
+invoked" — durable-effect recovery / exactly-once for those live calls still
+depends on D2b. §5.3
+defines the six frame lifetimes; §5.1 defines crash atomicity and §5.2 the
 resource contract. B0 does not pre-approve an ownership shortcut.
 
 ### 5.1 Transaction, concurrency, and recovery (FUTURE production gate)
@@ -1029,20 +1116,49 @@ admission — verify the record HMAC tag under the host key + canonical re-encod
 yielding TRUSTED expected digests and coordinates; (3) compare `module_sha256` +
 `wire_schema_sha256` + `exec_manifest_sha256` — a mismatch fails even when numeric
 ids coincide; (4) full record invariants + record/module/manifest coordinate
-cross-check; (5) staged exact-slot admission + typed payload: admit the exact
-distinct slot set (`{entry_input_slot}` U memo result slots) on the pinned
-generation snapshot — the `entry_input_slot` is OPAQUE (slot auth/length/cap only),
-each memo/injected/live Result is decoded/validated against its Verified Result
-root, and a module-produced Param is Verified-Param-decoded + arg_hash-recomputed
-in its import callback; (6) transition ELIGIBILITY validation only (no mutation
+cross-check INCLUDING the A2-baseline coordinate gate (record prefix node_count <=
+module node_count; identity node empty memo + no pending; every non-frontier
+capability node exactly one memo ordinal 0; Suspended frontier empty memo + exactly
+one pending ordinal 0; Injected frontier exactly one memo ordinal 0 + no pending;
+any capability memo_count > 1 or memo/pending ordinal != 0 fails closed as
+`resume.coordinate.mismatch` — a baseline gate on what the current cap_call_count in
+{0,1} / invocation_ordinal()==0 module can witness, NOT an A1-grammar relaxation; a
+repeated result_slot across different nodes/occurrences stays legal); (5) staged
+exact-slot admission + typed payload OWNER SPLIT: the
+ResumeSnapshot phase 2 / payload store authenticates and admits ONLY the exact
+distinct STORED slot bytes (`{entry_input_slot}` U memo result slots) on the pinned
+generation snapshot — it does NO schema decode; the `entry_input_slot` is OPAQUE
+(slot auth/length/cap only, replayed verbatim, never decoded). THEN the D1b
+controller Verified-decodes each STORED memo occurrence against that coordinate's
+Verified Result binding (a repeated result_slot reuses the same authenticated
+bytes, but every referencing coordinate's binding/type gate must still hold) — the
+Verified-binding dependency lives in the controller, never in the payload store.
+The Suspended record's EXTERNAL
+injected frame is NOT part of the staged slot set: D1b PREPARE Verified-decodes it
+against the FRONTIER Result binding only when it has been supplied (else the plan
+stops at NeedsInjectedResult). A module-produced Param is Verified-Param-decoded +
+arg_hash-recomputed in its IMPORT CALLBACK (arity-1 vector). A future LIVE Result
+does not exist at admission: it is Verified-decoded + canonically re-encoded only
+AFTER the live call returns, its canonical length checked <= its reserved bound
+before the adapter allocs/transfers/persists it; (6) transition ELIGIBILITY
+validation only (no mutation
 yet); (7) the TOTAL result-size preflight (§5.2); (8) effect-free replay of the
-below-frontier imports from schedule_pos 0 to the pending coordinate, returning
-each OLD committed memo-result frame with no live call; (9) at the pending
-coordinate, CAS publish the new pending memo entry + transfer the pending-result
-frame ownership; (10) frontier-forward live import. The effect-free replay (8) is
+below-frontier imports from schedule_pos 0 to the frontier, returning
+each OLD committed memo-result frame with no live call; (9) CONDITIONAL on the
+frontier state: an Injected frontier is a ReturnMemo of its already-committed
+injected memo (NO CAS); at a Suspended frontier D1b produces a PublishInjected
+command and the adapter CAS-publishes the new pending memo entry and, only after an
+explicit CAS-success ACK, transfers the pending-result
+frame ownership (a Suspended record with no supplied injected frame stops at
+NeedsInjectedResult, before the preflight); (10) ReadyForLive command(s) for
+imports strictly after the frontier (the live OK/PENDING/ERROR response API is a
+D1b/D2b follow-on, not a straight line to terminal OK). The effect-free replay (8)
+is
 BEFORE the CAS (9) so a trap during replay never leaves a mutation, and every CAS,
 mutation, Injected publish, or live effect happens strictly AFTER the preflight
-(7). Any failure leaves the record unconsumed and the loader fails CLOSED — it does
+(7). A failure fails the controller / loader CLOSED and leaves the newest
+authenticated generation Available / unconsumed (an already-acknowledged CAS or an
+already-emitted live effect is NOT rolled back) — it does
 NOT inherit the native recovery "load error -> fresh run" downgrade.
 
 Staged admission (B2-D1a, LANDED `9b8053cc`; the minimal store change that makes
@@ -1172,8 +1288,13 @@ lifecycle above remains the future production contract.
 > `max_canonical_json_size(binding) -> std::expected<std::uint64_t,
 > MaxCanonicalSizeError>`, values `MaxCanonicalSizeError::Unbounded` /
 > `MaxCanonicalSizeError::SizeOverflow`, emits no `resume.*` diagnostic string).
-> What is NOT implemented is the host-side TOTAL reservation (event region + entry
-> frame + memo frames + live/injected Result + allocator framing), the one-page
+> What is NOT implemented is the host-side TOTAL reservation (the fresh instance's
+> actual bump allocations counted exactly once: event-layout heap_base +
+> entry_input_slot actual bytes + every memo occurrence at actual length WITH
+> multiplicity + the Suspended injected frame's actual bytes + the future live
+> Result bounds for call sites strictly after the frontier; no separate
+> allocator-framing term — the checked bump advances heap_next by exactly len), the
+> one-page
 > capacity verdict, the `size_t`/align/u32-host casts, and the mapping of
 > `MaxCanonicalSizeError` to the host `resume.preflight.*` catalogue — all future
 > D1b.
@@ -1203,16 +1324,29 @@ Decimal/Duration spelling, or a productive recursive cycle in the node graph (a
 zero-capacity-cut cycle is not productive); it returns
 `MaxCanonicalSizeError::SizeOverflow` on a checked u64 add/mul overflow of a
 finite schema's bound (it makes no `size_t`/align/one-page verdict of its own).
-The FUTURE D1b TOTAL controller combines that per-Result bound with the event
-region (`event_log_base = 1024`,
-`event_bytes = checked(8 + node_count * 40)`, `heap_base =
-align_up(event_log_base + event_bytes, 8)`), the restored entry frame, all memo
-result frames, the current live/injected Result, and the allocator framing, then
-makes the one-page / u32-host verdict; a
-checked add/mul/align/`size_t` overflow OR a total reservation exceeding the fixed
-single page is what D1b fails closed with `resume.preflight.resource_exhausted`,
-and D1b maps the per-Result `MaxCanonicalSizeError::Unbounded` to
-`resume.preflight.unbounded`. These two are
+The FUTURE D1b TOTAL controller reserves one fresh instance's actual bump
+allocations exactly once: checked_total = the event layout's heap_base
+(`align_up(event_log_base + checked(8 + node_count * 40), 8)`, already covering the
+[0,1024) baseline + event header + all node-record slots + align) + the
+entry_input_slot's ACTUAL authenticated bytes + every record memo occurrence's
+ACTUAL slot length (with multiplicity — a repeated result_slot counts per
+occurrence, including an Injected record's committed frontier injected memo) +
+(Suspended only) the externally-supplied injected frame's ACTUAL bytes after
+Verified-decode + the future UNKNOWN live Result bounds (each `result_binding()`'s
+`max_canonical_json_size`) summed ONLY over call sites with schedule_pos STRICTLY
+AFTER the frontier — the current frontier is never counted both actual and bound,
+identity nodes add zero, and there is NO allocator-framing term (the cap-private
+checked bump advances heap_next by exactly len). Pass 1 visits ALL future-live
+bindings and records `seen_unbounded` and `seen_size_overflow` (a per-binding
+`MaxCanonicalSizeError::SizeOverflow` from D1a-4 is RECORDED, NOT early-returned —
+early-returning on the first SizeOverflow would mask a later binding's Unbounded).
+If ANY binding is Unbounded, D1b returns `resume.preflight.unbounded` (before any
+total arithmetic). Only when NO binding is Unbounded does pass 2 run: any recorded
+`seen_size_overflow`, OR an event-layout checked add/mul/align overflow, OR a
+checked total add overflow, OR a `size_t`/u32-host cast failure, OR checked_total
+exceeding the fixed single-page capacity, all map to
+`resume.preflight.resource_exhausted`. An early arithmetic overflow never masks a
+later Unbounded. These two are
 the ONLY host preflight errors and are a DISTINCT D1b runtime catalogue — they are
 never the
 compile-time `wasm.RESOURCE_EXHAUSTED` / `wasm.BINARY_OVERFLOW`, which stay
@@ -1230,32 +1364,50 @@ not chosen.)
 
 > Status: **B2-0 FOUNDATION DESIGN LOCKED; NOT implemented.**
 
-Five distinct frame lifetimes, each with allocate / borrow / transfer / last-use /
+Six distinct frame lifetimes, each with allocate / borrow / transfer / last-use /
 failure-cleanup:
-- **L1 host-private decoded Value** — allocated in HOST memory during admission
-  (§5.1 step 5, typed-payload decode); never in module memory; borrowed by the host
-  to recompute `arg_hash` + validate; last-use = end of that coordinate's gate; on
-  failure dropped immediately (no module allocation occurred); never echoed.
-- **L2 module-owned replayed argument frame** — the fresh instance allocates it in
-  its OWN memory as it re-executes to an import; the host BORROWS it read-only
-  during the import callback to decode the Param + recompute `arg_hash`; ownership
-  stays with the module (its lifetime), the record persists no args slot; failure
-  before the import returns leaves the record unconsumed.
+- **L0 entry-input transfer frame** — the authenticated `entry_input_slot` bytes,
+  OPAQUE / verbatim / reserved by ACTUAL length, never schema-decoded; the D2a
+  adapter allocs + writes it into fresh-instance memory and transfers ownership to
+  the module at the `run2` invocation; a pre-transfer failure does NOT hand the
+  frame to the module and leaves the record unconsumed.
+- **L1 host-private decoded Value** — a TEMPORARY Value produced per owner gate,
+  never in module memory: a stored memo / injected / live Result is Verified-decoded
+  for schema validation (a future live Result is additionally canonicalized +
+  bound-checked), and a module Param frame is Verified-decoded in the import
+  callback to feed `hash_values`; each is dropped at the end of its gate and is
+  never placed in module memory or echoed.
+- **L2 module-owned import Param view** — the Param the host reads in an import
+  callback is a VIEW/frame pointing at ALREADY-EXISTING module-owned storage
+  (sourced from L0 entry / an L3 memo return / an L4 injected transfer / a
+  future-live OK Result), routed to the import by identity/fan-out; this step adds
+  NO new bump allocation. The host BORROWS it read-only to decode the Param +
+  recompute `arg_hash`; ownership stays with the module (its lifetime); the record
+  persists NO args slot; failure before the import returns leaves the record
+  unconsumed.
 - **L3 memo-result return frame** — an OLD committed memo result the host writes
-  into fresh-instance memory and returns for a below-frontier import; ownership
+  into fresh-instance memory and returns for a below-frontier import OR an Injected
+  record's frontier import; returned as EXACT authenticated bytes; ownership
   transfers to the module ON RETURN (independent already-committed authority; NOT
-  gated behind the new pending append); last-use = the module reads it.
-- **L4 pending-result return frame** — the injected pending result; validated
-  against the Result root, its NEW memo entry appended atomically FIRST, and only
-  then its `(ptr,len)` ownership transferred to the module (§5.1 step 9, CAS
-  publish + pending ownership transfer); this is the ONLY frame gated behind the atomic
-  append.
-- **L5 node-output / fan-out frame** — a completed node's output routed to one or
-  more downstream nodes; allocated once in fresh-instance memory; each downstream
-  consumer BORROWS it (no copy) since runners are identity/borrowed-passthrough
-  today; failure on any consumer fails closed, record unconsumed.
-Ownership model for this slice: INSTANCE-LIFETIME allocation, no reclaim — every
-replayed/injected/output frame lives until the fresh instance is torn down.
+  gated behind any new pending append, NO CAS); last-use = the module reads it.
+- **L4 pending-result return frame** — ONLY a Suspended record's frontier NEW
+  injected pending result; Verified-decoded against the Result binding, its NEW memo
+  entry CAS-appended atomically FIRST, and only after an explicit CAS-success
+  acknowledgement is its `(ptr,len)` ownership transferred to the module; this is
+  the ONLY frame gated behind the atomic append (an Injected frontier does NOT use
+  this lifetime — it is an L3 ReturnMemo).
+- **L5 node-output / fan-out view** — a completed node's output routed to one or
+  more downstream nodes is a VIEW/lifetime over EXISTING storage, not a new
+  allocation: an identity runner reuses its input pointer, and a capability output
+  reuses the already-transferred L3 / L4 / future-live Result storage; the
+  scheduler / fan-out routing performs NO extra allocation or copy; each downstream
+  consumer BORROWS it; failure on any consumer fails closed, record unconsumed.
+Ownership model for this slice: INSTANCE-LIFETIME allocation, no reclaim. The ONLY
+host bump allocations are L0 entry, each L3 memo return, an L4 Suspended injected
+transfer, and a future-live OK Result transfer — exactly the terms summed in the
+§5.2 checked_total; the L2 Param view and the L5 fan-out view are ALIASES/views
+into that existing storage and are NOT added to checked_total. Every entry /
+replayed / injected / output frame lives until the fresh instance is torn down.
 Bounded-ness is proven by the checked preflight (§5.2), not by trap-on-overrun: a
 finite acyclic (Kahn) schedule, each node once, so peak memory is bounded by the
 committed ledger + one linear pass; if it does not fit, resume fails closed before
@@ -1420,8 +1572,15 @@ Implementation is intentionally split before any resume ABI:
      D1a-1..4 internal code/evidence are closed; this does NOT close B2-D — D1b +
      D2a + D2b + the protected store + the digest-comparison/coordinate-join gates
      remain;
-     **D1b** a host-independent replay controller proving deterministic state
-     transitions only (FOUNDATION — no real VM, no durable-effect authority);
+     **D1b** a host-independent, DECISION-ONLY replay controller proving
+     deterministic state transitions + the TOTAL result-size verdict (per §5.2:
+     actual bump allocations counted once + future-live bounds strictly after the
+     frontier) + the digest / coordinate / Param-schema gates + arg_hash ledger
+     equality ONLY where an expected hash exists (memo/pending) + typed adapter
+     commands (ReturnMemo / PublishInjected / ReadyForLive), where ReadyForLive is
+     command-only and the live OK/PENDING/ERROR response API is a D1b/D2b follow-on
+     (FOUNDATION — no real VM, no CAS/store mutation, no live capability, no
+     durable-effect authority; it decides, it does not execute);
      **D2a** a real embeddable production VM/host adapter + >=1 non-test caller
      (Shared-Change Gate, owner-approved) — this is the production-host step;
      **D2b** a durable-effect intent/result authority with read/recover/dedup/
