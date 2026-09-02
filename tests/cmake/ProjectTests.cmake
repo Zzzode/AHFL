@@ -1075,6 +1075,10 @@ add_test(NAME ahfl.runtime.core_wasm_node_events
     COMMAND $<TARGET_FILE:ahfl_core_wasm_node_events_tests>
 )
 
+add_test(NAME ahfl.runtime.core_wire_canonical_size
+    COMMAND $<TARGET_FILE:ahfl_core_wire_canonical_size_tests>
+)
+
 add_test(NAME ahfl.runtime.payload_store_codec
     COMMAND $<TARGET_FILE:ahfl_payload_store_codec_tests>
 )

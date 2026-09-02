@@ -28,6 +28,7 @@ add_library(ahfl_runtime_engine STATIC
     core_wasm_resume_record.cpp
     core_wasm_schema_module.cpp
     core_wasm_node_events.cpp
+    core_wire_canonical_size.cpp
     payload_store_codec.cpp
     payload_store.cpp
 )
