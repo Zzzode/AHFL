@@ -190,6 +190,92 @@ int main() {
               "layout.region_math_overflow");
     }
 
+    // ---- shared layout authority (event_region_heap_base) ------------------------
+    // Layout-pure: takes only node_count, renders NO capacity verdict, and is the
+    // single SSOT the decoder (and future D1b) call.
+    static_assert(noexcept(event_region_heap_base(std::size_t{0})),
+                  "event_region_heap_base must be noexcept");
+    {
+        // Pure-formula boundaries. node_count 0 -> 1032 (event_bytes 8); this is a
+        // formula vector, NOT a no-capability emitter claim. 2 -> 1112 (common-KAT).
+        auto z = event_region_heap_base(0);
+        check(z.has_value() && *z == 1032, "authority.n0_1032");
+        auto one = event_region_heap_base(1);
+        check(one.has_value() && *one == 1072, "authority.n1_1072");
+        auto two = event_region_heap_base(2);
+        check(two.has_value() && *two == 1112, "authority.n2_1112");
+        // 1612 fits a page (65512); 1613 SUCCEEDS at 65552 — the helper renders NO
+        // capacity verdict, so a heap_base past one page is returned normally.
+        auto fit = event_region_heap_base(1612);
+        check(fit.has_value() && *fit == 65512, "authority.n1612_65512");
+        auto past = event_region_heap_base(1613);
+        check(past.has_value() && *past == 65552, "authority.n1613_65552_no_capacity_verdict");
+    }
+    {
+        // max_fit = largest node_count whose region/align stays in the u32 domain.
+        // max_fit succeeds; max_fit+1 is a layout Overflow (region math leaves u32).
+        const std::size_t max_fit =
+            (static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) - 1032u) / 40u;
+        auto ok = event_region_heap_base(max_fit);
+        check(ok.has_value(), "authority.max_fit_ok");
+        auto over = event_region_heap_base(max_fit + 1u);
+        check(!over.has_value() && over.error() == NodeEventLayoutError::Overflow,
+              "authority.max_fit_plus1_overflow");
+    }
+    {
+        // node_count-domain Overflow: only assert if size_t can represent
+        // UINT32_MAX + 1 (64-bit); on a 32-bit size_t this value is unrepresentable,
+        // so skip rather than construct a wrap.
+        if constexpr (sizeof(std::size_t) > 4) {
+            const std::size_t just_over_u32 =
+                static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1u;
+            auto r = event_region_heap_base(just_over_u32);
+            check(!r.has_value() && r.error() == NodeEventLayoutError::Overflow,
+                  "authority.node_count_domain_overflow");
+        }
+    }
+    {
+        // Decoder <-> authority: the decoder's LayoutExceedsMemory derives from the
+        // SUPPLIED span vs the authority's heap_base (the span is the sole size
+        // authority). span == heap_base proceeds; span == heap_base - 1 fails.
+        auto hb = event_region_heap_base(2);
+        check(hb.has_value() && *hb == 1112, "span_diff.heap_base_1112");
+        if (hb.has_value()) {
+            std::vector<std::uint8_t> exact(*hb, 0); // span == heap_base
+            auto ok = decode_node_events(std::span<const std::uint8_t>(exact), 2);
+            check(ok.has_value() && ok->empty(), "span_diff.exact_heap_base_ok");
+            std::vector<std::uint8_t> minus1(*hb - 1, 0); // span == heap_base - 1
+            auto bad = decode_node_events(std::span<const std::uint8_t>(minus1), 2);
+            check(!bad.has_value() && bad.error() == NodeEventError::LayoutExceedsMemory,
+                  "span_diff.heap_base_minus1_exceeds");
+        }
+    }
+    {
+        // Decoder-vs-helper sweep: for selected node_counts, prove the decoder (over a
+        // zeroed one-page span) agrees with the shared authority on all three
+        // branches: helper Overflow -> decoder LayoutOverflow; helper Ok with
+        // heap_base > page -> decoder LayoutExceedsMemory; helper Ok with heap_base <=
+        // page -> decoder success + empty records.
+        const std::size_t max_fit =
+            (static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) - 1032u) / 40u;
+        const std::size_t counts[] = {0u,   1u,       2u,          800u,
+                                      1612u, 1613u,   max_fit,     max_fit + 1u};
+        std::vector<std::uint8_t> page(kPageBytes, 0); // event_count 0
+        for (const std::size_t nc : counts) {
+            const auto lay = event_region_heap_base(nc);
+            const auto dec = decode_node_events(std::span<const std::uint8_t>(page), nc);
+            if (!lay.has_value()) {
+                check(!dec.has_value() && dec.error() == NodeEventError::LayoutOverflow,
+                      "sweep.overflow_maps_layout_overflow");
+            } else if (*lay > kPageBytes) {
+                check(!dec.has_value() && dec.error() == NodeEventError::LayoutExceedsMemory,
+                      "sweep.past_page_exceeds_memory");
+            } else {
+                check(dec.has_value() && dec->empty(), "sweep.fits_decodes_empty");
+            }
+        }
+    }
+
     // ---- one-field tamper matrix (each asserts the exact no-echo error) ----------
     auto expect_error = [](std::vector<std::uint8_t> mem, std::size_t node_count,
                            NodeEventError want, std::string_view name) {

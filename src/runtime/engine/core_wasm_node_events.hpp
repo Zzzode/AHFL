@@ -80,4 +80,30 @@ enum class NodeEventError : std::uint8_t {
 [[nodiscard]] std::expected<std::vector<NodeEventRecord>, NodeEventError>
 decode_node_events(std::span<const std::uint8_t> linear_memory, std::size_t node_count);
 
+// A single-value overflow error for the pure layout authority below. It is
+// deliberately DISTINCT from `NodeEventError` so the two owners map it locally: the
+// decoder maps `Overflow` -> `NodeEventError::LayoutOverflow` (future collapse to
+// `resume.event.malformed`), while the future B2-D D1b TOTAL preflight maps the SAME
+// `Overflow` -> `resume.preflight.resource_exhausted`. One layout SSOT, two
+// owner-local mappings.
+enum class NodeEventLayoutError : std::uint8_t {
+    Overflow, // node_count, or the checked region / heap_base arithmetic, leaves u32
+};
+
+// The SINGLE runtime authority for the capability-workflow node-event buffer's heap
+// base. LAYOUT-PURE: it takes only `node_count` (never a span / capacity), performs
+// the checked u64 arithmetic `heap_base = align_up(1024 + 8 + node_count * 40, 8)`,
+// and returns that heap_base, or `Overflow` if `node_count` or the region/align math
+// leaves the wasm32 (u32) domain. It renders NO capacity / one-page verdict: a legal
+// `heap_base` larger than one 64 KiB page is returned normally (e.g. node_count 1613
+// -> 65552); only `decode_node_events` compares that heap_base against the SUPPLIED
+// span. It models ONLY the capability-workflow event buffer formula (node_count 0
+// yields 1032 as a pure-formula boundary, NOT a claim about a no-capability emitter,
+// which has no event buffer). Both `decode_node_events` and the future D1b TOTAL
+// preflight call THIS; the compiler-backend `compute_event_layout` remains the
+// byte-emitter authority (no runtime<->compiler dependency; agreement is locked by
+// the common-KAT).
+[[nodiscard]] std::expected<std::uint64_t, NodeEventLayoutError>
+event_region_heap_base(std::size_t node_count) noexcept;
+
 } // namespace ahfl::runtime::core_wasm_node_events

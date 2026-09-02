@@ -37,28 +37,45 @@ constexpr std::uint32_t kStatusOk = 0; // AHFL_CAP_OK
 
 } // namespace
 
-std::expected<std::vector<NodeEventRecord>, NodeEventError>
-decode_node_events(std::span<const std::uint8_t> linear_memory, std::size_t node_count) {
-    // (1) The header must fit.
-    if (linear_memory.size() < kEventRecordsBase) {
-        return std::unexpected(NodeEventError::Truncated);
-    }
-    // (2) Full static layout: node_count in the u32 domain, then the checked region
-    // arithmetic and align_up(...,8), then the heap must fit the linear memory. Every
-    // step is widened to u64 before comparison so nothing wraps.
+std::expected<std::uint64_t, NodeEventLayoutError>
+event_region_heap_base(std::size_t node_count) noexcept {
+    // LAYOUT-PURE checked wasm32 arithmetic; no span, no capacity verdict. Every step
+    // is widened to u64 before comparison so nothing wraps. node_count leaving the u32
+    // domain, or the region / align math leaving the u32 domain, is Overflow.
     if (node_count > std::numeric_limits<std::uint32_t>::max()) {
-        return std::unexpected(NodeEventError::LayoutOverflow);
+        return std::unexpected(NodeEventLayoutError::Overflow);
     }
     const auto n = static_cast<std::uint64_t>(node_count);
     const std::uint64_t region = static_cast<std::uint64_t>(kEventHeaderBytes) +
                                  n * static_cast<std::uint64_t>(kEventRecordBytes);
     const std::uint64_t unaligned = static_cast<std::uint64_t>(kEventLogBase) + region;
     const std::uint64_t heap_base = (unaligned + 7u) & ~static_cast<std::uint64_t>(7u);
-    // Anything beyond the wasm32 domain is a layout overflow (the emitter guards the
-    // identical bound with a BINARY_OVERFLOW; here it is a decoder-side fail-closed).
+    // Beyond the wasm32 domain is a layout overflow (the emitter guards the identical
+    // bound with a BINARY_OVERFLOW). NO capacity/one-page verdict here: a legal
+    // heap_base larger than one page is returned normally; the caller compares it
+    // against a supplied span (decoder) or the total reservation (future D1b).
     if (heap_base > std::numeric_limits<std::uint32_t>::max()) {
+        return std::unexpected(NodeEventLayoutError::Overflow);
+    }
+    return heap_base;
+}
+
+std::expected<std::vector<NodeEventRecord>, NodeEventError>
+decode_node_events(std::span<const std::uint8_t> linear_memory, std::size_t node_count) {
+    // (1) The header must fit. Checked BEFORE the layout authority so a too-small span
+    // is Truncated (Truncated beats LayoutOverflow).
+    if (linear_memory.size() < kEventRecordsBase) {
+        return std::unexpected(NodeEventError::Truncated);
+    }
+    // (2) Full static layout via the shared authority (node_count u32 domain + region
+    // + align_up + wasm32 bound). The decoder maps its Overflow to LayoutOverflow.
+    const auto layout = event_region_heap_base(node_count);
+    if (!layout) {
         return std::unexpected(NodeEventError::LayoutOverflow);
     }
+    const std::uint64_t heap_base = *layout;
+    // The heap must fit the SUPPLIED linear memory — this is the sole memory-size
+    // authority and stays in the decoder, never in the layout helper.
     if (heap_base > linear_memory.size()) {
         return std::unexpected(NodeEventError::LayoutExceedsMemory);
     }
