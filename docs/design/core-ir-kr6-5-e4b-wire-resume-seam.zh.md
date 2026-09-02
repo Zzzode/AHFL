@@ -663,17 +663,42 @@ identity or replay order.
 > production host + artifact-digest gate are NOT implemented and this does not
 > close B2 or KR6.5.
 
-The chosen resume approach adds NO new module ABI SIGNATURE and no new import or
-export index. Precisely: the PUBLIC signatures and function indices of the
-existing `run` / `run2` / `ahfl_cap` are unchanged; the no-capability E1/E3
-fixtures stay byte-frozen; and the E2 agent artifact is not rewritten. The new
-capability-bearing WORKFLOW artifact is itself the first capability-workflow byte
-change — its `run2` BODY necessarily changes (capability `PENDING` propagation +
-node-event writes), which is expected; only the signatures/indices above are
-frozen, not that body. The capability-bearing workflow module carries a
+The chosen resume approach adds NO new module ABI SYMBOL or SIGNATURE and reuses
+the existing PROJECT `import_count + base` function-index RULE unchanged (imported
+functions occupy the low indices; each defined function's index is
+`import_count + base`). Precisely: the existing `run` / `run2` export and
+`ahfl_cap` import Wasm ABI signatures are unchanged, and the no-capability E1/E3
+fixtures keep `import_count == 0` so their bytes AND their function/export index
+NUMBERS stay frozen; the E2 agent artifact is not rewritten. The new
+capability-bearing WORKFLOW artifact is the first capability-workflow byte change
+and a NEW baseline: once it carries `ahfl_cap` imports its defined/export function
+indices (runners / `run` / `run2`) NECESSARILY SHIFT by `import_count` UNDER THE
+SAME RULE — that shift is expected, not a new ABI. Its `run2` BODY also
+necessarily changes (capability `PENDING` propagation + node-event writes). Only
+the ABI symbols/signatures and the index-computation rule are frozen — not the
+concrete index numbers of the capability-workflow baseline, and not that body.
+The capability-bearing workflow module carries a
 deterministic EXECUTION MANIFEST (a compiler-emitted custom section) and a
 module-written node-event buffer; the host drives a fresh instance and answers
 the existing `ahfl_cap` imports.
+
+Write-safety and re-entry contract (capability-workflow baseline). Legacy `run`
+is pointer-only (the v1 `(ptr, len)` ABI carries no status), so on a
+capability-workflow it MUST trap BEFORE any state mutation, input read, or
+capability effect — a `PENDING` must never leak through `run`. `run2` returns
+`OK` only after complete success; among non-OK import statuses it propagates only
+`PENDING` as `(PENDING, 0, 0)`, and `ERROR` or any unknown/unexpected status
+returns a fail-closed `(ERROR, 0, 0)` (never a fabricated status, never
+trap-as-success); a non-`OK` status writes no completion event and does not
+increment `event_count`. When `run2` returns `PENDING` it sets the private
+`pending_latched` global; the FIRST instruction of any subsequent same-instance
+`run2` checks that latch and traps BEFORE it reads or transfers a new input
+frame, clears the event-log header, or re-runs any import — otherwise a caller
+could re-invoke a suspended instance and repeat live effects. This latch is a
+genuine safety gate, independent of the event buffer: the `event_count` bound
+only limits count authority and cannot substitute for it. The `pending_latched`
+global is emitted ONLY on the capability-workflow baseline; no-capability E1/E3
+modules keep their existing global section and bytes.
 
 Execution manifest — `ahfl.wasm-exec-manifest.v1`, compiler-emitted, carrying NO
 key material and NO self-HMAC (a runtime deployment key must never enter the
@@ -768,8 +793,14 @@ Resume state machine (fresh instance, from `schedule_pos` 0):
   never live-fallback.
 
 Node-event buffer — the module's own observable completion evidence (not
-counters, not host inference). It is a fixed region in linear memory, NOT a new
-export or global (existing export/function indices stay unchanged). Layout for the
+counters, not host inference). It is a fixed region in linear memory and needs
+NO new export and NO new global of its own (it does not itself shift export or
+global indices). Independently, the capability-workflow baseline DOES add one new
+PRIVATE global — a `pending_latched` flag (see the write-safety and re-entry
+contract above) — emitted ONLY on the capability-workflow lane; the
+no-capability E1/E3 global sections and bytes are unchanged (a function import
+never shifts global indices, and this global is emitted only when the module has
+imports). Layout for the
 capability-workflow artifact: a fixed HEADER at `event_log_base = 1024` holds
 `event_count` as a u32 little-endian at offset [0..3] of the region (so the host
 reads the valid record count DIRECTLY at byte 1024, with no inference); the
@@ -781,10 +812,12 @@ records + heap never overlap. Before reading any record the host fails closed
 unless `event_count <= node_count` AND the header `pad[4..7] == 0` AND the checked
 bound `records_base + event_count * 40 <= heap_base (<= linear_memory_bytes)`
 holds — a corrupted count can never steer the host outside the event region. Each
-node completion writes ONE fixed 40-byte little-endian TAGGED record at
-`records_base + event_count * 40`, THEN stores the incremented `event_count` in
-the header (bumped only after the full body store, so the host never reads a
-partial record). The
+node completion that returns `AHFL_CAP_OK` writes ONE fixed 40-byte little-endian
+TAGGED record at `records_base + event_count * 40`, THEN stores the incremented
+`event_count` in the header (bumped only AFTER the full 40-byte body store, so the
+host never reads a partial record). A `PENDING`, `ERROR`, or unknown status writes
+NO record and does NOT increment `event_count` (only successful completions are
+evidence). The
 region is STATICALLY sized to exactly `node_count` records (one completion per
 scheduled node), so the normal path cannot structurally overflow; a defensive
 guard against a would-be write past `node_count` fails `run2` closed as
