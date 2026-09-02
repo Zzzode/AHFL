@@ -62,4 +62,25 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         PASS_REGULAR_EXPRESSION "unknown --wasm-profile"
         LABELS "wasm;backend;target"
     )
+
+    # RFC 0026 E4-B2-C: capability-workflow binary/structural gate. Drives the real
+    # ahflc package entry (committed manifest isolated into a TemporaryDirectory
+    # with a copy of the committed golden), asserts byte identity vs the emit-only
+    # producer + determinism, and locks the import / AHFLXM-golden / AHFLWS-EOF
+    # structure. Not execution evidence.
+    add_test(NAME ahflc.emit_wasm.capability_workflow_binary_gate
+        COMMAND ${Python3_EXECUTABLE}
+                "${AHFL_TESTS_DIR}/scripts/wasm_workflow_cap_binary_gate.py"
+                $<TARGET_FILE:ahflc>
+                $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
+                "${AHFL_TESTS_DIR}/integration/wasm_capability_workflow/ahfl.toml"
+                "${AHFL_TESTS_DIR}/golden/wasm/e3_capability_workflow.ahfl"
+                "${AHFL_TESTS_DIR}/integration/wasm_e3_workflow/ahfl.toml"
+    )
+    set_tests_properties(ahflc.emit_wasm.capability_workflow_binary_gate PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "all KR6.5 E4-B2-C capability-workflow binary/structural gates passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC"
+        LABELS "wasm;backend;target;structural"
+    )
 endif()

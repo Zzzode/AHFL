@@ -5,6 +5,7 @@
 #include "ahfl/runtime/ahfl_host.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -53,10 +54,35 @@ constexpr std::uint8_t kSectionExport = 7;
 constexpr std::uint8_t kSectionCode = 10;
 
 // RFC 0026 E4-B1 wire-schema transport (seam doc §3.1): the deterministic
-// logical wire schema for an E2 agent's reachable capability imports rides in a
-// single Wasm custom section, keyed by this canonical name, appended once after
-// the Code section. E1 no-import agents and E3 workflows never carry it.
+// logical wire schema for reachable capability imports rides in a single Wasm
+// custom section, keyed by this canonical name, at the module's EOF. E1 no-import
+// agents and E3 no-capability identity workflows never carry it; E2 agents and
+// B2-C capability workflows carry the EOF AHFLWS section.
 constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema.v1";
+
+// RFC 0026 E4-B2-C capability-workflow (seam doc §4.4): a capability-bearing
+// workflow module carries a compiler-emitted execution manifest custom section
+// (payload magic AHFLXM) exactly once, immediately BEFORE the EOF wire-schema
+// section. The byte grammar is the exact mirror of the A2 decoder
+// (src/runtime/engine/core_wasm_schema_module.cpp); no runtime code is linked
+// or shared here.
+constexpr std::string_view kExecManifestSectionName = "ahfl.wasm-exec-manifest.v1";
+constexpr std::array<std::uint8_t, 6> kExecManifestMagic = {'A', 'H', 'F', 'L', 'X', 'M'};
+constexpr std::uint8_t kExecManifestVersion = 1;
+constexpr std::uint8_t kExecManifestEntryKindWorkflow = 0;
+
+// RFC 0026 E4-B2-C node-event buffer (seam doc §4.4): a fixed linear-memory
+// region observed by the host as post-run2 completion/ordering evidence. It is
+// NOT a no-reinvoke proof (that is the B2-D host envelope). Header at 1024:
+// event_count u32-LE at [0..3], pad[4..7]==0; records start at 1032; each record
+// is a fixed 40 bytes; the region is statically sized to exactly node_count.
+constexpr std::uint32_t kEventLogBase = 1024;
+constexpr std::uint32_t kEventHeaderBytes = 8;
+constexpr std::uint32_t kEventRecordBytes = 40;
+constexpr std::uint32_t kEventRecordsBase = kEventLogBase + kEventHeaderBytes; // 1032
+constexpr std::uint32_t kLinearMemoryBytes = 65536; // one fixed wasm page
+constexpr std::uint8_t kEventTagIdentity = 0;
+constexpr std::uint8_t kEventTagCapability = 1;
 
 constexpr std::uint8_t kImportFunction = 0;
 constexpr std::uint8_t kExportFunction = 0;
@@ -77,13 +103,21 @@ constexpr std::uint8_t kOpCall = 0x10;
 constexpr std::uint8_t kOpDrop = 0x1a;
 constexpr std::uint8_t kOpLocalGet = 0x20;
 constexpr std::uint8_t kOpLocalSet = 0x21;
+constexpr std::uint8_t kOpLocalTee = 0x22;
 constexpr std::uint8_t kOpGlobalGet = 0x23;
 constexpr std::uint8_t kOpGlobalSet = 0x24;
+constexpr std::uint8_t kOpI32Load = 0x28;
+constexpr std::uint8_t kOpI32Store = 0x36;
+constexpr std::uint8_t kOpI64Store = 0x37;
 constexpr std::uint8_t kOpI32Const = 0x41;
+constexpr std::uint8_t kOpI64Const = 0x42;
 constexpr std::uint8_t kOpI32Eqz = 0x45;
 constexpr std::uint8_t kOpI32Eq = 0x46;
+constexpr std::uint8_t kOpI32LtU = 0x49;
+constexpr std::uint8_t kOpI32GtU = 0x4b;
 constexpr std::uint8_t kOpI32Add = 0x6a;
 constexpr std::uint8_t kOpI32Sub = 0x6b;
+constexpr std::uint8_t kOpI32Mul = 0x6c;
 constexpr std::uint8_t kOpI32Or = 0x72;
 
 constexpr std::uint32_t kGlobalCurrentState = 0;
@@ -147,6 +181,14 @@ struct WorkflowNodePlan {
     CoreWorkflowNodeId node{};
     CoreInstanceId target_instance{};
     WorkflowFrameSource input;
+    // RFC 0026 E4-B2-C carriers. schedule_pos is the node's dense position in the
+    // Kahn schedule (== its manifest array index). A node reachable to a single
+    // capability carries that capability + its source SymbolId; identity nodes
+    // leave has_capability == false.
+    std::uint32_t schedule_pos{0};
+    bool has_capability{false};
+    CoreCapabilityId capability{};
+    std::uint64_t source_symbol{0};
 };
 
 struct WorkflowPlan {
@@ -156,6 +198,11 @@ struct WorkflowPlan {
     std::vector<AgentPlan> agent_plans;
     std::vector<WorkflowNodePlan> nodes;
     WorkflowFrameSource output;
+    // RFC 0026 E4-B2-C: sorted-unique reachable capability ids across all node
+    // agents (empty for an identity workflow). Non-empty triggers the
+    // capability-workflow baseline (import section, manifest, event buffer, latch,
+    // checked alloc).
+    std::vector<CoreCapabilityId> imports;
 };
 
 struct FunctionTable {
@@ -174,19 +221,23 @@ struct FunctionTable {
 };
 
 struct WorkflowFunctionTable {
+    // Imported functions occupy the low indices; every defined function index is
+    // import_count + base (the same PROJECT rule the agent FunctionTable uses).
+    // Identity workflows have import_count == 0, so their indices are unchanged.
+    std::uint32_t import_count{0};
     std::uint32_t runner_count{0};
-    [[nodiscard]] constexpr std::uint32_t alloc() const noexcept { return 0; }
-    [[nodiscard]] constexpr std::uint32_t dealloc() const noexcept { return 1; }
-    [[nodiscard]] constexpr std::uint32_t current_state() const noexcept { return 2; }
-    [[nodiscard]] constexpr std::uint32_t step() const noexcept { return 3; }
-    [[nodiscard]] constexpr std::uint32_t runner(std::uint32_t index) const noexcept {
-        return 4 + index;
+    [[nodiscard]] std::uint32_t alloc() const noexcept { return import_count + 0u; }
+    [[nodiscard]] std::uint32_t dealloc() const noexcept { return import_count + 1u; }
+    [[nodiscard]] std::uint32_t current_state() const noexcept { return import_count + 2u; }
+    [[nodiscard]] std::uint32_t step() const noexcept { return import_count + 3u; }
+    [[nodiscard]] std::uint32_t runner(std::uint32_t index) const noexcept {
+        return import_count + 4u + index;
     }
-    [[nodiscard]] constexpr std::uint32_t run() const noexcept {
-        return 4 + runner_count;
+    [[nodiscard]] std::uint32_t run() const noexcept {
+        return import_count + 4u + runner_count;
     }
-    [[nodiscard]] constexpr std::uint32_t run2() const noexcept {
-        return 5 + runner_count;
+    [[nodiscard]] std::uint32_t run2() const noexcept {
+        return import_count + 5u + runner_count;
     }
 };
 
@@ -195,6 +246,12 @@ constexpr std::uint32_t kWorkflowGlobalAbiVersion = 1;
 constexpr std::uint32_t kWorkflowGlobalHeapNext = 2;
 constexpr std::uint32_t kWorkflowGlobalNodeCount = 3;
 constexpr std::uint32_t kWorkflowGlobalCompletedCount = 4;
+// RFC 0026 E4-B2-C: a capability-workflow module adds this private global as its
+// suspend latch. It is emitted ONLY on the capability-workflow lane (see
+// encode_workflow_module); identity workflows keep the 5-global section and its
+// bytes unchanged. A function import never shifts global indices, so this global
+// index is stable regardless of import_count.
+constexpr std::uint32_t kWorkflowGlobalPendingLatched = 5;
 
 void add_diag(CoreWasmCodegenResult &result,
               std::string_view code,
@@ -867,6 +924,9 @@ validate_workflow_frame_region(const CoreProgram &program,
     return source;
 }
 
+[[nodiscard]] std::optional<std::uint32_t>
+workflow_runner_index(const WorkflowPlan &plan, CoreInstanceId instance);
+
 [[nodiscard]] std::optional<WorkflowPlan>
 build_workflow_plan(const CoreProgram &program,
                     const ir::core::CoreLayoutTable &layouts,
@@ -970,24 +1030,18 @@ build_workflow_plan(const CoreProgram &program,
                      "packaged workflow target is not an agent instance");
             return std::nullopt;
         }
+        // RFC 0026 E4-B2-C: a capability-bearing agent instance is now a legal
+        // workflow node. build_agent_plan validates the E2 capability contract
+        // (functional goto graph reaching exactly one terminal action, least-
+        // privilege single reachable import). Non-goto/identity/capability
+        // actions still fail closed inside build_agent_plan.
         auto agent_plan = build_agent_plan(
             program,
             layouts,
             payload->base,
             result,
-            AgentPlanPolicy{core_wasm_diag::kUnsupportedWorkflowFrame, false, "E3"});
+            AgentPlanPolicy{core_wasm_diag::kUnsupportedWorkflowFrame, true, "E3"});
         if (!agent_plan.has_value()) {
-            return std::nullopt;
-        }
-        if (std::any_of(agent_plan->actions.begin(),
-                        agent_plan->actions.end(),
-                        [](const StateAction &action) {
-                            return !std::holds_alternative<GotoAction>(action) &&
-                                   !std::holds_alternative<IdentityAction>(action);
-                        })) {
-            add_diag(result,
-                     core_wasm_diag::kUnsupportedWorkflowFrame,
-                     "workflow packages only identity-returning agent instances");
             return std::nullopt;
         }
         plan.agent_plans.push_back(std::move(*agent_plan));
@@ -1023,6 +1077,57 @@ build_workflow_plan(const CoreProgram &program,
             return std::nullopt;
         }
         plan.nodes[id] = WorkflowNodePlan{CoreWorkflowNodeId{id}, node.target_instance, *source};
+        plan.nodes[id].schedule_pos = schedule_position[id];
+    }
+
+    // RFC 0026 E4-B2-C: derive each node's capability identity (if any) from its
+    // packaged agent plan and aggregate the sorted-unique reachable capability
+    // set. build_agent_plan already reduced each agent to at most one reachable
+    // import (least privilege); a node carries that capability + its source
+    // SymbolId so the manifest and node-event records can name it. An identity
+    // node leaves has_capability == false. A non-empty plan.imports selects the
+    // capability-workflow baseline.
+    for (std::uint32_t id = 0; id < plan.nodes.size(); ++id) {
+        const auto runner = workflow_runner_index(plan, plan.nodes[id].target_instance);
+        if (!runner.has_value() || *runner >= plan.agent_plans.size()) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "workflow node target has no packaged runner plan");
+            return std::nullopt;
+        }
+        const auto &agent_plan = plan.agent_plans[*runner];
+        if (!agent_plan.imports.empty()) {
+            const auto capability = agent_plan.imports.front();
+            if (capability.value >= program.capabilities.size()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCore,
+                         "workflow node capability id is out of range");
+                return std::nullopt;
+            }
+            const auto &symbol = program.capabilities[capability.value].symbol_ref;
+            if (!symbol.id.has_value()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCapabilityAbi,
+                         "workflow node capability has no source SymbolId");
+                return std::nullopt;
+            }
+            plan.nodes[id].has_capability = true;
+            plan.nodes[id].capability = capability;
+            plan.nodes[id].source_symbol = *symbol.id;
+            plan.imports.push_back(capability);
+        }
+    }
+    std::sort(plan.imports.begin(), plan.imports.end(), [](auto lhs, auto rhs) {
+        return lhs.value < rhs.value;
+    });
+    plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()),
+                       plan.imports.end());
+    if (plan.imports.size() >
+        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 6u)) {
+        add_diag(result,
+                 core_wasm_diag::kInvalidCapabilityAbi,
+                 "reachable capability import table exceeds the wasm32 index domain");
+        return std::nullopt;
     }
 
     // The return region's exact logical type is its source type. Its nominal base
@@ -1094,6 +1199,16 @@ class ByteBuffer {
         bytes_.insert(bytes_.end(), values.begin(), values.end());
     }
     void u32(std::uint32_t value) {
+        do {
+            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
+            value >>= 7u;
+            if (value != 0) {
+                next = static_cast<std::uint8_t>(next | 0x80u);
+            }
+            byte(next);
+        } while (value != 0);
+    }
+    void u64(std::uint64_t value) {
         do {
             std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
             value >>= 7u;
@@ -1188,6 +1303,41 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
     append_indexed_op(body, kOpGlobalGet, heap_global);
     append_indexed_op(body, kOpLocalGet, 0);
     body.byte(kOpI32Add);
+    append_indexed_op(body, kOpGlobalSet, heap_global);
+    append_indexed_op(body, kOpLocalGet, 1);
+    body.byte(kOpEnd);
+    return body;
+}
+// RFC 0026 E4-B2-C: capability-workflow-private checked bump allocator. Keeps the
+// existing (i32)->i32 signature. Computes new = heap_next + len; if new exceeds
+// the fixed 64 KiB page (65536), returns the reserved null pointer 0 WITHOUT
+// advancing heap_next. Otherwise advances and returns the old heap_next. The
+// shared unchecked make_alloc_body used by E1/E2/E3 is left untouched.
+[[nodiscard]] ByteBuffer make_checked_alloc_body(std::uint32_t heap_global) {
+    ByteBuffer body;
+    body.u32(1);
+    body.u32(2);
+    body.byte(kI32); // locals 1 = old heap_next, 2 = new heap_next
+    append_indexed_op(body, kOpGlobalGet, heap_global);
+    append_indexed_op(body, kOpLocalSet, 1);
+    append_indexed_op(body, kOpLocalGet, 1);
+    append_indexed_op(body, kOpLocalGet, 0);
+    body.byte(kOpI32Add);
+    append_indexed_op(body, kOpLocalSet, 2);
+    // Capacity check: new > 65536 OR new < old (wrap) -> return 0, no advance.
+    append_indexed_op(body, kOpLocalGet, 2);
+    append_const(body, kLinearMemoryBytes);
+    body.byte(kOpI32GtU);
+    append_indexed_op(body, kOpLocalGet, 2);
+    append_indexed_op(body, kOpLocalGet, 1);
+    body.byte(kOpI32LtU);
+    body.byte(kOpI32Or);
+    body.byte(kOpIf);
+    body.byte(kEmptyBlock);
+    append_const(body, 0);
+    body.byte(kOpReturn);
+    body.byte(kOpEnd);
+    append_indexed_op(body, kOpLocalGet, 2);
     append_indexed_op(body, kOpGlobalSet, heap_global);
     append_indexed_op(body, kOpLocalGet, 1);
     body.byte(kOpEnd);
@@ -1567,6 +1717,111 @@ encode_module(const CoreProgram &program,
     return body;
 }
 
+// RFC 0026 E4-B2-C: two-phase capability-workflow memory sizing (seam §4.4/§5.2).
+// PHASE 1 (checked wasm32 arithmetic): node_count * 40, + header, + align, all
+// verified against the wasm32 domain; any overflow is a BINARY_OVERFLOW. PHASE 2
+// (capacity): only once a legal heap_base exists, heap_base > 65536 is a
+// RESOURCE_EXHAUSTED. Returns the computed heap_base, or a diagnostic code in
+// `overflow_is_binary` selecting which failure to raise. node_count = 1612 fits
+// (heap_base 65512); node_count = 1613 is rejected (65552).
+struct EventLayout {
+    std::uint32_t heap_base{0};
+};
+[[nodiscard]] std::optional<EventLayout>
+compute_event_layout(std::size_t node_count, bool &overflow_is_binary) {
+    overflow_is_binary = false;
+    // Phase 1: checked wasm32 arithmetic.
+    if (node_count > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+        overflow_is_binary = true;
+        return std::nullopt;
+    }
+    const auto n = static_cast<std::uint32_t>(node_count);
+    if (n != 0 && n > (std::numeric_limits<std::uint32_t>::max() - kEventHeaderBytes) /
+                          kEventRecordBytes) {
+        overflow_is_binary = true;
+        return std::nullopt;
+    }
+    const std::uint32_t event_bytes = kEventHeaderBytes + n * kEventRecordBytes;
+    if (event_bytes > std::numeric_limits<std::uint32_t>::max() - kEventLogBase) {
+        overflow_is_binary = true;
+        return std::nullopt;
+    }
+    std::uint32_t unaligned = kEventLogBase + event_bytes;
+    if (unaligned > std::numeric_limits<std::uint32_t>::max() - 7u) {
+        overflow_is_binary = true;
+        return std::nullopt;
+    }
+    const std::uint32_t heap_base = (unaligned + 7u) & ~static_cast<std::uint32_t>(7u);
+    // Phase 2: capacity against the fixed single page (65536 bytes).
+    if (heap_base > kLinearMemoryBytes) {
+        overflow_is_binary = false;
+        return std::nullopt;
+    }
+    return EventLayout{heap_base};
+}
+
+// Store a 32-bit little-endian immediate at a fixed absolute address (i32.store,
+// align=2, offset=0). The address and value are pushed by the caller lambdas.
+void append_i32_store_const(ByteBuffer &body, std::uint32_t addr, std::uint32_t value) {
+    append_const(body, addr);
+    append_const(body, value);
+    body.byte(kOpI32Store);
+    body.u32(2u); // alignment (log2(4))
+    body.u32(0u); // offset
+}
+
+// Store a 64-bit zero at a fixed absolute address (i64.store, align=3, offset=0).
+void append_i64_store_zero(ByteBuffer &body, std::uint32_t addr) {
+    append_const(body, addr);
+    body.byte(kOpI64Const);
+    body.byte(0x00); // SLEB128 for 0
+    body.byte(kOpI64Store);
+    body.u32(3u); // alignment (log2(8))
+    body.u32(0u); // offset
+}
+
+// RFC 0026 E4-B2-C: emit the AHFLXM execution-manifest payload, byte-identical to
+// the A2 decoder's canonical grammar. Private to this TU; no runtime code shared.
+// Nodes are emitted in schedule order so schedule_pos == array index.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>>
+encode_exec_manifest(const WorkflowPlan &plan) {
+    if (plan.schedule.size() >
+        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+        return std::nullopt;
+    }
+    if (plan.workflow.value == CoreWorkflowId::kInvalid) {
+        return std::nullopt;
+    }
+    ByteBuffer out;
+    out.raw_span(
+        std::span<const std::uint8_t>(kExecManifestMagic.data(), kExecManifestMagic.size()));
+    out.byte(kExecManifestVersion);
+    out.byte(kExecManifestEntryKindWorkflow);
+    out.u32(plan.workflow.value);
+    out.u32(static_cast<std::uint32_t>(plan.schedule.size()));
+    for (std::uint32_t index = 0; index < plan.schedule.size(); ++index) {
+        const auto node_id = plan.schedule[index];
+        if (node_id.value >= plan.nodes.size()) {
+            return std::nullopt;
+        }
+        const auto &node = plan.nodes[node_id.value];
+        if (node.node.value == CoreWorkflowNodeId::kInvalid) {
+            return std::nullopt;
+        }
+        out.u32(node.node.value);
+        out.u32(index); // schedule_pos == array index
+        out.byte(node.has_capability ? std::uint8_t{1} : std::uint8_t{0});
+        if (node.has_capability) {
+            if (node.capability.value == CoreCapabilityId::kInvalid) {
+                return std::nullopt;
+            }
+            out.u32(node.capability.value);
+            out.u64(node.source_symbol);
+        }
+    }
+    return std::move(out).take();
+}
+
 [[nodiscard]] std::optional<std::uint32_t>
 workflow_runner_index(const WorkflowPlan &plan, CoreInstanceId instance) {
     const auto it = std::lower_bound(plan.packaged_instances.begin(),
@@ -1579,14 +1834,19 @@ workflow_runner_index(const WorkflowPlan &plan, CoreInstanceId instance) {
     return static_cast<std::uint32_t>(it - plan.packaged_instances.begin());
 }
 
-[[nodiscard]] std::optional<std::vector<std::pair<CoreStateId, CoreStateId>>>
+struct WorkflowRunnerWalk {
+    std::vector<std::pair<CoreStateId, CoreStateId>> transitions;
+    CoreStateId terminal{};
+};
+
+[[nodiscard]] std::optional<WorkflowRunnerWalk>
 workflow_initial_transitions(const AgentPlan &plan) {
     if (plan.initial.value >= plan.actions.size()) {
         return std::nullopt;
     }
 
     std::vector<bool> visited(plan.actions.size(), false);
-    std::vector<std::pair<CoreStateId, CoreStateId>> transitions;
+    WorkflowRunnerWalk walk;
     auto state = plan.initial;
     while (true) {
         if (state.value >= plan.actions.size() || visited[state.value]) {
@@ -1594,25 +1854,48 @@ workflow_initial_transitions(const AgentPlan &plan) {
         }
         visited[state.value] = true;
         const auto &action = plan.actions[state.value];
-        if (std::holds_alternative<IdentityAction>(action)) {
+        // Both IdentityAction and CapabilityAction are legal terminals; only
+        // GotoAction continues the deterministic walk.
+        if (!std::holds_alternative<GotoAction>(action)) {
+            walk.terminal = state;
             break;
         }
-        const auto *go = std::get_if<GotoAction>(&action);
-        if (go == nullptr || go->target.value >= plan.actions.size()) {
+        const auto &go = std::get<GotoAction>(action);
+        if (go.target.value >= plan.actions.size()) {
             return std::nullopt;
         }
-        transitions.emplace_back(state, go->target);
-        state = go->target;
+        walk.transitions.emplace_back(state, go.target);
+        state = go.target;
     }
-    return transitions;
+    return walk;
+}
+
+[[nodiscard]] std::optional<std::uint32_t>
+workflow_import_function_index(std::span<const CoreCapabilityId> imports,
+                               CoreCapabilityId capability) {
+    const auto it = std::lower_bound(imports.begin(),
+                                     imports.end(),
+                                     capability,
+                                     [](auto lhs, auto rhs) { return lhs.value < rhs.value; });
+    if (it == imports.end() || *it != capability) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(it - imports.begin());
 }
 
 [[nodiscard]] std::optional<ByteBuffer>
-make_workflow_runner_body(const AgentPlan &plan) {
-    auto transitions = workflow_initial_transitions(plan);
-    if (!transitions.has_value()) {
+make_workflow_runner_body(const AgentPlan &plan,
+                          std::span<const CoreCapabilityId> workflow_imports) {
+    auto walk = workflow_initial_transitions(plan);
+    if (!walk.has_value()) {
         return std::nullopt;
     }
+    if (walk->terminal.value >= plan.actions.size()) {
+        return std::nullopt;
+    }
+    const auto &terminal_action = plan.actions[walk->terminal.value];
+    const bool is_capability = std::holds_alternative<CapabilityAction>(terminal_action);
+
     ByteBuffer body;
     body.u32(1);
     body.u32(1);
@@ -1620,8 +1903,7 @@ make_workflow_runner_body(const AgentPlan &plan) {
     append_const(body, plan.initial.value);
     append_indexed_op(body, kOpLocalSet, 2);
 
-    auto state = plan.initial;
-    for (const auto &[source, target] : *transitions) {
+    for (const auto &[source, target] : walk->transitions) {
         append_indexed_op(body, kOpLocalGet, 2);
         append_const(body, source.value);
         body.byte(kOpI32Eq);
@@ -1633,7 +1915,6 @@ make_workflow_runner_body(const AgentPlan &plan) {
 
         append_const(body, target.value);
         append_indexed_op(body, kOpLocalSet, 2);
-        state = target;
         append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalTransitionCount);
         append_const(body, 1);
         body.byte(kOpI32Add);
@@ -1641,16 +1922,38 @@ make_workflow_runner_body(const AgentPlan &plan) {
     }
 
     append_indexed_op(body, kOpLocalGet, 2);
-    append_const(body, state.value);
+    append_const(body, walk->terminal.value);
     body.byte(kOpI32Eq);
     body.byte(kOpI32Eqz);
     body.byte(kOpIf);
     body.byte(kEmptyBlock);
     body.byte(kOpUnreachable);
     body.byte(kOpEnd);
-    append_const(body, AHFL_CAP_OK);
+
+    if (!is_capability) {
+        // Identity terminal: return (OK, input ptr, input len). The runner never
+        // touches the event buffer; the scheduler is the sole event writer.
+        append_const(body, AHFL_CAP_OK);
+        append_indexed_op(body, kOpLocalGet, 0);
+        append_indexed_op(body, kOpLocalGet, 1);
+        body.byte(kOpEnd);
+        return body;
+    }
+
+    // Capability terminal: call the ahfl_cap import and forward its raw
+    // (status, ptr, len) to the scheduler WITHOUT interpreting or writing events.
+    // The module function index is the capability's ordinal in the workflow-level
+    // sorted-unique import table (imports occupy the low function indices).
+    const auto &capability = std::get<CapabilityAction>(terminal_action).capability;
+    const auto import_index = workflow_import_function_index(workflow_imports, capability);
+    if (!import_index.has_value()) {
+        return std::nullopt;
+    }
     append_indexed_op(body, kOpLocalGet, 0);
     append_indexed_op(body, kOpLocalGet, 1);
+    append_indexed_op(body, kOpCall, *import_index);
+    // Multi-value results (status, ptr, len) are already on the stack in order;
+    // return them verbatim to the scheduler.
     body.byte(kOpEnd);
     return body;
 }
@@ -1689,14 +1992,80 @@ workflow_node_len_local(CoreWorkflowNodeId node) {
     return true;
 }
 
+// Emit the SOLE node-event write for one completed node (P0-1: runners never
+// write events). Writes the full 40-byte record body FIRST, then the caller
+// publishes the incremented event_count. `record_addr` = records_base +
+// schedule_pos*40. tag 0 (identity) zeroes capability/source_symbol/
+// invocation_ordinal and sets status = OK; tag 1 (capability) carries the node's
+// capability identity. All pad and reserved bytes are explicitly zeroed.
+void append_event_record_write(ByteBuffer &body,
+                               const WorkflowNodePlan &node,
+                               std::uint32_t status_local) {
+    const std::uint32_t record_addr = kEventRecordsBase + node.schedule_pos * kEventRecordBytes;
+    const std::uint8_t tag = node.has_capability ? kEventTagCapability : kEventTagIdentity;
+    // [0..3]: tag u8 in byte 0, pad[1..3] == 0 (one aligned 4-byte store).
+    append_i32_store_const(body, record_addr + 0u, static_cast<std::uint32_t>(tag));
+    // [4..7]: workflow_node_id.
+    append_i32_store_const(body, record_addr + 4u, node.node.value);
+    // [8..11]: schedule_pos.
+    append_i32_store_const(body, record_addr + 8u, node.schedule_pos);
+    // [12..15]: capability (0 for identity).
+    append_i32_store_const(body, record_addr + 12u,
+                           node.has_capability ? node.capability.value : 0u);
+    // [16..23]: source_symbol u64 (0 for identity). A capability source SymbolId
+    // is a non-negative value bounded by the existing E2 host-ABI contract
+    // (build_agent_plan rejects SymbolId > UINT32_MAX), so it is always < 2^63 and
+    // its i64.const signed-LEB128 immediate never needs sign extension.
+    if (node.has_capability) {
+        append_const(body, record_addr + 16u);
+        body.byte(kOpI64Const);
+        std::uint64_t value = node.source_symbol;
+        while (true) {
+            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
+            value >>= 7u;
+            const bool more = value != 0 || (next & 0x40u) != 0;
+            if (more) {
+                next = static_cast<std::uint8_t>(next | 0x80u);
+            }
+            body.byte(next);
+            if (!more) {
+                break;
+            }
+        }
+        body.byte(kOpI64Store);
+        body.u32(3u);
+        body.u32(0u);
+    } else {
+        append_i64_store_zero(body, record_addr + 16u);
+    }
+    // [24..31]: invocation_ordinal (statically 0 today; the manifest carries none).
+    append_i64_store_zero(body, record_addr + 24u);
+    // [32..35]: status (address first, then the node's completion status local).
+    append_const(body, record_addr + 32u);
+    append_indexed_op(body, kOpLocalGet, status_local);
+    body.byte(kOpI32Store);
+    body.u32(2u);
+    body.u32(0u);
+    // [36..39]: reserved == 0.
+    append_i32_store_const(body, record_addr + 36u, 0u);
+}
+
 [[nodiscard]] bool append_workflow_schedule(ByteBuffer &body,
                                             const WorkflowPlan &plan,
                                             const WorkflowFunctionTable &functions,
                                             std::uint32_t status_local) {
+    const bool capability_workflow = !plan.imports.empty();
     append_const(body, 0);
     append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalTransitionCount);
     append_const(body, 0);
     append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
+
+    if (capability_workflow) {
+        // Reset the node-event header: event_count = 0 and pad[4..7] = 0. The
+        // latch first-instruction gate (in run2) has already run before this.
+        append_i32_store_const(body, kEventLogBase + 0u, 0u);
+        append_i32_store_const(body, kEventLogBase + 4u, 0u);
+    }
 
     for (const auto node_id : plan.schedule) {
         if (node_id.value >= plan.nodes.size()) {
@@ -1715,14 +2084,93 @@ workflow_node_len_local(CoreWorkflowNodeId node) {
         append_indexed_op(body, kOpLocalSet, *len_local);
         append_indexed_op(body, kOpLocalSet, *ptr_local);
         append_indexed_op(body, kOpLocalSet, status_local);
+
+        if (!capability_workflow) {
+            // Identity workflow (unchanged bytes): any non-OK traps.
+            append_indexed_op(body, kOpLocalGet, status_local);
+            append_const(body, AHFL_CAP_OK);
+            body.byte(kOpI32Eq);
+            body.byte(kOpI32Eqz);
+            body.byte(kOpIf);
+            body.byte(kEmptyBlock);
+            body.byte(kOpUnreachable);
+            body.byte(kOpEnd);
+            append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalCompletedCount);
+            append_const(body, 1);
+            body.byte(kOpI32Add);
+            append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalCompletedCount);
+            continue;
+        }
+
+        // Capability-workflow status dispatch, normalized to the E2 `ahfl_cap`
+        // postcondition (P0-1 / L2 / L3 / L4 + scheduler P0s).
+        // PENDING: only a null result_ptr is a legal suspend -> set the latch and
+        // return (PENDING,0,0). A PENDING with a non-null ptr is malformed ->
+        // ERROR and does NOT latch.
+        append_indexed_op(body, kOpLocalGet, status_local);
+        append_const(body, AHFL_CAP_PENDING);
+        body.byte(kOpI32Eq);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        append_indexed_op(body, kOpLocalGet, *ptr_local);
+        body.byte(kOpI32Eqz);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        append_const(body, 1);
+        append_indexed_op(body, kOpGlobalSet, kWorkflowGlobalPendingLatched);
+        append_const(body, AHFL_CAP_PENDING);
+        append_const(body, 0);
+        append_const(body, 0);
+        body.byte(kOpReturn);
+        body.byte(kOpEnd);
+        // PENDING with a non-null ptr is malformed.
+        append_error_return(body);
+        body.byte(kOpEnd);
+        // Not PENDING. A completion is OK ONLY when status==OK AND ptr!=0 AND
+        // len!=0; every other case (ERROR, unknown, OK-empty) is (ERROR,0,0).
         append_indexed_op(body, kOpLocalGet, status_local);
         append_const(body, AHFL_CAP_OK);
         body.byte(kOpI32Eq);
         body.byte(kOpI32Eqz);
         body.byte(kOpIf);
         body.byte(kEmptyBlock);
-        body.byte(kOpUnreachable);
+        append_error_return(body);
         body.byte(kOpEnd);
+        append_indexed_op(body, kOpLocalGet, *ptr_local);
+        body.byte(kOpI32Eqz);
+        append_indexed_op(body, kOpLocalGet, *len_local);
+        body.byte(kOpI32Eqz);
+        body.byte(kOpI32Or);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        append_error_return(body); // OK-empty (null ptr or zero len) is ERROR.
+        body.byte(kOpEnd);
+        // Defensive event_count bound (§4.4): before writing the record verify the
+        // runtime header event_count == this node's schedule_pos. `completed_count`
+        // (a mutable export the host could tamper) is NOT trusted as the
+        // coordinate. schedule_pos < node_count holds by construction (the region
+        // is statically sized to node_count). A mismatch returns (ERROR,0,0) with
+        // no body/count write.
+        append_const(body, kEventLogBase + 0u);
+        body.byte(kOpI32Load);
+        body.u32(2u);
+        body.u32(0u);
+        append_const(body, node.schedule_pos);
+        body.byte(kOpI32Eq);
+        body.byte(kOpI32Eqz);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        append_error_return(body);
+        body.byte(kOpEnd);
+        // OK: write the single node-event record (full body first), then publish
+        // event_count = schedule_pos + 1 AFTER the full 40-byte body store (so the
+        // host never reads a partial record), and bump completed_count.
+        append_event_record_write(body, node, status_local);
+        append_const(body, kEventLogBase + 0u);
+        append_const(body, node.schedule_pos + 1u);
+        body.byte(kOpI32Store);
+        body.u32(2u);
+        body.u32(0u);
         append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalCompletedCount);
         append_const(body, 1);
         body.byte(kOpI32Add);
@@ -1745,6 +2193,18 @@ make_workflow_run2_body(const WorkflowPlan &plan,
     body.u32(1);
     body.u32(node_locals + 1u);
     body.byte(kI32); // node (ptr,len) pairs followed by one status scratch
+
+    if (!plan.imports.empty()) {
+        // L4: a suspended capability-workflow instance cannot accept another
+        // input frame. This latch check is the FIRST instruction of run2, before
+        // the schedule resets the event header or re-runs any import.
+        append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalPendingLatched);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        body.byte(kOpUnreachable);
+        body.byte(kOpEnd);
+    }
+
     if (!append_workflow_schedule(body, plan, functions, status_local)) {
         return std::nullopt;
     }
@@ -1756,8 +2216,18 @@ make_workflow_run2_body(const WorkflowPlan &plan,
     return body;
 }
 
-[[nodiscard]] ByteBuffer make_workflow_run_body(const WorkflowFunctionTable &functions) {
+[[nodiscard]] ByteBuffer make_workflow_run_body(const WorkflowPlan &plan,
+                                                const WorkflowFunctionTable &functions) {
     ByteBuffer body;
+    if (!plan.imports.empty()) {
+        // Legacy run is pointer-only; the v1 (ptr,len) ABI cannot carry a status,
+        // so a capability-workflow's run traps before any state mutation, input
+        // read, or capability effect (a PENDING must never leak through run).
+        body.u32(0);
+        body.byte(kOpUnreachable);
+        body.byte(kOpEnd);
+        return body;
+    }
     body.u32(1);
     body.u32(3);
     body.byte(kI32); // locals 2=status, 3=ptr, 4=len
@@ -1781,12 +2251,18 @@ make_workflow_run2_body(const WorkflowPlan &plan,
 }
 
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
-encode_workflow_module(const WorkflowPlan &plan) {
+encode_workflow_module(const CoreProgram &program,
+                       const WorkflowPlan &plan,
+                       std::span<const std::uint8_t> wire_schema_payload,
+                       CoreWasmCodegenResult &result) {
     if (plan.packaged_instances.size() >
         static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 6u) ||
         plan.agent_plans.size() != plan.packaged_instances.size() ||
         plan.nodes.size() >=
             static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+        add_diag(result,
+                 core_wasm_diag::kBinaryOverflow,
+                 "workflow WASM function/index domain exceeds the wasm32 limit");
         return std::nullopt;
     }
     std::uint64_t aggregate_transitions = 0;
@@ -1803,14 +2279,46 @@ encode_workflow_module(const WorkflowPlan &plan) {
         if (!transitions.has_value()) {
             return std::nullopt;
         }
-        aggregate_transitions += transitions->size();
+        aggregate_transitions += transitions->transitions.size();
         if (aggregate_transitions >
             static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+            add_diag(result,
+                     core_wasm_diag::kBinaryOverflow,
+                     "workflow aggregate transition count exceeds the wasm32 domain");
             return std::nullopt;
         }
     }
+
+    const bool capability_workflow = !plan.imports.empty();
+    const auto import_count =
+        capability_workflow ? static_cast<std::uint32_t>(plan.imports.size()) : 0u;
+
+    // RFC 0026 E4-B2-C two-phase memory sizing (seam §4.4/§5.2). PHASE 1 checked
+    // wasm32 arithmetic -> BINARY_OVERFLOW; PHASE 2 capacity vs the fixed 64 KiB
+    // page -> RESOURCE_EXHAUSTED. Identity workflows keep heap_base = 1024.
+    std::uint32_t heap_base = kEventLogBase;
+    if (capability_workflow) {
+        bool overflow_is_binary = false;
+        auto layout = compute_event_layout(plan.nodes.size(), overflow_is_binary);
+        if (!layout.has_value()) {
+            if (overflow_is_binary) {
+                add_diag(result,
+                         core_wasm_diag::kBinaryOverflow,
+                         "capability-workflow node-event region size overflows the "
+                         "wasm32 arithmetic domain");
+            } else {
+                add_diag(result,
+                         core_wasm_diag::kResourceExhausted,
+                         "capability-workflow node-event region and heap exceed the "
+                         "fixed 64 KiB linear-memory page");
+            }
+            return std::nullopt;
+        }
+        heap_base = layout->heap_base;
+    }
+
     const WorkflowFunctionTable functions{
-        static_cast<std::uint32_t>(plan.packaged_instances.size())};
+        import_count, static_cast<std::uint32_t>(plan.packaged_instances.size())};
     ByteBuffer module;
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
 
@@ -1823,6 +2331,34 @@ encode_workflow_module(const WorkflowPlan &plan) {
     append_func_type(types, {kI32, kI32}, {kI32, kI32, kI32});
     if (!append_section(module, kSectionType, types)) {
         return std::nullopt;
+    }
+
+    // RFC 0026 E4-B2-C: capability imports occupy the low function indices. The
+    // import module name / field spelling mirror the E2 agent contract exactly.
+    if (capability_workflow) {
+        ByteBuffer imports;
+        imports.u32(import_count);
+        for (const auto id : plan.imports) {
+            if (id.value >= program.capabilities.size()) {
+                return std::nullopt;
+            }
+            const auto &symbol = program.capabilities[id.value].symbol_ref;
+            // build_agent_plan already enforces the existing E2 host-ABI gate on
+            // the capability SymbolId (<= UINT32_MAX); the encoder only defends
+            // presence + import-name length here.
+            if (!symbol.id.has_value()) {
+                return std::nullopt;
+            }
+            if (!imports.name("ahfl_cap") ||
+                !imports.name("cap_" + std::to_string(*symbol.id))) {
+                return std::nullopt;
+            }
+            imports.byte(kImportFunction);
+            imports.u32(kTypeCapabilityTuple);
+        }
+        if (!append_section(module, kSectionImport, imports)) {
+            return std::nullopt;
+        }
     }
 
     ByteBuffer functions_section;
@@ -1848,13 +2384,18 @@ encode_workflow_module(const WorkflowPlan &plan) {
         return std::nullopt;
     }
 
+    // Globals: a capability workflow adds the private pending_latched flag as a
+    // 6th global (cap-lane only). Identity workflows keep the 5-global section.
     ByteBuffer globals;
-    globals.u32(5);
+    globals.u32(capability_workflow ? 6u : 5u);
     append_global(globals, true, 0);
     append_global(globals, false, 1);
-    append_global(globals, true, 1024);
+    append_global(globals, true, heap_base);
     append_global(globals, false, static_cast<std::uint32_t>(plan.nodes.size()));
     append_global(globals, true, 0);
+    if (capability_workflow) {
+        append_global(globals, true, 0); // kWorkflowGlobalPendingLatched
+    }
     if (!append_section(module, kSectionGlobal, globals)) {
         return std::nullopt;
     }
@@ -1894,7 +2435,12 @@ encode_workflow_module(const WorkflowPlan &plan) {
 
     ByteBuffer code;
     code.u32(functions.runner_count + 6u);
-    const auto alloc = make_alloc_body(kWorkflowGlobalHeapNext);
+    // A capability workflow uses the checked-alloc body (returns 0 on capacity
+    // exhaustion, never advancing heap_next); identity workflows keep the shared
+    // unchecked bump body byte-for-byte.
+    const auto alloc = capability_workflow
+                           ? make_checked_alloc_body(kWorkflowGlobalHeapNext)
+                           : make_alloc_body(kWorkflowGlobalHeapNext);
     const auto dealloc = make_dealloc_body();
     const auto current = make_trapping_i32_body();
     const auto step = make_trapping_i32_body();
@@ -1903,16 +2449,45 @@ encode_workflow_module(const WorkflowPlan &plan) {
         return std::nullopt;
     }
     for (const auto &agent_plan : plan.agent_plans) {
-        auto runner = make_workflow_runner_body(agent_plan);
+        auto runner = make_workflow_runner_body(agent_plan, plan.imports);
         if (!runner.has_value() || !code.sized(*runner)) {
             return std::nullopt;
         }
     }
-    const auto run = make_workflow_run_body(functions);
+    const auto run = make_workflow_run_body(plan, functions);
     auto run2 = make_workflow_run2_body(plan, functions);
     if (!run2.has_value() || !code.sized(run) || !code.sized(*run2) ||
         !append_section(module, kSectionCode, code)) {
         return std::nullopt;
+    }
+
+    // RFC 0026 E4-B2-C: a capability workflow ends with the exec-manifest custom
+    // section (AHFLXM) EXACTLY ONCE, IMMEDIATELY BEFORE the wire-schema custom
+    // section (AHFLWS), which remains the module's FINAL section at EOF.
+    if (capability_workflow) {
+        auto manifest = encode_exec_manifest(plan);
+        if (!manifest.has_value()) {
+            return std::nullopt;
+        }
+        ByteBuffer manifest_custom;
+        if (!manifest_custom.name(kExecManifestSectionName)) {
+            return std::nullopt;
+        }
+        manifest_custom.raw_span(*manifest);
+        if (!append_section(module, kSectionCustom, manifest_custom)) {
+            return std::nullopt;
+        }
+        if (wire_schema_payload.empty()) {
+            return std::nullopt;
+        }
+        ByteBuffer schema_custom;
+        if (!schema_custom.name(kWireSchemaSectionName)) {
+            return std::nullopt;
+        }
+        schema_custom.raw_span(wire_schema_payload);
+        if (!append_section(module, kSectionCustom, schema_custom)) {
+            return std::nullopt;
+        }
     }
     return std::move(module).take();
 }
@@ -2025,17 +2600,64 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         if (!plan.has_value()) {
             return result;
         }
-        auto bytes = encode_workflow_module(*plan);
+        // RFC 0026 E4-B2-C: a capability workflow projects the deterministic wire
+        // schema for exactly its reachable capability imports (same authority the
+        // E2 agent path uses). Identity workflows have no imports and skip it.
+        std::vector<std::uint8_t> wire_schema_payload;
+        if (!plan->imports.empty()) {
+            auto projection = ir::core::project_core_wire_schema(program, plan->imports);
+            if (!projection.ok()) {
+                std::string message =
+                    "reachable capability import ABI is not wire-transportable";
+                ir::SourceRangeOpt range;
+                if (!projection.diagnostics.empty()) {
+                    const auto &first = projection.diagnostics.front();
+                    message += " (" + first.code + ")";
+                    range = first.source_range;
+                }
+                add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message),
+                         range);
+                return result;
+            }
+            auto encoded = ir::core::encode_core_wire_schema_table(*projection.table);
+            if (!encoded.ok()) {
+                std::string message =
+                    "wire-schema section payload exceeds the encoding domain";
+                ir::SourceRangeOpt range;
+                if (!encoded.diagnostics.empty()) {
+                    const auto &first = encoded.diagnostics.front();
+                    message += " (" + first.code + ")";
+                    range = first.source_range;
+                }
+                add_diag(result, core_wasm_diag::kBinaryOverflow, std::move(message), range);
+                return result;
+            }
+            wire_schema_payload = std::move(*encoded.bytes);
+        }
+        const auto diag_count_before = result.diagnostics.size();
+        auto bytes = encode_workflow_module(program, *plan, wire_schema_payload, result);
         if (!bytes.has_value()) {
-            add_diag(result,
-                     core_wasm_diag::kBinaryOverflow,
-                     "workflow WASM section, local, function, or index exceeds the wasm32 encoding domain");
+            // encode_workflow_module raises its own precise diagnostic (BINARY_
+            // OVERFLOW / RESOURCE_EXHAUSTED); only add the generic fallback if it
+            // failed silently.
+            if (result.diagnostics.size() == diag_count_before) {
+                add_diag(result,
+                         core_wasm_diag::kBinaryOverflow,
+                         "workflow WASM section, local, function, or index exceeds the "
+                         "wasm32 encoding domain");
+            }
             return result;
         }
         CoreWasmArtifact artifact;
         artifact.bytes = std::move(*bytes);
         artifact.entry = target.entry;
         artifact.packaged_agent_instances = plan->packaged_instances;
+        for (const auto id : plan->imports) {
+            const auto &symbol = program.capabilities[id.value].symbol_ref;
+            if (symbol.id.has_value()) {
+                artifact.imports.push_back("ahfl_cap.cap_" + std::to_string(*symbol.id));
+            }
+        }
         artifact.exports = {"memory",
                             "alloc",
                             "dealloc",

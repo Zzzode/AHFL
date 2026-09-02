@@ -1,0 +1,32 @@
+# RFC 0026 KR6.5 E4-B2-C structural-gate TEMPLATE (not a standalone package):
+# this manifest ships WITHOUT an adjacent source on purpose. The capability-
+# workflow binary gate (tests/scripts/wasm_workflow_cap_binary_gate.py) copies
+# this file together with the committed golden
+# tests/golden/wasm/e3_capability_workflow.ahfl (same file name / module name)
+# into a TemporaryDirectory before invoking ahflc. Running ahflc against this
+# file in place will fail to resolve its source — that is expected, not a broken
+# fixture.
+manifest_version = 1
+
+[package]
+name = "wasm-capability-workflow"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "wasm"
+root = "."
+
+[exports]
+modules = ["e3_capability_workflow"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "wasm::e3_capability_workflow::CapabilityPipeline"
+exports = [
+  { kind = "workflow", name = "wasm::e3_capability_workflow::CapabilityPipeline" },
+]
+
+[dependencies]
+std = { source = "sysroot" }

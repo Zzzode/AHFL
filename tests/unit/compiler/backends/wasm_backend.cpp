@@ -304,6 +304,88 @@ static ahfl::ir::core::CoreProgram make_e3_workflow_program() {
     return program;
 }
 
+// A linear-chain workflow of exactly `node_count` nodes, ALL targeting a single
+// packaged capability-bearing instance (packaged_instances stays 1; a repeated
+// capability across nodes is legal), node i reading node i-1's output (node 0
+// reads the workflow input). Drives the node-event region's compile-time capacity
+// boundary (N=1612 fits the 64 KiB page at heap_base 65512; N=1613 is
+// RESOURCE_EXHAUSTED) through the real public emitter, exercising the actual plan
+// carriers + preflight, not a copied formula.
+static ahfl::ir::core::CoreProgram make_n_node_capability_workflow(std::uint32_t node_count) {
+    using namespace ahfl::ir;
+    using namespace ahfl::ir::core;
+    CoreProgram program = make_e3_workflow_program();
+    const CoreValueTypeId frame_value{0};
+
+    // Turn the first packaged instance's flow into a single reachable capability
+    // call so every node that targets it is a capability node.
+    CoreCapabilityDecl cap;
+    cap.name = "Echo";
+    cap.symbol_ref = {SymbolRefKind::Capability, "app::Echo", "Echo", "app", 350};
+    cap.param_types = {frame_value};
+    cap.return_type = frame_value;
+    program.capabilities.push_back(std::move(cap));
+    program.agents[0].capabilities = {CoreCapabilityId{0}};
+    auto &cap_flow = program.flows[0];
+    cap_flow.value_count = 2;
+    cap_flow.value_types = {frame_value, frame_value};
+    auto &cap_statements = cap_flow.states[0].body.statements;
+    cap_statements.clear();
+    cap_statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
+    cap_statements.push_back(
+        CoreStmt{CoreCapabilityCallStmt{CoreValueId{1}, CoreCapabilityId{0}, "Echo",
+                                        {CoreValueId{0}}},
+                 std::nullopt});
+    cap_statements.push_back(CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+
+    CoreWorkflowDecl workflow;
+    workflow.id = CoreWorkflowId{0};
+    workflow.name = "IdentityPipeline";
+    workflow.symbol_ref = {SymbolRefKind::Workflow, "app::IdentityPipeline",
+                           "IdentityPipeline", "app", 203};
+    workflow.input_type = CoreTypeId{0};
+    workflow.output_type = CoreTypeId{0};
+    workflow.value_count = node_count + 1u;
+    workflow.value_types.assign(node_count + 1u, frame_value);
+
+    CorePathExpr input;
+    input.root = CorePathRoot::WorkflowInput;
+    input.root_name = "input";
+    input.root_type = CoreTypeId{0};
+    workflow.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
+    for (std::uint32_t i = 1; i <= node_count; ++i) {
+        CorePathExpr out;
+        out.root = CorePathRoot::WorkflowNodeOutput;
+        out.root_name = "n" + std::to_string(i - 1);
+        out.root_type = CoreTypeId{0};
+        out.workflow_node = CoreWorkflowNodeId{i - 1};
+        workflow.exprs.push_back(CoreExpr{std::move(out), std::nullopt, frame_value});
+    }
+
+    const auto yielding_region = [](CoreExprId expr, CoreValueId value) {
+        auto region = std::make_unique<CoreRegion>();
+        region->statements.push_back(CoreStmt{CoreLetStmt{value, expr}, std::nullopt});
+        region->statements.push_back(CoreStmt{CoreYieldStmt{true, value}, std::nullopt});
+        return region;
+    };
+    for (std::uint32_t i = 0; i < node_count; ++i) {
+        CoreWorkflowNode node;
+        node.id = CoreWorkflowNodeId{i};
+        node.node_name = "n" + std::to_string(i);
+        node.target_instance = CoreInstanceId{0};
+        if (i > 0) {
+            node.after = {CoreWorkflowNodeId{i - 1}};
+        }
+        node.input_region = yielding_region(CoreExprId{i}, CoreValueId{i});
+        workflow.nodes.push_back(std::move(node));
+    }
+    workflow.return_region =
+        yielding_region(CoreExprId{node_count}, CoreValueId{node_count});
+    program.workflows.clear();
+    program.workflows.push_back(std::move(workflow));
+    return program;
+}
+
 static bool has_codegen_code(const ahfl::backends::CoreWasmCodegenResult &result,
                              std::string_view code) {
     for (const auto &diagnostic : result.diagnostics) {
@@ -1482,15 +1564,16 @@ int main() {
                   valid_layouts.table == valid_layout_snapshot,
               "E3-C2 emits deterministic workflow bytes without mutating layout or expanding authority");
 
-        // RFC 0026 E4-B1: the E3 workflow artifact is not a capability agent and
-        // never carries a wire-schema custom section (the writer runs only on the
-        // agent path). Assert on the section walk, not merely on imports.empty().
+        // RFC 0026 E4-B2-C: the no-capability E3 identity-workflow fixture
+        // (import_count == 0) carries NO custom section (neither AHFLXM nor
+        // AHFLWS). Assert on the section walk, not merely on imports.empty(). A
+        // capability workflow does carry them (covered by the E4-B2-C case below).
         const auto e3_custom = valid_result.ok()
                                    ? wire_schema_custom_section(valid_result.artifact->bytes)
                                    : WireSchemaCustomSection{};
         check(valid_result.ok() && e3_custom.custom_count == 0 &&
                   !e3_custom.table_bytes.has_value(),
-              "E3 workflow artifact carries no wire-schema custom section");
+              "no-capability E3 identity workflow (import_count==0) carries no custom section");
 
         auto bad_workflow_layout = *valid_layouts.table;
         bad_workflow_layout.target.pointer_size = 8;
@@ -1647,6 +1730,11 @@ int main() {
                                    backends::core_wasm_diag::kUnsupportedWorkflowFrame),
               "E3 rejects a workflow frame that does not match target input type");
 
+        // RFC 0026 E4-B2-C: a workflow node agent whose reachable final action is
+        // a capability call is now a legal capability-bearing workflow (the E3
+        // refusal is lifted on this lane). It emits an import section + AHFLXM
+        // exec-manifest + EOF AHFLWS, and its defined/export indices shift by
+        // import_count (1 here) under the same PROJECT rule.
         auto capability_agent = make_e3_workflow_program();
         CoreCapabilityDecl cap;
         cap.name = "Echo";
@@ -1675,11 +1763,119 @@ int main() {
         cap_statements.push_back(
             CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
         const auto capability_result = emit_workflow(capability_agent);
+        const auto capability_custom =
+            capability_result.ok()
+                ? wire_schema_custom_section(capability_result.artifact->bytes)
+                : WireSchemaCustomSection{};
+        const bool capability_imports =
+            capability_result.artifact.has_value() &&
+            capability_result.artifact->imports ==
+                std::vector<std::string>{"ahfl_cap.cap_350"};
         check(verify_core_program(capability_agent).ok() &&
-                  !capability_result.artifact.has_value() &&
-                  has_codegen_code(capability_result,
-                                   backends::core_wasm_diag::kUnsupportedWorkflowFrame),
-              "E3 rejects a reachable capability-bearing agent before byte emission");
+                  capability_result.ok() && capability_imports &&
+                  capability_custom.custom_count == 2 &&
+                  capability_custom.table_bytes.has_value(),
+              "E4-B2-C emits a capability-bearing workflow with import + AHFLXM + AHFLWS");
+
+        // Opcode/index-level structural contract for the capability workflow.
+        // `wasm_function_body` indexes Code-section defined bodies (0-based,
+        // import-independent): alloc=0, run=6, run2=7 regardless of import_count.
+        // The absolute import_count+1 shift is proven by the run2 call operands
+        // {5,6} and by the executed Node export table.
+        const auto cap_run2 = capability_result.artifact.has_value()
+                                  ? wasm_function_body(capability_result.artifact->bytes, 7)
+                                  : std::nullopt;
+        const auto cap_run = capability_result.artifact.has_value()
+                                 ? wasm_function_body(capability_result.artifact->bytes, 6)
+                                 : std::nullopt;
+        const auto cap_alloc = capability_result.artifact.has_value()
+                                   ? wasm_function_body(capability_result.artifact->bytes, 0)
+                                   : std::nullopt;
+        // Latch-first: run2 begins with the locals prologue {01,05,7f} (one i32
+        // local group of 5) immediately followed by the pending-latch gate
+        // global.get 5 / if / unreachable / end. This proves it is the FIRST
+        // instruction, not merely present somewhere in the body.
+        const std::vector<std::uint8_t> latch_prefix = {
+            0x01, 0x05, 0x7f, 0x23, 0x05, 0x04, 0x40, 0x00, 0x0b};
+        const bool latch_first =
+            cap_run2.has_value() && cap_run2->size() >= latch_prefix.size() &&
+            std::equal(latch_prefix.begin(), latch_prefix.end(), cap_run2->begin());
+        // Body-before-count ORDER: node0's record body ends with the reserved
+        // [36..39]=0 store at absolute address 1068 (i32.const 1068 = 0x41 0xac
+        // 0x08, i32.const 0, i32.store), and the event_count publish stores value
+        // 1 to header address 1024 (i32.const 1024 = 0x41 0x80 0x08, i32.const 1,
+        // i32.store). Assert the reserved store appears BEFORE the publish.
+        const std::vector<std::uint8_t> reserved_store = {
+            0x41, 0xac, 0x08, 0x41, 0x00, 0x36, 0x02, 0x00};
+        const std::vector<std::uint8_t> count_publish = {
+            0x41, 0x80, 0x08, 0x41, 0x01, 0x36, 0x02, 0x00};
+        bool event_writes = false;
+        if (cap_run2.has_value()) {
+            const auto reserved_at = std::search(cap_run2->begin(), cap_run2->end(),
+                                                 reserved_store.begin(), reserved_store.end());
+            const auto publish_at = std::search(cap_run2->begin(), cap_run2->end(),
+                                                count_publish.begin(), count_publish.end());
+            event_writes = reserved_at != cap_run2->end() &&
+                           publish_at != cap_run2->end() && reserved_at < publish_at;
+        }
+        // Legacy run on the capability lane is a bare pre-effect trap.
+        const bool cap_run_traps =
+            cap_run == std::optional<std::vector<std::uint8_t>>{{0x00, 0x00, 0x0b}};
+        // Checked alloc returns 0 on capacity exhaustion (i32.gt_u 0x4b guard and
+        // an early i32.const 0 / return 0x0f), distinct from the unchecked bump.
+        const bool checked_alloc =
+            cap_alloc.has_value() && contains_bytes(*cap_alloc, {0x4b}) &&
+            contains_bytes(*cap_alloc, {0x41, 0x00, 0x0f});
+        // The scheduler runner calls dispatch to the shifted runner indices {5,6}.
+        const bool cap_schedule_calls =
+            cap_run2.has_value() &&
+            small_fixture_call_indices(*cap_run2) == std::vector<std::uint32_t>{5, 6};
+        check(latch_first && event_writes && cap_run_traps && checked_alloc &&
+                  cap_schedule_calls,
+              "E4-B2-C run2 latch-first + body-before-count + checked alloc + shifted dispatch");
+
+        // RFC 0026 E4-B2-C node-event region capacity boundary through the real
+        // public emitter (scaled Core builder, single reused capability instance).
+        // N=1612: heap_base = align_up(1024 + 8 + 1612*40, 8) = 65512 <= 65536, so
+        // the module emits with no RESOURCE/BINARY diagnostic. N=1613: 65552 >
+        // 65536, so it fails closed with EXACTLY wasm.RESOURCE_EXHAUSTED and no
+        // artifact (never a misreported BINARY_OVERFLOW).
+        const auto fits = make_n_node_capability_workflow(1612);
+        const auto fits_layouts = compute_core_layouts(fits);
+        const auto fits_result =
+            (verify_core_program(fits).ok() && fits_layouts.ok() &&
+             fits_layouts.table.has_value())
+                ? backends::emit_core_wasm(
+                      fits, *fits_layouts.table,
+                      {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi})
+                : backends::CoreWasmCodegenResult{};
+        check(fits_result.ok() &&
+                  !has_codegen_code(fits_result,
+                                    backends::core_wasm_diag::kResourceExhausted) &&
+                  !has_codegen_code(fits_result,
+                                    backends::core_wasm_diag::kBinaryOverflow),
+              "E4-B2-C N=1612 node-event region fits the 64 KiB page and emits");
+
+        const auto exceeds = make_n_node_capability_workflow(1613);
+        const auto exceeds_layouts = compute_core_layouts(exceeds);
+        const auto exceeds_result =
+            (verify_core_program(exceeds).ok() && exceeds_layouts.ok() &&
+             exceeds_layouts.table.has_value())
+                ? backends::emit_core_wasm(
+                      exceeds, *exceeds_layouts.table,
+                      {CoreWorkflowId{0}, backends::WasmProfileKind::Wasi})
+                : backends::CoreWasmCodegenResult{};
+        // Exactly one diagnostic, the stable range-less RESOURCE_EXHAUSTED code,
+        // and no artifact — locking both the priority (no BINARY_OVERFLOW) and the
+        // range-less/no-echo property of the new stable diagnostic.
+        const bool exceeds_exact =
+            !exceeds_result.artifact.has_value() &&
+            exceeds_result.diagnostics.size() == 1 &&
+            exceeds_result.diagnostics.front().code ==
+                backends::core_wasm_diag::kResourceExhausted &&
+            !exceeds_result.diagnostics.front().source_range.has_value();
+        check(exceeds_exact,
+              "E4-B2-C N=1613 fails closed with exactly one range-less RESOURCE_EXHAUSTED");
 
         auto workflow_capability = make_e3_workflow_program();
         CoreCapabilityDecl workflow_cap;

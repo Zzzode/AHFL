@@ -30,6 +30,10 @@
 //     table-decode / cross-check / eager-mint are compatible with genuine
 //     Type/Import/AHFLWS bytes. This is NOT capability-workflow emitter/topology
 //     evidence.
+//   * GENUINE B2-C emitter -> A2 (no injection): a real capability-workflow
+//     `emit_core_wasm` artifact already carries its AHFLXM exec-manifest, so its
+//     bytes are admitted directly and its exact topology / call-site coordinates
+//     are asserted -- true compiler->A2 cross-layer topology evidence.
 //   * HAND-BUILT canonical two-section fixture: all placement/canonical/set-equality
 //     negatives, sparse {3,7} cap ids, SymbolId{0}, repeated capability, and the
 //     distinct import-vs-invocation ordinal, exercised without any emitter.
@@ -312,6 +316,54 @@ std::optional<std::vector<std::uint8_t>> real_e2_module_bytes() {
     const auto emitted = ahfl::backends::emit_core_wasm(
         core.program, *layouts.table,
         {ahfl::ir::core::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
+    if (!emitted.ok() || !emitted.artifact.has_value()) {
+        return std::nullopt;
+    }
+    return emitted.artifact->bytes;
+}
+
+// Emit the GENUINE capability-bearing workflow (RFC 0026 E4-B2-C) end-to-end from
+// its committed golden source. Unlike real_e2_module_bytes + synthetic AHFLXM
+// injection, this is a real emitter artifact that ALREADY carries the AHFLXM
+// exec-manifest, so feeding it straight to make_verified_core_wasm_schema_module
+// is genuine emitter->A2 admission evidence (no test-synthesized manifest).
+std::optional<std::vector<std::uint8_t>> real_capability_workflow_module_bytes() {
+    namespace fs = std::filesystem;
+    const fs::path repo = ahfl::test_support::repo_root_from_source_file(__FILE__);
+    const fs::path fixture =
+        repo / "tests" / "golden" / "wasm" / "e3_capability_workflow.ahfl";
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_file(fixture);
+    if (parse.has_errors() || parse.program == nullptr) {
+        return std::nullopt;
+    }
+    const ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    if (resolve.has_errors()) {
+        return std::nullopt;
+    }
+    const ahfl::TypeChecker checker;
+    const auto typecheck = checker.check(*parse.program, resolve);
+    if (typecheck.has_errors()) {
+        return std::nullopt;
+    }
+    const ahfl::Validator validator;
+    const auto validation = validator.validate(*parse.program, resolve, typecheck);
+    if (validation.has_errors()) {
+        return std::nullopt;
+    }
+    const auto ir = ahfl::lower_program_ir(*parse.program, resolve, typecheck);
+    const auto core = ahfl::ir::core::lower_ahfl_to_core(ir);
+    if (!core.ok()) {
+        return std::nullopt;
+    }
+    const auto layouts = ahfl::ir::core::compute_core_layouts(core.program);
+    if (!layouts.ok() || !layouts.table.has_value()) {
+        return std::nullopt;
+    }
+    const auto emitted = ahfl::backends::emit_core_wasm(
+        core.program, *layouts.table,
+        {ahfl::ir::core::CoreWorkflowId{0}, ahfl::backends::WasmProfileKind::Wasi});
     if (!emitted.ok() || !emitted.artifact.has_value()) {
         return std::nullopt;
     }
@@ -927,6 +979,66 @@ int main() {
                                   "real.injected_param_result_shared_backing");
                         }
                     }
+                }
+            }
+        }
+
+        // ==== GENUINE capability-workflow emitter -> A2 admission ====
+        // The real B2-C emitter already writes the AHFLXM exec-manifest, so its
+        // bytes are admitted directly (no synthetic injection). This is the true
+        // compiler->A2 cross-layer consistency evidence for a capability workflow.
+        auto cap_wf = real_capability_workflow_module_bytes();
+        check(cap_wf.has_value(), "real.capwf_emit_ok");
+        if (cap_wf) {
+            auto admitted = make_verified_core_wasm_schema_module(
+                std::span<const std::uint8_t>(*cap_wf));
+            check(admitted.ok(), "real.capwf_genuine_admitted");
+            if (admitted.ok()) {
+                // Genuine AHFLXM topology: entry workflow 0, two nodes.
+                check(admitted.module->entry_id() == CoreWorkflowId{0},
+                      "real.capwf_entry_id");
+                check(admitted.module->node_count() == 2, "real.capwf_node_count");
+                // node0 = capability (id 0, schedule 0, cap_call_count 1).
+                auto n0 = admitted.module->resolve_node(ManifestNodeIndex{0});
+                check(n0.ok() &&
+                          n0.node->workflow_node_id() == CoreWorkflowNodeId{0} &&
+                          n0.node->schedule_pos() == ManifestNodeIndex{0} &&
+                          n0.node->cap_call_count() == 1,
+                      "real.capwf_node0_capability");
+                // node1 = identity (id 1, schedule 1, cap_call_count 0).
+                auto n1 = admitted.module->resolve_node(ManifestNodeIndex{1});
+                check(n1.ok() &&
+                          n1.node->workflow_node_id() == CoreWorkflowNodeId{1} &&
+                          n1.node->schedule_pos() == ManifestNodeIndex{1} &&
+                          n1.node->cap_call_count() == 0,
+                      "real.capwf_node1_identity");
+                // Exactly one call site (node0).
+                check(admitted.module->call_site_count() == 1,
+                      "real.capwf_one_call_site");
+                auto cs = admitted.module->resolve(ManifestCallSiteIndex{0});
+                check(cs.ok(), "real.capwf_resolve_ok");
+                if (cs.ok()) {
+                    // Exact canonical identity: the same committed golden's binary
+                    // gate hard-locks AHFLXM capability=0, source_symbol=1, so the
+                    // call site must report exactly those values (cross-test proof
+                    // that the emitter and A2 agree on one canonical identity).
+                    check(cs.call_site->workflow_node_id() == CoreWorkflowNodeId{0} &&
+                              cs.call_site->schedule_pos() == ManifestNodeIndex{0} &&
+                              cs.call_site->invocation_ordinal() ==
+                                  ahfl::runtime::core_wasm_resume::InvocationOrdinal{0} &&
+                              cs.call_site->capability() == CoreCapabilityId{0} &&
+                              cs.call_site->source_symbol() == 1 &&
+                              cs.call_site->import_ordinal() == CapabilityImportOrdinal{0},
+                          "real.capwf_callsite_coordinates");
+                    auto p = cs.call_site->param_binding();
+                    auto r = cs.call_site->result_binding();
+                    check(p.selector().capability == CoreCapabilityId{0} &&
+                              p.selector().expected_source_symbol == 1 &&
+                              r.selector().capability == CoreCapabilityId{0} &&
+                              r.selector().expected_source_symbol == 1,
+                          "real.capwf_binding_selectors_match_identity");
+                    check(&p.table() == &r.table(),
+                          "real.capwf_param_result_shared_backing");
                 }
             }
         }

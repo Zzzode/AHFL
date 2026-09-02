@@ -30,6 +30,7 @@ inline constexpr std::string_view kUnsupportedCapabilityFrame =
 inline constexpr std::string_view kUnsupportedWorkflowFrame =
     "wasm.UNSUPPORTED_WORKFLOW_FRAME";
 inline constexpr std::string_view kBinaryOverflow = "wasm.BINARY_OVERFLOW";
+inline constexpr std::string_view kResourceExhausted = "wasm.RESOURCE_EXHAUSTED";
 inline constexpr std::string_view kInternalInvalid = "wasm.INTERNAL_INVALID";
 } // namespace core_wasm_diag
 
@@ -71,8 +72,12 @@ struct CoreWasmCodegenResult {
 resolve_core_wasm_entry(const ir::core::CoreProgram &program,
                         const handoff::PackageMetadata *package_metadata);
 
-/// Emit the KR6.5 E1/E2 agent subset or E3 identity-workflow subset as a
-/// deterministic wasm32 binary selected by one typed entry identity.
+/// Emit a deterministic wasm32 binary selected by one typed entry identity:
+/// the KR6.5 E1/E2 agent subset, the E3 no-capability identity-workflow subset,
+/// or (RFC 0026 E4-B2-C FOUNDATION) a capability-bearing workflow module. The
+/// public C ABI and exported symbol names are unchanged across all of these; the
+/// capability-workflow artifact reuses the E2 `ahfl_cap` import ABI and
+/// additionally carries an exec-manifest and a node-event buffer.
 /// Pure: neither the verified Core program nor its P4-D layout side artifact is
 /// mutated. Unsupported Core nodes fail closed with no partial artifact.
 [[nodiscard]] CoreWasmCodegenResult

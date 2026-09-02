@@ -1296,6 +1296,20 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
     target_include_directories(ahfl_core_wasm_e3_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
     ahfl_apply_project_warnings(ahfl_core_wasm_e3_probe)
+
+    # RFC 0026 E4-B2-C: emit-only capability-workflow producer. Per the Q-P1
+    # ruling it links ONLY the compiler wasm backend (NOT ahfl_runtime_engine);
+    # it never calls the A2 runtime module context.
+    add_executable(ahfl_core_wasm_capability_workflow_probe
+        integration/core_wasm_capability_workflow_probe.cpp
+    )
+    target_link_libraries(ahfl_core_wasm_capability_workflow_probe
+        PRIVATE
+            ahfl_compiler_backend_infra_wasm
+    )
+    target_include_directories(ahfl_core_wasm_capability_workflow_probe
+        PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    ahfl_apply_project_warnings(ahfl_core_wasm_capability_workflow_probe)
 endif()
 
 add_executable(ahfl_compiler_backends_registry_tests

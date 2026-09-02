@@ -1,0 +1,59 @@
+module wasm::e3_capability_workflow;
+
+pub struct Frame {
+    value: String;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+pub agent FirstAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for FirstAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub agent SecondAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for SecondAgent {
+    state Done {
+        return input;
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow CapabilityPipeline {
+    input: Frame;
+    output: Frame;
+
+    node first: FirstAgent(input);
+    node second: SecondAgent(first) after [first];
+
+    return: second;
+}

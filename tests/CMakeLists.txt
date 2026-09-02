@@ -194,6 +194,39 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;wasmtime"
     )
+
+    # RFC 0026 E4-B2-C: emit-only capability-workflow producer. Always-on
+    # structural/binary evidence (not wasm-engine execution): it emits the
+    # capability-workflow module through the real frontend->Core->emit path and
+    # reports a non-empty import table.
+    add_test(NAME ahfl.wasm.capability_workflow_same_frontend_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_capability_workflow.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/capability_workflow_probe.wasm"
+    )
+    set_tests_properties(ahfl.wasm.capability_workflow_same_frontend_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION "import_count=1 packaged_instances=2"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # RFC 0026 E4-B2-C: Node embedded-host execution of the capability workflow's
+    # four capability statuses (OK/PENDING/ERROR/unknown) plus the node-event
+    # record layout, the pending latch re-entry negative, and the checked-alloc
+    # sequence. Real Node-engine evidence, NOT wasmtime evidence; SKIPs when Node
+    # is unavailable.
+    add_test(NAME ahfl.wasm.capability_workflow_node_host
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_workflow_cap_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_capability_workflow.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.capability_workflow_node_host PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "capability-workflow Node execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
 endif()
 
 add_test(NAME ahfl.runtime.native_grpc_gate
