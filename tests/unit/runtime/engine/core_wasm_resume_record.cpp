@@ -71,6 +71,7 @@ CoreWasmResumeRecord make_suspended() {
     r.exec_manifest_sha256 = hex_of('c');
     r.entry_kind = EntryKind::Workflow;
     r.entry_id = CoreWorkflowId{7};
+    r.entry_input_slot = PayloadSlotId{9}; // distinct from every memo.result_slot
     r.suspended_node_id = CoreWorkflowNodeId{41};
     r.resume_state = ResumeState::Suspended;
 
@@ -190,6 +191,7 @@ std::vector<std::uint8_t> forged_inflated_node_count(std::uint32_t node_count) {
     }
     body.push_back(0);       // entry_kind = Workflow
     put_uleb(body, 7);       // entry_id
+    put_uleb(body, 9);       // entry_input_slot
     put_uleb(body, 41);      // suspended_node_id
     body.push_back(0);       // resume_state = Suspended
     put_uleb(body, node_count); // attacker-inflated count; body then STOPS
@@ -248,6 +250,7 @@ std::vector<std::uint8_t> injected_single_node_core(char digest_fill = 'a',
     }
     b.push_back(entry_kind);     // entry_kind
     put_uleb(b, 7);              // entry_id
+    put_uleb(b, 9);              // entry_input_slot (distinct from memo result_slot 6)
     put_uleb(b, 41);             // suspended_node_id
     b.push_back(resume_state);   // resume_state
     put_uleb(b, 1);              // node_count = 1
@@ -294,13 +297,14 @@ int main() {
     }
 
     // ---- external HMAC KAT: the golden record bytes for make_suspended() are
-    //      fixed and independently cross-checked. The 292-byte record and its
+    //      fixed and independently cross-checked. The 293-byte record and its
     //      32-byte tail tag were verified with BOTH python hmac.new(key, prefix,
     //      sha256) AND `openssl dgst -sha256 -mac HMAC -macopt hexkey:<2b*32>` over
-    //      the exact 260-byte prefix; both produced the tag ded6367e...041068.
+    //      the exact 261-byte prefix; both produced the tag 76fd6bf6...4e4e97bf.
     //      Reproduce: encode make_suspended() with a 32-byte 0x2b key, then
     //      `openssl dgst -sha256 -mac HMAC -macopt hexkey:$(python3 -c "print('2b'*32)")`
-    //      over bytes [0, len-32). ----
+    //      over bytes [0, len-32). This golden is the D1a `entry_input_slot`-bearing
+    //      grammar; the pre-D1a golden is permanently rejected below. ----
     {
         static constexpr std::string_view kGoldenHex =
             "4148464c5752010061616161616161616161616161616161616161616161616161616161"
@@ -308,10 +312,10 @@ int main() {
             "626262626262626262626262626262626262626262626262626262626262626262626262"
             "626262626262626262626262626262626262626262626262626262626363636363636363"
             "636363636363636363636363636363636363636363636363636363636363636363636363"
-            "636363636363636363636363636363636363636300072900022800000029010101000000"
-            "88ef99abc5e88c91110501038407effdb6f50d010102030405060708090a0b0c0d0e0f10"
-            "3930000000000000ded6367ee4494cfef20304310671abd158f0ddfd9abf8255d929a15c"
-            "fb041068";
+            "63636363636363636363636363636363636363630007092900022800000029010101"
+            "00000088ef99abc5e88c91110501038407effdb6f50d010102030405060708090a0b0c0d"
+            "0e0f10393000000000000076fd6bf6607c78762b26a4cd4ad946cafd99826ae2b2c296b1"
+            "9237694e4e97bf";
         std::vector<std::uint8_t> golden;
         for (std::size_t i = 0; i + 1 < kGoldenHex.size(); i += 2) {
             const auto hi = kGoldenHex[i];
@@ -327,7 +331,41 @@ int main() {
         // Decoder admits the externally-verified golden bytes.
         check(decode_ok(golden), "kat.decoder_admits_golden_bytes");
         // The last 32 bytes are the externally-cross-checked tag.
-        check(golden.size() == 292, "kat.golden_length");
+        check(golden.size() == 293, "kat.golden_length");
+    }
+
+    // ---- permanent pre-D1a golden REJECT: the ORIGINAL frozen 292-byte,
+    //      HMAC-VALID pre-D1a make_suspended() record (no `entry_input_slot` field)
+    //      must be rejected by the D1a decoder. This is a lineage gate proving the
+    //      new decoder's fixed field order is the admission authority: the frozen
+    //      bytes below were a VALID record under the pre-D1a grammar (entry_id 7
+    //      immediately followed by suspended_node_id 41), and are kept verbatim as a
+    //      hardcoded constant -- NOT re-signed here -- so the tested HMAC path never
+    //      participates in this evidence. Because the D1a decoder reads a ULEB
+    //      `entry_input_slot` where this stream has `suspended_node_id`, the
+    //      downstream fields desynchronize and admission fails closed. ----
+    {
+        static constexpr std::string_view kPreD1aGoldenHex =
+            "4148464c5752010061616161616161616161616161616161616161616161616161616161"
+            "616161616161616161616161616161616161616161616161616161616161616161616161"
+            "626262626262626262626262626262626262626262626262626262626262626262626262"
+            "626262626262626262626262626262626262626262626262626262626363636363636363"
+            "636363636363636363636363636363636363636363636363636363636363636363636363"
+            "636363636363636363636363636363636363636300072900022800000029010101000000"
+            "88ef99abc5e88c91110501038407effdb6f50d010102030405060708090a0b0c0d0e0f10"
+            "3930000000000000ded6367ee4494cfef20304310671abd158f0ddfd9abf8255d929a15c"
+            "fb041068";
+        std::vector<std::uint8_t> pre_d1a;
+        for (std::size_t i = 0; i + 1 < kPreD1aGoldenHex.size(); i += 2) {
+            const auto hi = kPreD1aGoldenHex[i];
+            const auto lo = kPreD1aGoldenHex[i + 1];
+            auto nib = [](char c) -> int {
+                return (c >= '0' && c <= '9') ? c - '0' : (c - 'a') + 10;
+            };
+            pre_d1a.push_back(static_cast<std::uint8_t>((nib(hi) << 4) | nib(lo)));
+        }
+        check(pre_d1a.size() == 292, "lineage.pre_d1a_golden_length");
+        check(!decode_ok(pre_d1a), "lineage.pre_d1a_golden_is_rejected");
     }
 
     // ---- wrong key / wrong key_id ----
@@ -373,6 +411,19 @@ int main() {
                 auto b = *bytes;
                 b[10] ^= 0x20; // flip a hex-region byte
                 check(decode_fails(b), "tamper.digest_byte");
+            }
+            // entry_input_slot wire byte (in body -> breaks HMAC). Offset:
+            // magic(6)+fmt(1)+guarantees(1)+3*64 digests(192)+entry_kind(1)+
+            // entry_id(1,=7) = 202, so byte[202] is the entry_input_slot ULEB (value
+            // 9, single byte). Assert the position first so fixture drift cannot
+            // silently flip the wrong byte, then tamper it.
+            {
+                auto b = *bytes;
+                check(b.size() > 202 && b[202] == 0x09, "tamper.entry_input_slot_offset");
+                if (b.size() > 202 && b[202] == 0x09) {
+                    b[202] = 0x0a; // change entry_input_slot 9 -> 10 (still 1 ULEB byte)
+                    check(decode_fails(b), "tamper.entry_input_slot");
+                }
             }
             // alg_version in the tail
             {
@@ -599,6 +650,27 @@ int main() {
         auto r = make_suspended();
         r.nodes[1].memo[0].result_slot = PayloadSlotId{PayloadSlotId::kInvalid};
         check(!encode_and_authenticate(r, test_key()).ok(), "encoder.rejects_slot_sentinel");
+    }
+    {
+        auto r = make_suspended();
+        r.entry_input_slot = PayloadSlotId{PayloadSlotId::kInvalid};
+        check(!encode_and_authenticate(r, test_key()).ok(),
+              "encoder.rejects_entry_input_slot_sentinel");
+    }
+    {
+        // entry_input_slot must be DISTINCT from every memo.result_slot.
+        auto r = make_suspended();
+        r.entry_input_slot = r.nodes[1].memo[0].result_slot; // collide with memo slot 5
+        check(!encode_and_authenticate(r, test_key()).ok(),
+              "encoder.rejects_entry_input_slot_equals_memo_slot");
+    }
+    {
+        // Repeated memo references to the SAME result slot stay legal (positive), as
+        // long as that slot is not the entry_input_slot.
+        auto r = make_injected();
+        r.nodes[1].memo[1].result_slot = r.nodes[1].memo[0].result_slot; // slot 5 twice
+        check(encode_and_authenticate(r, test_key()).ok(),
+              "encoder.allows_repeated_memo_result_slot");
     }
     {
         // frontier not a capability node

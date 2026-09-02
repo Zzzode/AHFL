@@ -96,6 +96,7 @@ CoreWasmResumeRecord make_record(CoreWorkflowId wf) {
     r.wire_schema_sha256 = hex_of('b');
     r.exec_manifest_sha256 = hex_of('c');
     r.entry_id = wf;
+    r.entry_input_slot = PayloadSlotId{9}; // distinct from memo result_slot 5
     r.suspended_node_id = CoreWorkflowNodeId{41};
     r.resume_state = ahfl::runtime::core_wasm_resume::ResumeState::Suspended;
 
@@ -130,11 +131,33 @@ CoreWasmResumeRecord make_record(CoreWorkflowId wf) {
 }
 
 const std::vector<std::uint8_t> kSlot5Payload = {0xde, 0xad, 0xbe, 0xef};
-std::vector<Slot> slots_5() { return {Slot{PayloadSlotId{5}, kSlot5Payload}}; }
+const std::vector<std::uint8_t> kEntrySlot9Payload = {0x01, 0x02, 0x03};
+// The distinct slot set for make_record() is {entry_input_slot 9} U {memo slot 5}.
+std::vector<Slot> record_slots() {
+    return {Slot{PayloadSlotId{5}, kSlot5Payload}, Slot{PayloadSlotId{9}, kEntrySlot9Payload}};
+}
 
 void nuke(const fs::path &p) {
     std::error_code ec;
     fs::remove_all(p, ec);
+}
+
+// OS-level open-fd count for this process (Linux). Sanitizers do NOT track POSIX
+// fds, so a leaked directory fd is only observable at the OS level: we count the
+// entries in /proc/self/fd. Returns -1 if unavailable (the caller then skips the
+// numeric fd assertions rather than failing on a non-Linux/procfs-less host).
+[[nodiscard]] int open_fd_count() {
+    std::error_code ec;
+    const fs::path fd_dir = "/proc/self/fd";
+    if (!fs::exists(fd_dir, ec)) {
+        return -1;
+    }
+    int n = 0;
+    for (auto it = fs::directory_iterator(fd_dir, ec); !ec && it != fs::directory_iterator();
+         it.increment(ec)) {
+        ++n;
+    }
+    return ec ? -1 : n;
 }
 
 std::string h8(std::uint32_t v) {
@@ -366,7 +389,8 @@ int main(int argc, char **argv) {
         o.observer = &phase_recorder;
         o.observer_context = &phases;
         auto store = must_open_opts(work, o);
-        auto gen = store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key);
+        auto gen = store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                           key);
         check(gen.has_value() && *gen == 1, "roundtrip.first_gen_is_1");
         auto loaded = store.load(wf, ckpt, id_span, key);
         check(loaded.has_value() && std::holds_alternative<ResolvedAvailable>(*loaded),
@@ -374,10 +398,13 @@ int main(int argc, char **argv) {
         if (loaded.has_value() && std::holds_alternative<ResolvedAvailable>(*loaded)) {
             const auto &av = std::get<ResolvedAvailable>(*loaded);
             check(av.generation == 1, "roundtrip.gen_1");
-            check(av.slots.size() == 1 && av.slots[0].slot.value == 5 &&
-                      av.slots[0].payload == kSlot5Payload,
+            // Slots are canonically sorted by id: {memo slot 5, entry_input_slot 9}.
+            check(av.slots.size() == 2 && av.slots[0].slot.value == 5 &&
+                      av.slots[0].payload == kSlot5Payload && av.slots[1].slot.value == 9 &&
+                      av.slots[1].payload == kEntrySlot9Payload,
                   "roundtrip.slot_payload");
             check(av.record.entry_id.value == 7, "roundtrip.record_entry_id");
+            check(av.record.entry_input_slot.value == 9, "roundtrip.record_entry_input_slot");
         }
         const std::vector<StorePhase> expect = {
             StorePhase::WorkflowDirParentFsynced,     StorePhase::CheckpointDirParentFsynced,
@@ -396,7 +423,8 @@ int main(int argc, char **argv) {
         const fs::path work = fresh("consumed-phases");
         {
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "consumed_phases.setup_publish");
         }
@@ -431,7 +459,8 @@ int main(int argc, char **argv) {
             while (!go.load()) {
                 std::this_thread::sleep_for(std::chrono::microseconds{50});
             }
-            auto r = store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key);
+            auto r = store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                             key);
             if (r.has_value()) {
                 ++wins;
             } else if (r.error() == PayloadStoreError::GenerationMismatch) {
@@ -456,7 +485,8 @@ int main(int argc, char **argv) {
         const fs::path work = fresh(name);
         {
             auto store = must_open(work);
-            auto g = store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key);
+            auto g = store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                             key);
             check(g.has_value() && *g == 1, "reader.pre_gen_1");
         }
         BlockSync sync;
@@ -467,7 +497,7 @@ int main(int argc, char **argv) {
         wo.observer_context = &sync;
         auto writer_store = must_open_opts(work, wo);
         std::thread writer([&]() {
-            auto r = writer_store.publish_available(wf, ckpt, 1, make_record(wf), slots_5(),
+            auto r = writer_store.publish_available(wf, ckpt, 1, make_record(wf), record_slots(),
                                                     id_span, key);
             check(r.has_value() && *r == 2, "reader.writer_gen_2");
         });
@@ -506,13 +536,15 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("orphan-pointer-tmp");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "orphan.ptmp_pre");
             const std::vector<std::uint8_t> junk = {0x00, 0x01};
             check(write_file(ckpt_path(work, wf, ckpt) / "pointer.tmp", junk),
                   "orphan.ptmp_fixture");
-            auto g = store.publish_available(wf, ckpt, 1, make_record(wf), slots_5(), id_span, key);
+            auto g = store.publish_available(wf, ckpt, 1, make_record(wf), record_slots(), id_span,
+                                             key);
             check(g.has_value() && *g == 2, "orphan.pointer_tmp_rebuilt");
             check(!fs::exists(ckpt_path(work, wf, ckpt) / "pointer.tmp"),
                   "orphan.pointer_tmp_removed");
@@ -522,7 +554,8 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("orphan-stage");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "orphan.stage_pre");
             const fs::path stage = ckpt_path(work, wf, ckpt) / ("gen-" + h16(2) + ".stage");
@@ -531,7 +564,8 @@ int main(int argc, char **argv) {
             const std::vector<std::uint8_t> junk = {0x00};
             check(write_file(stage / "record", junk) && write_file(stage / "manifest", junk),
                   "orphan.stage_fixture");
-            auto g = store.publish_available(wf, ckpt, 1, make_record(wf), slots_5(), id_span, key);
+            auto g = store.publish_available(wf, ckpt, 1, make_record(wf), record_slots(), id_span,
+                                             key);
             check(g.has_value() && *g == 2, "orphan.stage_rebuilt");
             nuke(work);
         }
@@ -539,16 +573,19 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("orphan-final");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "orphan.final_pre");
             // Save the real gen-1 pointer bytes.
             const std::vector<std::uint8_t> pointer1 =
                 read_file(ckpt_path(work, wf, ckpt) / "pointer");
             check(!pointer1.empty(), "orphan.final_saved_pointer");
-            // Hand-write an unreferenced complete gen-2 with a MARKER payload.
+            // Hand-write an unreferenced complete gen-2 with MARKER payloads.
             const std::vector<std::uint8_t> marker(4, 0x99);
-            std::vector<Slot> marker_slots = {Slot{PayloadSlotId{5}, marker}};
+            const std::vector<std::uint8_t> marker9(3, 0x88);
+            std::vector<Slot> marker_slots = {Slot{PayloadSlotId{5}, marker},
+                                              Slot{PayloadSlotId{9}, marker9}};
             check(write_generation(work, wf, ckpt, 2, marker_slots, nullptr, nullptr),
                   "orphan.final_marker_fixture");
             // write_generation rewrote the pointer to gen 2; restore pointer to gen 1.
@@ -556,11 +593,12 @@ int main(int argc, char **argv) {
                   "orphan.final_restore_pointer");
             // Now expected=1 publish: the store must clean the unreferenced gen-2 and
             // publish its OWN gen-2 with the real caller payload (not the marker).
-            auto g = store.publish_available(wf, ckpt, 1, make_record(wf), slots_5(), id_span, key);
+            auto g = store.publish_available(wf, ckpt, 1, make_record(wf), record_slots(), id_span,
+                                             key);
             check(g.has_value() && *g == 2, "orphan.final_rebuilt");
             auto l = store.load(wf, ckpt, id_span, key);
             check(l.has_value() && std::holds_alternative<ResolvedAvailable>(*l) &&
-                      std::get<ResolvedAvailable>(*l).slots.size() == 1 &&
+                      std::get<ResolvedAvailable>(*l).slots.size() == 2 &&
                       std::get<ResolvedAvailable>(*l).slots[0].payload == kSlot5Payload,
                   "orphan.final_not_adopted");
             nuke(work);
@@ -569,7 +607,8 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("orphan-unknown");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "orphan.unknown_pre");
             const fs::path stage = ckpt_path(work, wf, ckpt) / ("gen-" + h16(2) + ".stage");
@@ -577,7 +616,8 @@ int main(int argc, char **argv) {
             fs::create_directories(stage, ec);
             const std::vector<std::uint8_t> junk = {0x00};
             check(write_file(stage / "bogus", junk), "orphan.unknown_fixture");
-            auto g = store.publish_available(wf, ckpt, 1, make_record(wf), slots_5(), id_span, key);
+            auto g = store.publish_available(wf, ckpt, 1, make_record(wf), record_slots(), id_span,
+                                             key);
             check(!g.has_value() && g.error() == PayloadStoreError::CommitInterrupted,
                   "orphan.unknown_child_fails_closed");
             check(fs::exists(stage / "bogus"), "orphan.unknown_child_kept");
@@ -587,7 +627,8 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("orphan-symlink-child");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "orphan.symlink_pre");
             const fs::path stage = ckpt_path(work, wf, ckpt) / ("gen-" + h16(2) + ".stage");
@@ -596,7 +637,8 @@ int main(int argc, char **argv) {
             fs::create_symlink("/etc/hostname", stage / "record", ec); // known name, symlink
             if (!ec) {
                 auto g =
-                    store.publish_available(wf, ckpt, 1, make_record(wf), slots_5(), id_span, key);
+                    store.publish_available(wf, ckpt, 1, make_record(wf), record_slots(), id_span,
+                                            key);
                 check(!g.has_value() && g.error() == PayloadStoreError::CommitInterrupted,
                       "orphan.symlink_child_fails_closed");
                 check(fs::is_symlink(stage / "record"), "orphan.symlink_child_kept");
@@ -629,7 +671,8 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("fs-groupwrite-wf");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "fs.groupwrite_pre");
             const fs::path wfdir = work / ("wf-" + h8(wf.value));
@@ -648,7 +691,8 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("fs-fifo-pointer");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "fs.fifo_pre");
             const fs::path ptr = ckpt_path(work, wf, ckpt) / "pointer";
@@ -666,7 +710,8 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("fs-hardlink-pointer");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "fs.hlptr_pre");
             std::error_code ec;
@@ -685,7 +730,8 @@ int main(int argc, char **argv) {
         {
             const fs::path work = fresh("fs-hardlink-record");
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "fs.hlrec_pre");
             std::error_code ec;
@@ -708,7 +754,7 @@ int main(int argc, char **argv) {
     auto tamper_case = [&](std::string_view name, void (*rt)(CoreWasmResumeRecord &),
                            void (*mt)(CommitManifest &)) {
         const fs::path work = fresh(name);
-        check(write_generation(work, wf, ckpt, 1, slots_5(), rt, mt), "tamper.fixture");
+        check(write_generation(work, wf, ckpt, 1, record_slots(), rt, mt), "tamper.fixture");
         auto store = must_open(work);
         auto l = store.load(wf, ckpt, id_span, key);
         check(!l.has_value() && l.error() == PayloadStoreError::StateMismatch, name);
@@ -727,7 +773,7 @@ int main(int argc, char **argv) {
     {
         // single-artifact record digest break (rewrite record without fixing manifest)
         const fs::path work = fresh("tamper-record-digest");
-        check(write_generation(work, wf, ckpt, 1, slots_5(), nullptr, nullptr),
+        check(write_generation(work, wf, ckpt, 1, record_slots(), nullptr, nullptr),
               "tamper.digest_fix");
         CoreWasmResumeRecord other = make_record(wf);
         other.auth_header.generation = 1;
@@ -744,7 +790,7 @@ int main(int argc, char **argv) {
     {
         // mark_consumed rejects a corrupt live Available (manifest record_len wrong).
         const fs::path work = fresh("tamper-consume-live");
-        check(write_generation(work, wf, ckpt, 1, slots_5(), nullptr,
+        check(write_generation(work, wf, ckpt, 1, record_slots(), nullptr,
                                [](CommitManifest &m) {
                                    std::get<AvailableBody>(m.state).record_len += 1;
                                }),
@@ -761,7 +807,8 @@ int main(int argc, char **argv) {
         const fs::path work = fresh("tamper-consumed-prev");
         {
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "tamper.cprev_pub");
             check(store.mark_consumed(wf, ckpt, 1, id_span, key).has_value(), "tamper.cprev_mark");
@@ -786,7 +833,7 @@ int main(int argc, char **argv) {
                               void (*tamper)(ConsumedBody &, CommitManifest &)) {
         {
             auto store = must_open(work);
-            if (!store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            if (!store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
                      .has_value()) {
                 return false;
             }
@@ -876,7 +923,8 @@ int main(int argc, char **argv) {
         const fs::path work = fresh("consumed-prev-ns");
         {
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "consumed_ns.pub");
         }
@@ -936,7 +984,8 @@ int main(int argc, char **argv) {
         const fs::path work = fresh("consumed-prev-state");
         {
             auto store = must_open(work);
-            check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+            check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                          key)
                       .has_value(),
                   "consumed_state.pub");
             check(store.mark_consumed(wf, ckpt, 1, id_span, key).has_value(),
@@ -985,7 +1034,8 @@ int main(int argc, char **argv) {
                         fs::perm_options::add, ec);
         if (!ec) {
             auto store = must_open(work);
-            auto r = store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key);
+            auto r = store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                             key);
             check(!r.has_value() && r.error() == PayloadStoreError::StateMismatch,
                   "create.groupwrite_wf_statemismatch");
         } else {
@@ -1001,7 +1051,8 @@ int main(int argc, char **argv) {
         fs::create_directory_symlink("elsewhere", work / ("wf-" + h8(wf.value)), ec);
         if (!ec) {
             auto store = must_open(work);
-            auto r = store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key);
+            auto r = store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                             key);
             check(!r.has_value() && r.error() == PayloadStoreError::StateMismatch,
                   "create.symlink_wf_statemismatch");
         } else {
@@ -1013,14 +1064,15 @@ int main(int argc, char **argv) {
         // hardlinked pointer.lock -> StateMismatch (not WriteFailed).
         const fs::path work = fresh("lock-hardlink");
         auto store = must_open(work);
-        check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
                   .has_value(),
               "lock.pre");
         const fs::path lock = ckpt_path(work, wf, ckpt) / "pointer.lock";
         std::error_code ec;
         fs::create_hard_link(lock, ckpt_path(work, wf, ckpt) / "pointer.lock.hl", ec);
         if (!ec) {
-            auto r = store.publish_available(wf, ckpt, 1, make_record(wf), slots_5(), id_span, key);
+            auto r = store.publish_available(wf, ckpt, 1, make_record(wf), record_slots(), id_span,
+                                             key);
             check(!r.has_value() && r.error() == PayloadStoreError::StateMismatch,
                   "lock.hardlink_statemismatch");
         } else {
@@ -1054,7 +1106,8 @@ int main(int argc, char **argv) {
         StoreOptions o;
         o.limits = StoreLimits{1u << 20, 8};
         auto store = must_open_opts(work, o);
-        auto r = store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key);
+        auto r = store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                         key);
         check(!r.has_value() && r.error() == PayloadStoreError::SizeCapExceeded,
               "cap.slot_exceeded");
         check(assert_no_advance(work), "cap.slot_no_advance");
@@ -1065,7 +1118,8 @@ int main(int argc, char **argv) {
         StoreOptions o;
         o.limits = StoreLimits{16, 1u << 20};
         auto store = must_open_opts(work, o);
-        auto r = store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key);
+        auto r = store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                         key);
         check(!r.has_value() && r.error() == PayloadStoreError::SizeCapExceeded,
               "cap.record_exceeded");
         check(assert_no_advance(work), "cap.record_no_advance");
@@ -1093,7 +1147,7 @@ int main(int argc, char **argv) {
         const fs::path work = fresh("sentinel-expected");
         auto store = must_open(work);
         auto r = store.publish_available(wf, ckpt, std::numeric_limits<std::uint64_t>::max(),
-                                          make_record(wf), slots_5(), id_span, key);
+                                          make_record(wf), record_slots(), id_span, key);
         check(!r.has_value() && r.error() == PayloadStoreError::GenerationMismatch,
               "sentinel.expected_uint64max");
         check(assert_no_advance(work), "sentinel.expected_no_advance");
@@ -1103,12 +1157,12 @@ int main(int argc, char **argv) {
         const fs::path work = fresh("sentinel-ids");
         auto store = must_open(work);
         auto bad_wf = store.publish_available(CoreWorkflowId{CoreWorkflowId::kInvalid}, ckpt, 0,
-                                               make_record(wf), slots_5(), id_span, key);
+                                               make_record(wf), record_slots(), id_span, key);
         check(!bad_wf.has_value() && bad_wf.error() == PayloadStoreError::Malformed,
               "sentinel.invalid_wf");
         auto bad_ckpt = store.publish_available(
-            wf, ResumeCheckpointId{ResumeCheckpointId::kInvalid}, 0, make_record(wf), slots_5(),
-            id_span, key);
+            wf, ResumeCheckpointId{ResumeCheckpointId::kInvalid}, 0, make_record(wf),
+            record_slots(), id_span, key);
         check(!bad_ckpt.has_value() && bad_ckpt.error() == PayloadStoreError::Malformed,
               "sentinel.invalid_ckpt");
         std::vector<Slot> bad_slot = {Slot{PayloadSlotId{PayloadSlotId::kInvalid}, kSlot5Payload}};
@@ -1119,20 +1173,37 @@ int main(int argc, char **argv) {
         nuke(work);
     }
 
-    // ---- P0-T3(set) distinct-slot missing / extra / duplicate ---------------
+    // ---- P0-T3(set) distinct-slot exact-set matrix (publish path) -----------
+    // The record-derived expected DISTINCT set is {entry_input_slot 9} U {memo 5}.
     {
         const fs::path work = fresh("slot-set");
         auto store = must_open(work);
+        // entry-specific missing: only the memo slot 5, entry slot 9 absent.
+        std::vector<Slot> entry_missing = {Slot{PayloadSlotId{5}, kSlot5Payload}};
+        auto em = store.publish_available(wf, ckpt, 0, make_record(wf), entry_missing, id_span,
+                                          key);
+        check(!em.has_value() && em.error() == PayloadStoreError::SlotSetMismatch,
+              "set.entry_missing_rejected");
+        // memo-specific missing: only the entry slot 9, memo slot 5 absent.
+        std::vector<Slot> memo_missing = {Slot{PayloadSlotId{9}, kEntrySlot9Payload}};
+        auto mm = store.publish_available(wf, ckpt, 0, make_record(wf), memo_missing, id_span, key);
+        check(!mm.has_value() && mm.error() == PayloadStoreError::SlotSetMismatch,
+              "set.memo_missing_rejected");
+        // fully missing: no slots at all.
         auto miss = store.publish_available(wf, ckpt, 0, make_record(wf), {}, id_span, key);
         check(!miss.has_value() && miss.error() == PayloadStoreError::SlotSetMismatch,
-              "set.missing_rejected");
+              "set.all_missing_rejected");
+        // extra: {5, 9, 7} where 7 is not in the expected set.
         std::vector<Slot> extra = {Slot{PayloadSlotId{5}, kSlot5Payload},
-                                   Slot{PayloadSlotId{9}, kSlot5Payload}};
+                                   Slot{PayloadSlotId{9}, kEntrySlot9Payload},
+                                   Slot{PayloadSlotId{7}, kSlot5Payload}};
         auto ex = store.publish_available(wf, ckpt, 0, make_record(wf), extra, id_span, key);
         check(!ex.has_value() && ex.error() == PayloadStoreError::SlotSetMismatch,
               "set.extra_rejected");
+        // duplicate caller slot id: {5, 5, 9}.
         std::vector<Slot> dup = {Slot{PayloadSlotId{5}, kSlot5Payload},
-                                 Slot{PayloadSlotId{5}, kSlot5Payload}};
+                                 Slot{PayloadSlotId{5}, kSlot5Payload},
+                                 Slot{PayloadSlotId{9}, kEntrySlot9Payload}};
         auto d = store.publish_available(wf, ckpt, 0, make_record(wf), dup, id_span, key);
         check(!d.has_value() && d.error() == PayloadStoreError::SlotSetMismatch,
               "set.duplicate_rejected");
@@ -1140,19 +1211,60 @@ int main(int argc, char **argv) {
         nuke(work);
     }
 
+    // ---- P0-T3(set) repeated-memo-reference POSITIVE (publish + load) --------
+    // Two memo entries referencing the SAME result slot collapse to ONE distinct
+    // slot; the record still publishes and loads with exactly {entry 9, memo 5}.
+    {
+        const fs::path work = fresh("slot-set-repeat");
+        auto store = must_open(work);
+        CoreWasmResumeRecord rec = make_record(wf);
+        rec.resume_state = ahfl::runtime::core_wasm_resume::ResumeState::Injected;
+        // Injected: drop pending, append a second memo entry reusing result_slot 5.
+        rec.nodes.back().pending.reset();
+        ResumeMemoEntry m1;
+        m1.invocation_ordinal = InvocationOrdinal{1};
+        m1.capability = CoreCapabilityId{3};
+        m1.source_symbol = 900;
+        m1.arg_hash = 0xdeadbeefULL;
+        m1.result_slot = PayloadSlotId{5}; // same slot as memo[0]
+        rec.nodes.back().memo.push_back(m1);
+        auto g = store.publish_available(wf, ckpt, 0, rec, record_slots(), id_span, key);
+        check(g.has_value() && *g == 1, "set.repeated_memo_publishes");
+        auto l = store.load(wf, ckpt, id_span, key);
+        check(l.has_value() && std::holds_alternative<ResolvedAvailable>(*l) &&
+                  std::get<ResolvedAvailable>(*l).slots.size() == 2,
+              "set.repeated_memo_loads_two_distinct");
+        // Staged path on the SAME repeated-memo generation: phase 1 succeeds and
+        // phase 2 admits exactly two distinct slots (entry 9 + memo 5) -- a repeated
+        // memo reference is not miscounted as a duplicate caller/manifest slot.
+        {
+            auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+            check(snap.has_value(), "set.repeated_memo_staged_phase1");
+            if (snap.has_value()) {
+                auto a = std::move(*snap).admit_slots(id_span, key);
+                check(a.has_value() && a->slots.size() == 2,
+                      "set.repeated_memo_staged_two_distinct");
+            }
+        }
+        nuke(work);
+    }
+
+
     // ---- P1-T6 CAS priority, Consumed, absent, key/key_id --------------------
     {
         const fs::path work = fresh("consumed-priority");
         auto store = must_open(work);
-        check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
                   .has_value(),
               "cpri.pub");
         auto c = store.mark_consumed(wf, ckpt, 1, id_span, key);
         check(c.has_value() && *c == 2, "cpri.mark_ok");
-        auto stale = store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key);
+        auto stale = store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span,
+                                             key);
         check(!stale.has_value() && stale.error() == PayloadStoreError::GenerationMismatch,
               "cpri.stale_expected_gen_mismatch");
-        auto over = store.publish_available(wf, ckpt, 2, make_record(wf), slots_5(), id_span, key);
+        auto over = store.publish_available(wf, ckpt, 2, make_record(wf), record_slots(), id_span,
+                                            key);
         check(!over.has_value() && over.error() == PayloadStoreError::Consumed,
               "cpri.publish_over_hit");
         auto cc = store.mark_consumed(wf, ckpt, 2, id_span, key);
@@ -1170,7 +1282,8 @@ int main(int argc, char **argv) {
         auto c = store.mark_consumed(absent_wf, ckpt, 0, id_span, key);
         check(!c.has_value() && c.error() == PayloadStoreError::NotFound,
               "absent.consume_notfound");
-        auto pe = store.publish_available(wf, ckpt, 3, make_record(wf), slots_5(), id_span, key);
+        auto pe = store.publish_available(wf, ckpt, 3, make_record(wf), record_slots(), id_span,
+                                          key);
         check(!pe.has_value() && pe.error() == PayloadStoreError::GenerationMismatch,
               "absent.publish_expected_gt0");
         check(!fs::exists(work / ("wf-" + h8(absent_wf.value))), "absent.no_dir_created");
@@ -1180,7 +1293,7 @@ int main(int argc, char **argv) {
     {
         const fs::path work = fresh("key-mismatch");
         auto store = must_open(work);
-        check(store.publish_available(wf, ckpt, 0, make_record(wf), slots_5(), id_span, key)
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
                   .has_value(),
               "key.pub");
         auto bad_id = key_id;
@@ -1193,6 +1306,379 @@ int main(int argc, char **argv) {
         check(!wrong_key.has_value() && wrong_key.error() == PayloadStoreError::IntegrityFailed,
               "key.wrong_key");
         static_assert(std::is_enum_v<PayloadStoreError>, "error type must be a bare no-echo enum");
+        nuke(work);
+    }
+
+    // ---- B2-D D1a staged ResumeSnapshot: two-phase admission -----------------
+    // Phase 1 (open_snapshot) authenticates pointer/manifest/record and exposes
+    // record()/generation() views; phase 2 (admit_slots) admits the exact slot set.
+    {
+        const fs::path work = fresh("snapshot-happy");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.pub");
+        auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+        check(snap.has_value(), "snapshot.phase1_ok");
+        if (snap.has_value()) {
+            // Phase-1 views are available before any slot admission.
+            check(snap->generation() == 1, "snapshot.phase1_generation");
+            check(snap->record().entry_id.value == 7 &&
+                      snap->record().entry_input_slot.value == 9,
+                  "snapshot.phase1_record_view");
+            // Phase 2: admit the exact set on the same pinned snapshot.
+            auto admitted = std::move(*snap).admit_slots(id_span, key);
+            check(admitted.has_value() && admitted->generation == 1 &&
+                      admitted->slots.size() == 2,
+                  "snapshot.phase2_admit_ok");
+        }
+        nuke(work);
+    }
+    // one-shot: a second admit_slots on a consumed/moved-from snapshot fails closed.
+    {
+        const fs::path work = fresh("snapshot-oneshot");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.oneshot_pub");
+        auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+        check(snap.has_value(), "snapshot.oneshot_phase1");
+        if (snap.has_value()) {
+            ResumeSnapshot moved = std::move(*snap);       // move transfers the pin
+            auto first = std::move(moved).admit_slots(id_span, key);
+            check(first.has_value(), "snapshot.oneshot_first_ok");
+            // The moved-FROM original is consumed: admit_slots fails closed.
+            auto reuse_src = std::move(*snap).admit_slots(id_span, key);
+            check(!reuse_src.has_value() &&
+                      reuse_src.error() == PayloadStoreError::StateMismatch,
+                  "snapshot.oneshot_moved_from_statemismatch");
+            // The consumed handle (first admit already ran) also fails a second call.
+            auto reuse = std::move(moved).admit_slots(id_span, key);
+            check(!reuse.has_value() && reuse.error() == PayloadStoreError::StateMismatch,
+                  "snapshot.oneshot_second_statemismatch");
+        }
+        nuke(work);
+    }
+    // phase-2 key priority: wrong key_id fails before any slot read; wrong key with
+    // the right key_id reaches slot integrity failure.
+    {
+        const fs::path work = fresh("snapshot-key");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.key_pub");
+        {
+            auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+            check(snap.has_value(), "snapshot.key_phase1");
+            if (snap.has_value()) {
+                auto bad_id = key_id;
+                bad_id[0] ^= 0xff;
+                auto r =
+                    std::move(*snap).admit_slots(std::span<const std::uint8_t, 16>(bad_id), key);
+                check(!r.has_value() && r.error() == PayloadStoreError::KeyIdMismatch,
+                      "snapshot.phase2_wrong_key_id");
+            }
+        }
+        {
+            auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+            check(snap.has_value(), "snapshot.key_phase1b");
+            if (snap.has_value()) {
+                std::vector<std::uint8_t> bad_key(32, 0x2c);
+                auto r = std::move(*snap).admit_slots(id_span, bad_key);
+                check(!r.has_value() && r.error() == PayloadStoreError::IntegrityFailed,
+                      "snapshot.phase2_wrong_key");
+            }
+        }
+        nuke(work);
+    }
+    // pinned-fd: after phase 1, rename the generation dir away (and drop a replacement
+    // at the old name); phase 2 still reads the pinned ORIGINAL (no reopen-by-name).
+    {
+        const fs::path work = fresh("snapshot-pinned");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.pinned_pub");
+        auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+        check(snap.has_value(), "snapshot.pinned_phase1");
+        if (snap.has_value()) {
+            const fs::path gen1 = gen_path(work, wf, ckpt, 1);
+            const fs::path moved_away = ckpt_path(work, wf, ckpt) / "gen-moved";
+            std::error_code ec;
+            fs::rename(gen1, moved_away, ec);
+            check(!ec, "snapshot.pinned_renamed");
+            // Drop a bogus replacement directory at the original name; phase 2 must
+            // NOT read it (it uses the pinned fd from phase 1).
+            fs::create_directories(gen1, ec);
+            auto admitted = std::move(*snap).admit_slots(id_span, key);
+            check(admitted.has_value() && admitted->slots.size() == 2,
+                  "snapshot.pinned_reads_original");
+        }
+        nuke(work);
+    }
+    // move-assignment closes the destination-owned fd and transfers ownership; the
+    // OS-level /proc/self/fd count proves no fd leak (sanitizers do not track fds).
+    {
+        const fs::path work = fresh("snapshot-move");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.move_pub");
+        const int base = open_fd_count();
+        {
+            auto a = store.open_snapshot(wf, ckpt, id_span, key);
+            auto b = store.open_snapshot(wf, ckpt, id_span, key);
+            check(a.has_value() && b.has_value(), "snapshot.move_two_snapshots");
+            if (base >= 0) {
+                check(open_fd_count() == base + 2, "snapshot.move_two_pins_open");
+            }
+            if (a.has_value() && b.has_value()) {
+                *a = std::move(*b); // closes a's fd, transfers b's pin into a
+                if (base >= 0) {
+                    check(open_fd_count() == base + 1, "snapshot.move_assign_closed_dest");
+                }
+                // The move-assignment SOURCE (b) is now moved-from: admit -> StateMismatch.
+                auto src = std::move(*b).admit_slots(id_span, key);
+                check(!src.has_value() && src.error() == PayloadStoreError::StateMismatch,
+                      "snapshot.move_source_statemismatch");
+                auto admitted = std::move(*a).admit_slots(id_span, key);
+                check(admitted.has_value(), "snapshot.move_assigned_still_admits");
+            }
+        }
+        if (base >= 0) {
+            check(open_fd_count() == base, "snapshot.move_back_to_baseline");
+        }
+        // Destructor close: open ONE snapshot (base+1), leave scope WITHOUT admit, and
+        // confirm the destructor alone returns to baseline (no reliance on admit's
+        // local RAII or move-assignment).
+        if (base >= 0) {
+            {
+                auto d = store.open_snapshot(wf, ckpt, id_span, key);
+                check(d.has_value(), "snapshot.dtor_open");
+                check(open_fd_count() == base + 1, "snapshot.dtor_pin_open");
+                // No admit_slots: the pin is held only by the snapshot handle.
+            }
+            check(open_fd_count() == base, "snapshot.dtor_closed_on_scope_exit");
+        }
+        nuke(work);
+    }
+    // FAILED admit is one-shot: a wrong-key admit consumes the pin, so a second
+    // admit on the SAME handle fails closed with StateMismatch (not a re-attempt).
+    {
+        const fs::path work = fresh("snapshot-failonce");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.failonce_pub");
+        auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+        check(snap.has_value(), "snapshot.failonce_phase1");
+        if (snap.has_value()) {
+            std::vector<std::uint8_t> bad_key(32, 0x2c);
+            auto first = std::move(*snap).admit_slots(id_span, bad_key);
+            check(!first.has_value() && first.error() == PayloadStoreError::IntegrityFailed,
+                  "snapshot.failonce_first_fails");
+            auto second = std::move(*snap).admit_slots(id_span, key); // pin already consumed
+            check(!second.has_value() && second.error() == PayloadStoreError::StateMismatch,
+                  "snapshot.failonce_second_statemismatch");
+        }
+        nuke(work);
+    }
+    // wrong-key_id is checked BEFORE any slot read: with a slot deleted (so a slot
+    // read WOULD fail), phase 2 with a wrong key_id still returns KeyIdMismatch.
+    {
+        const fs::path work = fresh("snapshot-idfirst");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.idfirst_pub");
+        auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+        check(snap.has_value(), "snapshot.idfirst_phase1");
+        if (snap.has_value()) {
+            // Corrupt a slot artifact AFTER phase 1 so a slot read would fail.
+            std::error_code ec;
+            fs::remove(gen_path(work, wf, ckpt, 1) / "slot-0000000000000005", ec);
+            auto bad_id = key_id;
+            bad_id[0] ^= 0xff;
+            auto r = std::move(*snap).admit_slots(std::span<const std::uint8_t, 16>(bad_id), key);
+            check(!r.has_value() && r.error() == PayloadStoreError::KeyIdMismatch,
+                  "snapshot.idfirst_key_id_before_slot");
+        }
+        nuke(work);
+    }
+    // phase-1 boundary: a missing/corrupt SLOT does not fail phase 1 (open_snapshot
+    // succeeds); only phase 2 surfaces it. A corrupt RECORD fails phase 1 first.
+    {
+        const fs::path work = fresh("snapshot-phase1");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.phase1_pub");
+        // Missing slot BEFORE open_snapshot: phase 1 does not touch slots, so it
+        // still succeeds; only phase 2 surfaces the missing slot.
+        {
+            std::error_code ec;
+            fs::remove(gen_path(work, wf, ckpt, 1) / "slot-0000000000000005", ec);
+            check(!ec, "snapshot.phase1_slot_removed");
+            auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+            check(snap.has_value(), "snapshot.phase1_slot_missing_ok");
+            if (snap.has_value()) {
+                auto r = std::move(*snap).admit_slots(id_span, key);
+                check(!r.has_value() && r.error() == PayloadStoreError::StateMismatch,
+                      "snapshot.phase1_slot_missing_phase2_statemismatch");
+            }
+        }
+        nuke(work);
+    }
+    // record-HMAC-invalid + slot-missing: phase 1 must fail IntegrityFailed FIRST
+    // (record precedes slot). The fixture re-signs the manifest.record_sha256 and the
+    // pointer so the corrupt record is the FIRST failing gate (not a digest mismatch).
+    {
+        const fs::path work = fresh("snapshot-recordfirst");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.recordfirst_pub");
+        const auto key_bytes = test_key();
+        const fs::path gp = gen_path(work, wf, ckpt, 1);
+        // Flip the record HMAC tag byte on disk (record_len unchanged).
+        auto rec = read_file(gp / "record");
+        check(!rec.empty(), "snapshot.recordfirst_read");
+        if (!rec.empty()) {
+            rec[rec.size() - 1] ^= 0xff;
+            check(write_file(gp / "record", rec), "snapshot.recordfirst_write");
+            // Re-sign the manifest to bind the NEW (corrupt) record digest + same
+            // length, so the record digest gate passes and admission reaches the
+            // record HMAC.
+            auto man_bytes = read_file(gp / "manifest");
+            auto man = decode_manifest(man_bytes, id_span, key_bytes, 1u << 20);
+            check(man.has_value(), "snapshot.recordfirst_decode_manifest");
+            if (man.has_value()) {
+                auto &avail = std::get<AvailableBody>(man->state);
+                avail.record_sha256 = digest_of(rec); // bind corrupt record bytes
+                auto re_man = encode_manifest(*man, key_bytes);
+                check(re_man.has_value() && write_file(gp / "manifest", *re_man),
+                      "snapshot.recordfirst_resign_manifest");
+                // Re-sign the pointer to the new manifest digest.
+                auto ptr_bytes = read_file(ckpt_path(work, wf, ckpt) / "pointer");
+                auto ptr = decode_pointer(ptr_bytes, id_span, key_bytes);
+                check(ptr.has_value(), "snapshot.recordfirst_decode_pointer");
+                if (ptr.has_value() && re_man.has_value()) {
+                    ptr->manifest_sha256 = digest_of(*re_man);
+                    auto re_ptr = encode_pointer(*ptr, key_bytes);
+                    check(re_ptr.has_value() &&
+                              write_file(ckpt_path(work, wf, ckpt) / "pointer", *re_ptr),
+                          "snapshot.recordfirst_resign_pointer");
+                }
+                // Drop a slot so a slot read WOULD fail -- proving record precedes slot.
+                std::error_code ec;
+                fs::remove(gp / "slot-0000000000000005", ec);
+            }
+        }
+        auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+        check(!snap.has_value() && snap.error() == PayloadStoreError::IntegrityFailed,
+              "snapshot.recordfirst_integrity_before_slot");
+        nuke(work);
+    }
+    // exact-set matrix layered by API. write_generation writes a self-consistent
+    // (HMAC-valid, pointer-digest-synchronized) generation whose manifest slot set is
+    // exactly the passed slots, while the embedded record derives {entry 9, memo 5}.
+    // legacy load rejects entry-missing / memo-missing / extra with SlotSetMismatch;
+    // staged phase 1 SUCCEEDS on the same self-consistent manifests and only phase 2
+    // returns SlotSetMismatch.
+    {
+        auto entry_slot = [] { return Slot{PayloadSlotId{9}, kEntrySlot9Payload}; };
+        auto memo_slot = [] { return Slot{PayloadSlotId{5}, kSlot5Payload}; };
+        struct Case {
+            const char *name;
+            std::vector<Slot> slots;
+        };
+        std::vector<Case> cases = {
+            {"entry_missing", {memo_slot()}},
+            {"memo_missing", {entry_slot()}},
+            {"extra", {memo_slot(), Slot{PayloadSlotId{7}, kSlot5Payload}, entry_slot()}},
+        };
+        for (auto &c : cases) {
+            const fs::path work = fresh(std::string("snapshot-set-") + c.name);
+            auto store = must_open(work);
+            check(write_generation(work, wf, ckpt, 1, c.slots, nullptr, nullptr),
+                  std::string("snapshot.set_fixture_") + c.name);
+            // legacy load rejects the record-vs-manifest set mismatch.
+            auto l = store.load(wf, ckpt, id_span, key);
+            check(!l.has_value() && l.error() == PayloadStoreError::SlotSetMismatch,
+                  std::string("snapshot.set_legacy_") + c.name);
+            // staged phase 1 succeeds (manifest self-consistent); phase 2 rejects.
+            auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+            check(snap.has_value(), std::string("snapshot.set_phase1_ok_") + c.name);
+            if (snap.has_value()) {
+                auto r = std::move(*snap).admit_slots(id_span, key);
+                check(!r.has_value() && r.error() == PayloadStoreError::SlotSetMismatch,
+                      std::string("snapshot.set_phase2_") + c.name);
+            }
+            nuke(work);
+        }
+    }
+    // duplicate slot_meta is an HMAC-valid manifest SELF-invariant that the ENCODER
+    // refuses to produce, so it is forged on the wire: encode a legal 2-slot manifest,
+    // rewrite the second slot id byte to equal the first (single-byte ULEB 9 -> 5),
+    // re-HMAC the prefix, and re-sign the pointer to the new manifest digest. phase 1
+    // (decode_manifest) must reject it before any slot admission.
+    {
+        const fs::path work = fresh("snapshot-dupmeta");
+        auto store = must_open(work);
+        const auto key_bytes = test_key();
+        check(write_generation(work, wf, ckpt, 1, record_slots(), nullptr, nullptr),
+              "snapshot.dupmeta_base_fixture");
+        const fs::path gp = gen_path(work, wf, ckpt, 1);
+        auto man = read_file(gp / "manifest");
+        check(man.size() > 32 + 25, "snapshot.dupmeta_manifest_read");
+        // Deterministic B0 wire offsets for this fixture: magic(6)+fmt(1)+wf(1,=7)+
+        // ckpt(1)+generation(8 LE)+state(1)+record_sha256(64)+record_len(2,=293)+
+        // slot_count(1) = 85, so the first slot id is byte[85] and the second slot id
+        // is byte[85 + 1 + 64 + 1] = byte[151]. Assert the legal bytes first so a
+        // future fixture drift cannot silently patch the wrong byte.
+        check(man.size() > 151 && man[85] == 0x05 && man[151] == 0x09,
+              "snapshot.dupmeta_slot_id_offsets");
+        if (man.size() > 151 && man[85] == 0x05 && man[151] == 0x09 && man.size() >= 32) {
+            man[151] = 0x05; // forge a duplicate of the first slot id
+            // Re-HMAC the prefix [0, tag) so the forged manifest is authentic.
+            const std::size_t tag_off = man.size() - 32;
+            std::span<const std::uint8_t> prefix(man.data(), tag_off);
+            const auto tag = ahfl::support::hmac_sha256(key_bytes, prefix);
+            std::copy(tag.begin(), tag.end(), man.begin() + static_cast<std::ptrdiff_t>(tag_off));
+            check(write_file(gp / "manifest", man), "snapshot.dupmeta_rewrite_manifest");
+            // Re-sign the pointer to the forged manifest digest.
+            auto ptr_bytes = read_file(ckpt_path(work, wf, ckpt) / "pointer");
+            auto ptr = decode_pointer(ptr_bytes, id_span, key_bytes);
+            check(ptr.has_value(), "snapshot.dupmeta_decode_pointer");
+            if (ptr.has_value()) {
+                ptr->manifest_sha256 = digest_of(man);
+                auto re_ptr = encode_pointer(*ptr, key_bytes);
+                check(re_ptr.has_value() &&
+                          write_file(ckpt_path(work, wf, ckpt) / "pointer", *re_ptr),
+                      "snapshot.dupmeta_resign_pointer");
+            }
+        }
+        // phase 1 rejects the duplicate slot_meta self-invariant with SlotSetMismatch.
+        auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+        check(!snap.has_value() && snap.error() == PayloadStoreError::SlotSetMismatch,
+              "snapshot.dupmeta_phase1_rejected");
+        nuke(work);
+    }
+    // live Consumed tombstone: open_snapshot returns Consumed before any admission.
+    {
+        const fs::path work = fresh("snapshot-consumed");
+        auto store = must_open(work);
+        check(store.publish_available(wf, ckpt, 0, make_record(wf), record_slots(), id_span, key)
+                  .has_value(),
+              "snapshot.consumed_pub");
+        check(store.mark_consumed(wf, ckpt, 1, id_span, key).has_value(), "snapshot.consumed_mark");
+        auto snap = store.open_snapshot(wf, ckpt, id_span, key);
+        check(!snap.has_value() && snap.error() == PayloadStoreError::Consumed,
+              "snapshot.consumed_rejected");
+        // absent checkpoint -> NotFound.
+        auto absent = store.open_snapshot(CoreWorkflowId{999}, ckpt, id_span, key);
+        check(!absent.has_value() && absent.error() == PayloadStoreError::NotFound,
+              "snapshot.absent_notfound");
         nuke(work);
     }
 

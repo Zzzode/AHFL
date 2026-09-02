@@ -123,6 +123,57 @@ struct ResolvedConsumed {
 // variant arm.
 using ResolvedGeneration = std::variant<ResolvedAvailable, ResolvedConsumed>;
 
+// A two-phase, no-TOCTOU handle over a live Available generation (B2-D D1a). The
+// atomic `load()` admits the record AND all slots together, which cannot express the
+// B2-D admission order (record HMAC -> digests -> coordinates must run and pass
+// BEFORE slot admission). `open_snapshot` performs PHASE 1 only -- it pins the live
+// generation directory fd and authenticates the pointer, manifest, and A1 record --
+// and returns this handle exposing narrow `record()` / `generation()` views for the
+// caller's digest + coordinate gates. Only after those gates pass does the caller
+// call `std::move(snapshot).admit_slots(...)` for PHASE 2: it re-borrows the key,
+// cross-checks it against the snapshot's non-secret key_id/generation authority, and
+// admits the exact `{entry_input_slot} U memo result slots` set on the SAME pinned
+// fd (never reopening the generation by name). The handle holds only NON-secret
+// authenticated metadata plus the pinned fd; it NEVER stores key bytes and exposes
+// no raw fd / manifest / pointer accessor. Move-only: an explicit noexcept move
+// transfers the fd and leaves the source with fd = -1; the destructor closes it
+// exactly once. `admit_slots` is ONE-SHOT: it consumes the pin (fd -> local RAII,
+// member fd -> -1) before any work, so it runs at most once whether it succeeds or
+// fails; a second call on a consumed/moved-from handle fails closed with
+// `StateMismatch`.
+class ResumeSnapshot {
+  public:
+    ResumeSnapshot(const ResumeSnapshot &) = delete;
+    ResumeSnapshot &operator=(const ResumeSnapshot &) = delete;
+    ResumeSnapshot(ResumeSnapshot &&other) noexcept;
+    ResumeSnapshot &operator=(ResumeSnapshot &&other) noexcept;
+    ~ResumeSnapshot();
+
+    // Phase-1 views for the caller's digest + coordinate gates.
+    [[nodiscard]] const core_wasm_resume::CoreWasmResumeRecord &record() const noexcept;
+    [[nodiscard]] std::uint64_t generation() const noexcept;
+
+    // Phase 2 (one-shot; consumes the pin). Admits the exact distinct slot set on
+    // the pinned generation fd after re-borrowing + cross-checking `(key_id, key)`.
+    // Returns the full `ResolvedAvailable` (generation + record + slots) moved out.
+    // A second call on a consumed/moved-from snapshot returns `StateMismatch`.
+    [[nodiscard]] std::expected<ResolvedAvailable, PayloadStoreError>
+    admit_slots(std::span<const std::uint8_t, 16> expected_key_id,
+                std::span<const std::uint8_t> key) &&;
+
+  private:
+    ResumeSnapshot() noexcept = default;
+    friend class IntegrityPayloadStore;
+
+    int gen_dir_fd_{-1};                              // pinned generation-dir fd
+    std::uint64_t root_dev_{0};                       // read_artifact st_dev guard
+    StoreLimits limits_{};                            // max_slot_artifact_bytes, etc.
+    payload_store::GenerationPointer pointer_{};      // authenticated, non-secret
+    payload_store::CommitManifest manifest_{};        // authenticated, non-secret (has generation)
+    std::uint64_t manifest_artifact_size_{0};         // actual manifest length read in phase 1
+    core_wasm_resume::CoreWasmResumeRecord record_{}; // authenticated, non-secret
+};
+
 // The integrity-only durable-resume payload store. Move-only; owns a pinned
 // directory fd for the trusted root. All identity is derived from typed ids into
 // fixed-width lowercase-hex path components under that root fd (openat + O_NOFOLLOW),
@@ -178,6 +229,18 @@ class IntegrityPayloadStore {
     [[nodiscard]] std::expected<ResolvedGeneration, PayloadStoreError>
     load(ir::core::CoreWorkflowId wf, ResumeCheckpointId ckpt,
          std::span<const std::uint8_t, 16> key_id, std::span<const std::uint8_t> key);
+
+    // Open a staged, two-phase snapshot of the live generation (B2-D D1a). PHASE 1:
+    // lock-free single authenticated pointer read (the snapshot linearization point),
+    // pins the live generation dir fd, and authenticates the pointer + manifest +
+    // A1 record WITHOUT admitting any slot. A live Consumed tombstone returns
+    // `Consumed` before any record admission; `NotFound` when no pointer exists. The
+    // returned handle exposes `record()`/`generation()` for the caller's digest +
+    // coordinate gates; the caller then calls `std::move(snapshot).admit_slots(...)`
+    // for phase 2. `key` is BORROWED for phase-1 authentication and never stored.
+    [[nodiscard]] std::expected<ResumeSnapshot, PayloadStoreError>
+    open_snapshot(ir::core::CoreWorkflowId wf, ResumeCheckpointId ckpt,
+                  std::span<const std::uint8_t, 16> key_id, std::span<const std::uint8_t> key);
 
   private:
     IntegrityPayloadStore() noexcept = default;

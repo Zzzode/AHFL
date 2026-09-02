@@ -67,8 +67,15 @@ constexpr std::uint64_t kManifestPerSlotMeta = 10 + 64 + 10;
 // nullopt if the formula overflows u64 (caller maps to SizeCapExceeded at open).
 [[nodiscard]] std::optional<std::uint64_t>
 derive_manifest_cap(std::uint64_t max_record_artifact_bytes) noexcept {
-    const std::uint64_t max_slots = max_record_artifact_bytes / kMinMemoEntryBytes;
-    auto slots_bytes = checked_mul(max_slots, kManifestPerSlotMeta);
+    const std::uint64_t memo_slots = max_record_artifact_bytes / kMinMemoEntryBytes;
+    // The distinct slot set is {entry_input_slot} U memo result slots: the workflow
+    // entry input slot is NOT a memo entry, so it adds ONE distinct slot beyond the
+    // memo-referenced bound. Checked +1 (overflow -> SizeCapExceeded at open).
+    auto max_slots = checked_add(memo_slots, 1);
+    if (!max_slots.has_value()) {
+        return std::nullopt;
+    }
+    auto slots_bytes = checked_mul(*max_slots, kManifestPerSlotMeta);
     if (!slots_bytes.has_value()) {
         return std::nullopt;
     }
@@ -257,6 +264,13 @@ std::expected<std::uint64_t, PayloadStoreError> IntegrityPayloadStore::mark_cons
 std::expected<ResolvedGeneration, PayloadStoreError>
 IntegrityPayloadStore::load(ir::core::CoreWorkflowId, ResumeCheckpointId,
                             std::span<const std::uint8_t, 16>, std::span<const std::uint8_t>) {
+    return std::unexpected(PayloadStoreError::UnsupportedPlatform);
+}
+
+std::expected<ResumeSnapshot, PayloadStoreError>
+IntegrityPayloadStore::open_snapshot(ir::core::CoreWorkflowId, ResumeCheckpointId,
+                                     std::span<const std::uint8_t, 16>,
+                                     std::span<const std::uint8_t>) {
     return std::unexpected(PayloadStoreError::UnsupportedPlatform);
 }
 
@@ -757,8 +771,12 @@ build_generation(std::uint64_t manifest_cap, const StoreLimits &limits, CoreWork
         body.record_sha256 = *record_digest;
         body.record_len = record_bytes.size();
 
-        // Distinct slot set derived from ALL memo references in the record.
+        // Distinct slot set = {entry_input_slot} U all memo references in the record.
+        // The entry input slot is the caller-provided workflow ENTRY frame; A1
+        // admission already guarantees it is non-invalid and distinct from every
+        // memo.result_slot, so seeding it here never collides with a memo slot.
         std::vector<std::uint64_t> expected;
+        expected.push_back(available_record->entry_input_slot.value);
         for (const auto &node : available_record->nodes) {
             for (const auto &memo : node.memo) {
                 expected.push_back(memo.result_slot.value);
@@ -953,6 +971,11 @@ struct LivePointer {
     GenerationPointer pointer;
     CommitManifest manifest;
     std::uint64_t manifest_artifact_size{0}; // whole current-manifest artifact byte size
+    // The generation directory fd, opened once while authenticating the pointer +
+    // manifest and PINNED for the lifetime of this admission: legacy admission and
+    // the staged ResumeSnapshot both reuse it, so a slot read never reopens the
+    // generation by name (no rename/replacement window).
+    FdGuard gen_dir;
 };
 
 [[nodiscard]] std::expected<LivePointer, PayloadStoreError>
@@ -1000,24 +1023,19 @@ read_live_pointer(int ckpt_fd, std::uint64_t root_dev, std::uint64_t manifest_ca
     if (manifest->generation != gen) {
         return std::unexpected(PayloadStoreError::StateMismatch);
     }
-    return LivePointer{std::move(*pointer), std::move(*manifest), manifest_bytes->size()};
+    return LivePointer{std::move(*pointer), std::move(*manifest), manifest_bytes->size(),
+                       std::move(*gen_dir)};
 }
 
-// Fully admit a live Available generation: authenticate the record, derive the
-// distinct slot set, exact-set-equal the manifest, and read+cross-check every slot.
-// Returns the ResolvedAvailable or an error. `live.manifest.state` must be Available.
-[[nodiscard]] std::expected<ResolvedAvailable, PayloadStoreError>
-admit_available(int ckpt_fd, std::uint64_t root_dev, const StoreLimits &limits, CoreWorkflowId wf,
-                ResumeCheckpointId ckpt, std::span<const std::uint8_t, 16> key_id,
-                std::span<const std::uint8_t> key, const LivePointer &live) {
-    const auto &avail = std::get<AvailableBody>(live.manifest.state);
-    const std::uint64_t gen = live.manifest.generation;
-    auto gen_dir = open_dir_checked(ckpt_fd, generation_dir_name(gen), root_dev);
-    if (!gen_dir.has_value()) {
-        return std::unexpected(PayloadStoreError::StateMismatch);
-    }
-    // Record artifact.
-    auto record_bytes = read_artifact(gen_dir->get(), "record", root_dev,
+// Phase 1 (shared): authenticate the live Available RECORD on the pinned generation
+// dir fd. Reads the record artifact, checks size + digest against the manifest,
+// decode_and_authenticates it (any failure -> IntegrityFailed), and cross-checks
+// entry_id / generation / guarantees. Returns the decoded record; admits NO slot.
+[[nodiscard]] std::expected<CoreWasmResumeRecord, PayloadStoreError>
+admit_record_for(int gen_dir_fd, std::uint64_t root_dev, const StoreLimits &limits,
+                 CoreWorkflowId wf, std::uint64_t gen, const AvailableBody &avail,
+                 std::span<const std::uint8_t, 16> key_id, std::span<const std::uint8_t> key) {
+    auto record_bytes = read_artifact(gen_dir_fd, "record", root_dev,
                                       limits.max_record_artifact_bytes,
                                       ArtifactReadKind::Immutable);
     if (!record_bytes.has_value()) {
@@ -1039,8 +1057,25 @@ admit_available(int ckpt_fd, std::uint64_t root_dev, const StoreLimits &limits, 
         record.guarantees != 0) {
         return std::unexpected(PayloadStoreError::StateMismatch);
     }
-    // Distinct slot set derived from all memo references.
+    return record;
+}
+
+// Phase 2 (shared): admit the SLOT set on the same pinned generation dir fd against
+// the already-authenticated record. Derives the distinct expected set
+// ({entry_input_slot} U memo result slots), exact-set-equals the manifest, verifies
+// the tightened manifest-cap, and reads + cross-checks every slot artifact. Returns
+// the resolved slots. Used by BOTH legacy admit_available and ResumeSnapshot phase 2
+// so the slot-admission invariants live in one place.
+[[nodiscard]] std::expected<std::vector<ResolvedSlot>, PayloadStoreError>
+admit_slots_for(int gen_dir_fd, std::uint64_t root_dev, const StoreLimits &limits,
+                CoreWorkflowId wf, ResumeCheckpointId ckpt, std::uint64_t gen,
+                const AvailableBody &avail, std::uint64_t manifest_artifact_size,
+                const CoreWasmResumeRecord &record, std::span<const std::uint8_t, 16> key_id,
+                std::span<const std::uint8_t> key) {
+    // Distinct slot set = {entry_input_slot} U all memo references. A1 admission
+    // guarantees entry_input_slot is non-invalid and distinct from every memo slot.
     std::vector<std::uint64_t> expected;
+    expected.push_back(record.entry_input_slot.value);
     for (const auto &node : record.nodes) {
         for (const auto &memo : node.memo) {
             expected.push_back(memo.result_slot.value);
@@ -1065,8 +1100,7 @@ admit_available(int ckpt_fd, std::uint64_t root_dev, const StoreLimits &limits, 
                                      kManifestPerSlotMeta);
         auto tight = per_slots.has_value() ? checked_add(kManifestFixedOverhead, *per_slots)
                                            : std::optional<std::uint64_t>{};
-        if (!tight.has_value() ||
-            static_cast<std::uint64_t>(live.manifest_artifact_size) > *tight) {
+        if (!tight.has_value() || manifest_artifact_size > *tight) {
             return std::unexpected(PayloadStoreError::SizeCapExceeded);
         }
     }
@@ -1074,7 +1108,7 @@ admit_available(int ckpt_fd, std::uint64_t root_dev, const StoreLimits &limits, 
     std::vector<ResolvedSlot> resolved;
     resolved.reserve(avail.slots.size());
     for (const auto &meta : avail.slots) {
-        auto slot_bytes = read_artifact(gen_dir->get(), slot_file_name(meta.slot), root_dev,
+        auto slot_bytes = read_artifact(gen_dir_fd, slot_file_name(meta.slot), root_dev,
                                         limits.max_slot_artifact_bytes,
                                         ArtifactReadKind::Immutable);
         if (!slot_bytes.has_value()) {
@@ -1094,7 +1128,30 @@ admit_available(int ckpt_fd, std::uint64_t root_dev, const StoreLimits &limits, 
         }
         resolved.push_back(ResolvedSlot{meta.slot, std::move(slot->payload)});
     }
-    return ResolvedAvailable{gen, std::move(record), std::move(resolved)};
+    return resolved;
+}
+
+// Fully admit a live Available generation on its pinned generation dir fd:
+// phase 1 (record) then phase 2 (slots), reusing the shared helpers so the
+// observable order / error priority / result is unchanged. `live.manifest.state`
+// must be Available and `live.gen_dir` must be the pinned generation directory.
+[[nodiscard]] std::expected<ResolvedAvailable, PayloadStoreError>
+admit_available(std::uint64_t root_dev, const StoreLimits &limits, CoreWorkflowId wf,
+                ResumeCheckpointId ckpt, std::span<const std::uint8_t, 16> key_id,
+                std::span<const std::uint8_t> key, const LivePointer &live) {
+    const auto &avail = std::get<AvailableBody>(live.manifest.state);
+    const std::uint64_t gen = live.manifest.generation;
+    const int gen_dir_fd = live.gen_dir.get();
+    auto record = admit_record_for(gen_dir_fd, root_dev, limits, wf, gen, avail, key_id, key);
+    if (!record.has_value()) {
+        return std::unexpected(record.error());
+    }
+    auto resolved = admit_slots_for(gen_dir_fd, root_dev, limits, wf, ckpt, gen, avail,
+                                    live.manifest_artifact_size, *record, key_id, key);
+    if (!resolved.has_value()) {
+        return std::unexpected(resolved.error());
+    }
+    return ResolvedAvailable{gen, std::move(*record), std::move(*resolved)};
 }
 
 } // namespace
@@ -1205,7 +1262,7 @@ std::expected<std::uint64_t, PayloadStoreError> IntegrityPayloadStore::mark_cons
         return std::unexpected(PayloadStoreError::Consumed); // already consumed
     }
     // Full admission of the live Available generation before tombstoning it.
-    auto admitted = admit_available(ckpt_fd, root_dev_, limits_, wf, ckpt, key_id, key, *live);
+    auto admitted = admit_available(root_dev_, limits_, wf, ckpt, key_id, key, *live);
     if (!admitted.has_value()) {
         return std::unexpected(admitted.error());
     }
@@ -1272,11 +1329,51 @@ IntegrityPayloadStore::load(ir::core::CoreWorkflowId wf, ResumeCheckpointId ckpt
         return ResolvedGeneration{
             ResolvedConsumed{live->manifest.generation, cb.consumed_generation}};
     }
-    auto admitted = admit_available(inner_fd, root_dev_, limits_, wf, ckpt, key_id, key, *live);
+    auto admitted = admit_available(root_dev_, limits_, wf, ckpt, key_id, key, *live);
     if (!admitted.has_value()) {
         return std::unexpected(admitted.error());
     }
     return ResolvedGeneration{std::move(*admitted)};
+}
+
+std::expected<ResumeSnapshot, PayloadStoreError>
+IntegrityPayloadStore::open_snapshot(ir::core::CoreWorkflowId wf, ResumeCheckpointId ckpt,
+                                     std::span<const std::uint8_t, 16> key_id,
+                                     std::span<const std::uint8_t> key) {
+    if (wf.value == CoreWorkflowId::kInvalid || ckpt.value == ResumeCheckpointId::kInvalid) {
+        return std::unexpected(PayloadStoreError::Malformed);
+    }
+    auto ckpt_dir = open_existing_checkpoint_dir(root_fd_, root_dev_, wf, ckpt,
+                                                 PayloadStoreError::NotFound);
+    if (!ckpt_dir.has_value()) {
+        return std::unexpected(ckpt_dir.error());
+    }
+    const int inner_fd = ckpt_dir->get();
+    // PHASE 1: single authenticated pointer read (linearization point); pins the
+    // live generation dir fd and authenticates pointer + manifest + record. No slot.
+    auto live = read_live_pointer(inner_fd, root_dev_, manifest_cap_, wf, ckpt, key_id, key);
+    if (!live.has_value()) {
+        return std::unexpected(live.error()); // NotFound if no pointer
+    }
+    if (std::holds_alternative<ConsumedBody>(live->manifest.state)) {
+        return std::unexpected(PayloadStoreError::Consumed); // live tombstone: no snapshot
+    }
+    const auto &avail = std::get<AvailableBody>(live->manifest.state);
+    const std::uint64_t gen = live->manifest.generation;
+    auto record = admit_record_for(live->gen_dir.get(), root_dev_, limits_, wf, gen, avail,
+                                   key_id, key);
+    if (!record.has_value()) {
+        return std::unexpected(record.error());
+    }
+    ResumeSnapshot snapshot;
+    snapshot.gen_dir_fd_ = live->gen_dir.release(); // pin transferred to the snapshot
+    snapshot.root_dev_ = root_dev_;
+    snapshot.limits_ = limits_;
+    snapshot.manifest_artifact_size_ = live->manifest_artifact_size;
+    snapshot.pointer_ = std::move(live->pointer);
+    snapshot.manifest_ = std::move(live->manifest);
+    snapshot.record_ = std::move(*record);
+    return snapshot;
 }
 
 #endif // __linux__
@@ -1311,6 +1408,89 @@ IntegrityPayloadStore::~IntegrityPayloadStore() {
         ::close(root_fd_);
         root_fd_ = -1;
     }
+#endif
+}
+
+// ---- ResumeSnapshot (B2-D D1a): move-only pinned-fd handle -------------------
+// Cross-platform: the fd is only ever >= 0 on Linux (open_snapshot returns
+// UnsupportedPlatform elsewhere), but the RAII/move semantics are defined uniformly.
+
+ResumeSnapshot::ResumeSnapshot(ResumeSnapshot &&other) noexcept
+    : gen_dir_fd_(other.gen_dir_fd_), root_dev_(other.root_dev_), limits_(other.limits_),
+      pointer_(std::move(other.pointer_)), manifest_(std::move(other.manifest_)),
+      manifest_artifact_size_(other.manifest_artifact_size_), record_(std::move(other.record_)) {
+    other.gen_dir_fd_ = -1; // transfer fd ownership; source is left moved-from
+}
+
+ResumeSnapshot &ResumeSnapshot::operator=(ResumeSnapshot &&other) noexcept {
+    if (this != &other) {
+#if defined(__linux__)
+        if (gen_dir_fd_ >= 0) {
+            ::close(gen_dir_fd_); // close any destination-owned fd first
+        }
+#endif
+        gen_dir_fd_ = other.gen_dir_fd_;
+        root_dev_ = other.root_dev_;
+        limits_ = other.limits_;
+        pointer_ = std::move(other.pointer_);
+        manifest_ = std::move(other.manifest_);
+        manifest_artifact_size_ = other.manifest_artifact_size_;
+        record_ = std::move(other.record_);
+        other.gen_dir_fd_ = -1;
+    }
+    return *this;
+}
+
+ResumeSnapshot::~ResumeSnapshot() {
+#if defined(__linux__)
+    if (gen_dir_fd_ >= 0) {
+        ::close(gen_dir_fd_); // close exactly once (moved-from / consumed => -1)
+        gen_dir_fd_ = -1;
+    }
+#endif
+}
+
+const core_wasm_resume::CoreWasmResumeRecord &ResumeSnapshot::record() const noexcept {
+    return record_;
+}
+
+std::uint64_t ResumeSnapshot::generation() const noexcept { return manifest_.generation; }
+
+std::expected<ResolvedAvailable, PayloadStoreError>
+ResumeSnapshot::admit_slots(std::span<const std::uint8_t, 16> expected_key_id,
+                            std::span<const std::uint8_t> key) && {
+    // ONE-SHOT: consume the pin BEFORE any work, so success OR failure retires this
+    // snapshot and a second call fails closed with StateMismatch (never re-admits).
+    if (gen_dir_fd_ < 0) {
+        return std::unexpected(PayloadStoreError::StateMismatch);
+    }
+#if defined(__linux__)
+    FdGuard pinned(gen_dir_fd_); // takes ownership; closes on return
+    gen_dir_fd_ = -1;
+    // Re-borrow (expected_key_id, key) and cross-check the caller's key_id against
+    // the snapshot's NON-secret authenticated key_id authority BEFORE any slot read,
+    // so a wrong key_id fails closed with KeyIdMismatch ahead of slot admission (a
+    // wrong key with a matching key_id still fails later at slot HMAC verification).
+    // key_id is non-secret identity, so a plain equality compare is sufficient here;
+    // the secret key bytes are only ever compared through the codec's fixed-work tag
+    // check inside admit_slots_for.
+    if (!std::equal(manifest_.auth.key_id.begin(), manifest_.auth.key_id.end(),
+                    expected_key_id.begin(), expected_key_id.end())) {
+        return std::unexpected(PayloadStoreError::KeyIdMismatch);
+    }
+    const auto &avail = std::get<AvailableBody>(manifest_.state);
+    const std::uint64_t gen = manifest_.generation;
+    auto resolved = admit_slots_for(pinned.get(), root_dev_, limits_, record_.entry_id,
+                                    manifest_.ckpt, gen, avail, manifest_artifact_size_, record_,
+                                    expected_key_id, key);
+    if (!resolved.has_value()) {
+        return std::unexpected(resolved.error());
+    }
+    return ResolvedAvailable{gen, std::move(record_), std::move(*resolved)};
+#else
+    (void)expected_key_id;
+    (void)key;
+    return std::unexpected(PayloadStoreError::UnsupportedPlatform);
 #endif
 }
 

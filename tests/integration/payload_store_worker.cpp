@@ -108,6 +108,7 @@ CoreWasmResumeRecord make_record() {
     r.wire_schema_sha256 = hex_of('b');
     r.exec_manifest_sha256 = hex_of('c');
     r.entry_id = kWf;
+    r.entry_input_slot = PayloadSlotId{9}; // distinct from memo result_slot 5
     r.suspended_node_id = CoreWorkflowNodeId{41};
     r.resume_state = ahfl::runtime::core_wasm_resume::ResumeState::Suspended;
 
@@ -321,7 +322,9 @@ int mode_publish(const std::filesystem::path &case_dir, std::uint64_t expected,
     if (!store.has_value()) {
         return result_exit(std::unexpected(store.error()));
     }
-    std::vector<ps::Slot> slots = {ps::Slot{PayloadSlotId{5}, *payload}};
+    const std::vector<std::uint8_t> entry_payload = {0x01, 0x02, 0x03};
+    std::vector<ps::Slot> slots = {ps::Slot{PayloadSlotId{5}, *payload},
+                                   ps::Slot{PayloadSlotId{9}, entry_payload}};
     auto r = store->publish_available(kWf, kCkpt, expected, make_record(), slots,
                                       std::span<const std::uint8_t, 16>(test_key_id()), test_key());
     return result_exit(r);
@@ -391,7 +394,9 @@ int mode_race_publish(const std::filesystem::path &case_dir, std::uint64_t expec
     std::cout << "CAS_READY\n" << std::flush;
     std::string line;
     std::getline(std::cin, line); // released by the parent simultaneously
-    std::vector<ps::Slot> slots = {ps::Slot{PayloadSlotId{5}, *payload}};
+    const std::vector<std::uint8_t> entry_payload = {0x01, 0x02, 0x03};
+    std::vector<ps::Slot> slots = {ps::Slot{PayloadSlotId{5}, *payload},
+                                   ps::Slot{PayloadSlotId{9}, entry_payload}};
     auto r = store->publish_available(kWf, kCkpt, expected, make_record(), slots,
                                       std::span<const std::uint8_t, 16>(test_key_id()), test_key());
     return result_exit(r);
@@ -435,7 +440,9 @@ int mode_crash(const std::filesystem::path &case_dir, bool consume, std::string_
                                       std::span<const std::uint8_t, 16>(test_key_id()), test_key());
         return result_exit(r); // reached only if the phase was never hit
     }
-    std::vector<ps::Slot> slots = {ps::Slot{PayloadSlotId{5}, payload}};
+    const std::vector<std::uint8_t> entry_payload = {0x01, 0x02, 0x03};
+    std::vector<ps::Slot> slots = {ps::Slot{PayloadSlotId{5}, payload},
+                                   ps::Slot{PayloadSlotId{9}, entry_payload}};
     auto r = store->publish_available(kWf, kCkpt, expected, make_record(), slots,
                                       std::span<const std::uint8_t, 16>(test_key_id()), test_key());
     return result_exit(r);

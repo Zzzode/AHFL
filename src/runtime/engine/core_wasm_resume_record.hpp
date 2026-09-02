@@ -105,6 +105,13 @@ struct CoreWasmResumeRecord {
     DigestHex exec_manifest_sha256{};
     EntryKind entry_kind{EntryKind::Workflow};
     ir::core::CoreWorkflowId entry_id{};
+    // The caller-provided workflow ENTRY frame for the fresh replay: a fresh
+    // instance's run2(ptr,len) is fed these exact opaque bytes. REQUIRED
+    // (non-invalid) and DISTINCT from every node's every memo.result_slot -- input
+    // provenance never shares slot authority with result provenance. The entry
+    // frame is admitted OPAQUE (AHFLWS carries no entry schema); each capability
+    // import Param is still Verified-decoded elsewhere.
+    PayloadSlotId entry_input_slot{};
     ir::core::CoreWorkflowNodeId suspended_node_id{};
     ResumeState resume_state{ResumeState::Suspended};
     std::vector<ResumeNode> nodes;

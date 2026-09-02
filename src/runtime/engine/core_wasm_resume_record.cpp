@@ -40,10 +40,11 @@ constexpr std::size_t kTagBytes = 32;
 constexpr std::size_t kTailBytes = kAuthHeaderBytes + kTagBytes; // 57
 
 // Smallest possible body: magic(6) + format_version(1) + guarantees(>=1) +
-// 3 * 64 hex digests + entry.kind(1) + entry.id(>=1) + suspended_node_id(>=1) +
-// resume_state(1) + node_count(>=1). Used only as a coarse pre-auth lower bound;
-// the real structure is validated in pass 2 after authentication.
-constexpr std::size_t kMinBodyBytes = 6 + 1 + 1 + (3 * 64) + 1 + 1 + 1 + 1 + 1;
+// 3 * 64 hex digests + entry.kind(1) + entry.id(>=1) + entry_input_slot(>=1) +
+// suspended_node_id(>=1) + resume_state(1) + node_count(>=1). Used only as a coarse
+// pre-auth lower bound; the real structure is validated in pass 2 after
+// authentication.
+constexpr std::size_t kMinBodyBytes = 6 + 1 + 1 + (3 * 64) + 1 + 1 + 1 + 1 + 1 + 1;
 
 [[nodiscard]] CoreLowerDiagnostic error(std::string message) {
     return CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
@@ -199,6 +200,9 @@ class Reader {
     if (r.entry_id.value == CoreWorkflowId::kInvalid) {
         return error("resume record entry id is the invalid sentinel");
     }
+    if (r.entry_input_slot.value == PayloadSlotId::kInvalid) {
+        return error("resume record entry input slot is the invalid sentinel");
+    }
     if (r.suspended_node_id.value == CoreWorkflowNodeId::kInvalid) {
         return error("resume record suspended node id is the invalid sentinel");
     }
@@ -244,6 +248,13 @@ class Reader {
             }
             if (entry.result_slot.value == PayloadSlotId::kInvalid) {
                 return error("resume record memo result slot is the invalid sentinel");
+            }
+            // Input provenance never shares slot authority with result provenance:
+            // a memo result slot must never equal the workflow entry input slot.
+            // Checked inline while visiting each memo entry (no set allocation);
+            // repeated memo references to the same result slot remain legal.
+            if (entry.result_slot == r.entry_input_slot) {
+                return error("resume record memo result slot equals the entry input slot");
             }
         }
 
@@ -306,6 +317,7 @@ void encode_body(std::vector<std::uint8_t> &out, const CoreWasmResumeRecord &r) 
     write_hex(out, r.exec_manifest_sha256);
     out.push_back(static_cast<std::uint8_t>(r.entry_kind));
     write_u32(out, r.entry_id.value);
+    write_u64(out, r.entry_input_slot.value);
     write_u32(out, r.suspended_node_id.value);
     out.push_back(static_cast<std::uint8_t>(r.resume_state));
     write_u32(out, static_cast<std::uint32_t>(r.nodes.size()));
@@ -464,6 +476,7 @@ decode_and_authenticate(std::span<const std::uint8_t> record_bytes,
     }
     record.entry_kind = EntryKind::Workflow;
     record.entry_id = CoreWorkflowId{reader.u32()};
+    record.entry_input_slot = PayloadSlotId{reader.u64()};
     record.suspended_node_id = CoreWorkflowNodeId{reader.u32()};
     const std::uint8_t resume_state = reader.byte();
     if (reader.failed() || resume_state > static_cast<std::uint8_t>(ResumeState::Injected)) {
