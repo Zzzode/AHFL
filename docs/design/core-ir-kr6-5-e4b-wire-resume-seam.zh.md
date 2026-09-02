@@ -1,6 +1,7 @@
 # Core-IR KR6.5 E4-B0: Wire Schema and Durable-Resume Seam -- Design
 
-> Status: **E4-B1 IMPLEMENTED; B2-S / B2-A-pre / B2-A FOUNDATION slices landed**
+> Status: **E4-B1 IMPLEMENTED; B2-S / B2-A-pre / B2-A / B2-B FOUNDATION slices
+> landed**
 > (schema-guided wire codec + durable-resume seam + full CLI/HTTP/gRPC/shim
 > demotion + the wire-schema Wasm transport chain: C1 payload decoder
 > `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime module inspector
@@ -12,8 +13,12 @@
 > replay ledger §4.2, execution manifest + resume state machine + node-event
 > buffer §4.4, transaction/recovery §5.1, and resource contract §5.2); the
 > B2-S / B2-A-pre / B2-A FOUNDATION slices have landed (record codec + runtime
-> module-context below), but NO B2-B+ store / capability-workflow emitter /
-> production host code is implemented and B2 / KR6.5 stay false. The confidential
+> module-context below), and the B2-B integrity-only LOCAL durable-resume payload
+> store FOUNDATION has since landed (B0 artifact codecs `d355171b`, B1a store
+> `72a062e0`, B1b crash evidence `c710a997`) — NON-CONFORMING to the §4.3
+> `ProtectedPayloadStore` (`guarantees` bit0 `rollback_protected` = 0 AND bit1
+> `confidential_at_rest` = 0); NO capability-workflow emitter / production host
+> code is implemented and B2 / KR6.5 stay false. The confidential
 > `ProtectedPayloadStore`, a production key/KMS authority, real rollback
 > protection, and the production host are all named future gates (§6). The
 > B2-S security PRIMITIVE has landed as a base-support FOUNDATION — the NEW
@@ -33,20 +38,27 @@
 > still no production host caller. B2 and KR6.5 stay false.
 > The A1 record codec (`8a987ca1`) and the A2 runtime module-context
 > (`5bd812b2`) have landed as FOUNDATION runtime slices (see §4.2, §4.4, §6);
-> they add no protected/integrity store, no capability-workflow emitter, no
-> production host, and no artifact-digest comparison — those remain B2-B, B2-C,
-> B2-D, and the B2-D digest gate respectively.
+> A1/A2 themselves add no payload store. The B2-B integrity-only LOCAL
+> durable-resume payload store FOUNDATION has since landed (B0 artifact codecs
+> `d355171b`, B1a store `72a062e0`, B1b crash evidence `c710a997`) —
+> NON-CONFORMING to the §4.3 `ProtectedPayloadStore` (`guarantees` bit0
+> `rollback_protected` = 0 AND bit1 `confidential_at_rest` = 0). No
+> confidential/at-rest store, no capability-workflow emitter, no production host,
+> and no artifact-digest comparison exist — those remain the unnumbered
+> confidential follow-on, B2-C, B2-D, and the B2-D digest gate respectively. B2
+> and KR6.5 stay false.
 >
 > Scope: decide who decodes and type-checks RFC 0019/0021 `value_json`, define
 > one canonical wire-schema projection, and define the durable record's control
 > and sensitive-payload boundaries. The design is implemented through B1 plus the
-> B2-S / B2-A-pre / B2-A FOUNDATION slices (base-support HMAC, the shared
-> verified-table authority, the `ahfl.wasm-resume.v1` record codec, and the
-> runtime module-context + exec-manifest decoder). It does not by itself
-> authorize the remaining B2-B/C/D/E artifacts (protected store,
-> capability-workflow emitter, production host + artifact-digest gate, exact
-> events) or any E4-A dependency/CI change; §3.2 still DESIGNS the future
-> production-host artifact-digest comparison/gate.
+> B2-S / B2-A-pre / B2-A / B2-B FOUNDATION slices (base-support HMAC, the shared
+> verified-table authority, the `ahfl.wasm-resume.v1` record codec, the runtime
+> module-context + exec-manifest decoder, and the B2-B integrity-only LOCAL
+> payload store FOUNDATION). It does not by itself authorize the remaining
+> confidential/at-rest store (the unnumbered confidential follow-on) or the
+> B2-C/D/E artifacts (capability-workflow emitter, production host +
+> artifact-digest gate, exact events) or any E4-A dependency/CI change; §3.2
+> still DESIGNS the future production-host artifact-digest comparison/gate.
 >
 > Priority: the E4-B0 design gate is CLOSED and E4-B0-C1/C2 and E4-B1 are
 > implemented (schema-guided wire codec + durable-resume seam + full ingress
@@ -446,11 +458,15 @@ a bare `CoreWireSchemaNodeId` is never persisted or accepted as authority.
 ### 4.2 Canonical control record — full-workflow replay ledger
 
 > Status: **B2-0 design LOCKED; the A1 record codec + authenticator LANDED
-> (`8a987ca1`).** The `encode_and_authenticate` / `decode_and_authenticate`
-> codec, its two-pass HMAC admission, canonical re-encode, and record-internal
-> invariants are implemented; the protected store/persistence, the production
-> host, and the artifact-digest comparison are NOT implemented and this does not
-> close B2 or KR6.5.
+> (`8a987ca1`); the B2-B integrity-only LOCAL payload store LANDED (B0 codecs
+> `d355171b`, B1a store `72a062e0`, B1b crash evidence `c710a997`).** The
+> `encode_and_authenticate` / `decode_and_authenticate` codec, its two-pass HMAC
+> admission, canonical re-encode, and record-internal invariants are implemented;
+> integrity-only LOCAL slot/manifest/pointer persistence has landed as a
+> §4.3-NON-CONFORMING FOUNDATION (`guarantees` bit0 = 0 AND bit1 = 0). The
+> confidential/at-rest protected production store, the production host, and the
+> artifact-digest comparison are NOT implemented and this does not close B2 or
+> KR6.5.
 
 A fresh module instance re-runs the whole workflow from the start of its
 deterministic (Kahn) schedule, so a single-node record cannot locate a prior
@@ -601,6 +617,15 @@ credential, or hash-map iteration. Given the same logical control state and slot
 assignment, it is byte-reproducible.
 
 ### 4.3 Literal "secret-free resume state" is impossible
+
+> Status (current state): the boundary below is the TARGET confidential +
+> integrity-protected contract; it is NOT yet implemented. The landed B1a
+> `IntegrityPayloadStore` (`72a062e0`) is a §4.3-NON-CONFORMING integrity-only
+> LOCAL store — it authenticates bytes but provides NO at-rest confidentiality
+> (`guarantees` bit1 `confidential_at_rest` = 0) and NO rollback protection
+> (bit0 `rollback_protected` = 0), so it must never be described as a conforming
+> `ProtectedPayloadStore`. The existing plaintext native
+> `ahfl.workflow-recovery.v1|v2` JSON store is unchanged and is NOT relabeled.
 
 Node input and capability results are application data. They may legitimately
 contain a user secret. A durable runtime cannot both persist enough state to
@@ -820,10 +845,31 @@ resource contract. B0 does not pre-approve an ownership shortcut.
 
 ### 5.1 Transaction, concurrency, and recovery (FUTURE production gate)
 
-> Status: **B2-0 FOUNDATION DESIGN LOCKED; NOT implemented.** The in-repo state
-> today has NO KMS, NO key authority, and NO confidential store; `atomic_file` is
-> rename-only (no fsync/flock/CAS). Everything below is the target production
-> contract, not an existing capability.
+> Status (layered): **B2-0 FOUNDATION DESIGN LOCKED; the integrity-only LOCAL
+> tier has LANDED, the KMS/cross-host/rollback/confidential tier is NOT
+> implemented.** LANDED: the B0 artifact codecs (`d355171b`; distinct-magic
+> integrity-only slot `AHFLPS` / commit-manifest `AHFLCM` Available+Consumed /
+> pointer `AHFLGP`, each `body || auth_header || HMAC` tag), the B1a
+> `IntegrityPayloadStore` (`72a062e0`; Linux-only immutable generation-dir
+> publish + atomic pointer swap, `flock(LOCK_EX)` writer, lock-free single-pointer
+> reader, `expected_current_generation` CAS, fsync-ordered `renameat2`, EXT-family
+> /XFS/Btrfs allowlist), and B1b cross-process crash evidence (`c710a997`; SIGKILL
+> then fresh-process reopen proving old-or-new atomic visibility + rebuild-not-
+> adopt + single-winner CAS). Honesty limits carried by that landed tier: SIGKILL
+> proves process-death visibility ONLY, NOT power-loss durability (the page cache
+> survives SIGKILL); the caller-supplied root prefix / parent path is TRUSTED
+> input resolved by the normal kernel path resolver — only the final root (opened
+> `O_NOFOLLOW`, then pinned as a root fd) and the `openat`/`O_NOFOLLOW` traversal
+> BELOW that pinned fd are hardened, and parent-of-root is NOT protected; a
+> pre-existing root directory is required, so a missing / non-openable root
+> currently maps to `UnsupportedFilesystem` (not a distinct NotFound) — an
+> observable behavior of this landed header-public internal API; the nlink==0
+> read race and an `st_dev` submount under the root are code-path-review-only, not
+> test-covered. NOT implemented: any KMS, key authority, at-rest confidential
+> store, real rollback protection, or production caller; `atomic_file` remains
+> rename-only (no fsync/flock/CAS — the store carries its OWN flock/fsync/
+> renameat2, `atomic_file` is untouched). Everything KMS/cross-host/confidential
+> below is the target production contract, not an existing capability.
 
 Admission order (replaces any "digests first"): (1) minimal canonical framing of
 the record; (2) authenticity admission — verify the HMAC tag under the host key,
@@ -838,8 +884,8 @@ CLOSED — it does NOT inherit the native recovery "load error -> fresh run"
 downgrade.
 
 Commit is a cross-resource transaction. Single-host mutual exclusion uses a
-kernel-released ADVISORY lock (auto-released on process death; the concrete
-flock-vs-fcntl choice is deferred to the B2-B shared gate). Cross-host generation
+kernel-released ADVISORY lock (auto-released on process death; the landed B1a
+LOCAL backend uses `flock(LOCK_EX)`). Cross-host generation
 authority is a durable KMS: `RESERVE(checkpoint) -> {generation N+1, lease}`
 (durable, queryable status in {reserved, finalized, aborted}), `CLAIM(checkpoint)`
 returns the current reservation + lease to a single fenced winner so a crashed
@@ -849,7 +895,8 @@ pointer) is HMAC-bound with a distinct domain separator + `key_id` + `generation
 so no cross-type or cross-generation substitution is possible — for the control
 record that domain separator is its intrinsic leading `magic || format_version`
 authenticated as the prefix's first bytes (§4.2), not a prepended string literal,
-and the future `commit_manifest` and slot artifacts (B2-B) each carry their OWN
+and the landed `commit_manifest` (`AHFLCM`) and slot (`AHFLPS`) / generation
+pointer (`AHFLGP`) artifacts (B2-B B0 codecs `d355171b`) each carry their OWN
 distinct magic. (The compiler
 `exec_manifest` is a DIFFERENT artifact — a build-time custom section with no
 runtime HMAC, anchored only by `exec_manifest_sha256` in the control record §4.4;
@@ -877,10 +924,12 @@ nothing appended yet); an Injected record restart still replays from
 `schedule_pos` 0, returns the already-committed injected memo entry at the
 frontier (no re-inject, no live call), and forwards; on workflow completion the
 record is marked committed-consumed / tombstoned in a new generation and is never
-retained indefinitely. The Consumed tombstone is a SEMANTIC state here: its exact
-authenticated `commit_manifest` byte grammar is deferred to B2-B (this foundation
-locks only that a completed generation carries an authenticated Consumed marker,
-not its on-disk bytes).
+retained indefinitely. The Consumed tombstone is a SEMANTIC state here: its
+authenticated `commit_manifest` byte grammar (the `AHFLCM` Available + Consumed
+variants) has landed in the B2-B B0 codecs (`d355171b`); this foundation locks
+that a completed generation carries an authenticated Consumed marker, and the
+landed integrity-only LOCAL tier persists it, while the KMS-fenced cross-host
+lifecycle above remains the future production contract.
 
 ### 5.2 Resource contract (FUTURE production gate)
 
@@ -964,9 +1013,10 @@ Implementation is intentionally split before any resume ABI:
    binding through the transported-table factory. This was the first reviewed Wasm
    byte change. It adds NO resume export, opcode, ABI, control record, or digest —
    those remain B2.
-4. **B2 durable resume — the B2-S / B2-A-pre / B2-A FOUNDATION slices have
-   LANDED; NO B2-B+ store / capability-workflow emitter / production host code is
-   implemented.** B2 is a slice ladder, each with an honest
+4. **B2 durable resume — the B2-S / B2-A-pre / B2-A / B2-B FOUNDATION slices
+   have LANDED; NO capability-workflow emitter / production host code is
+   implemented (the confidential/at-rest store is a separate future gate).** B2
+   is a slice ladder, each with an honest
    FOUNDATION-vs-production closure and an explicit dependency order (no slice
    claims "non-inert" before a production host exists):
    - **B2-S security foundation — LANDED (base-support, FOUNDATION only)**: a
@@ -1045,17 +1095,24 @@ Implementation is intentionally split before any resume ABI:
      linear wire-schema local verifies (C1 decode + authority admission), zero
      per-mint verify/copy. No real-Wasm durable-resume is proven (the current
      verification environment SKIPs the Wasmtime lanes); B2 and KR6.5 stay false.
-   - **B2-B integrity-only local store foundation**: a bytes-only
-     `PayloadStore` (integrity-store) foundation interface + an integrity-only
-     LOCAL reference backend with HMAC integrity + advisory-lock/generation
-     transaction. FOUNDATION — this backend is NON-CONFORMING to the §4.3
-     protected-store contract (`guarantees` bit1 `confidential_at_rest` = 0; no
-     at-rest confidentiality); it only exercises the foundation plumbing and must
+   - **B2-B integrity-only local store foundation — LANDED (B0 artifact codecs
+     `d355171b`; B1a `IntegrityPayloadStore` `72a062e0`; B1b cross-process crash
+     evidence `c710a997`)**: a bytes-only `PayloadStore` (integrity-store)
+     foundation + an integrity-only LOCAL reference backend (Linux POSIX:
+     `flock(LOCK_EX)`, immutable generation-dir + atomic pointer swap, an
+     implemented + unit-observed syscall/fsync order, `expected_current_generation`
+     CAS; EXT-family/XFS/Btrfs allowlist, else fail-closed). B1b's cross-process
+     SIGKILL/reopen proves post-process-death atomic visibility + rebuild-not-
+     adopt (process-death visibility only; NOT power-loss durability). FOUNDATION
+     — this backend is NON-CONFORMING to the §4.3
+     protected-store contract (`guarantees` bit0 `rollback_protected` = 0 AND bit1
+     `confidential_at_rest` = 0; no rollback protection, no at-rest
+     confidentiality); it only exercises the foundation plumbing and must
      never be described as a conforming ProtectedPayloadStore.
-   - **B2-B1/B2-B2 confidential store (SEPARATE, UNRESOLVED)**: at-rest
-     confidentiality requires a real AEAD/KMS backend, key authority, a
+   - **B2-B-confidential follow-on(s) (SEPARATE, UNRESOLVED, UNNUMBERED)**:
+     at-rest confidentiality requires a real AEAD/KMS backend, key authority, a
      dependency shared gate, and a non-test production caller; not selected in
-     B2-0 and not hidden inside the integrity-only B2-B.
+     B2-0 and not hidden inside the integrity-only B2-B foundation.
    - **B2-C capability-bearing workflow + manifest + module event bytes**: lift
      the workflow emitter's `allow_capability = false` refusal, propagate a node
      capability `PENDING` out of the schedule, and emit the exec-manifest +
