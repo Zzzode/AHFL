@@ -45,9 +45,10 @@
 > NON-CONFORMING to the §4.3 `ProtectedPayloadStore` (`guarantees` bit0
 > `rollback_protected` = 0 AND bit1 `confidential_at_rest` = 0). The B2-C
 > capability-workflow emitter has landed (`4224a52f`); no confidential/at-rest
-> store, no production host, and no artifact-digest comparison exist — those
-> remain the unnumbered confidential follow-on, B2-D, and the B2-D digest gate
-> respectively. B2 and KR6.5 stay false.
+> store, no production host, and no artifact-digest comparison exist — those remain,
+> respectively, the confidential/KMS/rollback protected store (a PREREQUISITE
+> sub-slice of full B2-D closure), the B2-D closure ladder (D1a/D1b/D2a/D2b, whose
+> production-host step is D2a), and the B2-D digest gate. B2 and KR6.5 stay false.
 >
 > Scope: decide who decodes and type-checks RFC 0019/0021 `value_json`, define
 > one canonical wire-schema projection, and define the durable record's control
@@ -59,7 +60,8 @@
 > for the exec-manifest + node-event buffer + capability-status scheduling). It
 > does not
 > by itself authorize the remaining
-> confidential/at-rest store (the unnumbered confidential follow-on) or the
+> confidential/at-rest store (the confidential/KMS/rollback protected store, a
+> PREREQUISITE sub-slice of full B2-D closure) or the
 > B2-D/E artifacts (production host + artifact-digest gate, exact events) or any
 > E4-A dependency/CI change; §3.2
 > still DESIGNS the future production-host artifact-digest comparison/gate.
@@ -429,15 +431,56 @@ The host rejects:
 
 ### 3.2 Artifact binding is not type proof
 
-The host records a SHA-256 digest of the complete module and of the exact schema
-section. On restore, both must match the loaded artifact. These digests bind a
-resume record to one artifact version; they do **not** prove a payload's type.
-After the digest check, the host still performs full schema-guided decode and
-validation.
+The host records three SHA-256 digests: the whole emitted module, the raw AHFLWS
+table payload (no custom-name framing), and the raw AHFLXM section payload (no
+custom-name framing). On restore, the B2-D digest gate compares all three against
+the loaded artifact AFTER record HMAC authenticity succeeds (never digests-first,
+per §5.1). The FUTURE B2-D D1a change is that the A2 module authority will compute
+these three digests during its single framing pass and expose them as three named
+typed getters returning a header-local `using ArtifactDigest =
+std::array<uint8_t, 32>` by value (no base_support header leak, no wrapper trio,
+no new dependency edge); the CURRENT A2 computes no digest and this docs commit
+adds no implementation. A mismatch fails even when numeric ids coincide. These
+digests bind a resume record to one artifact version; they do **not** prove a
+payload's type. After the digest check, the host still performs full schema-guided
+decode and validation.
 
 Likewise, RFC 0022 `arg_hash` remains the established deterministic replay and
 idempotency cross-check. Hash equality never substitutes for argument parsing,
-schema validation, capability identity, or ordinal equality.
+schema validation, capability identity, or ordinal equality. The 64-bit `arg_hash`
+is a ledger integrity comparator only — never a dedup or authenticity authority.
+
+Cross-process exactly-once dedup (FUTURE; contract locked in B2-D D1a, code owner
+D2b) uses an opaque 32-byte `IdempotencyToken = SHA-256(preimage)` over a FIXED,
+canonical, fixed-width preimage (all integers little-endian, no ULEB/text):
+
+```text
+"AHFL-IDEMPOTENCY-v1"            (ASCII domain, no trailing NUL)
+authority_id                    (IdempotencyAuthorityId: 16 raw bytes)
+CoreWorkflowId                  (u32-LE)
+ResumeCheckpointId              (u64-LE)
+CoreWorkflowNodeId              (u32-LE)
+InvocationOrdinal               (u64-LE)
+CoreCapabilityId                (u32-LE)
+source_symbol                   (u64-LE)
+SHA-256(canonical typed Param bytes)   (32 raw bytes)
+```
+
+`generation` and `attempt` are EXCLUDED (they change across replay). `authority_id`
+is a strong type `IdempotencyAuthorityId` — an opaque fixed 16-byte identity (the
+preimage field `authority_id` is exactly its raw bytes; no wrapper trio, no
+generalization). It is the dedup/intent backend's IMMUTABLE identity, supplied by
+the typed backend authority or bound once at host/controller construction — NEVER
+derived from `key_id`, a path, or a hostname, and never switched within a checkpoint
+lifetime (a namespace swap on recovery would mint a new token and bypass dedup).
+Within an `authority_id` scope, `(CoreWorkflowId, ResumeCheckpointId)` is the stable
+checkpoint namespace. This token is SELECTED for Core-Wasm cross-process authority
+INSTEAD OF reusing the native process-local `compute_idempotency_key`
+(workflow-index + `RunId{0}`, not a stable instance identity); the native path is
+NOT replaced and its `void` intent sink is unchanged. It is an identity/collision
+authority only, never an authenticity or rollback authority; whether `authority_id`
+is persistently bound into authenticated checkpoint metadata is a D2b gate, and
+D1 does NOT claim exactly-once.
 
 ## 4. Durable record: deterministic control, protected payload
 
@@ -470,12 +513,26 @@ a bare `CoreWireSchemaNodeId` is never persisted or accepted as authority.
 > §4.3-NON-CONFORMING FOUNDATION (`guarantees` bit0 = 0 AND bit1 = 0). The
 > confidential/at-rest protected production store, the production host, and the
 > artifact-digest comparison are NOT implemented and this does not close B2 or
-> KR6.5.
+> KR6.5. LAYERING: the landed `8a987ca1` codec is the PRE-D1a grammar and has NO
+> `entry_input_slot` field; the `entry_input_slot` shown in the grammar below is a
+> B2-D D1a-LOCKED FUTURE byte correction (a no-production-caller INTERNAL
+> pre-production grammar change), NOT a landed field. THIS DOCS COMMIT changes no
+> bytes; the future D1a code will add the field, and the new decoder's fixed field
+> order + invariants are the admission authority, enforced by a PERMANENT
+> old-golden reject gate (not by canonical re-encode alone). public C ABI and
+> `ahfl.workflow-recovery.v1|v2` are unchanged; no persisted-data migration (no
+> production persistence caller).
+
+The grammar below is the D1a TARGET record shape (including the future
+`entry_input_slot`); the landed `8a987ca1` codec omits that one field.
 
 A fresh module instance re-runs the whole workflow from the start of its
 deterministic (Kahn) schedule, so a single-node record cannot locate a prior
 node's memo (invocation ordinals are per-node) nor avoid re-invoking earlier
-capability nodes. The B2 record is therefore a FULL-WORKFLOW per-node replay
+capability nodes. Because the deterministic replay recomputes downstream inputs
+but CANNOT recompute the workflow's own entry frame (it enters the module only as
+`run2` arguments), that entry frame is persisted once as `entry_input_slot`; the
+B2 record is therefore a FULL-WORKFLOW per-node replay
 ledger — append-only, versioned, index-based, authenticated:
 
 ```text
@@ -486,8 +543,12 @@ body:
   guarantees            (u32 bit flags: bit0 rollback_protected, bit1 confidential_at_rest)
   module_sha256         (64 lowercase hex; whole emitted module)
   wire_schema_sha256    (64 lowercase hex; raw AHFLWS table payload, no custom-name framing)
-  exec_manifest_sha256  (64 lowercase hex; raw exec-manifest section payload)
+  exec_manifest_sha256  (64 lowercase hex; raw AHFLXM section payload, no custom-name framing)
   entry = { kind = Workflow, id }            (id: CoreWorkflowId)
+  entry_input_slot      (PayloadSlotId; the caller-provided workflow ENTRY frame
+                         for the fresh replay; non-invalid; DISTINCT from every
+                         memo.result_slot; opaque bytes, NOT type-checked against
+                         any transported schema — see below)
   suspended_node_id                          (CoreWorkflowNodeId)
   resume_state          (u8: 0 = Suspended, 1 = Injected)
   node_count
@@ -534,6 +595,16 @@ specified. Admission rejects the `UINT32_MAX` invalid sentinel of `CoreWorkflowI
 `source_symbol` has no invented invalid sentinel; every ULEB-to-index/`size_t`
 conversion is checked and `pending.invocation_ordinal == frontier.memo.size()` is
 compared without narrowing or overflow.
+
+The `entry_input_slot` is REQUIRED and its `PayloadSlotId` must differ from every
+`memo.result_slot` in every node (input provenance never shares slot authority
+with result provenance); admission rejects the invalid sentinel and any collision.
+It is the ONLY entry-frame authority: a fresh instance's `run2(ptr, len)` is fed
+these exact opaque bytes verbatim. AHFLWS carries only capability Param/Result
+roots (no workflow-entry schema), so the entry frame is admitted OPAQUE (slot
+artifact authenticity + length + cap only) and is NOT type-checked against a
+transported schema; each capability import Param IS still decoded/type-checked
+through its Verified binding before use.
 
 Per-node memo entries are strictly ascending and dense by `invocation_ordinal`.
 `pending` (Suspended state) belongs to exactly `suspended_node_id` on its highest
@@ -668,8 +739,17 @@ identity or replay order.
 > import-time `PENDING` propagation, and the node-event buffer have LANDED as a
 > FOUNDATION capability-workflow emitter; the production host + artifact-digest
 > gate are NOT implemented and this does not close B2 or KR6.5. The resume STATE
-> MACHINE's HOST side — fresh-instance replay/injection — remains B2-D; the
-> emitter provides only module-side manifest + event bytes.
+> MACHINE's HOST side — fresh-instance replay/injection — remains B2-D, which is
+> laddered: D1a host-INDEPENDENT internal authorities (entry_input_slot record
+> field + B1 exact-slot-set/store staged admission, A2 typed artifact digests, a
+> runtime-owned node-event decoder, a result-size preflight, and the 32B
+> IdempotencyToken contract), D1b a host-independent replay controller proving
+> only deterministic state transitions (FOUNDATION — not correctness-complete, no
+> real VM, no durable-effect intent/result authority, no power-loss/exactly-once
+> closure), D2a a production embeddable VM/host adapter + non-test caller (the
+> production-host step), and D2b a durable-effect intent/result authority; the
+> conforming confidential/KMS/rollback store is a PREREQUISITE sub-slice of full
+> B2-D closure. The emitter provides only module-side manifest + event bytes.
 
 The chosen resume approach adds NO new module ABI SYMBOL or SIGNATURE and reuses
 the existing PROJECT `import_count + base` function-index RULE unchanged (imported
@@ -855,30 +935,43 @@ No resume export is designed in B0. A later B2 may propose one only after the
 schema and state-store foundations are implemented and verified.
 
 The required host transaction for that later slice follows the SINGLE admission
-order defined in §5.1 (framing -> authenticity -> digests -> invariants ->
-identity -> binding -> source-state -> typed payload -> atomic append/ownership);
-the ordered steps below are its resume-side view and do NOT re-order it:
+order defined in §5.1 (framing -> record HMAC/canonical -> artifact digests ->
+coordinates -> staged exact-slot/typed payload [entry frame opaque] -> transition
+eligibility -> TOTAL result-size preflight -> effect-free replay of below-frontier
+imports to the pending coordinate -> CAS publish + pending ownership transfer ->
+frontier-forward live import; the effect-free replay is BEFORE any CAS so a trap
+during replay never leaves a mutation, and every CAS/mutation/live effect is AFTER
+the preflight); the ordered steps below are its resume-side view:
 
 1. minimal-frame the control record, verify its HMAC authenticity, then compare
    the module + schema (+ exec_manifest) digests — a mismatch fails even when
    numeric ids coincide;
 2. parse + validate the full-workflow ledger and every per-node memo coordinate;
-3. retrieve ONLY the ledger-referenced memo result slots from protected storage
-   (Approach A persists NO node-input slot — node inputs are reconstructed by the
-   fresh replay from validated memo results + pure runners, not restored);
-4. schema-decode each store-loaded memo result and the externally-supplied pending
-   result before allocating it in target memory (a module-produced Param frame is
-   instead decoded + arg_hash-recomputed inside its import callback, §4.4);
-5. run the fresh instance from schedule_pos 0; for each below-frontier import
-   return its OLD committed memo-result frame as the module reaches it (these have
-   independent already-committed authority and are transferred per import, NOT
-   held until the append below), invoking no live capability;
-6. at the pending import, validate the injected pending result against the
-   capability result root;
-7. append that NEW pending memo entry atomically; and
-8. only AFTER that atomic append transfer the NEW pending-result frame's ownership
-   to the instance (only this new frame is append-gated; the old memo frames of
-   step 5 already transferred), then continue forward past the frontier.
+3. retrieve the ledger-referenced slots from protected storage: the single
+   `entry_input_slot` (the workflow ENTRY frame) plus every memo result slot.
+   Approach A persists NO PER-NODE input slot — downstream node inputs are
+   reconstructed by the fresh replay from the entry frame + validated memo results
+   + pure runners; only the workflow entry frame slot is restored, never recomputed;
+4. admit the `entry_input_slot` as OPAQUE bytes (slot-artifact authenticity +
+   length + cap only — it carries no transported schema); schema-decode each
+   store-loaded memo RESULT and the externally-supplied injected/live pending
+   RESULT against the Verified Result root before allocating it in target memory
+   (a module-produced Param frame is instead Verified-Param-decoded +
+   arg_hash-recomputed inside its import callback, §4.4);
+5. validate transition ELIGIBILITY only (Suspended re-offers pending; Injected has
+   the committed injected ordinal as last memo; no live mutation yet);
+6. run the TOTAL result-size preflight (§5.2) over the worst case — event region +
+   entry frame + all memo frames + the current live/injected Result + allocator
+   framing — BEFORE any commit, ownership transfer, or live call; if it does not
+   fit, fail closed with no effect;
+7. run the fresh instance from schedule_pos 0; for each below-frontier import
+   return its OLD committed memo-result frame as the module reaches it (independent
+   already-committed authority, transferred per import), invoking no live
+   capability; at the pending import validate the injected result against the
+   capability Result root, CAS-append that NEW pending memo entry atomically, and
+   only AFTER the atomic append transfer the NEW pending-result frame's ownership
+   to the instance (only this new frame is append-gated), then continue past the
+   frontier to genuine live calls.
 
 Any failure leaves the record unconsumed and invokes no live capability. §5.3
 defines the five frame lifetimes; §5.1 defines crash atomicity and §5.2 the
@@ -912,17 +1005,89 @@ resource contract. B0 does not pre-approve an ownership shortcut.
 > renameat2, `atomic_file` is untouched). Everything KMS/cross-host/confidential
 > below is the target production contract, not an existing capability.
 
-Admission order (replaces any "digests first"): (1) minimal canonical framing of
-the record; (2) authenticity admission — verify the HMAC tag under the host key,
+Admission order (replaces any "digests first" and the earlier
+"invariants -> identity -> binding -> source-state -> typed payload -> atomic
+append" sketch): (1) minimal canonical framing of the record; (2) authenticity
+admission — verify the record HMAC tag under the host key + canonical re-encode,
 yielding TRUSTED expected digests and coordinates; (3) compare `module_sha256` +
-`wire_schema_sha256` (+ `exec_manifest_sha256`) — a mismatch fails even when numeric
-ids coincide; (4) full record invariants + coordinate cross-check; (5) identity
-gate (identity-first: `CoreCapabilityId` + `source_symbol` + REQUIRED pending
-`arg_hash`); (6) binding lookup via the verified module-context; (7) source-state
-(memo vs injected); (8) typed payload decode/validate; (9) atomic append +
-ownership transfer. Any failure leaves the record unconsumed and the loader fails
-CLOSED — it does NOT inherit the native recovery "load error -> fresh run"
-downgrade.
+`wire_schema_sha256` + `exec_manifest_sha256` — a mismatch fails even when numeric
+ids coincide; (4) full record invariants + record/module/manifest coordinate
+cross-check; (5) staged exact-slot admission + typed payload: admit the exact
+distinct slot set (`{entry_input_slot}` U memo result slots) on the pinned
+generation snapshot — the `entry_input_slot` is OPAQUE (slot auth/length/cap only),
+each memo/injected/live Result is decoded/validated against its Verified Result
+root, and a module-produced Param is Verified-Param-decoded + arg_hash-recomputed
+in its import callback; (6) transition ELIGIBILITY validation only (no mutation
+yet); (7) the TOTAL result-size preflight (§5.2); (8) effect-free replay of the
+below-frontier imports from schedule_pos 0 to the pending coordinate, returning
+each OLD committed memo-result frame with no live call; (9) at the pending
+coordinate, CAS publish the new pending memo entry + transfer the pending-result
+frame ownership; (10) frontier-forward live import. The effect-free replay (8) is
+BEFORE the CAS (9) so a trap during replay never leaves a mutation, and every CAS,
+mutation, Injected publish, or live effect happens strictly AFTER the preflight
+(7). Any failure leaves the record unconsumed and the loader fails CLOSED — it does
+NOT inherit the native recovery "load error -> fresh run" downgrade.
+
+Staged admission (B2-D D1a; the minimal store change that makes the order above
+implementable). The landed `IntegrityPayloadStore::load()` performs pointer +
+record + manifest + slot admission ATOMICALLY and returns the fully decoded record
+AND all authenticated slot payloads together, so the ruled order (record HMAC ->
+digests -> coordinates -> slot set/payload) cannot be expressed on it. D1a adds a
+store-owned STAGED admission WITHOUT changing `load()` (existing callers keep it):
+
+- phase 1 opens an opaque move-only RAII `ResumeSnapshot` handle that PINS the
+  verified immutable-generation directory fd AND HOLDS the NON-secret authenticated
+  pointer / manifest / record metadata (never any key bytes; the single
+  authenticated pointer read is the linearization point). Phase 1 auth/canonical-
+  checks the pointer and the manifest THEMSELVES, and authenticates + cross-checks
+  the A1 record (record len / digest / namespace / generation against the
+  manifest); it does NOT admit the expected slot set or any slot payload. Phase 2
+  never reopens the generation by
+  name (no replacement window).
+- the handle NEVER stores key bytes. Phase 1 borrows the key; phase 2 is a store
+  API that RE-BORROWS `(expected_key_id, key)`, cross-checks it against the
+  snapshot's NON-secret `key_id` / `generation` authority, and only then admits the
+  exact expected DISTINCT slot set (`{entry_input_slot}` U memo result slots) and
+  their payloads on that SAME pinned snapshot. The immutable generation-dir + no-GC
+  give no TOCTOU between the two phases.
+- the B1 expected DISTINCT slot set becomes `{entry_input_slot}` U memo result
+  slots (the `entry_input_slot` must not collide with any memo `result_slot`), and
+  the manifest-cap upper bound is raised by a CHECKED +1 (overflow fails closed).
+  The A1 `entry_input_slot` record field and this B1 set / staged-admission change
+  land in ONE code commit under ONE verification gate, so a record can never
+  reference a slot the store rejects.
+
+Error SSOT and priority (all codes range-less, null/no-echo; a host admission /
+controller / gate failure NEVER masquerades as a Wasm status — it terminates host
+execution and leaves the record unconsumed). The 16 `PayloadStoreError` variants
+map to host codes as: `NotFound` -> `resume.store.not_found`; `Consumed` ->
+`resume.store.consumed`; `IntegrityFailed` -> `resume.auth.integrity_failed`
+(record integrity is phase 1, slot integrity is phase 2 — not a single "top of
+admission" step); `KeyIdMismatch` -> `resume.auth.key_id_mismatch`;
+`GenerationMismatch` -> `resume.store.generation_mismatch` (it also covers CAS /
+manifest state, not pure auth); `StateMismatch` -> `resume.store.state_mismatch`;
+`SizeCapExceeded` -> `resume.store.size_cap_exceeded`; `Truncated` / `TrailingBytes`
+/ `Malformed` -> `resume.store.artifact_malformed` (a structural failure may come
+from the pointer / manifest / slot / record, never labelled record-only);
+`SlotSetMismatch` -> `resume.slots.set_mismatch`; `CrossCheckpointRejected` ->
+`resume.store.cross_checkpoint_rejected`; `WriteFailed` / `CommitInterrupted` ->
+`resume.store.commit_failed`; `UnsupportedPlatform` ->
+`resume.store.unsupported_platform`; `UnsupportedFilesystem` ->
+`resume.store.unsupported_filesystem`. New host controller / gate codes (not
+`PayloadStoreError`): `resume.digest.module_mismatch` /
+`resume.digest.wire_schema_mismatch` / `resume.digest.exec_manifest_mismatch` (fail
+even when numeric ids coincide); `resume.coordinate.mismatch` (record/module/
+manifest coordinate join); `resume.event.malformed` (node-event framing / count /
+pad / record self-invariant); `resume.payload.schema_invalid` (Verified Result /
+Param decode/validate); `resume.transition.invalid` (ineligible state transition);
+`resume.preflight.unbounded` (legal schema, no finite canonical upper bound);
+`resume.preflight.resource_exhausted` (checked add/mul/align/`size_t` overflow OR
+total worst-case reservation exceeds capacity — a DISTINCT host code, never the
+compile-time `wasm.RESOURCE_EXHAUSTED`); `resume.module.error` (a `run2` `ERROR`,
+including the module's fail-closed normalization of an unknown / import `ERROR`);
+and `resume.module.trap` (a module trap). In-module statuses stay EXACTLY
+`{AHFL_CAP_OK, AHFL_CAP_ERROR, AHFL_CAP_PENDING}`; only a genuine import callback
+returns one, and the host never invents a status or maps a trap to success.
 
 Commit is a cross-resource transaction. Single-host mutual exclusion uses a
 kernel-released ADVISORY lock (auto-released on process death; the landed B1a
@@ -974,30 +1139,49 @@ lifecycle above remains the future production contract.
 
 ### 5.2 Resource contract (FUTURE production gate)
 
-> Status: **B2-0 FOUNDATION DESIGN LOCKED; NOT implemented.** The current
-> `make_alloc_body` is an unchecked bump (`heap_next += len`), memory is a fixed
-> single page, and there is no `memory.grow`.
+> Status: **B2-0 FOUNDATION DESIGN LOCKED; the host-side preflight is NOT
+> implemented.** The shared `make_alloc_body` / legacy lane is still an unchecked
+> bump (`heap_next += len`); the capability-workflow lane already has B2-C's
+> cap-private CHECKED alloc (`4224a52f`: returns the reserved null pointer `0`
+> without advancing `heap_next` on insufficient capacity). Memory is a fixed single
+> page and there is no `memory.grow`. What is NOT implemented is the host-side TOTAL
+> preflight / max-canonical-size analysis below.
 
 Under the fixed single-page / no-`memory.grow` contract, a checked PREFLIGHT runs
-before any commit, ownership transfer, or live call. It covers what is knowable
-from the committed ledger: memo result frames, the injected pending result, the
-deterministically-recomputed pure-node outputs, and the event region
-(`event_log_base = 1024`, `event_bytes = checked(8 + node_count * 40)` — an
-8-byte header holding `event_count` + reserved pad, then the records — `heap_base =
-align_up(event_log_base + event_bytes, 8)`, `heap_base <= linear_memory_bytes`).
-It CANNOT predict the length of a frontier-onward LIVE capability result;
-therefore: a live Result whose schema has a provable max size reserves that
-worst-case before the live call; an unbounded live Result under this contract must
-be refused BEFORE any live side effect (never execute-then-discover);
-`memory.grow` is a separate future gate, not chosen here. No new Wasm status code
-is invented: the capability-workflow-private checked bump keeps the existing
-`alloc` signature `(i32) -> i32` and returns the reserved null pointer `0` on
-insufficient capacity; the host maps that (and its own preflight/unbounded
-detection) to a STABLE orchestrator diagnostic `RESOURCE_EXHAUSTED` /
-`UNBOUNDED_RESULT` before any live effect. The only in-module statuses remain
-`AHFL_CAP_OK` / `AHFL_CAP_ERROR` / `AHFL_CAP_PENDING`; a defensive resource guard
-inside `run2` fails closed as `AHFL_CAP_ERROR`, never a fabricated status. (A real
-in-module resource status would be a separate ABI gate; not chosen.)
+before any commit, ownership transfer, or live call — every CAS/mutation/live
+effect is strictly after it. The owning implementation (B2-D D1a) is a
+runtime-owned checked max-canonical-JSON-size analysis over the Verified Result
+binding, returning a conservative upper bound for a finite schema, and each size
+is a checked arithmetic step. A String is bounded by its `length_bounds` upper (as
+UTF-8 bytes + worst-case JSON escaping); a Sequence/Set by `checked(capacity ×
+element bound) + array framing`; a Map by `checked(capacity × checked(key bound +
+value bound + per-entry framing)) + object framing` — a Map key String must itself
+have an upper bound, and any key or value with no bound makes the Map unbounded;
+scalars by their canonical spelling width; a record by the checked sum of its
+fields, all with the canonical serializer's worst-case escaping, number spelling,
+and framing (quotes/commas/colons/brackets/field names), never underestimating. The
+analysis returns `resume.preflight.unbounded` when the schema has NO finite
+canonical upper bound — a String with no upper `length_bounds`, a Sequence/Set/Map
+with no `capacity`, a Map key/value with no bound, an unbounded-preserved
+Decimal/Duration spelling, or a productive recursive cycle in the node graph (a
+zero-capacity-cut cycle is not productive). The TOTAL
+reservation covers the event region (`event_log_base = 1024`,
+`event_bytes = checked(8 + node_count * 40)`, `heap_base =
+align_up(event_log_base + event_bytes, 8)`), the restored entry frame, all memo
+result frames, the current live/injected Result, and the allocator framing; a
+checked add/mul/align/`size_t` overflow OR a total reservation exceeding the fixed
+single page fails closed with `resume.preflight.resource_exhausted`. These two are
+the ONLY preflight errors and are a DISTINCT runtime catalogue — they are never the
+compile-time `wasm.RESOURCE_EXHAUSTED` / `wasm.BINARY_OVERFLOW`, which stay
+compiler-owned. `memory.grow` is a separate future gate, not chosen here. No new
+Wasm status code is invented: the capability-workflow-private checked bump keeps the
+existing `alloc` signature `(i32) -> i32` and returns the reserved null pointer `0`
+on insufficient capacity; the host maps that (and its own preflight/unbounded
+detection) to the STABLE orchestrator diagnostics above before any live effect. The
+only in-module statuses remain `AHFL_CAP_OK` / `AHFL_CAP_ERROR` / `AHFL_CAP_PENDING`;
+a defensive resource guard inside `run2` fails closed as `AHFL_CAP_ERROR`, never a
+fabricated status. (A real in-module resource status would be a separate ABI gate;
+not chosen.)
 
 ### 5.3 Frame lifetimes and fan-out ownership (FUTURE production gate)
 
@@ -1006,9 +1190,9 @@ in-module resource status would be a separate ABI gate; not chosen.)
 Five distinct frame lifetimes, each with allocate / borrow / transfer / last-use /
 failure-cleanup:
 - **L1 host-private decoded Value** — allocated in HOST memory during admission
-  (§5.1 step 8); never in module memory; borrowed by the host to recompute
-  `arg_hash` + validate; last-use = end of that coordinate's gate; on failure
-  dropped immediately (no module allocation occurred); never echoed.
+  (§5.1 step 5, typed-payload decode); never in module memory; borrowed by the host
+  to recompute `arg_hash` + validate; last-use = end of that coordinate's gate; on
+  failure dropped immediately (no module allocation occurred); never echoed.
 - **L2 module-owned replayed argument frame** — the fresh instance allocates it in
   its OWN memory as it re-executes to an import; the host BORROWS it read-only
   during the import callback to decode the Param + recompute `arg_hash`; ownership
@@ -1020,8 +1204,9 @@ failure-cleanup:
   gated behind the new pending append); last-use = the module reads it.
 - **L4 pending-result return frame** — the injected pending result; validated
   against the Result root, its NEW memo entry appended atomically FIRST, and only
-  then its `(ptr,len)` ownership transferred to the module (§5.1 step 7-8); this is
-  the ONLY frame gated behind the atomic append.
+  then its `(ptr,len)` ownership transferred to the module (§5.1 step 9, CAS
+  publish + pending ownership transfer); this is the ONLY frame gated behind the atomic
+  append.
 - **L5 node-output / fan-out frame** — a completed node's output routed to one or
   more downstream nodes; allocated once in fresh-instance memory; each downstream
   consumer BORROWS it (no copy) since runners are identity/borrowed-passthrough
@@ -1152,10 +1337,13 @@ Implementation is intentionally split before any resume ABI:
      `confidential_at_rest` = 0; no rollback protection, no at-rest
      confidentiality); it only exercises the foundation plumbing and must
      never be described as a conforming ProtectedPayloadStore.
-   - **B2-B-confidential follow-on(s) (SEPARATE, UNRESOLVED, UNNUMBERED)**:
-     at-rest confidentiality requires a real AEAD/KMS backend, key authority, a
-     dependency shared gate, and a non-test production caller; not selected in
-     B2-0 and not hidden inside the integrity-only B2-B foundation.
+   - **Confidential/KMS/rollback protected store (SEPARATE owner/shared gates;
+     a PREREQUISITE of full B2-D closure, NOT out-of-Objective)**: at-rest
+     confidentiality + real rollback/fencing require a real AEAD/KMS backend, key
+     authority, a dependency shared gate, and a non-test production caller; not
+     selected in B2-0 and not hidden inside the integrity-only B2-B foundation.
+     It may land under its own owner gate, but B2-D is NOT FULLY CLOSED until it,
+     the production host/fresh replay, and the digest gate all have evidence.
    - **B2-C capability-bearing workflow + manifest + module event bytes — LANDED
      (`4224a52f`)**: the workflow emitter's `allow_capability = false` refusal is
      lifted on the capability-workflow lane; a node capability `PENDING`
@@ -1172,11 +1360,23 @@ Implementation is intentionally split before any resume ABI:
      exact-evidence remains B2-E. Node/binary evidence is layout/structural, NOT
      Wasmtime, NOT durable-resume; the current verification environment SKIPs the
      Wasmtime lanes; B2 and KR6.5 stay false.
-   - **B2-D production host + confidential store/key/KMS/real rollback + fresh
-     replay**: a real embeddable production host API with at least one non-test
-     caller/deliverable, driving fresh-instance manifest replay + the five frame
-     lifetimes. This is the slice that actually closes durable resume; absent a
-     real host it stays FOUNDATION and full B2 is NOT claimed.
+   - **B2-D durable-resume closure (laddered)**: full closure requires ALL of —
+     **D1a** host-independent internal authorities: an `entry_input_slot` A1
+     RECORD FIELD + the B1 exact-slot-set / store staged-admission change (B1 has
+     no record field); A2 typed artifact digests computed during A2's single
+     framing pass; a runtime-owned node-event decoder; a result-size preflight;
+     and the opaque 32B `IdempotencyToken` CONTRACT/algorithm (its code owner is
+     D2b, but the fixed preimage/authority-namespace is a D1a-locked prerequisite);
+     **D1b** a host-independent replay controller proving deterministic state
+     transitions only (FOUNDATION — no real VM, no durable-effect authority);
+     **D2a** a real embeddable production VM/host adapter + >=1 non-test caller
+     (Shared-Change Gate, owner-approved) — this is the production-host step;
+     **D2b** a durable-effect intent/result authority with read/recover/dedup/
+     result authority (a new Core-Wasm typed authority, NOT the native write-only
+     void sink); and the conforming confidential/KMS/rollback protected store
+     PREREQUISITE (own owner/shared gates). D1a/D1b stay FOUNDATION; full B2 /
+     durable-resume is NOT claimed until D2a + D2b + the protected store all have
+     evidence.
    - **B2-E exact evidence + claim gate**: the authenticated host event envelope
      joined with the module event log, wiring `runtime_node_order_observed` /
      `durable_resume_observed`; depends on B2-D's host event channel (no parallel

@@ -332,7 +332,14 @@ as `wasm.RESOURCE_EXHAUSTED` (concretely, `node_count = 1612` fits at
 property), so it is range-less like the other entry-level codes, carries no
 payload/name/byte echo, and is emitted before any byte publication. It is distinct
 from the host-side `UNBOUNDED_RESULT`, which is a future B2-D orchestrator concept
-and is NOT emitted by codegen.
+and is NOT emitted by codegen. The future B2-D host-side result-size preflight
+owns a SEPARATE runtime diagnostic catalogue — a host `resume.preflight.unbounded`
+(a legal schema with no finite canonical upper bound) and a host
+`resume.preflight.resource_exhausted` (checked add/mul/align/`size_t` overflow, or
+the total worst-case reservation exceeding capacity) — distinct in owner and call
+site from this compile-time codegen `wasm.RESOURCE_EXHAUSTED`; codegen never emits
+the host codes and the host preflight never emits `wasm.BINARY_OVERFLOW` or reuses
+`wasm.RESOURCE_EXHAUSTED`.
 
 The following all fail before byte publication:
 
