@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
+#include "base/support/sha256.hpp"
 
 namespace ahfl::runtime::core_wasm_schema_module {
 
@@ -187,12 +189,16 @@ struct ParsedImport {
 };
 
 // Framing facts: per Type entry whether it is the ahfl_cap tuple signature, the
-// capability imports, and the raw bytes of BOTH target custom sections (borrowed).
+// capability imports, the raw bytes of BOTH target custom sections (borrowed), and
+// the three raw SHA-256 artifact digests computed once here after framing succeeds.
 struct ModuleFraming {
     std::vector<bool> type_is_capability_tuple;
     std::vector<ParsedImport> imports;
     std::span<const std::uint8_t> exec_manifest_bytes; // raw payload after the name framing
     std::span<const std::uint8_t> wire_schema_bytes;   // raw payload after the name framing
+    ArtifactDigest module_sha256{};       // whole emitted module
+    ArtifactDigest wire_schema_sha256{};  // raw AHFLWS payload (no custom-name framing)
+    ArtifactDigest exec_manifest_sha256{}; // raw AHFLXM payload (no custom-name framing)
 };
 
 [[nodiscard]] bool spans_are_capability_tuple(std::span<const std::uint8_t> params,
@@ -473,6 +479,20 @@ frame_module(std::span<const std::uint8_t> module_bytes,
     }
     framing.exec_manifest_bytes = exec_manifest_bytes;
     framing.wire_schema_bytes = wire_schema_bytes;
+    // Compute the three raw SHA-256 artifact digests ONCE here, now that type /
+    // import / AHFLXM / AHFLWS framing have all succeeded, in the fixed order whole
+    // module -> raw AHFLWS payload -> raw AHFLXM payload. support::sha256 throws
+    // std::length_error only for a span outside the SHA-256 input domain (>= 2^61
+    // bytes), which a real module can never reach; map it to a fixed no-echo
+    // fail-closed diagnostic so the exception never escapes admission.
+    try {
+        framing.module_sha256 = support::sha256(module_bytes);
+        framing.wire_schema_sha256 = support::sha256(wire_schema_bytes);
+        framing.exec_manifest_sha256 = support::sha256(exec_manifest_bytes);
+    } catch (const std::length_error &) {
+        diagnostics.push_back(error("module artifact exceeds the SHA-256 input domain"));
+        return std::nullopt;
+    }
     return framing;
 }
 
@@ -611,6 +631,11 @@ struct SchemaModulePayload {
     CoreWorkflowId entry_id{};
     std::vector<ManifestNode> nodes;
     std::vector<CallSiteRecord> call_sites;
+    // The three raw SHA-256 artifact digests, computed once during framing and
+    // shared (never re-hashed) by every token resolved from this payload.
+    ArtifactDigest module_sha256{};
+    ArtifactDigest wire_schema_sha256{};
+    ArtifactDigest exec_manifest_sha256{};
 };
 
 } // namespace detail
@@ -723,6 +748,15 @@ std::size_t VerifiedCoreWasmSchemaModule::node_count() const noexcept {
 std::size_t VerifiedCoreWasmSchemaModule::call_site_count() const noexcept {
     return payload_->call_sites.size();
 }
+ArtifactDigest VerifiedCoreWasmSchemaModule::module_sha256() const noexcept {
+    return payload_->module_sha256;
+}
+ArtifactDigest VerifiedCoreWasmSchemaModule::wire_schema_sha256() const noexcept {
+    return payload_->wire_schema_sha256;
+}
+ArtifactDigest VerifiedCoreWasmSchemaModule::exec_manifest_sha256() const noexcept {
+    return payload_->exec_manifest_sha256;
+}
 
 VerifiedCoreWasmNodeResult
 VerifiedCoreWasmSchemaModule::resolve_node(ManifestNodeIndex index) const {
@@ -833,6 +867,10 @@ struct SchemaModuleFactory {
         auto payload = std::make_shared<detail::SchemaModulePayload>();
         payload->entry_id = manifest->entry_id;
         payload->nodes = manifest->nodes;
+        // Copy the three digests computed once during framing (no re-hash here).
+        payload->module_sha256 = framing->module_sha256;
+        payload->wire_schema_sha256 = framing->wire_schema_sha256;
+        payload->exec_manifest_sha256 = framing->exec_manifest_sha256;
 
         for (std::size_t n = 0; n < manifest->nodes.size(); ++n) {
             const ManifestNode &node = manifest->nodes[n];

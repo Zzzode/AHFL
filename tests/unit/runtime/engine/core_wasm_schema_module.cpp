@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <type_traits>
 #include <optional>
 #include <span>
 #include <string>
@@ -202,6 +203,12 @@ struct ModuleSpec {
     bool manifest_after_schema = false;
     bool custom_between = false;      // an unknown custom between manifest and schema
     bool section_after_schema = false; // a standard section after AHFLWS
+    // D1a-2 test-only: an ACCEPTED unknown custom section emitted BEFORE the AHFLXM
+    // manifest (the section walk skips an unknown custom seen before the manifest).
+    // Its body is hashed into the whole-module digest but lies OUTSIDE both the raw
+    // AHFLXM and raw AHFLWS payloads, so a one-byte change there flips only the
+    // module digest. When set, the body is these exact bytes.
+    std::optional<std::vector<std::uint8_t>> pre_manifest_custom_body;
     std::optional<std::vector<std::uint8_t>> manifest_override;
     std::optional<std::vector<std::uint8_t>> schema_override;
 };
@@ -242,6 +249,9 @@ std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
         }
         return m;
     }
+    if (spec.pre_manifest_custom_body.has_value()) {
+        put_section(m, 0, custom_payload("ahfl.test.premanifest", *spec.pre_manifest_custom_body));
+    }
     if (spec.emit_manifest) {
         emit_manifest_section();
     }
@@ -273,6 +283,98 @@ bool admit_fails(const std::vector<std::uint8_t> &module) {
         if (d.code != std::string(ahfl::ir::core::wire_schema::kInvalid) ||
             d.source_range.has_value()) {
             return false;
+        }
+    }
+    return true;
+}
+
+// ---- D1a-2 test-only raw-payload locator -------------------------------------
+// An INDEPENDENT, fully bounds-checked byte walker (NOT the production framer and
+// NOT the getter under test) that returns the half-open [begin,end) byte offset
+// range of the raw AHFLXM / AHFLWS payload inside a module -- i.e. the bytes AFTER
+// the custom-section name-length ULEB + name and BEFORE the next section. Returns
+// {0,0} on any malformed framing (the caller asserts a non-empty range).
+struct RawRange {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    [[nodiscard]] bool empty() const noexcept { return begin >= end; }
+    [[nodiscard]] bool contains(std::size_t off) const noexcept {
+        return off >= begin && off < end;
+    }
+};
+
+// Minimal bounds-checked ULEB reader over a byte vector at *pos; returns false on
+// truncation / non-terminating encoding.
+bool locator_read_uleb(const std::vector<std::uint8_t> &m, std::size_t &pos, std::uint64_t &out) {
+    out = 0;
+    std::uint32_t shift = 0;
+    while (pos < m.size()) {
+        const std::uint8_t b = m[pos++];
+        if (shift >= 64) {
+            return false;
+        }
+        out |= static_cast<std::uint64_t>(b & 0x7fU) << shift;
+        if ((b & 0x80U) == 0) {
+            return true;
+        }
+        shift += 7;
+    }
+    return false;
+}
+
+RawRange locate_custom_payload(const std::vector<std::uint8_t> &m, std::string_view section_name) {
+    // Skip the 8-byte module header.
+    if (m.size() < 8) {
+        return {};
+    }
+    std::size_t pos = 8;
+    while (pos < m.size()) {
+        const std::uint8_t id = m[pos++];
+        std::uint64_t size = 0;
+        if (!locator_read_uleb(m, pos, size)) {
+            return {};
+        }
+        const std::size_t body_begin = pos;
+        if (size > m.size() - body_begin) {
+            return {};
+        }
+        const std::size_t body_end = body_begin + static_cast<std::size_t>(size);
+        if (id == 0) { // custom section
+            std::size_t np = body_begin;
+            std::uint64_t name_len = 0;
+            if (!locator_read_uleb(m, np, name_len)) {
+                return {};
+            }
+            // The name-length ULEB itself must not have run past this section, and
+            // the name bytes must lie fully inside it (no unsigned underflow below).
+            if (np > body_end || name_len > body_end - np) {
+                return {};
+            }
+            const std::string_view name(reinterpret_cast<const char *>(m.data() + np),
+                                        static_cast<std::size_t>(name_len));
+            const std::size_t payload_begin = np + static_cast<std::size_t>(name_len);
+            if (name == section_name) {
+                return RawRange{payload_begin, body_end};
+            }
+        }
+        pos = body_end;
+    }
+    return {};
+}
+
+// Count the number of differing byte offsets between two equal-length vectors and,
+// when exactly one differs, report that offset. Returns false if the sizes differ.
+bool single_byte_diff(const std::vector<std::uint8_t> &a, const std::vector<std::uint8_t> &b,
+                      std::size_t &diff_offset, std::size_t &diff_count) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    diff_count = 0;
+    diff_offset = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i] != b[i]) {
+            ++diff_count;
+            diff_offset = i;
         }
     }
     return true;
@@ -1040,6 +1142,199 @@ int main() {
                     check(&p.table() == &r.table(),
                           "real.capwf_param_result_shared_backing");
                 }
+            }
+        }
+    }
+
+    // ---- D1a-2: three raw artifact-digest getters ---------------------------
+    // A deterministic baseline module (one capability, one cap node). Its exact raw
+    // AHFLXM / AHFLWS payload ranges are located by the independent test walker, and
+    // the three expected SHA-256s are hardcoded from an EXTERNAL hashlib recompute
+    // over those exact byte slices (never produced by the getters or support::sha256
+    // in this test).
+    {
+        ModuleSpec base;
+        base.caps = {{0, 1}}; // (cap_id 0, source_symbol 1)
+        base.entry_id = 7;
+        base.manifest_nodes = {{40, 1, 0, 1}}; // one cap node -> cap 0, symbol 1
+        const auto module = build_module(base);
+        check(admit_ok(module), "digest.baseline_admits");
+
+        const RawRange ahflws = locate_custom_payload(module, "ahfl.wire-schema.v1");
+        const RawRange ahflxm = locate_custom_payload(module, "ahfl.wasm-exec-manifest.v1");
+        check(!ahflws.empty() && !ahflxm.empty(), "digest.baseline_ranges_located");
+
+        // Byte-lock the located raw slices for the fixed baseline. These HARD-CODED
+        // vectors are independent of exec_manifest_body / encode_schema / the getter;
+        // each begins with its raw magic (AHFLXM / AHFLWS) and carries NO custom-name
+        // framing, so the byte-exact equality pins the exact digest scope.
+        static const std::vector<std::uint8_t> kRawAhflxm = {
+            0x41, 0x48, 0x46, 0x4c, 0x58, 0x4d, 0x01, 0x00,
+            0x07, 0x01, 0x28, 0x00, 0x01, 0x00, 0x01}; // "AHFLXM"...
+        static const std::vector<std::uint8_t> kRawAhflws = {
+            0x41, 0x48, 0x46, 0x4c, 0x57, 0x53, 0x01, 0x02, 0x02,
+            0x00, 0x04, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00, 0x01}; // "AHFLWS"...
+        const bool xm_slice_ok =
+            !ahflxm.empty() && ahflxm.end <= module.size() &&
+            std::vector<std::uint8_t>(module.begin() + static_cast<std::ptrdiff_t>(ahflxm.begin),
+                                      module.begin() + static_cast<std::ptrdiff_t>(ahflxm.end)) ==
+                kRawAhflxm;
+        const bool ws_slice_ok =
+            !ahflws.empty() && ahflws.end <= module.size() &&
+            std::vector<std::uint8_t>(module.begin() + static_cast<std::ptrdiff_t>(ahflws.begin),
+                                      module.begin() + static_cast<std::ptrdiff_t>(ahflws.end)) ==
+                kRawAhflws;
+        check(xm_slice_ok, "digest.raw_ahflxm_slice_byte_locked");
+        check(ws_slice_ok, "digest.raw_ahflws_slice_byte_locked");
+
+        // Externally-computed KATs: python hashlib.sha256(module[a:b]).digest() over
+        // the exact byte-locked slices above (whole module / raw AHFLWS / raw AHFLXM).
+        // Recompute: sha256(kModule)=9e6b8c..3b9e; sha256(kRawAhflws)=6cbb2b..0c5b;
+        // sha256(kRawAhflxm)=6200b2..da28. NOT produced by the getter or support::sha256.
+        static constexpr ArtifactDigest kModuleKat = {
+            0x9e, 0x6b, 0x8c, 0x04, 0x52, 0xb7, 0x1b, 0x69, 0xeb, 0xb2, 0xe8,
+            0xc4, 0x19, 0x9f, 0x44, 0xf6, 0x18, 0xff, 0x3a, 0x80, 0xa1, 0x62,
+            0x36, 0x0e, 0xff, 0x35, 0x8c, 0xfb, 0x3b, 0x26, 0x3b, 0x9e};
+        static constexpr ArtifactDigest kWireKat = {
+            0x6c, 0xbb, 0x2b, 0xc1, 0x35, 0xd2, 0xe4, 0xaf, 0x2b, 0x56, 0x7e,
+            0xe8, 0x20, 0x06, 0xf2, 0xf6, 0xdc, 0x85, 0xeb, 0x54, 0x63, 0x26,
+            0x83, 0xcb, 0x36, 0xb0, 0x2f, 0x8b, 0x8d, 0x40, 0x0c, 0x5b};
+        static constexpr ArtifactDigest kManifestKat = {
+            0x62, 0x00, 0xb2, 0xda, 0xfc, 0x9b, 0xb7, 0x64, 0xca, 0xc0, 0x95,
+            0x2c, 0x56, 0x23, 0x4e, 0x0c, 0x37, 0xc8, 0xa5, 0x7e, 0x9d, 0xbd,
+            0x2f, 0xea, 0x35, 0x04, 0xc5, 0x44, 0xbd, 0xf8, 0xda, 0x28};
+
+        auto admitted =
+            make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+        check(admitted.ok(), "digest.baseline_admitted");
+        if (admitted.ok()) {
+            const auto &mod = *admitted.module;
+            // Return-type / static contract: getters are ArtifactDigest by value.
+            static_assert(std::is_same_v<decltype(mod.module_sha256()), ArtifactDigest>,
+                          "module_sha256 returns ArtifactDigest by value");
+            static_assert(std::is_same_v<decltype(mod.wire_schema_sha256()), ArtifactDigest>,
+                          "wire_schema_sha256 returns ArtifactDigest by value");
+            static_assert(std::is_same_v<decltype(mod.exec_manifest_sha256()), ArtifactDigest>,
+                          "exec_manifest_sha256 returns ArtifactDigest by value");
+            check(mod.module_sha256() == kModuleKat, "digest.module_kat");
+            check(mod.wire_schema_sha256() == kWireKat, "digest.wire_kat");
+            check(mod.exec_manifest_sha256() == kManifestKat, "digest.manifest_kat");
+
+            // Copy + lifetime: copy the handle, resolve a token, drop the original;
+            // both the copied handle's digests and the token's coordinates stay valid.
+            auto copy = mod;
+            auto node = mod.resolve_node(ManifestNodeIndex{0});
+            admitted = VerifiedCoreWasmSchemaModuleResult{}; // drop the original handle
+            check(copy.module_sha256() == kModuleKat && copy.wire_schema_sha256() == kWireKat &&
+                      copy.exec_manifest_sha256() == kManifestKat,
+                  "digest.copy_stable_after_original_drop");
+            // Actually READ the token after the original handle is gone (shared payload).
+            check(node.ok() && node.node.has_value() &&
+                      node.node->workflow_node_id() == CoreWorkflowNodeId{40} &&
+                      node.node->schedule_pos() == ManifestNodeIndex{0},
+                  "digest.token_reads_after_original_drop");
+        }
+
+        // Mutation 1 (module-only): an accepted unknown custom section BEFORE AHFLXM;
+        // its body byte 0 -> 1. Admits OK, exactly one byte differs, that offset is in
+        // the whole module but OUTSIDE both raw payloads -> only module digest flips.
+        {
+            ModuleSpec m0 = base;
+            m0.pre_manifest_custom_body = std::vector<std::uint8_t>{0x00};
+            ModuleSpec m1 = base;
+            m1.pre_manifest_custom_body = std::vector<std::uint8_t>{0x01};
+            const auto b0 = build_module(m0);
+            const auto b1 = build_module(m1);
+            check(admit_ok(b0) && admit_ok(b1), "digest.mod_only_both_admit");
+            std::size_t off = 0;
+            std::size_t cnt = 0;
+            const bool ok = single_byte_diff(b0, b1, off, cnt);
+            check(ok && cnt == 1, "digest.mod_only_one_byte_diff");
+            const RawRange ws = locate_custom_payload(b0, "ahfl.wire-schema.v1");
+            const RawRange xm = locate_custom_payload(b0, "ahfl.wasm-exec-manifest.v1");
+            check(ok && cnt == 1 && !ws.contains(off) && !xm.contains(off),
+                  "digest.mod_only_offset_outside_payloads");
+            auto a0 = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(b0));
+            auto a1 = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(b1));
+            check(a0.ok() && a1.ok(), "digest.mod_only_admitted");
+            if (a0.ok() && a1.ok()) {
+                check(a0.module->module_sha256() != a1.module->module_sha256(),
+                      "digest.mod_only_module_flips");
+                check(a0.module->wire_schema_sha256() == a1.module->wire_schema_sha256() &&
+                          a0.module->exec_manifest_sha256() == a1.module->exec_manifest_sha256(),
+                      "digest.mod_only_wire_manifest_stable");
+            }
+        }
+
+        // Mutation 2 (AHFLWS): the unbounded Result node String -> Int (both with a
+        // 0 optional-bounds tag), via schema_override. Admits OK, exactly one byte
+        // differs inside the raw AHFLWS payload -> module + wire flip, manifest stable.
+        {
+            CoreWireSchemaTable str_table;
+            str_table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});    // 0: param
+            str_table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaString{}}); // 1: Result
+            CoreWireCapabilitySchema c_str;
+            c_str.capability = CoreCapabilityId{0};
+            c_str.source_symbol = 1;
+            c_str.params = {CoreWireSchemaNodeId{0}};
+            c_str.result = CoreWireSchemaNodeId{1};
+            str_table.capabilities.push_back(c_str);
+
+            CoreWireSchemaTable int_table = str_table;
+            int_table.nodes[1] = CoreWireSchemaNode{CoreWireSchemaInt{}}; // Result String -> Int
+
+            ModuleSpec ms = base;
+            ms.schema_override = encode_schema(str_table);
+            ModuleSpec mi = base;
+            mi.schema_override = encode_schema(int_table);
+            check(!ms.schema_override->empty() && !mi.schema_override->empty(),
+                  "digest.ws_schema_encoded");
+            const auto bs = build_module(ms);
+            const auto bi = build_module(mi);
+            check(admit_ok(bs) && admit_ok(bi), "digest.ws_both_admit");
+            std::size_t off = 0;
+            std::size_t cnt = 0;
+            const bool ok = single_byte_diff(bs, bi, off, cnt);
+            check(ok && cnt == 1, "digest.ws_one_byte_diff");
+            const RawRange ws = locate_custom_payload(bs, "ahfl.wire-schema.v1");
+            check(ok && cnt == 1 && ws.contains(off), "digest.ws_offset_in_wire_range");
+            auto as = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(bs));
+            auto ai = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(bi));
+            check(as.ok() && ai.ok(), "digest.ws_admitted");
+            if (as.ok() && ai.ok()) {
+                check(as.module->wire_schema_sha256() != ai.module->wire_schema_sha256() &&
+                          as.module->module_sha256() != ai.module->module_sha256(),
+                      "digest.ws_module_and_wire_flip");
+                check(as.module->exec_manifest_sha256() == ai.module->exec_manifest_sha256(),
+                      "digest.ws_manifest_stable");
+            }
+        }
+
+        // Mutation 3 (AHFLXM): entry_id 7 -> 8 via manifest entry. Admits OK, exactly
+        // one byte differs inside the raw AHFLXM payload -> module + manifest flip,
+        // wire stable.
+        {
+            ModuleSpec m7 = base; // entry_id 7
+            ModuleSpec m8 = base;
+            m8.entry_id = 8;
+            const auto b7 = build_module(m7);
+            const auto b8 = build_module(m8);
+            check(admit_ok(b7) && admit_ok(b8), "digest.xm_both_admit");
+            std::size_t off = 0;
+            std::size_t cnt = 0;
+            const bool ok = single_byte_diff(b7, b8, off, cnt);
+            check(ok && cnt == 1, "digest.xm_one_byte_diff");
+            const RawRange xm = locate_custom_payload(b7, "ahfl.wasm-exec-manifest.v1");
+            check(ok && cnt == 1 && xm.contains(off), "digest.xm_offset_in_manifest_range");
+            auto a7 = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(b7));
+            auto a8 = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(b8));
+            check(a7.ok() && a8.ok(), "digest.xm_admitted");
+            if (a7.ok() && a8.ok()) {
+                check(a7.module->exec_manifest_sha256() != a8.module->exec_manifest_sha256() &&
+                          a7.module->module_sha256() != a8.module->module_sha256(),
+                      "digest.xm_module_and_manifest_flip");
+                check(a7.module->wire_schema_sha256() == a8.module->wire_schema_sha256(),
+                      "digest.xm_wire_stable");
             }
         }
     }

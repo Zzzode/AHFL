@@ -10,8 +10,11 @@
 // admitted `VerifiedCoreWasmSchemaModule` therefore GUARANTEES every call site is
 // usable; a caller can never submit an arbitrary `(capability, source_symbol)` to
 // mint. It is FOUNDATION only: it has no production caller yet (the first is the
-// future B2-D host), it does not emit the manifest (that is future B2-C), it makes
-// NO artifact-digest claim (that is the future B2-D digest gate), it adds no
+// future B2-D host); A2 does not itself emit the manifest (the landed compiler-side
+// B2-C supplies the AHFLXM section); it COMPUTES and EXPOSES the three artifact
+// digests (whole module / raw AHFLWS payload / raw AHFLXM payload) as authority but
+// does NOT compare them and does NOT close the digest gate (that comparison is
+// future B2-D / D1b); it adds no
 // compiler_ir Wasm/manifest knowledge, and B2 / KR6.5 stay false.
 //
 // The wire-schema section is admitted through the existing C1
@@ -20,6 +23,7 @@
 // the exec-manifest codec. It never exposes a raw `CoreWireSchemaTable`,
 // `CoreWireSchemaNodeId`, or the raw manifest.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -33,6 +37,14 @@
 #include "runtime/engine/core_wasm_resume_record.hpp" // InvocationOrdinal (A1 strong type)
 
 namespace ahfl::runtime::core_wasm_schema_module {
+
+// A raw SHA-256 artifact digest (32 bytes, NOT hex). A2 computes three of these
+// during its single framing pass -- over the whole emitted module, the raw AHFLWS
+// wire-schema payload (no custom-name framing), and the raw AHFLXM exec-manifest
+// payload (no custom-name framing) -- and exposes them by value. It never COMPARES
+// them against a resume record: the digest gate is future B2-D (D1b). This is a
+// plain std::array, so the header leaks no base-support type.
+using ArtifactDigest = std::array<std::uint8_t, 32>;
 
 namespace detail {
 // The single immutable payload shared by an admitted module handle and every node
@@ -160,6 +172,16 @@ class VerifiedCoreWasmSchemaModule {
     [[nodiscard]] VerifiedCoreWasmNodeResult resolve_node(ManifestNodeIndex index) const;
     // Resolve a capability call site (import cursor authority) by call-site index.
     [[nodiscard]] VerifiedCoreWasmCallSiteResult resolve(ManifestCallSiteIndex index) const;
+
+    // The three raw SHA-256 artifact digests computed during framing: the whole
+    // emitted module, the raw AHFLWS wire-schema payload (no custom-name framing),
+    // and the raw AHFLXM exec-manifest payload (no custom-name framing). Returned by
+    // value; stable after this handle (or a resolved token) is copied or the original
+    // handle is dropped (the shared immutable payload holds them). A2 exposes these
+    // as authority but performs NO comparison -- the digest gate is future B2-D (D1b).
+    [[nodiscard]] ArtifactDigest module_sha256() const noexcept;
+    [[nodiscard]] ArtifactDigest wire_schema_sha256() const noexcept;
+    [[nodiscard]] ArtifactDigest exec_manifest_sha256() const noexcept;
 
   private:
     friend struct SchemaModuleFactory;
