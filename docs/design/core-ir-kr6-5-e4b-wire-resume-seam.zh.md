@@ -1,7 +1,7 @@
 # Core-IR KR6.5 E4-B0: Wire Schema and Durable-Resume Seam -- Design
 
-> Status: **E4-B1 IMPLEMENTED; B2-S / B2-A-pre / B2-A / B2-B FOUNDATION slices
-> landed**
+> Status: **E4-B1 IMPLEMENTED; B2-S / B2-A-pre / B2-A / B2-B / B2-C FOUNDATION
+> slices landed**
 > (schema-guided wire codec + durable-resume seam + full CLI/HTTP/gRPC/shim
 > demotion + the wire-schema Wasm transport chain: C1 payload decoder
 > `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime module inspector
@@ -17,8 +17,9 @@
 > store FOUNDATION has since landed (B0 artifact codecs `d355171b`, B1a store
 > `72a062e0`, B1b crash evidence `c710a997`) — NON-CONFORMING to the §4.3
 > `ProtectedPayloadStore` (`guarantees` bit0 `rollback_protected` = 0 AND bit1
-> `confidential_at_rest` = 0); NO capability-workflow emitter / production host
-> code is implemented and B2 / KR6.5 stay false. The confidential
+> `confidential_at_rest` = 0); the B2-C capability-workflow emitter has landed
+> (`4224a52f`); NO production host code is implemented and B2 / KR6.5 stay false.
+> The confidential
 > `ProtectedPayloadStore`, a production key/KMS authority, real rollback
 > protection, and the production host are all named future gates (§6). The
 > B2-S security PRIMITIVE has landed as a base-support FOUNDATION — the NEW
@@ -42,22 +43,25 @@
 > durable-resume payload store FOUNDATION has since landed (B0 artifact codecs
 > `d355171b`, B1a store `72a062e0`, B1b crash evidence `c710a997`) —
 > NON-CONFORMING to the §4.3 `ProtectedPayloadStore` (`guarantees` bit0
-> `rollback_protected` = 0 AND bit1 `confidential_at_rest` = 0). No
-> confidential/at-rest store, no capability-workflow emitter, no production host,
-> and no artifact-digest comparison exist — those remain the unnumbered
-> confidential follow-on, B2-C, B2-D, and the B2-D digest gate respectively. B2
-> and KR6.5 stay false.
+> `rollback_protected` = 0 AND bit1 `confidential_at_rest` = 0). The B2-C
+> capability-workflow emitter has landed (`4224a52f`); no confidential/at-rest
+> store, no production host, and no artifact-digest comparison exist — those
+> remain the unnumbered confidential follow-on, B2-D, and the B2-D digest gate
+> respectively. B2 and KR6.5 stay false.
 >
 > Scope: decide who decodes and type-checks RFC 0019/0021 `value_json`, define
 > one canonical wire-schema projection, and define the durable record's control
 > and sensitive-payload boundaries. The design is implemented through B1 plus the
 > B2-S / B2-A-pre / B2-A / B2-B FOUNDATION slices (base-support HMAC, the shared
 > verified-table authority, the `ahfl.wasm-resume.v1` record codec, the runtime
-> module-context + exec-manifest decoder, and the B2-B integrity-only LOCAL
-> payload store FOUNDATION). It does not by itself authorize the remaining
+> module-context + exec-manifest decoder, the B2-B integrity-only LOCAL
+> payload store FOUNDATION, and the B2-C capability-workflow emitter `4224a52f`
+> for the exec-manifest + node-event buffer + capability-status scheduling). It
+> does not
+> by itself authorize the remaining
 > confidential/at-rest store (the unnumbered confidential follow-on) or the
-> B2-C/D/E artifacts (capability-workflow emitter, production host +
-> artifact-digest gate, exact events) or any E4-A dependency/CI change; §3.2
+> B2-D/E artifacts (production host + artifact-digest gate, exact events) or any
+> E4-A dependency/CI change; §3.2
 > still DESIGNS the future production-host artifact-digest comparison/gate.
 >
 > Priority: the E4-B0 design gate is CLOSED and E4-B0-C1/C2 and E4-B1 are
@@ -656,12 +660,16 @@ identity or replay order.
 ### 4.4 Execution manifest, resume state machine, and node-event buffer (Approach A)
 
 > Status: **B2-0 design LOCKED; the A2 exec-manifest decoder + runtime
-> module-context LANDED (`5bd812b2`).** The `ahfl.wasm-exec-manifest.v1` decoder,
+> module-context LANDED (`5bd812b2`); the B2-C capability-workflow emitter LANDED
+> (`4224a52f`).** The `ahfl.wasm-exec-manifest.v1` decoder,
 > the module framing + import/schema/manifest set-equality cross-check, and the
 > eager Param/Result call-site bindings are implemented; the compiler-side
-> manifest EMITTER, the resume state machine, the node-event buffer, and the
-> production host + artifact-digest gate are NOT implemented and this does not
-> close B2 or KR6.5.
+> manifest EMITTER (`4224a52f`), the module-side capability-status scheduling with
+> import-time `PENDING` propagation, and the node-event buffer have LANDED as a
+> FOUNDATION capability-workflow emitter; the production host + artifact-digest
+> gate are NOT implemented and this does not close B2 or KR6.5. The resume STATE
+> MACHINE's HOST side — fresh-instance replay/injection — remains B2-D; the
+> emitter provides only module-side manifest + event bytes.
 
 The chosen resume approach adds NO new module ABI SYMBOL or SIGNATURE and reuses
 the existing PROJECT `import_count + base` function-index RULE unchanged (imported
@@ -1046,9 +1054,10 @@ Implementation is intentionally split before any resume ABI:
    binding through the transported-table factory. This was the first reviewed Wasm
    byte change. It adds NO resume export, opcode, ABI, control record, or digest —
    those remain B2.
-4. **B2 durable resume — the B2-S / B2-A-pre / B2-A / B2-B FOUNDATION slices
-   have LANDED; NO capability-workflow emitter / production host code is
-   implemented (the confidential/at-rest store is a separate future gate).** B2
+4. **B2 durable resume — the B2-S / B2-A-pre / B2-A / B2-B FOUNDATION slices and
+   the B2-C capability-workflow emitter FOUNDATION (`4224a52f`) have LANDED; NO
+   production host code is implemented (the confidential/at-rest store and the
+   production host are separate future gates).** B2
    is a slice ladder, each with an honest
    FOUNDATION-vs-production closure and an explicit dependency order (no slice
    claims "non-inert" before a production host exists):
@@ -1121,8 +1130,9 @@ Implementation is intentionally split before any resume ABI:
      the exec-manifest immediately before the EOF wire-schema section + an exact
      import/schema/manifest set-equality + eager Param{0}/Result mint, exposing
      only narrow strong-typed coordinates. A1 is codec-only (no production
-     persistence caller); A2 is manifest consumer-only — it does NOT emit the
-     manifest (future B2-C) and makes NO artifact-digest comparison (future B2-D);
+     persistence caller); A2 is manifest consumer-only — it does not itself emit
+     the manifest (the compiler-side B2-C emitter `4224a52f` now supplies it) and
+     makes NO artifact-digest comparison (future B2-D);
      the C3 single-shot inspector's behavior is unchanged; the emitter dependency
      is test-only (production runtime unchanged). Complexity is the honest two
      linear wire-schema local verifies (C1 decode + authority admission), zero
@@ -1146,12 +1156,22 @@ Implementation is intentionally split before any resume ABI:
      at-rest confidentiality requires a real AEAD/KMS backend, key authority, a
      dependency shared gate, and a non-test production caller; not selected in
      B2-0 and not hidden inside the integrity-only B2-B foundation.
-   - **B2-C capability-bearing workflow + manifest + module event bytes**: lift
-     the workflow emitter's `allow_capability = false` refusal, propagate a node
-     capability `PENDING` out of the schedule, and emit the exec-manifest +
-     node-event buffer. This is the FIRST capability-bearing-workflow byte change;
-     the no-capability E1/E3 fixtures stay byte-frozen and a NEW
-     capability-workflow baseline is added.
+   - **B2-C capability-bearing workflow + manifest + module event bytes — LANDED
+     (`4224a52f`)**: the workflow emitter's `allow_capability = false` refusal is
+     lifted on the capability-workflow lane; a node capability `PENDING`
+     propagates out of the schedule (import-time), and the compiler emits the
+     `ahfl.wasm-exec-manifest.v1` (AHFLXM) exec-manifest exactly once immediately
+     before the EOF `ahfl.wire-schema.v1` (AHFLWS) section + a module-written
+     node-event buffer. WorkflowFunctionTable reuses the existing
+     `import_count + base` index rule (cap-lane indices shift by import_count; no
+     new ABI symbol/signature). This is the FIRST capability-workflow byte change;
+     the pre-existing E1/E2 and no-capability E3 fixtures stay byte-frozen and a
+     NEW capability-workflow baseline is added. FOUNDATION — the module event
+     buffer is completion/ordering evidence only, NOT a no-reinvoke proof; the
+     host-side fresh-instance replay/injection + artifact-digest gate remain B2-D,
+     exact-evidence remains B2-E. Node/binary evidence is layout/structural, NOT
+     Wasmtime, NOT durable-resume; the current verification environment SKIPs the
+     Wasmtime lanes; B2 and KR6.5 stay false.
    - **B2-D production host + confidential store/key/KMS/real rollback + fresh
      replay**: a real embeddable production host API with at least one non-test
      caller/deliverable, driving fresh-instance manifest replay + the five frame

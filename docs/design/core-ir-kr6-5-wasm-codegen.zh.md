@@ -1,18 +1,23 @@
 # Core-IR KR6.5: WASM Orchestration Codegen -- Design
 
 > Status: **DRAFT rev 2** (RFC 0026 P5 / KR6.5).
-> This document defines the first executable vertical slice, E1. It does not
-> claim that all of P5 is complete: capability calls and workflow DAG execution
-> remain later KR6.5 slices, while expression/control-flow computation remains
-> KR6.6 (P6).
+> This document defines the E1 executable vertical spine; the E2 capability
+> boundary, E3 workflow DAG, and the B2-C capability-bearing workflow emitter
+> (`4224a52f`, exec-manifest + node-event buffer + capability-status scheduling /
+> PENDING / latch) have since landed as FOUNDATION slices. It does not claim all
+> of P5 is complete: the production host + fresh-instance durable resume (B2-D),
+> exact evidence (B2-E), and expression/control-flow computation (KR6.6 / P6)
+> remain; the current verification environment SKIPs the Wasmtime execution lanes.
+> B2 and KR6.5 stay false.
 
 ## 0. Baseline and problem
 
-The current `wasm` backend is not an execution backend. It projects
-`ir::AgentDecl` into `WasmAgentConfig`, emits textual WAT, infers final states
-from missing outgoing edges, assumes state zero is initial, and leaves `run`
-and `step` as stubs. It does not consume `CoreProgram` or `CoreLayoutTable`.
-For more than one agent, the CLI concatenates multiple textual modules; that is
+At the original E1 design baseline, the legacy `wasm` backend was not an
+execution backend. It projected
+`ir::AgentDecl` into `WasmAgentConfig`, emitted textual WAT, inferred final states
+from missing outgoing edges, assumed state zero is initial, and left `run`
+and `step` as stubs. It did not consume `CoreProgram` or `CoreLayoutTable`.
+For more than one agent, the CLI concatenated multiple textual modules; that was
 not one loadable WebAssembly artifact.
 
 RFC 0026 fixes the layer boundary:
@@ -431,18 +436,24 @@ Optional real-execution conformance:
 
 ## 9. KR6.5 continuation after E1
 
-E1 is only the executable spine. Later P5 slices, each separately reviewed:
+E1 is only the executable spine. Later P5 slices (E2 capability boundary, E3
+workflow DAG, and the B2-C capability-workflow emitter `4224a52f` have landed as
+FOUNDATION; the rest remain), each separately reviewed:
 
-1. **E2 capability boundary**: lower `CoreCapabilityCallStmt`, consume existing
-   `ahfl_cap cap_<SymbolId>` `(ptr,len)->(status,ptr,len)` contract, propagate
-   ERROR and PENDING, and use only P4-D layouts for internal values. Resolve the
-   v1 value-returning `run` length problem before publishing output frames.
-2. **E3 workflow orchestration**: deterministic DAG scheduler over
+1. **E2 capability boundary — LANDED**: lowered `CoreCapabilityCallStmt`, consumes
+   the `ahfl_cap cap_<SymbolId>` `(ptr,len)->(status,ptr,len)` contract, propagates
+   ERROR and PENDING, and uses only P4-D layouts for internal values. The v1
+   value-returning `run` length problem is resolved by the pointer-only pre-effect
+   trap.
+2. **E3 workflow orchestration — LANDED**: deterministic DAG scheduler over
    `CoreWorkflowDecl`, explicit entry identity and multi-agent packaging,
    opaque frame routing where no computation is needed, no expression fallback.
 3. **E4 P5 conformance expansion**: state sequence, capability sequence,
-   pending/resume, workflow node order, and output frames. Only after these are
-   green is KR6.5/P5 complete.
+   pending/resume, workflow node order, and output frames. The B2-C
+   capability-workflow emitter module-side portion (manifest + node-event bytes +
+   PENDING/latch, `4224a52f`) has landed; pending/resume across a FRESH instance +
+   output frames remain B2-D production-host work, exact node-order evidence B2-E.
+   Only after these are green is KR6.5/P5 complete.
 4. **KR6.6/P6** then lowers expressions, arithmetic, structured `if`/`match`,
    ADT construction/projection, coercion physical effects, and closures. Every
    construct not yet landed continues to fail closed.
