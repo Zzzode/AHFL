@@ -1,0 +1,83 @@
+#pragma once
+
+// RFC 0026 KR6.5 E4-B2-D1a-3: a runtime-owned decoder for the capability-workflow
+// node-event buffer that the B2-C Wasm emitter writes into a module's linear memory.
+//
+// This is a PURE STRUCTURAL FRAMING decoder: it mirrors the emitter's fixed byte
+// grammar (8-byte header + 40-byte little-endian tagged records) and returns the
+// published records as typed, strong-typed coordinates. It is FOUNDATION only:
+//   * it proves completion / ordering FRAMING of the module's own event evidence;
+//   * it does NOT join the records to the A2 manifest / call-site coordinates (that
+//     cross-check is future B2-D / D1b), it is NOT the B2-E authenticated host event
+//     envelope, it does NOT prove no-reinvoke, and it never touches a Wasm VM or a
+//     durable-resume store.
+// A future B2-D host controller (D1b) collapses ANY `NodeEventError` returned here
+// into the stable orchestrator diagnostic `resume.event.malformed`; this decoder
+// emits no `resume.*` string of its own.
+//
+// Buffer grammar (mirrors src/compiler/backends/infra/core_wasm_codegen.cpp): a
+// fixed header at byte 1024 holds `event_count` as a u32 little-endian at [0..3]
+// with pad[4..7] == 0; records start at 1032; each record is a fixed 40 bytes; the
+// region is statically sized to `node_count` records and the module heap begins at
+// `align_up(1024 + 8 + node_count * 40, 8)`. Record layout (little-endian): tag u8
+// [0] + pad[1..3]; workflow_node_id u32 [4..7]; schedule_pos u32 [8..11]; capability
+// u32 [12..15]; source_symbol u64 [16..23]; invocation_ordinal u64 [24..31]; status
+// u32 [32..35]; reserved[36..39]. tag 0 = identity, tag 1 = capability; only
+// successful (AHFL_CAP_OK) completions are written, one per scheduled node.
+
+#include <cstddef>
+#include <cstdint>
+#include <expected>
+#include <span>
+#include <vector>
+
+#include "ahfl/compiler/ir/core_ir.hpp"               // CoreWorkflowNodeId, CoreCapabilityId
+#include "runtime/engine/core_wasm_resume_record.hpp" // NodeKind, InvocationOrdinal
+#include "runtime/engine/core_wasm_schema_module.hpp" // ManifestNodeIndex
+
+namespace ahfl::runtime::core_wasm_node_events {
+
+// One decoded, validated node-event record. Coordinates reuse the existing strong
+// types; `status` is kept as the raw u32 but an admitted record is always
+// AHFL_CAP_OK (0). For an identity record (`kind == Identity`) the capability /
+// source_symbol / invocation_ordinal fields are all zero.
+struct NodeEventRecord {
+    core_wasm_resume::NodeKind kind{core_wasm_resume::NodeKind::Identity};
+    ir::core::CoreWorkflowNodeId workflow_node_id{};
+    core_wasm_schema_module::ManifestNodeIndex schedule_pos{};
+    ir::core::CoreCapabilityId capability{};
+    std::uint64_t source_symbol{0};
+    core_wasm_resume::InvocationOrdinal invocation_ordinal{};
+    std::uint32_t status{0};
+    [[nodiscard]] friend bool operator==(const NodeEventRecord &,
+                                         const NodeEventRecord &) noexcept = default;
+};
+
+// A bare, no-echo structural error (carries no byte / offset / value). The failure
+// order is: header-minimum span -> full static layout arithmetic + memory fit ->
+// header pad / count -> each published record in index order.
+enum class NodeEventError : std::uint8_t {
+    Truncated,            // linear memory too small to hold the 8-byte header
+    LayoutOverflow,       // node_count out of range or the checked region math overflows
+    LayoutExceedsMemory,  // the header + records + heap do not fit the linear memory
+    BadHeaderPad,         // header pad[4..7] is nonzero
+    CountExceedsNodeCount, // event_count > node_count
+    BadTag,               // record tag is neither 0 nor 1
+    BadRecordPad,         // record pad[1..3] is nonzero
+    BadReserved,          // record reserved[36..39] is nonzero
+    InvalidWorkflowNodeId, // record workflow_node_id is the invalid sentinel
+    InvalidCapabilityId,  // capability record capability id is the invalid sentinel
+    SchedulePosMismatch,  // record schedule_pos != its published index
+    IdentityFieldsNonZero, // identity record has a nonzero cap / source_symbol / ordinal
+    StatusNotOk,          // record status is not AHFL_CAP_OK
+};
+
+// Decode the node-event buffer from a read-only view of the module's WHOLE linear
+// memory. `linear_memory.size()` is the SOLE memory-size authority; the record
+// region end and the heap base are computed internally from `node_count` with
+// checked arithmetic. Returns the published records (0..event_count) in index order,
+// or the first structural violation. Not `noexcept`: the returned vector allocates.
+[[nodiscard]] std::expected<std::vector<NodeEventRecord>, NodeEventError>
+decode_node_events(std::span<const std::uint8_t> linear_memory, std::size_t node_count);
+
+} // namespace ahfl::runtime::core_wasm_node_events

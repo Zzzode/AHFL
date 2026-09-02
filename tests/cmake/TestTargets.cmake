@@ -294,6 +294,15 @@ target_link_libraries(ahfl_core_wasm_schema_module_tests
 target_include_directories(ahfl_core_wasm_schema_module_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_core_wasm_schema_module_tests)
 
+add_executable(ahfl_core_wasm_node_events_tests
+    unit/runtime/engine/core_wasm_node_events.cpp
+)
+target_link_libraries(ahfl_core_wasm_node_events_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_core_wasm_node_events_tests)
+
 add_executable(ahfl_payload_store_codec_tests
     unit/runtime/engine/payload_store_codec.cpp
 )
@@ -1393,6 +1402,7 @@ foreach(_tgt
     ahfl_core_wire_codec_tests
     ahfl_core_wasm_resume_record_tests
     ahfl_core_wasm_schema_module_tests
+    ahfl_core_wasm_node_events_tests
     ahfl_payload_store_codec_tests
     ahfl_payload_store_tests
     ahfl_e2e_workflow_tests

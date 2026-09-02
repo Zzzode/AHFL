@@ -155,6 +155,21 @@ function readRecord(host, index) {
       r1.src !== 0n || r1.ord !== 0n || r1.status !== 0 ||
       r1.pad1 !== 0 || r1.pad2 !== 0 || r1.pad3 !== 0 || r1.resv !== 0)
     throw new Error("identity record layout mismatch: " + recStr(r1));
+  // D1a-3 common-KAT bridge: the executed node-event region memory[1024:1112] MUST
+  // equal the CONTRACT-DERIVED 88-byte golden (byte-for-byte identical to the
+  // hardcoded golden the C++ decoder unit tests/unit/runtime/engine/
+  // core_wasm_node_events.cpp decodes). This is contract-derived (from the wire
+  // grammar + this fixture's semantics), NOT captured from this execution: it links
+  // the real emitter/Node bytes and the decoder to one known-answer value.
+  const kNodeEventGoldenHex =
+      "02000000000000000100000000000000000000000000000001000000000000000000000000000000" +
+      "00000000000000000000000001000000010000000000000000000000000000000000000000000000" +
+      "0000000000000000";
+  const region = new Uint8Array(host.instance.exports.memory.buffer, EVENT_BASE, 88);
+  let regionHex = "";
+  for (const b of region) regionHex += b.toString(16).padStart(2, "0");
+  if (regionHex !== kNodeEventGoldenHex)
+    throw new Error("node-event region != contract-derived golden: " + regionHex);
 }
 
 // ---- non-OK normalization: no event, count stays 0, one call ---------------
