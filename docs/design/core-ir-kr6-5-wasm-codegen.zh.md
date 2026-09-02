@@ -294,7 +294,9 @@ target or delete it; E1 does not make `wasm` mean two formats.
 
 ## 6. Diagnostics and fail-closed matrix
 
-Stable E1 codes:
+Stable codes (E1 identity agents + the E2/E3 capability and workflow slices; the
+capability-workflow `wasm.RESOURCE_EXHAUSTED` contract below is defined for the
+B2-C emitter):
 
 | Code | Meaning |
 | --- | --- |
@@ -305,11 +307,27 @@ Stable E1 codes:
 | `wasm.UNSUPPORTED_ORCHESTRATION` | a valid Core construct is outside E1 (including every P6 node) |
 | `wasm.NONTERMINATING_E1_RUN` | deterministic E1 state action graph cycles/does not reach final |
 | `wasm.BINARY_OVERFLOW` | section/index/offset/LEB domain exceeds wasm32 limits |
+| `wasm.RESOURCE_EXHAUSTED` | a capability-workflow's node-event region + heap arithmetic is legal but the resulting `heap_base` exceeds the fixed 64 KiB linear-memory page |
 | `wasm.INTERNAL_INVALID` | encoder invariant failed; no partial artifact |
 
 Where a rejected Core statement has a source range, the diagnostic carries it.
 Program/entry-level errors may be range-less because `CoreAgentDecl` currently
 does not retain a declaration range; codegen must not fabricate one.
+
+The capability-workflow event region and heap are sized with a two-phase check,
+in this fixed priority. FIRST, every size computation (`8 + node_count * 40`, the
+`align_up`, and each section/index/offset/LEB domain) is a checked wasm32-domain
+operation; any multiply/add/align overflow or wasm32 limit breach fails closed as
+`wasm.BINARY_OVERFLOW`. ONLY after a legal
+`heap_base = align_up(1024 + 8 + node_count * 40, 8)` is obtained, a `heap_base`
+greater than the fixed single 64 KiB linear-memory page (65536 bytes) fails closed
+as `wasm.RESOURCE_EXHAUSTED` (concretely, `node_count = 1612` fits at
+`heap_base = 65512` and `node_count = 1613` is rejected at `65552`).
+`wasm.RESOURCE_EXHAUSTED` is program/entry-level (a `node_count` capacity
+property), so it is range-less like the other entry-level codes, carries no
+payload/name/byte echo, and is emitted before any byte publication. It is distinct
+from the host-side `UNBOUNDED_RESULT`, which is a future B2-D orchestrator concept
+and is NOT emitted by codegen.
 
 The following all fail before byte publication:
 
@@ -323,6 +341,9 @@ The following all fail before byte publication:
   goto;
 - cyclic deterministic goto graph;
 - any workflow in the E1 CLI program;
+- a capability-workflow whose node-event region + heap exceeds the fixed 64 KiB
+  page (`wasm.RESOURCE_EXHAUSTED`), or whose size arithmetic overflows the wasm32
+  domain (`wasm.BINARY_OVERFLOW`);
 - mismatched/tampered layout table;
 - more than one candidate agent (no first-agent fallback).
 
