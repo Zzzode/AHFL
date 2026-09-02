@@ -331,20 +331,25 @@ as `wasm.RESOURCE_EXHAUSTED` (concretely, `node_count = 1612` fits at
 `wasm.RESOURCE_EXHAUSTED` is program/entry-level (a `node_count` capacity
 property), so it is range-less like the other entry-level codes, carries no
 payload/name/byte echo, and is emitted before any byte publication. It is distinct
-from the future B2-D1b host-side `resume.preflight.unbounded` (a D1b TOTAL-preflight
-orchestrator code), which is NOT emitted by codegen. The B2-D1a per-Verified-Result
+from the B2-D1b host-independent `ResumePrepareReason::Unbounded` (a D1b
+TOTAL-preflight reason, LANDED `6d311320`), which is NOT emitted by codegen. The
+B2-D1a per-Verified-Result
 canonical size bound authority (`core_wire_canonical_size`, LANDED `5fbd1a9b`)
 returns a bare `MaxCanonicalSizeError` (`Unbounded` / `SizeOverflow`, the latter on
 a checked u64 add/mul overflow of a finite schema's bound) and emits NO `resume.*`
-diagnostic string. The future B2-D1b host-side TOTAL result-size preflight
-owns a SEPARATE runtime diagnostic catalogue — a host `resume.preflight.unbounded`
-(a legal schema with no finite canonical upper bound) and a host
-`resume.preflight.resource_exhausted` (checked add/mul/align/`size_t` overflow, or
-the total worst-case reservation exceeding capacity) — distinct in owner and call
-site from this compile-time codegen `wasm.RESOURCE_EXHAUSTED`, and it is the owner
-that maps the D1a-4 bound's `MaxCanonicalSizeError` into those host codes; codegen
-never emits the host codes and the host preflight never emits `wasm.BINARY_OVERFLOW`
-or reuses `wasm.RESOURCE_EXHAUSTED`.
+diagnostic string. The B2-D1b host-independent TOTAL result-size preflight (LANDED
+`6d311320`) consumes that bound and itself returns typed
+`ResumePrepareReason::{Unbounded, ResourceExhausted}` (Unbounded = a legal schema
+with no finite canonical upper bound; ResourceExhausted = an
+`event_region_heap_base` / layout `Overflow`, a checked-u64 TOTAL add overflow, the
+u32 transfer-domain bound (total > `UINT32_MAX`), the total exceeding the
+caller-supplied `LinearMemoryCapacityBytes`, or a per-binding
+`MaxCanonicalSizeError::SizeOverflow`). The SEPARATE runtime
+host `resume.preflight.unbounded` / `resume.preflight.resource_exhausted` catalogue
+that MAPS those typed reasons is FUTURE D2 — distinct in owner and call
+site from this compile-time codegen `wasm.RESOURCE_EXHAUSTED`; codegen
+never emits the host codes and the future host preflight mapping never emits
+`wasm.BINARY_OVERFLOW` or reuses `wasm.RESOURCE_EXHAUSTED`.
 
 The following all fail before byte publication:
 

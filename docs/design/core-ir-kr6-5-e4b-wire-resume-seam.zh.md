@@ -1,7 +1,7 @@
 # Core-IR KR6.5 E4-B0: Wire Schema and Durable-Resume Seam -- Design
 
 > Status: **E4-B1 IMPLEMENTED; B2-S / B2-A-pre / B2-A / B2-B / B2-C /
-> B2-D1a-1..4 internal-authority FOUNDATION code/evidence slices landed**
+> B2-D1a-1..4 / B2-D1b internal-authority FOUNDATION code/evidence slices landed**
 > (schema-guided wire codec + durable-resume seam + full CLI/HTTP/gRPC/shim
 > demotion + the wire-schema Wasm transport chain: C1 payload decoder
 > `2d25aa3b`, C2 custom-section writer `a73a8991`, C3 runtime module inspector
@@ -45,19 +45,31 @@
 > NON-CONFORMING to the §4.3 `ProtectedPayloadStore` (`guarantees` bit0
 > `rollback_protected` = 0 AND bit1 `confidential_at_rest` = 0). The B2-C
 > capability-workflow emitter has landed (`4224a52f`); no confidential/at-rest
-> store, no production host, and no artifact-digest comparison exist — those remain
-> future gates. The B2-D **D1a-1..4 host-independent internal authorities** have
+> store and no production host exist — those remain future gates. A2 itself stays
+> compute/expose-only, but the artifact-digest comparison has landed in the D1b
+> controller (`6d311320`, decision-only). The B2-D **D1a-1..4 host-independent
+> internal authorities** have
 > since landed as FOUNDATION code/evidence: the A1 `entry_input_slot` record field +
 > the B1 exact-slot-set/store staged admission (`9b8053cc`), the A2 three typed
 > artifact-digest getters (compute/expose only, no comparison) (`9a859224`), the
 > runtime-owned node-event decoder (`c59a235d`), and the per-Verified-Result
 > canonical wire-JSON size bound (`5fbd1a9b`, with the value-JSON integer
-> locale-independence prerequisite `abf6bd23`). REMAINING for B2-D closure: the D1b
-> host-independent replay controller, the TOTAL result-size reservation +
-> one-page/u32-host verdict, the artifact-digest COMPARISON gate, the
-> event<->manifest coordinate join, the D2a production VM/host adapter + non-test
-> caller, the D2b durable-effect intent/result authority (which also owns the
-> `IdempotencyToken` code — contract-only today), and the conforming
+> locale-independence prerequisite `abf6bd23`). The B2-D **D1b host-independent
+> replay controller** has since landed (`6d311320`) as a decision-only FOUNDATION:
+> it LANDED the two-phase gate (fixed-work three-artifact-digest COMPARISON, priority
+> Module -> WireSchema -> ExecManifest + the A2-baseline coordinate/state-matrix
+> gate), the staged admit + per-occurrence typed memo decode, the two-pass TOTAL
+> reservation + u32-transfer-domain + caller-supplied-capacity verdict, the
+> event<->manifest coordinate join, and the ReturnMemo / NeedInjectedSlot /
+> ReadyForLive + PublishInjected/MarkConsumed plan + real-store-ACK handshakes; it
+> returns typed `ResumePrepareReason` / `ResumeStepReason` or a verbatim
+> `PayloadStoreError` (NO `resume.*` strings -- the stable host-code mapping is
+> future D2). It is the first production-in-src/runtime direct consumer of these
+> authorities; the first non-test production caller remains D2a. REMAINING for B2-D
+> closure: the D2a production VM/host adapter + non-test caller (which BINDS the
+> `LinearMemoryCapacityBytes` input to the real fixed single-page VM capacity), the
+> D2b durable-effect intent/result authority (which also owns the
+> `IdempotencyToken` code -- contract-only today), and the conforming
 > confidential/KMS/rollback protected store. B2-E exact evidence also remains. B2
 > and KR6.5 stay false.
 >
@@ -70,16 +82,16 @@
 > payload store FOUNDATION, the B2-C capability-workflow emitter `4224a52f`
 > for the exec-manifest + node-event buffer + capability-status scheduling, and
 > the B2-D1a-1..4 host-independent internal authorities
-> `9b8053cc`/`9a859224`/`c59a235d`/`5fbd1a9b`). It
+> `9b8053cc`/`9a859224`/`c59a235d`/`5fbd1a9b`, and the B2-D1b host-independent
+> replay controller `6d311320`). It
 > does not
 > by itself authorize the remaining
 > confidential/at-rest store (the confidential/KMS/rollback protected store, a
 > PREREQUISITE sub-slice of full B2-D closure) or the remaining B2-D artifacts (the
-> D1b replay controller, the TOTAL result-size preflight + artifact-digest
-> COMPARISON gate + event<->manifest join, the D2a/D2b production host +
-> durable-effect authority) or B2-E exact events or any
+> D2a/D2b production host + durable-effect authority) or B2-E exact events or any
 > E4-A dependency/CI change; §3.2
-> still DESIGNS the future production-host artifact-digest comparison/gate.
+> designs the future production-HOST binding of the (now-landed, decision-only)
+> artifact-digest comparison to a real fixed-page VM (D2a).
 >
 > Priority: the E4-B0 design gate is CLOSED and E4-B0-C1/C2 and E4-B1 are
 > implemented (schema-guided wire codec + durable-resume seam + full ingress
@@ -526,9 +538,11 @@ a bare `CoreWireSchemaNodeId` is never persisted or accepted as authority.
 > `encode_and_authenticate` / `decode_and_authenticate` codec, its two-pass HMAC
 > admission, canonical re-encode, and record-internal invariants are implemented;
 > integrity-only LOCAL slot/manifest/pointer persistence has landed as a
-> §4.3-NON-CONFORMING FOUNDATION (`guarantees` bit0 = 0 AND bit1 = 0). The
-> confidential/at-rest protected production store, the production host, and the
-> artifact-digest comparison are NOT implemented and this does not close B2 or
+> §4.3-NON-CONFORMING FOUNDATION (`guarantees` bit0 = 0 AND bit1 = 0). A2 itself
+> stays compute/expose-only, but the artifact-digest COMPARISON is now LANDED and
+> consumed production-in-src by the D1b controller (`6d311320`, decision-only; no
+> non-test/host caller until D2a). The confidential/at-rest protected production
+> store and the production host are NOT implemented and this does not close B2 or
 > KR6.5. LAYERING: the original `8a987ca1` codec was the pre-`entry_input_slot`
 > grammar; B2-D1a (`9b8053cc`) ADDED the REQUIRED `entry_input_slot` field to the
 > A1 (`AHFLWR`) record as a no-production-caller INTERNAL pre-production grammar
@@ -752,19 +766,27 @@ identity or replay order.
 > eager Param/Result call-site bindings are implemented; the compiler-side
 > manifest EMITTER (`4224a52f`), the module-side capability-status scheduling with
 > import-time `PENDING` propagation, and the node-event buffer have LANDED as a
-> FOUNDATION capability-workflow emitter; the production host + artifact-digest
-> COMPARISON gate are NOT implemented and this does not close B2 or KR6.5. The
+> FOUNDATION capability-workflow emitter; the artifact-digest COMPARISON gate is
+> now LANDED in the D1b controller (`6d311320`, production-in-src, decision-only),
+> and the production host + fresh-instance VM replay are NOT implemented (D2a) and
+> this does not close B2 or KR6.5. The
 > resume STATE MACHINE's HOST side — fresh-instance replay/injection — remains
 > B2-D, which is laddered: D1a host-INDEPENDENT internal authorities have LANDED
 > (entry_input_slot record field + B1 exact-slot-set/store staged admission
 > `9b8053cc`, A2 typed artifact digests `9a859224`, a runtime-owned node-event
 > decoder `c59a235d`, and a per-Verified-Result canonical size bound `5fbd1a9b`;
-> the 32B IdempotencyToken remains contract-only, code owner D2b), D1b a
-> host-independent replay controller proving
-> only deterministic state transitions (FOUNDATION — not correctness-complete, no
-> real VM, no durable-effect intent/result authority, no power-loss/exactly-once
-> closure), D2a a production embeddable VM/host adapter + non-test caller (the
-> production-host step), and D2b a durable-effect intent/result authority; the
+> the 32B IdempotencyToken remains contract-only, code owner D2b). D1b (LANDED
+> `6d311320`) is the host-independent replay controller: a decision-only FOUNDATION
+> proving the deterministic two-phase gate (fixed-work three-artifact-digest
+> COMPARISON + A2-baseline coordinate gate), staged admit + per-occurrence typed
+> memo decode, two-pass TOTAL reservation + u32/caller-capacity verdict,
+> event<->manifest join, and ReturnMemo/NeedInjectedSlot/ReadyForLive +
+> PublishInjected/MarkConsumed real-store-ACK handshakes over 238 hand-built
+> A2-admitted assertions (not correctness-complete, no real VM, no CAS/store
+> mutation, no live-result handling, no durable-effect intent/result authority, no
+> power-loss/exactly-once closure). D2a is a production embeddable VM/host adapter +
+> non-test caller (the production-host step, which BINDS the capacity input to the
+> real fixed-page VM), and D2b a durable-effect intent/result authority; the
 > conforming confidential/KMS/rollback store is a PREREQUISITE sub-slice of full
 > B2-D closure. The emitter provides only module-side manifest + event bytes.
 
@@ -948,6 +970,15 @@ resets to 0 at every fresh instance entry.
 
 ## 5. Resume transaction and ownership gate
 
+> DIAGNOSTIC OWNER (applies to all of §5, §5.1, §5.2, §5.3): every `resume.*` code
+> named below — `resume.store.*`, `resume.auth.*`, `resume.coordinate.mismatch`,
+> `resume.event.malformed`, `resume.digest.*`, `resume.payload.schema_invalid`,
+> `resume.transition.invalid`, `resume.preflight.*`, `resume.module.*` — is a FUTURE
+> D2 host-boundary MAPPING catalogue, NOT a string any landed component emits. The
+> landed D1b controller (`6d311320`) returns only typed `ResumePrepareReason` /
+> `ResumeStepReason` values or a verbatim `payload_store::PayloadStoreError`; the
+> future D2 host is the owner that maps those into the `resume.*` catalogue.
+
 No resume export is designed in B0. A later B2 may propose one only after the
 schema and state-store foundations are implemented and verified.
 
@@ -957,9 +988,10 @@ coordinates -> staged exact-slot/typed payload [entry frame opaque] -> transitio
 eligibility -> TOTAL result-size preflight -> effect-free replay of below-frontier
 imports to the frontier -> then CONDITIONAL on the frontier state: an Injected
 frontier is a ReturnMemo of its already-committed injected memo (NO CAS), while a
-Suspended frontier emits a PublishInjected command whose adapter CAS + explicit
-success ACK precede the pending ownership transfer (a Suspended record with no
-supplied injected frame stops at NeedsInjectedResult, before the preflight) ->
+Suspended frontier's `next_import` returns the `NeedInjectedSlot` decision whose
+adapter CAS + explicit success ACK precede the pending frame-view release (a
+Suspended record with no supplied injected frame is the `PendingInjection` admit
+outcome, before the preflight) ->
 then ReadyForLive command(s) for imports strictly after the frontier; the
 effect-free replay is BEFORE any CAS so a trap during replay never leaves a
 mutation, and every CAS/mutation/live effect is AFTER the preflight); the ordered
@@ -1135,8 +1167,10 @@ bytes, but every referencing coordinate's binding/type gate must still hold) —
 Verified-binding dependency lives in the controller, never in the payload store.
 The Suspended record's EXTERNAL
 injected frame is NOT part of the staged slot set: D1b PREPARE Verified-decodes it
-against the FRONTIER Result binding only when it has been supplied (else the plan
-stops at NeedsInjectedResult). A module-produced Param is Verified-Param-decoded +
+against the FRONTIER Result binding only when it has been supplied (else
+`admit_and_preflight` returns the `PendingInjection` outcome, and
+`supply_injected_result` runs the full TOTAL preflight once the frame arrives). A
+module-produced Param is Verified-Param-decoded +
 arg_hash-recomputed in its IMPORT CALLBACK (arity-1 vector). A future LIVE Result
 does not exist at admission: it is Verified-decoded + canonically re-encoded only
 AFTER the live call returns, its canonical length checked <= its reserved bound
@@ -1146,20 +1180,33 @@ yet); (7) the TOTAL result-size preflight (§5.2); (8) effect-free replay of the
 below-frontier imports from schedule_pos 0 to the frontier, returning
 each OLD committed memo-result frame with no live call; (9) CONDITIONAL on the
 frontier state: an Injected frontier is a ReturnMemo of its already-committed
-injected memo (NO CAS); at a Suspended frontier D1b produces a PublishInjected
-command and the adapter CAS-publishes the new pending memo entry and, only after an
-explicit CAS-success ACK, transfers the pending-result
-frame ownership (a Suspended record with no supplied injected frame stops at
-NeedsInjectedResult, before the preflight); (10) ReadyForLive command(s) for
+injected memo (NO CAS); at a Suspended frontier `next_import` returns the
+`NeedInjectedSlot` decision, then `bind_publish_injected` produces a PublishInjected
+plan and the adapter CAS-publishes the new pending memo entry and, only after an
+explicit `ack_publish_injected` N+1==M CAS-success ACK, the controller releases the
+pending-result frame view (a Suspended record with no supplied injected frame is the
+`PendingInjection` admit outcome above, before the preflight); (10) ReadyForLive
+command(s) for
 imports strictly after the frontier (the live OK/PENDING/ERROR response API is a
-D1b/D2b follow-on, not a straight line to terminal OK). The effect-free replay (8)
+D1b/D2b follow-on, not a straight line to terminal OK). Terminal: `finish_run`
+classifies the raw `run2` exit via the `ahfl_host.h` SSOT (`AHFL_CAP_OK`=0 /
+`AHFL_CAP_ERROR`=1 / `AHFL_CAP_PENDING`=2) — only OK, after the replay cursor has
+reached every call site AND the full published-prefix event join, yields a
+`MarkConsumedPlan{expected_generation = N}`; the adapter calls the store's
+`mark_consumed` then `ack_mark_consumed` checks `N+1 == M` (the real-store TEST then
+`load()`s and asserts `ResolvedConsumed{M, N}`); PENDING is a second-PENDING
+`ResumeStepReason::TransitionInvalid`, ERROR/unknown is `ModuleError`, a trap is
+`ModuleTrap`, none emitting a tombstone. The effect-free replay (8)
 is
 BEFORE the CAS (9) so a trap during replay never leaves a mutation, and every CAS,
 mutation, Injected publish, or live effect happens strictly AFTER the preflight
 (7). A failure fails the controller / loader CLOSED and leaves the newest
 authenticated generation Available / unconsumed (an already-acknowledged CAS or an
 already-emitted live effect is NOT rolled back) — it does
-NOT inherit the native recovery "load error -> fresh run" downgrade.
+NOT inherit the native recovery "load error -> fresh run" downgrade. (This whole
+order is LANDED as the decision-only D1b controller `6d311320`; the actual VM
+allocation/transfer, live-result handling, and the CAS/store mutation the adapter
+performs remain D2a/D2b.)
 
 Staged admission (B2-D1a, LANDED `9b8053cc`; the minimal store change that makes
 the order above
@@ -1197,8 +1244,11 @@ preserved; existing callers keep it):
 Error SSOT and priority (all codes range-less, null/no-echo; a host admission /
 controller / gate failure NEVER masquerades as a Wasm status — it terminates host
 execution and leaves the record unconsumed). The 16 `PayloadStoreError` variants
-map to host codes as: `NotFound` -> `resume.store.not_found`; `Consumed` ->
-`resume.store.consumed`; `IntegrityFailed` -> `resume.auth.integrity_failed`
+WILL be mapped by the FUTURE D2 host boundary to host codes as (the landed D1b
+controller carries the `PayloadStoreError` verbatim; this catalogue is the future
+D2 mapping, not a D1b-emitted string): `NotFound` -> `resume.store.not_found`;
+`Consumed` -> `resume.store.consumed`; `IntegrityFailed` ->
+`resume.auth.integrity_failed`
 (record integrity is phase 1, slot integrity is phase 2 — not a single "top of
 admission" step); `KeyIdMismatch` -> `resume.auth.key_id_mismatch`;
 `GenerationMismatch` -> `resume.store.generation_mismatch` (it also covers CAS /
@@ -1218,8 +1268,10 @@ manifest coordinate join); `resume.event.malformed` (node-event framing / count 
 pad / record self-invariant); `resume.payload.schema_invalid` (Verified Result /
 Param decode/validate); `resume.transition.invalid` (ineligible state transition);
 `resume.preflight.unbounded` (legal schema, no finite canonical upper bound);
-`resume.preflight.resource_exhausted` (checked add/mul/align/`size_t` overflow OR
-total worst-case reservation exceeds capacity — a DISTINCT host code, never the
+`resume.preflight.resource_exhausted` (the future D2 host code that MAPS the landed
+`ResumePrepareReason::ResourceExhausted` — layout `Overflow` / checked-u64 TOTAL add
+/ u32 transfer-domain bound / caller-capacity / per-binding SizeOverflow — a
+DISTINCT host code, never the
 compile-time `wasm.RESOURCE_EXHAUSTED`); `resume.module.error` (a `run2` `ERROR`,
 including the module's fail-closed normalization of an unknown / import `ERROR`);
 and `resume.module.trap` (a module trap). In-module statuses stay EXACTLY
@@ -1277,27 +1329,30 @@ lifecycle above remains the future production contract.
 ### 5.2 Resource contract (FUTURE production gate)
 
 > Status: **B2-0 FOUNDATION DESIGN LOCKED; the per-Verified-Result canonical size
-> bound LANDED (B2-D1a `5fbd1a9b`); the host-side TOTAL preflight is NOT
-> implemented.** The shared `make_alloc_body` / legacy lane is still an unchecked
-> bump (`heap_next += len`); the capability-workflow lane already has B2-C's
-> cap-private CHECKED alloc (`4224a52f`: returns the reserved null pointer `0`
-> without advancing `heap_next` on insufficient capacity). Memory is a fixed single
-> page and there is no `memory.grow`. What HAS landed is the runtime-owned
+> bound LANDED (B2-D1a `5fbd1a9b`); the host-independent TOTAL preflight LANDED
+> (B2-D1b `6d311320`).** The shared `make_alloc_body` / legacy lane is still an
+> unchecked bump (`heap_next += len`); the capability-workflow lane already has
+> B2-C's cap-private CHECKED alloc (`4224a52f`: returns the reserved null pointer
+> `0` without advancing `heap_next` on insufficient capacity). Memory is a fixed
+> single page and there is no `memory.grow`. What HAS landed is the runtime-owned
 > per-Verified-Result max-canonical-JSON-size bound authority
 > (`core_wire_canonical_size`, a conservative never-underestimating upper bound,
 > `max_canonical_json_size(binding) -> std::expected<std::uint64_t,
 > MaxCanonicalSizeError>`, values `MaxCanonicalSizeError::Unbounded` /
-> `MaxCanonicalSizeError::SizeOverflow`, emits no `resume.*` diagnostic string).
-> What is NOT implemented is the host-side TOTAL reservation (the fresh instance's
+> `MaxCanonicalSizeError::SizeOverflow`, emits no `resume.*` diagnostic string) AND
+> the D1b controller's host-independent TOTAL reservation (the fresh instance's
 > actual bump allocations counted exactly once: event-layout heap_base +
 > entry_input_slot actual bytes + every memo occurrence at actual length WITH
 > multiplicity + the Suspended injected frame's actual bytes + the future live
 > Result bounds for call sites strictly after the frontier; no separate
-> allocator-framing term — the checked bump advances heap_next by exactly len), the
-> one-page
-> capacity verdict, the `size_t`/align/u32-host casts, and the mapping of
-> `MaxCanonicalSizeError` to the host `resume.preflight.*` catalogue — all future
-> D1b.
+> allocator-framing term — the checked bump advances heap_next by exactly len) with
+> the u32-transfer-domain + caller-supplied-`LinearMemoryCapacityBytes` verdict,
+> returning typed `ResumePrepareReason::Unbounded` / `ResumePrepareReason::ResourceExhausted`.
+> The controller renders NO fixed-single-page verdict of its own; what is NOT
+> implemented is D2a's binding of that `LinearMemoryCapacityBytes` input to the real
+> fixed single-page VM capacity, and the future D2 host mapping of
+> `MaxCanonicalSizeError` / these typed reasons to the host `resume.preflight.*`
+> catalogue.
 
 Under the fixed single-page / no-`memory.grow` contract, a checked PREFLIGHT runs
 before any commit, ownership transfer, or live call — every CAS/mutation/live
@@ -1306,8 +1361,10 @@ effect is strictly after it. The owning implementation (B2-D1a, LANDED
 runtime-owned checked max-canonical-JSON-size analysis over the Verified Result
 binding, returning a conservative upper bound for a finite schema, and each size
 is a checked arithmetic step; it returns a bare `MaxCanonicalSizeError` and emits
-no `resume.*` diagnostic string. The TOTAL reservation and the fixed-single-page
-verdict that consume this bound are future D1b. A String is bounded by its
+no `resume.*` diagnostic string. The TOTAL reservation that consumes this bound is
+LANDED in the D1b controller (`6d311320`, host-independent, decision-only); binding
+its `LinearMemoryCapacityBytes` input to the real fixed single page is future D2a.
+A String is bounded by its
 `length_bounds` upper (as
 UTF-8 bytes + worst-case JSON escaping); a Sequence/Set by `checked(capacity ×
 element bound) + array framing`; a Map by `checked(capacity × checked(key bound +
@@ -1324,7 +1381,8 @@ Decimal/Duration spelling, or a productive recursive cycle in the node graph (a
 zero-capacity-cut cycle is not productive); it returns
 `MaxCanonicalSizeError::SizeOverflow` on a checked u64 add/mul overflow of a
 finite schema's bound (it makes no `size_t`/align/one-page verdict of its own).
-The FUTURE D1b TOTAL controller reserves one fresh instance's actual bump
+The D1b TOTAL controller (LANDED `6d311320`, host-independent, decision-only)
+reserves one fresh instance's actual bump
 allocations exactly once: checked_total = the event layout's heap_base
 (`align_up(event_log_base + checked(8 + node_count * 40), 8)`, already covering the
 [0,1024) baseline + event header + all node-record slots + align) + the
@@ -1340,21 +1398,25 @@ checked bump advances heap_next by exactly len). Pass 1 visits ALL future-live
 bindings and records `seen_unbounded` and `seen_size_overflow` (a per-binding
 `MaxCanonicalSizeError::SizeOverflow` from D1a-4 is RECORDED, NOT early-returned —
 early-returning on the first SizeOverflow would mask a later binding's Unbounded).
-If ANY binding is Unbounded, D1b returns `resume.preflight.unbounded` (before any
+If ANY binding is Unbounded, D1b returns `ResumePrepareReason::Unbounded` (before any
 total arithmetic). Only when NO binding is Unbounded does pass 2 run: any recorded
-`seen_size_overflow`, OR an event-layout checked add/mul/align overflow, OR a
-checked total add overflow, OR a `size_t`/u32-host cast failure, OR checked_total
-exceeding the fixed single-page capacity, all map to
-`resume.preflight.resource_exhausted`. An early arithmetic overflow never masks a
+per-binding `MaxCanonicalSizeError::SizeOverflow`, OR an `event_region_heap_base` /
+layout `Overflow`, OR a checked-u64 TOTAL add overflow, OR the u32 transfer-domain
+bound (total > `UINT32_MAX`), OR checked_total
+exceeding the caller-supplied `LinearMemoryCapacityBytes`, all map to
+`ResumePrepareReason::ResourceExhausted`. An early arithmetic overflow never masks a
 later Unbounded. These two are
-the ONLY host preflight errors and are a DISTINCT D1b runtime catalogue — they are
+the ONLY host-independent preflight verdicts, returned as typed
+`ResumePrepareReason` values NOW; the DISTINCT host `resume.preflight.*` runtime
+catalogue that MAPS them (future D2) is
 never the
 compile-time `wasm.RESOURCE_EXHAUSTED` / `wasm.BINARY_OVERFLOW`, which stay
 compiler-owned. `memory.grow` is a separate future gate, not chosen here. No new
 Wasm status code is invented: the capability-workflow-private checked bump keeps the
 existing `alloc` signature `(i32) -> i32` and returns the reserved null pointer `0`
-on insufficient capacity; the host maps that (and its own D1b preflight/unbounded
-detection) to the STABLE orchestrator diagnostics above before any live effect. The
+on insufficient capacity; the future D2 host maps that (and the D1b typed
+preflight/unbounded reasons) to the STABLE orchestrator diagnostics above before any
+live effect. The
 only in-module statuses remain `AHFL_CAP_OK` / `AHFL_CAP_ERROR` / `AHFL_CAP_PENDING`;
 a defensive resource guard inside `run2` fails closed as `AHFL_CAP_ERROR`, never a
 fabricated status. (A real in-module resource status would be a separate ABI gate;
@@ -1362,7 +1424,25 @@ not chosen.)
 
 ### 5.3 Frame lifetimes and fan-out ownership (FUTURE production gate)
 
-> Status: **B2-0 FOUNDATION DESIGN LOCKED; NOT implemented.**
+> Status: **B2-0 FOUNDATION DESIGN LOCKED; the D1b controller-side ownership +
+> views + decision handshakes are LANDED (`6d311320`); the actual VM memory
+> allocation / transfer + fan-out routing remain D2a/D2b.** LANDED (decision-only),
+> with TWO controller-owned byte owners: (1) `admitted_slots` owns every committed
+> slot's bytes — the stable EntryFrame and the below-frontier/Injected-frontier
+> ReturnMemo spans are non-owning views into it (a repeated result_slot yields the
+> identical `.data()`); (2) a SEPARATE `injected_result_bytes` buffer owns the
+> Suspended-frontier injected result — the injected-ACK span returned by
+> `ack_publish_injected` is a non-owning view into THAT buffer, not into
+> `admitted_slots`. Every span stays valid for the
+> `PreparedResume` lifetime because the state is held behind a `unique_ptr` that
+> never moves post-mint; the L1 Param decode / `hash_values` temporaries are
+> released after each gate; and the PublishInjected plan (controller-owned exact
+> slot set + bytes) + the checked `N+1==M` ACK state machine. REMAINING (D2a/D2b):
+> the actual L0 / L3 / L4 / future-live linear-memory ALLOCATION + write + transfer,
+> the L2 / L5 VM Param routing / node-output fan-out, live-result handling, and
+> production cleanup. Any `resume.*` host-code reference below is a FUTURE D2
+> boundary mapping catalogue, NOT a string the D1b controller emits (it returns
+> typed `ResumePrepareReason` / `ResumeStepReason` or a verbatim `PayloadStoreError`).
 
 Six distinct frame lifetimes, each with allocate / borrow / transfer / last-use /
 failure-cleanup:
@@ -1514,7 +1594,9 @@ Implementation is intentionally split before any resume ABI:
      production
      persistence caller); A2 is manifest consumer-only — it does not itself emit
      the manifest (the compiler-side B2-C emitter `4224a52f` now supplies it) and
-     makes NO artifact-digest comparison (future B2-D);
+     itself makes NO artifact-digest comparison; the comparison is LANDED in the
+     D1b controller (`6d311320`, decision-only), whose first non-test/host caller
+     remains future D2a;
      the C3 single-shot inspector's behavior is unchanged; the emitter dependency
      is test-only (production runtime unchanged). Complexity is the honest two
      linear wire-schema local verifies (C1 decode + authority admission), zero
@@ -1553,7 +1635,8 @@ Implementation is intentionally split before any resume ABI:
      the pre-existing E1/E2 and no-capability E3 fixtures stay byte-frozen and a
      NEW capability-workflow baseline is added. FOUNDATION — the module event
      buffer is completion/ordering evidence only, NOT a no-reinvoke proof; the
-     host-side fresh-instance replay/injection + artifact-digest gate remain B2-D,
+     host-side fresh-instance VM replay/injection remains B2-D (D2a); the
+     artifact-digest comparison itself is landed decision-only in D1b (`6d311320`),
      exact-evidence remains B2-E. Node/binary evidence is layout/structural, NOT
      Wasmtime, NOT durable-resume; the current verification environment SKIPs the
      Wasmtime lanes; B2 and KR6.5 stay false.
