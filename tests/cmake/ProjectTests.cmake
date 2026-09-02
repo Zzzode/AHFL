@@ -1075,6 +1075,14 @@ add_test(NAME ahfl.runtime.payload_store_codec
     COMMAND $<TARGET_FILE:ahfl_payload_store_codec_tests>
 )
 
+add_test(NAME ahfl.runtime.payload_store
+    COMMAND $<TARGET_FILE:ahfl_payload_store_tests>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/payload-store"
+)
+# The store is Linux-only and requires a durable filesystem (EXT-family / XFS /
+# Btrfs); on any other platform or filesystem the test SKIPs (exit 77).
+set_tests_properties(ahfl.runtime.payload_store PROPERTIES SKIP_RETURN_CODE 77)
+
 add_test(NAME ahfl.runtime.e2e_workflow
     COMMAND $<TARGET_FILE:ahfl_e2e_workflow_tests>
             "${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
