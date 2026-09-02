@@ -1111,6 +1111,17 @@ add_test(NAME ahfl.reference_workflow.recovery_smoke
             "${PROJECT_SOURCE_DIR}/build/release-evidence/beta/reference-workflow-recovery.json"
 )
 
+add_test(NAME ahfl.runtime.payload_store_crash_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/payload_store_crash_smoke.py"
+            $<TARGET_FILE:ahfl_payload_store_worker>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/payload-store-crash"
+)
+# The store is Linux-only and requires a durable filesystem; on any other platform or
+# filesystem the worker's probe reports UnsupportedPlatform/UnsupportedFilesystem and
+# the driver exits 77 (ctest SKIP).
+set_tests_properties(ahfl.runtime.payload_store_crash_smoke PROPERTIES SKIP_RETURN_CODE 77)
+
 # RFC 0022 durable-resume capstone (Q4 roadmap M2 north-star): compile a verified
 # workflow, suspend on a PENDING capability, persist the resume record, then in a
 # fresh runtime cold-start from the on-disk snapshot and resume deterministically.

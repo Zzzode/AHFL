@@ -364,6 +364,20 @@ target_include_directories(ahfl_reference_workflow_recovery_worker
 )
 ahfl_apply_project_warnings(ahfl_reference_workflow_recovery_worker)
 
+add_executable(ahfl_payload_store_worker
+    integration/payload_store_worker.cpp
+)
+target_link_libraries(ahfl_payload_store_worker
+    PRIVATE
+        ahfl_runtime_engine
+)
+target_include_directories(ahfl_payload_store_worker
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+ahfl_apply_project_warnings(ahfl_payload_store_worker)
+
 add_executable(ahfl_durable_resume_capstone
     integration/durable_resume_capstone.cpp
 )
@@ -1372,6 +1386,7 @@ foreach(_tgt
     ahfl_if_let_e2e_tests
     ahfl_runtime_provider_llm_tests
     ahfl_reference_workflow_recovery_worker
+    ahfl_payload_store_worker
     ahfl_durable_resume_capstone
     ahfl_value_json_tests
     ahfl_counterexample_parse_tests
