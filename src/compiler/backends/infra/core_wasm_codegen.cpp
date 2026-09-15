@@ -1,6 +1,7 @@
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
 
 #include "ahfl/compiler/ir/core_verify.hpp"
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/runtime/ahfl_host.h"
 
@@ -39,6 +40,8 @@ using ir::core::CoreWorkflowDecl;
 using ir::core::CoreWorkflowId;
 using ir::core::CoreWorkflowNodeId;
 using ir::core::CoreYieldStmt;
+using ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
+using ir::core::kCoreWasmFixedLinearMemoryMinPages;
 
 constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kEmptyBlock = 0x40;
@@ -80,7 +83,6 @@ constexpr std::uint32_t kEventLogBase = 1024;
 constexpr std::uint32_t kEventHeaderBytes = 8;
 constexpr std::uint32_t kEventRecordBytes = 40;
 constexpr std::uint32_t kEventRecordsBase = kEventLogBase + kEventHeaderBytes; // 1032
-constexpr std::uint32_t kLinearMemoryBytes = 65536; // one fixed wasm page
 constexpr std::uint8_t kEventTagIdentity = 0;
 constexpr std::uint8_t kEventTagCapability = 1;
 
@@ -1324,9 +1326,10 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
     append_indexed_op(body, kOpLocalGet, 0);
     body.byte(kOpI32Add);
     append_indexed_op(body, kOpLocalSet, 2);
-    // Capacity check: new > 65536 OR new < old (wrap) -> return 0, no advance.
+    // Capacity check: new > fixed single-page capacity OR new < old (wrap) ->
+    // return 0, no advance.
     append_indexed_op(body, kOpLocalGet, 2);
-    append_const(body, kLinearMemoryBytes);
+    append_const(body, kCoreWasmFixedLinearMemoryCapacityBytes);
     body.byte(kOpI32GtU);
     append_indexed_op(body, kOpLocalGet, 2);
     append_indexed_op(body, kOpLocalGet, 1);
@@ -1631,9 +1634,9 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer memories;
-    memories.u32(1);
-    memories.byte(0);
-    memories.u32(1);
+    memories.u32(1); // one memory
+    memories.byte(0); // limits flags: no declared maximum
+    memories.u32(kCoreWasmFixedLinearMemoryMinPages);
     if (!append_section(module, kSectionMemory, memories)) {
         return std::nullopt;
     }
@@ -1752,8 +1755,8 @@ compute_event_layout(std::size_t node_count, bool &overflow_is_binary) {
         return std::nullopt;
     }
     const std::uint32_t heap_base = (unaligned + 7u) & ~static_cast<std::uint32_t>(7u);
-    // Phase 2: capacity against the fixed single page (65536 bytes).
-    if (heap_base > kLinearMemoryBytes) {
+    // Phase 2: capacity against the fixed single page.
+    if (heap_base > kCoreWasmFixedLinearMemoryCapacityBytes) {
         overflow_is_binary = false;
         return std::nullopt;
     }
@@ -2377,9 +2380,9 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     ByteBuffer memories;
-    memories.u32(1);
-    memories.byte(0);
-    memories.u32(1);
+    memories.u32(1); // one memory
+    memories.byte(0); // limits flags: no declared maximum
+    memories.u32(kCoreWasmFixedLinearMemoryMinPages);
     if (!append_section(module, kSectionMemory, memories)) {
         return std::nullopt;
     }

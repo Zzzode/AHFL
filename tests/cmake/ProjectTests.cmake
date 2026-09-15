@@ -1087,6 +1087,10 @@ add_test(NAME ahfl.runtime.core_wasm_resume_controller
 # requires a durable filesystem (EXT-family / XFS / Btrfs); elsewhere it SKIPs (77).
 set_tests_properties(ahfl.runtime.core_wasm_resume_controller PROPERTIES SKIP_RETURN_CODE 77)
 
+add_test(NAME ahfl.runtime.core_wasm_resume_capacity
+    COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_capacity_tests>
+)
+
 add_test(NAME ahfl.runtime.payload_store_codec
     COMMAND $<TARGET_FILE:ahfl_payload_store_codec_tests>
 )
