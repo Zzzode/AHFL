@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,6 +27,17 @@ class YamlWriter {
         buf_ += ": ";
         buf_ += (value ? "true" : "false");
         buf_ += '\n';
+        return *this;
+    }
+
+    // Emit a double-quoted YAML scalar. Use for free-form values that may
+    // contain ': ' or other YAML-significant bytes.
+    YamlWriter &key_value_quoted(std::string_view key, std::string_view value) {
+        write_indent();
+        buf_ += key;
+        buf_ += ": \"";
+        append_escaped_yaml(value);
+        buf_ += "\"\n";
         return *this;
     }
 
@@ -81,6 +93,25 @@ class YamlWriter {
     }
 
   private:
+    void append_escaped_yaml(std::string_view value) {
+        for (const char ch : value) {
+            switch (ch) {
+            case '\\':
+                buf_ += "\\\\";
+                break;
+            case '"':
+                buf_ += "\\\"";
+                break;
+            case '\n':
+                buf_ += "\\n";
+                break;
+            default:
+                buf_ += ch;
+                break;
+            }
+        }
+    }
+
     void write_indent() {
         if (pending_dash_) {
             // The list marker replaces the last indent level: emit
@@ -109,6 +140,14 @@ class HclWriter {
   public:
     HclWriter() = default;
 
+    HclWriter &begin_block(std::string_view type) {
+        write_indent();
+        buf_ += type;
+        buf_ += " {\n";
+        indent_++;
+        return *this;
+    }
+
     HclWriter &begin_block(std::string_view type, std::string_view name) {
         write_indent();
         buf_ += type;
@@ -132,6 +171,15 @@ class HclWriter {
         return *this;
     }
 
+    // Begin an inline object assignment: `key = {`.
+    HclWriter &begin_object(std::string_view key) {
+        write_indent();
+        buf_ += key;
+        buf_ += " = {\n";
+        indent_++;
+        return *this;
+    }
+
     HclWriter &end_block() {
         indent_--;
         write_indent();
@@ -143,8 +191,55 @@ class HclWriter {
         write_indent();
         buf_ += key;
         buf_ += " = \"";
-        buf_ += value;
+        append_escaped_hcl(value);
         buf_ += "\"\n";
+        return *this;
+    }
+
+    HclWriter &attribute_number(std::string_view key, std::int64_t value) {
+        write_indent();
+        buf_ += key;
+        buf_ += " = ";
+        buf_ += std::to_string(value);
+        buf_ += '\n';
+        return *this;
+    }
+
+    HclWriter &attribute_bool(std::string_view key, bool value) {
+        write_indent();
+        buf_ += key;
+        buf_ += value ? " = true\n" : " = false\n";
+        return *this;
+    }
+
+    // Emit a bracketed list of quoted strings: ["a", "b"].
+    HclWriter &attribute_string_list(std::string_view key,
+                                     const std::vector<std::string> &values) {
+        write_indent();
+        buf_ += key;
+        buf_ += " = [";
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            if (i > 0)
+                buf_ += ", ";
+            buf_ += '"';
+            append_escaped_hcl(values[i]);
+            buf_ += '"';
+        }
+        buf_ += "]\n";
+        return *this;
+    }
+
+    // Emit a bracketed list of unquoted HCL references: [a.b, c.d].
+    HclWriter &reference_list(std::string_view key, const std::vector<std::string> &refs) {
+        write_indent();
+        buf_ += key;
+        buf_ += " = [";
+        for (std::size_t i = 0; i < refs.size(); ++i) {
+            if (i > 0)
+                buf_ += ", ";
+            buf_ += refs[i];
+        }
+        buf_ += "]\n";
         return *this;
     }
 
@@ -157,6 +252,25 @@ class HclWriter {
     }
 
   private:
+    void append_escaped_hcl(std::string_view value) {
+        for (const char ch : value) {
+            switch (ch) {
+            case '\\':
+                buf_ += "\\\\";
+                break;
+            case '"':
+                buf_ += "\\\"";
+                break;
+            case '\n':
+                buf_ += "\\n";
+                break;
+            default:
+                buf_ += ch;
+                break;
+            }
+        }
+    }
+
     void write_indent() {
         for (int i = 0; i < indent_ * 2; ++i) {
             buf_ += ' ';

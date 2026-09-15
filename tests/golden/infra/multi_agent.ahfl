@@ -1,0 +1,51 @@
+module infra::multi_agent;
+
+struct ReviewInput {
+    text: String;
+    score: Int(0, 10);
+}
+
+struct ReviewOutput {
+    verdict: String;
+}
+
+struct ReviewContext {
+    stage: String = "init";
+}
+
+capability Analyze(review: ReviewInput) -> ReviewOutput;
+capability Sanitize(review: ReviewInput) -> ReviewOutput;
+
+agent ReviewerA {
+    input: ReviewInput;
+    context: ReviewContext;
+    output: ReviewOutput;
+    states: [Idle, Analyzing, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [Analyze];
+    transition Idle -> Analyzing;
+    transition Analyzing -> Done;
+}
+
+agent ReviewerB {
+    input: ReviewInput;
+    context: ReviewContext;
+    output: ReviewOutput;
+    states: [Idle, Sanitizing, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [Sanitize];
+    transition Idle -> Sanitizing;
+    transition Sanitizing -> Done;
+}
+
+workflow ReviewPipeline {
+    input: ReviewInput;
+    output: ReviewOutput;
+
+    node first: ReviewerA(input);
+    node second: ReviewerB(input) after [first];
+
+    return: second;
+}

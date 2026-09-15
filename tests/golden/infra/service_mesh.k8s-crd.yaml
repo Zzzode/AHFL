@@ -1,7 +1,12 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: infra::service_mesh::Routers.ahfl.io
+  name: routers-f963dcc5e9.ahfl.io
+  labels:
+    app.kubernetes.io/managed-by: ahfl
+  annotations:
+    ahfl.io/agent: "infra::service_mesh::Router"
+    ahfl.io/module: "infra::service_mesh"
 spec:
   group: ahfl.io
   versions:
@@ -18,8 +23,30 @@ spec:
                 state:
                   type: string
                   enum: [Idle, Classifying, Dispatching, Done]
+                initialState:
+                  type: string
+                  default: Idle
+                finalStates:
+                  type: array
+                  items:
+                    type: string
+                  default: [Done]
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+                  default: [infra::service_mesh::Classify, infra::service_mesh::Enrich, infra::service_mesh::Dispatch]
+                input:
+                  type: string
+                  description: "AHFL input port; canonical type infra::service_mesh::Request"
+                context:
+                  type: string
+                  description: "AHFL context port; canonical type infra::service_mesh::Context"
+                output:
+                  type: string
+                  description: "AHFL output port; canonical type infra::service_mesh::Response"
   scope: Namespaced
   names:
-    plural: infra::service_mesh::Routers
-    singular: infra::service_mesh::Router
-    kind: Infra::service_mesh::Router
+    plural: routers-f963dcc5e9
+    singular: router-f963dcc5e9
+    kind: Router

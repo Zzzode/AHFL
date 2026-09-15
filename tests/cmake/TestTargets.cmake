@@ -1389,6 +1389,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
             ahfl_compiler_backend_infra_k8s_crd
             ahfl_compiler_backend_infra_openapi_spec
             ahfl_compiler_backend_infra_terraform_gen
+            ahfl_compiler_backend_infra_type_schema
     )
     ahfl_apply_project_warnings(ahfl_target_backends_tests)
 endif()

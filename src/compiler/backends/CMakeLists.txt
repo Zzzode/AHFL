@@ -115,6 +115,21 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     target_link_libraries(ahfl_compiler_backend_infra_terraform_gen PUBLIC ahfl_base_support)
 
     ahfl_apply_project_warnings(ahfl_compiler_backend_infra_terraform_gen)
+
+    # IR TypeRef -> JSON Schema mapper shared by lower_openapi and the backend
+    # unit tests; depends on the IR layer (StructDecl / TypeRef).
+    add_library(ahfl_compiler_backend_infra_type_schema STATIC
+        infra/type_schema.cpp
+    )
+
+    target_link_libraries(ahfl_compiler_backend_infra_type_schema
+        PUBLIC
+            ahfl_base_support
+            ahfl_compiler_ir
+            ahfl_compiler_backend_infra_openapi_spec
+    )
+
+    ahfl_apply_project_warnings(ahfl_compiler_backend_infra_type_schema)
 endif()
 
 # All backend sub-targets need internal src/ headers (support/, backends/, etc.)
@@ -137,6 +152,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         ahfl_compiler_backend_infra_k8s_crd
         ahfl_compiler_backend_infra_openapi_spec
         ahfl_compiler_backend_infra_terraform_gen
+        ahfl_compiler_backend_infra_type_schema
     )
 endif()
 foreach(_tgt ${_backend_targets})
@@ -169,6 +185,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         ahfl_compiler_backend_infra_k8s_crd
         ahfl_compiler_backend_infra_openapi_spec
         ahfl_compiler_backend_infra_terraform_gen
+        ahfl_compiler_backend_infra_type_schema
     )
 endif()
 

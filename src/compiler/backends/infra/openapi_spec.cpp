@@ -27,34 +27,56 @@ class OpenApiJsonWriter : private PrettyJsonWriter {
             field("paths", [&]() {
                 print_object(1, [&](const auto &path_field) {
                     for (const auto &endpoint : config.endpoints) {
-                        path_field(endpoint.path.c_str(), [&]() {
+                        path_field(endpoint.path, [&]() {
                             print_object(2, [&](const auto &method_field) {
-                                method_field(endpoint.method.c_str(), [&]() {
+                                method_field(endpoint.method, [&]() {
                                     print_object(3, [&](const auto &ef) {
                                         ef("summary", [&]() { write_string(endpoint.summary); });
-                                        if (!endpoint.request_schema.empty()) {
-                                            ef("requestBody", [&]() {
-                                                print_object(4, [&](const auto &rf) {
-                                                    rf("schema", [&]() {
-                                                        write_string(endpoint.request_schema);
-                                                    });
-                                                });
-                                            });
-                                        }
-                                        if (!endpoint.response_schema.empty()) {
-                                            ef("responses", [&]() {
-                                                print_object(4, [&](const auto &rf) {
-                                                    rf("200", [&]() {
-                                                        print_object(5, [&](const auto &sf) {
-                                                            sf("schema", [&]() {
-                                                                write_string(
-                                                                    endpoint.response_schema);
+                                        ef("operationId",
+                                           [&]() { write_string(endpoint.operation_id); });
+                                        ef("requestBody", [&]() {
+                                            print_object(4, [&](const auto &rf) {
+                                                rf("required", [&]() { write_bool(true); });
+                                                rf("content", [&]() {
+                                                    print_object(5, [&](const auto &cf) {
+                                                        cf("application/json", [&]() {
+                                                            print_object(6, [&](const auto &jf) {
+                                                                jf("schema", [&]() {
+                                                                    write_schema(
+                                                                        7,
+                                                                        endpoint.request_schema);
+                                                                });
                                                             });
                                                         });
                                                     });
                                                 });
                                             });
-                                        }
+                                        });
+                                        ef("responses", [&]() {
+                                            print_object(4, [&](const auto &rf) {
+                                                rf("200", [&]() {
+                                                    print_object(5, [&](const auto &sf) {
+                                                        sf("description", [&]() {
+                                                            write_string(
+                                                                "Successful invocation");
+                                                        });
+                                                        sf("content", [&]() {
+                                                            print_object(6, [&](const auto &cf) {
+                                                                cf("application/json", [&]() {
+                                                                    print_object(7, [&](const auto &jf) {
+                                                                        jf("schema", [&]() {
+                                                                            write_schema(
+                                                                                8,
+                                                                                endpoint.response_schema);
+                                                                        });
+                                                                    });
+                                                                });
+                                                            });
+                                                        });
+                                                    });
+                                                });
+                                            });
+                                        });
                                     });
                                 });
                             });
@@ -62,8 +84,93 @@ class OpenApiJsonWriter : private PrettyJsonWriter {
                     }
                 });
             });
+            if (!config.components.empty()) {
+                field("components", [&]() {
+                    print_object(1, [&](const auto &cf) {
+                        cf("schemas", [&]() {
+                            print_object(2, [&](const auto &sf) {
+                                for (const auto &[name, schema] : config.components) {
+                                    sf(name, [&]() { write_schema(3, schema); });
+                                }
+                            });
+                        });
+                    });
+                });
+            }
         });
         out_ << '\n';
+    }
+
+  private:
+    void write_bool(bool value) { out_ << (value ? "true" : "false"); }
+
+    void write_number(std::int64_t value) { out_ << value; }
+
+    void write_schema(int level, const OpenApiSchema &schema) {
+        print_object(level, [&](const auto &field) {
+            if (!schema.ref.empty()) {
+                field("$ref", [&]() { write_string(schema.ref); });
+                return;
+            }
+            if (!schema.type.empty()) {
+                field("type", [&]() { write_string(schema.type); });
+            }
+            if (!schema.format.empty()) {
+                field("format", [&]() { write_string(schema.format); });
+            }
+            if (!schema.description.empty()) {
+                field("description", [&]() { write_string(schema.description); });
+            }
+            if (schema.minimum.has_value()) {
+                field("minimum", [&]() { write_number(*schema.minimum); });
+            }
+            if (schema.maximum.has_value()) {
+                field("maximum", [&]() { write_number(*schema.maximum); });
+            }
+            if (schema.min_length.has_value()) {
+                field("minLength", [&]() { write_number(*schema.min_length); });
+            }
+            if (schema.max_length.has_value()) {
+                field("maxLength", [&]() { write_number(*schema.max_length); });
+            }
+            if (schema.min_items.has_value()) {
+                field("minItems", [&]() { write_number(*schema.min_items); });
+            }
+            if (schema.max_items.has_value()) {
+                field("maxItems", [&]() { write_number(*schema.max_items); });
+            }
+            if (schema.unique_items) {
+                field("uniqueItems", [&]() { write_bool(true); });
+            }
+            if (schema.max_properties.has_value()) {
+                field("maxProperties", [&]() { write_number(*schema.max_properties); });
+            }
+            if (schema.items != nullptr) {
+                field("items", [&]() { write_schema(level + 1, *schema.items); });
+            }
+            if (schema.additional_properties != nullptr) {
+                field("additionalProperties",
+                      [&]() { write_schema(level + 1, *schema.additional_properties); });
+            }
+            if (!schema.properties.empty()) {
+                field("properties", [&]() {
+                    print_object(level + 1, [&](const auto &pf) {
+                        for (const auto &[name, property] : schema.properties) {
+                            pf(name, [&]() { write_schema(level + 2, property); });
+                        }
+                    });
+                });
+            }
+            if (!schema.required.empty()) {
+                field("required", [&]() {
+                    print_array(level + 1, [&](const auto &item) {
+                        for (const auto &name : schema.required) {
+                            item([&]() { write_string(name); });
+                        }
+                    });
+                });
+            }
+        });
     }
 };
 

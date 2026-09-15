@@ -5,19 +5,114 @@
     "version": "1.0.0"
   },
   "paths": {
-    "/infra::service_mesh::Classify": {
-      "POST": {
-        "summary": "Invoke capability infra::service_mesh::Classify"
+    "/infra/service_mesh/Classify": {
+      "post": {
+        "summary": "Invoke capability infra::service_mesh::Classify",
+        "operationId": "post_infra__service_mesh__classify",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/infra__service_mesh__Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/infra__service_mesh__Response"
+                }
+              }
+            }
+          }
+        }
       }
     },
-    "/infra::service_mesh::Enrich": {
-      "POST": {
-        "summary": "Invoke capability infra::service_mesh::Enrich"
+    "/infra/service_mesh/Enrich": {
+      "post": {
+        "summary": "Invoke capability infra::service_mesh::Enrich",
+        "operationId": "post_infra__service_mesh__enrich",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/infra__service_mesh__Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/infra__service_mesh__Response"
+                }
+              }
+            }
+          }
+        }
       }
     },
-    "/infra::service_mesh::Dispatch": {
-      "POST": {
-        "summary": "Invoke capability infra::service_mesh::Dispatch"
+    "/infra/service_mesh/Dispatch": {
+      "post": {
+        "summary": "Invoke capability infra::service_mesh::Dispatch",
+        "operationId": "post_infra__service_mesh__dispatch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/infra__service_mesh__Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/infra__service_mesh__Response"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "infra__service_mesh__Request": {
+        "type": "object",
+        "properties": {
+          "payload": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "payload"
+        ]
+      },
+      "infra__service_mesh__Response": {
+        "type": "object",
+        "properties": {
+          "payload": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "payload"
+        ]
       }
     }
   }

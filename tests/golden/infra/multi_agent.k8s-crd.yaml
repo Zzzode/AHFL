@@ -1,0 +1,105 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: revieweras-5c37c18386.ahfl.io
+  labels:
+    app.kubernetes.io/managed-by: ahfl
+  annotations:
+    ahfl.io/agent: "infra::multi_agent::ReviewerA"
+    ahfl.io/module: "infra::multi_agent"
+spec:
+  group: ahfl.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [Idle, Analyzing, Done]
+                initialState:
+                  type: string
+                  default: Idle
+                finalStates:
+                  type: array
+                  items:
+                    type: string
+                  default: [Done]
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+                  default: [infra::multi_agent::Analyze]
+                input:
+                  type: string
+                  description: "AHFL input port; canonical type infra::multi_agent::ReviewInput"
+                context:
+                  type: string
+                  description: "AHFL context port; canonical type infra::multi_agent::ReviewContext"
+                output:
+                  type: string
+                  description: "AHFL output port; canonical type infra::multi_agent::ReviewOutput"
+  scope: Namespaced
+  names:
+    plural: revieweras-5c37c18386
+    singular: reviewera-5c37c18386
+    kind: ReviewerA
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: reviewerbs-5c37c181d3.ahfl.io
+  labels:
+    app.kubernetes.io/managed-by: ahfl
+  annotations:
+    ahfl.io/agent: "infra::multi_agent::ReviewerB"
+    ahfl.io/module: "infra::multi_agent"
+spec:
+  group: ahfl.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [Idle, Sanitizing, Done]
+                initialState:
+                  type: string
+                  default: Idle
+                finalStates:
+                  type: array
+                  items:
+                    type: string
+                  default: [Done]
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+                  default: [infra::multi_agent::Sanitize]
+                input:
+                  type: string
+                  description: "AHFL input port; canonical type infra::multi_agent::ReviewInput"
+                context:
+                  type: string
+                  description: "AHFL context port; canonical type infra::multi_agent::ReviewContext"
+                output:
+                  type: string
+                  description: "AHFL output port; canonical type infra::multi_agent::ReviewOutput"
+  scope: Namespaced
+  names:
+    plural: reviewerbs-5c37c181d3
+    singular: reviewerb-5c37c181d3
+    kind: ReviewerB

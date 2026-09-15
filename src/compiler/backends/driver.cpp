@@ -121,8 +121,17 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                                return std::unexpected<std::string>(
                                                    "no agents found in program");
                                            }
-                                           for (const auto &c : configs) {
-                                               ctx.out << backends::generate_crd(c).yaml;
+                                           // Multi-agent programs emit one CRD
+                                           // document per agent; separate them
+                                           // with the YAML '---' directive so
+                                           // the artifact is a valid multi-doc
+                                           // YAML stream rather than
+                                           // concatenated mappings.
+                                           for (std::size_t i = 0; i < configs.size(); ++i) {
+                                               if (i > 0) {
+                                                   ctx.out << "---\n";
+                                               }
+                                               ctx.out << backends::generate_crd(configs[i]).yaml;
                                            }
                                            return {};
                                        }});

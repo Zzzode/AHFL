@@ -1,0 +1,98 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AHFL Generated API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/infra/multi_agent/Analyze": {
+      "post": {
+        "summary": "Invoke capability infra::multi_agent::Analyze",
+        "operationId": "post_infra__multi_agent__analyze",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/infra__multi_agent__ReviewInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/infra__multi_agent__ReviewOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/infra/multi_agent/Sanitize": {
+      "post": {
+        "summary": "Invoke capability infra::multi_agent::Sanitize",
+        "operationId": "post_infra__multi_agent__sanitize",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/infra__multi_agent__ReviewInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/infra__multi_agent__ReviewOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "infra__multi_agent__ReviewInput": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "score": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "text",
+          "score"
+        ]
+      },
+      "infra__multi_agent__ReviewOutput": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict"
+        ]
+      }
+    }
+  }
+}
