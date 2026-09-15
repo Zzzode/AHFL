@@ -1095,6 +1095,10 @@ add_test(NAME ahfl.runtime.payload_store_codec
     COMMAND $<TARGET_FILE:ahfl_payload_store_codec_tests>
 )
 
+add_test(NAME ahfl.runtime.core_wasm_idempotency_token
+    COMMAND $<TARGET_FILE:ahfl_core_wasm_idempotency_token_tests>
+)
+
 add_test(NAME ahfl.runtime.payload_store
     COMMAND $<TARGET_FILE:ahfl_payload_store_tests>
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/payload-store"

@@ -339,6 +339,18 @@ target_link_libraries(ahfl_payload_store_codec_tests
 )
 ahfl_apply_project_warnings(ahfl_payload_store_codec_tests)
 
+add_executable(ahfl_core_wasm_idempotency_token_tests
+    unit/runtime/engine/core_wasm_idempotency_token.cpp
+)
+target_link_libraries(ahfl_core_wasm_idempotency_token_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+target_include_directories(ahfl_core_wasm_idempotency_token_tests
+    PRIVATE ${PROJECT_SOURCE_DIR}/src
+)
+ahfl_apply_project_warnings(ahfl_core_wasm_idempotency_token_tests)
+
 add_executable(ahfl_payload_store_tests
     unit/runtime/engine/payload_store.cpp
 )
