@@ -15,7 +15,6 @@
 #include <cstdint>
 #include <optional>
 
-#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "runtime/engine/core_wasm_resume_controller.hpp" // LinearMemoryCapacityBytes
 
 namespace ahfl::runtime::core_wasm_resume_capacity {

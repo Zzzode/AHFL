@@ -5,6 +5,8 @@
 
 #include "runtime/engine/core_wasm_resume_capacity.hpp"
 
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
+
 #include <cstdint>
 #include <iostream>
 #include <limits>

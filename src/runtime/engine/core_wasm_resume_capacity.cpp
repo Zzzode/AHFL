@@ -4,6 +4,8 @@
 
 #include <limits>
 
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
+
 namespace ahfl::runtime::core_wasm_resume_capacity {
 
 namespace controller = core_wasm_resume_controller;
