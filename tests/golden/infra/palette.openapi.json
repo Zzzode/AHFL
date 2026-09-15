@@ -1,0 +1,82 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AHFL Generated API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/infra/palette/Pick": {
+      "post": {
+        "summary": "Invoke capability infra::palette::Pick",
+        "operationId": "post_infra__palette__pick",
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/infra__palette__Color"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/infra/palette/Fill": {
+      "post": {
+        "summary": "Invoke capability infra::palette::Fill",
+        "operationId": "post_infra__palette__fill",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/infra__palette__Color"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/infra__palette__Can"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "infra__palette__Can": {
+        "type": "object",
+        "properties": {
+          "color": {
+            "$ref": "#/components/schemas/infra__palette__Color"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "color",
+          "label"
+        ]
+      },
+      "infra__palette__Color": {
+        "type": "string",
+        "enum": [
+          "Red",
+          "Green",
+          "Blue"
+        ]
+      }
+    }
+  }
+}

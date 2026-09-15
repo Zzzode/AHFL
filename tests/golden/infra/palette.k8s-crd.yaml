@@ -1,0 +1,52 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: painters-c44f18787f.ahfl.io
+  labels:
+    app.kubernetes.io/managed-by: ahfl
+  annotations:
+    ahfl.io/agent: "infra::palette::Painter"
+    ahfl.io/module: "infra::palette"
+spec:
+  group: ahfl.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [Idle, Done]
+                initialState:
+                  type: string
+                  default: Idle
+                finalStates:
+                  type: array
+                  items:
+                    type: string
+                  default: [Done]
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+                  default: [infra::palette::Pick, infra::palette::Fill]
+                input:
+                  type: string
+                  description: "AHFL input port; canonical type infra::palette::Can"
+                context:
+                  type: string
+                  description: "AHFL context port; canonical type infra::palette::Empty"
+                output:
+                  type: string
+                  description: "AHFL output port; canonical type infra::palette::Can"
+  scope: Namespaced
+  names:
+    plural: painters-c44f18787f
+    singular: painter-c44f18787f
+    kind: Painter

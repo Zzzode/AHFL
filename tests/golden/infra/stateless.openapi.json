@@ -1,0 +1,55 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AHFL Generated API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/infra/stateless/Ping": {
+      "post": {
+        "summary": "Invoke capability infra::stateless::Ping",
+        "operationId": "post_infra__stateless__ping",
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/infra/stateless/Echo": {
+      "post": {
+        "summary": "Invoke capability infra::stateless::Echo",
+        "operationId": "post_infra__stateless__echo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful invocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

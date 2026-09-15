@@ -1,30 +1,18 @@
 #include "compiler/backends/infra/k8s_crd.hpp"
 
+#include "base/support/hash.hpp"
 #include "base/support/structured_writer.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
-#include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace ahfl::backends {
 
 namespace {
-
-// FNV-1a 64-bit. The module-hash suffix makes a sanitized name unique across
-// agents whose short names collide after DNS-1123 sanitization, and it is
-// deterministic across identical compilations.
-[[nodiscard]] std::uint64_t fnv1a_64(std::string_view data) {
-    constexpr std::uint64_t kOffset = 0xcbf29ce484222325ULL;
-    constexpr std::uint64_t kPrime = 0x100000001b3ULL;
-    std::uint64_t hash = kOffset;
-    for (const unsigned char byte : data) {
-        hash ^= static_cast<std::uint64_t>(byte);
-        hash *= kPrime;
-    }
-    return hash;
-}
 
 [[nodiscard]] std::string capitalize(std::string_view s) {
     if (s.empty())
@@ -55,37 +43,54 @@ namespace {
     return out;
 }
 
-[[nodiscard]] std::string hex_suffix(std::string_view qualified_name) {
-    static constexpr char kHex[] = "0123456789abcdef";
-    const std::uint64_t hash = fnv1a_64(qualified_name);
-    std::string suffix(10, '0');
-    for (std::size_t i = 0; i < suffix.size(); ++i) {
-        suffix[suffix.size() - 1 - i] =
-            kHex[(hash >> (4U * static_cast<unsigned>(i))) & 0x0FU];
-    }
-    return suffix;
-}
+// RFC 1123: a DNS label is at most 63 bytes; the CRD metadata.name
+// (plural + "." + group) is a DNS subdomain capped at 253 bytes.
+constexpr std::size_t kMaxDnsLabel = 63;
+constexpr std::size_t kMaxDnsSubdomain = 253;
 
-// RFC 1123 subdomain: lowercase [a-z0-9-.], max 253 bytes. Compose a sanitized
-// stem plus a deterministic 10-hex-char qualified-name hash suffix so the
-// field is unique without ever embedding '::' or uppercase bytes. `pluralize`
-// appends an 's' to the human-readable stem (K8s plural resource names), not
-// to the hash.
+// Compose a sanitized stem plus a deterministic 10-hex-char qualified-name
+// hash suffix so the field is unique without ever embedding '::' or uppercase
+// bytes. `pluralize` appends an 's' to the human-readable stem (K8s plural
+// resource names), not to the hash. The hash suffix is always preserved in
+// full: the stem alone is what gets truncated. For a plural name the length
+// budget additionally reserves the "." + apiGroup suffix so the composed
+// metadata.name stays within the 253-byte subdomain limit.
 [[nodiscard]] std::string rfc1123_name(const K8sCrdConfig &config, bool pluralize) {
-    std::string stem = dns_safe(config.short_name.empty() ? config.agent_name
-                                                         : config.short_name);
+    std::string stem = dns_safe(config.short_name.empty() ? config.agent_name : config.short_name);
     if (pluralize && !stem.empty()) {
         stem.push_back('s');
     }
-    std::string name = stem + "-" + hex_suffix(config.agent_name);
-    static constexpr std::size_t kMaxSubdomain = 253;
-    if (name.size() > kMaxSubdomain) {
-        name.resize(kMaxSubdomain);
-        while (!name.empty() && name.back() == '-') {
-            name.pop_back();
+
+    const std::string suffix = fnv1a_hex_suffix(config.agent_name, 10);
+    constexpr std::size_t kSuffixDash = 1;
+
+    std::size_t budget = kMaxDnsLabel;
+    if (pluralize) {
+        // metadata.name is plural + "." + apiGroup and must be a valid
+        // subdomain, so the plural must leave room for the group suffix.
+        const std::size_t required_group_suffix = config.api_group.size() + 1;
+        if (required_group_suffix >= kMaxDnsSubdomain) {
+            throw std::invalid_argument(
+                "K8s CRD apiGroup is too long to form a valid metadata.name");
+        }
+        budget = std::min(budget, kMaxDnsSubdomain - required_group_suffix);
+    }
+    // Reserve the '-' separator and the full hash suffix; truncate only the
+    // stem so the identity suffix survives intact.
+    if (budget <= suffix.size() + kSuffixDash) {
+        throw std::invalid_argument("K8s CRD name has no room for the identity hash suffix");
+    }
+    const std::size_t max_stem = budget - suffix.size() - kSuffixDash;
+    if (stem.size() > max_stem) {
+        stem.resize(max_stem);
+        while (!stem.empty() && stem.back() == '-') {
+            stem.pop_back();
         }
     }
-    return name;
+    if (stem.empty()) {
+        stem = "agent";
+    }
+    return stem + "-" + suffix;
 }
 
 void emit_placeholder_string(YamlWriter &yaml,
@@ -94,8 +99,8 @@ void emit_placeholder_string(YamlWriter &yaml,
     yaml.begin_mapping(property)
         .key_value("type", "string")
         .key_value_quoted("description",
-                          std::string("AHFL ") + std::string(property) +
-                              " port; canonical type " + std::string(canonical_type))
+                          std::string("AHFL ") + std::string(property) + " port; canonical type " +
+                              std::string(canonical_type))
         .end_mapping();
 }
 
@@ -175,10 +180,19 @@ K8sCrdOutput generate_crd(const K8sCrdConfig &config) {
     }
 
     // Input / context / output schema ports (placeholders carrying the
-    // canonical type names until a shared schema export lands).
-    emit_placeholder_string(yaml, "input", config.input_type);
-    emit_placeholder_string(yaml, "context", config.context_type);
-    emit_placeholder_string(yaml, "output", config.output_type);
+    // canonical type names until a shared schema export lands). The context
+    // clause is optional; an omitted context lowers to Unit and carries an
+    // empty canonical type, so emit only the ports the agent actually
+    // declares rather than a misleading empty-canonical placeholder.
+    if (!config.input_type.empty()) {
+        emit_placeholder_string(yaml, "input", config.input_type);
+    }
+    if (!config.context_type.empty()) {
+        emit_placeholder_string(yaml, "context", config.context_type);
+    }
+    if (!config.output_type.empty()) {
+        emit_placeholder_string(yaml, "output", config.output_type);
+    }
 
     yaml.end_mapping()   // properties
         .end_mapping()   // spec

@@ -1,0 +1,42 @@
+module infra::palette;
+
+// A C-style nominal enum is a first-class AHFL type. It must cross the JSON
+// boundary as a string schema restricted to the declared variants (not as the
+// unconstrained schema {}), both as a capability parameter and return type
+// and as a struct field.
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+struct Can {
+    color: Color;
+    label: String;
+}
+
+struct Empty {}
+
+capability Pick() -> Color;
+capability Fill(c: Color) -> Can;
+
+agent Painter {
+    input: Can;
+    context: Empty;
+    output: Can;
+    states: [Idle, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [Pick, Fill];
+    transition Idle -> Done;
+}
+
+workflow PaintJob {
+    input: Can;
+    output: Can;
+
+    node first: Painter(input);
+
+    return: first;
+}

@@ -34,45 +34,61 @@ class OpenApiJsonWriter : private PrettyJsonWriter {
                                         ef("summary", [&]() { write_string(endpoint.summary); });
                                         ef("operationId",
                                            [&]() { write_string(endpoint.operation_id); });
-                                        ef("requestBody", [&]() {
-                                            print_object(4, [&](const auto &rf) {
-                                                rf("required", [&]() { write_bool(true); });
-                                                rf("content", [&]() {
-                                                    print_object(5, [&](const auto &cf) {
-                                                        cf("application/json", [&]() {
-                                                            print_object(6, [&](const auto &jf) {
-                                                                jf("schema", [&]() {
-                                                                    write_schema(
-                                                                        7,
-                                                                        endpoint.request_schema);
+                                        // A zero-parameter capability maps to an
+                                        // empty request schema; omit requestBody
+                                        // entirely rather than demanding a JSON
+                                        // body for an operation that takes none.
+                                        if (endpoint.request_schema.has_content()) {
+                                            ef("requestBody", [&]() {
+                                                print_object(4, [&](const auto &rf) {
+                                                    rf("required", [&]() { write_bool(true); });
+                                                    rf("content", [&]() {
+                                                        print_object(5, [&](const auto &cf) {
+                                                            cf("application/json", [&]() {
+                                                                print_object(6, [&](const auto &jf) {
+                                                                    jf("schema", [&]() {
+                                                                        write_schema(
+                                                                            7,
+                                                                            endpoint
+                                                                                .request_schema);
+                                                                    });
                                                                 });
                                                             });
                                                         });
                                                     });
                                                 });
                                             });
-                                        });
+                                        }
                                         ef("responses", [&]() {
                                             print_object(4, [&](const auto &rf) {
                                                 rf("200", [&]() {
                                                     print_object(5, [&](const auto &sf) {
                                                         sf("description", [&]() {
-                                                            write_string(
-                                                                "Successful invocation");
+                                                            write_string("Successful invocation");
                                                         });
-                                                        sf("content", [&]() {
-                                                            print_object(6, [&](const auto &cf) {
-                                                                cf("application/json", [&]() {
-                                                                    print_object(7, [&](const auto &jf) {
-                                                                        jf("schema", [&]() {
-                                                                            write_schema(
-                                                                                8,
-                                                                                endpoint.response_schema);
-                                                                        });
+                                                        // Unit / unmappable return types
+                                                        // map to an empty schema: the
+                                                        // operation returns 200 with no
+                                                        // content instead of an empty
+                                                        // JSON object body.
+                                                        if (endpoint.response_schema
+                                                                .has_content()) {
+                                                            sf("content", [&]() {
+                                                                print_object(6, [&](const auto &cf) {
+                                                                    cf("application/json", [&]() {
+                                                                        print_object(
+                                                                            7, [&](const auto &jf) {
+                                                                                jf("schema", [&]() {
+                                                                                    write_schema(
+                                                                                        8,
+                                                                                        endpoint
+                                                                                            .response_schema);
+                                                                                });
+                                                                            });
                                                                     });
                                                                 });
                                                             });
-                                                        });
+                                                        }
                                                     });
                                                 });
                                             });
@@ -102,9 +118,13 @@ class OpenApiJsonWriter : private PrettyJsonWriter {
     }
 
   private:
-    void write_bool(bool value) { out_ << (value ? "true" : "false"); }
+    void write_bool(bool value) {
+        out_ << (value ? "true" : "false");
+    }
 
-    void write_number(std::int64_t value) { out_ << value; }
+    void write_number(std::int64_t value) {
+        out_ << value;
+    }
 
     void write_schema(int level, const OpenApiSchema &schema) {
         print_object(level, [&](const auto &field) {
@@ -120,6 +140,15 @@ class OpenApiJsonWriter : private PrettyJsonWriter {
             }
             if (!schema.description.empty()) {
                 field("description", [&]() { write_string(schema.description); });
+            }
+            if (!schema.enum_values.empty()) {
+                field("enum", [&]() {
+                    print_array(level + 1, [&](const auto &item) {
+                        for (const auto &value : schema.enum_values) {
+                            item([&]() { write_string(value); });
+                        }
+                    });
+                });
             }
             if (schema.minimum.has_value()) {
                 field("minimum", [&]() { write_number(*schema.minimum); });
@@ -147,6 +176,24 @@ class OpenApiJsonWriter : private PrettyJsonWriter {
             }
             if (schema.items != nullptr) {
                 field("items", [&]() { write_schema(level + 1, *schema.items); });
+            }
+            if (!schema.tuple_items.empty()) {
+                field("items", [&]() {
+                    print_array(level + 1, [&](const auto &item) {
+                        for (const auto &component : schema.tuple_items) {
+                            item([&]() { write_schema(level + 2, *component); });
+                        }
+                    });
+                });
+            }
+            if (!schema.one_of.empty()) {
+                field("oneOf", [&]() {
+                    print_array(level + 1, [&](const auto &item) {
+                        for (const auto &alternative : schema.one_of) {
+                            item([&]() { write_schema(level + 2, *alternative); });
+                        }
+                    });
+                });
             }
             if (schema.additional_properties != nullptr) {
                 field("additionalProperties",

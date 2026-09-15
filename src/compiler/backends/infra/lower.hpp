@@ -1,6 +1,8 @@
 #pragma once
 
+#include <expected>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "ahfl/compiler/ir/ir.hpp"
@@ -19,9 +21,13 @@ namespace ahfl::backends {
 /// Lower AHFL-IR to K8s CRD configs (one per AgentDecl).
 [[nodiscard]] std::vector<K8sCrdConfig> lower_k8s_crd(const ir::AhflIr &program);
 
-/// Lower AHFL-IR to OpenAPI config (from CapabilityDecl list).
-/// Returns nullopt if no capabilities found.
-[[nodiscard]] std::optional<OpenApiConfig> lower_openapi(const ir::AhflIr &program);
+/// Lower AHFL-IR to an OpenAPI config (from the CapabilityDecl list).
+/// Success with nullopt means the program declares no capabilities. An
+/// unexpected error carries a human-readable message (e.g. a capability type
+/// references a nominal the program does not declare), which the emitter must
+/// surface instead of rendering a document with dangling $refs.
+[[nodiscard]] std::expected<std::optional<OpenApiConfig>, std::string>
+lower_openapi(const ir::AhflIr &program);
 
 /// Lower AHFL-IR to Terraform configs (one per WorkflowDecl).
 [[nodiscard]] std::vector<TerraformConfig> lower_terraform(const ir::AhflIr &program);

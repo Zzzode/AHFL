@@ -14,12 +14,19 @@ namespace ahfl::backends {
 // OpenApiSchema is the backend-local JSON Schema (Draft/OpenAPI 3.0 subset)
 // tree shared by the OpenAPI renderer and the IR TypeRef -> JSON Schema mapper.
 // It is plain data: every field maps to the JSON Schema keyword of the same
-// name (camelCased in JSON). A node with neither `type` nor `$ref` renders as
-// the unconstrained schema `{}`.
+// name (camelCased in JSON). A node with neither `type` nor `$ref` nor any
+// nested keyword renders as the unconstrained schema `{}`, which the mapper
+// uses intentionally for kinds that cannot cross a JSON boundary (Unit, Any,
+// Fn, Never, Unresolved); see OpenApiTypeMapper. Renderers treat such a node
+// as "no content" rather than advertising an empty JSON object.
 struct OpenApiSchema {
     std::string type; // boolean | integer | number | string | object | array
     std::string format;
     std::string description;
+
+    // String-enum members for a C-style nominal enum rendered as a string
+    // schema: {"type": "string", "enum": [...]}.
+    std::vector<std::string> enum_values;
 
     std::optional<std::int64_t> minimum;
     std::optional<std::int64_t> maximum;
@@ -34,8 +41,15 @@ struct OpenApiSchema {
     // field is ignored (JSON reference semantics).
     std::string ref;
 
-    Owned<OpenApiSchema> items;                    // array element schema
-    Owned<OpenApiSchema> additional_properties;    // map value schema
+    Owned<OpenApiSchema> items; // array element schema
+    // OpenAPI 3.0 tuple typing: "items" as an ordered schema array (JSON
+    // Schema array-form items), one entry per tuple component. Empty for an
+    // unbounded array, which uses the scalar `items` pointer instead.
+    std::vector<Owned<OpenApiSchema>> tuple_items;
+    Owned<OpenApiSchema> additional_properties; // map value schema
+    // Externally tagged (Rust/serde-default) nominal-enum variants: every
+    // member is a standalone alternative schema combined with "oneOf".
+    std::vector<Owned<OpenApiSchema>> one_of;
     std::vector<std::pair<std::string, OpenApiSchema>> properties;
     std::vector<std::string> required;
 
@@ -44,31 +58,23 @@ struct OpenApiSchema {
     OpenApiSchema(OpenApiSchema &&) noexcept = default;
     OpenApiSchema &operator=(OpenApiSchema &&) noexcept = default;
 
-    OpenApiSchema(const OpenApiSchema &other)
-        : type(other.type),
-          format(other.format),
-          description(other.description),
-          minimum(other.minimum),
-          maximum(other.maximum),
-          min_length(other.min_length),
-          max_length(other.max_length),
-          min_items(other.min_items),
-          max_items(other.max_items),
-          max_properties(other.max_properties),
-          unique_items(other.unique_items),
-          ref(other.ref),
-          items(other.items ? make_owned<OpenApiSchema>(*other.items) : nullptr),
-          additional_properties(other.additional_properties
-                                    ? make_owned<OpenApiSchema>(*other.additional_properties)
-                                    : nullptr),
-          properties(other.properties),
-          required(other.required) {}
+    // The schema tree is move-only. It is built once and moved into the
+    // endpoint / component table; a copy would silently deep-clone a large
+    // tree. Deleting the copy operations turns an accidental copy into a
+    // compile error instead of an implicit O(n) clone.
+    OpenApiSchema(const OpenApiSchema &) = delete;
+    OpenApiSchema &operator=(const OpenApiSchema &) = delete;
 
-    OpenApiSchema &operator=(const OpenApiSchema &other) {
-        if (this != &other) {
-            *this = OpenApiSchema(other);
-        }
-        return *this;
+    // Whether this node constrains a JSON value at all. A default-constructed
+    // node (Unit / Any / Fn / Never / Unresolved mapping, or a zero-parameter
+    // request body) has no content and must render as "no body" rather than
+    // a required empty JSON object.
+    [[nodiscard]] bool has_content() const noexcept {
+        return !type.empty() || !ref.empty() || !enum_values.empty() || items != nullptr ||
+               !tuple_items.empty() || additional_properties != nullptr || !one_of.empty() ||
+               !properties.empty() || minimum.has_value() || maximum.has_value() ||
+               min_length.has_value() || max_length.has_value() || min_items.has_value() ||
+               max_items.has_value() || max_properties.has_value() || unique_items;
     }
 };
 

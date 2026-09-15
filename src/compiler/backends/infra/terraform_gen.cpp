@@ -12,18 +12,15 @@ namespace ahfl::backends {
 
 namespace {
 
-void emit_attribute(HclWriter &hcl,
-                    std::string_view key,
-                    const TerraformAttributeValue &value) {
-    std::visit(Overloaded{
-                   [&](const std::string &text) { hcl.attribute(key, text); },
-                   [&](std::int64_t number) { hcl.attribute_number(key, number); },
-                   [&](bool flag) { hcl.attribute_bool(key, flag); },
-                   [&](const std::vector<std::string> &items) {
-                       hcl.attribute_string_list(key, items);
-                   },
-               },
-               value);
+void emit_attribute(HclWriter &hcl, std::string_view key, const TerraformAttributeValue &value) {
+    std::visit(
+        Overloaded{
+            [&](const std::string &text) { hcl.attribute(key, text); },
+            [&](std::int64_t number) { hcl.attribute_number(key, number); },
+            [&](bool flag) { hcl.attribute_bool(key, flag); },
+            [&](const std::vector<std::string> &items) { hcl.attribute_string_list(key, items); },
+        },
+        value);
 }
 
 } // namespace

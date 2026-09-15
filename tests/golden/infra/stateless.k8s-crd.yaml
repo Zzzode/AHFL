@@ -1,0 +1,49 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: pingers-5f4d0e4af8.ahfl.io
+  labels:
+    app.kubernetes.io/managed-by: ahfl
+  annotations:
+    ahfl.io/agent: "infra::stateless::Pinger"
+    ahfl.io/module: "infra::stateless"
+spec:
+  group: ahfl.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [Idle, Done]
+                initialState:
+                  type: string
+                  default: Idle
+                finalStates:
+                  type: array
+                  items:
+                    type: string
+                  default: [Done]
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+                  default: [infra::stateless::Ping, infra::stateless::Echo]
+                input:
+                  type: string
+                  description: "AHFL input port; canonical type infra::stateless::Empty"
+                output:
+                  type: string
+                  description: "AHFL output port; canonical type infra::stateless::Empty"
+  scope: Namespaced
+  names:
+    plural: pingers-5f4d0e4af8
+    singular: pinger-5f4d0e4af8
+    kind: Pinger

@@ -1,0 +1,30 @@
+module infra::stateless;
+
+// A stateless agent omits the optional `context` clause (it lowers to Unit),
+// and one capability takes no parameters while another takes one. The OpenAPI
+// artifact must omit requestBody for the zero-parameter capability, and the
+// CRD must not publish a context port placeholder.
+
+struct Empty {}
+
+capability Ping() -> String;
+capability Echo(message: String) -> String;
+
+agent Pinger {
+    input: Empty;
+    output: Empty;
+    states: [Idle, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [Ping, Echo];
+    transition Idle -> Done;
+}
+
+workflow Solo {
+    input: Empty;
+    output: Empty;
+
+    node only: Pinger(input);
+
+    return: only;
+}

@@ -40,10 +40,31 @@ from pathlib import Path
 RFC1123_SUBDOMAIN = re.compile(r"^[a-z0-9]([a-z0-9.\-]{0,251}[a-z0-9])?$")
 
 # (fixture stem, expected agent count, expected terraform depends_on edges as
-# "resource_type.name" substrings).
+# "resource_type.name" substrings, optional structural expectations).
+#   enum_components: component schema names that must be a string enum
+#   no_request_body_paths: operation paths that must NOT carry a requestBody
+#   no_context_ports: number of CRD documents expected without a context port
 FIXTURES = [
-    ("service_mesh", 1, ["ahfl_workflow_node.primary"]),
-    ("multi_agent", 2, ["ahfl_workflow_node.first"]),
+    ("service_mesh", 1, ["ahfl_workflow_node.primary"], {}),
+    ("multi_agent", 2, ["ahfl_workflow_node.first"], {}),
+    (
+        "stateless",
+        1,
+        [],
+        {
+            "no_request_body_paths": {"/infra/stateless/Ping"},
+            "no_context_ports": 1,
+        },
+    ),
+    (
+        "palette",
+        1,
+        [],
+        {
+            "enum_components": ["infra__palette__Color"],
+            "no_request_body_paths": {"/infra/palette/Pick"},
+        },
+    ),
 ]
 
 
@@ -88,7 +109,8 @@ def collect_refs(node, refs):
             collect_refs(item, refs)
 
 
-def check_openapi(text: str, golden: Path, ahflc: str, source: Path) -> None:
+def check_openapi(text: str, golden: Path, ahflc: str, source: Path,
+                  expectations: dict) -> None:
     snapshot_ok(text, golden, "openapi", ahflc, source)
     doc = json.loads(text)  # must be valid JSON
     for key in ("openapi", "info", "paths"):
@@ -98,13 +120,39 @@ def check_openapi(text: str, golden: Path, ahflc: str, source: Path) -> None:
         raise SystemExit("FAIL: openapi 'paths' is empty")
 
     components = doc.get("components", {}).get("schemas", {})
+
+    # A C-style nominal enum component must be a string schema restricted to
+    # its declared variants rather than the unconstrained schema {}.
+    for name in expectations.get("enum_components", []):
+        schema = components.get(name)
+        if not isinstance(schema, dict) or schema.get("type") != "string":
+            raise SystemExit(
+                f"FAIL: openapi enum component {name!r} is not a string schema"
+            )
+        values = schema.get("enum")
+        if not isinstance(values, list) or not values or not all(
+            isinstance(v, str) for v in values
+        ):
+            raise SystemExit(
+                f"FAIL: openapi enum component {name!r} has no string 'enum' list"
+            )
+
+    no_request_body = set(expectations.get("no_request_body_paths", set()))
     for path, operations in doc["paths"].items():
         if "::" in path:
             raise SystemExit(f"FAIL: openapi path {path!r} contains raw '::'")
         if not path.startswith("/"):
             raise SystemExit(f"FAIL: openapi path {path!r} is not absolute")
         for method, operation in operations.items():
-            if "requestBody" not in operation:
+            if path in no_request_body:
+                # A zero-parameter capability must not advertise a required
+                # empty request body.
+                if "requestBody" in operation:
+                    raise SystemExit(
+                        f"FAIL: openapi {method.upper()} {path} unexpectedly "
+                        f"emits a requestBody for a zero-parameter capability"
+                    )
+            elif "requestBody" not in operation:
                 raise SystemExit(
                     f"FAIL: openapi {method.upper()} {path} missing requestBody"
                 )
@@ -131,12 +179,12 @@ def check_openapi(text: str, golden: Path, ahflc: str, source: Path) -> None:
 
     print(
         f"  ok openapi: snapshot, valid JSON, "
-        f"{len(doc['paths'])} paths carry requestBody+200, "
-        f"{len(refs)} $ref resolve"
+        f"{len(doc['paths'])} paths, {len(refs)} $ref resolve"
     )
 
 
-def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: int) -> None:
+def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: int,
+              expectations: dict) -> None:
     snapshot_ok(text, golden, "k8s-crd", ahflc, source)
     try:
         import yaml  # type: ignore
@@ -151,6 +199,8 @@ def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: in
             f"FAIL: k8s-crd document count {len(documents)} != agent count {agent_count}"
         )
 
+    no_context_expected = expectations.get("no_context_ports", 0)
+    no_context_seen = 0
     names = []
     for doc in documents:
         if not isinstance(doc, dict):
@@ -168,6 +218,29 @@ def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: in
             raise SystemExit(
                 f"FAIL: k8s-crd metadata.name {name!r} contains '::' or uppercase"
             )
+        if len(name.encode("utf-8")) > 253:
+            raise SystemExit(
+                f"FAIL: k8s-crd metadata.name {name!r} exceeds 253 bytes"
+            )
+        # A stateless agent (omitted `context` clause) must not publish a
+        # context port placeholder with a blank canonical type.
+        properties = (
+            doc.get("spec", {})
+            .get("versions", [{}])[0]
+            .get("schema", {})
+            .get("openAPIV3Schema", {})
+            .get("properties", {})
+            .get("spec", {})
+            .get("properties", {})
+        )
+        if "context" not in properties:
+            no_context_seen += 1
+        else:
+            description = properties["context"].get("description", "")
+            if description.rstrip().endswith("canonical type"):
+                raise SystemExit(
+                    f"FAIL: k8s-crd {name!r} context port has a blank canonical type"
+                )
         # The fully qualified identity must survive, but only outside RFC 1123
         # identity fields.
         annotations = metadata.get("annotations", {})
@@ -177,12 +250,18 @@ def check_k8s(text: str, golden: Path, ahflc: str, source: Path, agent_count: in
             )
         names.append(name)
 
+    if no_context_seen != no_context_expected:
+        raise SystemExit(
+            f"FAIL: k8s-crd context-port count {no_context_seen} != expected "
+            f"{no_context_expected}"
+        )
+
     if len(set(names)) != len(names):
         raise SystemExit(f"FAIL: k8s-crd metadata.names are not unique: {names}")
 
     print(
         f"  ok k8s-crd: snapshot, {len(documents)} YAML docs parse, "
-        f"{len(names)} unique RFC 1123 metadata.name"
+        f"{len(names)} unique RFC 1123 metadata.name (<=253 bytes)"
     )
 
 
@@ -216,7 +295,7 @@ def main() -> int:
 
     print("=== infra target backend gate ===")
 
-    for stem, agent_count, edges in FIXTURES:
+    for stem, agent_count, edges, expectations in FIXTURES:
         source = infra_dir / f"{stem}.ahfl"
         if not source.exists():
             raise SystemExit(f"FAIL: fixture not found: {source}")
@@ -225,12 +304,14 @@ def main() -> int:
         targets = {
             "openapi": (
                 infra_dir / f"{stem}.openapi.json",
-                lambda text, golden: check_openapi(text, golden, ahflc, source),
+                lambda text, golden: check_openapi(
+                    text, golden, ahflc, source, expectations
+                ),
             ),
             "k8s-crd": (
                 infra_dir / f"{stem}.k8s-crd.yaml",
                 lambda text, golden: check_k8s(
-                    text, golden, ahflc, source, agent_count
+                    text, golden, ahflc, source, agent_count, expectations
                 ),
             ),
             "terraform": (

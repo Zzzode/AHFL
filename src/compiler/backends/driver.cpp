@@ -142,10 +142,13 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                        [](const EmitContext &ctx) -> EmitResult {
                                            auto config = backends::lower_openapi(ctx.program);
                                            if (!config) {
+                                               return std::unexpected(config.error());
+                                           }
+                                           if (!*config) {
                                                return std::unexpected<std::string>(
                                                    "no capabilities found in program");
                                            }
-                                           ctx.out << backends::generate_openapi(*config).json;
+                                           ctx.out << backends::generate_openapi(**config).json;
                                            return {};
                                        }});
 

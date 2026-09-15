@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -79,8 +80,8 @@ build_capability_effects(const ir::AhflIr &program) {
     out.reserve(segment.size());
     for (const unsigned char ch : segment) {
         const bool unreserved = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-                                (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
-                                ch == '.' || ch == '~';
+                                (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' ||
+                                ch == '~';
         if (unreserved) {
             out.push_back(static_cast<char>(ch));
         } else {
@@ -99,9 +100,8 @@ build_capability_effects(const ir::AhflIr &program) {
     std::size_t begin = 0;
     while (begin <= canonical.size()) {
         const auto end = canonical.find("::", begin);
-        const auto segment_view =
-            canonical.substr(begin, end == std::string_view::npos ? std::string_view::npos
-                                                                  : end - begin);
+        const auto segment_view = canonical.substr(
+            begin, end == std::string_view::npos ? std::string_view::npos : end - begin);
         path += '/';
         path += percent_encode_segment(segment_view);
         if (end == std::string_view::npos) {
@@ -155,8 +155,8 @@ std::vector<K8sCrdConfig> lower_k8s_crd(const ir::AhflIr &program) {
         if (const auto *agent = std::get_if<ir::AgentDecl>(&decl)) {
             K8sCrdConfig config;
             config.agent_name = agent->name;
-            config.short_name = std::string(ir::symbol_display_name(agent->symbol_ref,
-                                                                    last_segment(agent->name)));
+            config.short_name =
+                std::string(ir::symbol_display_name(agent->symbol_ref, last_segment(agent->name)));
             config.module_name = agent->symbol_ref.module_name;
             config.states = agent->states;
             config.initial_state = agent->initial_state;
@@ -171,7 +171,7 @@ std::vector<K8sCrdConfig> lower_k8s_crd(const ir::AhflIr &program) {
     return result;
 }
 
-std::optional<OpenApiConfig> lower_openapi(const ir::AhflIr &program) {
+std::expected<std::optional<OpenApiConfig>, std::string> lower_openapi(const ir::AhflIr &program) {
     OpenApiConfig config;
     config.title = "AHFL Generated API";
     OpenApiTypeMapper mapper(program);
@@ -189,6 +189,13 @@ std::optional<OpenApiConfig> lower_openapi(const ir::AhflIr &program) {
     }
     if (config.endpoints.empty()) {
         return std::nullopt;
+    }
+    if (!mapper.errors().empty()) {
+        // Fail closed: one or more capability types referenced a nominal the
+        // program does not declare, which would otherwise render dangling
+        // $refs. Surface the first error; the full list is deterministic in
+        // declaration order.
+        return std::unexpected("OpenAPI lowering failed: " + mapper.errors().front());
     }
     config.components = mapper.release_components();
     return config;

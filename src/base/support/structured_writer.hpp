@@ -213,8 +213,7 @@ class HclWriter {
     }
 
     // Emit a bracketed list of quoted strings: ["a", "b"].
-    HclWriter &attribute_string_list(std::string_view key,
-                                     const std::vector<std::string> &values) {
+    HclWriter &attribute_string_list(std::string_view key, const std::vector<std::string> &values) {
         write_indent();
         buf_ += key;
         buf_ += " = [";

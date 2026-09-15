@@ -30,8 +30,11 @@ struct K8sCrdConfig {
 struct K8sCrdOutput {
     std::string yaml;
     std::string kind;
+    // Composed metadata.name: plural + "." + apiGroup; a DNS subdomain capped
+    // at 253 bytes.
     std::string resource_name;
-    // RFC 1123-compliant plural resource / metadata.name stem.
+    // RFC 1123-compliant plural resource name: a 63-byte DNS label carrying a
+    // deterministic qualified-name hash suffix.
     std::string plural;
 };
 
