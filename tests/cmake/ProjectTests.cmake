@@ -1544,6 +1544,10 @@ add_test(NAME ahfl.property.lowering_equiv
     COMMAND $<TARGET_FILE:ahfl_property_lowering_tests>
 )
 
+add_test(NAME ahfl.property.core_erasure
+    COMMAND $<TARGET_FILE:ahfl_property_core_erasure_tests>
+)
+
 add_test(NAME ahfl.property.smv_syntax
     COMMAND $<TARGET_FILE:ahfl_property_smv_tests>
 )

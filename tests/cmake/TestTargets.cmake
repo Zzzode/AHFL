@@ -1415,6 +1415,17 @@ target_link_libraries(ahfl_property_lowering_tests
 target_include_directories(ahfl_property_lowering_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_property_lowering_tests)
 
+add_executable(ahfl_property_core_erasure_tests
+    unit/property/core_erasure.cpp
+)
+target_link_libraries(ahfl_property_core_erasure_tests
+    PRIVATE
+        ahfl_compiler_handoff
+        ahfl_compiler_ir
+)
+target_include_directories(ahfl_property_core_erasure_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_property_core_erasure_tests)
+
 add_executable(ahfl_property_smv_tests
     unit/property/smv_syntax.cpp
 )
@@ -1528,6 +1539,7 @@ foreach(_tgt
     ahfl_tooling_incremental_tests
     ahfl_tooling_package_tests
     ahfl_property_lowering_tests
+    ahfl_property_core_erasure_tests
     ahfl_property_smv_tests
     ahfl_compiler_ir_opt_tests
     ahfl_assurance_obligations_tests
