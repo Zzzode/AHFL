@@ -4,6 +4,9 @@
 #include "verification/formal/counterexample_json.hpp"
 #include "verification/formal/model_checker_backend.hpp"
 #include "verification/formal/process_launcher.hpp"
+#include "verification/formal/smv_output.hpp"
+#include "verification/formal/smv_source_script.hpp"
+#include "verification/formal/smv_text.hpp"
 
 #if defined(AHFL_ENABLE_BACKEND_FORMAL)
 #include "ahfl/compiler/backends/smv.hpp"
@@ -112,23 +115,14 @@ struct ProcessResult {
     if (options.bmc_use_bmc_engine) {
         // BMC engine requires a source script so we can invoke `go_bmc` plus
         // the BMC-specific check commands with an explicit depth bound.
-        const auto temp_dir = model_path.parent_path();
-        cmd_path = temp_dir / ("ahfl-formal-cmd-" + model_path.filename().string() + ".txt");
-        {
-            std::ofstream cmd_file(cmd_path);
-            if (!cmd_file) {
-                return ProcessResult{-1, "failed to create checker source script", false};
-            }
-            cmd_file << "read_model -i " << model_path << "\n";
-            cmd_file << "go_bmc\n";
-            cmd_file << "check_ltlspec_bmc -k " << options.bmc_depth << "\n";
-            cmd_file << "check_invar_bmc -k " << options.bmc_depth << "\n";
-            cmd_file << "quit\n";
+        cmd_path = write_smv_source_script(model_path, SmvCheckerEngine::Bmc, options.bmc_depth);
+        if (cmd_path.empty()) {
+            return ProcessResult{-1, "failed to create checker source script", false};
         }
         config.arguments = {"-source", cmd_path.string()};
     } else {
         // BDD/default engine: invoke the checker with the model file directly
-        // so wrapper scripts and fake checkers continue to work.  nuXmv and
+        // so wrapper scripts and fake checkers continue to work. nuXmv and
         // NuSMV both default to BDD LTL + invariant checking on a .smv file.
         config.arguments = {model_path.string()};
     }
@@ -151,54 +145,13 @@ struct ProcessResult {
     };
 }
 
-[[nodiscard]] std::vector<std::string> split_lines(std::string_view text) {
-    std::vector<std::string> lines;
-    std::string current;
-    for (const auto character : text) {
-        if (character == '\n') {
-            if (!current.empty() && current.back() == '\r') {
-                current.pop_back();
-            }
-            lines.push_back(std::move(current));
-            current.clear();
-            continue;
-        }
-        current.push_back(character);
-    }
-    if (!current.empty()) {
-        lines.push_back(std::move(current));
-    }
-    return lines;
-}
-
-[[nodiscard]] std::string lower_copy(std::string value) {
-    std::ranges::transform(value, value.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
-    return value;
-}
-
-[[nodiscard]] bool contains(std::string_view value, std::string_view needle) {
-    return value.find(needle) != std::string_view::npos;
-}
-
-[[nodiscard]] std::string trim_copy(std::string_view value) {
-    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
-        value.remove_prefix(1);
-    }
-    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
-        value.remove_suffix(1);
-    }
-    return std::string(value);
-}
-
 [[nodiscard]] std::unordered_map<std::string, std::string>
 parse_symbol_mappings(std::string_view model) {
     constexpr std::string_view prefix = "-- AHFL_MAP ";
     constexpr std::string_view separator = " => ";
 
     std::unordered_map<std::string, std::string> mappings;
-    for (const auto &line : split_lines(model)) {
+    for (const auto &line : split_smv_lines(model)) {
         if (!line.starts_with(prefix)) {
             continue;
         }
@@ -209,8 +162,8 @@ parse_symbol_mappings(std::string_view model) {
             continue;
         }
 
-        mappings.emplace(trim_copy(payload.substr(0, separator_position)),
-                         trim_copy(payload.substr(separator_position + separator.size())));
+        mappings.emplace(smv_trim_copy(payload.substr(0, separator_position)),
+                         smv_trim_copy(payload.substr(separator_position + separator.size())));
     }
 
     return mappings;
@@ -220,13 +173,13 @@ void append_counterexample_mapping(
     FormalVerificationResult &result,
     std::string_view line,
     const std::unordered_map<std::string, std::string> &symbol_mappings) {
-    const auto trimmed = trim_copy(line);
+    const auto trimmed = smv_trim_copy(line);
     const auto separator = trimmed.find('=');
     if (separator == std::string::npos) {
         return;
     }
 
-    const auto symbol = trim_copy(std::string_view(trimmed).substr(0, separator));
+    const auto symbol = smv_trim_copy(std::string_view(trimmed).substr(0, separator));
     const auto mapping = symbol_mappings.find(symbol);
     if (mapping == symbol_mappings.end()) {
         return;
@@ -241,17 +194,30 @@ void append_counterexample_mapping(
 
 void parse_checker_output(FormalVerificationResult &result,
                           const std::unordered_map<std::string, std::string> &symbol_mappings) {
-    bool capture_counterexample = false;
-    for (const auto &line : split_lines(result.output)) {
-        const auto lowered = lower_copy(line);
-        if (contains(lowered, " is false")) {
-            result.failing_specifications.push_back(line);
-        } else if (contains(lowered, " is true")) {
-            result.proven_specifications.push_back(line);
+    for (const auto &specification :
+         parse_smv_specification_results(result.output).specifications) {
+        switch (specification.kind) {
+        case SmvSpecificationVerdictKind::Proven:
+            result.proven_specifications.push_back(specification.summary);
+            break;
+        case SmvSpecificationVerdictKind::Refuted:
+            result.failing_specifications.push_back(specification.summary);
+            break;
+        case SmvSpecificationVerdictKind::BoundedPass:
+            result.bounded_specifications.push_back(specification.summary);
+            break;
+        case SmvSpecificationVerdictKind::Inconclusive:
+            result.inconclusive_specifications.push_back(specification.summary);
+            break;
         }
+    }
 
-        if (contains(lowered, "counterexample") || contains(lowered, "trace description") ||
-            contains(lowered, "trace type")) {
+    bool capture_counterexample = false;
+    for (const auto &line : split_smv_lines(result.output)) {
+        const auto lowered = smv_lower_copy(line);
+        if (smv_contains(lowered, "counterexample") ||
+            smv_contains(lowered, "trace description") ||
+            smv_contains(lowered, "trace type")) {
             capture_counterexample = true;
         }
 
@@ -264,11 +230,11 @@ void parse_checker_output(FormalVerificationResult &result,
 
 [[nodiscard]] std::size_t count_expected_specifications(std::string_view model) {
     std::size_t count = 0;
-    for (const auto &line : split_lines(model)) {
-        if (contains(lower_copy(line), "ltlspec")) {
+    for (const auto &line : split_smv_lines(model)) {
+        if (smv_contains(smv_lower_copy(line), "ltlspec")) {
             ++count;
         }
-        if (contains(lower_copy(line), "invarspec")) {
+        if (smv_contains(smv_lower_copy(line), "invarspec")) {
             ++count;
         }
     }
@@ -283,7 +249,7 @@ void parse_checker_output(FormalVerificationResult &result,
 maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
     // Pattern match on a block of the form:
     //   VAR state : { S0, S1, ... };
-    const std::vector<std::string> lines = split_lines(model);
+    const std::vector<std::string> lines = split_smv_lines(model);
     std::vector<std::string> state_names;
     std::size_t var_state_line_end = std::string::npos;
 
@@ -292,7 +258,7 @@ maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
     std::size_t i = 0;
     while (i < lines.size()) {
         const auto &line = lines[i];
-        auto trimmed = trim_copy(line);
+        auto trimmed = smv_trim_copy(line);
         const auto var_prefix = std::string_view("VAR state : {");
         if (trimmed.starts_with(var_prefix) ||
             (trimmed.starts_with("VAR ") && trimmed.find("state : {") != std::string::npos)) {
@@ -300,7 +266,7 @@ maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
             std::size_t j = i;
             while (accum.find("};") == std::string::npos && j + 1 < lines.size()) {
                 ++j;
-                accum += " " + trim_copy(lines[j]);
+                accum += " " + smv_trim_copy(lines[j]);
             }
             const auto lbrace = accum.find('{');
             const auto rbrace = accum.find('}', lbrace);
@@ -310,7 +276,7 @@ maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
                 std::string current;
                 for (char c : inner) {
                     if (c == ',') {
-                        auto name = trim_copy(current);
+                        auto name = smv_trim_copy(current);
                         if (!name.empty())
                             state_names.push_back(std::move(name));
                         current.clear();
@@ -318,7 +284,7 @@ maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
                         current.push_back(c);
                     }
                 }
-                auto name = trim_copy(current);
+                auto name = smv_trim_copy(current);
                 if (!name.empty())
                     state_names.push_back(std::move(name));
                 var_state_line_end = j;
@@ -355,7 +321,8 @@ maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
     };
 
     auto line_starts_with_ci = [](std::string_view line, std::string_view prefix) {
-        return lower_copy(trim_copy(std::string(line))).starts_with(lower_copy(std::string(prefix)));
+        return smv_lower_copy(smv_trim_copy(std::string(line)))
+            .starts_with(smv_lower_copy(std::string(prefix)));
     };
 
     while (line_idx < lines.size()) {
@@ -379,10 +346,10 @@ maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
         if (!wrote_cycles_trans) {
             // Detect the end of a multi-line TRANS block: the line contains "esac;"
             // (typical case/end) or is a "TRANS ... ;" one-liner.
-            const auto tl = trim_copy(line);
+            const auto tl = smv_trim_copy(line);
             const bool is_trans_esac = tl == "esac;";
             const bool is_trans_oneliner =
-                lower_copy(tl).starts_with("trans ") && tl.ends_with(';');
+                smv_lower_copy(tl).starts_with("trans ") && tl.ends_with(';');
             if (is_trans_esac || is_trans_oneliner) {
                 out << "TRANS next(_cycles_visited) = case\n";
                 out << "  next(state) != state : _cycles_visited + 1;\n";
@@ -420,7 +387,7 @@ maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
 
 void print_output_excerpt(std::string_view output, std::ostream &out) {
     std::size_t printed = 0;
-    for (const auto &line : split_lines(output)) {
+    for (const auto &line : split_smv_lines(output)) {
         if (printed >= 20) {
             out << "... output truncated ...\n";
             return;
@@ -547,6 +514,8 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
     result.exit_code = process.exit_code;
     result.output = process.output;
     result.checker_timed_out = process.timed_out;
+    result.bounded_model_checking = options.bmc_use_bmc_engine;
+    result.bmc_depth = options.bmc_depth;
     parse_checker_output(result, symbol_mappings);
 
     if (!result.model_path_retained) {
@@ -590,7 +559,8 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
     }
 
     const auto observed_specification_count =
-        result.proven_specifications.size() + result.failing_specifications.size();
+        result.proven_specifications.size() + result.failing_specifications.size() +
+        result.bounded_specifications.size() + result.inconclusive_specifications.size();
     if (result.expected_specification_count > 0 && observed_specification_count == 0) {
         result.status = FormalVerificationStatus::CheckerError;
         result.availability_status = ModelCheckerAvailabilityStatus::Available;
@@ -604,6 +574,19 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
             "formal checker emitted fewer specification results than the generated SMV model";
         return result;
     }
+    // A bounded invariant search that exhausted the bound without a proof or
+    // a counterexample is fail-closed: the invariant was neither verified nor
+    // refuted up to K, so a "passed" verdict would be unsound.
+    if (!result.inconclusive_specifications.empty()) {
+        result.status = FormalVerificationStatus::CheckerError;
+        result.availability_status = ModelCheckerAvailabilityStatus::Available;
+        result.error_message =
+            "formal checker could neither prove nor refute " +
+            std::to_string(result.inconclusive_specifications.size()) +
+            " invariant specification(s) within bound " + std::to_string(options.bmc_depth) +
+            "; rerun the BDD engine (without --bmc-depth) or increase the bound";
+        return result;
+    }
 
     result.status = FormalVerificationStatus::Passed;
     return result;
@@ -613,14 +596,29 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
 void print_formal_verification_report(const FormalVerificationResult &result, std::ostream &out) {
     switch (result.status) {
     case FormalVerificationStatus::Passed:
-        out << "ok: formal verification passed with " << result.proven_specifications.size()
-            << " proven specification(s)\n";
+        if (result.bounded_model_checking && !result.bounded_specifications.empty()) {
+            out << "ok: formal verification passed with "
+                << result.bounded_specifications.size()
+                << " bounded specification(s) (no counterexample within bound "
+                << result.bmc_depth << ") and " << result.proven_specifications.size()
+                << " proven specification(s); bounded passes are not full proofs\n";
+        } else {
+            out << "ok: formal verification passed with "
+                << result.proven_specifications.size() << " proven specification(s)\n";
+        }
         out << "formal_backend: " << model_checker_kind_name(result.backend_kind) << '\n';
         out << "checker_status: available\n";
         print_state_space_estimate(result.state_space_estimate, out);
         out << "checker: " << result.checker_path << '\n';
+        if (result.bounded_model_checking) {
+            out << "bmc_engine: true\n";
+            out << "bmc_depth: " << result.bmc_depth << '\n';
+        }
         if (result.model_path_retained) {
             out << "model: " << result.model_path.string() << '\n';
+        }
+        for (const auto &specification : result.bounded_specifications) {
+            out << "bounded: " << specification << '\n';
         }
         return;
     case FormalVerificationStatus::Failed:

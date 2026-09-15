@@ -1,7 +1,10 @@
 #include "verification/formal/model_checker_backend.hpp"
 #include "verification/formal/nuxmv_backend.hpp"
+#include "verification/formal/smv_output.hpp"
+#include "verification/formal/smv_source_script.hpp"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -203,6 +206,161 @@ void test_nuxmv_output_parser_timeout_fixture() {
 }
 
 // ============================================================================
+// Shared SMV specification-output parser: bounded-model-checking verdicts
+// ============================================================================
+
+void test_smv_parser_bdd_true_false() {
+    constexpr std::string_view output = R"(-- specification  G state != bad    is true
+-- invariant (state != bad)   is true
+-- specification  F state = done    is false
+-- as demonstrated by the following execution sequence
+)";
+    const auto parsed = parse_smv_specification_results(output);
+    check(parsed.specifications.size() == 3, "smv_parse_bdd.count_3");
+    check(parsed.specifications[0].kind == SmvSpecificationVerdictKind::Proven,
+          "smv_parse_bdd.first_proven");
+    check(parsed.specifications[0].bound == 0, "smv_parse_bdd.first_unbounded");
+    check(parsed.specifications[1].kind == SmvSpecificationVerdictKind::Proven,
+          "smv_parse_bdd.invar_proven");
+    check(parsed.specifications[2].kind == SmvSpecificationVerdictKind::Refuted,
+          "smv_parse_bdd.ltl_refuted");
+}
+
+void test_smv_parser_bounded_ltl_pass() {
+    constexpr std::string_view output = R"(-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+-- no counterexample found with bound 2
+-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+-- no counterexample found with bound 2
+)";
+    const auto parsed = parse_smv_specification_results(output);
+    check(parsed.specifications.size() == 2, "smv_parse_bounded_pass.count_2");
+    check(parsed.specifications[0].kind == SmvSpecificationVerdictKind::BoundedPass,
+          "smv_parse_bounded_pass.first_kind");
+    check(parsed.specifications[0].bound == 2, "smv_parse_bounded_pass.first_bound_2");
+    check(parsed.specifications[0].summary.find("bound 0..2") != std::string::npos,
+          "smv_parse_bounded_pass.first_summary");
+    check(parsed.specifications[1].kind == SmvSpecificationVerdictKind::BoundedPass,
+          "smv_parse_bounded_pass.second_kind");
+    check(parsed.specifications[1].bound == 2, "smv_parse_bounded_pass.second_bound_2");
+}
+
+void test_smv_parser_bounded_ltl_refuted() {
+    constexpr std::string_view output = R"(-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+-- specification  G state != done    is false
+-- as demonstrated by the following execution sequence
+Trace Description: BMC Counterexample
+  -> State: 1.1 <-
+    state = done
+)";
+    const auto parsed = parse_smv_specification_results(output);
+    check(parsed.specifications.size() == 1, "smv_parse_bounded_fail.count_1");
+    check(parsed.specifications[0].kind == SmvSpecificationVerdictKind::Refuted,
+          "smv_parse_bounded_fail.kind_refuted");
+    check(parsed.specifications[0].bound == 1, "smv_parse_bounded_fail.bound_1");
+    check(parsed.specifications[0].summary.find("is false") != std::string::npos,
+          "smv_parse_bounded_fail.summary");
+}
+
+void test_smv_parser_bounded_passes_then_proven_invariant() {
+    // Real NuSMV 2.6.0 BMC output shape: two bounded LTL passes (no terminal
+    // line, counter resets to 0) followed by an inductively proven invariant.
+    constexpr std::string_view output = R"(-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+-- invariant (state != bad)   is true
+)";
+    const auto parsed = parse_smv_specification_results(output);
+    check(parsed.specifications.size() == 3, "smv_parse_mixed.count_3");
+    check(parsed.specifications[0].kind == SmvSpecificationVerdictKind::BoundedPass,
+          "smv_parse_mixed.first_bounded");
+    check(parsed.specifications[0].bound == 1, "smv_parse_mixed.first_bound_1");
+    check(parsed.specifications[1].kind == SmvSpecificationVerdictKind::BoundedPass,
+          "smv_parse_mixed.second_bounded");
+    check(parsed.specifications[1].bound == 1, "smv_parse_mixed.second_bound_1");
+    check(parsed.specifications[2].kind == SmvSpecificationVerdictKind::Proven,
+          "smv_parse_mixed.invar_proven");
+}
+
+void test_smv_parser_bounded_invariant_inconclusive() {
+    constexpr std::string_view output = R"(-- no proof or counterexample found with bound 0
+-- no proof or counterexample found with bound 1
+-- cannot prove the invariant state != s3  is true or false.
+)";
+    const auto parsed = parse_smv_specification_results(output);
+    check(parsed.specifications.size() == 1, "smv_parse_inconclusive.count_1");
+    check(parsed.specifications[0].kind == SmvSpecificationVerdictKind::Inconclusive,
+          "smv_parse_inconclusive.kind");
+    check(parsed.specifications[0].bound == 1, "smv_parse_inconclusive.bound_1");
+}
+
+void test_smv_parser_real_bmc_pass_fail_pass() {
+    // Mirrors the real three-LTLSPEC probe: pass, fail, pass.
+    constexpr std::string_view output = R"(-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+-- specification  G state != done    is false
+-- as demonstrated by the following execution sequence
+-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+)";
+    const auto parsed = parse_smv_specification_results(output);
+    check(parsed.specifications.size() == 3, "smv_parse_real_mix.count_3");
+    check(parsed.specifications[0].kind == SmvSpecificationVerdictKind::BoundedPass,
+          "smv_parse_real_mix.first_pass");
+    check(parsed.specifications[1].kind == SmvSpecificationVerdictKind::Refuted,
+          "smv_parse_real_mix.middle_fail");
+    check(parsed.specifications[2].kind == SmvSpecificationVerdictKind::BoundedPass,
+          "smv_parse_real_mix.last_pass");
+}
+
+void test_nuxmv_parser_bounded_pass_fixture() {
+    constexpr std::string_view output = R"(-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+-- no counterexample found with bound 0
+-- no counterexample found with bound 1
+)";
+    const auto parsed = parse_nuxmv_verification_output(output);
+    check(parsed.status == NuXmvOutputStatus::Passed, "nuxmv_parse_bounded.status_passed");
+    check(parsed.properties_checked == 2, "nuxmv_parse_bounded.checked_2");
+    check(parsed.properties_passed == 2, "nuxmv_parse_bounded.passed_2");
+}
+
+// ============================================================================
+// Shared NuSMV/nuXmv batch-source script builder
+// ============================================================================
+
+void test_build_smv_source_script_bmc() {
+    const std::filesystem::path model = "/tmp/ahfl-unit/model.smv";
+    const auto script = build_smv_source_script(model, SmvCheckerEngine::Bmc, 7);
+    check(script.find("read_model -i /tmp/ahfl-unit/model.smv\n") != std::string::npos,
+          "smv_script_bmc.read_model");
+    check(script.find("go_bmc\n") != std::string::npos, "smv_script_bmc.go_bmc");
+    check(script.find("check_ltlspec_bmc -k 7\n") != std::string::npos,
+          "smv_script_bmc.ltl_bound");
+    // NuSMV 2.6.0 rejects -k unless een-sorensson is selected explicitly.
+    check(script.find("check_invar_bmc -a een-sorensson -k 7\n") != std::string::npos,
+          "smv_script_bmc.invar_een_sorensson_bound");
+    check(script.find("build_model") == std::string::npos, "smv_script_bmc.no_bdd");
+    check(script.find("quit\n") != std::string::npos, "smv_script_bmc.quit");
+}
+
+void test_build_smv_source_script_bdd() {
+    const std::filesystem::path model = "/tmp/ahfl-unit/model.smv";
+    const auto script = build_smv_source_script(model, SmvCheckerEngine::Bdd, 7);
+    check(script.find("go_bmc") == std::string::npos, "smv_script_bdd.no_bmc");
+    check(script.find("check_ltlspec_bmc") == std::string::npos, "smv_script_bdd.no_bmc_ltl");
+    check(script.find("flatten_hierarchy\n") != std::string::npos, "smv_script_bdd.flatten");
+    check(script.find("build_model\n") != std::string::npos, "smv_script_bdd.build");
+    check(script.find("check_ltlspec\n") != std::string::npos, "smv_script_bdd.ltl");
+    check(script.find("check_invar\n") != std::string::npos, "smv_script_bdd.invar");
+}
+
+// ============================================================================
 // SPIN emission tests
 // ============================================================================
 
@@ -250,6 +408,15 @@ int main() {
     test_nuxmv_output_parser_false_fixture();
     test_nuxmv_output_parser_error_fixture();
     test_nuxmv_output_parser_timeout_fixture();
+    test_smv_parser_bdd_true_false();
+    test_smv_parser_bounded_ltl_pass();
+    test_smv_parser_bounded_ltl_refuted();
+    test_smv_parser_bounded_passes_then_proven_invariant();
+    test_smv_parser_bounded_invariant_inconclusive();
+    test_smv_parser_real_bmc_pass_fail_pass();
+    test_nuxmv_parser_bounded_pass_fixture();
+    test_build_smv_source_script_bmc();
+    test_build_smv_source_script_bdd();
     test_spin_emission();
     test_tlaplus_emission();
 

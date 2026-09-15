@@ -611,6 +611,35 @@ set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: formal verification passed"
 )
 
+# KR7.2: the --bmc-depth path drives the checker with a `-source` batch script
+# (go_bmc; check_ltlspec_bmc -k K; check_invar_bmc -a een-sorensson -k K). The
+# fake checker parses that script and emits the exact NuSMV 2.6.0 bounded
+# verdict lines, so this test is ungated by a real solver.
+add_test(NAME ahflc.verify_formal.fake_bmc_pass
+    COMMAND $<TARGET_FILE:ahflc> verify
+            --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_bmc_pass.sh"
+            --bmc-depth 3
+            "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+)
+set_tests_properties(ahflc.verify_formal.fake_bmc_pass PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: formal verification passed with 12 bounded specification\\(s\\)"
+)
+
+# KR7.2: real NuSMV/nuXmv bounded model checking under --bmc-depth. Always
+# registered so `ctest -R bmc` selects it; the driver exits 77 (ctest SKIP)
+# when no executable checker was configured via AHFL_SMV_CHECKER.
+add_test(NAME ahflc.verify_formal.real_smv_bmc
+    COMMAND "${PROJECT_SOURCE_DIR}/tests/scripts/run_real_smv_bmc.sh"
+            "$<TARGET_FILE:ahflc>"
+            "${AHFL_SMV_CHECKER}"
+            "10"
+            "${AHFL_TESTS_DIR}/golden/formal/ok_real_smv_control.ahfl"
+)
+set_tests_properties(ahflc.verify_formal.real_smv_bmc PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+    SKIP_RETURN_CODE 77
+)
+
 # RFC 0017 slice 1: a String-content contract predicate leaves the SMT
 # verifiable subset and must warn formal.NOT_IN_VERIFIED_SUBSET, while the
 # sibling arithmetic predicate stays unflagged. Uses the fake pass checker so

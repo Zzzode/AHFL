@@ -48,6 +48,14 @@ struct FormalVerificationResult {
     std::size_t expected_specification_count{0};
     std::vector<std::string> proven_specifications;
     std::vector<std::string> failing_specifications;
+    /// BMC verdicts ("no counterexample found with bound 0..K"): validated
+    /// only up to the unrolling depth, never an unconditional proof.
+    std::vector<std::string> bounded_specifications;
+    /// BMC invariant searches that exhausted the bound without proof or
+    /// counterexample; reported as fail-closed checker errors.
+    std::vector<std::string> inconclusive_specifications;
+    bool bounded_model_checking{false};
+    std::size_t bmc_depth{0};
     std::vector<std::string> counterexample_excerpt;
     std::vector<std::string> counterexample_mappings;
     StateSpaceEstimate state_space_estimate;

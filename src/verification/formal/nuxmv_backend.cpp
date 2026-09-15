@@ -1,6 +1,8 @@
 #include "verification/formal/nuxmv_backend.hpp"
 
 #include "verification/formal/process_launcher.hpp"
+#include "verification/formal/smv_output.hpp"
+#include "verification/formal/smv_source_script.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -88,27 +90,23 @@ NuXmvVerificationOutput parse_nuxmv_verification_output(std::string_view output,
         return parsed;
     }
 
+    const auto specifications = parse_smv_specification_results(output).specifications;
+    for (const auto &specification : specifications) {
+        ++parsed.properties_checked;
+        if (specification.kind == SmvSpecificationVerdictKind::Proven ||
+            specification.kind == SmvSpecificationVerdictKind::BoundedPass) {
+            ++parsed.properties_passed;
+        }
+    }
+
     std::istringstream iss{std::string(output)};
     std::string line;
     bool in_counterexample = false;
-
     while (std::getline(iss, line)) {
-        // Check for property results
-        if (line.find("-- specification") != std::string::npos ||
-            line.find("-- LTL specification") != std::string::npos) {
-            if (!parsed.counterexample_trace.empty() && in_counterexample) {
-                in_counterexample = false;
-            }
-
-            parsed.properties_checked++;
-            if (line.find("is true") != std::string::npos) {
-                parsed.properties_passed++;
-            } else if (line.find("is false") != std::string::npos) {
-                in_counterexample = true;
-            }
-        }
-
         // Collect counterexample trace
+        if (line.find("is false") != std::string::npos) {
+            in_counterexample = true;
+        }
         if (in_counterexample) {
             if (line.find("-> State:") != std::string::npos ||
                 line.find("-> Input:") != std::string::npos ||
@@ -282,27 +280,19 @@ NuXmvBackend::verify(const std::string &model_text, const BackendVerificationOpt
     // Write model to temp file
     auto model_path = write_temp_model(model_text);
 
-    // Build verification command using a source script.
-    // BMC mode: "go_bmc; check_ltlspec_bmc -k <K>"  (INVARSPEC BMC via check_invar_bmc)
-    // BDD mode: "flatten_hierarchy; encode_variables; build_model; check_ltlspec; check_invar"
-    auto cmd_path = fs::temp_directory_path() / "ahfl_verification_formal" / "verify_cmd.txt";
-    {
-        std::ofstream cmd_file(cmd_path, std::ios::trunc);
-        cmd_file << "read_model -i " << model_path << "\n";
-        if (options.use_bmc_engine) {
-            // BMC engine path. -k <depth> controls how deep the BMC SAT unrolling runs.
-            cmd_file << "go_bmc\n";
-            cmd_file << "check_ltlspec_bmc -k " << options.bmc_depth << "\n";
-            cmd_file << "check_invar_bmc -k " << options.bmc_depth << "\n";
-        } else {
-            // BDD (default) path — keep existing behaviour.
-            cmd_file << "flatten_hierarchy\n";
-            cmd_file << "encode_variables\n";
-            cmd_file << "build_model\n";
-            cmd_file << "check_ltlspec\n";
-            cmd_file << "check_invar\n";
-        }
-        cmd_file << "quit\n";
+    // Build verification command using a source script. The script content is
+    // shared with the ahflc verify path (see smv_source_script.cpp):
+    //  - BMC: go_bmc; check_ltlspec_bmc -k K; check_invar_bmc -a een-sorensson -k K
+    //  - BDD: flatten_hierarchy; encode_variables; build_model; check_ltlspec; check_invar
+    const auto engine = options.use_bmc_engine ? SmvCheckerEngine::Bmc : SmvCheckerEngine::Bdd;
+    auto cmd_path = write_smv_source_script(std::filesystem::path(model_path), engine,
+                                            options.bmc_depth);
+    if (cmd_path.empty()) {
+        summary.all_passed = false;
+        summary.error_message = "failed to create checker source script";
+        std::error_code ec;
+        fs::remove(model_path, ec);
+        return summary;
     }
 
     ProcessConfig process_config;

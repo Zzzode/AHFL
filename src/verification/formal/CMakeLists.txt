@@ -10,6 +10,8 @@ add_library(ahfl_verification_formal STATIC
     subset.cpp
     model_checker_backend.cpp
     nuxmv_backend.cpp
+    smv_output.cpp
+    smv_source_script.cpp
     spin_backend.cpp
     tlaplus_backend.cpp
     process_launcher.cpp
