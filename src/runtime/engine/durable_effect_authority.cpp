@@ -19,21 +19,21 @@ namespace ahfl::runtime::durable_effect_authority {
 
 namespace {
 
-// The digest-EXCLUDING call-site location of one coordinate (see the header's
-// EffectCallSiteLocation rationale).
-[[nodiscard]] EffectCallSiteLocation call_site_of(const IntentCoordinate &coordinate) noexcept {
-    return EffectCallSiteLocation{
-        .checkpoint_namespace = coordinate.checkpoint_namespace,
-        .node = coordinate.node,
-        .ordinal = coordinate.ordinal,
-        .capability = coordinate.capability,
-        .source_symbol = coordinate.source_symbol,
-    };
+// Whether two rows name the same digest-EXCLUDING call site inside one
+// checkpoint namespace: (namespace, node, ordinal, capability, source_symbol).
+// Authority and param_digest are deliberately excluded: the seal transaction
+// inspects same-call-site rows to detect same-authority param divergence and
+// foreign-authority isolation.
+[[nodiscard]] bool same_call_site(const IntentCoordinate &lhs,
+                                  const IntentCoordinate &rhs) noexcept {
+    return lhs.checkpoint_namespace == rhs.checkpoint_namespace && lhs.node == rhs.node &&
+           lhs.ordinal == rhs.ordinal && lhs.capability == rhs.capability &&
+           lhs.source_symbol == rhs.source_symbol;
 }
 
 // Project sealed storage state onto the begin decision. The caller has already
-// established that the looked-up row's token equals the in-flight intent's
-// token.
+// established that the looked-up row's token (and authority/coordinate) equals
+// the in-flight intent's.
 [[nodiscard]] DedupDecision project_begin(const SealedTerminal &terminal) noexcept {
     return std::visit(
         Overloaded{
@@ -60,6 +60,33 @@ namespace {
             },
         },
         terminal);
+}
+
+// Project the atomic seal_or_load outcome onto the begin decision. The
+// SealExisting row's token is the in-flight intent's token; because the slice-1
+// token deterministically binds authority + full coordinate, a row whose
+// authority/coordinate differ is corrupt backend state rather than a replay.
+[[nodiscard]] std::expected<DedupDecision, DurableEffectBackendError>
+project_seal(const SealOutcome &outcome, const DurableEffectIntent &intent) noexcept {
+    return std::visit(
+        Overloaded{
+            [](const SealSealed &sealed)
+                -> std::expected<DedupDecision, DurableEffectBackendError> {
+                return DedupDecision{EffectNew{sealed.scope}};
+            },
+            [](SealDiverged) -> std::expected<DedupDecision, DurableEffectBackendError> {
+                return DedupDecision{EffectDiverged{}};
+            },
+            [&](const SealExisting &existing)
+                -> std::expected<DedupDecision, DurableEffectBackendError> {
+                if (existing.registration.authority != intent.authority() ||
+                    existing.registration.coordinate != intent.coordinate()) {
+                    return std::unexpected(DurableEffectBackendError::StorageCorrupt);
+                }
+                return project_begin(existing.registration.terminal);
+            },
+        },
+        outcome);
 }
 
 using CompletionError = std::variant<RegistrationConflict, DurableEffectBackendError>;
@@ -105,7 +132,7 @@ map_completion_error(CompletionError error) noexcept {
 
 struct InMemoryDurableEffectBackend::Impl {
     // Flat append-only stores (Principle 3). Registrations are never removed or
-    // reordered; the token/call-site indexes hold flat indices.
+    // reordered; the token index holds flat indices.
     std::vector<SealedEffectRegistration> registrations;
     std::vector<std::vector<std::uint8_t>> payloads;
 
@@ -113,18 +140,11 @@ struct InMemoryDurableEffectBackend::Impl {
     // std::map key needs no custom hash.
     std::map<std::array<std::uint8_t, 32>, std::size_t> by_token;
 
-    // Process-local linearizability for the CAS operations: insert_pending and
-    // complete_pending are atomic with respect to concurrent readers.
+    // Process-local linearizability. seal_or_load and complete_pending run the
+    // ENTIRE decision/state transition under this one mutex, so the begin
+    // collision check and the Pending insert share a single linearization
+    // point.
     mutable std::mutex mutex;
-
-    [[nodiscard]] const SealedEffectRegistration *
-    row_locked(const IdempotencyToken &token) const noexcept {
-        const auto found = by_token.find(token.bytes);
-        if (found == by_token.end()) {
-            return nullptr;
-        }
-        return &registrations[found->second];
-    }
 };
 
 InMemoryDurableEffectBackend::InMemoryDurableEffectBackend()
@@ -138,34 +158,54 @@ InMemoryDurableEffectBackend::operator=(InMemoryDurableEffectBackend &&) noexcep
 std::optional<SealedEffectRegistration>
 InMemoryDurableEffectBackend::find_registration(const IdempotencyToken &token) const {
     const std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (const SealedEffectRegistration *row = impl_->row_locked(token)) {
-        return *row;
+    const auto found = impl_->by_token.find(token.bytes);
+    if (found == impl_->by_token.end()) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return impl_->registrations[found->second];
 }
 
-std::expected<std::vector<SealedEffectRegistration>, DurableEffectBackendError>
-InMemoryDurableEffectBackend::find_at_call_site(const EffectCallSiteLocation &location) const {
+std::expected<SealOutcome, DurableEffectBackendError>
+InMemoryDurableEffectBackend::seal_or_load(SealedEffectRegistration candidate) {
     const std::lock_guard<std::mutex> lock(impl_->mutex);
-    std::vector<SealedEffectRegistration> hits;
+
+    // (1) The token already owns a row (an identical racing begin, or a repeat
+    // begin): replay the sealed lifecycle, no mutation.
+    if (const auto found = impl_->by_token.find(candidate.token.bytes);
+        found != impl_->by_token.end()) {
+        return SealOutcome{SealExisting{impl_->registrations[found->second]}};
+    }
+
+    // (2) Scan the digest-EXCLUDING call site at the SAME linearization point as
+    // the insert. A same-authority row with a different param digest fails
+    // closed (seal nothing); foreign-authority rows mark an isolated New.
+    bool foreign_authority_present = false;
     for (const SealedEffectRegistration &row : impl_->registrations) {
-        if (call_site_of(row.coordinate) == location) {
-            hits.push_back(row);
+        if (!same_call_site(row.coordinate, candidate.coordinate)) {
+            continue;
         }
+        if (row.authority != candidate.authority) {
+            foreign_authority_present = true;
+            continue;
+        }
+        if (row.coordinate.param_digest != candidate.coordinate.param_digest) {
+            return SealOutcome{SealDiverged{}};
+        }
+        // Same authority + identical full coordinate MUST own the identical
+        // token (the slice-1 token is a deterministic digest of exactly those
+        // fields), and step (1) found no such row: the token index is
+        // internally inconsistent.
+        return std::unexpected(DurableEffectBackendError::StorageCorrupt);
     }
-    return hits;
-}
 
-bool InMemoryDurableEffectBackend::insert_pending(SealedEffectRegistration registration) {
-    const std::lock_guard<std::mutex> lock(impl_->mutex);
-    const auto [it, inserted] = impl_->by_token.emplace(registration.token.bytes,
-                                                        impl_->registrations.size());
-    if (!inserted) {
-        // A row already owns this token: the CAS loses with no mutation.
-        return false;
-    }
-    impl_->registrations.push_back(std::move(registration));
-    return true;
+    // (3) Seal Pending. No other thread can have observed the pre-insert call
+    // site within this same critical section, so exactly one thread reaches
+    // this append per same-authority coordinate.
+    impl_->by_token.emplace(candidate.token.bytes, impl_->registrations.size());
+    impl_->registrations.push_back(std::move(candidate));
+    return SealOutcome{SealSealed{
+        foreign_authority_present ? NewEffectScope::AuthorityIsolated
+                                  : NewEffectScope::FreshCoordinate}};
 }
 
 std::expected<ResultHandle,
@@ -214,12 +254,17 @@ InMemoryDurableEffectBackend::list_pending(
     return pending;
 }
 
-std::expected<std::vector<std::uint8_t>, DurableEffectBackendError>
+std::expected<std::vector<std::uint8_t>,
+              std::variant<PayloadReadConflict, DurableEffectBackendError>>
 InMemoryDurableEffectBackend::read_payload(ResultHandle handle) const {
     const std::lock_guard<std::mutex> lock(impl_->mutex);
     if (handle.value == ResultHandle::kInvalid ||
         handle.value >= impl_->payloads.size()) {
-        return std::unexpected(DurableEffectBackendError::StorageCorrupt);
+        // A stale / never-minted handle is a lookup MISS, not an integrity
+        // failure: the flat append-only store has no torn/truncated state.
+        return std::unexpected(
+            std::variant<PayloadReadConflict, DurableEffectBackendError>{
+                PayloadReadConflict::UnknownHandle});
     }
     return impl_->payloads[handle.value];
 }
@@ -234,70 +279,21 @@ std::shared_ptr<IDurableEffectBackend> make_in_memory_durable_effect_backend() {
 
 std::expected<DedupDecision, DurableEffectBackendError>
 DurableEffectAuthority::begin_effect(const DurableEffectIntent &intent) const {
-    const IdempotencyToken token = intent.token();
-
-    // Fast path: the token is already sealed. Project the sealed lifecycle; a
-    // row whose authority/coordinate disagree with the token-owning intent is
-    // corrupt backend state (the slice-1 token is a deterministic digest of
-    // exactly those fields).
-    if (auto existing = backend_->find_registration(token); existing.has_value()) {
-        if (existing->authority != intent.authority() ||
-            existing->coordinate != intent.coordinate()) {
-            return std::unexpected(DurableEffectBackendError::StorageCorrupt);
-        }
-        return project_begin(existing->terminal);
-    }
-
-    // Slow path: inspect every sealed row at the digest-EXCLUDING call site.
-    // Same-authority rows either diverge in their param digest (fail closed) or
-    // are impossible (equal digest implies the token already existed); rows of
-    // another authority make this an isolated New.
-    const EffectCallSiteLocation location = call_site_of(intent.coordinate());
-    auto siblings = backend_->find_at_call_site(location);
-    if (!siblings.has_value()) {
-        return std::unexpected(siblings.error());
-    }
-
-    bool foreign_authority_present = false;
-    for (const SealedEffectRegistration &row : *siblings) {
-        if (row.authority != intent.authority()) {
-            foreign_authority_present = true;
-            continue;
-        }
-        if (row.coordinate.param_digest != intent.coordinate().param_digest) {
-            // Same authority, same checkpoint namespace, same node / ordinal /
-            // capability / source symbol, DIFFERENT canonical Param bytes:
-            // never silently issue a second effect and never surface the prior
-            // effect's bytes.
-            return EffectDiverged{};
-        }
-        // Same authority + same param digest at this call site MUST already
-        // have sealed the identical token (find_registration above); missing it
-        // means the backend's token index is corrupt.
-        return std::unexpected(DurableEffectBackendError::StorageCorrupt);
-    }
-
-    // CAS-seal Pending. A losing race (another thread sealed the token between
-    // the find and the insert) re-reads and projects rather than double-New.
-    SealedEffectRegistration registration{
+    // One atomic backend transaction decides the whole begin: token lookup +
+    // digest-excluding call-site collision scan + Pending seal share a single
+    // linearization point, so two racing begins at one same-authority
+    // coordinate can never both seal (no check-then-act window).
+    SealedEffectRegistration candidate{
         .authority = intent.authority(),
-        .token = token,
+        .token = intent.token(),
         .coordinate = intent.coordinate(),
         .terminal = SealedTerminal{SealedPending{}},
     };
-    if (!backend_->insert_pending(std::move(registration))) {
-        auto raced = backend_->find_registration(token);
-        if (!raced.has_value()) {
-            return std::unexpected(DurableEffectBackendError::StorageCorrupt);
-        }
-        if (raced->authority != intent.authority() || raced->coordinate != intent.coordinate()) {
-            return std::unexpected(DurableEffectBackendError::StorageCorrupt);
-        }
-        return project_begin(raced->terminal);
+    auto outcome = backend_->seal_or_load(std::move(candidate));
+    if (!outcome.has_value()) {
+        return std::unexpected(outcome.error());
     }
-
-    return EffectNew{foreign_authority_present ? NewEffectScope::AuthorityIsolated
-                                               : NewEffectScope::FreshCoordinate};
+    return project_seal(*outcome, intent);
 }
 
 std::expected<ResultHandle, std::variant<EffectTerminalError, DurableEffectBackendError>>
@@ -341,16 +337,33 @@ DurableEffectAuthority::read_result(ResultHandle handle) const {
     if (bytes.has_value()) {
         return *bytes;
     }
-    switch (bytes.error()) {
-    case DurableEffectBackendError::StorageCorrupt:
-        return std::unexpected(
-            std::variant<ResultReadError, DurableEffectBackendError>{ResultReadError::UnknownHandle});
-    case DurableEffectBackendError::StorageUnavailable:
-        return std::unexpected(std::variant<ResultReadError, DurableEffectBackendError>{
-            DurableEffectBackendError::StorageUnavailable});
-    }
-    return std::unexpected(
-        std::variant<ResultReadError, DurableEffectBackendError>{ResultReadError::UnknownHandle});
+    // A lookup miss is the authority-local UnknownHandle; a genuine storage
+    // integrity failure (torn/truncated payload, internally inconsistent
+    // sealed state) passes through verbatim so the host fails closed into
+    // reconciliation instead of treating corruption as "never recorded".
+    return std::visit(
+        Overloaded{
+            [](PayloadReadConflict conflict)
+                -> std::expected<std::vector<std::uint8_t>,
+                                 std::variant<ResultReadError, DurableEffectBackendError>> {
+                switch (conflict) {
+                case PayloadReadConflict::UnknownHandle:
+                    return std::unexpected(
+                        std::variant<ResultReadError, DurableEffectBackendError>{
+                            ResultReadError::UnknownHandle});
+                }
+                return std::unexpected(
+                    std::variant<ResultReadError, DurableEffectBackendError>{
+                        ResultReadError::UnknownHandle});
+            },
+            [](DurableEffectBackendError storage_error)
+                -> std::expected<std::vector<std::uint8_t>,
+                                 std::variant<ResultReadError, DurableEffectBackendError>> {
+                return std::unexpected(
+                    std::variant<ResultReadError, DurableEffectBackendError>{storage_error});
+            },
+        },
+        bytes.error());
 }
 
 DurableEffectAuthority make_in_memory_durable_effect_authority() {

@@ -134,21 +134,34 @@ struct SealedEffectRegistration {
                                          const SealedEffectRegistration &) noexcept = default;
 };
 
-/// The digest-EXCLUDING call-site location inside a checkpoint namespace:
-/// (namespace, node, ordinal, capability, source_symbol). It deliberately
-/// carries NEITHER the authority NOR param_digest: lookups at this location are
-/// how the authority detects (a) same-authority param divergence and (b) a
-/// foreign-authority registration at an otherwise identical coordinate.
-struct EffectCallSiteLocation {
-    CheckpointNamespace checkpoint_namespace{};
-    ir::core::CoreWorkflowNodeId node{};
-    core_wasm_resume::InvocationOrdinal ordinal{};
-    ir::core::CoreCapabilityId capability{};
-    std::uint64_t source_symbol{0};
-
-    [[nodiscard]] friend bool operator==(const EffectCallSiteLocation &,
-                                         const EffectCallSiteLocation &) noexcept = default;
+/// Why a begin sealed a New effect. `FreshCoordinate`: nothing was sealed at
+/// the call site. `AuthorityIsolated`: a row IS sealed at the same call site
+/// but under a DIFFERENT authority; the caller's token is a fresh, isolated
+/// token -- the namespace-isolation guarantee operating, never a
+/// cross-authority replay.
+enum class NewEffectScope : std::uint8_t {
+    FreshCoordinate,
+    AuthorityIsolated,
 };
+
+/// The atomic outcome of `IDurableEffectBackend::seal_or_load`. The whole
+/// begin collision check (token lookup + digest-excluding call-site scan +
+/// Pending insert) is decided at the backend's single linearization point, so
+/// the decision layer never performs a check-then-act sequence.
+struct SealSealed {
+    // No token row existed: a fresh Pending row was sealed.
+    NewEffectScope scope{};
+};
+struct SealDiverged {
+    // A same-authority row at the same call site carries a DIFFERENT param
+    // digest; nothing was sealed (fail closed).
+};
+struct SealExisting {
+    // A row already owns the token (an identical concurrent begin lost the
+    // race, or the effect was already sealed): replay its sealed lifecycle.
+    SealedEffectRegistration registration{};
+};
+using SealOutcome = std::variant<SealSealed, SealDiverged, SealExisting>;
 
 /// One Pending row returned by recover(): everything a host reconciler needs to
 /// re-drive the effect, and nothing terminal (Succeeded/Failed rows are never
@@ -162,16 +175,28 @@ struct PendingRecoveryEntry {
 // ---- typed storage errors (closed sets, no bool/string error channel) --------
 
 /// Storage-layer failures, independent of the dedup DOMAIN decisions. The
-/// in-memory backend never returns these; the future durable backend uses them.
+/// in-memory backend only raises StorageUnavailable in principle (its flat
+/// stores cannot be torn); the future durable backend reports genuine
+/// sealed-state / payload-integrity inconsistency as StorageCorrupt. A handle
+/// naming no payload is NOT corruption -- it is the domain lookup miss
+/// PayloadReadConflict::UnknownHandle.
 enum class DurableEffectBackendError : std::uint8_t {
     StorageUnavailable, // the backend cannot currently serve the operation
-    StorageCorrupt,     // sealed state is internally inconsistent / handle stale
+    StorageCorrupt,     // sealed state is internally inconsistent / payload torn
 };
 
 /// Domain conflict when CAS-completing a Pending registration.
 enum class RegistrationConflict : std::uint8_t {
     Unknown,         // no registration is sealed at the token
     AlreadyTerminal, // the registration was already completed
+};
+
+/// Domain conflict when reading back a recorded payload: the handle names no
+/// stored payload. This is a lookup MISS, never an integrity failure -- a torn
+/// / truncated / internally inconsistent payload is a
+/// DurableEffectBackendError::StorageCorrupt and passes through unchanged.
+enum class PayloadReadConflict : std::uint8_t {
+    UnknownHandle, // the handle is kInvalid or past the flat store's end
 };
 
 // ---- the narrow backend seam -------------------------------------------------
@@ -181,10 +206,13 @@ enum class RegistrationConflict : std::uint8_t {
 /// NO dedup decisions (those live in DurableEffectAuthority). All methods are
 /// linearizable per-backend; the in-memory implementation is process-local.
 ///
-/// begin is a compare-and-seal: `insert_pending` atomically seals a Pending row
-/// keyed by the token and returns false when a row already exists, so a racing
-/// double begin can never produce two `New` decisions against any conforming
-/// backend. `complete_pending` is the CAS Pending -> terminal.
+/// begin is ONE atomic transaction, `seal_or_load`: at the backend's single
+/// linearization point it looks up the token, scans the digest-excluding call
+/// site, and seals Pending (or returns the collision/existing outcome), so a
+/// racing double begin can never produce two `New` decisions against any
+/// conforming backend. The decision layer must never re-derive the call-site
+/// collision check from separate find/insert calls. `complete_pending` is the
+/// CAS Pending -> terminal.
 class IDurableEffectBackend {
   public:
     virtual ~IDurableEffectBackend() = default;
@@ -192,15 +220,20 @@ class IDurableEffectBackend {
     [[nodiscard]] virtual std::optional<SealedEffectRegistration>
     find_registration(const IdempotencyToken &token) const = 0;
 
-    /// Every sealed row at the digest-excluding call-site location, across
-    /// authorities (the caller filters by authority).
-    [[nodiscard]] virtual std::expected<std::vector<SealedEffectRegistration>,
-                                        DurableEffectBackendError>
-    find_at_call_site(const EffectCallSiteLocation &location) const = 0;
-
-    /// CAS-seal a Pending registration keyed by `registration.token`. Returns
-    /// false (with no mutation) when a row already exists at that token.
-    [[nodiscard]] virtual bool insert_pending(SealedEffectRegistration registration) = 0;
+    /// Atomically decide one begin. `candidate` is the Pending registration the
+    /// caller wants sealed (token + authority + full coordinate). Under the
+    /// backend's single linearization point:
+    ///  * a row already owns `candidate.token` -> SealExisting (the racing
+    ///    identical begin, or a repeat begin), no mutation;
+    ///  * otherwise a same-authority row at the SAME digest-excluding call site
+    ///    carries a DIFFERENT param digest -> SealDiverged, nothing is sealed;
+    ///  * otherwise the candidate is appended as Pending -> SealSealed, carrying
+    ///    AuthorityIsolated when the only rows at the call site belong to a
+    ///    foreign authority, else FreshCoordinate.
+    /// A durable implementation realizes this as one transaction (a unique
+    /// constraint on token plus a conditional sibling check).
+    [[nodiscard]] virtual std::expected<SealOutcome, DurableEffectBackendError>
+    seal_or_load(SealedEffectRegistration candidate) = 0;
 
     /// CAS a Pending registration to a terminal state, storing the opaque typed
     /// payload bytes and returning their ResultHandle. Fails typed on an
@@ -218,16 +251,20 @@ class IDurableEffectBackend {
     list_pending(const CheckpointNamespace &checkpoint_namespace) const = 0;
 
     /// Copy out the recorded bytes named by `handle`. The handle is the only
-    /// way result bytes leave the backend.
+    /// way result bytes leave the backend. A handle naming no stored payload is
+    /// the domain conflict PayloadReadConflict::UnknownHandle; genuine
+    /// sealed-state / payload-integrity failures pass through as
+    /// DurableEffectBackendError.
     [[nodiscard]] virtual std::expected<std::vector<std::uint8_t>,
-                                        DurableEffectBackendError>
+                                        std::variant<PayloadReadConflict,
+                                                     DurableEffectBackendError>>
     read_payload(ResultHandle handle) const = 0;
 };
 
-/// The process-local in-memory backend: flat append-only stores + token and
-/// call-site indexes. Same-process recovery only (a fresh authority over the
-/// SAME backend instance); it survives no process exit. Holds no key and
-/// provides no integrity/confidentiality.
+/// The process-local in-memory backend: flat append-only stores, a token
+/// index, and an in-critical-section call-site scan. Same-process recovery
+/// only (a fresh authority over the SAME backend instance); it survives no
+/// process exit. Holds no key and provides no integrity/confidentiality.
 class InMemoryDurableEffectBackend final : public IDurableEffectBackend {
   public:
     InMemoryDurableEffectBackend();
@@ -241,11 +278,8 @@ class InMemoryDurableEffectBackend final : public IDurableEffectBackend {
     [[nodiscard]] std::optional<SealedEffectRegistration>
     find_registration(const IdempotencyToken &token) const override;
 
-    [[nodiscard]] std::expected<std::vector<SealedEffectRegistration>,
-                                DurableEffectBackendError>
-    find_at_call_site(const EffectCallSiteLocation &location) const override;
-
-    [[nodiscard]] bool insert_pending(SealedEffectRegistration registration) override;
+    [[nodiscard]] std::expected<SealOutcome, DurableEffectBackendError>
+    seal_or_load(SealedEffectRegistration candidate) override;
 
     [[nodiscard]] std::expected<ResultHandle,
                                 std::variant<RegistrationConflict,
@@ -258,7 +292,8 @@ class InMemoryDurableEffectBackend final : public IDurableEffectBackend {
     list_pending(const CheckpointNamespace &checkpoint_namespace) const override;
 
     [[nodiscard]] std::expected<std::vector<std::uint8_t>,
-                                DurableEffectBackendError>
+                                std::variant<PayloadReadConflict,
+                                             DurableEffectBackendError>>
     read_payload(ResultHandle handle) const override;
 
   private:
@@ -270,15 +305,6 @@ class InMemoryDurableEffectBackend final : public IDurableEffectBackend {
 make_in_memory_durable_effect_backend();
 
 // ---- dedup decisions (Principle 4: closed std::variant) ----------------------
-
-/// Why a begin was a New. `FreshCoordinate`: nothing was sealed at the call
-/// site. `AuthorityIsolated`: a row IS sealed at the same call site but under a
-/// DIFFERENT authority; the caller's token is a fresh, isolated token -- the
-/// namespace-isolation guarantee operating, never a cross-authority replay.
-enum class NewEffectScope : std::uint8_t {
-    FreshCoordinate,
-    AuthorityIsolated,
-};
 
 struct EffectNew {
     NewEffectScope scope{};

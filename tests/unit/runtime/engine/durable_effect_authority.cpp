@@ -27,12 +27,16 @@
 #include "runtime/engine/durable_effect_intent.hpp"
 
 #include <array>
+#include <atomic>
+#include <barrier>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -65,11 +69,18 @@ using ahfl::runtime::durable_effect_authority::InMemoryDurableEffectBackend;
 using ahfl::runtime::durable_effect_authority::make_in_memory_durable_effect_backend;
 using ahfl::runtime::durable_effect_authority::make_in_memory_durable_effect_authority;
 using ahfl::runtime::durable_effect_authority::NewEffectScope;
+using ahfl::runtime::durable_effect_authority::PayloadReadConflict;
 using ahfl::runtime::durable_effect_authority::PendingRecoveryEntry;
 using ahfl::runtime::durable_effect_authority::RegistrationConflict;
 using ahfl::runtime::durable_effect_authority::ResultHandle;
 using ahfl::runtime::durable_effect_authority::ResultReadError;
+using ahfl::runtime::durable_effect_authority::SealedEffectRegistration;
+using ahfl::runtime::durable_effect_authority::SealDiverged;
+using ahfl::runtime::durable_effect_authority::SealExisting;
+using ahfl::runtime::durable_effect_authority::SealOutcome;
+using ahfl::runtime::durable_effect_authority::SealSealed;
 using ahfl::runtime::core_wasm_idempotency_token::IdempotencyAuthorityId;
+using ahfl::runtime::core_wasm_idempotency_token::IdempotencyToken;
 using ahfl::runtime::durable_effect_intent::CheckpointNamespace;
 using ahfl::runtime::durable_effect_intent::DurableEffectIntent;
 using ahfl::runtime::durable_effect_intent::FrozenAuthorityNamespaceBuilder;
@@ -183,6 +194,100 @@ std::vector<std::uint8_t> secret_bytes(std::uint8_t seed) {
     return bytes;
 }
 
+// A pool of long-lived worker threads that runs one identical racing action
+// per round behind barriers. Thread creation/destruction is hoisted out of the
+// timed region (per-round churn otherwise serializes the begin calls and hides
+// the TOCTOU windows the test exists to catch). Each round: main publishes the
+// shared state and the action, releases the workers, waits for all of them to
+// finish, then inspects the accumulated counters. The barrier phases establish
+// a total order, so the action published before the release barrier is visible
+// to every worker after it.
+class RacingPool {
+  public:
+    explicit RacingPool(unsigned thread_count)
+        : ready_(thread_count + 1), go_(thread_count + 1), done_(thread_count + 1) {
+        workers_.reserve(thread_count);
+        for (unsigned t = 0; t < thread_count; ++t) {
+            workers_.emplace_back([this, t] { worker(t); });
+        }
+    }
+    ~RacingPool() {
+        stop_ = true;
+        ready_.arrive_and_wait();
+        for (std::thread &th : workers_) th.join();
+    }
+    RacingPool(const RacingPool &) = delete;
+    RacingPool &operator=(const RacingPool &) = delete;
+
+    void run_round(std::function<void(unsigned)> action) {
+        action_ = std::move(action);
+        ready_.arrive_and_wait();
+        go_.arrive_and_wait();
+        done_.arrive_and_wait();
+    }
+
+  private:
+    void worker(unsigned thread_index) {
+        for (;;) {
+            ready_.arrive_and_wait();
+            if (stop_) {
+                break;
+            }
+            go_.arrive_and_wait();
+            action_(thread_index);
+            done_.arrive_and_wait();
+        }
+    }
+
+    std::vector<std::thread> workers_;
+    std::barrier<> ready_;
+    std::barrier<> go_;
+    std::barrier<> done_;
+    bool stop_{false};
+    std::function<void(unsigned)> action_;
+};
+
+// A backend that delegates everything to the in-memory backend but reports a
+// genuine storage-integrity failure (a torn/truncated payload) on read. The
+// authority must pass that through as DurableEffectBackendError::StorageCorrupt,
+// never collapse it into the benign UnknownHandle lookup miss.
+class CorruptReadBackend final : public IDurableEffectBackend {
+  public:
+    explicit CorruptReadBackend(std::shared_ptr<IDurableEffectBackend> inner)
+        : inner_(std::move(inner)) {}
+
+    [[nodiscard]] std::optional<SealedEffectRegistration>
+    find_registration(const IdempotencyToken &token) const override {
+        return inner_->find_registration(token);
+    }
+    [[nodiscard]] std::expected<SealOutcome, DurableEffectBackendError>
+    seal_or_load(SealedEffectRegistration candidate) override {
+        return inner_->seal_or_load(std::move(candidate));
+    }
+    [[nodiscard]] std::expected<ResultHandle,
+                                std::variant<RegistrationConflict,
+                                             DurableEffectBackendError>>
+    complete_pending(const IdempotencyToken &token, bool succeeded,
+                     std::span<const std::uint8_t> typed_payload) override {
+        return inner_->complete_pending(token, succeeded, typed_payload);
+    }
+    [[nodiscard]] std::expected<std::vector<PendingRecoveryEntry>, DurableEffectBackendError>
+    list_pending(const CheckpointNamespace &checkpoint_namespace) const override {
+        return inner_->list_pending(checkpoint_namespace);
+    }
+    [[nodiscard]] std::expected<std::vector<std::uint8_t>,
+                                std::variant<PayloadReadConflict,
+                                             DurableEffectBackendError>>
+    read_payload(ResultHandle) const override {
+        return std::unexpected(
+            std::variant<PayloadReadConflict, DurableEffectBackendError>{
+                DurableEffectBackendError::StorageCorrupt});
+    }
+
+  private:
+    std::shared_ptr<IDurableEffectBackend> inner_;
+};
+
 } // namespace
 
 int main() {
@@ -192,6 +297,13 @@ int main() {
                   "ReplaySucceeded/ReplayFailed/Diverged");
     static_assert(std::variant_size_v<EffectResolution> == 4,
                   "EffectResolution must be exactly Unknown/Pending/Succeeded/Failed");
+    // The atomic backend seam outcome is a closed set: a fourth seal outcome
+    // (or a split back into separate find/scan/insert calls) must fail here.
+    static_assert(std::variant_size_v<SealOutcome> == 3,
+                  "SealOutcome must be exactly SealSealed/SealDiverged/SealExisting");
+    static_assert(std::is_same_v<std::variant_alternative_t<0, SealOutcome>, SealSealed>);
+    static_assert(std::is_same_v<std::variant_alternative_t<1, SealOutcome>, SealDiverged>);
+    static_assert(std::is_same_v<std::variant_alternative_t<2, SealOutcome>, SealExisting>);
     static_assert(std::is_same_v<std::variant_alternative_t<0, DedupDecision>, EffectNew>);
     static_assert(
         std::is_same_v<std::variant_alternative_t<1, DedupDecision>, EffectReplayPending>);
@@ -556,6 +668,216 @@ int main() {
             // (only authority/token/coordinate strong ids).
         }
         check(contains_token(recovered, pending), "pending_effect_is_recoverable");
+    }
+
+    // ---- (i) concurrency: the linearizable-begin guarantee under re-drive --
+    //
+    // begin/record are the hot path under concurrent replay controllers /
+    // workers re-driving the same checkpoint. The guarantee only matters under
+    // contention, so every invariant below is asserted over hundreds of rounds
+    // with a persistent pool of barrier-released workers, never serially. The
+    // pool keeps the worker threads alive across rounds: creating/joining a
+    // thread per round serializes the begins and hides the exact TOCTOU windows
+    // these tests pin.
+    {
+        constexpr unsigned kIdenticalThreads = 24;
+        constexpr unsigned kDivergeThreads = 8;
+        constexpr unsigned kRounds = 600;
+
+        // (i.1) N-way IDENTICAL begin: exactly one New, every other call a
+        // ReplayPending, zero storage errors. This is the former P1 window (a
+        // racing identical begin was misreported as StorageCorrupt).
+        {
+            RacingPool pool(kIdenticalThreads);
+            for (unsigned round = 0; round < kRounds; ++round) {
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority authority{backend};
+                const DurableEffectIntent intent = mint(authority_a, ns1,
+                                                        make_coordinate(ns1, 0x61,
+                                                                        /*node=*/400 + round));
+                std::atomic<unsigned> new_count{0};
+                std::atomic<unsigned> pending_count{0};
+                std::atomic<unsigned> error_count{0};
+                pool.run_round([&](unsigned) {
+                    auto decision = authority.begin_effect(intent);
+                    if (!decision.has_value()) {
+                        ++error_count;
+                        return;
+                    }
+                    const int arm = summarize(*decision).arm;
+                    if (arm == 0) {
+                        ++new_count;
+                    } else if (arm == 1) {
+                        ++pending_count;
+                    } else {
+                        ++error_count;
+                    }
+                });
+                check(new_count.load() == 1, "identical_race_exactly_one_New");
+                check(pending_count.load() == kIdenticalThreads - 1,
+                      "identical_race_all_losers_ReplayPending");
+                check(error_count.load() == 0, "identical_race_zero_errors");
+                const auto recovered = authority.recover(ns1);
+                check(recovered.has_value() && contains_token(*recovered, intent) &&
+                          recovered->size() == 1,
+                      "identical_race_seals_exactly_one_pending_row");
+            }
+        }
+
+        // (i.2) N-way record_result on one Pending token: exactly one winner,
+        // every other record TerminalAlreadyRecorded, no backend error.
+        {
+            RacingPool pool(kIdenticalThreads);
+            for (unsigned round = 0; round < kRounds; ++round) {
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority authority{backend};
+                const DurableEffectIntent intent = mint(authority_a, ns1,
+                                                        make_coordinate(ns1, 0x61,
+                                                                        /*node=*/900 + round));
+                static_cast<void>(authority.begin_effect(intent));
+                std::atomic<unsigned> ok_count{0};
+                std::atomic<unsigned> terminal_count{0};
+                std::atomic<unsigned> other_count{0};
+                pool.run_round([&](unsigned t) {
+                    auto recorded =
+                        authority.record_result(intent.token(), secret_bytes(0x40 + t));
+                    if (recorded.has_value()) {
+                        ++ok_count;
+                    } else if (std::holds_alternative<EffectTerminalError>(recorded.error()) &&
+                               std::get<EffectTerminalError>(recorded.error()) ==
+                                   EffectTerminalError::TerminalAlreadyRecorded) {
+                        ++terminal_count;
+                    } else {
+                        ++other_count;
+                    }
+                });
+                check(ok_count.load() == 1, "concurrent_record_exactly_one_success");
+                check(terminal_count.load() == kIdenticalThreads - 1,
+                      "concurrent_record_losers_TerminalAlreadyRecorded");
+                check(other_count.load() == 0, "concurrent_record_zero_other_errors");
+            }
+        }
+
+        // (i.3) Same authority, SAME call site, DIFFERENT param digest under
+        // contention: never two New. The winner seals one Pending row; losers
+        // carrying the winner's digest ReplayPending and losers carrying the
+        // other digest Diverge (sealing nothing). recover() names exactly one
+        // Pending row at the coordinate. This is the former P0 TOCTOU window
+        // (two distinct-token CAS inserts could both win).
+        {
+            RacingPool pool(kDivergeThreads);
+            for (unsigned round = 0; round < kRounds; ++round) {
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority authority{backend};
+                const DurableEffectIntent intent_v1 =
+                    mint(authority_a, ns1, make_coordinate(ns1, 0x61, /*node=*/1400 + round));
+                const DurableEffectIntent intent_v2 =
+                    mint(authority_a, ns1, make_coordinate(ns1, 0x62, /*node=*/1400 + round));
+                std::atomic<unsigned> new_count{0};
+                std::atomic<unsigned> replay_count{0};
+                std::atomic<unsigned> diverged_count{0};
+                std::atomic<unsigned> error_count{0};
+                pool.run_round([&](unsigned t) {
+                    const DurableEffectIntent &which = (t & 1U) ? intent_v2 : intent_v1;
+                    auto decision = authority.begin_effect(which);
+                    if (!decision.has_value()) {
+                        ++error_count;
+                        return;
+                    }
+                    switch (summarize(*decision).arm) {
+                    case 0: ++new_count; break;
+                    case 1: ++replay_count; break;
+                    case 4: ++diverged_count; break;
+                    default: ++error_count; break;
+                    }
+                });
+                check(new_count.load() == 1, "divergent_race_never_two_New");
+                check(error_count.load() == 0, "divergent_race_zero_errors");
+                check(new_count.load() + replay_count.load() + diverged_count.load() ==
+                          kDivergeThreads,
+                      "divergent_race_every_caller_classified");
+                const auto recovered = authority.recover(ns1);
+                const bool one_pending =
+                    recovered.has_value() && recovered->size() == 1 &&
+                    (contains_token(*recovered, intent_v1) ||
+                     contains_token(*recovered, intent_v2));
+                check(one_pending, "divergent_race_exactly_one_pending_row_at_coordinate");
+                // The loser-side digest seals nothing and is Unknown forever.
+                const bool v1_pending =
+                    recovered.has_value() && contains_token(*recovered, intent_v1);
+                const DurableEffectIntent &loser_digest =
+                    v1_pending ? intent_v2 : intent_v1;
+                check(std::holds_alternative<EffectUnknown>(
+                          *authority.resolve(loser_digest.token())),
+                      "divergent_race_loser_digest_seals_nothing");
+            }
+        }
+
+        // (i.4) Two FOREIGN authorities at one identical coordinate both begin:
+        // each seals its own isolated New (one FreshCoordinate, one
+        // AuthorityIsolated), and recover lists both rows with their own
+        // authority -- never cross-authority dedup.
+        {
+            constexpr unsigned kIsoRounds = 600;
+            RacingPool pool(2);
+            for (unsigned round = 0; round < kIsoRounds; ++round) {
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority authority{backend};
+                const DurableEffectIntent intent_a =
+                    mint(authority_a, ns1, make_coordinate(ns1, 0x61, /*node=*/1900 + round));
+                const DurableEffectIntent intent_b =
+                    mint(authority_b, ns1, make_coordinate(ns1, 0x61, /*node=*/1900 + round));
+                std::atomic<unsigned> isolated_new{0};
+                std::atomic<unsigned> other{0};
+                pool.run_round([&](unsigned t) {
+                    const DurableEffectIntent &which = t ? intent_b : intent_a;
+                    auto decision = authority.begin_effect(which);
+                    if (decision.has_value() &&
+                        std::holds_alternative<EffectNew>(*decision)) {
+                        ++isolated_new;
+                    } else {
+                        ++other;
+                    }
+                });
+                check(isolated_new.load() == 2 && other.load() == 0,
+                      "foreign_authority_race_both_get_isolated_New");
+                const auto recovered = authority.recover(ns1);
+                check(recovered.has_value() && recovered->size() == 2 &&
+                          contains_token(*recovered, intent_a) &&
+                          contains_token(*recovered, intent_b),
+                      "foreign_authority_race_seals_two_isolated_rows");
+            }
+        }
+    }
+
+    // ---- (j) genuine StorageCorrupt on read passes through, not UnknownHandle
+    {
+        auto inner = make_in_memory_durable_effect_backend();
+        auto corrupting = std::make_shared<CorruptReadBackend>(inner);
+        DurableEffectAuthority authority{corrupting};
+        const DurableEffectIntent intent =
+            mint(authority_a, ns1, make_coordinate(ns1, 0x61, /*node=*/2300));
+        static_cast<void>(authority.begin_effect(intent));
+        const auto handle = authority.record_result(intent.token(), secret_bytes(0xF0));
+        check(handle.has_value(), "corrupt_backend_still_seals_and_records");
+
+        // The seam reports a real torn/truncated payload; the authority must
+        // surface DurableEffectBackendError::StorageCorrupt rather than the
+        // benign authority-local UnknownHandle lookup miss.
+        const auto read = authority.read_result(*handle);
+        check(!read.has_value() &&
+                  std::holds_alternative<DurableEffectBackendError>(read.error()) &&
+                  std::get<DurableEffectBackendError>(read.error()) ==
+                      DurableEffectBackendError::StorageCorrupt,
+              "storage_corrupt_on_read_passes_through_not_UnknownHandle");
+
+        // The ordinary in-memory backend still classifies a stale handle as
+        // the domain UnknownHandle (a miss, not corruption).
+        DurableEffectAuthority plain = make_in_memory_durable_effect_authority();
+        const auto miss = plain.read_result(ResultHandle{0xDEADBEEFCAFEULL});
+        check(!miss.has_value() && std::holds_alternative<ResultReadError>(miss.error()) &&
+                  std::get<ResultReadError>(miss.error()) == ResultReadError::UnknownHandle,
+              "stale_handle_in_memory_is_UnknownHandle");
     }
 
     if (g_failures == 0) {
