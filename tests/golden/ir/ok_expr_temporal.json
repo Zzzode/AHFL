@@ -140,6 +140,58 @@
         "module_name": "ir::expr_temporal",
         "id": 1
       },
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "std::collections::List<Int>",
+            "canonical_name": "std::collections::List",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::collections::List",
+              "local_name": "List",
+              "module_name": "std::collections",
+              "id": 9
+            },
+            "type_args": [
+              {
+                "kind": "int",
+                "display_name": "Int"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "std::collections::Map<String, String>",
+            "canonical_name": "std::collections::Map",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::collections::Map",
+              "local_name": "Map",
+              "module_name": "std::collections",
+              "id": 11
+            },
+            "type_args": [
+              {
+                "kind": "string",
+                "display_name": "String"
+              },
+              {
+                "kind": "string",
+                "display_name": "String"
+              }
+            ]
+          }
+        }
+      ],
+      "field_type_template_roots": [
+        0,
+        1
+      ],
       "fields": [
         {
           "name": "values",
@@ -227,6 +279,142 @@
         "module_name": "ir::expr_temporal",
         "id": 2
       },
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "std::collections::List<Int>",
+            "canonical_name": "std::collections::List",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::collections::List",
+              "local_name": "List",
+              "module_name": "std::collections",
+              "id": 9
+            },
+            "type_args": [
+              {
+                "kind": "int",
+                "display_name": "Int"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "std::collections::Set<String>",
+            "canonical_name": "std::collections::Set",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::collections::Set",
+              "local_name": "Set",
+              "module_name": "std::collections",
+              "id": 10
+            },
+            "type_args": [
+              {
+                "kind": "string",
+                "display_name": "String"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "std::collections::Map<String, String>",
+            "canonical_name": "std::collections::Map",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::collections::Map",
+              "local_name": "Map",
+              "module_name": "std::collections",
+              "id": 11
+            },
+            "type_args": [
+              {
+                "kind": "string",
+                "display_name": "String"
+              },
+              {
+                "kind": "string",
+                "display_name": "String"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "int",
+            "display_name": "Int"
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Response",
+              "local_name": "Response",
+              "module_name": "ir::expr_temporal",
+              "id": 3
+            }
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "enum",
+            "display_name": "std::option::Option<String>",
+            "canonical_name": "std::option::Option",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "std::option::Option",
+              "local_name": "Option",
+              "module_name": "std::option",
+              "id": 90
+            },
+            "type_args": [
+              {
+                "kind": "string",
+                "display_name": "String"
+              }
+            ]
+          }
+        }
+      ],
+      "field_type_template_roots": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
       "fields": [
         {
           "name": "note",
@@ -1004,6 +1192,34 @@
         "module_name": "ir::expr_temporal",
         "id": 3
       },
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          }
+        },
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "enum",
+            "display_name": "ir::expr_temporal::Status",
+            "canonical_name": "ir::expr_temporal::Status",
+            "nominal_ref": {
+              "kind": "type",
+              "canonical_name": "ir::expr_temporal::Status",
+              "local_name": "Status",
+              "module_name": "ir::expr_temporal",
+              "id": 4
+            }
+          }
+        }
+      ],
+      "field_type_template_roots": [
+        0,
+        1
+      ],
       "fields": [
         {
           "name": "note",

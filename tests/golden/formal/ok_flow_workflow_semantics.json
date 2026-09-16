@@ -43,6 +43,18 @@
         "module_name": "formal::flow_workflow",
         "id": 0
       },
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "bool",
+            "display_name": "Bool"
+          }
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
       "fields": [
         {
           "name": "allow_fast_track",
@@ -81,6 +93,18 @@
         "module_name": "formal::flow_workflow",
         "id": 1
       },
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          }
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
       "fields": [
         {
           "name": "tag",
@@ -132,6 +156,18 @@
         "module_name": "formal::flow_workflow",
         "id": 2
       },
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          }
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
       "fields": [
         {
           "name": "tag",
