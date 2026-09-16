@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
@@ -133,6 +134,34 @@ std::vector<std::uint8_t> custom_payload(const std::string &name,
     return p;
 }
 
+// D2a-F3: a Memory (wasm section id 5) section payload: count then one limits
+// entry per memory (flags 0 = min only, 1 = min + max). Test-only.
+struct MemorySectionSpec {
+    std::uint32_t count = 1;
+    std::uint8_t flags = 0; // 0 = min only; 1 = min + max; 2 = reserved (malformed)
+    std::uint32_t min_pages = 1;
+    std::uint32_t max_pages = 1; // read iff flags == 1
+    // Append an extra trailing byte after the declared entries so the section is
+    // structurally present but not exact-consumed.
+    bool trailing_byte = false;
+};
+
+std::vector<std::uint8_t> memory_payload(const MemorySectionSpec &spec) {
+    std::vector<std::uint8_t> p;
+    put_uleb(p, spec.count);
+    for (std::uint32_t i = 0; i < spec.count; ++i) {
+        p.push_back(spec.flags);
+        put_uleb(p, spec.min_pages);
+        if (spec.flags == 1) {
+            put_uleb(p, spec.max_pages);
+        }
+    }
+    if (spec.trailing_byte) {
+        p.push_back(0x00);
+    }
+    return p;
+}
+
 // A canonical AHFLXM manifest body for a Workflow with the given node specs.
 struct ManifestNodeSpec {
     std::uint32_t workflow_node_id;
@@ -211,6 +240,10 @@ struct ModuleSpec {
     std::optional<std::vector<std::uint8_t>> pre_manifest_custom_body;
     std::optional<std::vector<std::uint8_t>> manifest_override;
     std::optional<std::vector<std::uint8_t>> schema_override;
+    // D2a-F3: an optional Memory (id 5) section payload emitted right after the
+    // Import section. Absent -> the module carries no Memory section at all.
+    std::optional<std::vector<std::uint8_t>> memory_section_override;
+    bool duplicate_memory = false; // emit the Memory section twice
 };
 
 std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
@@ -225,6 +258,13 @@ std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
         imports.emplace_back(symbol, 0u);
     }
     put_section(m, 2, import_payload(imports));
+
+    if (spec.memory_section_override.has_value()) {
+        put_section(m, 5, *spec.memory_section_override);
+        if (spec.duplicate_memory) {
+            put_section(m, 5, *spec.memory_section_override);
+        }
+    }
 
     const auto manifest = spec.manifest_override.has_value()
                               ? *spec.manifest_override
@@ -1117,6 +1157,22 @@ int main() {
                 // Exactly one call site (node0).
                 check(admitted.module->call_site_count() == 1,
                       "real.capwf_one_call_site");
+                // D2a-F3: the genuine emitter artifact's OWN Memory section
+                // declares exactly one no-maximum page, i.e. the F1 fixed
+                // single-page capacity read from the digest-authenticated bytes.
+                {
+                    auto cap = admitted.module->declared_linear_memory_capacity();
+                    check(cap.has_value(), "real.capwf_declared_capacity_ok");
+                    if (cap.has_value()) {
+                        check(cap->capacity_bytes ==
+                                      ahfl::ir::core::kCoreWasmFixedLinearMemoryCapacityBytes &&
+                                  cap->capacity_bytes == 65536 &&
+                                  cap->min_pages ==
+                                      ahfl::ir::core::kCoreWasmFixedLinearMemoryMinPages &&
+                                  !cap->has_max,
+                              "real.capwf_declared_capacity_fixed_single_page");
+                    }
+                }
                 auto cs = admitted.module->resolve(ManifestCallSiteIndex{0});
                 check(cs.ok(), "real.capwf_resolve_ok");
                 if (cs.ok()) {
@@ -1142,6 +1198,171 @@ int main() {
                     check(&p.table() == &r.table(),
                           "real.capwf_param_result_shared_backing");
                 }
+            }
+        }
+    }
+
+    // ---- D2a-F3: declared-memory capacity reader ---------------------------
+    // A2 parses the Memory (wasm section id 5) section during its one framing
+    // pass and exposes the artifact-declared fixed single-page capacity the
+    // host cross-checks against the F1 SSOT before instantiation. Evidence:
+    //   * conforming hand-built section -> 65536 / one page / no max;
+    //   * missing / zero / two memories / max present / min!=1 -> typed
+    //     MemoryDeclError while the module itself still admits (the fixed-page
+    //     contract is the getter's, applied after digest-authenticated framing);
+    //   * structurally malformed Memory sections fail framing closed;
+    //   * the genuine emitter artifact asserts the same value above.
+    {
+        ModuleSpec base;
+        base.caps = {{3, 300}};
+        base.manifest_nodes = {{40, 1, 3, 300}};
+
+        // Positive: exactly one memory, flags 0, min 1.
+        {
+            ModuleSpec s = base;
+            s.memory_section_override = memory_payload(MemorySectionSpec{});
+            const auto module = build_module(s);
+            check(admit_ok(module), "memory.conforming_admits");
+            auto admitted =
+                make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+            check(admitted.ok(), "memory.conforming_admitted");
+            if (admitted.ok()) {
+                static_assert(
+                    std::is_same_v<decltype(admitted.module->declared_linear_memory_capacity()),
+                                   std::expected<ArtifactMemoryCapacity, MemoryDeclError>>,
+                    "declared_linear_memory_capacity returns the typed expected");
+                auto cap = admitted.module->declared_linear_memory_capacity();
+                check(cap.has_value(), "memory.conforming_capacity_present");
+                if (cap.has_value()) {
+                    constexpr ArtifactMemoryCapacity kExpected{
+                        ahfl::ir::core::kCoreWasmFixedLinearMemoryCapacityBytes,
+                        ahfl::ir::core::kCoreWasmFixedLinearMemoryMinPages,
+                        false};
+                    check(*cap == kExpected, "memory.conforming_equals_ssot");
+                    check(cap->capacity_bytes == 65536 && cap->min_pages == 1 && !cap->has_max,
+                          "memory.conforming_one_page_no_max");
+                }
+            }
+        }
+
+        // Missing Memory section: module admits, getter fails closed.
+        {
+            const auto module = build_module(base);
+            check(admit_ok(module), "memory.missing_section_admits");
+            auto admitted =
+                make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+            check(admitted.ok(), "memory.missing_section_admitted");
+            if (admitted.ok()) {
+                auto cap = admitted.module->declared_linear_memory_capacity();
+                check(!cap.has_value() && cap.error() == MemoryDeclError::MissingMemorySection,
+                      "memory.missing_section_error");
+            }
+        }
+
+        // Memory count zero: well-formed section, contract fails closed.
+        {
+            ModuleSpec s = base;
+            s.memory_section_override = memory_payload(MemorySectionSpec{.count = 0});
+            const auto module = build_module(s);
+            check(admit_ok(module), "memory.zero_count_admits");
+            auto admitted =
+                make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+            if (admitted.ok()) {
+                auto cap = admitted.module->declared_linear_memory_capacity();
+                check(!cap.has_value() && cap.error() == MemoryDeclError::MemoryCountNotOne,
+                      "memory.zero_count_error");
+            }
+        }
+
+        // Two memories: exact-consumed section, getter reports count != 1.
+        {
+            ModuleSpec s = base;
+            s.memory_section_override = memory_payload(MemorySectionSpec{.count = 2});
+            const auto module = build_module(s);
+            check(admit_ok(module), "memory.two_count_admits");
+            auto admitted =
+                make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+            if (admitted.ok()) {
+                auto cap = admitted.module->declared_linear_memory_capacity();
+                check(!cap.has_value() && cap.error() == MemoryDeclError::MemoryCountNotOne,
+                      "memory.two_count_error");
+            }
+        }
+
+        // A declared maximum (flags 1) breaks the fixed-page contract.
+        {
+            ModuleSpec s = base;
+            s.memory_section_override =
+                memory_payload(MemorySectionSpec{.flags = 1, .min_pages = 1, .max_pages = 1});
+            const auto module = build_module(s);
+            check(admit_ok(module), "memory.with_max_admits");
+            auto admitted =
+                make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+            if (admitted.ok()) {
+                auto cap = admitted.module->declared_linear_memory_capacity();
+                check(!cap.has_value() && cap.error() == MemoryDeclError::DeclaredMaximum,
+                      "memory.with_max_error");
+            }
+        }
+
+        // Minimum of two pages (flags 0) breaks the single-page contract.
+        {
+            ModuleSpec s = base;
+            s.memory_section_override = memory_payload(MemorySectionSpec{.min_pages = 2});
+            const auto module = build_module(s);
+            check(admit_ok(module), "memory.min_two_admits");
+            auto admitted =
+                make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(module));
+            if (admitted.ok()) {
+                auto cap = admitted.module->declared_linear_memory_capacity();
+                check(!cap.has_value() && cap.error() == MemoryDeclError::MinPagesNotOne,
+                      "memory.min_two_error");
+            }
+        }
+
+        // Structurally malformed Memory sections fail FRAMING (no module).
+        {
+            // reserved limits flags (2 = shared64-style, not the MVP 0/1).
+            {
+                ModuleSpec s = base;
+                s.memory_section_override =
+                    memory_payload(MemorySectionSpec{.flags = 2, .min_pages = 1});
+                check(admit_fails(build_module(s)), "memory.malformed_flags");
+            }
+            // trailing byte after the one declared entry.
+            {
+                ModuleSpec s = base;
+                s.memory_section_override =
+                    memory_payload(MemorySectionSpec{.trailing_byte = true});
+                check(admit_fails(build_module(s)), "memory.malformed_trailing");
+            }
+            // truncated minimum (count 1, flags byte, then nothing).
+            {
+                ModuleSpec s = base;
+                s.memory_section_override = std::vector<std::uint8_t>{0x01, 0x00};
+                check(admit_fails(build_module(s)), "memory.malformed_truncated_min");
+            }
+            // wasm validation violation: max < min.
+            {
+                ModuleSpec s = base;
+                s.memory_section_override =
+                    memory_payload(MemorySectionSpec{.flags = 1, .min_pages = 2, .max_pages = 1});
+                check(admit_fails(build_module(s)), "memory.malformed_max_lt_min");
+            }
+            // huge count with no entries following.
+            {
+                ModuleSpec s = base;
+                std::vector<std::uint8_t> bad;
+                put_uleb(bad, 0xFFFFFFF0U);
+                s.memory_section_override = bad;
+                check(admit_fails(build_module(s)), "memory.malformed_huge_count");
+            }
+            // two Memory sections.
+            {
+                ModuleSpec s = base;
+                s.memory_section_override = memory_payload(MemorySectionSpec{});
+                s.duplicate_memory = true;
+                check(admit_fails(build_module(s)), "memory.malformed_duplicate_section");
             }
         }
     }

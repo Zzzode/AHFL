@@ -26,6 +26,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <optional>
 #include <span>
@@ -154,6 +155,34 @@ struct VerifiedCoreWasmCallSiteResult {
     [[nodiscard]] bool ok() const noexcept { return call_site.has_value() && !has_errors(); }
 };
 
+// RFC 0026 KR6.5 E4-B2-D2a-F3: the linear-memory capacity the admitted artifact
+// DECLARES, read from the module's own Memory (wasm section id 5) section during
+// A2's single framing pass over the exact digest-authenticated bytes. This is the
+// artifact-derived authority a host cross-checks against the F1 fixed-page SSOT
+// (`kCoreWasmFixedLinearMemoryCapacityBytes`) BEFORE instantiation -- no VM needed.
+// A conforming Core-Wasm artifact declares exactly one memory with one 64 KiB
+// page and no declared maximum, so an admitted capacity is always
+// {capacity_bytes == 65536, min_pages == 1, has_max == false}.
+struct ArtifactMemoryCapacity {
+    std::uint32_t capacity_bytes = 0; // min_pages * 65536 (the declared floor)
+    std::uint32_t min_pages = 0;
+    bool has_max = false;
+
+    [[nodiscard]] friend bool operator==(const ArtifactMemoryCapacity &,
+                                         const ArtifactMemoryCapacity &) noexcept = default;
+};
+
+// Why the declared memory does NOT satisfy the fixed single-page contract. A
+// malformed Memory section is NOT reported here: it fails module framing (the
+// section is exact-consumed like Type/Import), so no module handle exists on
+// which this getter could be called.
+enum class MemoryDeclError : std::uint8_t {
+    MissingMemorySection, // the module carries no Memory (wasm section id 5) section
+    MemoryCountNotOne,    // the section declares zero or more than one memory
+    DeclaredMaximum,      // the sole memory carries a declared maximum (limits flags == 1)
+    MinPagesNotOne,       // the sole memory's minimum page count is not exactly 1
+};
+
 // The admitted module context: an opaque, copy-only handle over one immutable,
 // fully-verified payload. Copies share the payload; a copy or a resolved token
 // stays valid after any other handle is dropped. There is no public/default/move
@@ -182,6 +211,16 @@ class VerifiedCoreWasmSchemaModule {
     [[nodiscard]] ArtifactDigest module_sha256() const noexcept;
     [[nodiscard]] ArtifactDigest wire_schema_sha256() const noexcept;
     [[nodiscard]] ArtifactDigest exec_manifest_sha256() const noexcept;
+
+    // The fixed single-page capacity the admitted artifact's OWN Memory section
+    // declares, parsed from the exact digest-authenticated bytes during framing.
+    // Fails closed with a typed `MemoryDeclError` when the declaration is missing
+    // or does not satisfy the exactly-one-memory / no-maximum / one-page contract;
+    // the host compares the returned `capacity_bytes` against the F1 fixed-page
+    // SSOT before instantiation. A structurally malformed Memory section never
+    // reaches this handle (it fails framing at admission).
+    [[nodiscard]] std::expected<ArtifactMemoryCapacity, MemoryDeclError>
+    declared_linear_memory_capacity() const noexcept;
 
   private:
     friend struct SchemaModuleFactory;

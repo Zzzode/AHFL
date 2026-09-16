@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "base/support/sha256.hpp"
 
@@ -49,6 +50,12 @@ constexpr std::uint8_t kValueTypeI32 = 0x7f;
 constexpr std::uint8_t kSectionCustom = 0;
 constexpr std::uint8_t kSectionType = 1;
 constexpr std::uint8_t kSectionImport = 2;
+constexpr std::uint8_t kSectionMemory = 5;
+
+// Memory-section limits flag 0 = minimum only (no declared maximum). The fixed
+// single-page Core-Wasm contract forbids the flag-1 (min + max) form.
+constexpr std::uint8_t kMemoryLimitsFlagNoMax = 0;
+constexpr std::uint8_t kMemoryLimitsFlagWithMax = 1;
 
 constexpr std::uint8_t kEntryKindWorkflow = 0;
 
@@ -188,12 +195,25 @@ struct ParsedImport {
     std::uint32_t type_index = 0;
 };
 
+// One Memory (wasm section id 5) section, structurally parsed during framing. The
+// fixed single-page contract is NOT applied here (a section that violates it is
+// still framing-valid); the module getter maps it to a typed `MemoryDeclError`.
+// `flags` / `min_pages` / `max_pages` are meaningful only when `count == 1`.
+struct ParsedMemorySection {
+    std::uint32_t count = 0;
+    std::uint8_t flags = 0; // 0 = min only, 1 = min + max (MVP limits)
+    std::uint32_t min_pages = 0;
+    std::uint32_t max_pages = 0; // valid only when flags == 1
+};
+
 // Framing facts: per Type entry whether it is the ahfl_cap tuple signature, the
 // capability imports, the raw bytes of BOTH target custom sections (borrowed), and
 // the three raw SHA-256 artifact digests computed once here after framing succeeds.
 struct ModuleFraming {
     std::vector<bool> type_is_capability_tuple;
     std::vector<ParsedImport> imports;
+    bool have_memory_section = false;
+    ParsedMemorySection memory;                        // valid only when have_memory_section
     std::span<const std::uint8_t> exec_manifest_bytes; // raw payload after the name framing
     std::span<const std::uint8_t> wire_schema_bytes;   // raw payload after the name framing
     ArtifactDigest module_sha256{};       // whole emitted module
@@ -311,8 +331,54 @@ struct ModuleFraming {
     return cursor.at_end();
 }
 
-// Walk the module: header + Type/Import (exact-consume, Type first) + size-skip
-// every other non-custom section. The exec-manifest custom section
+// Parse the Memory (wasm section id 5) section structurally: a vector count
+// followed by one limits entry each (MVP flags 0 = min only, 1 = min + max).
+// Only the first entry is retained because the fixed single-page contract
+// requires exactly one memory; the section is still exact-consumed so a count
+// above one with well-formed entries frames successfully and is rejected later
+// by the getter with MemoryCountNotOne, while ANY malformed encoding fails
+// framing like the Type/Import sections.
+[[nodiscard]] bool parse_memory_section(std::span<const std::uint8_t> payload,
+                                        ModuleFraming &framing) {
+    ByteCursor cursor(payload);
+    const auto count = cursor.u32();
+    if (!count.has_value()) {
+        return false;
+    }
+    constexpr std::size_t kMinMemoryEntryBytes = 2; // flags byte + >=1 min byte
+    if (*count > cursor.remaining() / kMinMemoryEntryBytes) {
+        return false;
+    }
+    for (std::uint32_t i = 0; i < *count; ++i) {
+        const auto flags = cursor.byte();
+        if (!flags.has_value() ||
+            (*flags != kMemoryLimitsFlagNoMax && *flags != kMemoryLimitsFlagWithMax)) {
+            return false; // reserved/shared flags (2..) or truncation
+        }
+        const auto min_pages = cursor.u32();
+        if (!min_pages.has_value()) {
+            return false;
+        }
+        std::uint32_t max_pages = 0;
+        if (*flags == kMemoryLimitsFlagWithMax) {
+            const auto parsed_max = cursor.u32();
+            if (!parsed_max.has_value() || *parsed_max < *min_pages) {
+                return false; // wasm validation: max >= min
+            }
+            max_pages = *parsed_max;
+        }
+        if (i == 0) {
+            framing.memory.count = *count;
+            framing.memory.flags = *flags;
+            framing.memory.min_pages = *min_pages;
+            framing.memory.max_pages = max_pages;
+        }
+    }
+    return cursor.at_end();
+}
+
+// Walk the module: header + Type/Import/Memory (exact-consume, in wasm section
+// order) + size-skip every other non-custom section. The exec-manifest custom section
 // (`ahfl.wasm-exec-manifest.v1`) must appear EXACTLY ONCE IMMEDIATELY BEFORE the
 // wire-schema custom section (`ahfl.wire-schema.v1`), which must be the module's
 // FINAL section at EOF. A missing, duplicated, misordered, misnamed, or
@@ -449,6 +515,24 @@ frame_module(std::span<const std::uint8_t> module_bytes,
                 return std::nullopt;
             }
             have_import = true;
+            continue;
+        }
+
+        if (*section_id == kSectionMemory) {
+            if (framing.have_memory_section) {
+                diagnostics.push_back(error("module has more than one Memory section"));
+                return std::nullopt;
+            }
+            if (have_manifest) {
+                diagnostics.push_back(
+                    error("module Memory section follows the exec-manifest section"));
+                return std::nullopt;
+            }
+            if (!parse_memory_section(*payload, framing)) {
+                diagnostics.push_back(error("module Memory section is malformed"));
+                return std::nullopt;
+            }
+            framing.have_memory_section = true;
             continue;
         }
 
@@ -631,6 +715,12 @@ struct SchemaModulePayload {
     CoreWorkflowId entry_id{};
     std::vector<ManifestNode> nodes;
     std::vector<CallSiteRecord> call_sites;
+    // The structurally-parsed Memory (id 5) section, plus whether the module
+    // carries one. `have_memory_section == false` yields MissingMemorySection
+    // from the capacity getter; a present-but-nonconforming declaration yields
+    // the matching MemoryDeclError. Admission itself does not require it.
+    bool have_memory_section = false;
+    ParsedMemorySection memory;
     // The three raw SHA-256 artifact digests, computed once during framing and
     // shared (never re-hashed) by every token resolved from this payload.
     ArtifactDigest module_sha256{};
@@ -758,6 +848,29 @@ ArtifactDigest VerifiedCoreWasmSchemaModule::exec_manifest_sha256() const noexce
     return payload_->exec_manifest_sha256;
 }
 
+std::expected<ArtifactMemoryCapacity, MemoryDeclError>
+VerifiedCoreWasmSchemaModule::declared_linear_memory_capacity() const noexcept {
+    if (!payload_->have_memory_section) {
+        return std::unexpected(MemoryDeclError::MissingMemorySection);
+    }
+    const ParsedMemorySection &memory = payload_->memory;
+    if (memory.count != 1) {
+        return std::unexpected(MemoryDeclError::MemoryCountNotOne);
+    }
+    if (memory.flags != kMemoryLimitsFlagNoMax) {
+        return std::unexpected(MemoryDeclError::DeclaredMaximum);
+    }
+    if (memory.min_pages != ir::core::kCoreWasmFixedLinearMemoryMinPages) {
+        return std::unexpected(MemoryDeclError::MinPagesNotOne);
+    }
+    // The conforming declaration is exactly one page with no maximum, so its
+    // declared floor is the F1 fixed single-page capacity SSOT (never a
+    // re-declared 65536).
+    return ArtifactMemoryCapacity{ir::core::kCoreWasmFixedLinearMemoryCapacityBytes,
+                                  ir::core::kCoreWasmFixedLinearMemoryMinPages,
+                                  false};
+}
+
 VerifiedCoreWasmNodeResult
 VerifiedCoreWasmSchemaModule::resolve_node(ManifestNodeIndex index) const {
     VerifiedCoreWasmNodeResult result;
@@ -867,6 +980,8 @@ struct SchemaModuleFactory {
         auto payload = std::make_shared<detail::SchemaModulePayload>();
         payload->entry_id = manifest->entry_id;
         payload->nodes = manifest->nodes;
+        payload->have_memory_section = framing->have_memory_section;
+        payload->memory = framing->memory;
         // Copy the three digests computed once during framing (no re-hash here).
         payload->module_sha256 = framing->module_sha256;
         payload->wire_schema_sha256 = framing->wire_schema_sha256;
