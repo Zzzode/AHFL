@@ -27,14 +27,17 @@ std::size_t QueryEngine::FlatSlotKeyHash::operator()(FlatSlotKey key) const
 
 std::string CycleError::describe() const {
     std::string text = "query cycle detected:";
-    for (const SlotKey &key : path) {
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        const SlotKey &key = path[i];
         const std::size_t slot = std::visit(
             [](const auto &typed) { return typed.index(); }, key.slot);
+        if (i > 0) {
+            text += " ->";
+        }
         text += " family ";
         text += std::to_string(key.family.index());
         text += " slot ";
         text += std::to_string(slot);
-        text += " ->";
     }
     return text;
 }
@@ -84,8 +87,10 @@ SlotKey QueryEngine::materialize_key(FlatSlotKey key) const {
 
 CycleError QueryEngine::current_cycle_path(FlatSlotKey repeated) const {
     CycleError error;
-    auto begin = std::ranges::find(stack_, repeated);
-    for (auto it = begin; it != stack_.end(); ++it) {
+    // The repeated key must be on the active evaluation-frame chain (it was
+    // found in_progress), so a missing entry here would be an internal bug.
+    auto begin = std::ranges::find(eval_frames_, repeated);
+    for (auto it = begin; it != eval_frames_.end(); ++it) {
         error.path.push_back(materialize_key(*it));
     }
     error.path.push_back(materialize_key(repeated));
@@ -190,7 +195,7 @@ bool QueryEngine::prove_unchanged(Slot &candidate) {
             }
             continue;
         }
-        if (fetch_derived(dependency) == nullptr) {
+        if (fetch_derived(dependency, nullptr) == nullptr) {
             return false;
         }
         const Slot &provider = slot_at(dependency);
@@ -201,7 +206,8 @@ bool QueryEngine::prove_unchanged(Slot &candidate) {
     return true;
 }
 
-const std::any *QueryEngine::fetch_derived(FlatSlotKey target) {
+const std::any *QueryEngine::fetch_derived(FlatSlotKey target,
+                                           bool *target_recomputed) {
     Slot &candidate = slot_at(target);
     if (candidate.in_progress) {
         raise_cycle(target);
@@ -214,18 +220,28 @@ const std::any *QueryEngine::fetch_derived(FlatSlotKey target) {
     // slot being proven is still being evaluated, so re-entering it (however
     // the dependency graph got there) is a cycle.
     candidate.in_progress = true;
+    // Push an evaluation frame for the entire attempt (prove OR recompute).
+    // The frame chain, not the narrower edge-attribution stack, is what makes
+    // a cycle entered during a green proof report a closed key path.
+    eval_frames_.push_back(target);
     try {
         if (candidate.has_value && prove_unchanged(candidate)) {
             candidate.state = SlotState::Verified;
             candidate.verified_at = revision_;
             candidate.in_progress = false;
+            eval_frames_.pop_back();
             return &candidate.value;
         }
         const std::any *result = recompute(target);
+        if (target_recomputed != nullptr) {
+            *target_recomputed = true;
+        }
         candidate.in_progress = false;
+        eval_frames_.pop_back();
         return result;
     } catch (...) {
         candidate.in_progress = false;
+        eval_frames_.pop_back();
         throw;
     }
 }
@@ -239,20 +255,34 @@ const std::any *QueryEngine::recompute(FlatSlotKey target) {
         candidate.dependencies;
     candidate.dependencies.clear();
 
-    // in_progress is owned by the fetch_derived frame; recompute only manages
-    // the edge-attribution stack.
+    // in_progress / eval_frames_ are owned by fetch_derived; recompute only
+    // manages the edge-attribution stack.
     stack_.push_back(target);
 
     std::any fresh;
     try {
         family.recompute(context_, DerivedId{target.slot}, fresh);
     } catch (...) {
-        // Do not leave half-recorded edges from the aborted attempt.
+        // Fail closed on BOTH axes:
+        //  1. Restore the previous (last-known-good) edge set symmetrically so
+        //     later input writes keep dirtying this slot; never leave the
+        //     one-sided edge deletion of the aborted attempt in place.
         for (const FlatSlotKey dependency : candidate.dependencies) {
             Slot &provider = slot_at(dependency);
             std::erase(provider.dependents, target);
         }
-        candidate.dependencies.clear();
+        candidate.dependencies = previous_dependencies;
+        for (const FlatSlotKey dependency : previous_dependencies) {
+            Slot &provider = slot_at(dependency);
+            if (std::ranges::find(provider.dependents, target) ==
+                provider.dependents.end()) {
+                provider.dependents.push_back(target);
+            }
+        }
+        //  2. Invalidate the stale memo: the next fetch must recompute rather
+        //     than green-prove an old value over (any) dependency set.
+        candidate.has_value = false;
+        candidate.state = SlotState::Dirty;
         stack_.pop_back();
         throw;
     }
@@ -293,18 +323,22 @@ const std::any *QueryEngine::read_derived(FamilyId family_id,
     const FlatSlotKey target{family_id.index(), slot_index};
     ensure_slot(families_[family_id.index()], slot_index);
     record_dependency(target);
-    return fetch_derived(target);
+    // Edge attribution belongs to the enclosing compute frame; the fetch must
+    // not report through that frame's recomputed flag.
+    return fetch_derived(target, nullptr);
 }
 
 std::expected<const std::any *, CycleError>
 QueryEngine::eval_slot(FamilyId family_id, std::size_t slot_index) {
     ++stats_.derived_evals;
-    const std::uint64_t recomputations_before = stats_.recomputations;
     const FlatSlotKey target{family_id.index(), slot_index};
     ensure_slot(families_[family_id.index()], slot_index);
     try {
-        const std::any *memo = fetch_derived(target);
-        if (stats_.recomputations == recomputations_before) {
+        bool target_recomputed = false;
+        const std::any *memo = fetch_derived(target, &target_recomputed);
+        // A memo hit is a property of the TARGET frame: a dependency may
+        // recompute (even transitively) while the target itself stays green.
+        if (!target_recomputed) {
             ++stats_.memo_hits;
         }
         return memo;
@@ -319,8 +353,11 @@ QueryStats QueryEngine::stats() const { return stats_; }
 
 SlotInfo QueryEngine::inspect_slot(FamilyId family_id,
                                    std::size_t slot_index) const {
-    const Family &family = families_[family_id.index()];
     SlotInfo info;
+    if (family_id.index() >= families_.size()) {
+        return info; // unknown family: fail closed with default snapshot
+    }
+    const Family &family = families_[family_id.index()];
     if (family.slots.size() <= slot_index) {
         return info;
     }

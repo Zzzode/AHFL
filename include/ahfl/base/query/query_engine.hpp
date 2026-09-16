@@ -125,7 +125,9 @@ struct QueryStats {
     std::uint64_t input_update_noops = 0; // equal-value set_input calls
     std::uint64_t derived_evals = 0;      // user-facing eval entries
     std::uint64_t recomputations = 0;     // compute function invocations
-    std::uint64_t memo_hits = 0;          // evals served without recomputing
+    // Evals whose TARGET reused its memo (current-revision hit or green proof),
+    // even when a transitive dependency had to recompute underneath it.
+    std::uint64_t memo_hits = 0;
 };
 
 class QueryEngine;
@@ -302,8 +304,15 @@ private:
 
     // Bring a derived slot's memo up to date without attributing edges: used by
     // the green-phase prover and by cross-slot reads after edge attribution.
-    [[nodiscard]] const std::any *fetch_derived(FlatSlotKey target);
+    //
+    // *target_recomputed (when non-null) is set when the target slot itself
+    // runs its compute function; a memo reuse or green proof leaves it false,
+    // and nested dependency recomputations never set the caller's flag.
+    [[nodiscard]] const std::any *fetch_derived(FlatSlotKey target,
+                                                bool *target_recomputed);
     [[nodiscard]] bool prove_unchanged(Slot &candidate);
+    // Run the compute function. User exceptions propagate to the caller after
+    // the memo and edge set have been rolled back to the last-known-good state.
     [[nodiscard]] const std::any *recompute(FlatSlotKey target);
 
     void record_dependency(FlatSlotKey target);
@@ -311,6 +320,8 @@ private:
     [[nodiscard]] Slot &slot_at(FlatSlotKey key);
     void mark_dependents_dirty(const Slot &changed);
     [[nodiscard]] SlotKey materialize_key(FlatSlotKey key) const;
+    // Build the closed cycle path from the active evaluation-frame chain,
+    // starting at (and closing with) the repeated key.
     [[nodiscard]] CycleError current_cycle_path(FlatSlotKey repeated) const;
     [[noreturn]] void raise_cycle(FlatSlotKey repeated);
 
@@ -318,7 +329,12 @@ private:
     Revision revision_ = 0;
     std::deque<Family> families_;
     QueryContext context_;
+    // Edge-attribution stack: slots currently RUNNING their compute function.
     std::vector<FlatSlotKey> stack_;
+    // Evaluation-frame chain: slots inside fetch_derived, green proofs included.
+    // Cycle detection and path construction read this chain; it always contains
+    // every key on the active eval path, unlike stack_.
+    std::vector<FlatSlotKey> eval_frames_;
     QueryStats stats_;
 };
 

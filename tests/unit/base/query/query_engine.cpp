@@ -4,6 +4,7 @@
 #include "ahfl/base/query/query_engine.hpp"
 
 #include <cstdint>
+#include <stdexcept>
 
 using namespace ahfl::query;
 
@@ -317,4 +318,216 @@ TEST_CASE("multiple independent slots coexist in one family") {
     CHECK(*engine.eval(plus_one, DerivedId{0}) == 12);
     CHECK(*engine.eval(plus_one, DerivedId{1}) == 21);
     CHECK(runs == 3);
+}
+
+TEST_CASE("a throwing compute invalidates the memo and recovers on input change") {
+    QueryEngine engine;
+    auto gate = engine.register_input<int>();
+    auto x = engine.register_input<int>();
+    int runs = 0;
+    auto a = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId) -> int {
+            ++runs;
+            if (ctx.get(gate, InputId{0}) == 1) {
+                throw std::runtime_error("compute failure");
+            }
+            return ctx.get(x, InputId{0});
+        });
+
+    engine.set_input(gate, InputId{0}, 0);
+    engine.set_input(x, InputId{0}, 10);
+    {
+        const auto first = engine.eval(a, DerivedId{0});
+        REQUIRE(first.has_value());
+        CHECK(*first == 10);
+        CHECK(runs == 1);
+    }
+
+    // Gate the compute to throw; the exception crosses the eval boundary.
+    engine.set_input(gate, InputId{0}, 1);
+    CHECK_THROWS_AS(static_cast<void>(engine.eval(a, DerivedId{0})),
+                    std::runtime_error);
+    CHECK(runs == 2);
+
+    // Retrying at the same failing inputs must run the compute again: never
+    // serve the pre-failure memo, and never falsely mark it Verified.
+    CHECK_THROWS_AS(static_cast<void>(engine.eval(a, DerivedId{0})),
+                    std::runtime_error);
+    CHECK(runs == 3);
+    {
+        const SlotInfo info = engine.inspect_slot(a.family(), 0);
+        CHECK_FALSE(info.has_value);
+        CHECK(info.state == SlotState::Dirty);
+    }
+
+    // Recover and change the other input: the fresh value must come through
+    // (the reverse edges survived the failed attempt).
+    engine.set_input(gate, InputId{0}, 0);
+    engine.set_input(x, InputId{0}, 20);
+    {
+        const auto recovered = engine.eval(a, DerivedId{0});
+        REQUIRE(recovered.has_value());
+        CHECK(*recovered == 20);
+        CHECK(runs == 4);
+    }
+}
+
+TEST_CASE("a transitive dependent recomputes after a dependency failure recovers") {
+    QueryEngine engine;
+    auto gate = engine.register_input<int>();
+    auto x = engine.register_input<int>();
+    int base_runs = 0;
+    int above_runs = 0;
+    auto base = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId) -> int {
+            ++base_runs;
+            if (ctx.get(gate, InputId{0}) == 1) {
+                throw std::runtime_error("base failure");
+            }
+            return ctx.get(x, InputId{0});
+        });
+    auto above = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId) -> int {
+            ++above_runs;
+            return ctx.read(base, DerivedId{0}) + 1;
+        });
+
+    engine.set_input(gate, InputId{0}, 0);
+    engine.set_input(x, InputId{0}, 10);
+    REQUIRE(*engine.eval(above, DerivedId{0}) == 11);
+    CHECK(base_runs == 1);
+    CHECK(above_runs == 1);
+
+    engine.set_input(gate, InputId{0}, 1);
+    CHECK_THROWS_AS(static_cast<void>(engine.eval(above, DerivedId{0})),
+                    std::runtime_error);
+
+    engine.set_input(gate, InputId{0}, 0);
+    engine.set_input(x, InputId{0}, 40);
+    // Both levels must recompute; above must not keep the memo from rev1.
+    const auto recovered = engine.eval(above, DerivedId{0});
+    REQUIRE(recovered.has_value());
+    CHECK(*recovered == 41);
+    CHECK(base_runs == 3);
+    CHECK(above_runs == 2);
+}
+
+TEST_CASE("a cycle formed by a dependency flip keeps reporting on retries (Error)") {
+    QueryEngine engine(CyclePolicy::Error);
+    auto selector = engine.register_input<int>();
+    // One derived family: slot 0 = D, slot 1 = C.
+    // selector == 0: D = 1; C = D + 10 (acyclic).
+    // selector == 1: D reads C, so C -> D -> C is a cycle.
+    DerivedQueryT<int> mutual = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId self) -> int {
+            if (self.index() == 0) {
+                if (ctx.get(selector, InputId{0}) == 0) {
+                    return 1;
+                }
+                return ctx.read(mutual, DerivedId{1});
+            }
+            return ctx.read(mutual, DerivedId{0}) + 10;
+        });
+
+    engine.set_input(selector, InputId{0}, 0);
+    {
+        const auto acyclic = engine.eval(mutual, DerivedId{1});
+        REQUIRE(acyclic.has_value());
+        CHECK(*acyclic == 11);
+    }
+
+    engine.set_input(selector, InputId{0}, 1);
+    const auto assert_cycle = [&] {
+        const auto result = engine.eval(mutual, DerivedId{1});
+        REQUIRE_FALSE(result.has_value());
+        const CycleError &error = result.error();
+        // Closed path through every in-progress frame, length at least 3.
+        CHECK(error.path.size() >= 3);
+        CHECK(error.path.front() == error.path.back());
+        CHECK_FALSE(error.describe().empty());
+        CHECK(error.describe().find("->") != std::string::npos);
+        CHECK_FALSE(error.describe().ends_with("->"));
+    };
+    assert_cycle(); // first eval after flip
+    assert_cycle(); // immediate retry at the same revision
+    assert_cycle(); // third retry
+
+    // No slot involved in the cycle is falsely Verified at the current
+    // revision after the errors.
+    const Revision current = engine.revision();
+    for (std::size_t slot = 0; slot < 2; ++slot) {
+        const SlotInfo info = engine.inspect_slot(mutual.family(), slot);
+        if (info.state == SlotState::Verified) {
+            CHECK(info.verified_at != current);
+        }
+    }
+}
+
+TEST_CASE("a cycle formed by a dependency flip keeps throwing on retries (Panic)") {
+    QueryEngine engine(CyclePolicy::Panic);
+    auto selector = engine.register_input<int>();
+    DerivedQueryT<int> mutual = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId self) -> int {
+            if (self.index() == 0) {
+                if (ctx.get(selector, InputId{0}) == 0) {
+                    return 1;
+                }
+                return ctx.read(mutual, DerivedId{1});
+            }
+            return ctx.read(mutual, DerivedId{0}) + 10;
+        });
+
+    engine.set_input(selector, InputId{0}, 0);
+    REQUIRE(*engine.eval(mutual, DerivedId{1}) == 11);
+
+    engine.set_input(selector, InputId{0}, 1);
+    const auto invoke = [&] {
+        static_cast<void>(engine.eval(mutual, DerivedId{1}));
+    };
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        CHECK_THROWS_AS(invoke(), CyclePanic);
+        try {
+            invoke();
+            FAIL("expected CyclePanic");
+        } catch (const CyclePanic &panic) {
+            const auto &path = panic.cycle().path;
+            CHECK(path.size() >= 3);
+            CHECK(path.front() == path.back());
+            const std::string text = panic.cycle().describe();
+            CHECK_FALSE(text.ends_with("->"));
+        }
+    }
+}
+
+TEST_CASE("a green target whose dependency recomputes equal still counts a memo hit") {
+    QueryEngine engine;
+    auto input = engine.register_input<int>();
+    auto clamped = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId) {
+            return ctx.get(input, InputId{0}) > 0 ? 1 : 0;
+        });
+    auto above = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId) {
+            return ctx.read(clamped, DerivedId{0}) + 100;
+        });
+
+    engine.set_input(input, InputId{0}, 1);
+    REQUIRE(*engine.eval(above, DerivedId{0}) == 101);
+    const std::uint64_t hits_before = engine.stats().memo_hits;
+
+    // clamped recomputes (changed input) with an equal value; above itself
+    // stays green and must count as a memo hit.
+    engine.set_input(input, InputId{0}, 2);
+    REQUIRE(*engine.eval(above, DerivedId{0}) == 101);
+    CHECK(engine.stats().memo_hits == hits_before + 1);
+}
+
+TEST_CASE("inspect_slot on an unregistered family fails closed") {
+    QueryEngine engine;
+    auto input = engine.register_input<int>();
+    engine.set_input(input, InputId{0}, 7);
+    const SlotInfo info = engine.inspect_slot(FamilyId{9999}, 0);
+    CHECK_FALSE(info.has_value);
+    CHECK(info.state == SlotState::Dirty);
+    CHECK(info.verified_at == 0);
 }
