@@ -4,10 +4,12 @@
 #include "ahfl/compiler/ir/core_verify.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // RFC 0026 P4-A1: the logical value-type arena + hash-cons interner +
@@ -783,4 +785,40 @@ TEST_CASE("P4-C member template materializer substitutes recursively and hash-co
         instantiate_member_template(p, CoreTypeId{2}, CoreMemberTypeTemplateNodeId{2}, {}, &reason)
             .has_value());
     CHECK(reason.find("expects 1") != std::string::npos);
+}
+
+// RFC 0027 Q1 (KR6.13-X): the X-macro-generated name table covers every
+// CoreValueTypeNode alternative exactly once, in declaration (variant-index)
+// order. This guards the .def -> variant/name-table generation independently of
+// the cardinality pin.
+TEST_CASE("core_value_type_name covers all 14 value-type nodes in index order") {
+    using namespace ir::core;
+
+    static_assert(std::variant_size_v<CoreValueTypeNode> == 14,
+                  "core_value_types.def must list exactly 14 CoreVt nodes");
+
+    SUBCASE("every index has a unique non-empty name") {
+        std::array<std::string_view, 14> names{};
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            names[i] = core_value_type_name(i);
+            CHECK_FALSE(names[i].empty());
+            CHECK(names[i].rfind("CoreVt", 0) == 0);
+        }
+        for (std::size_t a = 0; a < names.size(); ++a) {
+            for (std::size_t b = a + 1; b < names.size(); ++b) {
+                CHECK(names[a] != names[b]);
+            }
+        }
+        // Index anchors: the .def order is the variant alternative order.
+        CHECK(core_value_type_name(std::size_t{0}) == "CoreVtUnit");
+        CHECK(core_value_type_name(std::size_t{13}) == "CoreVtClosure");
+    }
+
+    SUBCASE("node overload agrees with the index overload") {
+        const CoreValueTypeNode unit{CoreVtUnit{}};
+        const CoreValueTypeNode closure{CoreVtClosure{}};
+        CHECK(core_value_type_name(unit) == "CoreVtUnit");
+        CHECK(core_value_type_name(closure) == "CoreVtClosure");
+        CHECK(core_value_type_name(unit) == core_value_type_name(unit.index()));
+    }
 }

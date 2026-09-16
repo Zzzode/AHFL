@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
-"""Negative compile-test for the RFC 0027 P8 IR SSOT exhaustiveness gate.
+"""Negative compile-tests for the RFC 0027 P8/Q1 IR SSOT exhaustiveness gates.
 
-The fixture (tests/fixtures/ir/ssot/expr_exhaustiveness_negative.cpp) rebuilds
-the ahfl::ir::ExprNode alternative type list from the shared X-macro
-(expr_nodes.def) and visits it with exactly one handler per alternative. This
-harness compiles it twice with -fsyntax-only:
+Each fixture rebuilds one IR node variant's alternative type list from a shared
+X-macro .def and visits it with exactly one handler per alternative. This
+harness syntax-only-compiles every fixture twice:
 
-  1. injected build (-DAHFL_SSOT_INJECT_UNHANDLED): a dummy 21st alternative
-     (SsotUnhandledExpr) is appended WITHOUT a visitor handler. The compile
-     MUST fail with a non-zero exit and a diagnostic naming the unhandled
-     type. This is the P8 property "adding a node without handling it breaks
-     the build".
+  1. injected build (-D<inject>): one dummy extra alternative (<unhandled>) is
+     appended to the rebuilt variant WITHOUT a visitor handler. The compile MUST
+     fail with a non-zero exit and a diagnostic naming the unhandled type. This
+     is the P8/Q1 property "adding a node without handling it breaks the build".
   2. clean build: no injection; the rebuilt variant is static_assert-identical
-     to ahfl::ir::ExprNode and fully handled. The compile MUST succeed, which
-     is the mutation check that the dummy alternative (not some unrelated
+     to the production variant and fully handled. The compile MUST succeed,
+     which is the mutation check that the dummy alternative (not some unrelated
      error) is the sole cause of the negative result.
+
+Fixtures:
+  * ahfl::ir::ExprNode (RFC 0027 P8, KR6.13-G) from tests/fixtures/ir/ssot/
+    expr_nodes.def, sentinel SsotUnhandledExpr, injected with
+    AHFL_SSOT_INJECT_UNHANDLED.
+  * ahfl::ir::core::CoreValueTypeNode (RFC 0027 Q1, KR6.13-X) straight from the
+    production include/ahfl/compiler/ir/core_value_types.def, sentinel
+    SsotUnhandledVt, injected with AHFL_SSOT_INJECT_UNHANDLED_VT.
 
 A compiler is picked from $AHFL_CXX, then $CXX, then PATH discovery
 (c++/g++/clang++). The repository include root is added automatically.
@@ -26,20 +32,36 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = (
-    REPO_ROOT
-    / "tests"
-    / "fixtures"
-    / "ir"
-    / "ssot"
-    / "expr_exhaustiveness_negative.cpp"
-)
 INCLUDE_DIR = REPO_ROOT / "include"
-UNHANDLED_TYPE = "SsotUnhandledExpr"
 STD_FLAG = "-std=c++23"
+
+
+@dataclass(frozen=True)
+class FixtureCase:
+    label: str
+    relative_path: str
+    inject_flag: str
+    unhandled_type: str
+
+
+FIXTURES = (
+    FixtureCase(
+        label="ExprNode",
+        relative_path="tests/fixtures/ir/ssot/expr_exhaustiveness_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED",
+        unhandled_type="SsotUnhandledExpr",
+    ),
+    FixtureCase(
+        label="CoreValueTypeNode",
+        relative_path="tests/fixtures/ir/ssot/core_value_type_nodes_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_VT",
+        unhandled_type="SsotUnhandledVt",
+    ),
+)
 
 
 def discover_compiler() -> str:
@@ -55,7 +77,9 @@ def discover_compiler() -> str:
     )
 
 
-def syntax_only(compiler: str, extra: list[str]) -> subprocess.CompletedProcess[str]:
+def syntax_only(
+    compiler: str, fixture: Path, extra: list[str]
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             compiler,
@@ -63,7 +87,7 @@ def syntax_only(compiler: str, extra: list[str]) -> subprocess.CompletedProcess[
             "-fsyntax-only",
             f"-I{INCLUDE_DIR}",
             *extra,
-            str(FIXTURE),
+            str(fixture),
         ],
         capture_output=True,
         text=True,
@@ -71,44 +95,56 @@ def syntax_only(compiler: str, extra: list[str]) -> subprocess.CompletedProcess[
     )
 
 
-def main() -> int:
+def run_case(compiler: str, case: FixtureCase) -> list[str]:
     failures: list[str] = []
+    fixture = REPO_ROOT / case.relative_path
 
-    if not FIXTURE.is_file():
-        print(f"FAIL: missing fixture {FIXTURE}", file=sys.stderr)
-        return 1
+    print(f"[{case.label}] fixture: {case.relative_path}")
 
-    compiler = discover_compiler()
-    print(f"compiler: {compiler}")
-    print(f"fixture:  {FIXTURE.relative_to(REPO_ROOT)}")
+    if not fixture.is_file():
+        return [f"{case.label}: missing fixture {fixture}"]
 
-    injected = syntax_only(compiler, ["-DAHFL_SSOT_INJECT_UNHANDLED"])
+    injected = syntax_only(compiler, fixture, [f"-D{case.inject_flag}"])
     if injected.returncode == 0:
         failures.append(
-            "injected build unexpectedly compiled: an unhandled extra "
-            "variant alternative was accepted by the exhaustive visitor"
+            f"{case.label}: injected build unexpectedly compiled: an unhandled "
+            "extra variant alternative was accepted by the exhaustive visitor"
         )
-    elif UNHANDLED_TYPE not in (injected.stderr + injected.stdout):
+    elif case.unhandled_type not in (injected.stderr + injected.stdout):
         failures.append(
-            "injected build failed, but the diagnostic does not name the "
-            f"unhandled type {UNHANDLED_TYPE!r}; refusing to treat an "
-            "unrelated error as the exhaustiveness gate"
+            f"{case.label}: injected build failed, but the diagnostic does not "
+            f"name the unhandled type {case.unhandled_type!r}; refusing to treat "
+            "an unrelated error as the exhaustiveness gate"
         )
     else:
         print(
-            "ok: injected build fails with a diagnostic naming "
-            f"{UNHANDLED_TYPE}"
+            f"[{case.label}] ok: injected build fails with a diagnostic naming "
+            f"{case.unhandled_type}"
         )
 
-    clean = syntax_only(compiler, [])
+    clean = syntax_only(compiler, fixture, [])
     if clean.returncode != 0:
         failures.append(
-            "clean build unexpectedly failed (the fixture must compile "
-            "when the dummy alternative is absent):\n"
+            f"{case.label}: clean build unexpectedly failed (the fixture must "
+            "compile when the dummy alternative is absent):\n"
             + (clean.stderr or clean.stdout).strip()
         )
     else:
-        print("ok: clean build compiles (dummy alternative is the sole failure)")
+        print(
+            f"[{case.label}] ok: clean build compiles (dummy alternative is the "
+            "sole failure)"
+        )
+
+    return failures
+
+
+def main() -> int:
+    compiler = discover_compiler()
+    print(f"compiler: {compiler}")
+
+    failures: list[str] = []
+    for case in FIXTURES:
+        failures.extend(run_case(compiler, case))
 
     if failures:
         print("ir_ssot_compile_fail FAILED:", file=sys.stderr)
@@ -121,4 +157,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

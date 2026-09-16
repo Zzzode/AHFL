@@ -835,50 +835,92 @@ class ValueTypeArena {
             const auto mix = [&h](std::size_t v) {
                 h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
             };
-            std::visit(Overloaded{
-                           [&](const CoreVtInt &n) {
-                               if (n.bounds) {
-                                   mix(static_cast<std::size_t>(n.bounds->first));
-                                   mix(static_cast<std::size_t>(n.bounds->second));
-                               }
-                           },
-                           [&](const CoreVtString &n) {
-                               if (n.length_bounds) {
-                                   mix(static_cast<std::size_t>(n.length_bounds->first));
-                                   mix(static_cast<std::size_t>(n.length_bounds->second));
-                               }
-                           },
-                           [&](const CoreVtDecimal &n) { mix(static_cast<std::size_t>(n.scale)); },
-                           [&](const CoreVtNominal &n) {
-                               mix(n.base.value);
-                               for (const auto &a : n.args) {
-                                   mix(a.value);
-                               }
-                               if (n.capacity) {
-                                   mix(static_cast<std::size_t>(*n.capacity));
-                               }
-                           },
-                           [&](const CoreVtTuple &n) {
-                               for (const auto &e : n.elements) {
-                                   mix(e.value);
-                               }
-                           },
-                           [&](const CoreVtFn &n) {
-                               for (const auto &p : n.params) {
-                                   mix(p.value);
-                               }
-                               mix(n.ret.value);
-                           },
-                           [&](const CoreVtClosure &n) {
-                               mix(n.signature.value);
-                               for (const auto &c : n.captures) {
-                                   mix(c.value_type.value);
-                                   mix(static_cast<std::size_t>(c.mode));
-                               }
-                           },
-                           [&](const auto &) {},
-                       },
-                       vt.node);
+            const auto hh_int = [&](const CoreVtInt &n) {
+                if (n.bounds) {
+                    mix(static_cast<std::size_t>(n.bounds->first));
+                    mix(static_cast<std::size_t>(n.bounds->second));
+                }
+            };
+            const auto hh_string = [&](const CoreVtString &n) {
+                if (n.length_bounds) {
+                    mix(static_cast<std::size_t>(n.length_bounds->first));
+                    mix(static_cast<std::size_t>(n.length_bounds->second));
+                }
+            };
+            const auto hh_decimal = [&](const CoreVtDecimal &n) {
+                mix(static_cast<std::size_t>(n.scale));
+            };
+            const auto hh_nominal = [&](const CoreVtNominal &n) {
+                mix(n.base.value);
+                for (const auto &a : n.args) {
+                    mix(a.value);
+                }
+                if (n.capacity) {
+                    mix(static_cast<std::size_t>(*n.capacity));
+                }
+            };
+            const auto hh_tuple = [&](const CoreVtTuple &n) {
+                for (const auto &e : n.elements) {
+                    mix(e.value);
+                }
+            };
+            const auto hh_fn = [&](const CoreVtFn &n) {
+                for (const auto &p : n.params) {
+                    mix(p.value);
+                }
+                mix(n.ret.value);
+            };
+            const auto hh_closure = [&](const CoreVtClosure &n) {
+                mix(n.signature.value);
+                for (const auto &c : n.captures) {
+                    mix(c.value_type.value);
+                    mix(static_cast<std::size_t>(c.mode));
+                }
+            };
+            // RFC 0027 Q1 (KR6.13-X): one handler per value-type node,
+            // generated from core_value_types.def. Leaf scalars with no
+            // identity payload share LOWER_HASH_LEAF (which expands to a
+            // distinct typed no-op lambda per node); structural nodes route to
+            // the explicit payload lambdas above. There is NO unnamed catch-all,
+            // so a 15th node without a LOWER_HASH_* routing macro fails to
+            // compile.
+#define LOWER_HASH_LEAF(Name) [](const CoreVt##Name &) {},
+#define LOWER_HASH_Unit(Name) LOWER_HASH_LEAF(Name)
+#define LOWER_HASH_Never(Name) LOWER_HASH_LEAF(Name)
+#define LOWER_HASH_Bool(Name) LOWER_HASH_LEAF(Name)
+#define LOWER_HASH_Int(Name) hh_int,
+#define LOWER_HASH_Float(Name) LOWER_HASH_LEAF(Name)
+#define LOWER_HASH_String(Name) hh_string,
+#define LOWER_HASH_Decimal(Name) hh_decimal,
+#define LOWER_HASH_Duration(Name) LOWER_HASH_LEAF(Name)
+#define LOWER_HASH_Timestamp(Name) LOWER_HASH_LEAF(Name)
+#define LOWER_HASH_Uuid(Name) LOWER_HASH_LEAF(Name)
+#define LOWER_HASH_Nominal(Name) hh_nominal,
+#define LOWER_HASH_Tuple(Name) hh_tuple,
+#define LOWER_HASH_Fn(Name) hh_fn,
+#define LOWER_HASH_Closure(Name) hh_closure,
+#define HANDLE_CORE_VT(Name) LOWER_HASH_##Name(Name)
+            std::visit(
+                Overloaded{
+#include "ahfl/compiler/ir/core_value_types.def"
+                },
+                vt.node);
+#undef HANDLE_CORE_VT
+#undef LOWER_HASH_Unit
+#undef LOWER_HASH_Never
+#undef LOWER_HASH_Bool
+#undef LOWER_HASH_Int
+#undef LOWER_HASH_Float
+#undef LOWER_HASH_String
+#undef LOWER_HASH_Decimal
+#undef LOWER_HASH_Duration
+#undef LOWER_HASH_Timestamp
+#undef LOWER_HASH_Uuid
+#undef LOWER_HASH_Nominal
+#undef LOWER_HASH_Tuple
+#undef LOWER_HASH_Fn
+#undef LOWER_HASH_Closure
+#undef LOWER_HASH_LEAF
             return h;
         }
     };

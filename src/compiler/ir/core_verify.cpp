@@ -2739,32 +2739,70 @@ class Verifier {
         // Child-id bounds + collect children for the cycle walk.
         const auto children_of = [](const CoreValueType &vt, std::vector<std::uint32_t> &out) {
             out.clear();
-            std::visit(Overloaded{
-                           [&](const CoreVtNominal &n) {
-                               for (const auto &a : n.args) {
-                                   out.push_back(a.value);
-                               }
-                           },
-                           [&](const CoreVtTuple &n) {
-                               for (const auto &e : n.elements) {
-                                   out.push_back(e.value);
-                               }
-                           },
-                           [&](const CoreVtFn &n) {
-                               for (const auto &p : n.params) {
-                                   out.push_back(p.value);
-                               }
-                               out.push_back(n.ret.value);
-                           },
-                           [&](const CoreVtClosure &n) {
-                               out.push_back(n.signature.value);
-                               for (const auto &c : n.captures) {
-                                   out.push_back(c.value_type.value);
-                               }
-                           },
-                           [&](const auto &) {},
-                       },
-                       vt.node);
+            const auto co_nominal = [&](const CoreVtNominal &n) {
+                for (const auto &a : n.args) {
+                    out.push_back(a.value);
+                }
+            };
+            const auto co_tuple = [&](const CoreVtTuple &n) {
+                for (const auto &e : n.elements) {
+                    out.push_back(e.value);
+                }
+            };
+            const auto co_fn = [&](const CoreVtFn &n) {
+                for (const auto &p : n.params) {
+                    out.push_back(p.value);
+                }
+                out.push_back(n.ret.value);
+            };
+            const auto co_closure = [&](const CoreVtClosure &n) {
+                out.push_back(n.signature.value);
+                for (const auto &c : n.captures) {
+                    out.push_back(c.value_type.value);
+                }
+            };
+            // RFC 0027 Q1 (KR6.13-X): one handler per value-type node, generated
+            // from core_value_types.def. Childless leaves share VERIFY_CHILD_LEAF
+            // (a distinct typed no-op lambda per node); the four structural nodes
+            // route to the payload lambdas above. No unnamed catch-all: a 15th
+            // node without a VERIFY_CHILD_* routing macro fails to compile.
+#define VERIFY_CHILD_LEAF(Name) [](const CoreVt##Name &) {},
+#define VERIFY_CHILD_Unit(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Never(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Bool(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Int(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Float(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_String(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Decimal(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Duration(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Timestamp(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Uuid(Name) VERIFY_CHILD_LEAF(Name)
+#define VERIFY_CHILD_Nominal(Name) co_nominal,
+#define VERIFY_CHILD_Tuple(Name) co_tuple,
+#define VERIFY_CHILD_Fn(Name) co_fn,
+#define VERIFY_CHILD_Closure(Name) co_closure,
+#define HANDLE_CORE_VT(Name) VERIFY_CHILD_##Name(Name)
+            std::visit(
+                Overloaded{
+#include "ahfl/compiler/ir/core_value_types.def"
+                },
+                vt.node);
+#undef HANDLE_CORE_VT
+#undef VERIFY_CHILD_Unit
+#undef VERIFY_CHILD_Never
+#undef VERIFY_CHILD_Bool
+#undef VERIFY_CHILD_Int
+#undef VERIFY_CHILD_Float
+#undef VERIFY_CHILD_String
+#undef VERIFY_CHILD_Decimal
+#undef VERIFY_CHILD_Duration
+#undef VERIFY_CHILD_Timestamp
+#undef VERIFY_CHILD_Uuid
+#undef VERIFY_CHILD_Nominal
+#undef VERIFY_CHILD_Tuple
+#undef VERIFY_CHILD_Fn
+#undef VERIFY_CHILD_Closure
+#undef VERIFY_CHILD_LEAF
         };
 
         std::vector<std::uint32_t> kids;
@@ -2818,51 +2856,88 @@ class Verifier {
     }
 
     void verify_value_type_node(std::uint32_t index, const CoreValueType &vt) {
-        std::visit(Overloaded{
-                       [&](const CoreVtInt &n) {
-                           if (n.bounds && n.bounds->first > n.bounds->second) {
-                               error(verify::kValueTypeRefinementInvalid,
-                                     "value type #" + std::to_string(index) +
-                                         " has an Int bound with min > max",
-                                     std::nullopt);
-                           }
-                       },
-                       [&](const CoreVtString &n) {
-                           if (n.length_bounds &&
-                               (n.length_bounds->first < 0 || n.length_bounds->second < 0 ||
-                                n.length_bounds->first > n.length_bounds->second)) {
-                               error(verify::kValueTypeRefinementInvalid,
-                                     "value type #" + std::to_string(index) +
-                                         " has a negative or reversed String length bound",
-                                     std::nullopt);
-                           }
-                       },
-                       [&](const CoreVtNominal &n) { verify_value_type_nominal(index, n); },
-                       [&](const CoreVtFn &n) {
-                           if (n.ret.value == CoreValueTypeId::kInvalid) {
-                               error(verify::kValueTypeChildInvalid,
-                                     "value type #" + std::to_string(index) +
-                                         " (Fn) has an invalid return id",
-                                     std::nullopt);
-                           }
-                       },
-                       [&](const CoreVtClosure &n) {
-                           // A closure's signature MUST resolve to a CoreVtFn (a
-                           // closure is a function value plus captures).
-                           const auto sig = n.signature.value;
-                           const bool sig_ok =
-                               sig != CoreValueTypeId::kInvalid && sig < program_.value_types.size() &&
-                               std::holds_alternative<CoreVtFn>(program_.value_types[sig].node);
-                           if (!sig_ok) {
-                               error(verify::kValueTypeChildInvalid,
-                                     "value type #" + std::to_string(index) +
-                                         " (Closure) signature does not resolve to a Fn value type",
-                                     std::nullopt);
-                           }
-                       },
-                       [&](const auto &) {},
-                   },
-                   vt.node);
+        const auto vn_int = [&](const CoreVtInt &n) {
+            if (n.bounds && n.bounds->first > n.bounds->second) {
+                error(verify::kValueTypeRefinementInvalid,
+                      "value type #" + std::to_string(index) + " has an Int bound with min > max",
+                      std::nullopt);
+            }
+        };
+        const auto vn_string = [&](const CoreVtString &n) {
+            if (n.length_bounds && (n.length_bounds->first < 0 || n.length_bounds->second < 0 ||
+                                    n.length_bounds->first > n.length_bounds->second)) {
+                error(verify::kValueTypeRefinementInvalid,
+                      "value type #" + std::to_string(index) +
+                          " has a negative or reversed String length bound",
+                      std::nullopt);
+            }
+        };
+        const auto vn_nominal = [&](const CoreVtNominal &n) {
+            verify_value_type_nominal(index, n);
+        };
+        const auto vn_fn = [&](const CoreVtFn &n) {
+            if (n.ret.value == CoreValueTypeId::kInvalid) {
+                error(verify::kValueTypeChildInvalid,
+                      "value type #" + std::to_string(index) + " (Fn) has an invalid return id",
+                      std::nullopt);
+            }
+        };
+        const auto vn_closure = [&](const CoreVtClosure &n) {
+            // A closure's signature MUST resolve to a CoreVtFn (a closure is a
+            // function value plus captures).
+            const auto sig = n.signature.value;
+            const bool sig_ok =
+                sig != CoreValueTypeId::kInvalid && sig < program_.value_types.size() &&
+                std::holds_alternative<CoreVtFn>(program_.value_types[sig].node);
+            if (!sig_ok) {
+                error(verify::kValueTypeChildInvalid,
+                      "value type #" + std::to_string(index) +
+                          " (Closure) signature does not resolve to a Fn value type",
+                      std::nullopt);
+            }
+        };
+        // RFC 0027 Q1 (KR6.13-X): one handler per value-type node, generated
+        // from core_value_types.def. Nodes with no per-node structural rule share
+        // VERIFY_NODE_LEAF (a distinct typed no-op lambda per node); the five
+        // checked nodes route to the payload lambdas above. No unnamed catch-all:
+        // a 15th node without a VERIFY_NODE_* routing macro fails to compile.
+#define VERIFY_NODE_LEAF(Name) [](const CoreVt##Name &) {},
+#define VERIFY_NODE_Unit(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_Never(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_Bool(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_Int(Name) vn_int,
+#define VERIFY_NODE_Float(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_String(Name) vn_string,
+#define VERIFY_NODE_Decimal(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_Duration(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_Timestamp(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_Uuid(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_Nominal(Name) vn_nominal,
+#define VERIFY_NODE_Tuple(Name) VERIFY_NODE_LEAF(Name)
+#define VERIFY_NODE_Fn(Name) vn_fn,
+#define VERIFY_NODE_Closure(Name) vn_closure,
+#define HANDLE_CORE_VT(Name) VERIFY_NODE_##Name(Name)
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/core_value_types.def"
+            },
+            vt.node);
+#undef HANDLE_CORE_VT
+#undef VERIFY_NODE_Unit
+#undef VERIFY_NODE_Never
+#undef VERIFY_NODE_Bool
+#undef VERIFY_NODE_Int
+#undef VERIFY_NODE_Float
+#undef VERIFY_NODE_String
+#undef VERIFY_NODE_Decimal
+#undef VERIFY_NODE_Duration
+#undef VERIFY_NODE_Timestamp
+#undef VERIFY_NODE_Uuid
+#undef VERIFY_NODE_Nominal
+#undef VERIFY_NODE_Tuple
+#undef VERIFY_NODE_Fn
+#undef VERIFY_NODE_Closure
+#undef VERIFY_NODE_LEAF
     }
 
     void verify_value_type_nominal(std::uint32_t index, const CoreVtNominal &n) {
@@ -2950,27 +3025,65 @@ class Verifier {
         const auto mix = [&h](std::size_t v) {
             h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
         };
-        std::visit(Overloaded{
-                       [&](const CoreVtNominal &n) {
-                           mix(n.base.value);
-                           for (const auto &a : n.args) {
-                               mix(a.value);
-                           }
-                       },
-                       [&](const CoreVtTuple &n) {
-                           for (const auto &e : n.elements) {
-                               mix(e.value);
-                           }
-                       },
-                       [&](const CoreVtFn &n) {
-                           for (const auto &p : n.params) {
-                               mix(p.value);
-                           }
-                           mix(n.ret.value);
-                       },
-                       [&](const auto &) {},
-                   },
-                   vt.node);
+        const auto vh_nominal = [&](const CoreVtNominal &n) {
+            mix(n.base.value);
+            for (const auto &a : n.args) {
+                mix(a.value);
+            }
+        };
+        const auto vh_tuple = [&](const CoreVtTuple &n) {
+            for (const auto &e : n.elements) {
+                mix(e.value);
+            }
+        };
+        const auto vh_fn = [&](const CoreVtFn &n) {
+            for (const auto &p : n.params) {
+                mix(p.value);
+            }
+            mix(n.ret.value);
+        };
+        // RFC 0027 Q1 (KR6.13-X): one handler per value-type node, generated
+        // from core_value_types.def. Nodes without child ids share
+        // VERIFY_HASH_LEAF (a distinct typed no-op lambda per node); nominal /
+        // tuple / fn route to the payload lambdas above. No unnamed catch-all: a
+        // 15th node without a VERIFY_HASH_* routing macro fails to compile.
+#define VERIFY_HASH_LEAF(Name) [](const CoreVt##Name &) noexcept {},
+#define VERIFY_HASH_Unit(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Never(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Bool(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Int(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Float(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_String(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Decimal(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Duration(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Timestamp(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Uuid(Name) VERIFY_HASH_LEAF(Name)
+#define VERIFY_HASH_Nominal(Name) vh_nominal,
+#define VERIFY_HASH_Tuple(Name) vh_tuple,
+#define VERIFY_HASH_Fn(Name) vh_fn,
+#define VERIFY_HASH_Closure(Name) VERIFY_HASH_LEAF(Name)
+#define HANDLE_CORE_VT(Name) VERIFY_HASH_##Name(Name)
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/core_value_types.def"
+            },
+            vt.node);
+#undef HANDLE_CORE_VT
+#undef VERIFY_HASH_Unit
+#undef VERIFY_HASH_Never
+#undef VERIFY_HASH_Bool
+#undef VERIFY_HASH_Int
+#undef VERIFY_HASH_Float
+#undef VERIFY_HASH_String
+#undef VERIFY_HASH_Decimal
+#undef VERIFY_HASH_Duration
+#undef VERIFY_HASH_Timestamp
+#undef VERIFY_HASH_Uuid
+#undef VERIFY_HASH_Nominal
+#undef VERIFY_HASH_Tuple
+#undef VERIFY_HASH_Fn
+#undef VERIFY_HASH_Closure
+#undef VERIFY_HASH_LEAF
         return h;
     }
 

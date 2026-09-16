@@ -1,10 +1,15 @@
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-# Public headers
+# Public headers. The glob also ships X-macro fragment headers (*.def), which
+# are #included by the public headers (e.g. core_ir.hpp includes
+# ahfl/compiler/ir/core_value_types.def to generate the CoreValueTypeNode
+# variant), so omitting them would make an installed SDK fail to compile.
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/ahfl
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    FILES_MATCHING PATTERN "*.hpp"
+    FILES_MATCHING
+        PATTERN "*.hpp"
+        PATTERN "*.def"
 )
 
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/third_party/antlr4/runtime/src/

@@ -37,13 +37,15 @@
 //     `std::vector<CoreDecl>` and the node set is a `std::variant` grown by
 //     later sub-slices.
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <variant>
+#include <tuple>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "ahfl/compiler/ir/program.hpp"
@@ -1343,17 +1345,67 @@ struct CoreVtClosure {
         default;
 };
 
-using CoreValueTypeNode =
-    std::variant<CoreVtUnit, CoreVtNever, CoreVtBool, CoreVtInt, CoreVtFloat, CoreVtString,
-                 CoreVtDecimal, CoreVtDuration, CoreVtTimestamp, CoreVtUuid, CoreVtNominal,
-                 CoreVtTuple, CoreVtFn, CoreVtClosure>;
+// RFC 0027 Q1 (KR6.13-X): the variant alternative list and the diagnostic name
+// table are BOTH generated from the single X-macro node list in
+// core_value_types.def — one line per node, declaration order preserved. The
+// tuple-tag indirection exists because a template argument list (unlike a
+// braced-init list) rejects a trailing comma, so the macro cannot paste
+// `CoreVt##Name,` straight into std::variant<...>; the tags also give every
+// consumer a compile-time ordered type sequence it can re-expand.
+namespace core_value_type_detail {
 
-// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+template <typename T> struct value_type_tag {
+    using type = T;
+};
+
+template <typename TagTuple> struct variant_from_tags;
+template <typename... Ts> struct variant_from_tags<std::tuple<value_type_tag<Ts>...>> {
+    using type = std::variant<Ts...>;
+};
+
+#define HANDLE_CORE_VT(Name) value_type_tag<CoreVt##Name>{},
+inline constexpr auto kCoreValueTypeTags = std::tuple{
+#include "ahfl/compiler/ir/core_value_types.def"
+};
+
+/// Stable per-node diagnostic name, indexed by `CoreValueTypeNode::index()`.
+/// Generated from the SAME .def list as the variant, so the table can never
+/// silently miss or reorder a node.
+inline constexpr std::array<
+    std::string_view, std::tuple_size_v<std::remove_cvref_t<decltype(kCoreValueTypeTags)>>>
+    kCoreValueTypeNames = {
+#define HANDLE_CORE_VT(Name) "CoreVt" #Name,
+#include "ahfl/compiler/ir/core_value_types.def"
+};
+
+} // namespace core_value_type_detail
+
+using CoreValueTypeNode = core_value_type_detail::variant_from_tags<
+    std::remove_cvref_t<decltype(core_value_type_detail::kCoreValueTypeTags)>>::type;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
+// count itself now derives from core_value_types.def; this pin turns "a node was
+// added to the .def" into a deliberate review event across every exhaustive
+// visitor (layout / wire / lower / verify).
 static_assert(std::variant_size_v<CoreValueTypeNode> == 14,
               "ahfl::ir::core::CoreValueTypeNode cardinality drift (RFC "
               "0027 P8 IR SSOT): update every exhaustive visitor "
-              "(layout / wire / lower / verify) and this pin together with "
-              "the alternative list.");
+              "(layout / wire / lower / verify), this pin, and "
+              "core_value_types.def together.");
+
+/// Stable diagnostic name of the value-type alternative at `variant_index`
+/// (e.g. `"CoreVtNominal"`). `variant_index` is a `CoreValueTypeNode::index()`
+/// value and therefore always in bounds.
+[[nodiscard]] inline constexpr std::string_view
+core_value_type_name(std::size_t variant_index) noexcept {
+    return core_value_type_detail::kCoreValueTypeNames[variant_index];
+}
+
+/// Stable diagnostic name of a value-type node (e.g. `"CoreVtClosure"`).
+[[nodiscard]] inline std::string_view
+core_value_type_name(const CoreValueTypeNode &node) noexcept {
+    return core_value_type_name(node.index());
+}
 
 /// An interned logical value type (`CoreProgram::value_types`). Structural
 /// equality of the node IS the interning key: two `CoreValueType`s compare equal

@@ -200,61 +200,70 @@ class LayoutBuilder {
         // nominal/tuple payload would be a use-after-free (ASan-proven). The copy
         // is cheap (small inline vectors) and this is not a hot path.
         const CoreValueType value_type = scratch_types_[type.value];
+        // RFC 0027 Q1 (KR6.13-X): the handler list is generated from the
+        // core_value_types.def X-list; each entry token-pastes to a real,
+        // explicitly-typed local lambda below. There is deliberately NO
+        // catch-all: adding a 15th node to the .def without defining
+        // `vt_##Name` fails to compile. Per-node semantics (including the
+        // deferred-closure failure) are unchanged.
+        const auto vt_Unit = [&](const CoreVtUnit &) -> std::optional<CoreLayout> {
+            return CoreLayout{0, 1, true, CoreLayoutStruct{}};
+        };
+        const auto vt_Never = [&](const CoreVtNever &) -> std::optional<CoreLayout> {
+            return CoreLayout{0, 1, true, CoreLayoutUninhabited{}};
+        };
+        const auto vt_Bool = [&](const CoreVtBool &) -> std::optional<CoreLayout> {
+            return scalar_layout(CoreScalarRepr::I32);
+        };
+        const auto vt_Int = [&](const CoreVtInt &node) -> std::optional<CoreLayout> {
+            constexpr auto i32_min =
+                static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::min());
+            constexpr auto i32_max =
+                static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max());
+            const bool narrow = node.bounds.has_value() && node.bounds->first >= i32_min &&
+                                node.bounds->second <= i32_max;
+            return scalar_layout(narrow ? CoreScalarRepr::I32 : CoreScalarRepr::I64);
+        };
+        const auto vt_Float = [&](const CoreVtFloat &) -> std::optional<CoreLayout> {
+            return scalar_layout(CoreScalarRepr::F64);
+        };
+        const auto vt_String = [&](const CoreVtString &) -> std::optional<CoreLayout> {
+            return CoreLayout{8, 4, false, CoreLayoutPtrLen{}};
+        };
+        const auto vt_Decimal = [&](const CoreVtDecimal &) -> std::optional<CoreLayout> {
+            return scalar_layout(CoreScalarRepr::I64);
+        };
+        const auto vt_Duration = [&](const CoreVtDuration &) -> std::optional<CoreLayout> {
+            return scalar_layout(CoreScalarRepr::I64);
+        };
+        const auto vt_Timestamp = [&](const CoreVtTimestamp &) -> std::optional<CoreLayout> {
+            return scalar_layout(CoreScalarRepr::I64);
+        };
+        const auto vt_Uuid = [&](const CoreVtUuid &) -> std::optional<CoreLayout> {
+            return CoreLayout{16, 1, false, CoreLayoutBytes{16}};
+        };
+        const auto vt_Nominal = [&](const CoreVtNominal &node) -> std::optional<CoreLayout> {
+            return build_nominal(type, node);
+        };
+        const auto vt_Tuple = [&](const CoreVtTuple &node) -> std::optional<CoreLayout> {
+            return build_aggregate(node.elements, type_range(type));
+        };
+        const auto vt_Fn = [&](const CoreVtFn &) -> std::optional<CoreLayout> {
+            return CoreLayout{4, 4, false, CoreLayoutFnRef{}};
+        };
+        const auto vt_Closure = [&](const CoreVtClosure &) -> std::optional<CoreLayout> {
+            fail(layout::kUnsupported,
+                 "closure value layout is deferred to P4-D D2",
+                 type_range(type));
+            return std::nullopt;
+        };
+#define HANDLE_CORE_VT(Name) vt_##Name,
         return std::visit(
             Overloaded{
-                [&](const CoreVtUnit &) -> std::optional<CoreLayout> {
-                    return CoreLayout{0, 1, true, CoreLayoutStruct{}};
-                },
-                [&](const CoreVtNever &) -> std::optional<CoreLayout> {
-                    return CoreLayout{0, 1, true, CoreLayoutUninhabited{}};
-                },
-                [&](const CoreVtBool &) -> std::optional<CoreLayout> {
-                    return scalar_layout(CoreScalarRepr::I32);
-                },
-                [&](const CoreVtInt &node) -> std::optional<CoreLayout> {
-                    constexpr auto i32_min =
-                        static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::min());
-                    constexpr auto i32_max =
-                        static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max());
-                    const bool narrow = node.bounds.has_value() &&
-                                        node.bounds->first >= i32_min &&
-                                        node.bounds->second <= i32_max;
-                    return scalar_layout(narrow ? CoreScalarRepr::I32 : CoreScalarRepr::I64);
-                },
-                [&](const CoreVtFloat &) -> std::optional<CoreLayout> {
-                    return scalar_layout(CoreScalarRepr::F64);
-                },
-                [&](const CoreVtString &) -> std::optional<CoreLayout> {
-                    return CoreLayout{8, 4, false, CoreLayoutPtrLen{}};
-                },
-                [&](const CoreVtDecimal &) -> std::optional<CoreLayout> {
-                    return scalar_layout(CoreScalarRepr::I64);
-                },
-                [&](const CoreVtDuration &) -> std::optional<CoreLayout> {
-                    return scalar_layout(CoreScalarRepr::I64);
-                },
-                [&](const CoreVtTimestamp &) -> std::optional<CoreLayout> {
-                    return scalar_layout(CoreScalarRepr::I64);
-                },
-                [&](const CoreVtUuid &) -> std::optional<CoreLayout> {
-                    return CoreLayout{16, 1, false, CoreLayoutBytes{16}};
-                },
-                [&](const CoreVtNominal &node) -> std::optional<CoreLayout> {
-                    return build_nominal(type, node);
-                },
-                [&](const CoreVtTuple &node) -> std::optional<CoreLayout> {
-                    return build_aggregate(node.elements, type_range(type));
-                },
-                [&](const CoreVtFn &) -> std::optional<CoreLayout> {
-                    return CoreLayout{4, 4, false, CoreLayoutFnRef{}};
-                },
-                [&](const CoreVtClosure &) -> std::optional<CoreLayout> {
-                    fail(layout::kUnsupported,
-                         "closure value layout is deferred to P4-D D2", type_range(type));
-                    return std::nullopt;
-                },
+#include "ahfl/compiler/ir/core_value_types.def"
             },
             value_type.node);
+#undef HANDLE_CORE_VT
     }
 
     [[nodiscard]] std::optional<CoreValueTypeId>

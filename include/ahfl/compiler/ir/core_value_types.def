@@ -1,0 +1,49 @@
+// X-macro node list for ahfl::ir::core::CoreValueTypeNode (RFC 0027 Q1,
+// KR6.13-X): the SINGLE source of truth for the Core value-type node set.
+//
+// This file intentionally has NO include guard. It is a text fragment that is
+// re-included once per consumer; every consumer must first define the
+// HANDLE_CORE_VT(Name) macro. The expansion is one HANDLE_CORE_VT invocation
+// per node, IN DECLARATION ORDER. That order is simultaneously:
+//   * the CoreValueTypeNode std::variant alternative order (generated in
+//     core_ir.hpp through core_value_type_tag), and
+//   * the core_value_type_name() table order.
+// Reordering an entry changes std::variant::index() values and is therefore a
+// breaking change; append new nodes at the END.
+//
+// Every exhaustive visitor (core_layout / core_wire_schema / core_lower /
+// core_verify) consumes this list with one explicit per-node handler macro,
+// routing through `<visitor-prefix>_##Name` token pasting. Adding a node here
+// without adding every per-node handler is a COMPILE ERROR; the property is
+// pinned by the negative compile-test
+// tests/fixtures/ir/ssot/core_value_type_nodes_negative.cpp (syntax-compiled by
+// tests/scripts/ir_ssot_compile_fail.py under ctest ahfl.ir.ssot_compile_fail).
+//
+// Usage:
+//   #define HANDLE_CORE_VT(Name) /* ... CoreVt##Name ... */
+//   #include "ahfl/compiler/ir/core_value_types.def"
+//
+// The file #undefs HANDLE_CORE_VT at the end so the driver macro never leaks
+// past a consumer; visitor-specific per-node helper macros are the consumer's
+// own responsibility to #undef.
+
+#ifndef HANDLE_CORE_VT
+#error "core_value_types.def: #define HANDLE_CORE_VT(Name) before #include-ing this node list"
+#endif
+
+HANDLE_CORE_VT(Unit)
+HANDLE_CORE_VT(Never)
+HANDLE_CORE_VT(Bool)
+HANDLE_CORE_VT(Int)
+HANDLE_CORE_VT(Float)
+HANDLE_CORE_VT(String)
+HANDLE_CORE_VT(Decimal)
+HANDLE_CORE_VT(Duration)
+HANDLE_CORE_VT(Timestamp)
+HANDLE_CORE_VT(Uuid)
+HANDLE_CORE_VT(Nominal)
+HANDLE_CORE_VT(Tuple)
+HANDLE_CORE_VT(Fn)
+HANDLE_CORE_VT(Closure)
+
+#undef HANDLE_CORE_VT

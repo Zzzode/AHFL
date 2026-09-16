@@ -175,70 +175,83 @@ class SchemaBuilder {
         // read of a nominal/tuple payload would be a use-after-free (ASan-proven).
         // The copy is cheap (small inline vectors) and this is not a hot path.
         const CoreValueTypeNode node = scratch_types_[type.value].node;
+        // RFC 0027 Q1 (KR6.13-X): the handler list is generated from the
+        // core_value_types.def X-list; each entry token-pastes to an explicit
+        // local lambda below. No catch-all: a 15th node added to the .def
+        // without a `ws_##Name` lambda fails to compile. Per-node wire behavior
+        // (including the Never/Fn/Closure unsupported diagnostics) is
+        // unchanged.
+        const auto ws_Unit = [](const CoreVtUnit &) -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaUnit{};
+        };
+        const auto ws_Never = [&](const CoreVtNever &) -> std::optional<CoreWireSchemaShape> {
+            fail(wire_schema::kUnsupported,
+                 "Never is not a materialized wire value",
+                 std::move(range));
+            return std::nullopt;
+        };
+        const auto ws_Bool = [](const CoreVtBool &) -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaBool{};
+        };
+        const auto ws_Int = [](const CoreVtInt &value) -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaInt{value.bounds};
+        };
+        const auto ws_Float = [](const CoreVtFloat &) -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaFloat{};
+        };
+        const auto ws_String = [](const CoreVtString &value)
+            -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaString{value.length_bounds};
+        };
+        const auto ws_Decimal = [](const CoreVtDecimal &value)
+            -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaDecimal{value.scale};
+        };
+        const auto ws_Duration = [](const CoreVtDuration &) -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaDuration{};
+        };
+        const auto ws_Timestamp = [](const CoreVtTimestamp &)
+            -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaTimestamp{};
+        };
+        const auto ws_Uuid = [](const CoreVtUuid &) -> std::optional<CoreWireSchemaShape> {
+            return CoreWireSchemaUuid{};
+        };
+        const auto ws_Nominal = [&](const CoreVtNominal &value)
+            -> std::optional<CoreWireSchemaShape> {
+            return build_nominal(value, range);
+        };
+        const auto ws_Tuple = [&](const CoreVtTuple &value) -> std::optional<CoreWireSchemaShape> {
+            CoreWireSchemaTuple tuple;
+            tuple.elements.reserve(value.elements.size());
+            for (const CoreValueTypeId element : value.elements) {
+                const auto child = project_type(element, range);
+                if (!child.has_value()) {
+                    return std::nullopt;
+                }
+                tuple.elements.push_back(*child);
+            }
+            return tuple;
+        };
+        const auto ws_Fn = [&](const CoreVtFn &) -> std::optional<CoreWireSchemaShape> {
+            fail(wire_schema::kUnsupported,
+                 "function values are not supported by value_json",
+                 std::move(range));
+            return std::nullopt;
+        };
+        const auto ws_Closure = [&](const CoreVtClosure &) -> std::optional<CoreWireSchemaShape> {
+            fail(wire_schema::kUnsupported,
+                 "closure values are not supported by value_json",
+                 std::move(range));
+            return std::nullopt;
+        };
+#define HANDLE_CORE_VT(Name) ws_##Name,
         return std::visit(
             Overloaded{
-                [](const CoreVtUnit &) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaUnit{};
-                },
-                [&](const CoreVtNever &) -> std::optional<CoreWireSchemaShape> {
-                    fail(wire_schema::kUnsupported,
-                         "Never is not a materialized wire value",
-                         std::move(range));
-                    return std::nullopt;
-                },
-                [](const CoreVtBool &) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaBool{};
-                },
-                [](const CoreVtInt &value) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaInt{value.bounds};
-                },
-                [](const CoreVtFloat &) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaFloat{};
-                },
-                [](const CoreVtString &value) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaString{value.length_bounds};
-                },
-                [](const CoreVtDecimal &value) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaDecimal{value.scale};
-                },
-                [](const CoreVtDuration &) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaDuration{};
-                },
-                [](const CoreVtTimestamp &) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaTimestamp{};
-                },
-                [](const CoreVtUuid &) -> std::optional<CoreWireSchemaShape> {
-                    return CoreWireSchemaUuid{};
-                },
-                [&](const CoreVtNominal &value) -> std::optional<CoreWireSchemaShape> {
-                    return build_nominal(value, range);
-                },
-                [&](const CoreVtTuple &value) -> std::optional<CoreWireSchemaShape> {
-                    CoreWireSchemaTuple tuple;
-                    tuple.elements.reserve(value.elements.size());
-                    for (const CoreValueTypeId element : value.elements) {
-                        const auto child = project_type(element, range);
-                        if (!child.has_value()) {
-                            return std::nullopt;
-                        }
-                        tuple.elements.push_back(*child);
-                    }
-                    return tuple;
-                },
-                [&](const CoreVtFn &) -> std::optional<CoreWireSchemaShape> {
-                    fail(wire_schema::kUnsupported,
-                         "function values are not supported by value_json",
-                         std::move(range));
-                    return std::nullopt;
-                },
-                [&](const CoreVtClosure &) -> std::optional<CoreWireSchemaShape> {
-                    fail(wire_schema::kUnsupported,
-                         "closure values are not supported by value_json",
-                         std::move(range));
-                    return std::nullopt;
-                },
+#include "ahfl/compiler/ir/core_value_types.def"
             },
             node);
+#undef HANDLE_CORE_VT
     }
 
     [[nodiscard]] std::optional<CoreWireSchemaShape>
