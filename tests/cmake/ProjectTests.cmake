@@ -1091,6 +1091,10 @@ add_test(NAME ahfl.runtime.core_wasm_resume_capacity
     COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_capacity_tests>
 )
 
+add_test(NAME ahfl.runtime.core_wasm_resume_host_codes
+    COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_host_codes_tests>
+)
+
 add_test(NAME ahfl.runtime.payload_store_codec
     COMMAND $<TARGET_FILE:ahfl_payload_store_codec_tests>
 )
