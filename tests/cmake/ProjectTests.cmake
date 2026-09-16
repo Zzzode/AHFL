@@ -1111,6 +1111,10 @@ add_test(NAME ahfl.runtime.durable_effect_authority
     COMMAND $<TARGET_FILE:ahfl_durable_effect_authority_tests>
 )
 
+add_test(NAME ahfl.conformance_case
+    COMMAND $<TARGET_FILE:ahfl_conformance_case_tests>
+)
+
 add_test(NAME ahfl.runtime.payload_store
     COMMAND $<TARGET_FILE:ahfl_payload_store_tests>
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/payload-store"

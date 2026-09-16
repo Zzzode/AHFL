@@ -1,0 +1,21 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/runtime/enum_variant_e2e.ahfl",
+  "kind": "workflow",
+  "entry": "runtime::enum_variant_e2e::TicketWorkflow",
+  "input": {"_type":"runtime::enum_variant_e2e::TicketRequest","id":42},
+  "capabilities": [],
+  "expect": {
+    "run_status": "completed",
+    "state_sequence": [],
+    "capability_sequence": [],
+    "output_json": {"_type":"runtime::enum_variant_e2e::TicketResponse","id":42,"owner":"system"}
+  },
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "computation",
+      "reason": "match on a struct-payload enum inside the agent body needs in-wasm expression evaluation (KR6.6 computation lane); P5 orchestration subset skips it"
+    }
+  }
+}

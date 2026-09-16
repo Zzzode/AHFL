@@ -385,6 +385,27 @@ target_include_directories(ahfl_durable_effect_authority_tests
 )
 ahfl_apply_project_warnings(ahfl_durable_effect_authority_tests)
 
+# KR6.7 (RFC 0026 P7): engine-independent conformance case manifest schema
+# validator. Pure test infrastructure: links only the JSON DOM + diagnostics,
+# never an execution engine.
+add_executable(ahfl_conformance_case_tests
+    unit/runtime/conformance/conformance_case_test.cpp
+)
+target_link_libraries(ahfl_conformance_case_tests
+    PRIVATE
+        ahfl_base_json
+)
+target_include_directories(ahfl_conformance_case_tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+target_compile_definitions(ahfl_conformance_case_tests
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+ahfl_apply_project_warnings(ahfl_conformance_case_tests)
+
 add_executable(ahfl_payload_store_tests
     unit/runtime/engine/payload_store.cpp
 )

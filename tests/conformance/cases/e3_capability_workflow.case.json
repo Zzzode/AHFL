@@ -1,0 +1,27 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e3_capability_workflow.ahfl",
+  "kind": "workflow",
+  "entry": "wasm::e3_capability_workflow::CapabilityPipeline",
+  "input": {"_type":"wasm::e3_capability_workflow::Frame","value":"identity"},
+  "capabilities": [
+    {
+      "name": "wasm::e3_capability_workflow::Echo",
+      "status": "ok",
+      "result_json": {"_type":"wasm::e3_capability_workflow::Frame","value":"identity"}
+    }
+  ],
+  "expect": {
+    "run_status": "completed",
+    "state_sequence": [],
+    "capability_sequence": ["wasm::e3_capability_workflow::Echo"],
+    "output_json": {"_type":"wasm::e3_capability_workflow::Frame","value":"identity"}
+  },
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "two-node workflow DAG with one capability-bearing node; executable on the P5 orchestration wasm subset (E3 capability workflow)"
+    }
+  }
+}

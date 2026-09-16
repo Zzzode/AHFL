@@ -1,0 +1,21 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e3_identity_workflow.ahfl",
+  "kind": "workflow",
+  "entry": "wasm::e3_workflow::IdentityPipeline",
+  "input": {"_type":"wasm::e3_workflow::Frame","value":"identity"},
+  "capabilities": [],
+  "expect": {
+    "run_status": "completed",
+    "state_sequence": [],
+    "capability_sequence": [],
+    "output_json": {"_type":"wasm::e3_workflow::Frame","value":"identity"}
+  },
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "two-node identity workflow DAG with no capability imports; executable on the P5 orchestration wasm subset (E3)"
+    }
+  }
+}
