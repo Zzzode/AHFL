@@ -1091,6 +1091,10 @@ add_test(NAME ahfl.runtime.core_wasm_resume_capacity
     COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_capacity_tests>
 )
 
+add_test(NAME ahfl.runtime.host_event_envelope
+    COMMAND $<TARGET_FILE:ahfl_host_event_envelope_tests>
+)
+
 add_test(NAME ahfl.runtime.core_wasm_resume_host_codes
     COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_host_codes_tests>
 )

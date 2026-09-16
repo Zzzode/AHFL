@@ -331,6 +331,20 @@ target_link_libraries(ahfl_core_wasm_resume_capacity_tests
 )
 ahfl_apply_project_warnings(ahfl_core_wasm_resume_capacity_tests)
 
+add_executable(ahfl_host_event_envelope_tests
+    unit/runtime/engine/host_event_envelope.cpp
+)
+target_link_libraries(ahfl_host_event_envelope_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+target_include_directories(ahfl_host_event_envelope_tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+ahfl_apply_project_warnings(ahfl_host_event_envelope_tests)
+
 add_executable(ahfl_core_wasm_resume_host_codes_tests
     unit/runtime/engine/core_wasm_resume_host_codes.cpp
 )
