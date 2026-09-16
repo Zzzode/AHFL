@@ -1456,6 +1456,10 @@ const core_wasm_resume::CoreWasmResumeRecord &ResumeSnapshot::record() const noe
 
 std::uint64_t ResumeSnapshot::generation() const noexcept { return manifest_.generation; }
 
+ir::core::CoreWorkflowId ResumeSnapshot::workflow_id() const noexcept { return manifest_.wf; }
+
+ResumeCheckpointId ResumeSnapshot::checkpoint_id() const noexcept { return manifest_.ckpt; }
+
 std::expected<ResolvedAvailable, PayloadStoreError>
 ResumeSnapshot::admit_slots(std::span<const std::uint8_t, 16> expected_key_id,
                             std::span<const std::uint8_t> key) && {

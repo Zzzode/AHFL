@@ -153,6 +153,14 @@ class ResumeSnapshot {
     [[nodiscard]] const core_wasm_resume::CoreWasmResumeRecord &record() const noexcept;
     [[nodiscard]] std::uint64_t generation() const noexcept;
 
+    // The AUTHENTICATED checkpoint namespace this snapshot belongs to. Both
+    // values come from the HMAC-authenticated commit manifest, whose (wf, ckpt)
+    // `read_live_pointer` cross-checks against the open_snapshot arguments
+    // (CrossCheckpointRejected on any mismatch), so they -- never a caller
+    // re-supply -- are the namespace SSOT for downstream token authorities.
+    [[nodiscard]] ir::core::CoreWorkflowId workflow_id() const noexcept;
+    [[nodiscard]] ResumeCheckpointId checkpoint_id() const noexcept;
+
     // Phase 2 (one-shot; consumes the pin). Admits the exact distinct slot set on
     // the pinned generation fd after re-borrowing + cross-checking `(key_id, key)`.
     // Returns the full `ResolvedAvailable` (generation + record + slots) moved out.

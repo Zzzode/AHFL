@@ -18,22 +18,14 @@
 // per-import / event-join branches; (F) publish / ACK states + span stability; (G)
 // terminal / consume incl raw ABI status classification + real Consumed{M,N}.
 
-#include "runtime/engine/core_wasm_resume_controller.hpp"
 
-#include "runtime/engine/core_wasm_resume_record.hpp"
-#include "runtime/engine/core_wasm_schema_module.hpp"
-#include "runtime/engine/core_wire_codec.hpp"
-#include "runtime/engine/payload_store.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
-
-#include "ahfl/compiler/ir/core_wire_schema.hpp"
-#include "ahfl/runtime/ahfl_host.h"
-#include "base/json/json_value.hpp"
+// The module/event/store fixture builders live in the SHARED test-support header
+// (promoted by D2a-F4 so the production resume-host driver and Node e2e reuse them
+// without duplication).
+#include "resume_test_support.hpp"
 
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -48,23 +40,18 @@
 
 namespace {
 
+using namespace ahfl::runtime::resume_test_support;
+
 namespace rc = ahfl::runtime::core_wasm_resume_controller;
 namespace ps = ahfl::runtime::payload_store;
 namespace csm = ahfl::runtime::core_wasm_schema_module;
 
 using ahfl::ir::core::CoreCapabilityId;
-using ahfl::ir::core::CoreWireCapabilitySchema;
-using ahfl::ir::core::CoreWireSchemaInt;
 using ahfl::ir::core::CoreWireSchemaNode;
 using ahfl::ir::core::CoreWireSchemaNodeId;
-using ahfl::ir::core::CoreWireSchemaSequence;
-using ahfl::ir::core::CoreWireSchemaString;
-using ahfl::ir::core::CoreWireSchemaTable;
-using ahfl::ir::core::CoreWireSequenceKind;
 using ahfl::ir::core::CoreWorkflowId;
 using ahfl::ir::core::CoreWorkflowNodeId;
 using ahfl::runtime::core_wasm_resume::CoreWasmResumeRecord;
-using ahfl::runtime::core_wasm_resume::DigestHex;
 using ahfl::runtime::core_wasm_resume::InvocationOrdinal;
 using ahfl::runtime::core_wasm_resume::NodeKind;
 using ahfl::runtime::core_wasm_resume::PayloadSlotId;
@@ -72,12 +59,20 @@ using ahfl::runtime::core_wasm_resume::ResumeMemoEntry;
 using ahfl::runtime::core_wasm_resume::ResumeNode;
 using ahfl::runtime::core_wasm_resume::ResumePendingEntry;
 using ahfl::runtime::core_wasm_resume::ResumeState;
-using ahfl::runtime::core_wasm_schema_module::ArtifactDigest;
-using ahfl::runtime::core_wasm_schema_module::make_verified_core_wasm_schema_module;
 using ahfl::runtime::core_wasm_schema_module::VerifiedCoreWasmSchemaModule;
 using ahfl::runtime::payload_store::ResumeCheckpointId;
+using ahfl::runtime::durable_effect_authority::DurableEffectAuthority;
+using ahfl::runtime::durable_effect_authority::IDurableEffectBackend;
+using ahfl::runtime::durable_effect_authority::make_in_memory_durable_effect_backend;
+using ahfl::runtime::durable_effect_intent::FrozenAuthorityNamespaceBuilder;
+using ahfl::runtime::core_wasm_idempotency_token::IdempotencyAuthorityId;
+using ahfl::support::Sha256Digest;
 
 namespace fs = std::filesystem;
+
+namespace dea = ahfl::runtime::durable_effect_authority;
+namespace dei = ahfl::runtime::durable_effect_intent;
+namespace tok = ahfl::runtime::core_wasm_idempotency_token;
 
 // ---- raw ABI status pinned to the SSOT (not magic numbers) ------------------
 static_assert(AHFL_CAP_OK == 0u, "OK must be 0");
@@ -91,7 +86,9 @@ static_assert(!std::is_copy_constructible_v<rc::GatedResume>, "GatedResume move-
 static_assert(!std::is_copy_constructible_v<rc::PendingInjection>, "PendingInjection move-only");
 // Closed variant sizes (no accidental extra arms).
 static_assert(std::variant_size_v<rc::AdmitOutcome> == 2, "AdmitOutcome has 2 arms");
-static_assert(std::variant_size_v<rc::ImportStepDecision> == 3, "ImportStepDecision has 3 arms");
+static_assert(std::variant_size_v<rc::ImportStepDecision> == 6,
+              "ImportStepDecision has 6 arms (ReturnMemo/NeedInjectedSlot/ReadyForLive + "
+              "D2b-4 DedupReplay/DedupReplayFailure/RecoverPending)");
 static_assert(std::variant_size_v<rc::Run2Exit> == 2, "Run2Exit has 2 arms");
 // Reason enums are compact (u8), carry no bytes.
 static_assert(sizeof(rc::ResumePrepareReason) == 1, "PrepareReason u8");
@@ -108,345 +105,62 @@ void check(bool ok, std::string_view name) {
     }
 }
 
-// ==== emitter-free canonical module byte builders (NOT a production authority) ====
+// D2b-4: a delegating durable-effect backend whose READ-ONLY call-site lookup
+// always reports a storage fault, so the controller's fail-closed arm is proven
+// against a real backend error (not a synthetic variant literal).
+class FaultLookupBackend final : public IDurableEffectBackend {
+  public:
+    explicit FaultLookupBackend(std::shared_ptr<IDurableEffectBackend> inner)
+        : inner_(std::move(inner)) {}
 
-void put_uleb(std::vector<std::uint8_t> &out, std::uint64_t value) {
-    do {
-        auto b = static_cast<std::uint8_t>(value & 0x7fU);
-        value >>= 7U;
-        if (value != 0) {
-            b |= 0x80U;
-        }
-        out.push_back(b);
-    } while (value != 0);
-}
-
-void put_section(std::vector<std::uint8_t> &out, std::uint8_t id,
-                 const std::vector<std::uint8_t> &payload) {
-    out.push_back(id);
-    put_uleb(out, payload.size());
-    out.insert(out.end(), payload.begin(), payload.end());
-}
-
-std::vector<std::uint8_t> func_type(const std::vector<std::uint8_t> &params,
-                                    const std::vector<std::uint8_t> &results) {
-    std::vector<std::uint8_t> t;
-    t.push_back(0x60);
-    put_uleb(t, params.size());
-    t.insert(t.end(), params.begin(), params.end());
-    put_uleb(t, results.size());
-    t.insert(t.end(), results.begin(), results.end());
-    return t;
-}
-
-std::vector<std::uint8_t> type_payload(const std::vector<std::vector<std::uint8_t>> &types) {
-    std::vector<std::uint8_t> p;
-    put_uleb(p, types.size());
-    for (const auto &t : types) {
-        p.insert(p.end(), t.begin(), t.end());
+    [[nodiscard]] std::optional<dea::SealedEffectRegistration>
+    find_registration(const tok::IdempotencyToken &token) const override {
+        return inner_->find_registration(token);
     }
-    return p;
-}
-
-std::vector<std::uint8_t>
-import_payload(const std::vector<std::pair<std::uint64_t, std::uint32_t>> &imports) {
-    std::vector<std::uint8_t> p;
-    put_uleb(p, imports.size());
-    for (const auto &[symbol, typeidx] : imports) {
-        const std::string module_name = "ahfl_cap";
-        put_uleb(p, module_name.size());
-        p.insert(p.end(), module_name.begin(), module_name.end());
-        const std::string field = "cap_" + std::to_string(symbol);
-        put_uleb(p, field.size());
-        p.insert(p.end(), field.begin(), field.end());
-        p.push_back(0x00); // func import
-        put_uleb(p, typeidx);
+    [[nodiscard]] std::expected<dea::SealOutcome, dea::DurableEffectBackendError>
+    seal_or_load(dea::SealedEffectRegistration candidate) override {
+        return inner_->seal_or_load(std::move(candidate));
     }
-    return p;
-}
+    [[nodiscard]] std::expected<dea::ResultHandle,
+                                std::variant<dea::RegistrationConflict,
+                                             dea::DurableEffectBackendError>>
+    complete_pending(const tok::IdempotencyToken &token, bool succeeded,
+                     std::span<const std::uint8_t> typed_payload) override {
+        return inner_->complete_pending(token, succeeded, typed_payload);
+    }
+    [[nodiscard]] std::expected<std::vector<dea::PendingRecoveryEntry>,
+                                dea::DurableEffectBackendError>
+    list_pending(const dei::CheckpointNamespace &checkpoint_namespace) const override {
+        return inner_->list_pending(checkpoint_namespace);
+    }
+    [[nodiscard]] std::expected<dea::CallSiteLookup, dea::DurableEffectBackendError>
+    find_registration_at_call_site(const tok::IdempotencyAuthorityId &authority,
+                                   const dei::CheckpointNamespace &checkpoint_namespace,
+                                   CoreWorkflowNodeId node, InvocationOrdinal ordinal,
+                                   CoreCapabilityId capability,
+                                   std::uint64_t source_symbol) const override {
+        // The read the D2b-4 controller performs always fails here.
+        (void)authority;
+        (void)checkpoint_namespace;
+        (void)node;
+        (void)ordinal;
+        (void)capability;
+        (void)source_symbol;
+        return std::unexpected(dea::DurableEffectBackendError::StorageUnavailable);
+    }
+    [[nodiscard]] std::expected<std::vector<std::uint8_t>,
+                                std::variant<dea::PayloadReadConflict,
+                                             dea::DurableEffectBackendError>>
+    read_payload(dea::ResultHandle handle) const override {
+        return inner_->read_payload(handle);
+    }
 
-std::vector<std::uint8_t> custom_payload(const std::string &name,
-                                         const std::vector<std::uint8_t> &body) {
-    std::vector<std::uint8_t> p;
-    put_uleb(p, name.size());
-    p.insert(p.end(), name.begin(), name.end());
-    p.insert(p.end(), body.begin(), body.end());
-    return p;
-}
-
-struct ManifestNodeSpec {
-    std::uint32_t workflow_node_id;
-    std::uint8_t cap_call_count; // 0 identity or 1 capability
-    std::uint32_t capability;
-    std::uint64_t source_symbol;
+  private:
+    std::shared_ptr<IDurableEffectBackend> inner_;
 };
-
-std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
-                                             const std::vector<ManifestNodeSpec> &nodes) {
-    std::vector<std::uint8_t> b;
-    const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
-    for (char c : magic) {
-        b.push_back(static_cast<std::uint8_t>(c));
-    }
-    b.push_back(1); // version
-    b.push_back(0); // entry.kind = Workflow
-    put_uleb(b, entry_id);
-    put_uleb(b, nodes.size());
-    for (std::uint32_t i = 0; i < nodes.size(); ++i) {
-        const auto &n = nodes[i];
-        put_uleb(b, n.workflow_node_id);
-        put_uleb(b, i); // schedule_pos == index
-        b.push_back(n.cap_call_count);
-        if (n.cap_call_count == 1) {
-            put_uleb(b, n.capability);
-            put_uleb(b, n.source_symbol);
-        }
-    }
-    return b;
-}
-
-struct CapSpec {
-    std::uint32_t cap_id;
-    std::uint64_t symbol;
-    CoreWireSchemaNodeId result;
-};
-
-std::vector<std::uint8_t> encode_schema(const CoreWireSchemaTable &table) {
-    auto enc = ahfl::ir::core::encode_core_wire_schema_table(table);
-    if (!enc.ok() || !enc.bytes.has_value()) {
-        return {};
-    }
-    return *enc.bytes;
-}
-
-// Node 0 = Int param; caller-supplied extra nodes append after it. Each cap uses param
-// node 0 and its own result node id.
-CoreWireSchemaTable schema_table(std::vector<CoreWireSchemaNode> extra_nodes,
-                                 const std::vector<CapSpec> &caps) {
-    CoreWireSchemaTable table;
-    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0: Int param
-    for (auto &n : extra_nodes) {
-        table.nodes.push_back(std::move(n));
-    }
-    for (const auto &c : caps) {
-        CoreWireCapabilitySchema cs;
-        cs.capability = CoreCapabilityId{c.cap_id};
-        cs.source_symbol = c.symbol;
-        cs.params = {CoreWireSchemaNodeId{0}};
-        cs.result = c.result;
-        table.capabilities.push_back(cs);
-    }
-    return table;
-}
-
-struct ModuleSpec {
-    std::uint32_t entry_id = 7;
-    std::vector<CapSpec> caps;
-    std::vector<ManifestNodeSpec> nodes;
-    std::vector<CoreWireSchemaNode> extra_schema_nodes;
-};
-
-std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
-    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
-    put_section(m, 1, type_payload({func_type({0x7f, 0x7f}, {0x7f, 0x7f, 0x7f})}));
-    std::vector<std::pair<std::uint64_t, std::uint32_t>> imports;
-    for (const auto &c : spec.caps) {
-        imports.emplace_back(c.symbol, 0u);
-    }
-    put_section(m, 2, import_payload(imports));
-    put_section(m, 0,
-                custom_payload("ahfl.wasm-exec-manifest.v1",
-                               exec_manifest_body(spec.entry_id, spec.nodes)));
-    put_section(m, 0,
-                custom_payload("ahfl.wire-schema.v1",
-                               encode_schema(schema_table(spec.extra_schema_nodes, spec.caps))));
-    return m;
-}
-
-// Build + verify a module spec in one step.
-csm::VerifiedCoreWasmSchemaModuleResult admit_module(const ModuleSpec &spec) {
-    const auto bytes = build_module(spec);
-    return make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(bytes));
-}
-
-// schema node builders
-CoreWireSchemaNode int_node() { return CoreWireSchemaNode{CoreWireSchemaInt{}}; }
-CoreWireSchemaNode bounded_string_node(std::int64_t max_bytes) {
-    CoreWireSchemaString s;
-    s.length_bounds = std::pair<std::int64_t, std::int64_t>{0, max_bytes};
-    return CoreWireSchemaNode{s};
-}
-CoreWireSchemaNode unbounded_string_node() { return CoreWireSchemaNode{CoreWireSchemaString{}}; }
-CoreWireSchemaNode list_node(std::uint32_t elem, std::optional<std::uint64_t> cap) {
-    CoreWireSchemaSequence s;
-    s.kind = CoreWireSequenceKind::List;
-    s.element = CoreWireSchemaNodeId{elem};
-    s.capacity = cap;
-    return CoreWireSchemaNode{s};
-}
-
-// ==== digest + record + store helpers ====
-
-DigestHex hex_of_digest(const ArtifactDigest &raw) {
-    static const char *k = "0123456789abcdef";
-    DigestHex out{};
-    for (std::size_t i = 0; i < raw.size(); ++i) {
-        out[2 * i] = k[(raw[i] >> 4) & 0xF];
-        out[2 * i + 1] = k[raw[i] & 0xF];
-    }
-    return out;
-}
-
-std::vector<std::uint8_t> test_key() { return std::vector<std::uint8_t>(32, 0x2b); }
-std::array<std::uint8_t, 16> test_key_id() {
-    std::array<std::uint8_t, 16> id{};
-    for (std::size_t i = 0; i < id.size(); ++i) {
-        id[i] = static_cast<std::uint8_t>(i + 1);
-    }
-    return id;
-}
-
-ps::StoreOptions big_opts() {
-    ps::StoreOptions o;
-    o.limits = ps::StoreLimits{1u << 20, 1u << 20};
-    return o;
-}
-
-void set_matching_digests(CoreWasmResumeRecord &r, const VerifiedCoreWasmSchemaModule &mod) {
-    r.module_sha256 = hex_of_digest(mod.module_sha256());
-    r.wire_schema_sha256 = hex_of_digest(mod.wire_schema_sha256());
-    r.exec_manifest_sha256 = hex_of_digest(mod.exec_manifest_sha256());
-}
-
-// The frontier arg_hash the controller computes for a given Int param JSON against a
-// call site's Param binding (mirrors the controller: decode_json -> hash_values).
-std::uint64_t param_arg_hash(const VerifiedCoreWasmSchemaModule &mod, std::size_t call_site,
-                             std::string_view param_json) {
-    auto cs = mod.resolve(csm::ManifestCallSiteIndex{call_site});
-    if (!cs.ok()) {
-        return 0;
-    }
-    auto dom = ahfl::json::parse_json(param_json);
-    if (!dom.has_value()) {
-        return 0;
-    }
-    auto decoded = ahfl::runtime::wire_codec::decode_json(**dom, cs.call_site->param_binding());
-    if (!decoded.ok()) {
-        return 0;
-    }
-    std::vector<ahfl::evaluator::Value> v;
-    v.push_back(std::move(*decoded.value));
-    return ahfl::evaluator::hash_values(v);
-}
-
-// ---- node-event linear-memory synthesizer ----
-constexpr std::size_t kPageBytes = 65536;
-constexpr std::uint32_t kEventLogBase = 1024;
-constexpr std::uint32_t kEventRecordsBase = 1032;
-constexpr std::uint32_t kRecordBytes = 40;
-
-void put_u32(std::vector<std::uint8_t> &m, std::size_t off, std::uint32_t v) {
-    m[off] = static_cast<std::uint8_t>(v & 0xFF);
-    m[off + 1] = static_cast<std::uint8_t>((v >> 8) & 0xFF);
-    m[off + 2] = static_cast<std::uint8_t>((v >> 16) & 0xFF);
-    m[off + 3] = static_cast<std::uint8_t>((v >> 24) & 0xFF);
-}
-void put_u64(std::vector<std::uint8_t> &m, std::size_t off, std::uint64_t v) {
-    for (std::size_t i = 0; i < 8; ++i) {
-        m[off + i] = static_cast<std::uint8_t>((v >> (8 * i)) & 0xFF);
-    }
-}
-
-std::vector<std::uint8_t> event_memory(const std::vector<ManifestNodeSpec> &nodes,
-                                       std::uint32_t count) {
-    std::vector<std::uint8_t> m(kPageBytes, 0);
-    put_u32(m, kEventLogBase, count);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const auto &n = nodes[i];
-        const std::size_t base = kEventRecordsBase + static_cast<std::size_t>(i) * kRecordBytes;
-        const bool is_cap = n.cap_call_count == 1;
-        m[base + 0] = is_cap ? 1 : 0;
-        put_u32(m, base + 4, n.workflow_node_id);
-        put_u32(m, base + 8, i);
-        if (is_cap) {
-            put_u32(m, base + 12, n.capability);
-            put_u64(m, base + 16, n.source_symbol);
-            put_u64(m, base + 24, 0);
-        }
-        put_u32(m, base + 32, 0);
-    }
-    return m;
-}
-
-const std::string kIntParamJson = "1";
-const std::string kStringResultJson = "\"ok\"";
-const std::vector<std::uint8_t> kEntryBytes = {0x01, 0x02, 0x03};
-
-void nuke(const fs::path &p) {
-    std::error_code ec;
-    fs::remove_all(p, ec);
-}
-
-std::optional<ps::IntegrityPayloadStore> open_store(const fs::path &work) {
-    nuke(work);
-    std::error_code ec;
-    fs::create_directories(work, ec);
-    auto s = ps::IntegrityPayloadStore::open(work, big_opts());
-    if (!s.has_value()) {
-        return std::nullopt;
-    }
-    return std::move(*s);
-}
-
-// Flip the first byte of every on-disk artifact file under `work` whose name contains
-// `marker` (e.g. "slot"), changing the artifact's whole-file digest. At admission the
-// store's manifest digest cross-check (which runs BEFORE the HMAC decode) fails with
-// StateMismatch. Test-only tamper hook; it does NOT re-sign the manifest, so it exercises
-// the digest cross-check arm, not the HMAC IntegrityFailed arm.
-void corrupt_artifacts(const fs::path &work, std::string_view marker) {
-    std::error_code ec;
-    for (auto it = fs::recursive_directory_iterator(work, ec);
-         !ec && it != fs::recursive_directory_iterator(); ++it) {
-        if (!it->is_regular_file(ec)) {
-            continue;
-        }
-        if (it->path().filename().string().find(marker) == std::string::npos) {
-            continue;
-        }
-        std::error_code sec;
-        if (fs::file_size(it->path(), sec) == 0 || sec) {
-            continue;
-        }
-        std::FILE *f = std::fopen(it->path().string().c_str(), "r+b");
-        if (f == nullptr) {
-            continue;
-        }
-        unsigned char b = 0;
-        std::fseek(f, 0, SEEK_SET);
-        if (std::fread(&b, 1, 1, f) == 1) {
-            b = static_cast<unsigned char>(b ^ 0xFF);
-            std::fseek(f, 0, SEEK_SET);
-            std::fwrite(&b, 1, 1, f);
-        }
-        std::fclose(f);
-    }
-}
-
-// ---- typed-error assertion helpers ----
-bool is_prepare_reason(const rc::ResumePrepareError &e, rc::ResumePrepareReason want) {
-    return std::holds_alternative<rc::ResumePrepareReason>(e) &&
-           std::get<rc::ResumePrepareReason>(e) == want;
-}
-bool is_step_reason(const rc::ResumeStepError &e, rc::ResumeStepReason want) {
-    return std::holds_alternative<rc::ResumeStepReason>(e) &&
-           std::get<rc::ResumeStepReason>(e) == want;
-}
-bool is_store_error(const rc::ResumeStepError &e, ps::PayloadStoreError want) {
-    return std::holds_alternative<ps::PayloadStoreError>(e) &&
-           std::get<ps::PayloadStoreError>(e) == want;
-}
 
 } // namespace
+
 
 int main(int argc, char **argv) {
     if (argc < 2) {
@@ -529,10 +243,12 @@ int main(int argc, char **argv) {
     const std::vector<ps::Slot> entry_only_slots = {ps::Slot{PayloadSlotId{9}, kEntryBytes}};
 
     // Publish a Suspended record + open a gated resume. Returns the GatedResume.
+    // D2b-4: an optional GatedResumeOptions threads the dedup authority binding.
     const auto publish_and_gate =
         [&](ps::IntegrityPayloadStore &store,
             const CoreWasmResumeRecord &rec, const std::vector<ps::Slot> &slots,
-            const VerifiedCoreWasmSchemaModule &m)
+            const VerifiedCoreWasmSchemaModule &m,
+            rc::GatedResumeOptions options = rc::GatedResumeOptions{})
         -> std::optional<std::expected<rc::GatedResume, rc::ResumePrepareError>> {
         if (!store.publish_available(wf, ckpt, 0, rec, slots, id_span, key).has_value()) {
             return std::nullopt;
@@ -541,7 +257,7 @@ int main(int argc, char **argv) {
         if (!snap.has_value()) {
             return std::nullopt;
         }
-        return rc::open_gated_resume(m, std::move(*snap));
+        return rc::open_gated_resume(m, std::move(*snap), options);
     };
 
     // Full admit->supply into a PreparedResume for the shared module (Suspended->inject).
@@ -3024,6 +2740,328 @@ int main(int argc, char **argv) {
                 check(false, "G.consume_genmismatch.setup");
             }
             nuke(work);
+        }
+    }
+
+    // ================= GROUP H: D2b-4 token-aware ReadyForLive decision seam =====
+    // The controller is DECISION-ONLY: it consults the D2b authority READ-ONLY and
+    // seals nothing. The AFTER-frontier ordinal-1 import (node 42, cap 4/sym 901)
+    // is the ReadyForLive frontier where the verdict is surfaced.
+    {
+        ModuleSpec hspec;
+        hspec.entry_id = 7;
+        hspec.extra_schema_nodes = {bounded_string_node(8)};
+        hspec.caps = {CapSpec{3, 900, CoreWireSchemaNodeId{1}},
+                      CapSpec{4, 901, CoreWireSchemaNodeId{1}}};
+        hspec.nodes = {ManifestNodeSpec{40, 0, 0, 0}, ManifestNodeSpec{41, 1, 3, 900},
+                       ManifestNodeSpec{42, 1, 4, 901}};
+        auto hmr = admit_module(hspec);
+        check(hmr.ok(), "H.module_admits");
+        if (hmr.ok()) {
+            const auto &hm = *hmr.module;
+            const std::uint64_t ah0 = param_arg_hash(hm, 0, kIntParamJson);
+            const auto ord0 = hm.resolve(csm::ManifestCallSiteIndex{0}).call_site->import_ordinal();
+            const auto ord1 = hm.resolve(csm::ManifestCallSiteIndex{1}).call_site->import_ordinal();
+            const std::vector<std::uint8_t> mem_h1 = event_memory(hspec.nodes, 1);
+            const std::vector<std::uint8_t> mem_h2 = event_memory(hspec.nodes, 2);
+
+            std::array<std::uint8_t, 16> auth_raw{};
+            for (std::size_t i = 0; i < auth_raw.size(); ++i) {
+                auth_raw[i] = static_cast<std::uint8_t>(0x40 + i);
+            }
+            const IdempotencyAuthorityId auth_id{auth_raw};
+            std::array<std::uint8_t, 16> foreign_raw{};
+            for (std::size_t i = 0; i < foreign_raw.size(); ++i) {
+                foreign_raw[i] = static_cast<std::uint8_t>(0x80 + i);
+            }
+            const IdempotencyAuthorityId foreign_id{foreign_raw};
+
+            namespace dei = ahfl::runtime::durable_effect_intent;
+            namespace dea = ahfl::runtime::durable_effect_authority;
+            namespace tok = ahfl::runtime::core_wasm_idempotency_token;
+
+            // The controller's exact canonical digest for the live call's param "1".
+            const Sha256Digest digest_p1 = param_canonical_digest(hm, 1, kIntParamJson);
+            // A DIVERGENT prior-attempt digest (same call site, different param "2").
+            const Sha256Digest digest_p2 = param_canonical_digest(hm, 1, "2");
+
+            // Mint an intent at the node-42 after-frontier call site under a given
+            // authority id + param digest (same namespace wf/ckpt).
+            const auto mint_live = [&](IdempotencyAuthorityId who, Sha256Digest digest) {
+                FrozenAuthorityNamespaceBuilder b;
+                static_cast<void>(b.bind(who, dei::CheckpointNamespace{wf, ckpt}));
+                dei::IntentCoordinate c;
+                c.checkpoint_namespace = {wf, ckpt};
+                c.node = CoreWorkflowNodeId{42};
+                c.ordinal = InvocationOrdinal{0};
+                c.capability = CoreCapabilityId{4};
+                c.source_symbol = 901;
+                c.param_digest = digest;
+                return b.mint(c).value();
+            };
+
+            // Publish Suspended (frontier 41), gate with the D2b-4 options, admit +
+            // drive the frontier publish/ACK so the cursor sits at the live node 42.
+            const auto drive_h =
+                [&](const fs::path &work, std::optional<ps::IntegrityPayloadStore> &store_out,
+                    const DurableEffectAuthority *dedup, IdempotencyAuthorityId who)
+                -> std::optional<rc::PreparedResume> {
+                store_out = open_store(work);
+                if (!store_out.has_value()) {
+                    return std::nullopt;
+                }
+                rc::GatedResumeOptions opts;
+                opts.authority_id = who;
+                opts.dedup_authority = dedup;
+                auto gated = publish_and_gate(
+                    *store_out, d_record(hm, ah0),
+                    {ps::Slot{PayloadSlotId{9}, kEntryBytes}}, hm, opts);
+                if (!gated.has_value() || !gated->has_value()) {
+                    return std::nullopt;
+                }
+                auto outcome = rc::admit_and_preflight(std::move(**gated), id_span, key,
+                                                       std::span<const std::uint8_t>(), cap);
+                if (!outcome.has_value() ||
+                    !std::holds_alternative<rc::PendingInjection>(*outcome)) {
+                    return std::nullopt;
+                }
+                auto prepared = rc::supply_injected_result(
+                    std::get<rc::PendingInjection>(std::move(*outcome)),
+                    std::span<const std::uint8_t>(injected));
+                if (!prepared.has_value()) {
+                    return std::nullopt;
+                }
+                rc::ImportStepInput i0;
+                i0.observed_ordinal = ord0;
+                i0.module_param_frame = std::span<const std::uint8_t>(param_frame);
+                i0.whole_linear_memory = std::span<const std::uint8_t>(mem_h1);
+                if (!rc::next_import(*prepared, i0).has_value()) {
+                    return std::nullopt;
+                }
+                auto plan = rc::bind_publish_injected(*prepared, PayloadSlotId{5});
+                if (!plan.has_value()) {
+                    return std::nullopt;
+                }
+                auto pub = store_out->publish_available(wf, ckpt, plan->expected_generation(),
+                                                        plan->record(), plan->slots(), id_span,
+                                                        key);
+                if (!rc::ack_publish_injected(*prepared, pub).has_value()) {
+                    return std::nullopt;
+                }
+                return std::move(*prepared);
+            };
+            // The ordinal-1 after-frontier consultation.
+            const auto consult1 = [&](rc::PreparedResume &p) {
+                rc::ImportStepInput i1;
+                i1.observed_ordinal = ord1;
+                i1.module_param_frame = std::span<const std::uint8_t>(param_frame);
+                i1.whole_linear_memory = std::span<const std::uint8_t>(mem_h2);
+                return rc::next_import(p, i1);
+            };
+
+            // (a) unknown token -> ReadyForLive, and the READ-ONLY preview sealed
+            // NOTHING (a subsequent begin still returns a Fresh New).
+            {
+                const fs::path work = base / "h-fresh";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority dedup{backend};
+                auto prepared = drive_h(work, store, &dedup, auth_id);
+                check(prepared.has_value(), "H.fresh_prepared");
+                if (prepared.has_value()) {
+                    auto d = consult1(*prepared);
+                    check(d.has_value() && std::holds_alternative<rc::ReadyForLive>(*d),
+                          "H.unknown_token_ready_for_live");
+                    // Decision-only: the controller's preview created no row.
+                    auto again = dedup.begin_effect(mint_live(auth_id, digest_p1));
+                    check(again.has_value() &&
+                              std::holds_alternative<dea::EffectNew>(*again),
+                          "H.preview_seals_nothing");
+                    auto pending =
+                        dedup.recover(dei::CheckpointNamespace{wf, ckpt});
+                    check(pending.has_value() && pending->size() == 1,
+                          "H.fresh_then_begin_seals_exactly_one");
+                }
+                nuke(work);
+            }
+            // (b) a prior SUCCEEDED terminal -> DedupReplay{token,handle}, never
+            // ReadyForLive; the handle round-trips the recorded typed bytes.
+            {
+                const fs::path work = base / "h-replay-ok";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority dedup{backend};
+                const auto intent = mint_live(auth_id, digest_p1);
+                auto begin = dedup.begin_effect(intent);
+                check(begin.has_value() && std::holds_alternative<dea::EffectNew>(*begin),
+                      "H.replay_seal_new");
+                const std::vector<std::uint8_t> recorded = {0x52, 0x45, 0x50};
+                auto rh = dedup.record_result(intent.token(), recorded);
+                check(rh.has_value(), "H.replay_record_result");
+                auto prepared = drive_h(work, store, &dedup, auth_id);
+                check(prepared.has_value(), "H.replay_prepared");
+                if (prepared.has_value() && rh.has_value()) {
+                    auto d = consult1(*prepared);
+                    check(d.has_value() && std::holds_alternative<rc::DedupReplay>(*d) &&
+                              !std::holds_alternative<rc::ReadyForLive>(*d),
+                          "H.replay_succeeded_arm");
+                    if (d.has_value() && std::holds_alternative<rc::DedupReplay>(*d)) {
+                        const auto &rep = std::get<rc::DedupReplay>(*d);
+                        check(rep.token == intent.token(), "H.replay_token_matches");
+                        check(rep.handle == *rh, "H.replay_handle_matches");
+                        auto bytes = dedup.read_result(rep.handle);
+                        check(bytes.has_value() && *bytes == recorded,
+                              "H.replay_handle_bytes_roundtrip");
+                    }
+                }
+                nuke(work);
+            }
+            // (c) a Pending row reopened over the SAME backend (simulated crash =
+            // fresh authority over the live backend) -> RecoverPending.
+            {
+                const fs::path work = base / "h-recover";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto backend = make_in_memory_durable_effect_backend();
+                const auto intent = [&] {
+                    DurableEffectAuthority before{backend};
+                    auto sealed = before.begin_effect(mint_live(auth_id, digest_p1));
+                    check(sealed.has_value(), "H.recover_seal_before_crash");
+                    return mint_live(auth_id, digest_p1);
+                }();
+                // Simulated crash: a brand-new authority instance over the same
+                // backend, bound to the same frozen authority id.
+                DurableEffectAuthority after{backend};
+                auto rows = after.recover(dei::CheckpointNamespace{wf, ckpt});
+                check(rows.has_value() && rows->size() == 1, "H.recover_one_pending_row");
+                auto prepared = drive_h(work, store, &after, auth_id);
+                check(prepared.has_value(), "H.recover_prepared");
+                if (prepared.has_value()) {
+                    auto d = consult1(*prepared);
+                    check(d.has_value() && std::holds_alternative<rc::RecoverPending>(*d),
+                          "H.recover_pending_arm");
+                    if (d.has_value() && std::holds_alternative<rc::RecoverPending>(*d)) {
+                        check(std::get<rc::RecoverPending>(*d).token == intent.token(),
+                              "H.recover_pending_token_matches");
+                    }
+                }
+                nuke(work);
+            }
+            // (d) same call site, DIFFERENT prior param digest -> the authority
+            // already sealed a Pending for another argument; preview is Diverged
+            // and the controller fails closed CoordinateMismatch -> Failed.
+            {
+                const fs::path work = base / "h-diverged";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority dedup{backend};
+                // A prior attempt sealed node 42 under the "2" digest.
+                auto prior = dedup.begin_effect(mint_live(auth_id, digest_p2));
+                check(prior.has_value() && std::holds_alternative<dea::EffectNew>(*prior),
+                      "H.diverged_prior_sealed");
+                auto prepared = drive_h(work, store, &dedup, auth_id);
+                check(prepared.has_value(), "H.diverged_prepared");
+                if (prepared.has_value()) {
+                    auto d = consult1(*prepared); // controller computes digest "1"
+                    check(!d.has_value() &&
+                              is_step_reason(d.error(), rc::ResumeStepReason::CoordinateMismatch),
+                          "H.diverged_coordinate_mismatch");
+                    // Failed is terminal: the next step rejects TransitionInvalid.
+                    auto again = consult1(*prepared);
+                    check(!again.has_value() &&
+                              is_step_reason(again.error(),
+                                             rc::ResumeStepReason::TransitionInvalid),
+                          "H.diverged_failed_terminal");
+                }
+                nuke(work);
+            }
+            // (e) a prior recorded FAILURE -> DedupReplayFailure (no second effect).
+            {
+                const fs::path work = base / "h-replay-fail";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority dedup{backend};
+                const auto intent = mint_live(auth_id, digest_p1);
+                static_cast<void>(dedup.begin_effect(intent));
+                const std::vector<std::uint8_t> failure = {0x46, 0x41, 0x49, 0x4c};
+                auto fh = dedup.record_failure(intent.token(), failure);
+                check(fh.has_value(), "H.fail_record_failure");
+                auto prepared = drive_h(work, store, &dedup, auth_id);
+                if (prepared.has_value() && fh.has_value()) {
+                    auto d = consult1(*prepared);
+                    check(d.has_value() &&
+                              std::holds_alternative<rc::DedupReplayFailure>(*d),
+                          "H.replay_failed_arm");
+                    if (d.has_value() &&
+                        std::holds_alternative<rc::DedupReplayFailure>(*d)) {
+                        const auto &rep = std::get<rc::DedupReplayFailure>(*d);
+                        check(rep.token == intent.token() && rep.handle == *fh,
+                              "H.replay_failed_token_handle");
+                    }
+                } else {
+                    check(false, "H.replay_failed_setup");
+                }
+                nuke(work);
+            }
+            // (f) a real backend storage fault on the read -> carried verbatim as
+            // DurableEffectBackendError and the controller fails closed.
+            {
+                const fs::path work = base / "h-backend-fault";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto raw = make_in_memory_durable_effect_backend();
+                auto faulting = std::make_shared<FaultLookupBackend>(raw);
+                DurableEffectAuthority dedup{faulting};
+                auto prepared = drive_h(work, store, &dedup, auth_id);
+                check(prepared.has_value(), "H.fault_prepared");
+                if (prepared.has_value()) {
+                    auto d = consult1(*prepared);
+                    check(!d.has_value() &&
+                              is_dedup_backend_error(
+                                  d.error(),
+                                  dea::DurableEffectBackendError::StorageUnavailable),
+                          "H.backend_fault_verbatim");
+                }
+                nuke(work);
+            }
+            // (g) a FOREIGN-authority row at the same site is isolated: the
+            // controller's authority owns no row, so the verdict is still
+            // ReadyForLive (never a cross-authority replay).
+            {
+                const fs::path work = base / "h-foreign";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto backend = make_in_memory_durable_effect_backend();
+                {
+                    DurableEffectAuthority foreign{backend};
+                    auto sealed = foreign.begin_effect(mint_live(foreign_id, digest_p1));
+                    check(sealed.has_value(), "H.foreign_seal");
+                }
+                DurableEffectAuthority dedup{backend};
+                auto prepared = drive_h(work, store, &dedup, auth_id);
+                check(prepared.has_value(), "H.foreign_prepared");
+                if (prepared.has_value()) {
+                    auto d = consult1(*prepared);
+                    check(d.has_value() && std::holds_alternative<rc::ReadyForLive>(*d),
+                          "H.foreign_isolated_ready_for_live");
+                }
+                nuke(work);
+            }
+            // (h) legacy: no authority bound (nullptr) always yields ReadyForLive
+            // even when a same-token row exists in a backend the controller never
+            // consults.
+            {
+                const fs::path work = base / "h-legacy-null";
+                std::optional<ps::IntegrityPayloadStore> store;
+                auto backend = make_in_memory_durable_effect_backend();
+                DurableEffectAuthority dedup{backend};
+                static_cast<void>(dedup.begin_effect(mint_live(auth_id, digest_p1)));
+                auto prepared = drive_h(work, store, nullptr, auth_id);
+                check(prepared.has_value(), "H.legacy_prepared");
+                if (prepared.has_value()) {
+                    auto d = consult1(*prepared);
+                    check(d.has_value() && std::holds_alternative<rc::ReadyForLive>(*d),
+                          "H.legacy_null_authority_ready_for_live");
+                }
+                nuke(work);
+            }
         }
     }
 

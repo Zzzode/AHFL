@@ -19,6 +19,10 @@ namespace ahfl::runtime::durable_effect_authority {
 
 namespace {
 
+using ir::core::CoreCapabilityId;
+using ir::core::CoreWorkflowNodeId;
+using core_wasm_resume::InvocationOrdinal;
+
 // Whether two rows name the same digest-EXCLUDING call site inside one
 // checkpoint namespace: (namespace, node, ordinal, capability, source_symbol).
 // Authority and param_digest are deliberately excluded: the seal transaction
@@ -254,6 +258,43 @@ InMemoryDurableEffectBackend::list_pending(
     return pending;
 }
 
+std::expected<CallSiteLookup, DurableEffectBackendError>
+InMemoryDurableEffectBackend::find_registration_at_call_site(
+    const IdempotencyAuthorityId &authority,
+    const CheckpointNamespace &checkpoint_namespace, CoreWorkflowNodeId node,
+    InvocationOrdinal ordinal, CoreCapabilityId capability,
+    std::uint64_t source_symbol) const {
+    const std::lock_guard<std::mutex> lock(impl_->mutex);
+    CallSiteLookup lookup;
+    const SealedEffectRegistration *own = nullptr;
+    for (const SealedEffectRegistration &row : impl_->registrations) {
+        if (row.coordinate.checkpoint_namespace != checkpoint_namespace ||
+            row.coordinate.node != node || row.coordinate.ordinal != ordinal ||
+            row.coordinate.capability != capability ||
+            row.coordinate.source_symbol != source_symbol) {
+            continue;
+        }
+        if (row.authority != authority) {
+            // Foreign-authority rows are isolated: they never join the
+            // querying authority's decision, exactly as in seal_or_load.
+            lookup.foreign_authority_present = true;
+            continue;
+        }
+        if (own != nullptr) {
+            // seal_or_load seals at most one same-authority row per
+            // digest-excluding call site (an identical digest owns the same
+            // token; a differing digest returns SealDiverged): a second own
+            // row can only be torn/duplicated storage.
+            return std::unexpected(DurableEffectBackendError::StorageCorrupt);
+        }
+        own = &row;
+    }
+    if (own != nullptr) {
+        lookup.own_registration = *own;
+    }
+    return lookup;
+}
+
 std::expected<std::vector<std::uint8_t>,
               std::variant<PayloadReadConflict, DurableEffectBackendError>>
 InMemoryDurableEffectBackend::read_payload(ResultHandle handle) const {
@@ -294,6 +335,57 @@ DurableEffectAuthority::begin_effect(const DurableEffectIntent &intent) const {
         return std::unexpected(outcome.error());
     }
     return project_seal(*outcome, intent);
+}
+
+std::expected<BeginPreview, DurableEffectBackendError>
+DurableEffectAuthority::preview_begin(const DurableEffectIntent &intent) const {
+    // READ-ONLY: consult sealed state at the digest-EXCLUDING call site and
+    // project it with the in-flight intent's full coordinate, but never seal.
+    const IntentCoordinate &coordinate = intent.coordinate();
+    auto lookup = backend_->find_registration_at_call_site(
+        intent.authority(), coordinate.checkpoint_namespace, coordinate.node,
+        coordinate.ordinal, coordinate.capability, coordinate.source_symbol);
+    if (!lookup.has_value()) {
+        return std::unexpected(lookup.error());
+    }
+    if (!lookup->own_registration.has_value()) {
+        // No own row: the sealing begin would mint a fresh Pending. A foreign
+        // row at the site only scopes that New as AuthorityIsolated.
+        return BeginPreview{PreviewFresh{
+            lookup->foreign_authority_present ? NewEffectScope::AuthorityIsolated
+                                              : NewEffectScope::FreshCoordinate}};
+    }
+    const SealedEffectRegistration &own = *lookup->own_registration;
+    // The lookup selected the row by the digest-EXCLUDING call site. The
+    // sealing begin distinguishes (1) same authority + same param digest -> the
+    // row owns the in-flight token -> replay its terminal; (2) same authority +
+    // DIFFERENT param digest -> SealDiverged, nothing sealed. An authority
+    // mismatch cannot occur for an own row and is corrupt state.
+    if (own.authority != intent.authority()) {
+        return std::unexpected(DurableEffectBackendError::StorageCorrupt);
+    }
+    if (own.coordinate.param_digest != coordinate.param_digest) {
+        return BeginPreview{PreviewDiverged{}};
+    }
+    if (own.coordinate != coordinate || own.token != intent.token()) {
+        // Same digest but any other coordinate/token disagreement is torn
+        // storage: the token is deterministically derived from exactly these
+        // fields.
+        return std::unexpected(DurableEffectBackendError::StorageCorrupt);
+    }
+    return std::visit(
+        Overloaded{
+            [&](SealedPending) -> BeginPreview {
+                return BeginPreview{PreviewReplayPending{intent.token()}};
+            },
+            [&](const SealedSucceeded &succeeded) -> BeginPreview {
+                return BeginPreview{PreviewReplaySucceeded{intent.token(), succeeded.handle}};
+            },
+            [&](const SealedFailed &failed) -> BeginPreview {
+                return BeginPreview{PreviewReplayFailed{intent.token(), failed.handle}};
+            },
+        },
+        own.terminal);
 }
 
 std::expected<ResultHandle, std::variant<EffectTerminalError, DurableEffectBackendError>>

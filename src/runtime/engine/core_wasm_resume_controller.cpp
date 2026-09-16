@@ -10,11 +10,14 @@
 #include <vector>
 
 #include "ahfl/runtime/ahfl_host.h"                     // AHFL_CAP_OK/ERROR/PENDING (ABI SSOT)
+#include "ahfl/base/support/overloaded.hpp"
 #include "base/json/json_value.hpp"
+#include "base/support/sha256.hpp"
 #include "runtime/engine/core_wasm_node_events.hpp"    // decode_node_events, event_region_heap_base
 #include "runtime/engine/core_wire_canonical_size.hpp" // max_canonical_json_size
 #include "runtime/engine/core_wire_codec.hpp"          // wire_codec::decode_json
-#include "runtime/evaluator/value_json.hpp"            // hash_values
+#include "runtime/engine/durable_effect_intent.hpp"    // FrozenAuthorityNamespaceBuilder
+#include "runtime/evaluator/value_json.hpp"            // hash_values, value_to_json
 
 namespace ahfl::runtime::core_wasm_resume_controller {
 namespace {
@@ -39,6 +42,17 @@ constexpr std::uint8_t kCapabilityCallCount = 1;
 
 constexpr std::uint64_t kU64Max = std::numeric_limits<std::uint64_t>::max();
 constexpr std::uint64_t kU32Max = std::numeric_limits<std::uint32_t>::max();
+
+// D2b-4: the host-bound dedup consultation context carried phase 1 -> prepared.
+// The checkpoint namespace (wf, ckpt) is read from the snapshot's AUTHENTICATED
+// manifest, never re-supplied; the authority id is host-bound once; the
+// authority pointer is optional and borrowed (nullptr = pre-D2b-4 behavior).
+struct DedupContext {
+    core_wasm_idempotency_token::IdempotencyAuthorityId authority_id{};
+    ir::core::CoreWorkflowId workflow{};
+    payload_store::ResumeCheckpointId checkpoint{};
+    const durable_effect_authority::DurableEffectAuthority *authority{nullptr};
+};
 
 // Convert one lowercase-hex nibble to its value, or 0xFF if it is not a lowercase-hex
 // digit. Fixed-work: never early-exits on a bad digit (the caller ORs a validity flag),
@@ -109,11 +123,12 @@ struct GatedState {
     VerifiedCoreWasmSchemaModule module;
     payload_store::ResumeSnapshot snapshot;
     std::vector<std::optional<std::size_t>> schedule_to_callsite;
+    DedupContext dedup;
 
     GatedState(VerifiedCoreWasmSchemaModule m, payload_store::ResumeSnapshot s,
-               std::vector<std::optional<std::size_t>> sched_map)
+               std::vector<std::optional<std::size_t>> sched_map, DedupContext dedup_context)
         : module(std::move(m)), snapshot(std::move(s)),
-          schedule_to_callsite(std::move(sched_map)) {}
+          schedule_to_callsite(std::move(sched_map)), dedup(std::move(dedup_context)) {}
 };
 
 // The fully-preflighted replay state and its in-place phase machine.
@@ -122,6 +137,9 @@ struct PreparedState {
     CoreWasmResumeRecord record;         // authenticated; mutated on a publish ACK
     std::uint64_t current_generation{0}; // last committed generation N
     Phase phase{Phase::Replaying};
+
+    // D2b-4 token-aware ReadyForLive consultation (nullopt authority = legacy).
+    DedupContext dedup;
 
     // Controller-owned, join authority precomputed once at admission (O(1) lookups).
     std::vector<std::optional<std::size_t>> schedule_to_callsite; // by manifest schedule_pos
@@ -409,11 +427,13 @@ build_slot_index(const std::vector<payload_store::ResolvedSlot> &slots, bool &bu
 [[nodiscard]] std::unique_ptr<detail::PreparedState>
 build_prepared(VerifiedCoreWasmSchemaModule module,
                std::vector<std::optional<std::size_t>> sched_map,
-               payload_store::ResolvedAvailable admitted, bool &payload_invalid) {
+               payload_store::ResolvedAvailable admitted, DedupContext dedup,
+               bool &payload_invalid) {
     payload_invalid = false;
     auto st = std::make_unique<detail::PreparedState>(std::move(module));
     st->record = std::move(admitted.record);
     st->current_generation = admitted.generation;
+    st->dedup = std::move(dedup);
     st->call_site_count = st->module.call_site_count();
     st->entry_slot = st->record.entry_input_slot;
     st->admitted_slots = std::move(admitted.slots);
@@ -652,7 +672,7 @@ event_join(const detail::PreparedState &st, std::span<const std::uint8_t> whole_
 // ---------------------------------------------------------------------------
 std::expected<GatedResume, ResumePrepareError>
 open_gated_resume(const VerifiedCoreWasmSchemaModule &module,
-                  payload_store::ResumeSnapshot &&snapshot) {
+                  payload_store::ResumeSnapshot &&snapshot, GatedResumeOptions options) {
     const CoreWasmResumeRecord &record = snapshot.record();
     if (const auto d = digest_gate(record, module)) {
         return std::unexpected(ResumePrepareError{*d});
@@ -665,8 +685,15 @@ open_gated_resume(const VerifiedCoreWasmSchemaModule &module,
     if (const auto c = coordinate_gate(record, module, *sched_map)) {
         return std::unexpected(ResumePrepareError{*c});
     }
-    return GatedResume(
-        std::make_unique<detail::GatedState>(module, std::move(snapshot), std::move(*sched_map)));
+    // The checkpoint namespace is the AUTHENTICATED manifest's, not the caller's
+    // option; the store already rejected any wf/ckpt disagreement at open_snapshot.
+    DedupContext dedup;
+    dedup.authority_id = options.authority_id;
+    dedup.workflow = snapshot.workflow_id();
+    dedup.checkpoint = snapshot.checkpoint_id();
+    dedup.authority = options.dedup_authority;
+    return GatedResume(std::make_unique<detail::GatedState>(
+        module, std::move(snapshot), std::move(*sched_map), std::move(dedup)));
 }
 
 // ---------------------------------------------------------------------------
@@ -692,8 +719,9 @@ admit_and_preflight(GatedResume &&gated, std::span<const std::uint8_t, 16> key_i
     // Stored-memo per-occurrence Verified decode happens inside build_prepared; a decode
     // fault (PayloadSchemaInvalid) is reported BEFORE the input-matrix / eligibility gate.
     bool payload_invalid = false;
-    auto prepared = build_prepared(gstate->module, std::move(gstate->schedule_to_callsite),
-                                   std::move(*admitted), payload_invalid);
+    auto prepared =
+        build_prepared(gstate->module, std::move(gstate->schedule_to_callsite),
+                       std::move(*admitted), std::move(gstate->dedup), payload_invalid);
     if (prepared == nullptr) {
         return std::unexpected(ResumePrepareError{payload_invalid
                                                       ? ResumePrepareReason::PayloadSchemaInvalid
@@ -761,6 +789,96 @@ supply_injected_result(PendingInjection &&pending, std::span<const std::uint8_t>
 // ---------------------------------------------------------------------------
 // Per-import decision.
 // ---------------------------------------------------------------------------
+
+namespace {
+
+// D2b-4: the SHA-256 of one arity-1 Param's canonical typed bytes. The canonical
+// byte form is the codebase's canonical wire-JSON SSOT (`value_to_json`, the
+// same deterministic serialization `hash_values` length-delimits): it is what a
+// future host seals and what this controller consults under, so there is exactly
+// one canonicalization authority.
+[[nodiscard]] support::Sha256Digest canonical_param_digest(const evaluator::Value &param) {
+    const std::string canonical = evaluator::value_to_json(param);
+    return support::sha256(
+        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(canonical.data()),
+                                      canonical.size()));
+}
+
+// D2b-4 READ-ONLY dedup consultation at one AFTER-frontier call site. With no
+// authority bound this is the legacy verdict (ReadyForLive). With an authority,
+// mint the D0 token from the AUTHENTICATED namespace + host-bound authority id +
+// call-site coordinate + canonical-param digest and ask the authority for a
+// preview (seals NOTHING). A recorded terminal/pending verdict suppresses the
+// live command; a same-site param-digest divergence fails closed as
+// CoordinateMismatch; a backend storage fault is carried verbatim. Every
+// returned decision leaves the caller responsible for the AwaitingLiveResult
+// transition; this helper never touches the phase.
+[[nodiscard]] std::expected<ImportStepDecision, ResumeStepError>
+consult_live_dedup(const DedupContext &dedup,
+                   const core_wasm_schema_module::VerifiedCoreWasmCallSite &call_site,
+                   std::uint64_t arg_hash, std::vector<evaluator::Value> params) {
+    namespace dea = durable_effect_authority;
+    namespace dei = durable_effect_intent;
+
+    ReadyForLive live{call_site, arg_hash, std::move(params)};
+    if (dedup.authority == nullptr) {
+        return ImportStepDecision{std::move(live)};
+    }
+    // Arity-1 is enforced by next_import's decode path.
+    const support::Sha256Digest param_digest = canonical_param_digest(live.params.front());
+
+    dei::FrozenAuthorityNamespaceBuilder builder;
+    if (!builder
+             .bind(dedup.authority_id,
+                   dei::CheckpointNamespace{dedup.workflow, dedup.checkpoint})
+             .has_value()) {
+        // The namespace ids come from the authenticated manifest (validated at
+        // open_snapshot) and the authority id is bound once: a bind failure is
+        // an internal fault, fail closed.
+        return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+    }
+    dei::IntentCoordinate coordinate;
+    coordinate.checkpoint_namespace = {dedup.workflow, dedup.checkpoint};
+    coordinate.node = call_site.workflow_node_id();
+    coordinate.ordinal = call_site.invocation_ordinal();
+    coordinate.capability = call_site.capability();
+    coordinate.source_symbol = call_site.source_symbol();
+    coordinate.param_digest = param_digest;
+    auto minted = builder.mint(coordinate);
+    if (!minted.has_value()) {
+        return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+    }
+
+    auto preview = dedup.authority->preview_begin(*minted);
+    if (!preview.has_value()) {
+        // Real backend storage fault (unavailable/corrupt): carry it verbatim
+        // so the host fails closed into reconciliation, never as a live command.
+        return std::unexpected(ResumeStepError{preview.error()});
+    }
+    using ConsultResult = std::expected<ImportStepDecision, ResumeStepError>;
+    return std::visit(
+        Overloaded{
+            [&live](dea::PreviewFresh) -> ConsultResult {
+                return ImportStepDecision{std::move(live)};
+            },
+            [](dea::PreviewReplayPending p) -> ConsultResult {
+                return ImportStepDecision{RecoverPending{p.token}};
+            },
+            [](dea::PreviewReplaySucceeded p) -> ConsultResult {
+                return ImportStepDecision{DedupReplay{p.token, p.handle}};
+            },
+            [](dea::PreviewReplayFailed p) -> ConsultResult {
+                return ImportStepDecision{DedupReplayFailure{p.token, p.handle}};
+            },
+            [](dea::PreviewDiverged) -> ConsultResult {
+                return std::unexpected(ResumeStepError{ResumeStepReason::CoordinateMismatch});
+            },
+        },
+        *preview);
+}
+
+} // namespace
+
 std::expected<ImportStepDecision, ResumeStepError>
 next_import(PreparedResume &prepared, const ImportStepInput &input) {
     detail::PreparedState &st = detail::PreparedState::unwrap(prepared);
@@ -836,10 +954,19 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
         return ImportStepDecision{NeedInjectedSlot{}};
     }
 
-    // After the frontier: drive the live capability (follow-on states are out of scope
-    // this slice; the controller moves to AwaitingLiveResult).
+    // After the frontier: D2b-4 token-aware decision. With no authority bound
+    // this is the legacy ReadyForLive verdict; with one, a READ-ONLY authority
+    // preview may instead suppress the live call (DedupReplay /
+    // DedupReplayFailure / RecoverPending) or fail closed on a same-site
+    // param-digest divergence / backend fault. Every verdict (live or replay)
+    // parks in AwaitingLiveResult -- the follow-on live-response API is blocked.
+    auto verdict = consult_live_dedup(st.dedup, *expected.call_site, arg_hash, std::move(params));
+    if (!verdict.has_value()) {
+        st.phase = Phase::Failed;
+        return std::unexpected(verdict.error());
+    }
     st.phase = Phase::AwaitingLiveResult;
-    return ImportStepDecision{ReadyForLive{*expected.call_site, arg_hash, std::move(params)}};
+    return verdict;
 }
 
 // ---------------------------------------------------------------------------

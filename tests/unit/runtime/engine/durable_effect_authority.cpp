@@ -49,6 +49,13 @@ using ahfl::ir::core::CoreWorkflowId;
 using ahfl::ir::core::CoreWorkflowNodeId;
 using ahfl::runtime::core_wasm_resume::InvocationOrdinal;
 using ahfl::runtime::durable_effect_authority::DedupDecision;
+using ahfl::runtime::durable_effect_authority::CallSiteLookup;
+using ahfl::runtime::durable_effect_authority::BeginPreview;
+using ahfl::runtime::durable_effect_authority::PreviewFresh;
+using ahfl::runtime::durable_effect_authority::PreviewReplayPending;
+using ahfl::runtime::durable_effect_authority::PreviewReplaySucceeded;
+using ahfl::runtime::durable_effect_authority::PreviewReplayFailed;
+using ahfl::runtime::durable_effect_authority::PreviewDiverged;
 using ahfl::runtime::durable_effect_authority::DurableEffectAuthority;
 using ahfl::runtime::durable_effect_authority::DurableEffectBackendError;
 using ahfl::runtime::durable_effect_authority::DurableEffectGuarantee;
@@ -275,7 +282,15 @@ class CorruptReadBackend final : public IDurableEffectBackend {
     list_pending(const CheckpointNamespace &checkpoint_namespace) const override {
         return inner_->list_pending(checkpoint_namespace);
     }
-    [[nodiscard]] std::expected<std::vector<std::uint8_t>,
+    [[nodiscard]] std::expected<CallSiteLookup, DurableEffectBackendError>
+    find_registration_at_call_site(const IdempotencyAuthorityId &authority,
+                                   const CheckpointNamespace &checkpoint_namespace,
+                                   CoreWorkflowNodeId node, InvocationOrdinal ordinal,
+                                   CoreCapabilityId capability,
+                                   std::uint64_t source_symbol) const override {
+        return inner_->find_registration_at_call_site(authority, checkpoint_namespace, node,
+                                                      ordinal, capability, source_symbol);
+    }    [[nodiscard]] std::expected<std::vector<std::uint8_t>,
                                 std::variant<PayloadReadConflict,
                                              DurableEffectBackendError>>
     read_payload(ResultHandle) const override {
@@ -878,6 +893,114 @@ int main() {
         check(!miss.has_value() && std::holds_alternative<ResultReadError>(miss.error()) &&
                   std::get<ResultReadError>(miss.error()) == ResultReadError::UnknownHandle,
               "stale_handle_in_memory_is_UnknownHandle");
+    }
+
+    // ---- (k) D2b-4 preview_begin: read-only projection, seals nothing -------
+    {
+        // Classifier for the five-arm BeginPreview.
+        auto preview_arm = [](const BeginPreview &p) -> int {
+            return std::visit(
+                Overloaded{
+                    [](const PreviewFresh &) -> int { return 0; },
+                    [](const PreviewReplayPending &) -> int { return 1; },
+                    [](const PreviewReplaySucceeded &) -> int { return 2; },
+                    [](const PreviewReplayFailed &) -> int { return 3; },
+                    [](const PreviewDiverged &) -> int { return 4; },
+                },
+                p);
+        };
+
+        DurableEffectAuthority authority = make_in_memory_durable_effect_authority();
+        const DurableEffectIntent intent = mint(authority_a, ns1, make_coordinate(ns1));
+
+        // Before any seal: Fresh, and recover is still empty (nothing sealed).
+        const auto pre = authority.preview_begin(intent);
+        check(pre.has_value() && preview_arm(*pre) == 0,
+              "preview_before_begin_is_Fresh");
+        {
+            auto pending = authority.recover(ns1);
+            check(pending.has_value() && pending->empty(),
+                  "preview_seals_nothing_recover_empty");
+            // A subsequent real begin is still New (the preview was not a seal).
+            const auto begin = authority.begin_effect(intent);
+            check(begin.has_value() && std::holds_alternative<EffectNew>(*begin),
+                  "begin_after_preview_still_New");
+        }
+
+        // Pending after the real seal: preview mirrors ReplayPending.
+        {
+            const auto p = authority.preview_begin(intent);
+            check(p.has_value() && preview_arm(*p) == 1,
+                  "preview_pending_after_seal");
+            if (p.has_value()) {
+                check(std::get<PreviewReplayPending>(*p).token == intent.token(),
+                      "preview_pending_carries_token");
+            }
+        }
+
+        // Succeeded terminal: preview carries the same token + handle.
+        const std::vector<std::uint8_t> ok_bytes = secret_bytes(0xC1);
+        const auto ok_handle = authority.record_result(intent.token(), ok_bytes);
+        check(ok_handle.has_value(), "preview_record_result");
+        {
+            const auto p = authority.preview_begin(intent);
+            check(p.has_value() && preview_arm(*p) == 2,
+                  "preview_succeeded_arm");
+            if (p.has_value()) {
+                const auto &s = std::get<PreviewReplaySucceeded>(*p);
+                check(s.token == intent.token() && s.handle == *ok_handle,
+                      "preview_succeeded_token_and_handle");
+            }
+        }
+
+        // A different param digest at the same call site: preview is Diverged
+        // and (read-only) still seals nothing.
+        const DurableEffectIntent divergent =
+            mint(authority_a, ns1, make_coordinate(ns1, /*digest=*/0x77));
+        {
+            const auto before = authority.recover(ns1);
+            const auto p = authority.preview_begin(divergent);
+            check(p.has_value() && preview_arm(*p) == 4,
+                  "preview_diverged_arm");
+            const auto after = authority.recover(ns1);
+            check(before.has_value() && after.has_value() &&
+                      before->size() == after->size(),
+                  "preview_diverged_seals_nothing");
+        }
+
+        // A recorded FAILURE replays through PreviewReplayFailed.
+        {
+            DurableEffectAuthority authority2 = make_in_memory_durable_effect_authority();
+            const DurableEffectIntent intent2 =
+                mint(authority_a, ns1, make_coordinate(ns1, 0x61, /*node=*/909));
+            static_cast<void>(authority2.begin_effect(intent2));
+            const auto fail_handle =
+                authority2.record_failure(intent2.token(), secret_bytes(0xD9));
+            check(fail_handle.has_value(), "preview_fail_record");
+            const auto p = authority2.preview_begin(intent2);
+            check(p.has_value() && preview_arm(*p) == 3,
+                  "preview_failed_arm");
+            if (p.has_value()) {
+                const auto &f = std::get<PreviewReplayFailed>(*p);
+                check(f.token == intent2.token() && f.handle == *fail_handle,
+                      "preview_failed_token_and_handle");
+            }
+        }
+
+        // A FOREIGN-authority row at the same site scopes a Fresh preview as
+        // AuthorityIsolated (never a cross-authority replay).
+        {
+            DurableEffectAuthority authority3 = make_in_memory_durable_effect_authority();
+            const DurableEffectIntent foreign =
+                mint(authority_b, ns1, make_coordinate(ns1, 0x61, /*node=*/313));
+            static_cast<void>(authority3.begin_effect(foreign));
+            const DurableEffectIntent own =
+                mint(authority_a, ns1, make_coordinate(ns1, 0x61, /*node=*/313));
+            const auto p = authority3.preview_begin(own);
+            check(p.has_value() && preview_arm(*p) == 0 &&
+                      std::get<PreviewFresh>(*p).scope == NewEffectScope::AuthorityIsolated,
+                  "preview_foreign_authority_is_isolated_Fresh");
+        }
     }
 
     if (g_failures == 0) {

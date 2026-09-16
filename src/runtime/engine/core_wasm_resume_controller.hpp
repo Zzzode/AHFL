@@ -35,15 +35,18 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <variant>
 #include <vector>
 
-#include "runtime/engine/core_wasm_resume_record.hpp"  // PayloadSlotId, CoreWasmResumeRecord
-#include "runtime/engine/core_wasm_schema_module.hpp"  // VerifiedCoreWasmSchemaModule, call site
-#include "runtime/engine/payload_store.hpp"            // ResumeSnapshot, payload_store::Slot
-#include "runtime/engine/payload_store_codec.hpp"      // PayloadStoreError
-#include "runtime/evaluator/value.hpp"                 // evaluator::Value
+#include "runtime/engine/core_wasm_idempotency_token.hpp" // IdempotencyAuthorityId/Token
+#include "runtime/engine/core_wasm_resume_record.hpp"    // PayloadSlotId, CoreWasmResumeRecord
+#include "runtime/engine/core_wasm_schema_module.hpp"    // VerifiedCoreWasmSchemaModule, call site
+#include "runtime/engine/durable_effect_authority.hpp"  // DurableEffectAuthority, ResultHandle
+#include "runtime/engine/payload_store.hpp"              // ResumeSnapshot, payload_store::Slot
+#include "runtime/engine/payload_store_codec.hpp"        // PayloadStoreError
+#include "runtime/evaluator/value.hpp"                   // evaluator::Value
 
 namespace ahfl::runtime::core_wasm_resume_controller {
 
@@ -93,10 +96,13 @@ enum class ResumeStepReason : std::uint8_t {
     ModuleTrap,
 };
 
-// Two closed error SSOTs. A controller reason OR the real 16-variant store error,
-// never a bool / optional / illegal-combination struct.
+// Two closed error SSOTs. A controller reason OR the real 16-variant store error
+// (or, at the D2b-4 dedup seam, the real durable-effect backend error), never a
+// bool / optional / illegal-combination struct.
 using ResumePrepareError = std::variant<ResumePrepareReason, payload_store::PayloadStoreError>;
-using ResumeStepError = std::variant<ResumeStepReason, payload_store::PayloadStoreError>;
+using ResumeStepError = std::variant<ResumeStepReason,
+                                     payload_store::PayloadStoreError,
+                                     durable_effect_authority::DurableEffectBackendError>;
 
 // A read-only, non-owning view of the L0 workflow ENTRY frame: the verbatim opaque
 // bytes of the authenticated slot whose id equals `record.entry_input_slot`. It is
@@ -120,6 +126,7 @@ class EntryFrame {
 // PHASE-1 result: the snapshot has passed the three artifact-digest gates and the
 // coordinate / A2-baseline gate, but NO slot has been admitted and NO transition
 // eligibility judged. Opaque, move-only; minted only by `open_gated_resume`.
+struct GatedResumeOptions;
 class GatedResume {
   public:
     GatedResume(const GatedResume &) = delete;
@@ -131,7 +138,7 @@ class GatedResume {
   private:
     friend std::expected<GatedResume, ResumePrepareError>
     open_gated_resume(const core_wasm_schema_module::VerifiedCoreWasmSchemaModule &,
-                      payload_store::ResumeSnapshot &&);
+                      payload_store::ResumeSnapshot &&, GatedResumeOptions);
     friend std::expected<std::variant<class PreparedResume, class PendingInjection>,
                          ResumePrepareError>
     admit_and_preflight(GatedResume &&, std::span<const std::uint8_t, 16>,
@@ -140,6 +147,27 @@ class GatedResume {
     explicit GatedResume(std::unique_ptr<detail::GatedState> state) noexcept;
 
     std::unique_ptr<detail::GatedState> state_;
+};
+
+// D2b-4 binding for the token-aware ReadyForLive frontier. The checkpoint
+// namespace `(CoreWorkflowId, ResumeCheckpointId)` is NOT supplied here: it is
+// read from the snapshot's AUTHENTICATED commit manifest (the SSOT), so a
+// caller cannot mint a token under a namespace inconsistent with the loaded
+// generation. Only the dedup authority identity and the optional read-only
+// decision authority are host-supplied.
+struct GatedResumeOptions {
+    // Opaque 16-byte identity of the durable-effect backend, bound once for the
+    // whole checkpoint lifetime (seam lines 500-503); never derived from
+    // key_id/path/hostname. A zero/absent value would only ever mint Fresh
+    // tokens, so it is an explicit required input when dedup is enabled.
+    core_wasm_idempotency_token::IdempotencyAuthorityId authority_id{};
+
+    // When set, every AFTER-frontier import consults this authority READ-ONLY
+    // (preview_begin: it seals nothing) before issuing ReadyForLive. When
+    // absent, the controller behaves exactly as pre-D2b-4 (always ReadyForLive)
+    // and no token is computed. Borrowed for the GatedResume lifetime only; the
+    // caller owns the (shared, backend-backed) authority.
+    const durable_effect_authority::DurableEffectAuthority *dedup_authority{nullptr};
 };
 
 // A fully-preflighted, ready-to-drive replay. Opaque, move-only; minted only by
@@ -231,8 +259,43 @@ struct ReadyForLive {
     std::vector<evaluator::Value> params; // exactly one element
 };
 
+// D2b-4 decision: the D2b authority already has a SUCCEEDED terminal for this
+// exact token. The adapter MUST NOT issue a second live effect; it reads the
+// recorded typed result through `handle` (the only way result bytes leave the
+// authority) and feeds it back to the instance via the (follow-on, blocked)
+// live-response API. Decision-only: the controller performs no read, effect, or
+// CAS and moves to AwaitingLiveResult. `token` is the D0 token minted from the
+// controller's wf/ckpt/authority/call-site/canonical-param coordinate.
+struct DedupReplay {
+    core_wasm_idempotency_token::IdempotencyToken token;
+    durable_effect_authority::ResultHandle handle;
+};
+
+// D2b-4 decision: symmetric to DedupReplay for a prior recorded FAILURE. A
+// repeated begin after a terminal failure replays the failure instead of
+// silently issuing a second effect; the host re-surfaces the recorded failure
+// (read via `handle`) through the follow-on live-response API.
+struct DedupReplayFailure {
+    core_wasm_idempotency_token::IdempotencyToken token;
+    durable_effect_authority::ResultHandle handle;
+};
+
+// D2b-4 decision: the authority holds a PENDING row for this exact token (a
+// prior attempt crashed/reopened before a terminal was recorded). The host MUST
+// reconcile that row (recover) rather than invoke a fresh live effect; no
+// result bytes exist yet, so this arm carries only the token. Decision-only;
+// moves to AwaitingLiveResult.
+struct RecoverPending {
+    core_wasm_idempotency_token::IdempotencyToken token;
+};
+
 // A closed per-import decision. Publish and terminal decisions are NOT here.
-using ImportStepDecision = std::variant<ReturnMemo, NeedInjectedSlot, ReadyForLive>;
+using ImportStepDecision = std::variant<ReturnMemo,
+                                        NeedInjectedSlot,
+                                        ReadyForLive,
+                                        DedupReplay,
+                                        DedupReplayFailure,
+                                        RecoverPending>;
 
 // The COMPLETE, controller-owned publish plan for the Suspended->Injected transition.
 // The controller decides every byte: the updated record (Suspended->Injected, the
@@ -296,7 +359,8 @@ struct MarkConsumedPlan {
 // -------------------------------------------------------------------------------
 [[nodiscard]] std::expected<GatedResume, ResumePrepareError>
 open_gated_resume(const core_wasm_schema_module::VerifiedCoreWasmSchemaModule &module,
-                  payload_store::ResumeSnapshot &&snapshot);
+                  payload_store::ResumeSnapshot &&snapshot,
+                  GatedResumeOptions options = GatedResumeOptions{});
 
 // -------------------------------------------------------------------------------
 // PHASE 2: admit the exact slot set (one-shot), decode stored memo per occurrence,

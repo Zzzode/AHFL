@@ -172,6 +172,18 @@ struct PendingRecoveryEntry {
     IntentCoordinate coordinate{};
 };
 
+/// READ-ONLY projection of sealed state at ONE digest-EXCLUDING call site
+/// (D2b-4). `own_registration` is the single row the querying authority owns at
+/// the site (absent when it owns none); `foreign_authority_present` reports a
+/// row under a DIFFERENT authority (namespace isolation: it never joins the
+/// own-authority decision, exactly as in `seal_or_load`). This carries no
+/// decision: the caller still compares `own_registration`'s token/param digest
+/// against the in-flight coordinate.
+struct CallSiteLookup {
+    std::optional<SealedEffectRegistration> own_registration{};
+    bool foreign_authority_present{false};
+};
+
 // ---- typed storage errors (closed sets, no bool/string error channel) --------
 
 /// Storage-layer failures, independent of the dedup DOMAIN decisions. The
@@ -250,6 +262,24 @@ class IDurableEffectBackend {
                                         DurableEffectBackendError>
     list_pending(const CheckpointNamespace &checkpoint_namespace) const = 0;
 
+    /// READ-ONLY lookup at one digest-EXCLUDING call site (D2b-4): return the
+    /// row the CALLING authority owns there plus whether any FOREIGN-authority
+    /// row exists at the same site. NOTHING is sealed or mutated. At most one
+    /// same-authority row can exist per call site -- `seal_or_load` rejects a
+    /// same-authority different-digest second seal -- so a second own row is
+    /// backend corruption, not a normal miss. Foreign rows are isolated
+    /// (invisible to the owning-authority decision) exactly as in the sealing
+    /// begin. This is the single read the decision-only resume controller
+    /// consults at the ReadyForLive frontier; it can never replace the mutating
+    /// `seal_or_load` the host runs when it actually issues a live effect.
+    [[nodiscard]] virtual std::expected<CallSiteLookup, DurableEffectBackendError>
+    find_registration_at_call_site(const IdempotencyAuthorityId &authority,
+                                   const CheckpointNamespace &checkpoint_namespace,
+                                   ir::core::CoreWorkflowNodeId node,
+                                   core_wasm_resume::InvocationOrdinal ordinal,
+                                   ir::core::CoreCapabilityId capability,
+                                   std::uint64_t source_symbol) const = 0;
+
     /// Copy out the recorded bytes named by `handle`. The handle is the only
     /// way result bytes leave the backend. A handle naming no stored payload is
     /// the domain conflict PayloadReadConflict::UnknownHandle; genuine
@@ -291,6 +321,14 @@ class InMemoryDurableEffectBackend final : public IDurableEffectBackend {
                                 DurableEffectBackendError>
     list_pending(const CheckpointNamespace &checkpoint_namespace) const override;
 
+    [[nodiscard]] std::expected<CallSiteLookup, DurableEffectBackendError>
+    find_registration_at_call_site(const IdempotencyAuthorityId &authority,
+                                   const CheckpointNamespace &checkpoint_namespace,
+                                   ir::core::CoreWorkflowNodeId node,
+                                   core_wasm_resume::InvocationOrdinal ordinal,
+                                   ir::core::CoreCapabilityId capability,
+                                   std::uint64_t source_symbol) const override;
+
     [[nodiscard]] std::expected<std::vector<std::uint8_t>,
                                 std::variant<PayloadReadConflict,
                                              DurableEffectBackendError>>
@@ -330,6 +368,40 @@ using DedupDecision = std::variant<EffectNew,
                                    EffectReplaySucceeded,
                                    EffectReplayFailed,
                                    EffectDiverged>;
+
+// ---- READ-ONLY begin preview (D2b-4: no seal) --------------------------------
+
+/// A NON-MUTATING projection of the same state `begin_effect` decides from.
+/// The decision-only resume controller consults this at the ReadyForLive
+/// frontier: it can never seal the Pending row that marks the host's intent to
+/// perform an effect, so this preview -- and NOT `begin_effect` -- is the only
+/// authority call the controller may make. The host still runs the sealing
+/// `begin_effect` when it actually issues the live call; a racing seal between
+/// preview and begin is resolved by that later atomic transaction.
+struct PreviewFresh {
+    // Mirrors EffectNew::scope: AuthorityIsolated when only FOREIGN-authority
+    // rows exist at the call site.
+    NewEffectScope scope{};
+};
+struct PreviewReplayPending {
+    // The sealed row's token (equals the in-flight intent token; the digest
+    // matched, otherwise the verdict is PreviewDiverged).
+    IdempotencyToken token{};
+};
+struct PreviewReplaySucceeded {
+    IdempotencyToken token{};
+    ResultHandle handle{};
+};
+struct PreviewReplayFailed {
+    IdempotencyToken token{};
+    ResultHandle handle{};
+};
+struct PreviewDiverged {};
+using BeginPreview = std::variant<PreviewFresh,
+                                  PreviewReplayPending,
+                                  PreviewReplaySucceeded,
+                                  PreviewReplayFailed,
+                                  PreviewDiverged>;
 
 // ---- resolutions -------------------------------------------------------------
 
@@ -374,6 +446,15 @@ class DurableEffectAuthority {
     /// coordinate returns an isolated New(AuthorityIsolated).
     [[nodiscard]] std::expected<DedupDecision, DurableEffectBackendError>
     begin_effect(const DurableEffectIntent &intent) const;
+
+    /// READ-ONLY counterpart of begin_effect (D2b-4): project the SAME sealed
+    /// state begin_effect would decide from, but seal nothing. For use by
+    /// decision-only callers (the resume controller) that must not register an
+    /// effect intent. It mints no row, so a later begin_effect can still return
+    /// New; the preview is advisory evidence, never a claim or an exactly-once
+    /// guarantee.
+    [[nodiscard]] std::expected<BeginPreview, DurableEffectBackendError>
+    preview_begin(const DurableEffectIntent &intent) const;
 
     /// Record the opaque typed SUCCESS bytes for a Pending token and return
     /// their handle. Fails typed on an unknown token or a second terminal
