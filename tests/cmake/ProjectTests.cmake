@@ -1211,6 +1211,10 @@ add_test(NAME ahfl.toml.syntax_all
     COMMAND $<TARGET_FILE:ahfl_base_toml_tests>
 )
 
+add_test(NAME ahfl.query.engine_all
+    COMMAND $<TARGET_FILE:ahfl_base_query_tests>
+)
+
 add_test(NAME ahfl.manifest.schema_all
     COMMAND $<TARGET_FILE:ahfl_compiler_manifest_tests>
 )

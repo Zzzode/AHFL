@@ -1,0 +1,337 @@
+#pragma once
+
+#include <any>
+#include <concepts>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <expected>
+#include <functional>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace ahfl::query {
+
+// Monotonic engine clock. Every *changing* input update advances it by one;
+// setting an input to an equal value does not. Slot memos carry the revision at
+// which they were last produced/verified.
+using Revision = std::uint64_t;
+
+// What should happen when derived queries re-enter a slot already being
+// evaluated (A depends on B which depends on A)?
+enum class CyclePolicy {
+    // eval() returns std::unexpected(CycleError) carrying the key path.
+    Error,
+    // A cycle is a programming bug: throw CyclePanic carrying the key path.
+    Panic,
+};
+
+// Lifecycle state of a derived slot memo.
+enum class SlotState {
+    // No memo, or a transitive input change has invalidated it since it was
+    // last verified: the next read must prove it or recompute.
+    Dirty,
+    // Memo produced by running the compute function at the current revision.
+    Clean,
+    // Memo reused without recomputation after a revision bump: every recorded
+    // dependency was re-fetched and proven unchanged (salsa "green" phase).
+    Verified,
+};
+
+// Strongly typed per-family slot index. The Tag phantom parameter prevents an
+// input index from being passed where a derived index is expected (and vice
+// versa); canonical identity stays numeric (CLAUDE.md Principle 2).
+template <typename Tag> class QueryKey {
+public:
+    constexpr explicit QueryKey(std::size_t index) noexcept : index_(index) {}
+
+    [[nodiscard]] constexpr std::size_t index() const noexcept { return index_; }
+
+    constexpr bool operator==(const QueryKey &) const noexcept = default;
+
+private:
+    std::size_t index_;
+};
+
+struct InputTag {};
+struct DerivedTag {};
+
+using InputId = QueryKey<InputTag>;
+using DerivedId = QueryKey<DerivedTag>;
+
+// Numeric identity of a registered query family (one input value type or one
+// derived compute function). Families are allocated by registration order.
+class FamilyId {
+public:
+    constexpr explicit FamilyId(std::size_t index) noexcept : index_(index) {}
+
+    [[nodiscard]] constexpr std::size_t index() const noexcept { return index_; }
+
+    constexpr bool operator==(const FamilyId &) const noexcept = default;
+
+private:
+    std::size_t index_;
+};
+
+// Fully qualified identity of a single slot: family plus the input/derived
+// index inside it. This is the index-based identity carried in diagnostics;
+// strings are rendered only for display (CLAUDE.md Principle 2).
+struct SlotKey {
+    FamilyId family;
+    std::variant<InputId, DerivedId> slot;
+
+    bool operator==(const SlotKey &) const = default;
+};
+
+// Closed cycle result: the evaluation path from the outer eval() entry through
+// every in-progress slot, closed by the first key repeated.
+struct CycleError {
+    std::vector<SlotKey> path;
+
+    [[nodiscard]] std::string describe() const;
+};
+
+// Exception thrown by CyclePolicy::Panic when a cycle is detected.
+class CyclePanic : public std::runtime_error {
+public:
+    explicit CyclePanic(CycleError error);
+
+    [[nodiscard]] const CycleError &cycle() const noexcept { return error_; }
+
+private:
+    CycleError error_;
+};
+
+// Observable snapshot of one slot (introspection/testing). For input slots
+// changed_at is the revision of the last changing write; for derived slots it
+// is the revision at which the value last actually changed (recomputation that
+// produced an equal value does not advance it), while verified_at is the
+// revision of the last produce-or-prove evaluation.
+struct SlotInfo {
+    SlotState state = SlotState::Dirty;
+    Revision changed_at = 0;
+    Revision verified_at = 0;
+    bool has_value = false;
+};
+
+// Aggregate engine counters. Per-slot recompute instrumentation additionally
+// lives inside the user-supplied compute closures.
+struct QueryStats {
+    std::uint64_t input_updates = 0;      // changing set_input calls
+    std::uint64_t input_update_noops = 0; // equal-value set_input calls
+    std::uint64_t derived_evals = 0;      // user-facing eval entries
+    std::uint64_t recomputations = 0;     // compute function invocations
+    std::uint64_t memo_hits = 0;          // evals served without recomputing
+};
+
+class QueryEngine;
+template <typename T> class InputQueryT;
+template <typename T> class DerivedQueryT;
+
+// Read surface handed to derived compute functions. Reads issued here are
+// automatically attributed as dependency edges of the slot under evaluation.
+class QueryContext {
+public:
+    // Read an input. Throws std::logic_error if the input was never set.
+    template <typename T>
+    [[nodiscard]] const T &get(const InputQueryT<T> &family, InputId key) const;
+
+    // Read a derived slot, bringing it up to date lazily. Under
+    // CyclePolicy::Error a nested cycle unwinds to the outer eval() call;
+    // under CyclePolicy::Panic it throws CyclePanic.
+    template <typename T>
+    [[nodiscard]] T read(const DerivedQueryT<T> &family, DerivedId key) const;
+
+private:
+    friend class QueryEngine;
+    explicit QueryContext(QueryEngine &engine) noexcept : engine_(&engine) {}
+    QueryEngine *engine_;
+};
+
+// Handle to a registered family of input values of type T.
+template <typename T> class InputQueryT {
+public:
+    [[nodiscard]] FamilyId family() const noexcept { return family_; }
+
+private:
+    friend class QueryEngine;
+    explicit InputQueryT(FamilyId family) noexcept : family_(family) {}
+    FamilyId family_;
+};
+
+// Handle to a registered family of derived values of type T, computed by a
+// function (QueryContext&, DerivedId) -> T.
+template <typename T> class DerivedQueryT {
+public:
+    [[nodiscard]] FamilyId family() const noexcept { return family_; }
+
+private:
+    friend class QueryEngine;
+    explicit DerivedQueryT(FamilyId family) noexcept : family_(family) {}
+    FamilyId family_;
+};
+
+// Salsa red-green subset: typed input slots, memoized derived slots with
+// automatically recorded dependency edges, a single monotonic revision clock,
+// eager transitive dirty marking and lazy recomputation.
+//
+// Single-threaded: families must be registered before evaluation starts, and
+// set_input() must not be called from inside a compute function.
+class QueryEngine {
+public:
+    explicit QueryEngine(CyclePolicy policy = CyclePolicy::Error);
+    ~QueryEngine();
+
+    QueryEngine(const QueryEngine &) = delete;
+    QueryEngine &operator=(const QueryEngine &) = delete;
+    QueryEngine(QueryEngine &&) = delete;
+    QueryEngine &operator=(QueryEngine &&) = delete;
+
+    // Register a family of externally set inputs holding T.
+    template <typename T>
+        requires std::equality_comparable<T>
+    [[nodiscard]] InputQueryT<T> register_input() {
+        return InputQueryT<T>{register_input_family(make_equals<T>())};
+    }
+
+    // Register a derived query. The compute closure receives the read context
+    // and the derived slot key and produces T; every read it performs records
+    // a dependency edge for the slot being evaluated.
+    template <typename T, typename Compute>
+        requires std::equality_comparable<T> &&
+                 std::is_invocable_r_v<T, Compute &, QueryContext &, DerivedId>
+    [[nodiscard]] DerivedQueryT<T> register_derived(Compute compute) {
+        RecomputeFn recompute = [fn = std::move(compute)](
+                                    QueryContext &ctx, DerivedId key,
+                                    std::any &out) mutable {
+            out.emplace<T>(fn(ctx, key));
+        };
+        return DerivedQueryT<T>{register_derived_family(std::move(recompute),
+                                                        make_equals<T>())};
+    }
+
+    // Set an input. Equal values are a no-op (no revision bump, no dirtying);
+    // a changed value bumps the revision and eagerly marks only the transitive
+    // dependents dirty without recomputing anything.
+    template <typename T>
+    void set_input(const InputQueryT<T> &family, InputId key, T value) {
+        update_input(family.family_, key.index(), std::any(std::move(value)));
+    }
+
+    // Evaluate a derived slot: return the memoized value when still valid,
+    // otherwise recompute it (and its stale dependencies) lazily.
+    template <typename T>
+    [[nodiscard]] std::expected<T, CycleError> eval(const DerivedQueryT<T> &family,
+                                                    DerivedId key) {
+        std::expected<const std::any *, CycleError> memo =
+            eval_slot(family.family_, key.index());
+        if (!memo) {
+            return std::unexpected(std::move(memo.error()));
+        }
+        return std::any_cast<const T &>(**memo);
+    }
+
+    [[nodiscard]] Revision revision() const noexcept;
+    [[nodiscard]] QueryStats stats() const;
+
+    // Introspect any slot of a known family.
+    [[nodiscard]] SlotInfo inspect_slot(FamilyId family, std::size_t slot_index) const;
+
+private:
+    struct FlatSlotKey {
+        std::size_t family = 0;
+        std::size_t slot = 0;
+
+        bool operator==(const FlatSlotKey &) const = default;
+    };
+
+    struct FlatSlotKeyHash {
+        [[nodiscard]] std::size_t operator()(FlatSlotKey key) const noexcept;
+    };
+
+    struct Slot {
+        std::any value;
+        bool has_value = false;
+        Revision changed_at = 0;  // revision at which the value last changed
+        Revision verified_at = 0; // revision of last produce-or-prove eval
+        SlotState state = SlotState::Dirty;
+        std::vector<FlatSlotKey> dependencies; // slots this derived read
+        std::vector<FlatSlotKey> dependents;   // derived slots reading this one
+        bool in_progress = false;              // cycle detection
+    };
+
+    using EqualsFn = std::function<bool(const std::any &, const std::any &)>;
+    using RecomputeFn =
+        std::function<void(QueryContext &, DerivedId, std::any &)>;
+
+    struct Family {
+        bool is_input = false;
+        EqualsFn equals;                       // value equality, type erased
+        RecomputeFn recompute;                 // derived families only
+        std::deque<Slot> slots;                // stable addresses on growth
+    };
+
+    friend class QueryContext;
+
+    template <typename T>
+    [[nodiscard]] static EqualsFn make_equals() {
+        return [](const std::any &before, const std::any &after) {
+            return std::any_cast<const T &>(before) ==
+                   std::any_cast<const T &>(after);
+        };
+    }
+
+    [[nodiscard]] FamilyId register_input_family(EqualsFn equals);
+    [[nodiscard]] FamilyId register_derived_family(RecomputeFn recompute,
+                                                   EqualsFn equals);
+
+    void update_input(FamilyId family, std::size_t slot_index, std::any value);
+    [[nodiscard]] std::expected<const std::any *, CycleError>
+    eval_slot(FamilyId family, std::size_t slot_index);
+
+    // Read primitives invoked by QueryContext; both record an edge from the
+    // slot currently being evaluated (if any).
+    [[nodiscard]] const std::any &read_input(FamilyId family,
+                                             std::size_t slot_index);
+    [[nodiscard]] const std::any *read_derived(FamilyId family,
+                                               std::size_t slot_index);
+
+    // Bring a derived slot's memo up to date without attributing edges: used by
+    // the green-phase prover and by cross-slot reads after edge attribution.
+    [[nodiscard]] const std::any *fetch_derived(FlatSlotKey target);
+    [[nodiscard]] bool prove_unchanged(Slot &candidate);
+    [[nodiscard]] const std::any *recompute(FlatSlotKey target);
+
+    void record_dependency(FlatSlotKey target);
+    void ensure_slot(Family &family, std::size_t slot_index);
+    [[nodiscard]] Slot &slot_at(FlatSlotKey key);
+    void mark_dependents_dirty(const Slot &changed);
+    [[nodiscard]] SlotKey materialize_key(FlatSlotKey key) const;
+    [[nodiscard]] CycleError current_cycle_path(FlatSlotKey repeated) const;
+    [[noreturn]] void raise_cycle(FlatSlotKey repeated);
+
+    CyclePolicy policy_;
+    Revision revision_ = 0;
+    std::deque<Family> families_;
+    QueryContext context_;
+    std::vector<FlatSlotKey> stack_;
+    QueryStats stats_;
+};
+
+template <typename T>
+const T &QueryContext::get(const InputQueryT<T> &family, InputId key) const {
+    return std::any_cast<const T &>(
+        engine_->read_input(family.family(), key.index()));
+}
+
+template <typename T>
+T QueryContext::read(const DerivedQueryT<T> &family, DerivedId key) const {
+    const std::any *memo = engine_->read_derived(family.family(), key.index());
+    return std::any_cast<const T &>(*memo);
+}
+
+} // namespace ahfl::query

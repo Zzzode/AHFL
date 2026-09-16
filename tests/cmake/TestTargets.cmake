@@ -603,6 +603,16 @@ target_link_libraries(ahfl_base_toml_tests
 )
 ahfl_apply_project_warnings(ahfl_base_toml_tests)
 
+add_executable(ahfl_base_query_tests
+    unit/base/query/query_engine.cpp
+)
+target_link_libraries(ahfl_base_query_tests
+    PRIVATE
+        ahfl_base_query
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_base_query_tests)
+
 add_executable(ahfl_compiler_manifest_tests
     unit/compiler/manifest/manifest.cpp
 )
@@ -1512,6 +1522,7 @@ foreach(_tgt
     ahfl_grpc_transport_tests
     ahfl_base_json_value_tests
     ahfl_base_toml_tests
+    ahfl_base_query_tests
     ahfl_compiler_manifest_tests
     ahfl_compiler_package_graph_tests
     ahfl_base_diagnostic_serialization_tests
