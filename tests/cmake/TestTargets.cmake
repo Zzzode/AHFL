@@ -46,6 +46,7 @@ add_executable(ahfl_compiler_ir_tests
     unit/compiler/ir/identity_visitor.cpp
     unit/compiler/ir/mangling.cpp
     unit/compiler/ir/matched_type_ref_bridge.cpp
+    unit/compiler/ir/node_variant_coverage.cpp
     unit/compiler/ir/nominal_ref_bridge.cpp
     unit/compiler/ir/tower.cpp
     unit/compiler/ir/typed_hir_instance.cpp

@@ -66,6 +66,14 @@ using Decl = std::variant<ModuleDecl,
                           ImplDecl,
                           InstanceDecl>;
 
+// RFC 0027 P8 IR SSOT compile-time cardinality gate. Adding or removing an
+// alternative without updating every exhaustive Decl visitor MUST fail the
+// build; keep this pin adjacent to the declaration.
+static_assert(std::variant_size_v<Decl> == 16,
+              "ahfl::ir::Decl cardinality drift (RFC 0027 P8 IR SSOT): "
+              "update every exhaustive visitor and this pin together with "
+              "the alternative list.");
+
 enum class ProgramPhase {
     Lowered,
     Analyzed,

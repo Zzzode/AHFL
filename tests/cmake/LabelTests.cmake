@@ -35,6 +35,7 @@ ahfl_label_tests(
         ahflc.emit_ir_json.workflow_value_flow
         ahfl.check.project.ok_expression_type_isolated
         ahfl.handoff.package_compat.escape_control_characters
+        ahfl.ir.ssot_compile_fail
 )
 
 ahfl_label_tests(
@@ -671,6 +672,7 @@ ahfl_label_tests(
     LABELS quality-gates
     TESTS
         ahfl.architecture.boundaries
+        ahfl.ir.ssot_compile_fail
         ahfl.runtime.native_grpc_gate
         ahfl.runtime.transport_gate_smoke
         ahfl.property.lowering_equiv

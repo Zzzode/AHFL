@@ -1,0 +1,39 @@
+// SHARED alternative list for ahfl::ir::ExprNode (RFC 0027 P8 IR SSOT).
+//
+// This is the negative compile-test harness's canonical TYPE LIST. It MUST
+// stay byte-for-byte in lockstep with the `using ExprNode = std::variant<...>`
+// declaration in include/ahfl/compiler/ir/expr.hpp:
+//
+//   * tests/unit/compiler/ir/node_variant_coverage.cpp asserts
+//     `std::is_same_v<variant-built-from-this-list, ahfl::ir::ExprNode>`, so a
+//     list drift fails the unit suite.
+//   * tests/fixtures/ir/ssot/expr_exhaustiveness_negative.cpp rebuilds the
+//     variant from this list, injects one dummy alternative, and visits it
+//     with exactly one handler per entry below. A REAL new node added here
+//     without a visitor handler is therefore a compile failure.
+//   * The static_assert next to ExprNode pins the cardinality independently.
+//
+// X-macro contract: the consumer defines AHFL_IR_EXPR_NODE(Name) before
+// invoking AHFL_IR_EXPR_NODES and undefines it afterwards.
+
+#define AHFL_IR_EXPR_NODES(APPLY)                                                               \
+    APPLY(BoolLiteralExpr)                                                                      \
+    APPLY(IntegerLiteralExpr)                                                                   \
+    APPLY(FloatLiteralExpr)                                                                     \
+    APPLY(DecimalLiteralExpr)                                                                   \
+    APPLY(StringLiteralExpr)                                                                    \
+    APPLY(DurationLiteralExpr)                                                                  \
+    APPLY(PathExpr)                                                                             \
+    APPLY(QualifiedValueExpr)                                                                   \
+    APPLY(CallExpr)                                                                             \
+    APPLY(MethodCallExpr)                                                                       \
+    APPLY(LambdaExpr)                                                                           \
+    APPLY(StructLiteralExpr)                                                                    \
+    APPLY(UnaryExpr)                                                                            \
+    APPLY(BinaryExpr)                                                                           \
+    APPLY(MemberAccessExpr)                                                                     \
+    APPLY(IndexAccessExpr)                                                                      \
+    APPLY(MatchExpr)                                                                            \
+    APPLY(UnwrapExpr)                                                                           \
+    APPLY(UnitLiteralExpr)                                                                      \
+    APPLY(QuantifierExpr)

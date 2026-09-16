@@ -164,6 +164,17 @@ using MatchPatternNode = std::variant<LiteralPattern,
                                       TuplePattern,
                                       OrPattern>;
 
+// RFC 0027 P8 IR SSOT compile-time cardinality gate. Adding or removing an
+// alternative without updating every exhaustive visitor MUST fail the build.
+// Keep this pin adjacent to the declaration; the negative compile-test harness
+// under tests/fixtures/ir/ssot/ independently proves a missing visitor handler
+// is uncompilable, and the follow-up X-macro slice generates the variant itself
+// from one shared node list.
+static_assert(std::variant_size_v<MatchPatternNode> == 7,
+              "ahfl::ir::MatchPatternNode cardinality drift (RFC 0027 P8 IR "
+              "SSOT): update every exhaustive visitor and this pin together "
+              "with the alternative list.");
+
 struct MatchPattern {
     MatchPatternNode node;
     SourceRangeOpt source_range;
@@ -402,6 +413,12 @@ using ExprNode = std::variant<BoolLiteralExpr,
                               UnitLiteralExpr,
                               QuantifierExpr>;
 
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see MatchPatternNode).
+static_assert(std::variant_size_v<ExprNode> == 20,
+              "ahfl::ir::ExprNode cardinality drift (RFC 0027 P8 IR SSOT): "
+              "update every exhaustive visitor (see the SWEEP CHECKLIST "
+              "above) and this pin together with the alternative list.");
+
 /// Expression wrapper struct
 struct Expr {
     ExprNode node;
@@ -462,6 +479,12 @@ using TemporalExprNode = std::variant<EmbeddedTemporalExpr,
                                       CompletedTemporalExpr,
                                       TemporalUnaryExpr,
                                       TemporalBinaryExpr>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see MatchPatternNode).
+static_assert(std::variant_size_v<TemporalExprNode> == 7,
+              "ahfl::ir::TemporalExprNode cardinality drift (RFC 0027 P8 IR "
+              "SSOT): update every exhaustive visitor and this pin together "
+              "with the alternative list.");
 
 /// Temporal expression wrapper struct
 struct TemporalExpr {
@@ -595,7 +618,7 @@ struct ExprStatement {
     ExprRef expr;
 };
 
-/// Statement node (12 variant alternatives)
+/// Statement node (11 variant alternatives)
 using StatementNode = std::variant<LetStatement,
                                    AssignStatement,
                                    IfStatement,
@@ -607,6 +630,12 @@ using StatementNode = std::variant<LetStatement,
                                    RequiresStatement,
                                    UnreachableStatement,
                                    ExprStatement>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see MatchPatternNode).
+static_assert(std::variant_size_v<StatementNode> == 11,
+              "ahfl::ir::StatementNode cardinality drift (RFC 0027 P8 IR "
+              "SSOT): update every exhaustive visitor and this pin together "
+              "with the alternative list.");
 
 /// Statement wrapper struct
 struct Statement {

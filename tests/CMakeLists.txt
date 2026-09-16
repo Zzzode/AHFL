@@ -10,6 +10,17 @@ add_test(NAME ahfl.architecture.boundaries
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-architecture.py"
 )
 
+# RFC 0027 P8 (KR6.13-G): negative compile-test for the IR node SSOT
+# exhaustiveness gate. Syntax-only-compiles a fixture that rebuilds
+# ahfl::ir::ExprNode from the shared .def list, injects one dummy
+# alternative, and visits with one handler per real alternative. The
+# injected build MUST fail with a diagnostic naming the unhandled type;
+# removing the dummy alternative MUST compile.
+add_test(NAME ahfl.ir.ssot_compile_fail
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/scripts/ir_ssot_compile_fail.py"
+)
+
 # RFC 0026 Objective 6A (KR6.4-pre): WASM toolchain preflight. Three tiers:
 #  1. fixture integrity — the committed preflight.wasm matches its generator
 #     (byte-exact, auditable, no wat2wasm dependency); always runs.

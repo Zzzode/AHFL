@@ -331,6 +331,14 @@ struct CoreCapabilityDecl {
 /// not a class hierarchy.
 using CoreDecl = std::variant<CoreAgentDecl, CoreCapabilityDecl>;
 
+// RFC 0027 P8 IR SSOT compile-time cardinality gate. Adding or removing a
+// Core node alternative without updating every exhaustive visitor MUST fail
+// the build; keep this pin adjacent to the declaration.
+static_assert(std::variant_size_v<CoreDecl> == 2,
+              "ahfl::ir::core::CoreDecl cardinality drift (RFC 0027 P8 IR "
+              "SSOT): update every exhaustive visitor and this pin together "
+              "with the alternative list.");
+
 // ----------------------------------------------------------------------------
 // Execution body: A-normalized (ANF) expressions, statements, regions
 // ----------------------------------------------------------------------------
@@ -554,6 +562,12 @@ using CoreExprNode = std::variant<CoreLiteralExpr,
                                   CoreCoerceExpr,
                                   CoreUnsupportedExpr>;
 
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+static_assert(std::variant_size_v<CoreExprNode> == 9,
+              "ahfl::ir::core::CoreExprNode cardinality drift (RFC 0027 P8 "
+              "IR SSOT): update every exhaustive visitor and this pin "
+              "together with the alternative list.");
+
 struct CoreExpr {
     CoreExprNode node;
     SourceRangeOpt source_range;
@@ -669,6 +683,12 @@ using CorePatternNode = std::variant<CoreWildcardPat,
                                      CoreVariantPat,
                                      CoreTuplePat,
                                      CoreOrPat>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+static_assert(std::variant_size_v<CorePatternNode> == 7,
+              "ahfl::ir::core::CorePatternNode cardinality drift (RFC 0027 "
+              "P8 IR SSOT): update every exhaustive visitor and this pin "
+              "together with the alternative list.");
 
 struct CorePattern {
     CorePatternNode node;
@@ -822,6 +842,12 @@ using CoreStmtNode = std::variant<CoreLetStmt,
                                   CoreYieldStmt,
                                   CoreTrapStmt,
                                   CoreMatchStmt>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+static_assert(std::variant_size_v<CoreStmtNode> == 9,
+              "ahfl::ir::core::CoreStmtNode cardinality drift (RFC 0027 P8 "
+              "IR SSOT): update every exhaustive visitor and this pin "
+              "together with the alternative list.");
 
 struct CoreStmt {
     CoreStmtNode node;
@@ -1140,6 +1166,12 @@ using CoreInstancePayload =
     std::variant<CoreCapabilityInstance, CorePredicateInstance, CoreAgentInstance,
                  CoreWorkflowInstance, CoreFnInstance>;
 
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+static_assert(std::variant_size_v<CoreInstancePayload> == 5,
+              "ahfl::ir::core::CoreInstancePayload cardinality drift (RFC "
+              "0027 P8 IR SSOT): update every exhaustive visitor and this "
+              "pin together with the alternative list.");
+
 // ----------------------------------------------------------------------------
 // Logical value types (RFC 0026 P4). A program-global, hash-consed arena of
 // TARGET-INDEPENDENT value types — the "what a value logically is" layer,
@@ -1315,6 +1347,13 @@ using CoreValueTypeNode =
     std::variant<CoreVtUnit, CoreVtNever, CoreVtBool, CoreVtInt, CoreVtFloat, CoreVtString,
                  CoreVtDecimal, CoreVtDuration, CoreVtTimestamp, CoreVtUuid, CoreVtNominal,
                  CoreVtTuple, CoreVtFn, CoreVtClosure>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+static_assert(std::variant_size_v<CoreValueTypeNode> == 14,
+              "ahfl::ir::core::CoreValueTypeNode cardinality drift (RFC "
+              "0027 P8 IR SSOT): update every exhaustive visitor "
+              "(layout / wire / lower / verify) and this pin together with "
+              "the alternative list.");
 
 /// An interned logical value type (`CoreProgram::value_types`). Structural
 /// equality of the node IS the interning key: two `CoreValueType`s compare equal
