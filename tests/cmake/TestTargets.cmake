@@ -360,6 +360,18 @@ target_include_directories(ahfl_core_wasm_idempotency_token_tests
 )
 ahfl_apply_project_warnings(ahfl_core_wasm_idempotency_token_tests)
 
+add_executable(ahfl_durable_effect_intent_tests
+    unit/runtime/engine/durable_effect_intent.cpp
+)
+target_link_libraries(ahfl_durable_effect_intent_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+target_include_directories(ahfl_durable_effect_intent_tests
+    PRIVATE ${PROJECT_SOURCE_DIR}/src
+)
+ahfl_apply_project_warnings(ahfl_durable_effect_intent_tests)
+
 add_executable(ahfl_payload_store_tests
     unit/runtime/engine/payload_store.cpp
 )

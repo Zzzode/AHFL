@@ -33,6 +33,7 @@ add_library(ahfl_runtime_engine STATIC
     core_wasm_resume_host_codes.cpp
     core_wasm_resume_capacity.cpp
     core_wasm_idempotency_token.cpp
+    durable_effect_intent.cpp
     payload_store_codec.cpp
     payload_store.cpp
 )
