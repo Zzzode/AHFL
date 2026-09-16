@@ -1,10 +1,10 @@
 #include "runtime/evaluator/value.hpp"
 
+#include "base/json/json_value.hpp"
+
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <ostream>
 #include <sstream>
@@ -67,10 +67,11 @@ const Value *FieldMap::get(std::string_view name) const {
 // ============================================================================
 // Canonical double formatting (RFC 0022 prereq 1b)
 // ----------------------------------------------------------------------------
-// One locale-independent, shortest-round-trip float renderer, shared by
-// value_json and print_value so a given double serializes identically in every
-// artifact. std::to_chars ignores the global locale and ostream format flags,
-// eliminating the platform-default-precision nondeterminism of `os << double`.
+// One locale-independent, shortest-round-trip float renderer shared by
+// value_json, print_value, and the conformance-case canonicality gate, so a
+// given double serializes identically in every artifact. The wire spelling
+// itself lives in ahfl::json::format_wire_float (the base JSON library); this
+// wrapper only adds the non-finite diagnostics conventions.
 // ============================================================================
 
 std::string format_double(double value, bool json_mode) {
@@ -84,21 +85,9 @@ std::string format_double(double value, bool json_mode) {
         }
         return value < 0.0 ? "-Infinity" : "Infinity";
     }
-    char buf[64];
-    auto [ptr, ec] = std::to_chars(buf,
-                                   buf + sizeof(buf),
-                                   value,
-                                   std::chars_format::general,
-                                   std::numeric_limits<double>::max_digits10);
-    (void)ec; // 64 bytes always suffices for a double in general format.
-    std::string_view sv(buf, static_cast<std::size_t>(ptr - buf));
-    std::string out(sv);
-    // Keep the spelling recognizably a float (has '.' or exponent).
-    if (sv.find('.') == std::string_view::npos && sv.find('e') == std::string_view::npos &&
-        sv.find('E') == std::string_view::npos) {
-        out += ".0";
-    }
-    return out;
+    // Delegate to the shared wire SSOT so a given double renders identically in
+    // every artifact (value_json, print_value, conformance canonicality gate).
+    return json::format_wire_float(value);
 }
 
 

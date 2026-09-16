@@ -1113,6 +1113,7 @@ add_test(NAME ahfl.runtime.durable_effect_authority
 
 add_test(NAME ahfl.conformance_case
     COMMAND $<TARGET_FILE:ahfl_conformance_case_tests>
+            "${CMAKE_CURRENT_BINARY_DIR}/conformance-case"
 )
 
 add_test(NAME ahfl.runtime.payload_store

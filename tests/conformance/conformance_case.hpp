@@ -18,13 +18,17 @@
 // fields lexicographically sorted, no insignificant whitespace). The parser
 // enforces byte equality against a canonical re-serialization of the parsed
 // fragment, so a case can never pin an engine to a non-canonical encoding.
+//
+// The canonical float spelling is the runtime SSOT
+// (`json::format_wire_float`, the same renderer behind `value_to_json`): an
+// integral float keeps a decimal point ("1.0", never the bare "1"), matching
+// the input wire codec which rejects integer tokens at Float nodes ("no int
+// widening").
 
 #include <algorithm>
-#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -45,16 +49,6 @@ enum class CaseKind {
     Workflow,
 };
 
-[[nodiscard]] inline std::string_view to_string(CaseKind kind) noexcept {
-    switch (kind) {
-    case CaseKind::Agent:
-        return "agent";
-    case CaseKind::Workflow:
-        return "workflow";
-    }
-    return "unknown";
-}
-
 /// Terminal status a case expects from an engine run.
 enum class ExpectedRunStatus {
     Completed,
@@ -62,36 +56,12 @@ enum class ExpectedRunStatus {
     Failed,
 };
 
-[[nodiscard]] inline std::string_view to_string(ExpectedRunStatus status) noexcept {
-    switch (status) {
-    case ExpectedRunStatus::Completed:
-        return "completed";
-    case ExpectedRunStatus::Suspended:
-        return "suspended";
-    case ExpectedRunStatus::Failed:
-        return "failed";
-    }
-    return "unknown";
-}
-
 /// Mocked outcome of one capability invocation.
 enum class CapabilityOutcomeStatus {
     Ok,
     Error,
     Pending,
 };
-
-[[nodiscard]] inline std::string_view to_string(CapabilityOutcomeStatus status) noexcept {
-    switch (status) {
-    case CapabilityOutcomeStatus::Ok:
-        return "ok";
-    case CapabilityOutcomeStatus::Error:
-        return "error";
-    case CapabilityOutcomeStatus::Pending:
-        return "pending";
-    }
-    return "unknown";
-}
 
 /// WASM lane a case is eligible for.
 ///  * Orchestration: state-machine / DAG orchestration executable on the P5
@@ -105,18 +75,6 @@ enum class WasmEligibility {
     Computation,
     None,
 };
-
-[[nodiscard]] inline std::string_view to_string(WasmEligibility eligibility) noexcept {
-    switch (eligibility) {
-    case WasmEligibility::Orchestration:
-        return "orchestration";
-    case WasmEligibility::Computation:
-        return "computation";
-    case WasmEligibility::None:
-        return "none";
-    }
-    return "unknown";
-}
 
 struct CapabilityExpectation {
     std::string name;
@@ -202,9 +160,13 @@ namespace detail {
 // Mirrors runtime::evaluator `value_to_json` byte conventions, applied to a
 // plain JSON DOM so the validator stays engine-independent:
 //   * no insignificant whitespace;
+//   * floats keep the runtime SSOT spelling (json::format_wire_float): an
+//     integral float renders "1.0", never the bare integer "1";
 //   * struct objects (`_type`): discriminator first, remaining fields sorted;
-//   * enum objects (`_enum`): `_enum`, `_variant`, then `_payload`,
-//     `_named_payload` in that fixed wire order;
+//   * enum objects (`_enum`): `_enum`, `_variant`, then a non-empty
+//     `_payload` / `_named_payload` in that fixed wire order; empty payload
+//     containers are omitted (exactly as value_to_json does), so an
+//     explicitly-present `"_payload":[]` is non-canonical and rejected;
 //   * every other object: lexicographically sorted keys (canonical maps).
 
 inline void emit_canonical_string(std::ostream &out, std::string_view value) {
@@ -267,27 +229,45 @@ inline void emit_canonical_string(std::ostream &out, std::string_view value) {
     std::vector<std::string> ordered;
     ordered.reserve(keys.size());
 
+    // Every enum discriminator key present in the DOM is consumed here, even
+    // when an empty `_payload` / `_named_payload` is suppressed: otherwise the
+    // sorted-remainder loop below would re-emit the suppressed key.
+    std::vector<std::string> consumed;
+    consumed.reserve(keys.size());
+
     if (has("_enum")) {
         for (std::string_view discriminator : {"_enum", "_variant", "_payload", "_named_payload"}) {
-            if (has(discriminator)) {
-                ordered.emplace_back(discriminator);
+            const auto *child = object.get(discriminator);
+            if (child == nullptr) {
+                continue;
             }
+            consumed.emplace_back(discriminator);
+            // Mirror value_to_json's EnumValue emission: `_payload` and
+            // `_named_payload` are written only when non-empty, so an
+            // explicitly-present empty container is non-canonical.
+            if ((discriminator == "_payload" && child->is_array() &&
+                 child->array_items.empty()) ||
+                (discriminator == "_named_payload" && child->is_object() &&
+                 child->object_fields.empty())) {
+                continue;
+            }
+            ordered.emplace_back(discriminator);
         }
     } else if (has("_type")) {
+        consumed.emplace_back("_type");
         ordered.emplace_back("_type");
     }
 
-    std::vector<std::string> discriminators(ordered.begin(), ordered.end());
     std::sort(keys.begin(), keys.end());
     for (auto &key : keys) {
-        bool is_discriminator = false;
-        for (const auto &discriminator : discriminators) {
+        bool is_consumed = false;
+        for (const auto &discriminator : consumed) {
             if (key == discriminator) {
-                is_discriminator = true;
+                is_consumed = true;
                 break;
             }
         }
-        if (!is_discriminator) {
+        if (!is_consumed) {
             ordered.push_back(std::move(key));
         }
     }
@@ -317,14 +297,10 @@ inline void emit_canonical_json(const json::JsonValue &value, std::ostream &out)
             out.setstate(std::ios_base::failbit);
             break;
         }
-        char buffer[64];
-        auto [ptr, ec] = std::to_chars(buffer,
-                                       buffer + sizeof(buffer),
-                                       value.float_val,
-                                       std::chars_format::general,
-                                       std::numeric_limits<double>::max_digits10);
-        (void)ec;
-        out << std::string_view(buffer, static_cast<std::size_t>(ptr - buffer));
+        // Runtime SSOT spelling (same renderer as value_to_json): an integral
+        // float keeps ".0", so canonical wire bytes are always valid float
+        // syntax for the input codec.
+        out << json::format_wire_float(value.float_val);
         break;
     }
     case json::Kind::String:
@@ -412,6 +388,7 @@ class ConformanceCaseReader {
         std::optional<std::string> entry;
         std::optional<std::string> input_json;
         std::vector<CapabilityExpectation> capabilities;
+        bool capabilities_present = false;
         std::optional<CaseExpectations> expect;
         std::optional<EngineMatrix> engines;
 
@@ -427,6 +404,7 @@ class ConformanceCaseReader {
             } else if (key == "input") {
                 input_json = require_canonical_wire_json(*value, "input");
             } else if (key == "capabilities") {
+                capabilities_present = true;
                 parse_capabilities(*value, capabilities);
             } else if (key == "expect") {
                 expect = parse_expectations(*value);
@@ -445,6 +423,9 @@ class ConformanceCaseReader {
         require_present(kind, "kind");
         require_present(entry, "entry");
         require_present(input_json, "input");
+        if (!capabilities_present) {
+            error("conformance case is missing required field 'capabilities'", std::nullopt);
+        }
         require_present(expect, "expect");
         require_present(engines, "engines");
         if (diagnostics_.has_error()) {

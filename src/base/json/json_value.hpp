@@ -120,4 +120,15 @@ struct JsonValue {
 /// Serialize a JsonValue tree to a compact JSON string.
 [[nodiscard]] std::string serialize_json(const JsonValue &v);
 
+/// Canonical, locale-independent wire spelling of a finite double. Uses
+/// std::to_chars shortest round-trip at max_digits10, then guarantees the
+/// result stays syntactically a JSON float: an integral result is suffixed
+/// with ".0" (so 1.0 emits "1.0", never the bare integer "1"). This is the
+/// single float renderer shared by the runtime `value_to_json` path and the
+/// conformance-case canonicality gate, so a given double has exactly one
+/// canonical wire spelling everywhere. Non-finite values are not representable
+/// in JSON; callers must handle them before calling (the evaluator maps them
+/// to "null" / "NaN" / "Infinity").
+[[nodiscard]] std::string format_wire_float(double value);
+
 } // namespace ahfl::json

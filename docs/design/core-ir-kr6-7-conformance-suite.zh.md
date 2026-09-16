@@ -128,9 +128,17 @@ equality against the exact source span:
 * struct objects (`_type`) emit the discriminator first, then remaining fields
   in lexicographic order (the runtime `FieldMap` invariant);
 * enum objects (`_enum`) emit the fixed wire order `_enum`, `_variant`,
-  `_payload`, `_named_payload`;
+  `_payload`, `_named_payload`, and omit `_payload` / `_named_payload` when
+  empty (an explicitly-present `"_payload":[]` is a second spelling of the
+  same unit enum and is non-canonical);
 * other objects (maps) emit lexicographically sorted keys;
-* numbers use the existing shortest-round-trip spellings.
+* numbers use the shared shortest-round-trip wire renderer
+  (`json::format_wire_float`, the same SSOT behind runtime `value_to_json`):
+  an integral float keeps a decimal point (`1.0`, `100.0`), never the bare
+  integer `1`, because the input wire codec rejects integer tokens at Float
+  nodes ("no int widening"); a value with one SSOT spelling has no alternate
+  canonical form (`1e2` is the same double as `100.0` and is rejected in
+  favour of the `100.0` spelling).
 
 This guarantees a case can never pin an engine to a non-canonical encoding and
 keeps output comparison a byte equality, matching the E4 evidence rule that
@@ -215,16 +223,24 @@ manifest bytes. The validator rejects at least:
 `ahfl_conformance_case_tests` (ctest name `ahfl.conformance_case`) links only
 `ahfl_base_json` plus public diagnostics -- deliberately no engine library:
 
-1. all seven committed sidecars load, reference an existing `.ahfl` source,
-   and expose the expected kind / entry / capability count / eligibility /
-   reason, with byte-exact canonical input and output assertions on the
-   richest case;
+1. the test scans `tests/conformance/cases/*.case.json`, asserts the
+   discovered file set equals the expected catalogue, and loads every
+   sidecar: each references an existing `.ahfl` source and exposes the
+   expected kind / entry / capability count / eligibility / reason, with
+   byte-exact canonical input and output assertions on the richest case;
 2. malformed manifests (sections 3-4 and 7) are rejected with a diagnostic
-   containing the precise rule text;
+   containing the precise rule text, including a missing `capabilities`
+   block;
 3. the canonicality gate accepts a compact ordered fragment and rejects both
-   embedded whitespace and a shuffled struct field;
+   embedded whitespace and a shuffled struct field; it accepts the SSOT
+   float spellings (`1.0`, `100.0`, `1.5`, `1e+20`), rejects the bare
+   integer `1` and the alternate exponent synonym `1e2`, and rejects an
+   explicitly-present empty enum `_payload:[]` / `_named_payload:{}`;
 4. `load_conformance_case` fails closed for a missing sidecar and for a
-   schema-valid sidecar whose source does not exist.
+   schema-valid sidecar whose source does not exist. The dangling-source
+   sidecar is written into a scratch directory passed under
+   `${CMAKE_CURRENT_BINARY_DIR}`, never into the committed cases catalogue,
+   so an interrupted run cannot leave a broken extra case in the source tree.
 
 No engine execution is invoked, so the test is deterministic and independent
 of the Wasmtime / KR6.6 state.

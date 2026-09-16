@@ -764,6 +764,26 @@ std::optional<std::unique_ptr<JsonValue>> parse_json(std::string_view input) {
     return parser.parse();
 }
 
+std::string format_wire_float(double value) {
+    char buf[64];
+    auto [ptr, ec] = std::to_chars(buf,
+                                   buf + sizeof(buf),
+                                   value,
+                                   std::chars_format::general,
+                                   std::numeric_limits<double>::max_digits10);
+    (void)ec; // 64 bytes always suffices for a finite double in general format.
+    std::string_view sv(buf, static_cast<std::size_t>(ptr - buf));
+    std::string out(sv);
+    // Keep the spelling recognizably a float (has '.' or exponent). The input
+    // wire codec rejects integer tokens at Float nodes ("no int widening"), so
+    // the canonical wire spelling of an integral float must keep ".0".
+    if (sv.find('.') == std::string_view::npos && sv.find('e') == std::string_view::npos &&
+        sv.find('E') == std::string_view::npos) {
+        out += ".0";
+    }
+    return out;
+}
+
 std::string serialize_json(const JsonValue &v) {
     std::ostringstream out;
     serialize_impl(v, out);

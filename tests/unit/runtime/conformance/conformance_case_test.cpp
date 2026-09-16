@@ -20,6 +20,7 @@
 
 #include "conformance/conformance_case.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -143,50 +144,88 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";
-    std::size_t loaded = 0;
+
+    // Self-validating catalogue: scan the committed directory rather than
+    // iterate a hand-maintained list. Any sidecar present on disk that the
+    // battery does not know about (or an expected one that is absent) fails,
+    // so a malformed or dangling newly committed case can never slip past
+    // ahfl.conformance_case.
+    std::vector<std::string> discovered;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator(cases_dir, ec)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const auto &path = entry.path();
+        if (is_conformance_case_sidecar(path)) {
+            discovered.push_back(path.filename().string());
+        }
+    }
+    check(!ec, "conformance cases directory scanned without error");
+    std::sort(discovered.begin(), discovered.end());
+
+    std::vector<std::string> expected_names;
+    expected_names.reserve(expected.size());
     for (const auto &expectation : expected) {
-        const auto sidecar = cases_dir / expectation.file_name;
+        expected_names.push_back(expectation.file_name);
+    }
+    std::sort(expected_names.begin(), expected_names.end());
+    check(discovered == expected_names,
+          "discovered case set equals the expected catalogue (every committed case is exercised)");
+
+    std::size_t loaded = 0;
+    for (const auto &file_name : discovered) {
+        const auto expectation =
+            std::find_if(expected.begin(), expected.end(), [&](const ExpectedCase &candidate) {
+                return candidate.file_name == file_name;
+            });
+        check(expectation != expected.end(), "case carries field expectations: " + file_name);
+        if (expectation == expected.end()) {
+            continue;
+        }
+
+        const auto sidecar = cases_dir / file_name;
         check(is_conformance_case_sidecar(sidecar),
-              "sidecar suffix recognized: " + expectation.file_name);
+              "sidecar suffix recognized: " + file_name);
 
         auto result = load_conformance_case(sidecar, repo_root);
         if (!result.has_errors() && result.conformance_case.has_value()) {
             ++loaded;
         } else {
-            check(false, "load committed case: " + expectation.file_name);
+            check(false, "load committed case: " + file_name);
             result.diagnostics.render(std::cerr);
             continue;
         }
 
         const ConformanceCase &manifest = result.conformance_case->manifest;
-        check(manifest.kind == expectation.kind, "kind matches: " + expectation.file_name);
-        check(manifest.entry == expectation.entry, "entry matches: " + expectation.file_name);
-        check(manifest.source == expectation.source_suffix,
-              "source matches: " + expectation.file_name);
-        check(manifest.capabilities.size() == expectation.capability_count,
-              "capability count: " + expectation.file_name);
-        check(manifest.expect.capability_sequence.size() == expectation.capability_sequence_size,
-              "capability sequence size: " + expectation.file_name);
-        check(manifest.engines.evaluator, "evaluator enabled: " + expectation.file_name);
-        check(manifest.engines.wasm.eligibility == expectation.wasm,
-              "wasm eligibility: " + expectation.file_name);
+        check(manifest.kind == expectation->kind, "kind matches: " + file_name);
+        check(manifest.entry == expectation->entry, "entry matches: " + file_name);
+        check(manifest.source == expectation->source_suffix,
+              "source matches: " + file_name);
+        check(manifest.capabilities.size() == expectation->capability_count,
+              "capability count: " + file_name);
+        check(manifest.expect.capability_sequence.size() == expectation->capability_sequence_size,
+              "capability sequence size: " + file_name);
+        check(manifest.engines.evaluator, "evaluator enabled: " + file_name);
+        check(manifest.engines.wasm.eligibility == expectation->wasm,
+              "wasm eligibility: " + file_name);
         check(!manifest.engines.wasm.reason.empty(),
-              "wasm skip reason present: " + expectation.file_name);
+              "wasm skip reason present: " + file_name);
         check(manifest.expect.run_status == ExpectedRunStatus::Completed,
-              "expected completed run: " + expectation.file_name);
+              "expected completed run: " + file_name);
 
         if (manifest.kind == CaseKind::Agent) {
             check(!manifest.expect.state_sequence.empty(),
-                  "agent carries state sequence: " + expectation.file_name);
+                  "agent carries state sequence: " + file_name);
         } else {
             check(manifest.expect.state_sequence.empty(),
-                  "workflow leaves state sequence empty: " + expectation.file_name);
+                  "workflow leaves state sequence empty: " + file_name);
         }
 
-        check(result.conformance_case->source_path == (repo_root / expectation.source_suffix),
-              "source path resolved under repo root: " + expectation.file_name);
+        check(result.conformance_case->source_path == (repo_root / expectation->source_suffix),
+              "source path resolved under repo root: " + file_name);
     }
-    check(loaded == expected.size(), "all seven committed cases loaded");
+    check(loaded == discovered.size(), "all committed cases loaded");
 
     // Spot-check the richest case field-by-field.
     const auto multi = load_conformance_case(cases_dir / "e2e_multi_agent.case.json", repo_root);
@@ -599,10 +638,94 @@ void test_canonicality_gate() {
           "input canonicality diagnostic names the field");
 }
 
-void test_dangling_source_rejected(const std::filesystem::path &repo_root) {
+// The canonical float spelling is the runtime value_to_json SSOT: an integral
+// float keeps ".0" (the input wire codec rejects integer tokens at Float
+// nodes), and there is exactly one canonical spelling per value.
+void test_float_canonicality_gate() {
+    const auto case_with_input = [](std::string_view input_fragment) {
+        return std::string{R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "input": )"} + std::string{input_fragment} + R"(,
+  "capabilities": [],
+  "expect": {
+    "run_status": "completed",
+    "state_sequence": ["Start", "Done"],
+    "capability_sequence": []
+  },
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "E1"}}
+})";
+    };
+
+    check(!parse_conformance_case_json(case_with_input(R"({"x":1.0})"), "float-1.0").has_errors(),
+          "integral float 1.0 accepted (SSOT keeps the decimal point)");
+    check(!parse_conformance_case_json(case_with_input(R"({"x":100.0})"), "float-100.0")
+               .has_errors(),
+          "integral float 100.0 accepted");
+    check(!parse_conformance_case_json(case_with_input(R"({"x":1.5})"), "float-1.5").has_errors(),
+          "fractional float 1.5 accepted");
+    check(!parse_conformance_case_json(case_with_input(R"({"x":1e+20})"), "float-exp").has_errors(),
+          "exponential float 1e+20 accepted in its shortest-round-trip spelling");
+
+    // 1e2 is a synonym of 100.0; the single-canonical-encoding guarantee pins
+    // the SSOT spelling "100.0", so the exponent form is non-canonical here.
+    {
+        auto result = parse_conformance_case_json(case_with_input(R"({"x":1e2})"), "float-1e2");
+        check(result.has_errors(), "1e2 rejected: canonical spelling of 100.0 is 100.0");
+        check(diagnostics_contain(result.diagnostics, "must be canonical compact wire JSON"),
+              "1e2 canonicality diagnostic");
+    }
+}
+
+// value_to_json omits an enum's `_payload` / `_named_payload` when empty, so
+// an explicitly-present empty container is a second, non-canonical spelling
+// and must be rejected; the bare unit-enum form is the canonical one.
+void test_enum_empty_payload_gate() {
+    const auto case_with_input = [](std::string_view input_fragment) {
+        return std::string{R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "input": )"} + std::string{input_fragment} + R"(,
+  "capabilities": [],
+  "expect": {
+    "run_status": "completed",
+    "state_sequence": ["Start", "Done"],
+    "capability_sequence": []
+  },
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "E1"}}
+})";
+    };
+
+    check(!parse_conformance_case_json(
+                   case_with_input(R"({"_enum":"E","_variant":"V"})"), "enum-bare")
+               .has_errors(),
+          "unit enum without payload containers accepted");
+    check(!parse_conformance_case_json(
+                   case_with_input(R"({"_enum":"E","_variant":"V","_payload":[1.0]})"),
+                   "enum-payload")
+               .has_errors(),
+          "non-empty positional payload accepted");
+
+    for (const auto *fragment : {R"({"_enum":"E","_variant":"V","_payload":[]})",
+                                 R"({"_enum":"E","_variant":"V","_named_payload":{}})"}) {
+        auto result = parse_conformance_case_json(case_with_input(fragment), "enum-empty");
+        check(result.has_errors(),
+              std::string{"empty enum payload container rejected: "} + fragment);
+        check(diagnostics_contain(result.diagnostics, "must be canonical compact wire JSON"),
+              "empty enum container canonicality diagnostic");
+    }
+}
+
+void test_dangling_source_rejected(const std::filesystem::path &scratch_dir) {
     const std::string manifest = R"({
   "format_version": "ahfl.conformance-case.v1",
-  "source": "tests/conformance/cases/no_such_source.ahfl",
+  "source": "no_such_source.ahfl",
   "kind": "agent",
   "entry": "ghost::Agent",
   "input": {},
@@ -616,29 +739,68 @@ void test_dangling_source_rejected(const std::filesystem::path &repo_root) {
     check(!parsed.has_errors(), "dangling source is schema-valid");
     check(parsed.conformance_case.has_value(), "dangling manifest parses");
 
-    // load_conformance_case adds the filesystem existence gate.
-    const auto sidecar = repo_root / "tests" / "conformance" / "cases" / "dangling.tmp.case.json";
+    // load_conformance_case adds the filesystem existence gate. The scratch
+    // sidecar lives under the per-test build directory (never in the committed
+    // cases catalogue, which is globbed as the case set), so an interrupted
+    // run cannot leave a broken extra case inside the source tree.
+    std::error_code error;
+    std::filesystem::create_directories(scratch_dir, error);
+    check(!error, "scratch directory created for dangling-source sidecar");
+    const auto sidecar = scratch_dir / "dangling.tmp.case.json";
     {
         std::ofstream out(sidecar, std::ios::binary | std::ios::trunc);
         out << manifest;
     }
-    auto loaded = load_conformance_case(sidecar, repo_root);
+    // The manifest's repo-relative source is resolved against the scratch
+    // directory (which contains no such file): the load must fail closed.
+    auto loaded = load_conformance_case(sidecar, scratch_dir);
     check(loaded.has_errors(), "load rejects dangling source");
     check(diagnostics_contain(loaded.diagnostics, "does not exist relative to the repository root"),
           "dangling source diagnostic");
-    std::error_code error;
     std::filesystem::remove(sidecar, error);
+}
+
+// Every top-level field in the design-doc contract is mandatory; a manifest
+// omitting `capabilities` (which the design marks required) must be rejected.
+void test_capabilities_required() {
+    expect_rejected("capabilities block absent",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+  "expect": {
+    "run_status": "completed",
+    "state_sequence": ["Start", "Done"],
+    "capability_sequence": [],
+    "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
+  },
+  "engines": {
+    "evaluator": true,
+    "wasm": {"eligible": "orchestration", "reason": "E1"}
+  }
+})",
+                    "missing required field 'capabilities'");
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
     const std::filesystem::path repo_root{AHFL_SOURCE_DIR};
+    if (argc < 2) {
+        std::cerr << "usage: conformance_case_tests <scratch-dir>\n";
+        return 2;
+    }
+    const std::filesystem::path scratch_dir{argv[1]};
 
     test_committed_cases(repo_root);
     test_malformed_manifests();
     test_canonicality_gate();
-    test_dangling_source_rejected(repo_root);
+    test_float_canonicality_gate();
+    test_enum_empty_payload_gate();
+    test_capabilities_required();
+    test_dangling_source_rejected(scratch_dir);
 
     if (g_failures != 0) {
         std::cerr << g_failures << " conformance case test(s) failed\n";
