@@ -204,7 +204,26 @@ struct ModuleSpec {
     std::vector<CapSpec> caps;
     std::vector<ManifestNodeSpec> nodes;
     std::vector<CoreWireSchemaNode> extra_schema_nodes;
+    // D2a-F4: the canonical capability-workflow artifact carries the SAME
+    // fixed single-page Memory (wasm section id 5) declaration the B2-C
+    // emitter writes: exactly one memory, no declared maximum, `min_pages`
+    // pages (the conforming value is 1). A host test clears the flag to
+    // exercise the F3->F1 declared-capacity gate's missing-section arm.
+    bool emit_memory_section = true;
+    std::uint32_t memory_min_pages = 1;
 };
+
+// D2a-F3 Memory (wasm section id 5) section payload: one memory, limits flags
+// 0 (min only) + the min-page count. Mirrors the B2-C emitter byte for byte at
+// one page.
+inline std::vector<std::uint8_t>
+memory_section_payload(std::uint32_t min_pages) {
+    std::vector<std::uint8_t> p;
+    put_uleb(p, 1); // exactly one memory
+    p.push_back(0x00); // limits flags: no declared maximum
+    put_uleb(p, min_pages);
+    return p;
+}
 
 inline std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
     std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
@@ -214,6 +233,9 @@ inline std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
         imports.emplace_back(c.symbol, 0u);
     }
     put_section(m, 2, import_payload(imports));
+    if (spec.emit_memory_section) {
+        put_section(m, 5, memory_section_payload(spec.memory_min_pages));
+    }
     put_section(m, 0,
                 custom_payload("ahfl.wasm-exec-manifest.v1",
                                exec_manifest_body(spec.entry_id, spec.nodes)));

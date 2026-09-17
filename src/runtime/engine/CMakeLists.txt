@@ -31,6 +31,7 @@ add_library(ahfl_runtime_engine STATIC
     core_wire_canonical_size.cpp
     core_wasm_resume_controller.cpp
     core_wasm_resume_host_codes.cpp
+    core_wasm_resume_host.cpp
     core_wasm_resume_capacity.cpp
     core_wasm_idempotency_token.cpp
     host_event_envelope.cpp

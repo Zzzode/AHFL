@@ -1091,6 +1091,15 @@ add_test(NAME ahfl.runtime.core_wasm_resume_capacity
     COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_capacity_tests>
 )
 
+add_test(NAME ahfl.runtime.core_wasm_resume_host
+    COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_host_tests>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/resume-host"
+)
+# The resume-host driver test drives a real IntegrityPayloadStore, which is
+# Linux-only and requires a durable filesystem (EXT-family / XFS / Btrfs);
+# elsewhere it SKIPs (77).
+set_tests_properties(ahfl.runtime.core_wasm_resume_host PROPERTIES SKIP_RETURN_CODE 77)
+
 add_test(NAME ahfl.runtime.host_event_envelope
     COMMAND $<TARGET_FILE:ahfl_host_event_envelope_tests>
 )

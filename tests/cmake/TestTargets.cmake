@@ -331,6 +331,15 @@ target_link_libraries(ahfl_core_wasm_resume_capacity_tests
 )
 ahfl_apply_project_warnings(ahfl_core_wasm_resume_capacity_tests)
 
+add_executable(ahfl_core_wasm_resume_host_tests
+    unit/runtime/engine/core_wasm_resume_host.cpp
+)
+target_link_libraries(ahfl_core_wasm_resume_host_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_core_wasm_resume_host_tests)
+
 add_executable(ahfl_host_event_envelope_tests
     unit/runtime/engine/host_event_envelope.cpp
 )
@@ -1550,6 +1559,7 @@ foreach(_tgt
     ahfl_core_wasm_resume_controller_tests
     ahfl_core_wasm_resume_host_codes_tests
     ahfl_core_wasm_resume_capacity_tests
+    ahfl_core_wasm_resume_host_tests
     ahfl_payload_store_codec_tests
     ahfl_payload_store_tests
     ahfl_e2e_workflow_tests
