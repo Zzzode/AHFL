@@ -1554,6 +1554,26 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     add_test(NAME ahfl.backends.wasm_all
         COMMAND $<TARGET_FILE:ahfl_wasm_backend_tests>
     )
+
+    # RFC 0026 E4-B2-D2a (F5): the F4 production resume-host driver driven
+    # end-to-end over a REAL Node embedded Wasm engine, replaying a B2-C-emitted
+    # capability workflow through a real IntegrityPayloadStore. The driver binary
+    # subprocess-launches the emit-only probe, so it carries an explicit build
+    # dependency; SKIPs (77) when node is absent or off a durable Linux FS. Real
+    # Node-engine evidence, explicitly NOT wasmtime evidence.
+    add_dependencies(ahfl_core_wasm_resume_node_e2e
+        ahfl_core_wasm_capability_workflow_probe
+    )
+    add_test(NAME ahfl.runtime.core_wasm_resume_node
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_node_e2e>
+                $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
+                "${AHFL_TESTS_DIR}/golden/wasm/e3_capability_workflow_resume.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/runtime/resume-node-e2e"
+    )
+    set_tests_properties(ahfl.runtime.core_wasm_resume_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        LABELS "wasm;backend;execution;node"
+    )
 endif()
 
 add_test(NAME ahfl.backends.registry_all

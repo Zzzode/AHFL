@@ -1,0 +1,67 @@
+// RFC 0026 KR6.5 E4-B2-D2a (F5): durable-resume replay fixture. Identical
+// topology to e3_capability_workflow.ahfl (one-capability pipeline into an
+// identity node) but with a BOUNDED String field so the F1 fixed single-page
+// preflight's canonical-size bound is finite (an unbounded String result makes
+// the two-pass TOTAL preflight fail resume.preflight.unbounded). The F5 Node
+// embedded-engine e2e emits this through the same real frontend -> Core -> B2-C
+// emitter path and replays it against the production resume-host driver.
+
+module wasm::e3_capability_workflow_resume;
+
+pub struct Frame {
+    value: String(0, 64);
+}
+
+capability Echo(request: Frame) -> Frame;
+
+pub agent FirstAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for FirstAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub agent SecondAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for SecondAgent {
+    state Done {
+        return input;
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow CapabilityPipeline {
+    input: Frame;
+    output: Frame;
+
+    node first: FirstAgent(input);
+    node second: SecondAgent(first) after [first];
+
+    return: second;
+}

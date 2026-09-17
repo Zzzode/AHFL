@@ -1459,6 +1459,27 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     target_include_directories(ahfl_core_wasm_capability_workflow_probe
         PRIVATE ${PROJECT_SOURCE_DIR}/src)
     ahfl_apply_project_warnings(ahfl_core_wasm_capability_workflow_probe)
+
+    # RFC 0026 E4-B2-D2a (F5): end-to-end durable-resume replay of the emitted
+    # capability workflow over a REAL Node embedded Wasm engine. The binary links
+    # only the runtime engine (+ base support for process.hpp/find_executable);
+    # the emit-only capability-workflow probe is a ctest-level build dependency,
+    # launched as a subprocess to produce the real artifact under replay.
+    add_executable(ahfl_core_wasm_resume_node_e2e
+        integration/core_wasm_node_resume_engine.cpp
+        integration/core_wasm_resume_node_e2e.cpp
+    )
+    target_link_libraries(ahfl_core_wasm_resume_node_e2e
+        PRIVATE
+            ahfl_runtime_engine
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_core_wasm_resume_node_e2e
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_core_wasm_resume_node_e2e)
 endif()
 
 add_executable(ahfl_compiler_backends_registry_tests

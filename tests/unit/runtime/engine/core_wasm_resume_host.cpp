@@ -45,17 +45,9 @@ namespace nev = ahfl::runtime::core_wasm_node_events;
 namespace ps = ahfl::runtime::payload_store;
 namespace rc = ahfl::runtime::core_wasm_resume_controller;
 
-using ahfl::ir::core::CoreCapabilityId;
 using ahfl::ir::core::CoreWireSchemaNodeId;
 using ahfl::ir::core::CoreWorkflowId;
-using ahfl::ir::core::CoreWorkflowNodeId;
-using ahfl::runtime::core_wasm_resume::CoreWasmResumeRecord;
-using ahfl::runtime::core_wasm_resume::InvocationOrdinal;
-using ahfl::runtime::core_wasm_resume::NodeKind;
 using ahfl::runtime::core_wasm_resume::PayloadSlotId;
-using ahfl::runtime::core_wasm_resume::ResumeMemoEntry;
-using ahfl::runtime::core_wasm_resume::ResumeNode;
-using ahfl::runtime::core_wasm_resume::ResumePendingEntry;
 using ahfl::runtime::core_wasm_resume::ResumeState;
 using ahfl::runtime::payload_store::ResumeCheckpointId;
 
@@ -156,8 +148,8 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
         const auto ptr = host_next_;
         std::copy(bytes.begin(), bytes.end(), memory_.begin() + ptr);
         host_next_ = static_cast<std::uint32_t>(end);
-        allocations_.push_back(AllocationRecord{
-            ptr, std::vector<std::uint8_t>(bytes.begin(), bytes.end())});
+        allocations_.push_back(
+            AllocationRecord{ptr, std::vector<std::uint8_t>(bytes.begin(), bytes.end())});
         return eng::GuestPointer{ptr};
     }
 
@@ -265,101 +257,14 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
 };
 
 // ---- ledger builders --------------------------------------------------------
+//
+// The Suspended / Injected ledger builders and slot seeding live in the SHARED
+// resume_test_support.hpp (make_suspended_record / make_injected_record /
+// suspended_slots); the F5 Node e2e seeds the same shape over a real emitted
+// module. This TU only supplies its hand-built topologies and the scripted
+// engine.
 
-// A Suspended record: identity/cap nodes in `specs`, every below-frontier cap
-// carrying one ordinal-0 memo bound to a per-index result slot, and the final
-// cap node the pending frontier.
-CoreWasmResumeRecord make_suspended(const csm::VerifiedCoreWasmSchemaModule &mod,
-                                    const CoreWorkflowId wf,
-                                    const std::vector<ManifestNodeSpec> &specs,
-                                    PayloadSlotId entry_slot) {
-    CoreWasmResumeRecord r;
-    r.format_version = 1;
-    set_matching_digests(r, mod);
-    r.entry_id = wf;
-    r.entry_input_slot = entry_slot;
-    r.resume_state = ResumeState::Suspended;
-    r.suspended_node_id = CoreWorkflowNodeId{specs.back().workflow_node_id};
-    // Call sites enumerate ONLY capability nodes in schedule order, so the
-    // call-site index is the running cap count, not the schedule position.
-    std::size_t call_site = 0;
-    for (std::size_t i = 0; i < specs.size(); ++i) {
-        const auto &s = specs[i];
-        ResumeNode n;
-        n.workflow_node_id = CoreWorkflowNodeId{s.workflow_node_id};
-        n.schedule_pos = static_cast<std::uint32_t>(i);
-        n.node_kind = s.cap_call_count == 1 ? NodeKind::Capability : NodeKind::Identity;
-        if (s.cap_call_count == 1) {
-            const std::uint64_t arg_hash = param_arg_hash(mod, call_site, kIntParamJson);
-            if (i != specs.size() - 1) {
-                ResumeMemoEntry m;
-                m.invocation_ordinal = InvocationOrdinal{0};
-                m.capability = CoreCapabilityId{s.capability};
-                m.source_symbol = s.source_symbol;
-                m.arg_hash = arg_hash;
-                m.result_slot = PayloadSlotId{101 + i};
-                n.memo.push_back(m);
-            } else {
-                ResumePendingEntry p;
-                p.invocation_ordinal = InvocationOrdinal{0};
-                p.capability = CoreCapabilityId{s.capability};
-                p.source_symbol = s.source_symbol;
-                p.arg_hash = arg_hash;
-                n.pending = p;
-            }
-            ++call_site;
-        }
-        r.nodes.push_back(n);
-    }
-    return r;
-}
-
-// The already-Injected counterpart: the frontier pending promoted to one
-// ordinal-0 memo bound to `injected_slot`.
-CoreWasmResumeRecord make_injected(CoreWasmResumeRecord suspended,
-                                   PayloadSlotId injected_slot) {
-    suspended.resume_state = ResumeState::Injected;
-    ResumeNode &frontier = suspended.nodes.back();
-    ResumeMemoEntry m;
-    m.invocation_ordinal = frontier.pending->invocation_ordinal;
-    m.capability = frontier.pending->capability;
-    m.source_symbol = frontier.pending->source_symbol;
-    m.arg_hash = frontier.pending->arg_hash;
-    m.result_slot = injected_slot;
-    frontier.memo.push_back(m);
-    frontier.pending.reset();
-    return suspended;
-}
-
-// The exact slots a Suspended record with below-frontier memos references:
-// the opaque entry plus one result slot per memo. The result payload MUST be
-// stable storage: ps::Slot spans are non-owning and the store reads them at
-// publish time, so a function-local buffer would dangle.
-const std::vector<std::uint8_t> &memo_result_bytes() {
-    static const std::vector<std::uint8_t> bytes(kStringResultJson.begin(),
-                                                 kStringResultJson.end());
-    return bytes;
-}
-
-std::vector<ps::Slot> suspended_slots(const CoreWasmResumeRecord &record) {
-    std::vector<ps::Slot> slots;
-    slots.push_back(ps::Slot{record.entry_input_slot,
-                             std::span<const std::uint8_t>(kEntryBytes)});
-    for (const auto &n : record.nodes) {
-        for (const auto &m : n.memo) {
-            slots.push_back(
-                ps::Slot{m.result_slot, std::span<const std::uint8_t>(memo_result_bytes())});
-        }
-    }
-    return slots;
-}
-
-std::vector<std::uint8_t> bytes_of(std::string_view text) {
-    return std::vector<std::uint8_t>(text.begin(), text.end());
-}
-
-[[nodiscard]] bool is_host_failure(const host::ResumeFailure &f,
-                                   host::ResumeHostReason want) {
+[[nodiscard]] bool is_host_failure(const host::ResumeFailure &f, host::ResumeHostReason want) {
     return std::holds_alternative<host::HostFailure>(f) &&
            std::get<host::HostFailure>(f).reason == want;
 }
@@ -367,13 +272,11 @@ std::vector<std::uint8_t> bytes_of(std::string_view text) {
     return std::holds_alternative<host::StepFailure>(f) &&
            std::get<host::StepFailure>(f).reason == want;
 }
-[[nodiscard]] bool is_prepare(const host::ResumeFailure &f,
-                              rc::ResumePrepareReason want) {
+[[nodiscard]] bool is_prepare(const host::ResumeFailure &f, rc::ResumePrepareReason want) {
     return std::holds_alternative<host::PrepareFailure>(f) &&
            std::get<host::PrepareFailure>(f).reason == want;
 }
-[[nodiscard]] bool is_store(const host::ResumeFailure &f,
-                            ps::PayloadStoreError want) {
+[[nodiscard]] bool is_store(const host::ResumeFailure &f, ps::PayloadStoreError want) {
     return std::holds_alternative<host::StoreFailure>(f) &&
            std::get<host::StoreFailure>(f).error == want;
 }
@@ -403,8 +306,7 @@ Topology topology_two_nodes() {
     t.spec.entry_id = 7;
     t.spec.extra_schema_nodes = {bounded_string_node(8)};
     t.spec.caps = {CapSpec{3, 900, CoreWireSchemaNodeId{1}}};
-    t.spec.nodes = {ManifestNodeSpec{40, 0, 0, 0},
-                    ManifestNodeSpec{41, 1, 3, 900}};
+    t.spec.nodes = {ManifestNodeSpec{40, 0, 0, 0}, ManifestNodeSpec{41, 1, 3, 900}};
     t.nodes = t.spec.nodes;
     return t;
 }
@@ -467,8 +369,9 @@ int main(int argc, char **argv) {
 
         auto store = open_store(work);
         check(store.has_value(), "S1.store");
-        const auto record = make_suspended(mod, kWf, topo.nodes, kEntrySlot);
-        const auto slots = suspended_slots(record);
+        const auto record = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(record, std::span<const std::uint8_t>(injected));
         auto pub0 = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
         check(pub0.has_value() && *pub0 == 1, "S1.gen1_published");
 
@@ -494,8 +397,7 @@ int main(int argc, char **argv) {
         if (done.has_value()) {
             check(done->raw_status == AHFL_CAP_OK, "S1.raw_ok");
             check(done->output == injected, "S1.forwarded_output_is_injected");
-            check(done->consumed_from == 2 && done->consumed_generation == 3,
-                  "S1.consumed_3_2");
+            check(done->consumed_from == 2 && done->consumed_generation == 3, "S1.consumed_3_2");
         }
 
         // The host performed exactly the L0 + two memo + one injected frame
@@ -540,13 +442,13 @@ int main(int argc, char **argv) {
 
         auto store = open_store(work);
         check(store.has_value(), "S2.store");
-        auto suspended = make_suspended(mod, kWf, topo.nodes, kEntrySlot);
-        const auto injected_record = make_injected(suspended, kInjectedSlot);
+        auto suspended = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto injected_record = make_injected_record(suspended, kInjectedSlot);
         std::vector<ps::Slot> slots = {
             ps::Slot{kEntrySlot, std::span<const std::uint8_t>(kEntryBytes)},
             ps::Slot{kInjectedSlot, std::span<const std::uint8_t>(injected)}};
-        auto pub0 =
-            store->publish_available(kWf, kCkpt, 0, injected_record, slots, id_span, key);
+        auto pub0 = store->publish_available(kWf, kCkpt, 0, injected_record, slots, id_span, key);
         check(pub0.has_value() && *pub0 == 1, "S2.gen1_injected");
 
         FakeScript script;
@@ -569,8 +471,7 @@ int main(int argc, char **argv) {
         check(done.has_value(), "S2.resume_ok");
         if (done.has_value()) {
             check(done->output == injected, "S2.frontier_memo_forwarded");
-            check(done->consumed_from == 1 && done->consumed_generation == 2,
-                  "S2.consumed_2_1");
+            check(done->consumed_from == 1 && done->consumed_generation == 2, "S2.consumed_2_1");
         }
         // L0 entry + the single frontier memo transfer: there was NO new CAS.
         check(engine.host_allocations().size() == 2, "S2.two_transfers_no_cas");
@@ -601,8 +502,9 @@ int main(int argc, char **argv) {
         auto store = open_store(work);
         check(store.has_value(), "S3.store");
         const std::vector<ManifestNodeSpec> ledger_nodes{all_nodes[0], all_nodes[1]};
-        const auto record = make_suspended(mod, kWf, ledger_nodes, kEntrySlot);
-        const auto slots = suspended_slots(record);
+        const auto record = make_suspended_record(
+            mod, kWf, ledger_nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(record, std::span<const std::uint8_t>(injected));
         auto pub0 = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
         check(pub0.has_value() && *pub0 == 1, "S3.gen1");
 
@@ -628,8 +530,7 @@ int main(int argc, char **argv) {
         if (!done.has_value()) {
             check(is_host_failure(done.error(), host::ResumeHostReason::ReadyForLiveBlocked),
                   "S3.ready_for_live_blocked");
-            check(host::host_code(done.error()) == "resume.transition.invalid",
-                  "S3.host_code");
+            check(host::host_code(done.error()) == "resume.transition.invalid", "S3.host_code");
         }
         // L0 + the injected L4 transfer happened; no memo transfer and no
         // second cap frame (the live result was never fabricated).
@@ -657,17 +558,17 @@ int main(int argc, char **argv) {
 
         auto store = open_store(work);
         check(store.has_value(), "S4.store");
-        const auto suspended = make_suspended(mod, kWf, topo.nodes, kEntrySlot);
-        const auto slots = suspended_slots(suspended);
+        const auto suspended = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(suspended, std::span<const std::uint8_t>(injected));
         auto pub0 = store->publish_available(kWf, kCkpt, 0, suspended, slots, id_span, key);
         check(pub0.has_value() && *pub0 == 1, "S4.gen1");
 
         // A competing winner publishes the Injected generation at the frontier
         // boundary, so the driver's CAS (expected 1) loses.
-        const auto promoted = make_injected(suspended, kInjectedSlot);
+        const auto promoted = make_injected_record(suspended, kInjectedSlot);
         std::vector<ps::Slot> promoted_slots = slots;
-        promoted_slots.push_back(
-            ps::Slot{kInjectedSlot, std::span<const std::uint8_t>(injected)});
+        promoted_slots.push_back(ps::Slot{kInjectedSlot, std::span<const std::uint8_t>(injected)});
 
         FakeScript script;
         script.nodes = topo.nodes;
@@ -677,8 +578,8 @@ int main(int argc, char **argv) {
             // open_store: that nukes). flock serializes the two publishers.
             auto competitor = ps::IntegrityPayloadStore::open(work, big_opts());
             if (competitor.has_value()) {
-                auto raced = competitor->publish_available(kWf, kCkpt, 1, promoted,
-                                                           promoted_slots, id_span, key);
+                auto raced = competitor->publish_available(
+                    kWf, kCkpt, 1, promoted, promoted_slots, id_span, key);
                 check(raced.has_value(), "S4.competitor_wins_gen2");
             }
         };
@@ -732,8 +633,9 @@ int main(int argc, char **argv) {
 
         auto store = open_store(work);
         check(store.has_value(), "S5.store");
-        const auto record = make_suspended(mod, kWf, topo.nodes, kEntrySlot);
-        const auto slots = suspended_slots(record);
+        const auto record = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(record, std::span<const std::uint8_t>(injected));
         auto pub0 = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
         check(pub0.has_value() && *pub0 == 1, "S5.gen1");
 
@@ -819,11 +721,11 @@ int main(int argc, char **argv) {
 
         const fs::path work = base / "s7-no-instance";
         auto store = open_store(work);
-        const auto record = make_suspended(mod, kWf, topo.nodes, kEntrySlot);
-        const auto slots = suspended_slots(record);
+        const auto record = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(record, std::span<const std::uint8_t>(injected));
         if (store.has_value()) {
-            auto seeded =
-                store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
+            auto seeded = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
             check(seeded.has_value(), "seed.gen1");
         }
         host::ResumeRequest request;
@@ -862,11 +764,11 @@ int main(int argc, char **argv) {
 
         const fs::path work = base / "s8-alloc";
         auto store = open_store(work);
-        const auto record = make_suspended(mod, kWf, topo.nodes, kEntrySlot);
-        const auto slots = suspended_slots(record);
+        const auto record = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(record, std::span<const std::uint8_t>(injected));
         if (store.has_value()) {
-            auto seeded =
-                store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
+            auto seeded = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
             check(seeded.has_value(), "seed.gen1");
         }
         host::ResumeRequest request;
@@ -903,10 +805,10 @@ int main(int argc, char **argv) {
 
         auto store = open_store(work);
         check(store.has_value(), "S9.store");
-        const auto record = make_suspended(mod, kWf, topo.nodes, kEntrySlot);
-        const auto slots = suspended_slots(record);
-        auto seeded =
-            store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
+        const auto record = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(record, std::span<const std::uint8_t>(injected));
+        auto seeded = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
         check(seeded.has_value(), "S9.gen1");
 
         FakeScript script;
@@ -932,8 +834,7 @@ int main(int argc, char **argv) {
         if (!done.has_value()) {
             check(is_step(done.error(), rc::ResumeStepReason::CoordinateMismatch),
                   "S9.coordinate_mismatch");
-            check(host::host_code(done.error()) == "resume.coordinate.mismatch",
-                  "S9.host_code");
+            check(host::host_code(done.error()) == "resume.coordinate.mismatch", "S9.host_code");
         }
         // Only L0 transferred; the bad-arg-hash import returned no memo frame.
         check(engine.host_allocations().size() == 1, "S9.no_memo_transfer");
@@ -951,9 +852,13 @@ int main(int argc, char **argv) {
 
         auto store = open_store(work);
         check(store.has_value(), "S10.store");
-        auto record = make_suspended(mod, kWf, topo.nodes, kEntrySlot);
+        auto record = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
         record.module_sha256 = hex_of_digest(ArtifactDigest{});
-        const auto slots = suspended_slots(make_suspended(mod, kWf, topo.nodes, kEntrySlot));
+        const auto slots = suspended_slots(
+            make_suspended_record(
+                mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101}),
+            std::span<const std::uint8_t>(injected));
         auto pub0 = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
         check(pub0.has_value(), "S10.gen1_tampered");
 

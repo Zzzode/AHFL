@@ -51,6 +51,8 @@ using ahfl::ir::core::CoreWireSchemaSequence;
 using ahfl::ir::core::CoreWireSchemaString;
 using ahfl::ir::core::CoreWireSchemaTable;
 using ahfl::ir::core::CoreWireSequenceKind;
+using ahfl::ir::core::CoreWorkflowId;
+using ahfl::ir::core::CoreWorkflowNodeId;
 using ahfl::runtime::core_wasm_resume::CoreWasmResumeRecord;
 using ahfl::runtime::core_wasm_resume::DigestHex;
 using ahfl::runtime::core_wasm_resume::InvocationOrdinal;
@@ -60,10 +62,10 @@ using ahfl::runtime::core_wasm_resume::ResumeMemoEntry;
 using ahfl::runtime::core_wasm_resume::ResumeNode;
 using ahfl::runtime::core_wasm_resume::ResumePendingEntry;
 using ahfl::runtime::core_wasm_resume::ResumeState;
-using ahfl::runtime::payload_store::ResumeCheckpointId;
 using ahfl::runtime::core_wasm_schema_module::ArtifactDigest;
 using ahfl::runtime::core_wasm_schema_module::make_verified_core_wasm_schema_module;
 using ahfl::runtime::core_wasm_schema_module::VerifiedCoreWasmSchemaModule;
+using ahfl::runtime::payload_store::ResumeCheckpointId;
 
 namespace fs = std::filesystem;
 
@@ -80,7 +82,8 @@ inline void put_uleb(std::vector<std::uint8_t> &out, std::uint64_t value) {
     } while (value != 0);
 }
 
-inline void put_section(std::vector<std::uint8_t> &out, std::uint8_t id,
+inline void put_section(std::vector<std::uint8_t> &out,
+                        std::uint8_t id,
                         const std::vector<std::uint8_t> &payload) {
     out.push_back(id);
     put_uleb(out, payload.size());
@@ -98,8 +101,7 @@ inline std::vector<std::uint8_t> func_type(const std::vector<std::uint8_t> &para
     return t;
 }
 
-inline std::vector<std::uint8_t>
-type_payload(const std::vector<std::vector<std::uint8_t>> &types) {
+inline std::vector<std::uint8_t> type_payload(const std::vector<std::vector<std::uint8_t>> &types) {
     std::vector<std::uint8_t> p;
     put_uleb(p, types.size());
     for (const auto &t : types) {
@@ -216,10 +218,9 @@ struct ModuleSpec {
 // D2a-F3 Memory (wasm section id 5) section payload: one memory, limits flags
 // 0 (min only) + the min-page count. Mirrors the B2-C emitter byte for byte at
 // one page.
-inline std::vector<std::uint8_t>
-memory_section_payload(std::uint32_t min_pages) {
+inline std::vector<std::uint8_t> memory_section_payload(std::uint32_t min_pages) {
     std::vector<std::uint8_t> p;
-    put_uleb(p, 1); // exactly one memory
+    put_uleb(p, 1);    // exactly one memory
     p.push_back(0x00); // limits flags: no declared maximum
     put_uleb(p, min_pages);
     return p;
@@ -236,10 +237,12 @@ inline std::vector<std::uint8_t> build_module(const ModuleSpec &spec) {
     if (spec.emit_memory_section) {
         put_section(m, 5, memory_section_payload(spec.memory_min_pages));
     }
-    put_section(m, 0,
+    put_section(m,
+                0,
                 custom_payload("ahfl.wasm-exec-manifest.v1",
                                exec_manifest_body(spec.entry_id, spec.nodes)));
-    put_section(m, 0,
+    put_section(m,
+                0,
                 custom_payload("ahfl.wire-schema.v1",
                                encode_schema(schema_table(spec.extra_schema_nodes, spec.caps))));
     return m;
@@ -252,7 +255,9 @@ inline csm::VerifiedCoreWasmSchemaModuleResult admit_module(const ModuleSpec &sp
 }
 
 // schema node builders
-inline CoreWireSchemaNode int_node() { return CoreWireSchemaNode{CoreWireSchemaInt{}}; }
+inline CoreWireSchemaNode int_node() {
+    return CoreWireSchemaNode{CoreWireSchemaInt{}};
+}
 inline CoreWireSchemaNode bounded_string_node(std::int64_t max_bytes) {
     CoreWireSchemaString s;
     s.length_bounds = std::pair<std::int64_t, std::int64_t>{0, max_bytes};
@@ -298,8 +303,7 @@ inline ps::StoreOptions big_opts() {
     return o;
 }
 
-inline void set_matching_digests(CoreWasmResumeRecord &r,
-                                 const VerifiedCoreWasmSchemaModule &mod) {
+inline void set_matching_digests(CoreWasmResumeRecord &r, const VerifiedCoreWasmSchemaModule &mod) {
     r.module_sha256 = hex_of_digest(mod.module_sha256());
     r.wire_schema_sha256 = hex_of_digest(mod.wire_schema_sha256());
     r.exec_manifest_sha256 = hex_of_digest(mod.exec_manifest_sha256());
@@ -308,7 +312,8 @@ inline void set_matching_digests(CoreWasmResumeRecord &r,
 // The frontier arg_hash the controller computes for a given Int param JSON against a
 // call site's Param binding (mirrors the controller: decode_json -> hash_values).
 inline std::uint64_t param_arg_hash(const VerifiedCoreWasmSchemaModule &mod,
-                                   std::size_t call_site, std::string_view param_json) {
+                                    std::size_t call_site,
+                                    std::string_view param_json) {
     auto cs = mod.resolve(csm::ManifestCallSiteIndex{call_site});
     if (!cs.ok()) {
         return 0;
@@ -331,16 +336,15 @@ inline std::uint64_t param_arg_hash(const VerifiedCoreWasmSchemaModule &mod,
 // canonical wire-JSON bytes (the same SSOT value_to_json the production seam
 // hashes). Mirrors the controller so a test can seal an effect under the exact
 // token the controller will consult.
-inline ahfl::support::Sha256Digest
-param_canonical_digest(const VerifiedCoreWasmSchemaModule &mod, std::size_t call_site,
-                       std::string_view param_json) {
+inline ahfl::support::Sha256Digest param_canonical_digest(const VerifiedCoreWasmSchemaModule &mod,
+                                                          std::size_t call_site,
+                                                          std::string_view param_json) {
     auto cs = mod.resolve(csm::ManifestCallSiteIndex{call_site});
     auto dom = ahfl::json::parse_json(param_json);
     auto decoded = ahfl::runtime::wire_codec::decode_json(**dom, cs.call_site->param_binding());
     const std::string canonical = ahfl::evaluator::value_to_json(*decoded.value);
-    return ahfl::support::sha256(
-        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(canonical.data()),
-                                      canonical.size()));
+    return ahfl::support::sha256(std::span<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t *>(canonical.data()), canonical.size()));
 }
 
 // ---- node-event linear-memory synthesizer ----
@@ -413,6 +417,122 @@ inline const std::string kIntParamJson{"1"};
 inline const std::string kStringResultJson{"\"ok\""};
 inline const std::vector<std::uint8_t> kEntryBytes = {0x01, 0x02, 0x03};
 
+// ==== ledger builders (shared by the F4 host-driver TU and the F5 Node e2e) ====
+
+// Enumerate an ADMITTED module's dense schedule as ManifestNodeSpec values (the
+// same shape the hand-built module fixtures use), resolving capability
+// coordinates through the A2 call-site authority. Lets a replay test seed a
+// ledger over a REAL emitted module instead of a hand-built one.
+inline std::vector<ManifestNodeSpec> module_node_specs(const VerifiedCoreWasmSchemaModule &mod) {
+    std::vector<ManifestNodeSpec> specs;
+    specs.reserve(mod.node_count());
+    std::size_t call_site = 0;
+    for (std::size_t i = 0; i < mod.node_count(); ++i) {
+        auto node = mod.resolve_node(csm::ManifestNodeIndex{i});
+        ManifestNodeSpec spec{};
+        spec.workflow_node_id = node.node->workflow_node_id().value;
+        spec.cap_call_count = node.node->cap_call_count();
+        if (spec.cap_call_count == 1) {
+            auto cs = mod.resolve(csm::ManifestCallSiteIndex{call_site});
+            spec.capability = cs.call_site->capability().value;
+            spec.source_symbol = cs.call_site->source_symbol();
+            ++call_site;
+        }
+        specs.push_back(spec);
+    }
+    return specs;
+}
+
+// Build a Suspended ledger over a dense node prefix: identity nodes carry
+// nothing; every below-frontier capability node carries one ordinal-0 memo
+// bound to result slot (memo_slot_base + schedule_pos); the FINAL node is the
+// pending capability frontier. Every call site presents the SAME arity-1 Param
+// JSON (F4 hand-built fixtures use "1"; the F5 Frame workflow uses its struct
+// JSON), whose controller-equivalent arg_hash seals each memo/pending.
+inline CoreWasmResumeRecord make_suspended_record(const VerifiedCoreWasmSchemaModule &mod,
+                                                  const CoreWorkflowId wf,
+                                                  const std::vector<ManifestNodeSpec> &specs,
+                                                  const PayloadSlotId entry_slot,
+                                                  const std::string_view param_json,
+                                                  const PayloadSlotId memo_slot_base) {
+    CoreWasmResumeRecord r;
+    r.format_version = 1;
+    set_matching_digests(r, mod);
+    r.entry_id = wf;
+    r.entry_input_slot = entry_slot;
+    r.resume_state = ResumeState::Suspended;
+    r.suspended_node_id = CoreWorkflowNodeId{specs.back().workflow_node_id};
+    // Call sites enumerate ONLY capability nodes in schedule order, so the
+    // call-site index is the running cap count, not the schedule position.
+    std::size_t call_site = 0;
+    for (std::size_t i = 0; i < specs.size(); ++i) {
+        const auto &s = specs[i];
+        ResumeNode n;
+        n.workflow_node_id = CoreWorkflowNodeId{s.workflow_node_id};
+        n.schedule_pos = static_cast<std::uint32_t>(i);
+        n.node_kind = s.cap_call_count == 1 ? NodeKind::Capability : NodeKind::Identity;
+        if (s.cap_call_count == 1) {
+            const std::uint64_t arg_hash = param_arg_hash(mod, call_site, param_json);
+            if (i != specs.size() - 1) {
+                ResumeMemoEntry m;
+                m.invocation_ordinal = InvocationOrdinal{0};
+                m.capability = CoreCapabilityId{s.capability};
+                m.source_symbol = s.source_symbol;
+                m.arg_hash = arg_hash;
+                m.result_slot = PayloadSlotId{memo_slot_base.value + i};
+                n.memo.push_back(m);
+            } else {
+                ResumePendingEntry p;
+                p.invocation_ordinal = InvocationOrdinal{0};
+                p.capability = CoreCapabilityId{s.capability};
+                p.source_symbol = s.source_symbol;
+                p.arg_hash = arg_hash;
+                n.pending = p;
+            }
+            ++call_site;
+        }
+        r.nodes.push_back(n);
+    }
+    return r;
+}
+
+// The already-Injected counterpart: the frontier pending is promoted to one
+// ordinal-0 memo bound to `injected_slot`.
+inline CoreWasmResumeRecord make_injected_record(CoreWasmResumeRecord suspended,
+                                                 const PayloadSlotId injected_slot) {
+    suspended.resume_state = ResumeState::Injected;
+    ResumeNode &frontier = suspended.nodes.back();
+    ResumeMemoEntry m;
+    m.invocation_ordinal = frontier.pending->invocation_ordinal;
+    m.capability = frontier.pending->capability;
+    m.source_symbol = frontier.pending->source_symbol;
+    m.arg_hash = frontier.pending->arg_hash;
+    m.result_slot = injected_slot;
+    frontier.memo.push_back(m);
+    frontier.pending.reset();
+    return suspended;
+}
+
+// The exact slots a Suspended record references: the opaque entry plus one
+// result slot per below-frontier memo, all carrying `result_bytes`. The caller
+// MUST keep `result_bytes` alive through publish_available (ps::Slot spans are
+// non-owning; the store reads them at publish time).
+inline std::vector<ps::Slot> suspended_slots(const CoreWasmResumeRecord &record,
+                                             const std::span<const std::uint8_t> result_bytes) {
+    std::vector<ps::Slot> slots;
+    slots.push_back(ps::Slot{record.entry_input_slot, std::span<const std::uint8_t>(kEntryBytes)});
+    for (const auto &n : record.nodes) {
+        for (const auto &m : n.memo) {
+            slots.push_back(ps::Slot{m.result_slot, result_bytes});
+        }
+    }
+    return slots;
+}
+
+inline std::vector<std::uint8_t> bytes_of(const std::string_view text) {
+    return std::vector<std::uint8_t>(text.begin(), text.end());
+}
+
 inline void nuke(const fs::path &p) {
     std::error_code ec;
     fs::remove_all(p, ec);
@@ -437,7 +557,8 @@ inline std::optional<ps::IntegrityPayloadStore> open_store(const fs::path &work)
 inline void corrupt_artifacts(const fs::path &work, std::string_view marker) {
     std::error_code ec;
     for (auto it = fs::recursive_directory_iterator(work, ec);
-         !ec && it != fs::recursive_directory_iterator(); ++it) {
+         !ec && it != fs::recursive_directory_iterator();
+         ++it) {
         if (!it->is_regular_file(ec)) {
             continue;
         }
@@ -476,13 +597,12 @@ inline bool is_store_error(const rc::ResumeStepError &e, ps::PayloadStoreError w
     return std::holds_alternative<ps::PayloadStoreError>(e) &&
            std::get<ps::PayloadStoreError>(e) == want;
 }
-inline bool is_dedup_backend_error(
-    const rc::ResumeStepError &e,
-    ahfl::runtime::durable_effect_authority::DurableEffectBackendError want) {
+inline bool
+is_dedup_backend_error(const rc::ResumeStepError &e,
+                       ahfl::runtime::durable_effect_authority::DurableEffectBackendError want) {
     return std::holds_alternative<
                ahfl::runtime::durable_effect_authority::DurableEffectBackendError>(e) &&
-           std::get<ahfl::runtime::durable_effect_authority::DurableEffectBackendError>(e) ==
-               want;
+           std::get<ahfl::runtime::durable_effect_authority::DurableEffectBackendError>(e) == want;
 }
 
 } // namespace ahfl::runtime::resume_test_support
