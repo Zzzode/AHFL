@@ -1413,6 +1413,19 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     target_include_directories(ahfl_core_wasm_e2_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
     ahfl_apply_project_warnings(ahfl_core_wasm_e2_probe)
 
+    # RFC 0026 P6-1 (KR6.6): real-frontend scalar-computation computed-goto
+    # producer. Links the same backend + runtime as the E1/E3 probes.
+    add_executable(ahfl_core_wasm_p6_probe
+        integration/core_wasm_p6_probe.cpp
+    )
+    target_link_libraries(ahfl_core_wasm_p6_probe
+        PRIVATE
+            ahfl_compiler_backend_infra_wasm
+            ahfl_runtime_engine
+    )
+    target_include_directories(ahfl_core_wasm_p6_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    ahfl_apply_project_warnings(ahfl_core_wasm_p6_probe)
+
     add_executable(ahfl_core_wasm_e3_probe
         integration/core_wasm_e3_probe.cpp
     )

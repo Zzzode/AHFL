@@ -112,6 +112,35 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-1 (KR6.6): real-frontend arithmetic conditional-goto scalar
+    # computation. The Node embedded host drives the stable step()/run ABI and
+    # asserts the reached state ids and transition_count match native, including
+    # the i64.div_s divide-by-zero trap. Real Node-engine evidence, visibly NOT
+    # wasmtime evidence; SKIPs (77) when node is unavailable.
+    add_test(NAME ahfl.wasm.p6_same_frontend_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_scalar_cond.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_scalar_cond.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_same_frontend_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_scalar_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_scalar_cond.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.p6_scalar_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "scalar Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     add_test(NAME ahfl.wasm.e2_same_frontend_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"

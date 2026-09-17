@@ -1993,107 +1993,291 @@ int main() {
         check(e1_result.ok() && e1_result.artifact->bytes == e1_snapshot,
               "P6-0 scaffold leaves the canonical E1 artifact byte-identical");
 
-        constexpr std::string_view kP6ScaffoldPrefix =
-            "RFC 0026 P6 computation codegen does not yet lower";
+        constexpr std::string_view kP6ScaffoldPrefix = "RFC 0026 P6 scalar codegen cannot lower";
         constexpr std::string_view kLegacyShapeMessage =
             "non-final handler";
 
-        // Extend the E1 flow with a bounded Int value type (i32 scalar) and
-        // a Bool value type, plus literal expression arena entries. Every P6
-        // fixture below is a VERIFIER-CLEAN program: the Core program verifier and
-        // the P4-D layout table both accept it, so the codegen rejection is
-        // purely the P6 fail-closed gate, never kInvalidCore / kInvalidLayout.
-        auto make_p6_base = [&] {
-            auto program = make_e1_core_program();
-            program.value_types.push_back(CoreValueType{CoreVtInt{
-                std::make_pair<std::int64_t, std::int64_t>(1, 1)}});
-            program.value_types.push_back(CoreValueType{CoreVtBool{}});
-            auto &flow = program.flows[0];
-            flow.exprs.push_back(
-                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"},
-                         std::nullopt,
-                         CoreValueTypeId{1}});
-            flow.exprs.push_back(
-                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
-                         std::nullopt,
-                         CoreValueTypeId{2}});
-            flow.value_count = 3;
-            flow.value_types = {CoreValueTypeId{0},
-                               CoreValueTypeId{1},
-                               CoreValueTypeId{2}};
-            return program;
+        // Opcode byte constants pinned here (mirror of the encoder's scalar
+        // ladder); byte-pattern assertions prove the right physical instruction
+        // was selected for the operand's P4-D scalar repr.
+        constexpr std::uint8_t kOpI32Const = 0x41;
+        constexpr std::uint8_t kOpI32Eqz = 0x45;
+        constexpr std::uint8_t kOpI32LtS = 0x48;
+        constexpr std::uint8_t kOpI32Add = 0x6a;
+        constexpr std::uint8_t kOpI32DivS = 0x6d;
+        constexpr std::uint8_t kOpI64Const = 0x42;
+        constexpr std::uint8_t kOpI64LtS = 0x53;
+        constexpr std::uint8_t kOpI64Add = 0x7c;
+
+        const auto emit_agent = [&](const CoreProgram &program, const CoreLayoutTable &layout) {
+            return backends::emit_core_wasm(
+                program, layout, {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
         };
 
-        // Fixture A: non-final handler with CoreLetStmt(CoreLiteralExpr Int)
-        // followed by the canonical goto.
-        {
-            auto program = make_p6_base();
-            auto &start = program.flows[0].states[1].body;
+        // Build a 3-state agent (Done final, Start computed goto, High) whose
+        // Start handler branches on a scalar comparison. `wide` selects the
+        // integer value type: bounded Int(0..1000) is the i32 scalar repr, an
+        // unbounded Int is i64. `op` chooses Add vs Div over two i32 literals
+        // so the same builder proves arithmetic + comparison lowering and the
+        // signed-division trap body. Every expr/value is consumed and the
+        // program is verifier-clean with a finalized layout.
+        auto make_computed_goto_program = [&](bool wide, CoreBinaryOp arith) {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{
+                CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 1000)}}); // vt1 i32
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});           // vt2
+            if (wide) {
+                // Replace vt1 with an UNBOUNDED Int -> i64 scalar repr.
+                program.value_types[1] = CoreValueType{CoreVtInt{std::nullopt}};
+            }
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start", "High"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}},
+                                 {CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{2}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            // expr0 is the existing Done identity path (vt0).
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "10"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr1 -> v3
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "20"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr2 -> v4
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{3}}, std::nullopt, CoreValueTypeId{1}}); // expr3
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{1}}); // expr4
+            flow.exprs.push_back(CoreExpr{CoreBinaryExpr{arith, CoreExprId{3}, CoreExprId{4}},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr5 add/div v1
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{1}}, std::nullopt, CoreValueTypeId{1}}); // expr6
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "25"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr7 -> const v5
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{5}}, std::nullopt, CoreValueTypeId{1}}); // expr8
+            flow.exprs.push_back(
+                CoreExpr{CoreBinaryExpr{CoreBinaryOp::Lt, CoreExprId{6}, CoreExprId{8}},
+                         std::nullopt,
+                         CoreValueTypeId{2}}); // expr9 lt -> v2
+            flow.value_count = 6;
+            flow.value_types = {CoreValueTypeId{0},
+                                CoreValueTypeId{1},
+                                CoreValueTypeId{2},
+                                CoreValueTypeId{1},
+                                CoreValueTypeId{1},
+                                CoreValueTypeId{1}};
+            auto &start = flow.states[1].body;
             start.statements.clear();
             start.statements.push_back(
-                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+                CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{1}}, std::nullopt});
             start.statements.push_back(
-                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
-            check(verify_core_program(program).ok() &&
-                      compute_core_layouts(program).ok(),
-                  "P6 let-int fixture is verified Core with a finalized layout");
-            const auto layout = compute_core_layouts(program);
-            const auto emitted = backends::emit_core_wasm(
-                program, *layout.table,
-                {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
-            check(!emitted.artifact.has_value() &&
-                      has_codegen_code(
-                          emitted, backends::core_wasm_diag::kUnsupportedOrchestration) &&
-                      has_codegen_message(emitted, kP6ScaffoldPrefix) &&
-                      !has_codegen_message(emitted, kLegacyShapeMessage),
-                  "P6-0 fails closed on a CoreLetStmt(Int literal) computation handler");
-        }
-
-        // Fixture B: non-final handler with a structured CoreIfStmt whose
-        // branches both goto the (same) legal final state.
-        {
-            auto program = make_p6_base();
-            auto &start = program.flows[0].states[1].body;
-            start.statements.clear();
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{2}}, std::nullopt});
             start.statements.push_back(
-                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{5}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{5}, CoreExprId{7}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{9}}, std::nullopt});
             CoreIfStmt branch;
             branch.condition = CoreValueId{2};
             branch.then_region = std::make_unique<CoreRegion>();
             branch.then_region->statements.push_back(
-                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
             branch.else_region = std::make_unique<CoreRegion>();
             branch.else_region->statements.push_back(
                 CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
             start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
-            check(verify_core_program(program).ok() &&
-                      compute_core_layouts(program).ok(),
-                  "P6 if fixture is verified Core with a finalized layout");
+            // High handler (state 2) needs appending after Start.
+            CoreFlowState high;
+            high.state = CoreStateId{2};
+            high.state_name = "High";
+            high.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(high));
+            return program;
+        };
+
+        // P6-1 fixture A (i32): bounded-Int add + signed comparison drives a
+        // computed goto. The step body must contain i32.add and i32.lt_s and
+        // the module must emit successfully.
+        {
+            auto program = make_computed_goto_program(false, CoreBinaryOp::Add);
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-1 i32 computed-goto fixture is verified Core with a layout");
             const auto layout = compute_core_layouts(program);
-            const auto emitted = backends::emit_core_wasm(
-                program, *layout.table,
-                {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
-            check(!emitted.artifact.has_value() &&
-                      has_codegen_code(
-                          emitted, backends::core_wasm_diag::kUnsupportedOrchestration) &&
-                      has_codegen_message(emitted, kP6ScaffoldPrefix) &&
-                      !has_codegen_message(emitted, kLegacyShapeMessage),
-                  "P6-0 fails closed on a CoreIfStmt computation handler");
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto step_body =
+                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            const auto contains = [&](std::uint8_t op) {
+                return step_body.has_value() &&
+                       std::find(step_body->begin(), step_body->end(), op) != step_body->end();
+            };
+            check(emitted.ok() && step_body.has_value() && contains(kOpI32Add) &&
+                      contains(kOpI32LtS),
+                  "P6-1 lowers a bounded-Int add/lt computed-goto handler to i32 "
+                  "opcodes in step()");
+            check(!contains(kOpI64Const), "P6-1 i32 handler emits no i64.const");
         }
 
-        // Fixture C: non-final handler with a statement CoreMatchStmt
-        // (wildcard arm + mandatory fallback, both goto). This is the fixture
-        // that forces the flow through the (relaxed) pattern-arena gate.
+        // P6-1 fixture A2 (i64): the same arithmetic over an UNBOUNDED Int
+        // selects the i64 scalar ladder (i64.add / i64.lt_s, i64.const).
         {
-            auto program = make_p6_base();
+            auto program = make_computed_goto_program(true, CoreBinaryOp::Add);
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-1 i64 computed-goto fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto step_body =
+                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            const auto contains = [&](std::uint8_t op) {
+                return step_body.has_value() &&
+                       std::find(step_body->begin(), step_body->end(), op) != step_body->end();
+            };
+            check(emitted.ok() && step_body.has_value() && contains(kOpI64Add) &&
+                      contains(kOpI64LtS) && contains(kOpI64Const),
+                  "P6-1 lowers an unbounded-Int add/lt computed-goto handler to "
+                  "the i64 scalar ladder");
+            // The integer comparison must NOT select the i32 signed opcode;
+            // the condition Bool is still i32 but the arithmetic compare is i64.
+            check(std::find(step_body->begin(), step_body->end(), kOpI32LtS) == step_body->end(),
+                  "P6-1 i64 integer comparison selects no i32.lt_s opcode");
+        }
+
+        // P6-1 fixture B: a signed division lowers to i32.div_s; a literal
+        // zero divisor is NOT statically rejected (wasm traps at runtime).
+        {
+            auto program = make_computed_goto_program(false, CoreBinaryOp::Div);
+            // Force the divisor literal to zero so the runtime trap path exists.
+            program.flows[0].exprs[2] = CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt, CoreValueTypeId{1}};
+            check(verify_core_program(program).ok(),
+                  "P6-1 literal-divide-by-zero is a verifier-clean (runtime trap) "
+                  "program");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto step_body =
+                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            check(emitted.ok() && step_body.has_value() &&
+                      std::find(step_body->begin(), step_body->end(), kOpI32DivS) !=
+                          step_body->end(),
+                  "P6-1 division-by-zero body contains i32.div_s (runtime trap)");
+        }
+
+        // P6-1 fixture C: logical Not lowers to i32.eqz on a Bool value.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtBool{}}); // vt1
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start", "High"};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}},
+                                 {CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{2}, CoreStateId{0}}};
             auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr1 -> v1
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{1}}, std::nullopt, CoreValueTypeId{1}}); // expr2
+            flow.exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{2}},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr3 -> v2
+            flow.value_count = 3;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{3}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{2};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            CoreFlowState high;
+            high.state = CoreStateId{2};
+            high.state_name = "High";
+            high.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(high));
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto step_body =
+                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            check(emitted.ok() && step_body.has_value() &&
+                      std::find(step_body->begin(), step_body->end(), kOpI32Eqz) !=
+                          step_body->end() &&
+                      std::find(step_body->begin(), step_body->end(), kOpI32Const) !=
+                          step_body->end(),
+                  "P6-1 lowers Bool Not to i32.eqz with an i32.const literal");
+        }
+
+        // P6-1 fail-closed: an integer literal that overflows the bounded
+        // i32 scalar range must fail closed (never silently truncate).
+        {
+            auto program = make_computed_goto_program(false, CoreBinaryOp::Add);
+            program.flows[0].exprs[7] =
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "9999999999"},
+                         std::nullopt,
+                         CoreValueTypeId{1}};
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            check(
+                !emitted.artifact.has_value() &&
+                    has_codegen_code(emitted, backends::core_wasm_diag::kUnsupportedOrchestration),
+                "P6-1 fails closed on an integer literal exceeding the i32 range");
+        }
+
+        // P6-1 fail-closed: a computed-goto branch whose target is NOT in the
+        // agent's declared transition table is kInvalidCore (never silently
+        // accepted). The then branch legally targets High(2); the else branch
+        // illegally targets Done(0) which is NOT declared from Start(1).
+        {
+            auto program = make_computed_goto_program(false, CoreBinaryOp::Add);
+            auto &agent = program.agents[0];
+            // Drop the Start(1) -> Done(0) legal edge, leaving only -> High(2).
+            agent.transitions.erase(std::remove_if(agent.transitions.begin(),
+                                                   agent.transitions.end(),
+                                                   [](const CoreTransition &edge) {
+                                                       return edge.from == CoreStateId{1} &&
+                                                              edge.to == CoreStateId{0};
+                                                   }),
+                                    agent.transitions.end());
+            check(verify_core_program(program).ok(),
+                  "computed-goto illegal-edge fixture is verifier-clean (the Core "
+                  "verifier does not re-check declared transitions)");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(emitted, backends::core_wasm_diag::kInvalidCore),
+                  "P6-1 rejects a computed goto outside the legal transition table");
+        }
+
+        // P6-1 fail-closed: a CoreMatchStmt inside a computation region is a
+        // later P6 slice, so it still rejects with the scalar codegen prefix
+        // and produces no artifact.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{1}});
+            flow.value_count = 2;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
             flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
             auto &start = flow.states[1].body;
             start.statements.clear();
             start.statements.push_back(
-                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
             CoreMatchStmt match;
-            match.scrutinee = CoreValueId{2};
+            match.scrutinee = CoreValueId{1};
             match.has_result = false;
             CoreMatchArm arm;
             arm.pattern = CorePatternId{0};
@@ -2105,19 +2289,16 @@ int main() {
             match.fallback_region->statements.push_back(
                 CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
             start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
-            check(verify_core_program(program).ok() &&
-                      compute_core_layouts(program).ok(),
-                  "P6 match fixture is verified Core with a finalized layout");
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-1 match fixture is verified Core with a finalized layout");
             const auto layout = compute_core_layouts(program);
-            const auto emitted = backends::emit_core_wasm(
-                program, *layout.table,
-                {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+            const auto emitted = emit_agent(program, *layout.table);
             check(!emitted.artifact.has_value() &&
-                      has_codegen_code(
-                          emitted, backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                      has_codegen_code(emitted,
+                                       backends::core_wasm_diag::kUnsupportedOrchestration) &&
                       has_codegen_message(emitted, kP6ScaffoldPrefix) &&
                       !has_codegen_message(emitted, kLegacyShapeMessage),
-                  "P6-0 fails closed on a CoreMatchStmt computation handler");
+                  "P6-1 still fails closed on a CoreMatchStmt computation handler");
         }
 
         // A P6-shaped region that carries a capability EFFECT must NOT enter the

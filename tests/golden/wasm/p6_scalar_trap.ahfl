@@ -1,0 +1,33 @@
+module wasm::p6_scalar_trap;
+
+// RFC 0026 P6-1 (KR6.6) integer trap semantics fixture. The Boom handler
+// computes a literal signed division by zero. Wasm i64.div_s traps at runtime
+// (the documented P6 integer choice: Div/Rem trap on a zero divisor rather
+// than wrapping), observable as a step() trap with no state transition.
+pub struct Frame {
+    value: String;
+}
+
+pub agent ScalarTrapAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Boom];
+    initial: Boom;
+    final: [Done];
+    capabilities: [];
+    transition Boom -> Done;
+}
+
+flow for ScalarTrapAgent {
+    state Boom {
+        let numerator = 1;
+        let divisor = 0;
+        let quotient = numerator / divisor;
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

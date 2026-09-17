@@ -9,8 +9,11 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <utility>
@@ -25,6 +28,7 @@ using ir::core::CoreAgentDecl;
 using ir::core::CoreAgentId;
 using ir::core::CoreAgentInstance;
 using ir::core::CoreBinaryExpr;
+using ir::core::CoreBinaryOp;
 using ir::core::CoreCapabilityCallStmt;
 using ir::core::CoreCapabilityId;
 using ir::core::CoreCoerceExpr;
@@ -36,8 +40,10 @@ using ir::core::CoreFlowState;
 using ir::core::CoreGotoStmt;
 using ir::core::CoreIfStmt;
 using ir::core::CoreInstanceId;
+using ir::core::CoreLayoutId;
 using ir::core::CoreLetStmt;
 using ir::core::CoreLiteralExpr;
+using ir::core::CoreLiteralKind;
 using ir::core::CoreMatchArm;
 using ir::core::CoreMatchStmt;
 using ir::core::CorePathExpr;
@@ -50,10 +56,14 @@ using ir::core::CoreStmt;
 using ir::core::CoreStoreStmt;
 using ir::core::CoreTrapStmt;
 using ir::core::CoreUnaryExpr;
+using ir::core::CoreUnaryOp;
 using ir::core::CoreUnsupportedExpr;
 using ir::core::CoreValueId;
 using ir::core::CoreValueRefExpr;
 using ir::core::CoreValueTypeId;
+using ir::core::CoreValueTypeNode;
+using ir::core::CoreVtBool;
+using ir::core::CoreVtInt;
 using ir::core::CoreVtNominal;
 using ir::core::CoreWorkflowDecl;
 using ir::core::CoreWorkflowId;
@@ -63,6 +73,7 @@ using ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
 using ir::core::kCoreWasmFixedLinearMemoryMinPages;
 
 constexpr std::uint8_t kI32 = 0x7f;
+constexpr std::uint8_t kI64 = 0x7e;
 constexpr std::uint8_t kEmptyBlock = 0x40;
 constexpr std::uint8_t kFuncType = 0x60;
 
@@ -192,6 +203,26 @@ static_assert(AHFL_CAP_PENDING == 2u);
 struct GotoAction {
     CoreStateId target{};
 };
+// RFC 0026 P6-1 (KR6.6): a non-final handler whose next state is decided by a
+// lowered scalar computation (e.g. `if (a + b > c) goto X else goto Y`). The
+// body bytes are emitted INLINE in `step()`'s dispatch arm: every path updates
+// global current_state + transition_count exactly as a bare GotoAction does,
+// or traps. `targets` are every state the body may branch to (the handler may
+// be non-deterministic across runs), and `local_reprs` / `local_base` describe
+// the step-function SSA locals the body references (i32 for Bool/narrow Int,
+// i64 for wide Int — the repr is read from the P4-D layout table, never
+// recomputed).
+struct ComputedGotoAction {
+    // Pre-lowered step()-inline body: every path updates global current_state
+    // + transition_count exactly as a bare GotoAction does and returns the new
+    // state id, or traps. References only the step-function SSA locals declared
+    // once in make_step_body (i32 group then i64 group; indices shared across
+    // all computed handlers since each step() dispatch runs one handler).
+    std::vector<std::uint8_t> body;
+    // Every state the body may branch to; the graph analysis treats the action
+    // as nondeterministic over this successor set.
+    std::vector<CoreStateId> targets;
+};
 struct IdentityAction {
     [[nodiscard]] friend bool operator==(IdentityAction, IdentityAction) noexcept = default;
 };
@@ -199,18 +230,30 @@ struct CapabilityAction {
     CoreCapabilityId capability{};
     [[nodiscard]] friend bool operator==(CapabilityAction, CapabilityAction) noexcept = default;
 };
-using StateAction = std::variant<GotoAction, IdentityAction, CapabilityAction>;
+using StateAction = std::variant<GotoAction, ComputedGotoAction, IdentityAction, CapabilityAction>;
 
 struct AgentPlan {
     CoreAgentId agent{};
     CoreStateId initial{};
     std::vector<StateAction> actions;
     std::vector<CoreCapabilityId> imports;
+    // RFC 0026 P6-1: step()-function SSA locals consumed by computed-goto
+    // handler bodies. Wasm locals are FUNCTION scoped, so every computed
+    // handler draws from two disjoint function-global pools (all i32 locals
+    // occupy the low indices, i64 locals follow); the two counters are the
+    // group sizes emitted by make_step_body's local declaration.
+    std::uint32_t step_i32_locals{0};
+    std::uint32_t step_i64_locals{0};
 };
 
 struct AgentPlanPolicy {
     std::string_view unsupported_code{core_wasm_diag::kUnsupportedOrchestration};
     bool allow_capability{true};
+    // Workflow node packaging runs its agents' handlers through a linear,
+    // single-target runner body; a P6 computed-goto handler cannot be inlined
+    // there yet, so the workflow lane fails closed on it. Direct agent
+    // emission accepts it.
+    bool allow_computed_goto{true};
     std::string_view slice{"E2"};
 };
 
@@ -307,7 +350,8 @@ void add_diag(CoreWasmCodegenResult &result,
 }
 
 [[nodiscard]] bool is_final_action(const StateAction &action) {
-    return !std::holds_alternative<GotoAction>(action);
+    return std::holds_alternative<IdentityAction>(action) ||
+           std::holds_alternative<CapabilityAction>(action);
 }
 
 [[nodiscard]] bool is_final_state(const CoreAgentDecl &agent, std::uint32_t state) {
@@ -765,80 +809,347 @@ class ByteBuffer {
     return true;
 }
 
+// The scalar kind of a value type for the P6 ladder, with the physical repr
+// read from the P4-D layout table (design §2.1: codegen never recomputes a
+// repr). Bool and narrow Int share the i32 repr but stay distinct KINDS so the
+// boolean-only operators (! && ||) cannot be applied to an integer.
+enum class P6ScalarKind {
+    Bool,
+    IntI32,
+    IntI64
+};
+
+[[nodiscard]] std::optional<P6ScalarKind> p6_scalar_kind(const CoreProgram &program,
+                                                         const ir::core::CoreLayoutTable &layouts,
+                                                         CoreValueTypeId type) {
+    if (type.value >= program.value_types.size() || type.value >= layouts.value_layouts.size()) {
+        return std::nullopt;
+    }
+    const CoreLayoutId layout_id = layouts.value_layouts[type.value];
+    if (layout_id.value >= layouts.layouts.size()) {
+        return std::nullopt;
+    }
+    const auto *scalar =
+        std::get_if<ir::core::CoreLayoutScalar>(&layouts.layouts[layout_id.value].shape);
+    if (scalar == nullptr || scalar->repr == ir::core::CoreScalarRepr::F64) {
+        // F64 needs the f64 opcode ladder, which is a later P6 slice; every
+        // non-scalar aggregate is outside the scalar subset.
+        return std::nullopt;
+    }
+    const CoreValueTypeNode &node = program.value_types[type.value].node;
+    if (std::holds_alternative<CoreVtBool>(node)) {
+        return scalar->repr == ir::core::CoreScalarRepr::I32 ? std::optional{P6ScalarKind::Bool}
+                                                             : std::nullopt;
+    }
+    if (std::holds_alternative<CoreVtInt>(node)) {
+        switch (scalar->repr) {
+        case ir::core::CoreScalarRepr::I32:
+            return P6ScalarKind::IntI32;
+        case ir::core::CoreScalarRepr::I64:
+            return P6ScalarKind::IntI64;
+        case ir::core::CoreScalarRepr::F64:
+            return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
+// Structural all-paths termination predicate for a P6 scalar handler region.
+// P6-1 accepts a computed-goto handler only when EVERY path leaves via a goto
+// or trap (so `step()` always performs exactly one transition or traps and
+// never falls through with an undefined next state). If/branch fallthrough and
+// every other terminator keep the handler on a later slice.
+[[nodiscard]] bool p6_region_always_diverges(const CoreRegion &region) {
+    if (region.statements.empty()) {
+        return false;
+    }
+    const CoreStmt &last = region.statements.back();
+    return std::visit(Overloaded{
+                          [](const CoreGotoStmt &) { return true; },
+                          [](const CoreTrapStmt &) { return true; },
+                          [](const CoreIfStmt &s) {
+                              return s.then_region && s.else_region &&
+                                     p6_region_always_diverges(*s.then_region) &&
+                                     p6_region_always_diverges(*s.else_region);
+                          },
+                          [](const CoreMatchStmt &s) {
+                              if (!s.fallback_region ||
+                                  !p6_region_always_diverges(*s.fallback_region)) {
+                                  return false;
+                              }
+                              return std::ranges::all_of(s.arms, [](const CoreMatchArm &arm) {
+                                  return arm.body && p6_region_always_diverges(*arm.body);
+                              });
+                          },
+                          [](const auto &) { return false; },
+                      },
+                      last.node);
+}
+
 class P6ComputationHandlerBuilder {
   public:
-    P6ComputationHandlerBuilder(const CoreFlowDecl &flow,
+    P6ComputationHandlerBuilder(const CoreProgram &program,
+                                const ir::core::CoreLayoutTable &layouts,
+                                const CoreFlowDecl &flow,
                                 const CoreFlowState &handler,
                                 std::string_view unsupported_code,
+                                std::vector<bool> &used_exprs,
+                                std::vector<bool> &used_values,
                                 CoreWasmCodegenResult &result)
-        : flow_(flow), handler_(handler), unsupported_code_(unsupported_code),
-          result_(result), locals_(flow.value_count, kNoLocal) {}
+        : program_(program), layouts_(layouts), flow_(flow), handler_(handler),
+          unsupported_code_(unsupported_code), used_exprs_(used_exprs), used_values_(used_values),
+          result_(result), locals_(flow.value_count, LocalInfo{}) {}
 
-    // Bind an incoming frame value to the next wasm-local index. Parameters
-    // always occupy the LOWEST indices, ahead of SSA temporaries allocated for
-    // CoreLetStmt results. P6-0 binds none (the computed-goto ABI arrives with
-    // P6-1); the ordering contract is fixed here.
-    [[nodiscard]] bool bind_parameter(CoreValueId value) {
-        if (value.value >= locals_.size() || locals_[value.value] != kNoLocal) {
-            return false;
+    // Validate the handler is in the P6-1 scalar subset, assign every bound
+    // SSA value a per-repr pool slot, and record the goto target set. The i64
+    // pool's concrete indices depend on the FUNCTION-wide i32 group size (wasm
+    // locals are function scoped with one fixed type per index), so a second
+    // emit() pass resolves final indices once all handlers are planned.
+    [[nodiscard]] bool plan() {
+        if (!p6_region_always_diverges(handler_.body)) {
+            return reject("non-final scalar handler must goto or trap on every path",
+                          handler_.body.statements.empty()
+                              ? ir::SourceRangeOpt{}
+                              : handler_.body.statements.front().source_range);
         }
-        locals_[value.value] = next_local_++;
-        return true;
+        return plan_region(handler_.body);
     }
 
-    // Walk the handler region through the exhaustive visitors. P6-0 lowers no
-    // arm, so the first node always fails closed; later slices make individual
-    // arms succeed and then hand the assembled ByteBuffer to the module
-    // encoder.
-    [[nodiscard]] bool try_build() {
-        return emit_region(handler_.body);
+    [[nodiscard]] std::uint32_t i32_count() const noexcept {
+        return i32_count_;
+    }
+    [[nodiscard]] std::uint32_t i64_count() const noexcept {
+        return i64_count_;
+    }
+    [[nodiscard]] const std::vector<CoreStateId> &targets() const noexcept {
+        return targets_;
+    }
+
+    // Emit the step()-inline body. `i64_base` is the function-wide count of
+    // i32 SSA locals (i64 slots follow them). Every goto path performs exactly
+    // the E1 transition (set current_state, bump transition_count) and returns
+    // the new state; trap paths emit unreachable.
+    [[nodiscard]] std::optional<std::vector<std::uint8_t>> emit(std::uint32_t i64_base) {
+        i64_base_ = i64_base;
+        if (!emit_region(handler_.body)) {
+            return std::nullopt;
+        }
+        return std::move(body_).take();
     }
 
   private:
-    static constexpr std::uint32_t kNoLocal =
-        std::numeric_limits<std::uint32_t>::max();
+    struct LocalInfo {
+        P6ScalarKind kind{P6ScalarKind::IntI32};
+        std::uint32_t slot{0}; // index within the kind's pool
+        bool bound{false};
+    };
 
+    const CoreProgram &program_;
+    const ir::core::CoreLayoutTable &layouts_;
     const CoreFlowDecl &flow_;
     const CoreFlowState &handler_;
     std::string_view unsupported_code_;
+    std::vector<bool> &used_exprs_;
+    std::vector<bool> &used_values_;
     CoreWasmCodegenResult &result_;
 
     ByteBuffer body_;
-    std::vector<std::uint32_t> locals_; // CoreValueId -> wasm local index
-    std::uint32_t next_local_{0};
+    std::vector<LocalInfo> locals_; // CoreValueId -> pool slot
+    std::uint32_t i32_count_{0};
+    std::uint32_t i64_count_{0};
+    std::uint32_t i64_base_{0};
+    std::vector<CoreStateId> targets_;
 
-    [[nodiscard]] std::optional<std::uint32_t> local_of(CoreValueId value) const {
-        if (value.value >= locals_.size() || locals_[value.value] == kNoLocal) {
-            return std::nullopt;
-        }
-        return locals_[value.value];
-    }
-
-    // Allocate the next SSA local and register the CoreValueId mapping. This
-    // is an infallible registration (the table is sized to value_count), so it
-    // has no [[nodiscard]]; P6-1 additionally consumes the returned index for
-    // local.tee/set.
-    std::uint32_t allocate_local(CoreValueId value) {
-        const std::uint32_t index = next_local_++;
-        if (value.value < locals_.size()) {
-            locals_[value.value] = index;
-        }
-        return index;
-    }
-
-    // Emit an unreachable instruction into the (discarded) body buffer and
-    // publish one sourced, actionable diagnostic. The buffer never reaches the
-    // module while try_build() fails.
-    [[nodiscard]] bool reject(std::string_view node_kind,
-                              ir::SourceRangeOpt range) {
+    [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
         body_.byte(kOpUnreachable);
         add_diag(result_,
                  unsupported_code_,
-                 "RFC 0026 P6 computation codegen does not yet lower " +
-                     std::string(node_kind) + " in handler of state '" +
-                     handler_.state_name + "'",
+                 "RFC 0026 P6 scalar codegen cannot lower handler of state '" +
+                     handler_.state_name + "': " + std::move(message),
                  std::move(range));
         return false;
+    }
+
+    [[nodiscard]] std::optional<P6ScalarKind> scalar_kind(CoreValueTypeId type) const {
+        return p6_scalar_kind(program_, layouts_, type);
+    }
+
+    [[nodiscard]] std::optional<std::uint32_t> final_local(CoreValueId value) const {
+        if (value.value >= locals_.size() || !locals_[value.value].bound) {
+            return std::nullopt;
+        }
+        const LocalInfo &info = locals_[value.value];
+        return info.kind == P6ScalarKind::IntI64 ? i64_base_ + info.slot : info.slot;
+    }
+
+    // Assign a pool slot to a let-bound value (one slot per CoreValueId; the
+    // Core verifier proves flow-global single definition).
+    [[nodiscard]] bool bind_value(CoreValueId value, P6ScalarKind kind) {
+        if (value.value >= locals_.size() || locals_[value.value].bound) {
+            return false;
+        }
+        LocalInfo &info = locals_[value.value];
+        info.bound = true;
+        info.kind = kind;
+        info.slot = kind == P6ScalarKind::IntI64 ? i64_count_++ : i32_count_++;
+        return true;
+    }
+
+    void record_target(CoreStateId target) {
+        if (std::find(targets_.begin(), targets_.end(), target) == targets_.end()) {
+            targets_.push_back(target);
+        }
+    }
+
+    // --- planning pass: validate subset + assign slots + mark consumed arena ---
+
+    [[nodiscard]] bool plan_region(const CoreRegion &region) {
+        for (const CoreStmt &statement : region.statements) {
+            if (!plan_statement(statement)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool plan_expr(const CoreExprId id) {
+        if (id.value >= flow_.exprs.size()) {
+            return false;
+        }
+        used_exprs_[id.value] = true;
+        const CoreExpr &expr = flow_.exprs[id.value];
+        if (scalar_kind(expr.result_type) == std::nullopt) {
+            return reject("scalar expression has a non-scalar or f64 result type",
+                          expr.source_range);
+        }
+        return std::visit(
+            Overloaded{
+                [&](const CoreLiteralExpr &) { return plan_literal(expr); },
+                [&](const CoreValueRefExpr &r) {
+                    used_values_[r.value.value] = true;
+                    if (final_local_like(r.value) == std::nullopt) {
+                        return reject("value reference is not a scalar local bound in this handler",
+                                      expr.source_range);
+                    }
+                    return true;
+                },
+                [&](const CoreUnaryExpr &u) { return plan_expr(u.operand); },
+                [&](const CoreBinaryExpr &b) { return plan_expr(b.lhs) && plan_expr(b.rhs); },
+                [&](const CorePathExpr &) {
+                    return reject("input/context field loads are a later P6 slice",
+                                  expr.source_range);
+                },
+                [&](const CoreQualifiedExpr &) {
+                    return reject("enum variant projections are a later P6 slice",
+                                  expr.source_range);
+                },
+                [&](const CoreConstructExpr &) {
+                    return reject("aggregate construction is a later P6 slice", expr.source_range);
+                },
+                [&](const CoreCoerceExpr &) {
+                    return reject("scalar coercion is outside the P6 scalar subset",
+                                  expr.source_range);
+                },
+                [&](const CoreUnsupportedExpr &) {
+                    return reject("expression was not fully lowered to Core-IR", expr.source_range);
+                },
+            },
+            expr.node);
+    }
+
+    // Kind lookup that does not depend on the emit-only i64 base.
+    [[nodiscard]] std::optional<P6ScalarKind> final_local_like(CoreValueId value) const {
+        if (value.value >= locals_.size() || !locals_[value.value].bound) {
+            return std::nullopt;
+        }
+        return locals_[value.value].kind;
+    }
+
+    [[nodiscard]] bool plan_literal(const CoreExpr &expr) {
+        const auto kind = *scalar_kind(expr.result_type);
+        const auto &lit = std::get<CoreLiteralExpr>(expr.node);
+        switch (lit.kind) {
+        case CoreLiteralKind::Bool:
+            return kind == P6ScalarKind::Bool;
+        case CoreLiteralKind::Integer:
+            return kind != P6ScalarKind::Bool;
+        default:
+            return false;
+        }
+    }
+
+    [[nodiscard]] bool plan_statement(const CoreStmt &statement) {
+        return std::visit(
+            Overloaded{
+                [&](const CoreLetStmt &s) {
+                    if (s.expr.value >= flow_.exprs.size()) {
+                        return reject("let references an out-of-range expression",
+                                      statement.source_range);
+                    }
+                    const CoreExpr &bound = flow_.exprs[s.expr.value];
+                    const auto kind = scalar_kind(bound.result_type);
+                    if (kind == std::nullopt) {
+                        return reject("let value has a non-scalar or f64 type",
+                                      statement.source_range);
+                    }
+                    if (!bind_value(s.result, *kind)) {
+                        return reject("SSA value is bound more than once", statement.source_range);
+                    }
+                    // Every let result is a real lowered SSA local in the
+                    // emitted handler (a bound-but-unread result such as
+                    // `let q = one / zero` is frontend-valid and its effect —
+                    // the trapping division — must still be emitted). Orphan
+                    // EXPRESSIONS remain gated by the arena consumption check.
+                    used_values_[s.result.value] = true;
+                    return plan_expr(s.expr);
+                },
+                [&](const CoreIfStmt &s) {
+                    if (final_local_like(s.condition) != P6ScalarKind::Bool) {
+                        return reject("if condition must be a Bool local", statement.source_range);
+                    }
+                    used_values_[s.condition.value] = true;
+                    return (!s.then_region || plan_region(*s.then_region)) &&
+                           (!s.else_region || plan_region(*s.else_region));
+                },
+                [&](const CoreGotoStmt &go) {
+                    record_target(go.target);
+                    return true;
+                },
+                [](const CoreTrapStmt &) { return true; },
+                [&](const CoreMatchStmt &) {
+                    return reject("match lowering is a later P6 slice", statement.source_range);
+                },
+                [&](const CoreCapabilityCallStmt &) {
+                    return reject("capability effects stay on the orchestration lane",
+                                  statement.source_range);
+                },
+                [&](const CoreStoreStmt &) {
+                    return reject("context stores are a later P6 slice", statement.source_range);
+                },
+                [&](const CoreReturnStmt &) {
+                    return reject("value-returning handlers are a later P6 slice",
+                                  statement.source_range);
+                },
+                [&](const CoreYieldStmt &) {
+                    return reject("yield is illegal in a flow handler", statement.source_range);
+                },
+            },
+            statement.node);
+    }
+
+    // --- emit pass: scalar stack machine ---
+
+    void emit_const_i32(std::int32_t value) {
+        body_.byte(kOpI32Const);
+        body_.s32(value);
+    }
+    void emit_const_i64(std::int64_t value) {
+        body_.byte(kOpI64Const);
+        body_.s64(value);
+    }
+    void emit_local_get(std::uint32_t local) {
+        body_.byte(kOpLocalGet);
+        body_.u32(local);
     }
 
     [[nodiscard]] bool emit_region(const CoreRegion &region) {
@@ -850,95 +1161,338 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    [[nodiscard]] bool emit_expr(const CoreExpr &expr) {
-        return std::visit(
+    // Parse the nonnegative decimal spelling an Integer literal carries
+    // (INT_LITERAL is DIGIT+; source-level negation is a separate Neg node).
+    [[nodiscard]] static std::optional<std::uint64_t>
+    parse_unsigned_spelling(const std::string &spelling) {
+        if (spelling.empty()) {
+            return std::nullopt;
+        }
+        std::uint64_t value = 0;
+        for (const char c : spelling) {
+            if (c < '0' || c > '9') {
+                return std::nullopt;
+            }
+            const std::uint64_t digit = static_cast<std::uint64_t>(c - '0');
+            if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10u) {
+                return std::nullopt;
+            }
+            value = value * 10u + digit;
+        }
+        return value;
+    }
+
+    [[nodiscard]] bool emit_literal(const CoreLiteralExpr &lit,
+                                    P6ScalarKind kind,
+                                    const CoreVtInt *int_type,
+                                    ir::SourceRangeOpt range) {
+        if (lit.kind == CoreLiteralKind::Bool) {
+            if (kind != P6ScalarKind::Bool) {
+                return reject("bool literal has a non-Bool type", std::move(range));
+            }
+            if (lit.spelling != "true" && lit.spelling != "false") {
+                return reject("bool literal has an unrecognized spelling", std::move(range));
+            }
+            emit_const_i32(lit.spelling == "true" ? 1 : 0);
+            return true;
+        }
+        if (lit.kind != CoreLiteralKind::Integer || kind == P6ScalarKind::Bool) {
+            return reject("only Bool and Integer literals are in the scalar subset",
+                          std::move(range));
+        }
+        const auto parsed = parse_unsigned_spelling(lit.spelling);
+        if (!parsed.has_value()) {
+            return reject("integer literal spelling does not parse or overflows uint64",
+                          std::move(range));
+        }
+        const std::uint64_t value = *parsed;
+        // Fail closed against BOTH the physical repr and any declared bounded
+        // refinement; never silently truncate a constant.
+        if (kind == P6ScalarKind::IntI32 &&
+            value > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+            return reject("integer literal exceeds the i32 scalar range", std::move(range));
+        }
+        if (value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            return reject("integer literal exceeds the i64 scalar range", std::move(range));
+        }
+        if (int_type != nullptr && int_type->bounds.has_value()) {
+            const auto signed_value = static_cast<std::int64_t>(value);
+            if (signed_value < int_type->bounds->first || signed_value > int_type->bounds->second) {
+                return reject("integer literal is outside its declared bounded-Int range",
+                              std::move(range));
+            }
+        }
+        if (kind == P6ScalarKind::IntI32) {
+            emit_const_i32(static_cast<std::int32_t>(value));
+        } else {
+            emit_const_i64(static_cast<std::int64_t>(value));
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool emit_expr(const CoreExprId id) {
+        if (id.value >= flow_.exprs.size()) {
+            return false;
+        }
+        const CoreExpr &expr = flow_.exprs[id.value];
+        const auto result_kind = scalar_kind(expr.result_type);
+        if (result_kind == std::nullopt) {
+            return reject("scalar expression has a non-scalar or f64 result type",
+                          expr.source_range);
+        }
+        bool ok = std::visit(
             Overloaded{
-                [&](const CoreLiteralExpr &) {
-                    return reject("CoreLiteralExpr", expr.source_range);
+                [&](const CoreLiteralExpr &lit) {
+                    const CoreVtInt *int_type =
+                        std::get_if<CoreVtInt>(&program_.value_types[expr.result_type.value].node);
+                    return emit_literal(lit, *result_kind, int_type, expr.source_range);
                 },
-                [&](const CoreValueRefExpr &) {
-                    return reject("CoreValueRefExpr", expr.source_range);
+                [&](const CoreValueRefExpr &r) {
+                    const auto local = final_local(r.value);
+                    if (local == std::nullopt) {
+                        return reject("value reference is not a scalar local bound in this handler",
+                                      expr.source_range);
+                    }
+                    emit_local_get(*local);
+                    return true;
                 },
+                [&](const CoreUnaryExpr &u) { return emit_unary(u, expr.source_range); },
+                [&](const CoreBinaryExpr &b) { return emit_binary(b, expr.source_range); },
                 [&](const CorePathExpr &) {
-                    return reject("CorePathExpr", expr.source_range);
+                    return reject("input/context field loads are a later P6 slice",
+                                  expr.source_range);
                 },
                 [&](const CoreQualifiedExpr &) {
-                    return reject("CoreQualifiedExpr", expr.source_range);
-                },
-                [&](const CoreUnaryExpr &) {
-                    return reject("CoreUnaryExpr", expr.source_range);
-                },
-                [&](const CoreBinaryExpr &) {
-                    return reject("CoreBinaryExpr", expr.source_range);
+                    return reject("enum variant projections are a later P6 slice",
+                                  expr.source_range);
                 },
                 [&](const CoreConstructExpr &) {
-                    return reject("CoreConstructExpr", expr.source_range);
+                    return reject("aggregate construction is a later P6 slice", expr.source_range);
                 },
                 [&](const CoreCoerceExpr &) {
-                    return reject("CoreCoerceExpr", expr.source_range);
+                    return reject("scalar coercion is outside the P6 scalar subset",
+                                  expr.source_range);
                 },
                 [&](const CoreUnsupportedExpr &) {
-                    return reject("CoreUnsupportedExpr", expr.source_range);
+                    return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
             },
             expr.node);
+        return ok;
+    }
+
+    [[nodiscard]] bool emit_unary(const CoreUnaryExpr &u, ir::SourceRangeOpt range) {
+        if (u.operand.value >= flow_.exprs.size()) {
+            return false;
+        }
+        const P6ScalarKind operand_kind = *scalar_kind(flow_.exprs[u.operand.value].result_type);
+        switch (u.op) {
+        case CoreUnaryOp::Not:
+            if (operand_kind != P6ScalarKind::Bool) {
+                return reject("logical not requires a Bool operand", std::move(range));
+            }
+            if (!emit_expr(u.operand)) {
+                return false;
+            }
+            body_.byte(kOpI32Eqz);
+            return true;
+        case CoreUnaryOp::Neg:
+            if (operand_kind == P6ScalarKind::Bool) {
+                return reject("arithmetic negation requires an Int operand", std::move(range));
+            }
+            // 0 - x; wasm wrap semantics (negating INT_MIN wraps), matching the
+            // documented P6 integer contract.
+            if (operand_kind == P6ScalarKind::IntI32) {
+                emit_const_i32(0);
+            } else {
+                emit_const_i64(0);
+            }
+            if (!emit_expr(u.operand)) {
+                return false;
+            }
+            body_.byte(operand_kind == P6ScalarKind::IntI32 ? kOpI32Sub : kOpI64Sub);
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool emit_binary(const CoreBinaryExpr &b, ir::SourceRangeOpt range) {
+        if (b.lhs.value >= flow_.exprs.size() || b.rhs.value >= flow_.exprs.size()) {
+            return false;
+        }
+        const auto lhs_kind = scalar_kind(flow_.exprs[b.lhs.value].result_type);
+        const auto rhs_kind = scalar_kind(flow_.exprs[b.rhs.value].result_type);
+        if (lhs_kind == std::nullopt || rhs_kind == std::nullopt || *lhs_kind != *rhs_kind) {
+            return reject("binary operands must share one scalar type", std::move(range));
+        }
+        const P6ScalarKind kind = *lhs_kind;
+        const bool wide = kind == P6ScalarKind::IntI64;
+        const bool bool_operands = kind == P6ScalarKind::Bool;
+
+        struct Opcode {
+            std::uint8_t i32;
+            std::uint8_t i64;
+        };
+        std::optional<Opcode> opcode;
+        bool is_comparison = false;
+        switch (b.op) {
+        case CoreBinaryOp::Add:
+            opcode = {kOpI32Add, kOpI64Add};
+            break;
+        case CoreBinaryOp::Sub:
+            opcode = {kOpI32Sub, kOpI64Sub};
+            break;
+        case CoreBinaryOp::Mul:
+            opcode = {kOpI32Mul, kOpI64Mul};
+            break;
+        // Signed division / remainder: a zero divisor traps at runtime, which
+        // is the deliberately documented P6 integer semantics.
+        case CoreBinaryOp::Div:
+            opcode = {kOpI32DivS, kOpI64DivS};
+            break;
+        case CoreBinaryOp::Mod:
+            opcode = {kOpI32RemS, kOpI64RemS};
+            break;
+        case CoreBinaryOp::Eq:
+            opcode = {kOpI32Eq, kOpI64Eq};
+            is_comparison = true;
+            break;
+        case CoreBinaryOp::Ne:
+            opcode = {kOpI32Ne, kOpI64Ne};
+            is_comparison = true;
+            break;
+        case CoreBinaryOp::Lt:
+            opcode = {kOpI32LtS, kOpI64LtS};
+            is_comparison = true;
+            break;
+        case CoreBinaryOp::Le:
+            opcode = {kOpI32LeS, kOpI64LeS};
+            is_comparison = true;
+            break;
+        case CoreBinaryOp::Gt:
+            opcode = {kOpI32GtS, kOpI64GtS};
+            is_comparison = true;
+            break;
+        case CoreBinaryOp::Ge:
+            opcode = {kOpI32GeS, kOpI64GeS};
+            is_comparison = true;
+            break;
+        case CoreBinaryOp::And:
+            if (!bool_operands) {
+                return reject("logical and requires Bool operands", std::move(range));
+            }
+            opcode = {kOpI32And, kOpI32And};
+            break;
+        case CoreBinaryOp::Or:
+            if (!bool_operands) {
+                return reject("logical or requires Bool operands", std::move(range));
+            }
+            opcode = {kOpI32Or, kOpI32Or};
+            break;
+        }
+        if (!opcode.has_value()) {
+            return reject("binary operator is outside the P6 scalar subset", std::move(range));
+        }
+        if (bool_operands && !is_comparison && b.op != CoreBinaryOp::And &&
+            b.op != CoreBinaryOp::Or) {
+            return reject("arithmetic operator requires Int operands", std::move(range));
+        }
+        if (!bool_operands && (b.op == CoreBinaryOp::And || b.op == CoreBinaryOp::Or)) {
+            return reject("logical and/or requires Bool operands", std::move(range));
+        }
+        if (!emit_expr(b.lhs) || !emit_expr(b.rhs)) {
+            return false;
+        }
+        body_.byte(wide ? opcode->i64 : opcode->i32);
+        return true;
+    }
+
+    void emit_goto_transition(const CoreGotoStmt &go) {
+        // Mirrors the E1 bare-goto step tail exactly: latch current_state,
+        // bump transition_count once, return the new state id. `return` works
+        // from any nested if/block depth.
+        emit_const_i32(static_cast<std::int32_t>(go.target.value));
+        body_.byte(kOpGlobalSet);
+        body_.u32(kGlobalCurrentState);
+        body_.byte(kOpGlobalGet);
+        body_.u32(kGlobalTransitionCount);
+        emit_const_i32(1);
+        body_.byte(kOpI32Add);
+        body_.byte(kOpGlobalSet);
+        body_.u32(kGlobalTransitionCount);
+        emit_const_i32(static_cast<std::int32_t>(go.target.value));
+        body_.byte(kOpReturn);
     }
 
     [[nodiscard]] bool emit_statement(const CoreStmt &statement) {
         return std::visit(
             Overloaded{
                 [&](const CoreLetStmt &s) {
-                    if (s.expr.value >= flow_.exprs.size() ||
-                        !emit_expr(flow_.exprs[s.expr.value])) {
+                    if (!emit_expr(s.expr)) {
                         return false;
                     }
-                    allocate_local(s.result);
+                    const auto local = final_local(s.result);
+                    if (local == std::nullopt) {
+                        return reject("let result has no SSA local", statement.source_range);
+                    }
+                    body_.byte(kOpLocalSet);
+                    body_.u32(*local);
                     return true;
                 },
-                [&](const CoreCapabilityCallStmt &) {
-                    return reject("CoreCapabilityCallStmt",
-                                  statement.source_range);
-                },
-                [&](const CoreStoreStmt &) {
-                    return reject("CoreStoreStmt", statement.source_range);
-                },
                 [&](const CoreIfStmt &s) {
-                    if (local_of(s.condition) == std::nullopt) {
-                        return reject("CoreIfStmt", statement.source_range);
+                    const auto cond = final_local(s.condition);
+                    if (cond == std::nullopt) {
+                        return reject("if condition has no Bool local", statement.source_range);
                     }
+                    emit_local_get(*cond);
+                    body_.byte(kOpIf);
+                    // A fully-diverging if (both branches goto/trap on every
+                    // path) is the handler's terminator and is typed i32: every
+                    // branch returns polymorphically, and the produced i32 also
+                    // satisfies the enclosing step()-dispatch arm. An if that
+                    // can fall through is a plain void control block; the
+                    // verifier proves a fully-diverging if is always terminal.
+                    const bool diverges = s.then_region && s.else_region &&
+                                          p6_region_always_diverges(*s.then_region) &&
+                                          p6_region_always_diverges(*s.else_region);
+                    body_.byte(diverges ? kI32 : kEmptyBlock);
                     if (s.then_region && !emit_region(*s.then_region)) {
                         return false;
                     }
-                    if (s.else_region && !emit_region(*s.else_region)) {
-                        return false;
+                    if (s.else_region) {
+                        body_.byte(kOpElse);
+                        if (!emit_region(*s.else_region)) {
+                            return false;
+                        }
                     }
-                    return reject("CoreIfStmt", statement.source_range);
+                    body_.byte(kOpEnd);
+                    return true;
                 },
-                [&](const CoreGotoStmt &) {
-                    return reject("CoreGotoStmt", statement.source_range);
-                },
-                [&](const CoreReturnStmt &) {
-                    return reject("CoreReturnStmt", statement.source_range);
-                },
-                [&](const CoreYieldStmt &) {
-                    return reject("CoreYieldStmt", statement.source_range);
+                [&](const CoreGotoStmt &go) {
+                    record_target(go.target);
+                    emit_goto_transition(go);
+                    return true;
                 },
                 [&](const CoreTrapStmt &) {
-                    return reject("CoreTrapStmt", statement.source_range);
+                    body_.byte(kOpUnreachable);
+                    return true;
                 },
-                [&](const CoreMatchStmt &s) {
-                    for (const CoreMatchArm &arm : s.arms) {
-                        if (arm.guard_region && !emit_region(*arm.guard_region)) {
-                            return false;
-                        }
-                        if (arm.body && !emit_region(*arm.body)) {
-                            return false;
-                        }
-                    }
-                    if (s.fallback_region && !emit_region(*s.fallback_region)) {
-                        return false;
-                    }
-                    return reject("CoreMatchStmt", statement.source_range);
+                [&](const CoreMatchStmt &) {
+                    return reject("match lowering is a later P6 slice", statement.source_range);
+                },
+                [&](const CoreCapabilityCallStmt &) {
+                    return reject("capability effects stay on the orchestration lane",
+                                  statement.source_range);
+                },
+                [&](const CoreStoreStmt &) {
+                    return reject("context stores are a later P6 slice", statement.source_range);
+                },
+                [&](const CoreReturnStmt &) {
+                    return reject("value-returning handlers are a later P6 slice",
+                                  statement.source_range);
+                },
+                [&](const CoreYieldStmt &) {
+                    return reject("yield is illegal in a flow handler", statement.source_range);
                 },
             },
             statement.node);
@@ -1022,6 +1576,16 @@ build_agent_plan(const CoreProgram &program,
     std::vector<bool> used_exprs(flow->exprs.size(), false);
     std::vector<bool> used_values(flow->value_count, false);
 
+    // RFC 0026 P6-1: computed-goto handlers planned in the per-state loop and
+    // emitted in a second pass once the function-wide maximum per-repr local
+    // group sizes are known (wasm locals are function scoped; disjoint handler
+    // invocations reuse the same local indices).
+    struct PendingComputed {
+        std::uint32_t state{0};
+        std::unique_ptr<P6ComputationHandlerBuilder> builder;
+    };
+    std::vector<PendingComputed> pending_computed;
+
     for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
         const auto *handler = handlers[state];
         if (handler == nullptr) {
@@ -1075,28 +1639,59 @@ build_agent_plan(const CoreProgram &program,
 
         // RFC 0026 P6 (KR6.6): the canonical KR6.5 non-final handler is a
         // single bare CoreGotoStmt. Anything that is NOT that shape but IS a
-        // pure computation region (ANF scalar lets + structured if/match +
-        // goto/trap terminators, never a capability effect) enters the
-        // per-handler computation builder scaffold. P6-0 lowers no visitor arm,
-        // so the builder fails closed with the orchestration code and no
-        // artifact; P6-1 starts accepting scalar/computed-goto handlers. All
-        // effect-bearing or otherwise out-of-subset regions keep the exact
-        // legacy rejections below.
+        // pure computation region (ANF scalar lets + structured if + goto/trap
+        // terminators, never a capability effect) enters the per-handler scalar
+        // builder (P6-1: Literal/ValueRef/Unary/Binary + computed goto). All
+        // effect-bearing or otherwise out-of-subset regions keep the legacy
+        // rejections below.
         const bool single_goto =
             statements.size() == 1 &&
             std::holds_alternative<CoreGotoStmt>(statements.front().node);
         if (!single_goto) {
             if (!handler->body.statements.empty() &&
                 is_p6_computation_region(handler->body)) {
-                P6ComputationHandlerBuilder builder(
-                    *flow, *handler, policy.unsupported_code, result);
-                if (builder.try_build()) {
+                if (!policy.allow_computed_goto) {
                     add_diag(result,
-                             core_wasm_diag::kInternalInvalid,
-                             "P6 computation scaffold accepted a handler before any "
-                             "lowering arm landed");
+                             policy.unsupported_code,
+                             "KR6.5 " + std::string(policy.slice) +
+                                 " does not yet package a P6 computed-goto handler",
+                             statements.front().source_range);
+                    return std::nullopt;
                 }
-                return std::nullopt;
+                auto builder =
+                    std::make_unique<P6ComputationHandlerBuilder>(program,
+                                                                  layouts,
+                                                                  *flow,
+                                                                  *handler,
+                                                                  policy.unsupported_code,
+                                                                  used_exprs,
+                                                                  used_values,
+                                                                  result);
+                if (!builder->plan()) {
+                    return std::nullopt;
+                }
+                // Every dynamically reachable target must be a declared legal
+                // edge of THIS state.
+                for (const CoreStateId destination : builder->targets()) {
+                    const bool legal =
+                        std::any_of(agent.transitions.begin(),
+                                    agent.transitions.end(),
+                                    [state, destination](const auto &edge) {
+                                        return edge.from.value == state && edge.to == destination;
+                                    });
+                    if (!legal) {
+                        add_diag(result,
+                                 core_wasm_diag::kInvalidCore,
+                                 "computed goto target is not present in the agent's legal "
+                                 "transition table",
+                                 statements.front().source_range);
+                        return std::nullopt;
+                    }
+                }
+                plan.step_i32_locals = std::max(plan.step_i32_locals, builder->i32_count());
+                plan.step_i64_locals = std::max(plan.step_i64_locals, builder->i64_count());
+                pending_computed.push_back(PendingComputed{state, std::move(builder)});
+                continue;
             }
             const bool contains_capability = region_contains_capability(handler->body);
             add_diag(result,
@@ -1128,6 +1723,17 @@ build_agent_plan(const CoreProgram &program,
         plan.actions[state] = GotoAction{go.target};
     }
 
+    // Second pass: emit every planned computed-goto body now that the shared
+    // i32 group size (the i64 local base) is final.
+    for (auto &pending : pending_computed) {
+        auto body = pending.builder->emit(plan.step_i32_locals);
+        if (!body.has_value()) {
+            return std::nullopt;
+        }
+        plan.actions[pending.state] =
+            ComputedGotoAction{std::move(*body), pending.builder->targets()};
+    }
+
     if (std::any_of(used_exprs.begin(), used_exprs.end(), [](bool used) { return !used; }) ||
         std::any_of(used_values.begin(), used_values.end(), [](bool used) { return !used; })) {
         const bool contains_capability = std::any_of(
@@ -1144,50 +1750,97 @@ build_agent_plan(const CoreProgram &program,
         return std::nullopt;
     }
 
-    // The goto graph is functional. Every state must reach a final action.
-    std::vector<std::uint8_t> color(plan.actions.size(), 0);
-    for (std::uint32_t start = 0; start < plan.actions.size(); ++start) {
-        if (color[start] == 2) {
-            continue;
+    // The goto graph must be acyclic and every state must reach a final action.
+    // A computed-goto state is NONDETERMINISTIC: ALL of its targets are
+    // possible next states, so the analysis is a three-color DFS over the
+    // successor SET (a reachable back edge on any path is rejected), not the
+    // E1 single-successor walk.
+    const auto successors = [&](std::uint32_t state) -> std::vector<std::uint32_t> {
+        return std::visit(Overloaded{
+                              [](const GotoAction &a) { return std::vector{a.target.value}; },
+                              [](const ComputedGotoAction &a) {
+                                  std::vector<std::uint32_t> out;
+                                  out.reserve(a.targets.size());
+                                  for (const CoreStateId target : a.targets) {
+                                      out.push_back(target.value);
+                                  }
+                                  return out;
+                              },
+                              [](const IdentityAction &) { return std::vector<std::uint32_t>{}; },
+                              [](const CapabilityAction &) { return std::vector<std::uint32_t>{}; },
+                          },
+                          plan.actions[state]);
+    };
+    enum class Color : std::uint8_t {
+        White,
+        Gray,
+        Black
+    };
+    std::vector<Color> colors(plan.actions.size(), Color::White);
+    std::function<bool(std::uint32_t)> acyclic_to_final = [&](std::uint32_t state) -> bool {
+        if (colors[state] == Color::Black) {
+            return true;
         }
-        std::vector<std::uint32_t> path;
-        std::uint32_t current = start;
-        while (color[current] == 0) {
-            color[current] = 1;
-            path.push_back(current);
-            if (is_final_action(plan.actions[current])) {
-                break;
+        if (colors[state] == Color::Gray) {
+            return false; // back edge: cycle
+        }
+        colors[state] = Color::Gray;
+        for (const std::uint32_t next : successors(state)) {
+            if (!acyclic_to_final(next)) {
+                return false;
             }
-            current = std::get<GotoAction>(plan.actions[current]).target.value;
         }
-        if (!is_final_action(plan.actions[current]) && color[current] == 1) {
+        colors[state] = Color::Black;
+        return true;
+    };
+    for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
+        if (!acyclic_to_final(state)) {
             add_diag(result,
                      core_wasm_diag::kNonterminatingE1Run,
                      "KR6.5 " + std::string(policy.slice) +
-                         " deterministic goto graph contains a cycle");
+                         " goto graph contains a reachable cycle");
             return std::nullopt;
-        }
-        for (const auto state : path) {
-            color[state] = 2;
         }
     }
 
-    // Import only the action reachable from the declared initial state. The
-    // E2 graph is functional, so this walk has exactly one terminal action;
-    // unreachable declared finals must not expand host authority.
-    std::uint32_t reachable = plan.initial.value;
-    while (std::holds_alternative<GotoAction>(plan.actions[reachable])) {
-        reachable = std::get<GotoAction>(plan.actions[reachable]).target.value;
+    // Import only the capability finals reachable from the declared initial
+    // state across EVERY possible computed-goto path. The E2 least-privilege
+    // contract permits at most one distinct reachable capability import.
+    std::vector<std::uint8_t> reachable_state(plan.actions.size(), 0);
+    {
+        std::vector<std::uint32_t> worklist{plan.initial.value};
+        reachable_state[plan.initial.value] = 1;
+        while (!worklist.empty()) {
+            const std::uint32_t current = worklist.back();
+            worklist.pop_back();
+            for (const std::uint32_t next : successors(current)) {
+                if (!reachable_state[next]) {
+                    reachable_state[next] = 1;
+                    worklist.push_back(next);
+                }
+            }
+        }
     }
-    if (const auto *capability =
-            std::get_if<CapabilityAction>(&plan.actions[reachable])) {
-        plan.imports.push_back(capability->capability);
+    for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
+        if (!reachable_state[state]) {
+            continue;
+        }
+        if (const auto *capability = std::get_if<CapabilityAction>(&plan.actions[state])) {
+            plan.imports.push_back(capability->capability);
+        }
     }
     std::sort(plan.imports.begin(), plan.imports.end(), [](auto lhs, auto rhs) {
         return lhs.value < rhs.value;
     });
     plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()),
                        plan.imports.end());
+    if (plan.imports.size() > 1) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedCapabilityFrame,
+                 "KR6.5 " + std::string(policy.slice) +
+                     " computed-goto graph reaches more than one capability final");
+        return std::nullopt;
+    }
     if (plan.imports.size() >
         static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 7u)) {
         add_diag(result,
@@ -1480,12 +2133,15 @@ build_workflow_plan(const CoreProgram &program,
         // (functional goto graph reaching exactly one terminal action, least-
         // privilege single reachable import). Non-goto/identity/capability
         // actions still fail closed inside build_agent_plan.
-        auto agent_plan = build_agent_plan(
-            program,
-            layouts,
-            payload->base,
-            result,
-            AgentPlanPolicy{core_wasm_diag::kUnsupportedWorkflowFrame, true, "E3"});
+        auto agent_plan =
+            build_agent_plan(program,
+                             layouts,
+                             payload->base,
+                             result,
+                             AgentPlanPolicy{core_wasm_diag::kUnsupportedWorkflowFrame,
+                                             /*allow_capability=*/true,
+                                             /*allow_computed_goto=*/false,
+                                             "E3"});
         if (!agent_plan.has_value()) {
             return std::nullopt;
         }
@@ -1758,7 +2414,25 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
 }
 [[nodiscard]] ByteBuffer make_step_body(const AgentPlan &plan) {
     ByteBuffer body;
-    body.u32(0);
+    // RFC 0026 P6-1: step()-function SSA locals for computed-goto handlers.
+    // All i32 temporaries occupy the low group; i64 temporaries follow. Pure
+    // E1-E2 agents declare none, so their bytes are unchanged.
+    std::uint32_t local_groups = 0;
+    if (plan.step_i32_locals != 0) {
+        ++local_groups;
+    }
+    if (plan.step_i64_locals != 0) {
+        ++local_groups;
+    }
+    body.u32(local_groups);
+    if (plan.step_i32_locals != 0) {
+        body.u32(plan.step_i32_locals);
+        body.byte(kI32);
+    }
+    if (plan.step_i64_locals != 0) {
+        body.u32(plan.step_i64_locals);
+        body.byte(kI64);
+    }
     for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
         append_indexed_op(body, kOpGlobalGet, kGlobalCurrentState);
         append_const(body, state);
@@ -1766,17 +2440,23 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
         body.byte(kOpIf);
         body.byte(kI32);
         const auto &action = plan.actions[state];
-        if (is_final_action(action)) {
-            append_const(body, state);
-        } else {
-            const auto target = std::get<GotoAction>(action).target;
-            append_const(body, target.value);
+        if (const auto *go = std::get_if<GotoAction>(&action)) {
+            append_const(body, go->target.value);
             append_indexed_op(body, kOpGlobalSet, kGlobalCurrentState);
             append_indexed_op(body, kOpGlobalGet, kGlobalTransitionCount);
             append_const(body, 1);
             body.byte(kOpI32Add);
             append_indexed_op(body, kOpGlobalSet, kGlobalTransitionCount);
-            append_const(body, target.value);
+            append_const(body, go->target.value);
+        } else if (const auto *computed = std::get_if<ComputedGotoAction>(&action)) {
+            // The pre-lowered handler body runs the scalar stack machine and
+            // returns the next state id itself (bumping globals on every goto
+            // path), or traps. It is emitted inline inside this dispatch arm.
+            body.raw_span(computed->body);
+        } else {
+            // Identity / capability final: the state is stable and reports
+            // itself without incrementing the transition counter.
+            append_const(body, state);
         }
         body.byte(kOpElse);
     }
