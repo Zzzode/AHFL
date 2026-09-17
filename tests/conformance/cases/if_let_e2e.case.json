@@ -3,14 +3,29 @@
   "source": "tests/golden/runtime/if_let_e2e.ahfl",
   "kind": "workflow",
   "entry": "runtime::if_let_e2e::IfLetWorkflow",
-  "input": {"_type":"runtime::if_let_e2e::InspectRequest","maybe":{"_enum":"runtime::if_let_e2e::Maybe","_variant":"Some","_payload":[42]}},
+  "scenarios": [
+    {
+      "name": "some",
+      "input": {"_type":"runtime::if_let_e2e::InspectRequest","maybe":{"_enum":"runtime::if_let_e2e::Maybe","_variant":"Some","_payload":[42]}},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": [],
+        "output_json": {"_type":"runtime::if_let_e2e::InspectResponse","branch":"some","value":42}
+      }
+    },
+    {
+      "name": "none",
+      "input": {"_type":"runtime::if_let_e2e::InspectRequest","maybe":{"_enum":"runtime::if_let_e2e::Maybe","_variant":"None"}},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": [],
+        "output_json": {"_type":"runtime::if_let_e2e::InspectResponse","branch":"none","value":0}
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": [],
-    "capability_sequence": [],
-    "output_json": {"_type":"runtime::if_let_e2e::InspectResponse","branch":"some","value":42}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {

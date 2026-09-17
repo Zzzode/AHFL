@@ -3,7 +3,18 @@
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e2_capability::CapabilityAgent",
-  "input": {"_type":"wasm::e2_capability::InputFrame","value":"input"},
+  "scenarios": [
+    {
+      "name": "echo",
+      "input": {"_type":"wasm::e2_capability::InputFrame","value":"input"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": ["wasm::e2_capability::Echo"],
+        "output_json": {"_type":"wasm::e2_capability::OutputFrame","value":"echo"}
+      }
+    }
+  ],
   "capabilities": [
     {
       "name": "wasm::e2_capability::Echo",
@@ -11,12 +22,6 @@
       "result_json": {"_type":"wasm::e2_capability::OutputFrame","value":"echo"}
     }
   ],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": ["wasm::e2_capability::Echo"],
-    "output_json": {"_type":"wasm::e2_capability::OutputFrame","value":"echo"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {

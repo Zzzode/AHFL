@@ -3,7 +3,18 @@
   "source": "tests/golden/wasm/e3_capability_workflow.ahfl",
   "kind": "workflow",
   "entry": "wasm::e3_capability_workflow::CapabilityPipeline",
-  "input": {"_type":"wasm::e3_capability_workflow::Frame","value":"identity"},
+  "scenarios": [
+    {
+      "name": "pipeline",
+      "input": {"_type":"wasm::e3_capability_workflow::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": ["wasm::e3_capability_workflow::Echo"],
+        "output_json": {"_type":"wasm::e3_capability_workflow::Frame","value":"identity"}
+      }
+    }
+  ],
   "capabilities": [
     {
       "name": "wasm::e3_capability_workflow::Echo",
@@ -11,12 +22,6 @@
       "result_json": {"_type":"wasm::e3_capability_workflow::Frame","value":"identity"}
     }
   ],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": [],
-    "capability_sequence": ["wasm::e3_capability_workflow::Echo"],
-    "output_json": {"_type":"wasm::e3_capability_workflow::Frame","value":"identity"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {

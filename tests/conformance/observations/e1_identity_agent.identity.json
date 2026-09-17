@@ -1,0 +1,1 @@
+{"schema":"ahfl.evaluator-observation.v1","case":"tests/golden/wasm/e1_identity_agent.ahfl","scenario":"identity","status":"completed","state_sequence":[{"agent":"wasm::e1_identity::IdentityAgent","state":"Start"},{"agent":"wasm::e1_identity::IdentityAgent","state":"Done"}],"capability_sequence":[],"output_json":{"_type":"wasm::e1_identity::Frame","value":"identity"}}

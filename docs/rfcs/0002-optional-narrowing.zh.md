@@ -192,7 +192,7 @@ Adjacent suites verify the shared infrastructure:
 - `tests/unit/compiler/semantics/typed_hir.cpp`
 - `tests/unit/compiler/ir/opt_ir.cpp`
 - `tests/unit/runtime/evaluator/executor.cpp`
-- `tests/unit/runtime/engine/if_let_e2e.cpp`
+- `tests/conformance/cases/if_let_e2e.case.json`
 
 ## Rollout and Stabilization
 

@@ -429,6 +429,30 @@ target_compile_definitions(ahfl_conformance_case_tests
 )
 ahfl_apply_project_warnings(ahfl_conformance_case_tests)
 
+# KR6.7 (RFC 0026 P7): generic in-process evaluator conformance runner. Links
+# the actual tree-walking engine (ahfl_runtime_engine, which pulls the
+# compiler pipeline) and the engine-independent manifest parser, and drives
+# both over the checked-in case catalogue.
+add_executable(ahfl_conformance_evaluator_runner
+    conformance/evaluator_engine.cpp
+    integration/conformance_evaluator_runner.cpp
+)
+target_link_libraries(ahfl_conformance_evaluator_runner
+    PRIVATE
+        ahfl_runtime_engine
+        ahfl_base_json
+)
+target_include_directories(ahfl_conformance_evaluator_runner
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+target_compile_definitions(ahfl_conformance_evaluator_runner
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+ahfl_apply_project_warnings(ahfl_conformance_evaluator_runner)
+
 add_executable(ahfl_payload_store_tests
     unit/runtime/engine/payload_store.cpp
 )
@@ -437,33 +461,6 @@ target_link_libraries(ahfl_payload_store_tests
         ahfl_runtime_engine
 )
 ahfl_apply_project_warnings(ahfl_payload_store_tests)
-
-add_executable(ahfl_e2e_workflow_tests
-    unit/runtime/engine/e2e_workflow.cpp
-)
-target_link_libraries(ahfl_e2e_workflow_tests
-    PRIVATE
-        ahfl_runtime_engine
-)
-ahfl_apply_project_warnings(ahfl_e2e_workflow_tests)
-
-add_executable(ahfl_enum_variant_e2e_tests
-    unit/runtime/engine/enum_variant_e2e.cpp
-)
-target_link_libraries(ahfl_enum_variant_e2e_tests
-    PRIVATE
-        ahfl_runtime_engine
-)
-ahfl_apply_project_warnings(ahfl_enum_variant_e2e_tests)
-
-add_executable(ahfl_if_let_e2e_tests
-    unit/runtime/engine/if_let_e2e.cpp
-)
-target_link_libraries(ahfl_if_let_e2e_tests
-    PRIVATE
-        ahfl_runtime_engine
-)
-ahfl_apply_project_warnings(ahfl_if_let_e2e_tests)
 
 add_executable(ahfl_runtime_provider_llm_tests
     unit/runtime/providers/llm/llm_provider.cpp
@@ -1583,9 +1580,6 @@ foreach(_tgt
     ahfl_core_wasm_resume_host_tests
     ahfl_payload_store_codec_tests
     ahfl_payload_store_tests
-    ahfl_e2e_workflow_tests
-    ahfl_enum_variant_e2e_tests
-    ahfl_if_let_e2e_tests
     ahfl_runtime_provider_llm_tests
     ahfl_reference_workflow_recovery_worker
     ahfl_payload_store_worker

@@ -3,7 +3,36 @@
   "source": "tests/golden/runtime/e2e_multi_agent.ahfl",
   "kind": "workflow",
   "entry": "runtime::e2e_multi_agent::CustomerSupportWorkflow",
-  "input": {"_type":"runtime::e2e_multi_agent::SupportRequest","message":"My server is crashing","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"Low"},"user_id":"user_123"},
+  "scenarios": [
+    {
+      "name": "priority_low",
+      "input": {"_type":"runtime::e2e_multi_agent::SupportRequest","message":"My server is crashing","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"Low"},"user_id":"user_123"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": [
+          "runtime::e2e_multi_agent::ClassifyMessage",
+          "runtime::e2e_multi_agent::HandleGeneral",
+          "runtime::e2e_multi_agent::GenerateSummary"
+        ],
+        "output_json": {"_type":"runtime::e2e_multi_agent::SummaryResult","category":{"_enum":"runtime::e2e_multi_agent::Category","_variant":"Technical"},"resolved":true,"summary":"Case resolved successfully"}
+      }
+    },
+    {
+      "name": "priority_high",
+      "input": {"_type":"runtime::e2e_multi_agent::SupportRequest","message":"My server is crashing","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"High"},"user_id":"user_456"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": [
+          "runtime::e2e_multi_agent::ClassifyMessage",
+          "runtime::e2e_multi_agent::HandleTechnical",
+          "runtime::e2e_multi_agent::GenerateSummary"
+        ],
+        "output_json": {"_type":"runtime::e2e_multi_agent::SummaryResult","category":{"_enum":"runtime::e2e_multi_agent::Category","_variant":"Technical"},"resolved":true,"summary":"Case resolved successfully"}
+      }
+    }
+  ],
   "capabilities": [
     {
       "name": "runtime::e2e_multi_agent::ClassifyMessage",
@@ -16,21 +45,16 @@
       "result_json": {"_type":"runtime::e2e_multi_agent::SupportResult","resolved":true,"response":"Your issue has been resolved"}
     },
     {
+      "name": "runtime::e2e_multi_agent::HandleTechnical",
+      "status": "ok",
+      "result_json": {"_type":"runtime::e2e_multi_agent::SupportResult","resolved":true,"response":"Escalated to senior engineer"}
+    },
+    {
       "name": "runtime::e2e_multi_agent::GenerateSummary",
       "status": "ok",
       "result_json": {"_type":"runtime::e2e_multi_agent::SummaryResult","category":{"_enum":"runtime::e2e_multi_agent::Category","_variant":"Technical"},"resolved":true,"summary":"Case resolved successfully"}
     }
   ],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": [],
-    "capability_sequence": [
-      "runtime::e2e_multi_agent::ClassifyMessage",
-      "runtime::e2e_multi_agent::HandleGeneral",
-      "runtime::e2e_multi_agent::GenerateSummary"
-    ],
-    "output_json": {"_type":"runtime::e2e_multi_agent::SummaryResult","category":{"_enum":"runtime::e2e_multi_agent::Category","_variant":"Technical"},"resolved":true,"summary":"Case resolved successfully"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {

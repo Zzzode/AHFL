@@ -1,0 +1,1 @@
+{"schema":"ahfl.evaluator-observation.v1","case":"tests/golden/runtime/if_let_e2e.ahfl","scenario":"none","status":"completed","state_sequence":[{"agent":"runtime::if_let_e2e::InspectAgent","state":"Init"},{"agent":"runtime::if_let_e2e::InspectAgent","state":"Done"}],"capability_sequence":[],"output_json":{"_type":"runtime::if_let_e2e::InspectResponse","branch":"none","value":0}}

@@ -8,6 +8,11 @@
 // future KR6.6 computation wasm lane). This header deliberately depends on
 // neither: it only parses, validates, and canonicalizes manifest data.
 //
+// A case carries one or more *scenarios*: one source program plus a shared
+// mocked-capability table, exercised under different inputs with independently
+// blessed expectations (e.g. the Priority::Low and Priority::High paths of one
+// workflow). Every scenario is independently runnable by every engine adapter.
+//
 // Identity inside a manifest is *name-only*: canonical entry targets, state
 // names, node names, and canonical capability names. Numeric engine-internal
 // ids never appear in a case file (CLAUDE.md Principle 2).
@@ -97,6 +102,20 @@ struct CaseExpectations {
     std::optional<std::string> output_json;
 };
 
+/// One executable scenario inside a case: the case's program run under a
+/// distinct canonical input, with its own blessed expectations. A case always
+/// carries at least one scenario; multi-path programs (e.g. a low-priority and
+/// a high-priority route through the same workflow) carry one scenario per
+/// path.
+struct ConformanceScenario {
+    /// Stable name unique within the case (used in observation documents and
+    /// diagnostics); never numeric engine identity.
+    std::string name;
+    /// Canonical wire JSON fed to the run as input.
+    std::string input_json;
+    CaseExpectations expect{};
+};
+
 struct WasmEngineEligibility {
     WasmEligibility eligibility{WasmEligibility::None};
     /// Human-readable, structured skip/selection reason. Always required so the
@@ -119,10 +138,9 @@ struct ConformanceCase {
     CaseKind kind{CaseKind::Agent};
     /// Canonical entry target ("module::Agent" / "module::Workflow").
     std::string entry;
-    /// Canonical wire JSON fed to the run as input.
-    std::string input_json;
+    /// At least one scenario; names are unique within the case.
+    std::vector<ConformanceScenario> scenarios;
     std::vector<CapabilityExpectation> capabilities;
-    CaseExpectations expect{};
     EngineMatrix engines{};
 };
 
@@ -386,10 +404,10 @@ class ConformanceCaseReader {
         std::optional<std::string> source;
         std::optional<CaseKind> kind;
         std::optional<std::string> entry;
-        std::optional<std::string> input_json;
+        std::vector<ConformanceScenario> scenarios;
+        bool scenarios_present = false;
         std::vector<CapabilityExpectation> capabilities;
         bool capabilities_present = false;
-        std::optional<CaseExpectations> expect;
         std::optional<EngineMatrix> engines;
 
         for (const auto &[key, value] : root_.object_fields) {
@@ -401,13 +419,12 @@ class ConformanceCaseReader {
                 kind = parse_kind(*value);
             } else if (key == "entry") {
                 entry = require_string(*value, "entry");
-            } else if (key == "input") {
-                input_json = require_canonical_wire_json(*value, "input");
+            } else if (key == "scenarios") {
+                scenarios_present = true;
+                parse_scenarios(*value, scenarios);
             } else if (key == "capabilities") {
                 capabilities_present = true;
                 parse_capabilities(*value, capabilities);
-            } else if (key == "expect") {
-                expect = parse_expectations(*value);
             } else if (key == "engines") {
                 engines = parse_engines(*value);
             } else {
@@ -422,11 +439,12 @@ class ConformanceCaseReader {
         require_present(source, "source");
         require_present(kind, "kind");
         require_present(entry, "entry");
-        require_present(input_json, "input");
+        if (!scenarios_present) {
+            error("conformance case is missing required field 'scenarios'", std::nullopt);
+        }
         if (!capabilities_present) {
             error("conformance case is missing required field 'capabilities'", std::nullopt);
         }
-        require_present(expect, "expect");
         require_present(engines, "engines");
         if (diagnostics_.has_error()) {
             return std::nullopt;
@@ -443,10 +461,19 @@ class ConformanceCaseReader {
         if (entry->empty()) {
             error("conformance case field 'entry' must not be empty", field_range("entry"));
         }
-
-        validate_cross_field_semantics(*kind, capabilities, *expect);
+        if (scenarios_present && scenarios.empty()) {
+            error("conformance case field 'scenarios' must contain at least one scenario",
+                  field_range("scenarios"));
+        }
         if (diagnostics_.has_error()) {
             return std::nullopt;
+        }
+
+        for (const auto &scenario : scenarios) {
+            validate_cross_field_semantics(*kind, capabilities, scenario);
+            if (diagnostics_.has_error()) {
+                return std::nullopt;
+            }
         }
 
         return ConformanceCase{
@@ -454,9 +481,8 @@ class ConformanceCaseReader {
             .source = std::move(*source),
             .kind = *kind,
             .entry = std::move(*entry),
-            .input_json = std::move(*input_json),
+            .scenarios = std::move(scenarios),
             .capabilities = std::move(capabilities),
-            .expect = std::move(*expect),
             .engines = std::move(*engines),
         };
     }
@@ -595,6 +621,81 @@ class ConformanceCaseReader {
                 return;
             }
         }
+    }
+
+    void parse_scenarios(const json::JsonValue &array,
+                         std::vector<ConformanceScenario> &scenarios) {
+        if (!array.is_array()) {
+            error("conformance case field 'scenarios' must be an array", range_of(array));
+            return;
+        }
+
+        std::unordered_set<std::string> names;
+        for (const auto &item : array.array_items) {
+            auto scenario = parse_scenario(*item);
+            if (!scenario.has_value()) {
+                return;
+            }
+            if (!names.insert(scenario->name).second) {
+                error("conformance case field 'scenarios' lists scenario '" + scenario->name +
+                          "' more than once",
+                      range_of(*item));
+                return;
+            }
+            scenarios.push_back(std::move(*scenario));
+        }
+    }
+
+    [[nodiscard]] std::optional<ConformanceScenario>
+    parse_scenario(const json::JsonValue &object) {
+        if (!object.is_object()) {
+            error("conformance case field 'scenarios[]' must contain objects", range_of(object));
+            return std::nullopt;
+        }
+
+        std::optional<std::string> name;
+        std::optional<std::string> input_json;
+        std::optional<CaseExpectations> expect;
+
+        for (const auto &[key, value] : object.object_fields) {
+            if (key == "name") {
+                name = require_nonempty_string(*value, "scenarios[].name");
+            } else if (key == "input") {
+                input_json = require_canonical_wire_json(*value, "scenarios[].input");
+            } else if (key == "expect") {
+                expect = parse_expectations(*value);
+            } else {
+                error("unsupported conformance case field 'scenarios[]." + key + "'",
+                      range_of(*value));
+                return std::nullopt;
+            }
+            if (diagnostics_.has_error()) {
+                return std::nullopt;
+            }
+        }
+
+        if (!name.has_value()) {
+            error("conformance case scenario is missing required field 'name'", range_of(object));
+            return std::nullopt;
+        }
+        if (!input_json.has_value()) {
+            error("conformance case scenario '" + *name +
+                      "' is missing required field 'input'",
+                  range_of(object));
+            return std::nullopt;
+        }
+        if (!expect.has_value()) {
+            error("conformance case scenario '" + *name +
+                      "' is missing required field 'expect'",
+                  range_of(object));
+            return std::nullopt;
+        }
+
+        return ConformanceScenario{
+            .name = std::move(*name),
+            .input_json = std::move(*input_json),
+            .expect = std::move(*expect),
+        };
     }
 
     void parse_capabilities(const json::JsonValue &array,
@@ -910,20 +1011,20 @@ class ConformanceCaseReader {
 
     void validate_cross_field_semantics(CaseKind kind,
                                         const std::vector<CapabilityExpectation> &capabilities,
-                                        const CaseExpectations &expect) {
+                                        const ConformanceScenario &scenario) {
         // A flat state sequence is only meaningful for a single-agent case. A
         // workflow fans out across multiple agents, so a flat list would be
         // ambiguous; the exact workflow node-order observation is a separate
         // contract and must not be smuggled in here.
-        if (kind == CaseKind::Agent && expect.state_sequence.empty()) {
-            error("conformance case of kind 'agent' must declare a non-empty "
-                  "'expect.state_sequence'",
+        if (kind == CaseKind::Agent && scenario.expect.state_sequence.empty()) {
+            error("conformance case of kind 'agent' scenario '" + scenario.name +
+                      "' must declare a non-empty 'expect.state_sequence'",
                   field_range("kind"));
         }
-        if (kind == CaseKind::Workflow && !expect.state_sequence.empty()) {
-            error("conformance case of kind 'workflow' must leave "
-                  "'expect.state_sequence' empty; workflow node order is a "
-                  "separate observation contract",
+        if (kind == CaseKind::Workflow && !scenario.expect.state_sequence.empty()) {
+            error("conformance case of kind 'workflow' scenario '" + scenario.name +
+                      "' must leave 'expect.state_sequence' empty; workflow node "
+                      "order is a separate observation contract",
                   field_range("kind"));
         }
 
@@ -932,10 +1033,11 @@ class ConformanceCaseReader {
         for (const auto &capability : capabilities) {
             configured.insert(capability.name);
         }
-        for (const auto &invoked : expect.capability_sequence) {
+        for (const auto &invoked : scenario.expect.capability_sequence) {
             if (!configured.contains(invoked)) {
-                error("conformance case 'expect.capability_sequence' invokes capability '" +
-                          invoked + "' that has no entry in 'capabilities'",
+                error("conformance case scenario '" + scenario.name +
+                          "' 'expect.capability_sequence' invokes capability '" + invoked +
+                          "' that has no entry in 'capabilities'",
                       std::nullopt);
             }
         }

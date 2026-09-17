@@ -3,14 +3,19 @@
   "source": "tests/golden/runtime/enum_variant_e2e.ahfl",
   "kind": "workflow",
   "entry": "runtime::enum_variant_e2e::TicketWorkflow",
-  "input": {"_type":"runtime::enum_variant_e2e::TicketRequest","id":42},
+  "scenarios": [
+    {
+      "name": "struct_payload_default",
+      "input": {"_type":"runtime::enum_variant_e2e::TicketRequest","id":42},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": [],
+        "output_json": {"_type":"runtime::enum_variant_e2e::TicketResponse","id":42,"owner":"system"}
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": [],
-    "capability_sequence": [],
-    "output_json": {"_type":"runtime::enum_variant_e2e::TicketResponse","id":42,"owner":"system"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {

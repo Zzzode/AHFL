@@ -7,14 +7,15 @@
 //       one references an existing AHFL source (the 4 tests/golden/wasm and 3
 //       tests/golden/runtime fixtures);
 //   (b) loaded manifests round-trip the expected name-only contract: kind,
-//       entry, canonical wire input, capability outcomes, expectations, and
-//       wasm eligibility metadata;
+//       entry, named scenarios with canonical wire input + expectations,
+//       capability outcomes, and wasm eligibility metadata;
 //   (c) malformed manifests are rejected with precise diagnostics:
 //       missing entry, bad capability status enum, non-canonical
 //       expect.output_json, absent engines block, unknown field, plus
 //       format_version / kind / run_status / eligibility enum / pending+result
 //       / duplicate capability / unconfigured invoked capability / workflow
-//       state-sequence / source-path escapes;
+//       state-sequence / source-path escapes / duplicate or anonymous
+//       scenario / empty scenario list;
 //   (d) the canonicality gate distinguishes a compact correctly-ordered wire
 //       fragment from one carrying whitespace or a shuffled struct field.
 
@@ -72,7 +73,7 @@ struct ExpectedCase {
     CaseKind kind;
     std::string entry;
     std::size_t capability_count;
-    std::size_t capability_sequence_size;
+    std::size_t scenario_count;
     WasmEligibility wasm;
 };
 
@@ -84,7 +85,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Agent,
             "wasm::e1_identity::IdentityAgent",
             0,
-            0,
+            1,
             WasmEligibility::Orchestration,
         },
         {
@@ -102,7 +103,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Workflow,
             "wasm::e3_workflow::IdentityPipeline",
             0,
-            0,
+            1,
             WasmEligibility::Orchestration,
         },
         {
@@ -120,7 +121,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Workflow,
             "runtime::enum_variant_e2e::TicketWorkflow",
             0,
-            0,
+            1,
             WasmEligibility::Computation,
         },
         {
@@ -129,7 +130,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Workflow,
             "runtime::if_let_e2e::IfLetWorkflow",
             0,
-            0,
+            2,
             WasmEligibility::Computation,
         },
         {
@@ -137,8 +138,8 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "tests/golden/runtime/e2e_multi_agent.ahfl",
             CaseKind::Workflow,
             "runtime::e2e_multi_agent::CustomerSupportWorkflow",
-            3,
-            3,
+            4,
+            2,
             WasmEligibility::Computation,
         },
     };
@@ -204,22 +205,29 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
               "source matches: " + file_name);
         check(manifest.capabilities.size() == expectation->capability_count,
               "capability count: " + file_name);
-        check(manifest.expect.capability_sequence.size() == expectation->capability_sequence_size,
-              "capability sequence size: " + file_name);
+        check(manifest.scenarios.size() == expectation->scenario_count,
+              "scenario count: " + file_name);
         check(manifest.engines.evaluator, "evaluator enabled: " + file_name);
         check(manifest.engines.wasm.eligibility == expectation->wasm,
               "wasm eligibility: " + file_name);
         check(!manifest.engines.wasm.reason.empty(),
               "wasm skip reason present: " + file_name);
-        check(manifest.expect.run_status == ExpectedRunStatus::Completed,
-              "expected completed run: " + file_name);
 
-        if (manifest.kind == CaseKind::Agent) {
-            check(!manifest.expect.state_sequence.empty(),
-                  "agent carries state sequence: " + file_name);
-        } else {
-            check(manifest.expect.state_sequence.empty(),
-                  "workflow leaves state sequence empty: " + file_name);
+        for (const auto &scenario : manifest.scenarios) {
+            check(!scenario.name.empty(), "scenario carries a name: " + file_name);
+            check(!scenario.input_json.empty(),
+                  "scenario '" + scenario.name + "' carries canonical input: " + file_name);
+            check(scenario.expect.run_status == ExpectedRunStatus::Completed,
+                  "expected completed run: " + file_name + "/" + scenario.name);
+            if (manifest.kind == CaseKind::Agent) {
+                check(!scenario.expect.state_sequence.empty(),
+                      "agent scenario carries state sequence: " + file_name + "/" +
+                          scenario.name);
+            } else {
+                check(scenario.expect.state_sequence.empty(),
+                      "workflow scenario leaves state sequence empty: " + file_name + "/" +
+                          scenario.name);
+            }
         }
 
         check(result.conformance_case->source_path == (repo_root / expectation->source_suffix),
@@ -227,18 +235,34 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
     }
     check(loaded == discovered.size(), "all committed cases loaded");
 
-    // Spot-check the richest case field-by-field.
+    // Spot-check the richest case field-by-field: two routing scenarios over a
+    // shared four-capability mock table.
     const auto multi = load_conformance_case(cases_dir / "e2e_multi_agent.case.json", repo_root);
     check(!multi.has_errors(), "multi-agent case reloads");
     if (!multi.has_errors()) {
         const auto &m = multi.conformance_case->manifest;
+        check(m.scenarios.size() == 2, "multi-agent carries two routing scenarios");
+        check(m.scenarios[0].name == "priority_low", "first scenario is priority_low");
+        check(m.scenarios[1].name == "priority_high", "second scenario is priority_high");
         check(
-            m.input_json ==
+            m.scenarios[0].input_json ==
                 R"({"_type":"runtime::e2e_multi_agent::SupportRequest","message":"My server is crashing","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"Low"},"user_id":"user_123"})",
-            "multi-agent canonical input bytes preserved");
-        check(m.expect.output_json.has_value(), "multi-agent output present");
+            "low scenario canonical input bytes preserved");
         check(
-            *m.expect.output_json ==
+            m.scenarios[1].input_json ==
+                R"({"_type":"runtime::e2e_multi_agent::SupportRequest","message":"My server is crashing","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"High"},"user_id":"user_456"})",
+            "high scenario canonical input bytes preserved");
+        check(m.scenarios[0].expect.capability_sequence.size() == 3,
+              "low scenario invokes three capabilities");
+        check(m.scenarios[0].expect.capability_sequence[1] ==
+                    "runtime::e2e_multi_agent::HandleGeneral",
+              "low scenario routes through HandleGeneral");
+        check(m.scenarios[1].expect.capability_sequence[1] ==
+                    "runtime::e2e_multi_agent::HandleTechnical",
+              "high scenario routes through HandleTechnical");
+        check(m.scenarios[0].expect.output_json.has_value(), "low scenario output present");
+        check(
+            *m.scenarios[0].expect.output_json ==
                 R"({"_type":"runtime::e2e_multi_agent::SummaryResult","category":{"_enum":"runtime::e2e_multi_agent::Category","_variant":"Technical"},"resolved":true,"summary":"Case resolved successfully"})",
             "multi-agent canonical output bytes preserved");
         check(m.capabilities[0].status == CapabilityOutcomeStatus::Ok,
@@ -264,14 +288,19 @@ constexpr std::string_view kValidCase = R"({
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+  "scenarios": [
+    {
+      "name": "identity",
+      "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": [],
-    "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1 identity subset"}
@@ -289,6 +318,31 @@ void expect_rejected(std::string_view label,
           std::string{"diagnostic '"} + std::string{diagnostic_needle} +
               "' for: " + std::string{label});
 }
+
+// A minimal scenario object embedded in the inline rejection manifests.
+constexpr std::string_view kScenarioEcho = R"(
+    {
+      "name": "echo",
+      "input": {"_type":"wasm::e2_capability::InputFrame","value":"input"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": ["wasm::e2_capability::Echo"],
+        "output_json": {"_type":"wasm::e2_capability::OutputFrame","value":"echo"}
+      }
+    })";
+
+constexpr std::string_view kScenarioIdentity = R"(
+    {
+      "name": "identity",
+      "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
+      }
+    })";
 
 void test_malformed_manifests() {
     expect_rejected("malformed json", "{ not json", "valid JSON");
@@ -311,14 +365,9 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e2_capability::CapabilityAgent",
-  "input": {"_type":"wasm::e2_capability::InputFrame","value":"input"},
+  "scenarios": [)" + std::string{kScenarioEcho} + R"(
+  ],
   "capabilities": [{"name": "wasm::e2_capability::Echo", "status": "exploded"}],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": ["wasm::e2_capability::Echo"],
-    "output_json": {"_type":"wasm::e2_capability::OutputFrame","value":"echo"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E2"}
@@ -332,14 +381,19 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+  "scenarios": [
+    {
+      "name": "identity",
+      "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type": "wasm::e1_identity::Frame", "value": "identity"}
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": [],
-    "output_json": {"_type": "wasm::e1_identity::Frame", "value": "identity"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
@@ -353,14 +407,19 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+  "scenarios": [
+    {
+      "name": "identity",
+      "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"value":"identity","_type":"wasm::e1_identity::Frame"}
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": [],
-    "output_json": {"value":"identity","_type":"wasm::e1_identity::Frame"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
@@ -374,14 +433,9 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
-  "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": [],
-    "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
-  }
+  "scenarios": [)" + std::string{kScenarioIdentity} + R"(
+  ],
+  "capabilities": []
 })",
                     "missing required field 'engines'");
 
@@ -391,14 +445,9 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+  "scenarios": [)" + std::string{kScenarioIdentity} + R"(
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": [],
-    "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}
@@ -413,10 +462,15 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+  "scenarios": [
+    {
+      "name": "identity",
+      "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+      "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                 "capability_sequence": []}
+    }
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": []},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
@@ -428,10 +482,12 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "daemon",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": [],
+                "capability_sequence": []}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "state_sequence": [],
-             "capability_sequence": []},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
@@ -443,10 +499,12 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "wednesday", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "wednesday", "state_sequence": ["Start"],
-             "capability_sequence": []},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
@@ -458,10 +516,12 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": []},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "both", "reason": "r"}}
 })",
@@ -473,10 +533,12 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": []},
   "engines": {"evaluator": true, "wasm": {"eligible": "none"}}
 })",
                     "engines.wasm.reason' is required");
@@ -487,11 +549,13 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "suspended", "state_sequence": ["Start"],
+                "capability_sequence": ["wasm::e2_capability::Echo"]}}
+  ],
   "capabilities": [{"name": "wasm::e2_capability::Echo", "status": "pending",
                     "result_json": {"_type":"wasm::e2_capability::OutputFrame","value":"x"}}],
-  "expect": {"run_status": "suspended", "state_sequence": ["Start"],
-             "capability_sequence": ["wasm::e2_capability::Echo"]},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
@@ -503,10 +567,12 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": ["wasm::e2_capability::Echo"]}}
+  ],
   "capabilities": [{"name": "wasm::e2_capability::Echo", "status": "ok"}],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": ["wasm::e2_capability::Echo"]},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "orchestration", "reason": "r"}}
 })",
@@ -518,14 +584,16 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": ["wasm::e2_capability::Echo"]}}
+  ],
   "capabilities": [
     {"name": "wasm::e2_capability::Echo", "status": "ok",
      "result_json": {"_type":"wasm::e2_capability::OutputFrame","value":"x"}},
     {"name": "wasm::e2_capability::Echo", "status": "error"}
   ],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": ["wasm::e2_capability::Echo"]},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "orchestration", "reason": "r"}}
 })",
@@ -537,10 +605,12 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e2_capability_agent.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": ["wasm::e2_capability::Echo"]}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": ["wasm::e2_capability::Echo"]},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "orchestration", "reason": "r"}}
 })",
@@ -552,15 +622,17 @@ void test_malformed_manifests() {
   "source": "tests/golden/wasm/e3_identity_workflow.ahfl",
   "kind": "workflow",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed",
+                "state_sequence": ["first", "second"],
+                "capability_sequence": []}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed",
-             "state_sequence": ["first", "second"],
-             "capability_sequence": []},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "orchestration", "reason": "r"}}
 })",
-                    "kind 'workflow' must leave 'expect.state_sequence' empty");
+                    "must leave 'expect.state_sequence' empty");
 
     expect_rejected("source path escapes repository",
                     R"({
@@ -568,10 +640,12 @@ void test_malformed_manifests() {
   "source": "../secret.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": []},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
@@ -583,10 +657,12 @@ void test_malformed_manifests() {
   "source": "/etc/passwd.ahfl",
   "kind": "agent",
   "entry": "x",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": []},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "none", "reason": "r"}}
 })",
@@ -597,14 +673,121 @@ void test_malformed_manifests() {
   "format_version": "ahfl.conformance-case.v1",
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
-  "entry": "x",
-  "input": {},
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "scenarios": [
+    {
+      "name": "identity",
+      "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+      "expect": {"run_status": "completed", "capability_sequence": []}
+    }
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "capability_sequence": []},
-  "engines": {"evaluator": true,
-              "wasm": {"eligible": "none", "reason": "r"}}
+  "engines": {
+    "evaluator": true,
+    "wasm": {"eligible": "orchestration", "reason": "E1"}
+  }
 })",
                     "missing required field");
+
+    expect_rejected("scenarios block absent",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {"eligible": "orchestration", "reason": "E1"}
+  }
+})",
+                    "missing required field 'scenarios'");
+
+    expect_rejected("empty scenarios array",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "scenarios": [],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {"eligible": "orchestration", "reason": "E1"}
+  }
+})",
+                    "must contain at least one scenario");
+
+    expect_rejected("duplicate scenario name",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "scenarios": [
+    {"name": "same", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}},
+    {"name": "same", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Done"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "E1"}}
+})",
+                    "lists scenario 'same' more than once");
+
+    expect_rejected("anonymous scenario",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "scenarios": [
+    {"input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "E1"}}
+})",
+                    "scenario is missing required field 'name'");
+
+    expect_rejected("scenario missing input",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "scenarios": [
+    {"name": "s",
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "E1"}}
+})",
+                    "is missing required field 'input'");
+
+    expect_rejected("unknown scenario field",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "scenarios": [
+    {"name": "s", "input": {}, "bogus": 1,
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "E1"}}
+})",
+                    "unsupported conformance case field 'scenarios[].bogus'");
 }
 
 // ---------------------------------------------------------------------------
@@ -620,21 +803,26 @@ void test_canonicality_gate() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": { "_type": "wasm::e1_identity::Frame", "value": "identity" },
+  "scenarios": [
+    {
+      "name": "identity",
+      "input": { "_type": "wasm::e1_identity::Frame", "value": "identity" },
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": [],
-    "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
-  },
   "engines": {"evaluator": true,
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })";
     auto rejected = parse_conformance_case_json(noncanonical_input, "noncanonical-input");
     check(rejected.has_errors(), "whitespace inside input fragment rejected");
     check(diagnostics_contain(rejected.diagnostics,
-                              "field 'input' must be canonical compact wire JSON"),
+                              "field 'scenarios[].input' must be canonical compact wire JSON"),
           "input canonicality diagnostic names the field");
 }
 
@@ -648,13 +836,18 @@ void test_float_canonicality_gate() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": )"} + std::string{input_fragment} + R"(,
+  "scenarios": [
+    {
+      "name": "s",
+      "input": )"} + std::string{input_fragment} + R"(,
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": []
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": []
-  },
   "engines": {"evaluator": true,
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })";
@@ -690,13 +883,18 @@ void test_enum_empty_payload_gate() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": )"} + std::string{input_fragment} + R"(,
+  "scenarios": [
+    {
+      "name": "s",
+      "input": )"} + std::string{input_fragment} + R"(,
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": []
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": []
-  },
   "engines": {"evaluator": true,
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })";
@@ -728,10 +926,12 @@ void test_dangling_source_rejected(const std::filesystem::path &scratch_dir) {
   "source": "no_such_source.ahfl",
   "kind": "agent",
   "entry": "ghost::Agent",
-  "input": {},
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
   "capabilities": [],
-  "expect": {"run_status": "completed", "state_sequence": ["Start"],
-             "capability_sequence": []},
   "engines": {"evaluator": true,
               "wasm": {"eligible": "none", "reason": "host-only"}}
 })";
@@ -769,13 +969,18 @@ void test_capabilities_required() {
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": [],
-    "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
-  },
+  "scenarios": [
+    {
+      "name": "identity",
+      "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
+      }
+    }
+  ],
   "engines": {
     "evaluator": true,
     "wasm": {"eligible": "orchestration", "reason": "E1"}

@@ -3,14 +3,19 @@
   "source": "tests/golden/wasm/e1_identity_agent.ahfl",
   "kind": "agent",
   "entry": "wasm::e1_identity::IdentityAgent",
-  "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+  "scenarios": [
+    {
+      "name": "identity",
+      "input": {"_type":"wasm::e1_identity::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
+      }
+    }
+  ],
   "capabilities": [],
-  "expect": {
-    "run_status": "completed",
-    "state_sequence": ["Start", "Done"],
-    "capability_sequence": [],
-    "output_json": {"_type":"wasm::e1_identity::Frame","value":"identity"}
-  },
   "engines": {
     "evaluator": true,
     "wasm": {

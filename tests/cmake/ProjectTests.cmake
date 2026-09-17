@@ -1129,6 +1129,39 @@ add_test(NAME ahfl.conformance_case
             "${CMAKE_CURRENT_BINARY_DIR}/conformance-case"
 )
 
+# KR6.7 (RFC 0026 P7): the generic evaluator conformance runner. Observations
+# are blessed once and byte-compared; a separate lane runs every scenario
+# twice (determinism), and a mutation lane proves the byte gate detects a
+# tampered blessing.
+set(AHFL_CONFORMANCE_CASES_DIR "${AHFL_TESTS_DIR}/conformance/cases")
+set(AHFL_CONFORMANCE_OBSERVATIONS_DIR "${AHFL_TESTS_DIR}/conformance/observations")
+set(AHFL_CONFORMANCE_SCRATCH_DIR "${CMAKE_CURRENT_BINARY_DIR}/conformance-evaluator")
+
+add_test(NAME ahfl.conformance.evaluator
+    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
+            verify
+            "${PROJECT_SOURCE_DIR}"
+            "${AHFL_CONFORMANCE_CASES_DIR}"
+            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
+)
+
+add_test(NAME ahfl.conformance.evaluator_determinism
+    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
+            determinism
+            "${PROJECT_SOURCE_DIR}"
+            "${AHFL_CONFORMANCE_CASES_DIR}"
+)
+
+add_test(NAME ahfl.conformance.evaluator_mutation
+    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
+            mutation
+            "${PROJECT_SOURCE_DIR}"
+            "${AHFL_CONFORMANCE_CASES_DIR}"
+            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
+            "${AHFL_CONFORMANCE_SCRATCH_DIR}"
+            e1_identity_agent
+)
+
 add_test(NAME ahfl.runtime.payload_store
     COMMAND $<TARGET_FILE:ahfl_payload_store_tests>
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/payload-store"
@@ -1137,19 +1170,34 @@ add_test(NAME ahfl.runtime.payload_store
 # Btrfs); on any other platform or filesystem the test SKIPs (exit 77).
 set_tests_properties(ahfl.runtime.payload_store PROPERTIES SKIP_RETURN_CODE 77)
 
+# The three historical end-to-end identities are preserved, now manifest-
+# backed: each verifies its migrated case through the generic runner against
+# the same checked-in observation blessings.
 add_test(NAME ahfl.runtime.e2e_workflow
-    COMMAND $<TARGET_FILE:ahfl_e2e_workflow_tests>
-            "${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
+            verify
+            "${PROJECT_SOURCE_DIR}"
+            "${AHFL_CONFORMANCE_CASES_DIR}"
+            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
+            e2e_multi_agent
 )
 
 add_test(NAME ahfl.runtime.enum_variant_e2e
-    COMMAND $<TARGET_FILE:ahfl_enum_variant_e2e_tests>
-            "${AHFL_TESTS_DIR}/golden/runtime/enum_variant_e2e.ahfl"
+    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
+            verify
+            "${PROJECT_SOURCE_DIR}"
+            "${AHFL_CONFORMANCE_CASES_DIR}"
+            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
+            enum_variant_e2e
 )
 
 add_test(NAME ahfl.runtime.if_let_e2e
-    COMMAND $<TARGET_FILE:ahfl_if_let_e2e_tests>
-            "${AHFL_TESTS_DIR}/golden/runtime/if_let_e2e.ahfl"
+    COMMAND $<TARGET_FILE:ahfl_conformance_evaluator_runner>
+            verify
+            "${PROJECT_SOURCE_DIR}"
+            "${AHFL_CONFORMANCE_CASES_DIR}"
+            "${AHFL_CONFORMANCE_OBSERVATIONS_DIR}"
+            if_let_e2e
 )
 
 add_test(NAME ahfl.llm_provider.all
