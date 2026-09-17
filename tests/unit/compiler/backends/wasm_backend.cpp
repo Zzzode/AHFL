@@ -396,6 +396,16 @@ static bool has_codegen_code(const ahfl::backends::CoreWasmCodegenResult &result
     return false;
 }
 
+static bool has_codegen_message(const ahfl::backends::CoreWasmCodegenResult &result,
+                                std::string_view needle) {
+    for (const auto &diagnostic : result.diagnostics) {
+        if (diagnostic.message.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static std::optional<std::uint32_t> read_u32_leb(const std::vector<std::uint8_t> &bytes,
                                                 std::size_t &offset) {
     std::uint32_t value = 0;
@@ -1921,6 +1931,245 @@ int main() {
                   has_codegen_code(non_ancestor_result,
                                    backends::core_wasm_diag::kInvalidCore),
               "workflow non-ancestor output read remains a standalone Core rejection");
+    }
+
+    // Test 16 (RFC 0026 P6-0 / KR6.6): computation codegen scaffold.
+    //
+    // The scaffold introduces a fail-closed subset gate ("P6 computation
+    // handler" vs KR6.5 orchestration), a per-handler body builder with SSA
+    // local allocation, and compile-time-exhaustive Expr/Stmt visitors where
+    // every arm emits unreachable + diagnostic. It must accept NO new program:
+    // every verifier-clean computation-shaped non-final handler still fails with
+    // wasm.UNSUPPORTED_ORCHESTRATION and no artifact, while the canonical
+    // E1-E3 shapes remain byte-identical.
+    {
+        using namespace ahfl::ir::core;
+        namespace backends = ahfl::backends;
+
+        // The exact 382-byte E1 artifact blessed at the P6-0 landing. The
+        // scaffold is additive; any drift here means an existing emit path moved.
+        constexpr std::uint8_t kP60E1Snapshot[382] = {
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x1d, 0x05, 0x60,
+            0x00, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f,
+            0x00, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x02, 0x7f, 0x7f, 0x03,
+            0x7f, 0x7f, 0x7f, 0x03, 0x08, 0x07, 0x01, 0x02, 0x00, 0x00, 0x00, 0x03,
+            0x04, 0x05, 0x03, 0x01, 0x00, 0x01, 0x06, 0x1b, 0x05, 0x7f, 0x01, 0x41,
+            0x01, 0x0b, 0x7f, 0x01, 0x41, 0x00, 0x0b, 0x7f, 0x00, 0x41, 0x01, 0x0b,
+            0x7f, 0x01, 0x41, 0x80, 0x08, 0x0b, 0x7f, 0x01, 0x41, 0x00, 0x0b, 0x07,
+            0x66, 0x09, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00, 0x05,
+            0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x00, 0x00, 0x07, 0x64, 0x65, 0x61, 0x6c,
+            0x6c, 0x6f, 0x63, 0x00, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x05, 0x04,
+            0x72, 0x75, 0x6e, 0x32, 0x00, 0x06, 0x04, 0x73, 0x74, 0x65, 0x70, 0x00,
+            0x04, 0x0d, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x74,
+            0x61, 0x74, 0x65, 0x00, 0x02, 0x10, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x69,
+            0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x03, 0x01,
+            0x10, 0x61, 0x68, 0x66, 0x6c, 0x5f, 0x61, 0x62, 0x69, 0x5f, 0x76, 0x65,
+            0x72, 0x73, 0x69, 0x6f, 0x6e, 0x03, 0x02, 0x0a, 0xc0, 0x01, 0x07, 0x11,
+            0x01, 0x01, 0x7f, 0x23, 0x03, 0x21, 0x01, 0x23, 0x03, 0x20, 0x00, 0x6a,
+            0x24, 0x03, 0x20, 0x01, 0x0b, 0x03, 0x00, 0x01, 0x0b, 0x04, 0x00, 0x23,
+            0x00, 0x0b, 0x0a, 0x00, 0x41, 0x00, 0x23, 0x00, 0x41, 0x00, 0x46, 0x72,
+            0x0b, 0x24, 0x00, 0x23, 0x00, 0x41, 0x00, 0x46, 0x04, 0x7f, 0x41, 0x00,
+            0x05, 0x23, 0x00, 0x41, 0x01, 0x46, 0x04, 0x7f, 0x41, 0x00, 0x24, 0x00,
+            0x23, 0x01, 0x41, 0x01, 0x6a, 0x24, 0x01, 0x41, 0x00, 0x05, 0x00, 0x0b,
+            0x0b, 0x0b, 0x2f, 0x01, 0x01, 0x7f, 0x41, 0x01, 0x24, 0x00, 0x41, 0x00,
+            0x24, 0x01, 0x41, 0x03, 0x21, 0x02, 0x02, 0x40, 0x03, 0x40, 0x10, 0x03,
+            0x0d, 0x01, 0x20, 0x02, 0x45, 0x04, 0x40, 0x00, 0x0b, 0x20, 0x02, 0x41,
+            0x01, 0x6b, 0x21, 0x02, 0x10, 0x04, 0x1a, 0x0c, 0x00, 0x0b, 0x0b, 0x20,
+            0x00, 0x0b, 0x43, 0x01, 0x04, 0x7f, 0x23, 0x04, 0x04, 0x40, 0x00, 0x0b,
+            0x41, 0x01, 0x24, 0x00, 0x41, 0x00, 0x24, 0x01, 0x41, 0x03, 0x21, 0x05,
+            0x02, 0x40, 0x03, 0x40, 0x10, 0x03, 0x0d, 0x01, 0x20, 0x05, 0x45, 0x04,
+            0x40, 0x00, 0x0b, 0x20, 0x05, 0x41, 0x01, 0x6b, 0x21, 0x05, 0x10, 0x04,
+            0x1a, 0x0c, 0x00, 0x0b, 0x0b, 0x23, 0x00, 0x41, 0x00, 0x46, 0x04, 0x40,
+            0x41, 0x00, 0x20, 0x00, 0x20, 0x01, 0x0f, 0x0b, 0x00, 0x0b,
+        };
+
+        const auto e1_program = make_e1_core_program();
+        const auto e1_layout = compute_core_layouts(e1_program);
+        const auto e1_result = backends::emit_core_wasm(
+            e1_program, *e1_layout.table,
+            {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+        const std::vector<std::uint8_t> e1_snapshot(
+            std::begin(kP60E1Snapshot), std::end(kP60E1Snapshot));
+        check(e1_result.ok() && e1_result.artifact->bytes == e1_snapshot,
+              "P6-0 scaffold leaves the canonical E1 artifact byte-identical");
+
+        constexpr std::string_view kP6ScaffoldPrefix =
+            "RFC 0026 P6 computation codegen does not yet lower";
+        constexpr std::string_view kLegacyShapeMessage =
+            "non-final handler";
+
+        // Extend the E1 flow with a bounded Int value type (i32 scalar) and
+        // a Bool value type, plus literal expression arena entries. Every P6
+        // fixture below is a VERIFIER-CLEAN program: the Core program verifier and
+        // the P4-D layout table both accept it, so the codegen rejection is
+        // purely the P6 fail-closed gate, never kInvalidCore / kInvalidLayout.
+        auto make_p6_base = [&] {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtInt{
+                std::make_pair<std::int64_t, std::int64_t>(1, 1)}});
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"},
+                         std::nullopt,
+                         CoreValueTypeId{1}});
+            flow.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
+                         std::nullopt,
+                         CoreValueTypeId{2}});
+            flow.value_count = 3;
+            flow.value_types = {CoreValueTypeId{0},
+                               CoreValueTypeId{1},
+                               CoreValueTypeId{2}};
+            return program;
+        };
+
+        // Fixture A: non-final handler with CoreLetStmt(CoreLiteralExpr Int)
+        // followed by the canonical goto.
+        {
+            auto program = make_p6_base();
+            auto &start = program.flows[0].states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            check(verify_core_program(program).ok() &&
+                      compute_core_layouts(program).ok(),
+                  "P6 let-int fixture is verified Core with a finalized layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = backends::emit_core_wasm(
+                program, *layout.table,
+                {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(
+                          emitted, backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                      has_codegen_message(emitted, kP6ScaffoldPrefix) &&
+                      !has_codegen_message(emitted, kLegacyShapeMessage),
+                  "P6-0 fails closed on a CoreLetStmt(Int literal) computation handler");
+        }
+
+        // Fixture B: non-final handler with a structured CoreIfStmt whose
+        // branches both goto the (same) legal final state.
+        {
+            auto program = make_p6_base();
+            auto &start = program.flows[0].states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{2};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            check(verify_core_program(program).ok() &&
+                      compute_core_layouts(program).ok(),
+                  "P6 if fixture is verified Core with a finalized layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = backends::emit_core_wasm(
+                program, *layout.table,
+                {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(
+                          emitted, backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                      has_codegen_message(emitted, kP6ScaffoldPrefix) &&
+                      !has_codegen_message(emitted, kLegacyShapeMessage),
+                  "P6-0 fails closed on a CoreIfStmt computation handler");
+        }
+
+        // Fixture C: non-final handler with a statement CoreMatchStmt
+        // (wildcard arm + mandatory fallback, both goto). This is the fixture
+        // that forces the flow through the (relaxed) pattern-arena gate.
+        {
+            auto program = make_p6_base();
+            auto &flow = program.flows[0];
+            flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{2};
+            match.has_result = false;
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{0};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            check(verify_core_program(program).ok() &&
+                      compute_core_layouts(program).ok(),
+                  "P6 match fixture is verified Core with a finalized layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = backends::emit_core_wasm(
+                program, *layout.table,
+                {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(
+                          emitted, backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                      has_codegen_message(emitted, kP6ScaffoldPrefix) &&
+                      !has_codegen_message(emitted, kLegacyShapeMessage),
+                  "P6-0 fails closed on a CoreMatchStmt computation handler");
+        }
+
+        // A P6-shaped region that carries a capability EFFECT must NOT enter the
+        // computation lane: effects stay on the KR6.5 orchestration classification
+        // (kUnsupportedCapabilityFrame, never the P6 scaffold prefix).
+        {
+            auto program = make_e2_core_program();
+            auto &e2_flow = program.flows[0];
+            // A second unprojected input-path expr for the Start handler;
+            // verifier scopes are per-handler, so Done's v0 is not visible.
+            e2_flow.exprs.push_back(
+                CoreExpr{CorePathExpr{CorePathRoot::Input,
+                                    "input",
+                                    {},
+                                    CoreTypeId{0},
+                                    {},
+                                    true,
+                                    {},
+                                    false,
+                                    {}},
+                         std::nullopt,
+                         CoreValueTypeId{0}});
+            e2_flow.value_count = 4;
+            e2_flow.value_types = {CoreValueTypeId{0},
+                                   CoreValueTypeId{1},
+                                   CoreValueTypeId{1},
+                                   CoreValueTypeId{0}};
+            auto &start = e2_flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreCapabilityCallStmt{CoreValueId{2},
+                                            CoreCapabilityId{0},
+                                            "Echo",
+                                            {CoreValueId{3}}},
+                     std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            check(verify_core_program(program).ok(),
+                  "capability-in-non-final fixture is verified Core");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = backends::emit_core_wasm(
+                program, *layout.table,
+                {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(
+                          emitted,
+                          backends::core_wasm_diag::kUnsupportedCapabilityFrame) &&
+                      !has_codegen_message(emitted, kP6ScaffoldPrefix),
+                  "P6 gate classifies an effectful region as orchestration, not computation");
+        }
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

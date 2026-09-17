@@ -1,5 +1,6 @@
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
@@ -23,17 +24,35 @@ namespace {
 using ir::core::CoreAgentDecl;
 using ir::core::CoreAgentId;
 using ir::core::CoreAgentInstance;
+using ir::core::CoreBinaryExpr;
 using ir::core::CoreCapabilityCallStmt;
 using ir::core::CoreCapabilityId;
+using ir::core::CoreCoerceExpr;
+using ir::core::CoreConstructExpr;
+using ir::core::CoreExpr;
+using ir::core::CoreExprId;
 using ir::core::CoreFlowDecl;
+using ir::core::CoreFlowState;
 using ir::core::CoreGotoStmt;
+using ir::core::CoreIfStmt;
 using ir::core::CoreInstanceId;
 using ir::core::CoreLetStmt;
+using ir::core::CoreLiteralExpr;
+using ir::core::CoreMatchArm;
+using ir::core::CoreMatchStmt;
 using ir::core::CorePathExpr;
 using ir::core::CoreProgram;
+using ir::core::CoreQualifiedExpr;
+using ir::core::CoreRegion;
 using ir::core::CoreReturnStmt;
 using ir::core::CoreStateId;
+using ir::core::CoreStmt;
+using ir::core::CoreStoreStmt;
+using ir::core::CoreTrapStmt;
+using ir::core::CoreUnaryExpr;
+using ir::core::CoreUnsupportedExpr;
 using ir::core::CoreValueId;
+using ir::core::CoreValueRefExpr;
 using ir::core::CoreValueTypeId;
 using ir::core::CoreVtNominal;
 using ir::core::CoreWorkflowDecl;
@@ -115,12 +134,36 @@ constexpr std::uint8_t kOpI32Const = 0x41;
 constexpr std::uint8_t kOpI64Const = 0x42;
 constexpr std::uint8_t kOpI32Eqz = 0x45;
 constexpr std::uint8_t kOpI32Eq = 0x46;
+// RFC 0026 P6 (KR6.6): the scalar ladder opcode set. The P6-0 scaffold emits
+// unreachable from every expression/statement arm, so these are first
+// referenced by P6-1; [[maybe_unused]] keeps the exhaustive opcode table
+// present under clang's -Wunused-const-variable without per-reader guards.
+[[maybe_unused]] constexpr std::uint8_t kOpI32Ne = 0x47;
+[[maybe_unused]] constexpr std::uint8_t kOpI32LtS = 0x48;
 constexpr std::uint8_t kOpI32LtU = 0x49;
+[[maybe_unused]] constexpr std::uint8_t kOpI32LeS = 0x4a;
 constexpr std::uint8_t kOpI32GtU = 0x4b;
+[[maybe_unused]] constexpr std::uint8_t kOpI32GtS = 0x4c;
+[[maybe_unused]] constexpr std::uint8_t kOpI32GeS = 0x4d;
+[[maybe_unused]] constexpr std::uint8_t kOpI64Eqz = 0x50;
+[[maybe_unused]] constexpr std::uint8_t kOpI64Eq = 0x51;
+[[maybe_unused]] constexpr std::uint8_t kOpI64Ne = 0x52;
+[[maybe_unused]] constexpr std::uint8_t kOpI64LtS = 0x53;
+[[maybe_unused]] constexpr std::uint8_t kOpI64LeS = 0x54;
+[[maybe_unused]] constexpr std::uint8_t kOpI64GtS = 0x55;
+[[maybe_unused]] constexpr std::uint8_t kOpI64GeS = 0x56;
 constexpr std::uint8_t kOpI32Add = 0x6a;
 constexpr std::uint8_t kOpI32Sub = 0x6b;
 constexpr std::uint8_t kOpI32Mul = 0x6c;
+[[maybe_unused]] constexpr std::uint8_t kOpI32DivS = 0x6d;
+[[maybe_unused]] constexpr std::uint8_t kOpI32RemS = 0x6f;
+[[maybe_unused]] constexpr std::uint8_t kOpI32And = 0x71;
 constexpr std::uint8_t kOpI32Or = 0x72;
+[[maybe_unused]] constexpr std::uint8_t kOpI64Add = 0x7c;
+[[maybe_unused]] constexpr std::uint8_t kOpI64Sub = 0x7d;
+[[maybe_unused]] constexpr std::uint8_t kOpI64Mul = 0x7e;
+[[maybe_unused]] constexpr std::uint8_t kOpI64DivS = 0x7f;
+[[maybe_unused]] constexpr std::uint8_t kOpI64RemS = 0x81;
 
 constexpr std::uint32_t kGlobalCurrentState = 0;
 constexpr std::uint32_t kGlobalTransitionCount = 1;
@@ -310,6 +353,36 @@ void add_diag(CoreWasmCodegenResult &result,
             }
             if (match->fallback_region != nullptr &&
                 region_contains_capability(*match->fallback_region)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool region_contains_match(const ir::core::CoreRegion &region) {
+    for (const auto &statement : region.statements) {
+        if (std::holds_alternative<ir::core::CoreMatchStmt>(statement.node)) {
+            return true;
+        }
+        if (const auto *branch = std::get_if<ir::core::CoreIfStmt>(&statement.node)) {
+            if ((branch->then_region != nullptr &&
+                 region_contains_match(*branch->then_region)) ||
+                (branch->else_region != nullptr &&
+                 region_contains_match(*branch->else_region))) {
+                return true;
+            }
+        }
+        if (const auto *match = std::get_if<ir::core::CoreMatchStmt>(&statement.node)) {
+            for (const auto &arm : match->arms) {
+                if ((arm.guard_region != nullptr &&
+                     region_contains_match(*arm.guard_region)) ||
+                    (arm.body != nullptr && region_contains_match(*arm.body))) {
+                    return true;
+                }
+            }
+            if (match->fallback_region != nullptr &&
+                region_contains_match(*match->fallback_region)) {
                 return true;
             }
         }
@@ -532,6 +605,346 @@ validate_capability_final(const CoreProgram &program,
     return CapabilityAction{call->capability};
 }
 
+class ByteBuffer {
+  public:
+    void byte(std::uint8_t value) { bytes_.push_back(value); }
+    void raw(std::initializer_list<std::uint8_t> values) {
+        bytes_.insert(bytes_.end(), values.begin(), values.end());
+    }
+    void raw_span(std::span<const std::uint8_t> values) {
+        bytes_.insert(bytes_.end(), values.begin(), values.end());
+    }
+    void u32(std::uint32_t value) {
+        do {
+            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
+            value >>= 7u;
+            if (value != 0) {
+                next = static_cast<std::uint8_t>(next | 0x80u);
+            }
+            byte(next);
+        } while (value != 0);
+    }
+    void u64(std::uint64_t value) {
+        do {
+            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
+            value >>= 7u;
+            if (value != 0) {
+                next = static_cast<std::uint8_t>(next | 0x80u);
+            }
+            byte(next);
+        } while (value != 0);
+    }
+    void s32_nonnegative(std::uint32_t value) {
+        bool more = true;
+        while (more) {
+            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
+            value >>= 7u;
+            more = value != 0 || (next & 0x40u) != 0;
+            if (more) {
+                next = static_cast<std::uint8_t>(next | 0x80u);
+            }
+            byte(next);
+        }
+    }
+    // RFC 0026 P6 (KR6.6): signed LEB128 immediates for i32.const / i64.const.
+    // Logical-shift formulation of the canonical sign-extension termination
+    // rule: stop when the remaining bits are all zero with a clear sign bit, or
+    // all ones with a set sign bit.
+    void s32(std::int32_t signed_value) {
+        auto value = static_cast<std::uint32_t>(signed_value);
+        while (true) {
+            const auto next = static_cast<std::uint8_t>(value & 0x7fu);
+            value >>= 7u;
+            const bool sign_bit = (next & 0x40u) != 0;
+            if ((value == 0 && !sign_bit) ||
+                (value == 0x0fffffffu && sign_bit)) {
+                byte(next);
+                return;
+            }
+            byte(static_cast<std::uint8_t>(next | 0x80u));
+        }
+    }
+    void s64(std::int64_t signed_value) {
+        auto value = static_cast<std::uint64_t>(signed_value);
+        while (true) {
+            const auto next = static_cast<std::uint8_t>(value & 0x7fu);
+            value >>= 7u;
+            const bool sign_bit = (next & 0x40u) != 0;
+            if ((value == 0 && !sign_bit) ||
+                (value == 0x7fffffffffffffffull && sign_bit)) {
+                byte(next);
+                return;
+            }
+            byte(static_cast<std::uint8_t>(next | 0x80u));
+        }
+    }
+    [[nodiscard]] bool name(std::string_view value) {
+        if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
+            return false;
+        }
+        u32(static_cast<std::uint32_t>(value.size()));
+        bytes_.insert(bytes_.end(), value.begin(), value.end());
+        return true;
+    }
+    [[nodiscard]] bool sized(const ByteBuffer &payload) {
+        if (payload.bytes_.size() > std::numeric_limits<std::uint32_t>::max()) {
+            return false;
+        }
+        u32(static_cast<std::uint32_t>(payload.bytes_.size()));
+        bytes_.insert(bytes_.end(), payload.bytes_.begin(), payload.bytes_.end());
+        return true;
+    }
+    [[nodiscard]] std::vector<std::uint8_t> take() && { return std::move(bytes_); }
+
+  private:
+    std::vector<std::uint8_t> bytes_;
+};
+
+// RFC 0026 P6 (KR6.6) — computation codegen scaffold.
+//
+// The KR6.5 backend emits one ACTION per state (goto / identity / capability)
+// and validates those three canonical shapes. KR6.6 adds real per-handler
+// computation lowering (scalar expressions, SSA locals, structured control
+// flow). P6-0 introduces the infrastructure every later P6 slice hangs from,
+// WITHOUT accepting a single new program:
+//
+//   * `is_p6_computation_region` is the fail-closed subset gate that separates a
+//     P6 computation handler (ANF scalar lets, if/match structure, goto/trap
+//     terminators; NO capability effect) from the KR6.5 orchestration shapes.
+//   * `P6ComputationHandlerBuilder` is the per-handler body builder: its own
+//     ByteBuffer plus a CoreValueId -> wasm-local table (handler parameters
+//     bound first, then freshly allocated SSA locals). Expression and statement
+//     lowering are COMPILE-TIME-EXHAUSTIVE std::variant visitors over all nine
+//     CoreExprNode / CoreStmtNode arms — no catch-all, so a tenth IR node is a
+//     compile error here, not a silent miscompile.
+//
+// Every visitor arm emits unreachable and publishes a diagnostic in P6-0, so
+// try_build() always fails closed and no partial artifact is ever returned.
+// P6-1 replaces the scalar arms one at a time; until then the E1-E3 byte paths
+// are untouched.
+
+[[nodiscard]] bool is_p6_computation_region(const CoreRegion &region) {
+    for (const CoreStmt &statement : region.statements) {
+        const bool in_subset = std::visit(
+            Overloaded{
+                [](const CoreLetStmt &) { return true; },
+                [](const CoreGotoStmt &) { return true; },
+                [](const CoreTrapStmt &) { return true; },
+                [](const CoreIfStmt &s) {
+                    const bool then_ok =
+                        !s.then_region || is_p6_computation_region(*s.then_region);
+                    const bool else_ok =
+                        !s.else_region || is_p6_computation_region(*s.else_region);
+                    return then_ok && else_ok;
+                },
+                [](const CoreMatchStmt &s) {
+                    for (const CoreMatchArm &arm : s.arms) {
+                        if (arm.guard_region &&
+                            !is_p6_computation_region(*arm.guard_region)) {
+                            return false;
+                        }
+                        if (!arm.body || !is_p6_computation_region(*arm.body)) {
+                            return false;
+                        }
+                    }
+                    return s.fallback_region &&
+                           is_p6_computation_region(*s.fallback_region);
+                },
+                // Effects and non-P6 control flow stay on the KR6.5
+                // orchestration lane (capability / store / return / yield).
+                [](const CoreCapabilityCallStmt &) { return false; },
+                [](const CoreStoreStmt &) { return false; },
+                [](const CoreReturnStmt &) { return false; },
+                [](const CoreYieldStmt &) { return false; },
+            },
+            statement.node);
+        if (!in_subset) {
+            return false;
+        }
+    }
+    return true;
+}
+
+class P6ComputationHandlerBuilder {
+  public:
+    P6ComputationHandlerBuilder(const CoreFlowDecl &flow,
+                                const CoreFlowState &handler,
+                                std::string_view unsupported_code,
+                                CoreWasmCodegenResult &result)
+        : flow_(flow), handler_(handler), unsupported_code_(unsupported_code),
+          result_(result), locals_(flow.value_count, kNoLocal) {}
+
+    // Bind an incoming frame value to the next wasm-local index. Parameters
+    // always occupy the LOWEST indices, ahead of SSA temporaries allocated for
+    // CoreLetStmt results. P6-0 binds none (the computed-goto ABI arrives with
+    // P6-1); the ordering contract is fixed here.
+    [[nodiscard]] bool bind_parameter(CoreValueId value) {
+        if (value.value >= locals_.size() || locals_[value.value] != kNoLocal) {
+            return false;
+        }
+        locals_[value.value] = next_local_++;
+        return true;
+    }
+
+    // Walk the handler region through the exhaustive visitors. P6-0 lowers no
+    // arm, so the first node always fails closed; later slices make individual
+    // arms succeed and then hand the assembled ByteBuffer to the module
+    // encoder.
+    [[nodiscard]] bool try_build() {
+        return emit_region(handler_.body);
+    }
+
+  private:
+    static constexpr std::uint32_t kNoLocal =
+        std::numeric_limits<std::uint32_t>::max();
+
+    const CoreFlowDecl &flow_;
+    const CoreFlowState &handler_;
+    std::string_view unsupported_code_;
+    CoreWasmCodegenResult &result_;
+
+    ByteBuffer body_;
+    std::vector<std::uint32_t> locals_; // CoreValueId -> wasm local index
+    std::uint32_t next_local_{0};
+
+    [[nodiscard]] std::optional<std::uint32_t> local_of(CoreValueId value) const {
+        if (value.value >= locals_.size() || locals_[value.value] == kNoLocal) {
+            return std::nullopt;
+        }
+        return locals_[value.value];
+    }
+
+    // Allocate the next SSA local and register the CoreValueId mapping. This
+    // is an infallible registration (the table is sized to value_count), so it
+    // has no [[nodiscard]]; P6-1 additionally consumes the returned index for
+    // local.tee/set.
+    std::uint32_t allocate_local(CoreValueId value) {
+        const std::uint32_t index = next_local_++;
+        if (value.value < locals_.size()) {
+            locals_[value.value] = index;
+        }
+        return index;
+    }
+
+    // Emit an unreachable instruction into the (discarded) body buffer and
+    // publish one sourced, actionable diagnostic. The buffer never reaches the
+    // module while try_build() fails.
+    [[nodiscard]] bool reject(std::string_view node_kind,
+                              ir::SourceRangeOpt range) {
+        body_.byte(kOpUnreachable);
+        add_diag(result_,
+                 unsupported_code_,
+                 "RFC 0026 P6 computation codegen does not yet lower " +
+                     std::string(node_kind) + " in handler of state '" +
+                     handler_.state_name + "'",
+                 std::move(range));
+        return false;
+    }
+
+    [[nodiscard]] bool emit_region(const CoreRegion &region) {
+        for (const CoreStmt &statement : region.statements) {
+            if (!emit_statement(statement)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool emit_expr(const CoreExpr &expr) {
+        return std::visit(
+            Overloaded{
+                [&](const CoreLiteralExpr &) {
+                    return reject("CoreLiteralExpr", expr.source_range);
+                },
+                [&](const CoreValueRefExpr &) {
+                    return reject("CoreValueRefExpr", expr.source_range);
+                },
+                [&](const CorePathExpr &) {
+                    return reject("CorePathExpr", expr.source_range);
+                },
+                [&](const CoreQualifiedExpr &) {
+                    return reject("CoreQualifiedExpr", expr.source_range);
+                },
+                [&](const CoreUnaryExpr &) {
+                    return reject("CoreUnaryExpr", expr.source_range);
+                },
+                [&](const CoreBinaryExpr &) {
+                    return reject("CoreBinaryExpr", expr.source_range);
+                },
+                [&](const CoreConstructExpr &) {
+                    return reject("CoreConstructExpr", expr.source_range);
+                },
+                [&](const CoreCoerceExpr &) {
+                    return reject("CoreCoerceExpr", expr.source_range);
+                },
+                [&](const CoreUnsupportedExpr &) {
+                    return reject("CoreUnsupportedExpr", expr.source_range);
+                },
+            },
+            expr.node);
+    }
+
+    [[nodiscard]] bool emit_statement(const CoreStmt &statement) {
+        return std::visit(
+            Overloaded{
+                [&](const CoreLetStmt &s) {
+                    if (s.expr.value >= flow_.exprs.size() ||
+                        !emit_expr(flow_.exprs[s.expr.value])) {
+                        return false;
+                    }
+                    allocate_local(s.result);
+                    return true;
+                },
+                [&](const CoreCapabilityCallStmt &) {
+                    return reject("CoreCapabilityCallStmt",
+                                  statement.source_range);
+                },
+                [&](const CoreStoreStmt &) {
+                    return reject("CoreStoreStmt", statement.source_range);
+                },
+                [&](const CoreIfStmt &s) {
+                    if (local_of(s.condition) == std::nullopt) {
+                        return reject("CoreIfStmt", statement.source_range);
+                    }
+                    if (s.then_region && !emit_region(*s.then_region)) {
+                        return false;
+                    }
+                    if (s.else_region && !emit_region(*s.else_region)) {
+                        return false;
+                    }
+                    return reject("CoreIfStmt", statement.source_range);
+                },
+                [&](const CoreGotoStmt &) {
+                    return reject("CoreGotoStmt", statement.source_range);
+                },
+                [&](const CoreReturnStmt &) {
+                    return reject("CoreReturnStmt", statement.source_range);
+                },
+                [&](const CoreYieldStmt &) {
+                    return reject("CoreYieldStmt", statement.source_range);
+                },
+                [&](const CoreTrapStmt &) {
+                    return reject("CoreTrapStmt", statement.source_range);
+                },
+                [&](const CoreMatchStmt &s) {
+                    for (const CoreMatchArm &arm : s.arms) {
+                        if (arm.guard_region && !emit_region(*arm.guard_region)) {
+                            return false;
+                        }
+                        if (arm.body && !emit_region(*arm.body)) {
+                            return false;
+                        }
+                    }
+                    if (s.fallback_region && !emit_region(*s.fallback_region)) {
+                        return false;
+                    }
+                    return reject("CoreMatchStmt", statement.source_range);
+                },
+            },
+            statement.node);
+    }
+};
+
 [[nodiscard]] std::optional<AgentPlan>
 build_agent_plan(const CoreProgram &program,
                  const ir::core::CoreLayoutTable &layouts,
@@ -553,7 +966,21 @@ build_agent_plan(const CoreProgram &program,
                  "explicit Core agent entry does not have one unique target flow");
         return std::nullopt;
     }
-    if (!flow->patterns.empty() || !flow->coercion_plans.empty()) {
+    // RFC 0026 P6 (KR6.6): coercion plans stay on the KR6.5 reject path
+    // (scalar coercion lowering is not part of the P6 ladder). A non-empty
+    // PATTERN arena is admitted past this gate only when some handler is a pure
+    // P6 computation region actually containing a match — otherwise canonical
+    // E1-E3 shapes that merely carry leftover pattern artifacts keep the exact
+    // legacy rejection. The admitted flow still fails closed per-handler below,
+    // because P6-0 lowers no arm.
+    if (!flow->coercion_plans.empty() ||
+        (!flow->patterns.empty() &&
+         !std::any_of(flow->states.begin(),
+                      flow->states.end(),
+                      [](const ir::core::CoreFlowState &state) {
+                          return region_contains_match(state.body) &&
+                                 is_p6_computation_region(state.body);
+                      }))) {
         const bool contains_capability =
             std::any_of(flow->states.begin(),
                         flow->states.end(),
@@ -646,34 +1073,50 @@ build_agent_plan(const CoreProgram &program,
             continue;
         }
 
-        if (statements.size() != 1) {
+        // RFC 0026 P6 (KR6.6): the canonical KR6.5 non-final handler is a
+        // single bare CoreGotoStmt. Anything that is NOT that shape but IS a
+        // pure computation region (ANF scalar lets + structured if/match +
+        // goto/trap terminators, never a capability effect) enters the
+        // per-handler computation builder scaffold. P6-0 lowers no visitor arm,
+        // so the builder fails closed with the orchestration code and no
+        // artifact; P6-1 starts accepting scalar/computed-goto handlers. All
+        // effect-bearing or otherwise out-of-subset regions keep the exact
+        // legacy rejections below.
+        const bool single_goto =
+            statements.size() == 1 &&
+            std::holds_alternative<CoreGotoStmt>(statements.front().node);
+        if (!single_goto) {
+            if (!handler->body.statements.empty() &&
+                is_p6_computation_region(handler->body)) {
+                P6ComputationHandlerBuilder builder(
+                    *flow, *handler, policy.unsupported_code, result);
+                if (builder.try_build()) {
+                    add_diag(result,
+                             core_wasm_diag::kInternalInvalid,
+                             "P6 computation scaffold accepted a handler before any "
+                             "lowering arm landed");
+                }
+                return std::nullopt;
+            }
             const bool contains_capability = region_contains_capability(handler->body);
             add_diag(result,
                      contains_capability
                          ? (policy.allow_capability ? core_wasm_diag::kUnsupportedCapabilityFrame
                                                     : policy.unsupported_code)
                          : policy.unsupported_code,
-                     "KR6.5 " + std::string(policy.slice) +
-                         " requires a non-final handler to contain exactly one goto",
+                     statements.size() != 1
+                         ? "KR6.5 " + std::string(policy.slice) +
+                               " requires a non-final handler to contain exactly one goto"
+                         : "KR6.5 " + std::string(policy.slice) +
+                               " supports only CoreGotoStmt in a non-final handler",
                      statements.empty() ? ir::SourceRangeOpt{}
                                         : statements.front().source_range);
             return std::nullopt;
         }
-        const auto *go = std::get_if<CoreGotoStmt>(&statements.front().node);
-        if (go == nullptr) {
-            add_diag(result,
-                     region_contains_capability(handler->body)
-                         ? (policy.allow_capability ? core_wasm_diag::kUnsupportedCapabilityFrame
-                                                    : policy.unsupported_code)
-                         : policy.unsupported_code,
-                     "KR6.5 " + std::string(policy.slice) +
-                         " supports only CoreGotoStmt in a non-final handler",
-                     statements.front().source_range);
-            return std::nullopt;
-        }
+        const auto &go = std::get<CoreGotoStmt>(statements.front().node);
         const bool legal = std::any_of(
-            agent.transitions.begin(), agent.transitions.end(), [state, go](const auto &edge) {
-                return edge.from.value == state && edge.to == go->target;
+            agent.transitions.begin(), agent.transitions.end(), [state, &go](const auto &edge) {
+                return edge.from.value == state && edge.to == go.target;
             });
         if (!legal) {
             add_diag(result,
@@ -682,7 +1125,7 @@ build_agent_plan(const CoreProgram &program,
                      statements.front().source_range);
             return std::nullopt;
         }
-        plan.actions[state] = GotoAction{go->target};
+        plan.actions[state] = GotoAction{go.target};
     }
 
     if (std::any_of(used_exprs.begin(), used_exprs.end(), [](bool used) { return !used; }) ||
@@ -1190,69 +1633,6 @@ build_workflow_plan(const CoreProgram &program,
     }
     return plan;
 }
-
-class ByteBuffer {
-  public:
-    void byte(std::uint8_t value) { bytes_.push_back(value); }
-    void raw(std::initializer_list<std::uint8_t> values) {
-        bytes_.insert(bytes_.end(), values.begin(), values.end());
-    }
-    void raw_span(std::span<const std::uint8_t> values) {
-        bytes_.insert(bytes_.end(), values.begin(), values.end());
-    }
-    void u32(std::uint32_t value) {
-        do {
-            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            if (value != 0) {
-                next = static_cast<std::uint8_t>(next | 0x80u);
-            }
-            byte(next);
-        } while (value != 0);
-    }
-    void u64(std::uint64_t value) {
-        do {
-            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            if (value != 0) {
-                next = static_cast<std::uint8_t>(next | 0x80u);
-            }
-            byte(next);
-        } while (value != 0);
-    }
-    void s32_nonnegative(std::uint32_t value) {
-        bool more = true;
-        while (more) {
-            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            more = value != 0 || (next & 0x40u) != 0;
-            if (more) {
-                next = static_cast<std::uint8_t>(next | 0x80u);
-            }
-            byte(next);
-        }
-    }
-    [[nodiscard]] bool name(std::string_view value) {
-        if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
-            return false;
-        }
-        u32(static_cast<std::uint32_t>(value.size()));
-        bytes_.insert(bytes_.end(), value.begin(), value.end());
-        return true;
-    }
-    [[nodiscard]] bool sized(const ByteBuffer &payload) {
-        if (payload.bytes_.size() > std::numeric_limits<std::uint32_t>::max()) {
-            return false;
-        }
-        u32(static_cast<std::uint32_t>(payload.bytes_.size()));
-        bytes_.insert(bytes_.end(), payload.bytes_.begin(), payload.bytes_.end());
-        return true;
-    }
-    [[nodiscard]] std::vector<std::uint8_t> take() && { return std::move(bytes_); }
-
-  private:
-    std::vector<std::uint8_t> bytes_;
-};
 
 void append_const(ByteBuffer &body, std::uint32_t value) {
     body.byte(kOpI32Const);
@@ -2017,24 +2397,13 @@ void append_event_record_write(ByteBuffer &body,
                            node.has_capability ? node.capability.value : 0u);
     // [16..23]: source_symbol u64 (0 for identity). A capability source SymbolId
     // is a non-negative value bounded by the existing E2 host-ABI contract
-    // (build_agent_plan rejects SymbolId > UINT32_MAX), so it is always < 2^63 and
-    // its i64.const signed-LEB128 immediate never needs sign extension.
+    // (build_agent_plan rejects SymbolId > UINT32_MAX), so it is always < 2^63
+    // and the canonical ByteBuffer::s64 signed-LEB128 emitter needs no special
+    // sign extension here.
     if (node.has_capability) {
         append_const(body, record_addr + 16u);
         body.byte(kOpI64Const);
-        std::uint64_t value = node.source_symbol;
-        while (true) {
-            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            const bool more = value != 0 || (next & 0x40u) != 0;
-            if (more) {
-                next = static_cast<std::uint8_t>(next | 0x80u);
-            }
-            body.byte(next);
-            if (!more) {
-                break;
-            }
-        }
+        body.s64(static_cast<std::int64_t>(node.source_symbol));
         body.byte(kOpI64Store);
         body.u32(3u);
         body.u32(0u);
