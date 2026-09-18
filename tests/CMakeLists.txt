@@ -160,6 +160,38 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-2 (KR6.6): structured control flow. Every computed handler now
+    # compiles to its own `() -> i32` wasm FUNCTION whose body is a
+    # `block (result i32)` wrapping the lowered region; step() dispatches by
+    # CALL. The fixtures drive multi-way nested if/else cascades and else-less
+    # fall-through, so the emitted `br` label depth tracks real nesting. The Node
+    # host compiles each module (a wrong depth or an unbalanced if/else/end is a
+    # hard WebAssembly.compile rejection) and drives step() against the native
+    # state-id path.
+    add_test(NAME ahfl.wasm.p6_structured_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_cascade.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_cascade.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_structured_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "entered_ids=5,2,0 final_state_id=0 transition_count=2 initial_state_id=5"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_structured_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_structured_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_structured_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "structured-control-flow Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     add_test(NAME ahfl.wasm.e2_same_frontend_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"

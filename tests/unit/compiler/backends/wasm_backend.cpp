@@ -2002,15 +2002,17 @@ int main() {
               "workflow non-ancestor output read remains a standalone Core rejection");
     }
 
-    // Test 16 (RFC 0026 P6-0 / KR6.6): computation codegen scaffold.
+    // Test 16 (RFC 0026 P6-0..P6-2 / KR6.6): computation codegen.
     //
     // The scaffold introduces a fail-closed subset gate ("P6 computation
     // handler" vs KR6.5 orchestration), a per-handler body builder with SSA
-    // local allocation, and compile-time-exhaustive Expr/Stmt visitors where
-    // every arm emits unreachable + diagnostic. It must accept NO new program:
-    // every verifier-clean computation-shaped non-final handler still fails with
-    // wasm.UNSUPPORTED_ORCHESTRATION and no artifact, while the canonical
-    // E1-E3 shapes remain byte-identical.
+    // local allocation, and compile-time-exhaustive Expr/Stmt visitors. P6-1
+    // landed the scalar stack machine compiled inline in step(); P6-2 promotes
+    // each computed handler to its own `() -> i32` wasm FUNCTION and lowers
+    // structured `if` to block/if/else with goto = `br` to the handler block.
+    // Expression and statement kinds not yet landed still fail with
+    // wasm.UNSUPPORTED_ORCHESTRATION and no artifact, while the canonical E1-E3
+    // shapes remain byte-identical.
     {
         using namespace ahfl::ir::core;
         namespace backends = ahfl::backends;
@@ -2074,6 +2076,7 @@ int main() {
         constexpr std::uint8_t kOpI32LtS = 0x48;
         constexpr std::uint8_t kOpI32Add = 0x6a;
         constexpr std::uint8_t kOpI32DivS = 0x6d;
+        constexpr std::uint8_t kOpCall = 0x10;
         constexpr std::uint8_t kOpI64Const = 0x42;
         constexpr std::uint8_t kOpI64LtS = 0x53;
         constexpr std::uint8_t kOpI64Add = 0x7c;
@@ -2169,53 +2172,78 @@ int main() {
             return program;
         };
 
-        // P6-1 fixture A (i32): bounded-Int add + signed comparison drives a
-        // computed goto. The step body must contain i32.add and i32.lt_s and
-        // the module must emit successfully.
+        // P6-2: a scalar computation handler compiles to its OWN `() -> i32`
+        // wasm FUNCTION. The seven fixed ABI functions occupy indices 0..6
+        // (import_count == 0 here), so the first compiled handler is index 7;
+        // `step()` becomes a thin `call`-based dispatch ladder whose body no
+        // longer contains the arithmetic. `scalar_handler_body` is the single
+        // accessor every P6 assertion below reads.
+        constexpr std::uint32_t kFirstHandlerFunction = 7;
+        const auto scalar_handler_body = [](const std::vector<std::uint8_t> &bytes) {
+            return wasm_function_body(bytes, kFirstHandlerFunction);
+        };
+
+        // P6-2 fixture A (i32): bounded-Int add + signed comparison drives a
+        // computed goto. The compiled handler function must contain i32.add and
+        // i32.lt_s and the module must emit successfully.
         {
             auto program = make_computed_goto_program(false, CoreBinaryOp::Add);
             check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
-                  "P6-1 i32 computed-goto fixture is verified Core with a layout");
+                  "P6-2 i32 computed-goto fixture is verified Core with a layout");
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            const auto contains = [&](std::uint8_t op) {
+                return handler_body.has_value() &&
+                       std::find(handler_body->begin(), handler_body->end(), op) !=
+                           handler_body->end();
+            };
             const auto step_body =
                 emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
-            const auto contains = [&](std::uint8_t op) {
-                return step_body.has_value() &&
-                       std::find(step_body->begin(), step_body->end(), op) != step_body->end();
-            };
-            check(emitted.ok() && step_body.has_value() && contains(kOpI32Add) &&
+            check(emitted.ok() && handler_body.has_value() && contains(kOpI32Add) &&
                       contains(kOpI32LtS),
-                  "P6-1 lowers a bounded-Int add/lt computed-goto handler to i32 "
-                  "opcodes in step()");
-            check(!contains(kOpI64Const), "P6-1 i32 handler emits no i64.const");
+                  "P6-2 compiles a bounded-Int add/lt computed-goto handler to its own "
+                  "i32 function");
+            check(!contains(kOpI64Const), "P6-2 i32 handler emits no i64.const");
+            // step() dispatches by CALL, not by inlining the comparison. The
+            // bare-goto state still bumps transition_count with i32.add, so the
+            // discriminating opcode is the handler-only i32.lt_s.
+            check(step_body.has_value() &&
+                      std::find(step_body->begin(), step_body->end(), kOpI32LtS) ==
+                          step_body->end() &&
+                      std::find(step_body->begin(), step_body->end(), kOpCall) !=
+                          step_body->end(),
+                  "P6-2 step() dispatches to the handler function instead of inlining it");
         }
 
-        // P6-1 fixture A2 (i64): the same arithmetic over an UNBOUNDED Int
+        // P6-2 fixture A2 (i64): the same arithmetic over an UNBOUNDED Int
         // selects the i64 scalar ladder (i64.add / i64.lt_s, i64.const).
         {
             auto program = make_computed_goto_program(true, CoreBinaryOp::Add);
             check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
-                  "P6-1 i64 computed-goto fixture is verified Core with a layout");
+                  "P6-2 i64 computed-goto fixture is verified Core with a layout");
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
-            const auto step_body =
-                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
             const auto contains = [&](std::uint8_t op) {
-                return step_body.has_value() &&
-                       std::find(step_body->begin(), step_body->end(), op) != step_body->end();
+                return handler_body.has_value() &&
+                       std::find(handler_body->begin(), handler_body->end(), op) !=
+                           handler_body->end();
             };
-            check(emitted.ok() && step_body.has_value() && contains(kOpI64Add) &&
+            check(emitted.ok() && handler_body.has_value() && contains(kOpI64Add) &&
                       contains(kOpI64LtS) && contains(kOpI64Const),
-                  "P6-1 lowers an unbounded-Int add/lt computed-goto handler to "
+                  "P6-2 compiles an unbounded-Int add/lt computed-goto handler to "
                   "the i64 scalar ladder");
             // The integer comparison must NOT select the i32 signed opcode;
             // the condition Bool is still i32 but the arithmetic compare is i64.
-            check(std::find(step_body->begin(), step_body->end(), kOpI32LtS) == step_body->end(),
-                  "P6-1 i64 integer comparison selects no i32.lt_s opcode");
+            check(std::find(handler_body->begin(), handler_body->end(), kOpI32LtS) ==
+                      handler_body->end(),
+                  "P6-2 i64 integer comparison selects no i32.lt_s opcode");
         }
 
-        // P6-1 fixture B: a signed division lowers to i32.div_s; a literal
+        // P6-2 fixture B: a signed division lowers to i32.div_s; a literal
         // zero divisor is NOT statically rejected (wasm traps at runtime).
         {
             auto program = make_computed_goto_program(false, CoreBinaryOp::Div);
@@ -2223,19 +2251,19 @@ int main() {
             program.flows[0].exprs[2] = CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt, CoreValueTypeId{1}};
             check(verify_core_program(program).ok(),
-                  "P6-1 literal-divide-by-zero is a verifier-clean (runtime trap) "
+                  "P6-2 literal-divide-by-zero is a verifier-clean (runtime trap) "
                   "program");
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
-            const auto step_body =
-                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
-            check(emitted.ok() && step_body.has_value() &&
-                      std::find(step_body->begin(), step_body->end(), kOpI32DivS) !=
-                          step_body->end(),
-                  "P6-1 division-by-zero body contains i32.div_s (runtime trap)");
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            check(emitted.ok() && handler_body.has_value() &&
+                      std::find(handler_body->begin(), handler_body->end(), kOpI32DivS) !=
+                          handler_body->end(),
+                  "P6-2 division-by-zero handler contains i32.div_s (runtime trap)");
         }
 
-        // P6-1 fixture C: logical Not lowers to i32.eqz on a Bool value.
+        // P6-2 fixture C: logical Not lowers to i32.eqz on a Bool value.
         {
             auto program = make_e1_core_program();
             program.value_types.push_back(CoreValueType{CoreVtBool{}}); // vt1
@@ -2278,17 +2306,17 @@ int main() {
             flow.states.push_back(std::move(high));
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
-            const auto step_body =
-                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
-            check(emitted.ok() && step_body.has_value() &&
-                      std::find(step_body->begin(), step_body->end(), kOpI32Eqz) !=
-                          step_body->end() &&
-                      std::find(step_body->begin(), step_body->end(), kOpI32Const) !=
-                          step_body->end(),
-                  "P6-1 lowers Bool Not to i32.eqz with an i32.const literal");
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            check(emitted.ok() && handler_body.has_value() &&
+                      std::find(handler_body->begin(), handler_body->end(), kOpI32Eqz) !=
+                          handler_body->end() &&
+                      std::find(handler_body->begin(), handler_body->end(), kOpI32Const) !=
+                          handler_body->end(),
+                  "P6-2 compiles Bool Not to i32.eqz with an i32.const literal");
         }
 
-        // P6-1 fail-closed: an integer literal that overflows the bounded
+        // P6-2 fail-closed: an integer literal that overflows the bounded
         // i32 scalar range must fail closed (never silently truncate).
         {
             auto program = make_computed_goto_program(false, CoreBinaryOp::Add);
@@ -2301,10 +2329,10 @@ int main() {
             check(
                 !emitted.artifact.has_value() &&
                     has_codegen_code(emitted, backends::core_wasm_diag::kUnsupportedOrchestration),
-                "P6-1 fails closed on an integer literal exceeding the i32 range");
+                "P6-2 fails closed on an integer literal exceeding the i32 range");
         }
 
-        // P6-1 fail-closed: a computed-goto branch whose target is NOT in the
+        // P6-2 fail-closed: a computed-goto branch whose target is NOT in the
         // agent's declared transition table is kInvalidCore (never silently
         // accepted). The then branch legally targets High(2); the else branch
         // illegally targets Done(0) which is NOT declared from Start(1).
@@ -2326,10 +2354,10 @@ int main() {
             const auto emitted = emit_agent(program, *layout.table);
             check(!emitted.artifact.has_value() &&
                       has_codegen_code(emitted, backends::core_wasm_diag::kInvalidCore),
-                  "P6-1 rejects a computed goto outside the legal transition table");
+                  "P6-2 rejects a computed goto outside the legal transition table");
         }
 
-        // P6-1 fail-closed: a CoreMatchStmt inside a computation region is a
+        // P6-2 fail-closed: a CoreMatchStmt inside a computation region is a
         // later P6 slice, so it still rejects with the scalar codegen prefix
         // and produces no artifact.
         {
@@ -2359,7 +2387,7 @@ int main() {
                 CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
             start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
             check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
-                  "P6-1 match fixture is verified Core with a finalized layout");
+                  "P6-2 match fixture is verified Core with a finalized layout");
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
             check(!emitted.artifact.has_value() &&
@@ -2368,11 +2396,11 @@ int main() {
                       has_codegen_message(emitted, "match lowering is a later P6 slice") &&
                       has_codegen_message(emitted, kP6ScaffoldPrefix) &&
                       !has_codegen_message(emitted, kLegacyShapeMessage),
-                  "P6-1 CoreMatchStmt arm itself rejects (node-specific message), not a "
+                  "P6-2 CoreMatchStmt arm itself rejects (node-specific message), not a "
                   "leading literal arm");
         }
 
-        // P6-1 opcode-pinning regression: the signed comparison ladder must
+        // P6-2 opcode-pinning regression: the signed comparison ladder must
         // emit the exact wasm byte for Le/Gt/Ge at the operand's P4-D scalar
         // repr. The operands straddle zero (lhs = -1 via 0 - 1, rhs = 0), so
         // a swapped-direction or unsigned opcode miscompiles half the input
@@ -2477,16 +2505,17 @@ int main() {
         for (const auto &tc : compare_cases) {
             auto program = make_compare_program(false, tc.op);
             check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
-                  "P6-1 i32 signed-compare fixture is verified Core with a layout");
+                  "P6-2 i32 signed-compare fixture is verified Core with a layout");
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
-            const auto step_body =
-                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
             const auto has = [&](std::uint8_t b) {
-                return step_body.has_value() &&
-                       std::find(step_body->begin(), step_body->end(), b) != step_body->end();
+                return handler_body.has_value() &&
+                       std::find(handler_body->begin(), handler_body->end(), b) !=
+                           handler_body->end();
             };
-            check(emitted.ok() && step_body.has_value() && has(tc.correct) &&
+            check(emitted.ok() && handler_body.has_value() && has(tc.correct) &&
                       (!tc.previous_wrong.has_value() || !has(*tc.previous_wrong)),
                   tc.label);
         }
@@ -2499,18 +2528,218 @@ int main() {
         for (const auto &tc : compare_wide_cases) {
             auto program = make_compare_program(true, tc.op);
             check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
-                  "P6-1 i64 signed-compare fixture is verified Core with a layout");
+                  "P6-2 i64 signed-compare fixture is verified Core with a layout");
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
-            const auto step_body =
-                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
             const auto has = [&](std::uint8_t b) {
-                return step_body.has_value() &&
-                       std::find(step_body->begin(), step_body->end(), b) != step_body->end();
+                return handler_body.has_value() &&
+                       std::find(handler_body->begin(), handler_body->end(), b) !=
+                           handler_body->end();
             };
-            check(emitted.ok() && step_body.has_value() && has(tc.correct) &&
+            check(emitted.ok() && handler_body.has_value() && has(tc.correct) &&
                       (!tc.previous_wrong.has_value() || !has(*tc.previous_wrong)),
                   tc.label);
+        }
+
+        // P6-2 structured control flow: a handler compiles to a real wasm
+        // function whose body is `block (result i32)` + structurally balanced
+        // if/else/end. These assertions pin the byte grammar (label balance and
+        // the `br` depth a nested goto must use), which a mis-emitted nesting or
+        // a `br 0` that lands on an inner `if` would break — the exact failure a
+        // wasm validator reports as a type mismatch or an invalid label.
+        constexpr std::uint8_t kOpBlock = 0x02;
+        constexpr std::uint8_t kOpIf = 0x04;
+        constexpr std::uint8_t kOpElse = 0x05;
+        constexpr std::uint8_t kOpEnd = 0x0b;
+        constexpr std::uint8_t kOpBr = 0x0c;
+        constexpr std::uint8_t kBlockResultI32 = 0x7f;
+        constexpr std::uint8_t kOpUnreachable = 0x00;
+
+        // `label_depths` counts, for each emitted `br`, how many enclosing
+        // labels (function + block + if) it must skip. Walks the nesting with a
+        // simple depth counter: `block`/`if` are entries, `end` is an exit, the
+        // function-level `end` terminates the walk.
+        const auto structure = [](const std::vector<std::uint8_t> &body) {
+            struct Summary {
+                std::uint32_t blocks{0};
+                std::uint32_t ifs{0};
+                std::uint32_t elses{0};
+                std::uint32_t ends{0};
+                std::vector<std::uint32_t> br_depths;
+                std::uint32_t max_depth{0};
+                bool saw_result_i32_block{false};
+            } out;
+            // Skip the local declarations (count + (count,type) pairs).
+            std::size_t offset = 0;
+            const auto read_leb = [&](std::size_t &at) {
+                std::uint32_t value = 0;
+                std::uint32_t shift = 0;
+                while (at < body.size()) {
+                    const auto b = body[at++];
+                    value |= static_cast<std::uint32_t>(b & 0x7fu) << shift;
+                    if ((b & 0x80u) == 0) {
+                        break;
+                    }
+                    shift += 7;
+                }
+                return value;
+            };
+            const auto groups = read_leb(offset);
+            for (std::uint32_t g = 0; g < groups; ++g) {
+                (void)read_leb(offset); // group size
+                ++offset;                // value type
+            }
+            std::uint32_t depth = 0; // 1 = inside the function body block
+            ++depth;
+            while (offset < body.size()) {
+                const auto op = body[offset++];
+                if (op == kOpBlock) {
+                    ++out.blocks;
+                    if (offset < body.size() && body[offset] == kBlockResultI32) {
+                        out.saw_result_i32_block = true;
+                    }
+                    ++offset; // blocktype
+                    ++depth;
+                } else if (op == kOpIf) {
+                    ++out.ifs;
+                    ++offset; // blocktype
+                    ++depth;
+                } else if (op == kOpElse) {
+                    ++out.elses;
+                } else if (op == kOpEnd) {
+                    ++out.ends;
+                    --depth;
+                    if (depth == 0) {
+                        break; // function-level end
+                    }
+                } else if (op == kOpBr) {
+                    out.br_depths.push_back(read_leb(offset));
+                } else if (op == kOpUnreachable) {
+                    // no immediate
+                } else if (op == 0x41) { // i32.const
+                    (void)read_leb(offset);
+                } else if (op == 0x21 || op == 0x20) { // local.set / local.get
+                    (void)read_leb(offset);
+                } else if (op == 0x24 || op == 0x23) { // global.set / global.get
+                    (void)read_leb(offset);
+                } else if (op == kOpCall) {
+                    (void)read_leb(offset);
+                }
+                out.max_depth = std::max(out.max_depth, depth);
+            }
+            return out;
+        };
+
+        // Else-less nested if: Decide -> if (x>10) { if (x>5) goto High } goto Low.
+        // The inner goto is two `if`s deep, so its `br` must skip BOTH labels and
+        // land on the result-i32 block (depth 2).
+        {
+            auto program = make_computed_goto_program(false, CoreBinaryOp::Add);
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start", "High", "Low"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{1}, CoreStateId{3}},
+                                 {CoreStateId{2}, CoreStateId{0}},
+                                 {CoreStateId{3}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            auto &start = flow.states[1].body;
+            // Reuse the planned condition (v2); wrap the outer if around an inner
+            // else-less if whose branch gotos High, with a Low fallthrough after.
+            auto inner = std::make_unique<CoreRegion>();
+            inner->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            auto then_region = std::make_unique<CoreRegion>();
+            CoreIfStmt inner_if;
+            inner_if.condition = CoreValueId{2};
+            inner_if.then_region = std::move(inner);
+            then_region->statements.push_back(CoreStmt{std::move(inner_if), std::nullopt});
+            CoreIfStmt outer_if;
+            outer_if.condition = CoreValueId{2};
+            outer_if.then_region = std::move(then_region);
+            // Replace the original two-arm branch with outer_if + trailing goto.
+            start.statements.pop_back();
+            start.statements.push_back(CoreStmt{std::move(outer_if), std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{3}, "Low"}, std::nullopt});
+            CoreFlowState low;
+            low.state = CoreStateId{3};
+            low.state_name = "Low";
+            low.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(low));
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-2 nested else-less fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            check(emitted.ok() && handler_body.has_value(),
+                  "P6-2 nested else-less handler compiles to a real function");
+            if (handler_body.has_value()) {
+                const auto s = structure(*handler_body);
+                check(s.saw_result_i32_block && s.blocks == 1,
+                      "P6-2 handler opens exactly one result-i32 block");
+                check(s.ifs == 2 && s.elses == 0 && s.ends == s.blocks + s.ifs + 1,
+                      "P6-2 nested else-less if emits balanced if/end with no else");
+                // Two gotos: inner (2 ifs deep -> br 2) and the trailing outer
+                // fallthrough (0 ifs deep -> br 0).
+                check(s.br_depths.size() == 2 &&
+                          std::find(s.br_depths.begin(), s.br_depths.end(), 2u) !=
+                              s.br_depths.end() &&
+                          std::find(s.br_depths.begin(), s.br_depths.end(), 0u) !=
+                              s.br_depths.end(),
+                      "P6-2 nested goto branches to the handler block at the correct depth");
+            }
+        }
+
+        // If/else so both arms diverge: the else must be emitted and a goto in
+        // the else branch is only one `if` deep (br 1).
+        {
+            auto program = make_computed_goto_program(false, CoreBinaryOp::Add);
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            check(emitted.ok() && handler_body.has_value(),
+                  "P6-2 if/else handler compiles to a real function");
+            if (handler_body.has_value()) {
+                const auto s = structure(*handler_body);
+                check(s.blocks == 1 && s.ifs == 1 && s.elses == 1 &&
+                          s.ends == s.blocks + s.ifs + 1,
+                      "P6-2 if/else emits one balanced if/else/end");
+                check(!s.br_depths.empty() &&
+                          std::all_of(s.br_depths.begin(),
+                                      s.br_depths.end(),
+                                      [](std::uint32_t d) { return d == 1; }),
+                      "P6-2 both if/else arms branch to the handler block at depth 1");
+            }
+        }
+
+        // A trap-only handler (no goto) compiles to `block (result i32)` +
+        // unreachable + end, and must not claim any target states.
+        {
+            auto program = make_e1_core_program();
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start"};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-2 trap-only fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            check(emitted.ok() && handler_body.has_value() &&
+                      std::find(handler_body->begin(), handler_body->end(), kOpUnreachable) !=
+                          handler_body->end(),
+                  "P6-2 trap-only handler compiles to a trapping function");
         }
 
         // A P6-shaped region that carries a capability EFFECT must NOT enter the

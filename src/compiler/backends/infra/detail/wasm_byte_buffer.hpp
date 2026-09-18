@@ -101,14 +101,19 @@ class ByteBuffer {
         bytes_.insert(bytes_.end(), value.begin(), value.end());
         return true;
     }
-    [[nodiscard]] bool sized(const ByteBuffer &payload) {
-        if (payload.bytes_.size() > std::numeric_limits<std::uint32_t>::max()) {
+    [[nodiscard]] std::span<const std::uint8_t> span() const noexcept { return bytes_; }
+    // Length-prefixed raw payload. The span overload is the ONE framing encoder;
+    // the ByteBuffer overload delegates, so a caller holding pre-encoded bytes
+    // (or a borrowed buffer) never re-derives the LEB framing by hand.
+    [[nodiscard]] bool sized(std::span<const std::uint8_t> payload) {
+        if (payload.size() > std::numeric_limits<std::uint32_t>::max()) {
             return false;
         }
-        u32(static_cast<std::uint32_t>(payload.bytes_.size()));
-        bytes_.insert(bytes_.end(), payload.bytes_.begin(), payload.bytes_.end());
+        u32(static_cast<std::uint32_t>(payload.size()));
+        bytes_.insert(bytes_.end(), payload.begin(), payload.end());
         return true;
     }
+    [[nodiscard]] bool sized(const ByteBuffer &payload) { return sized(payload.span()); }
     [[nodiscard]] std::vector<std::uint8_t> take() && {
         return std::move(bytes_);
     }

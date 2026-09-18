@@ -473,4 +473,10 @@ FOUNDATION; the rest remain), each separately reviewed:
    Only after these are green is KR6.5/P5 complete.
 4. **KR6.6/P6** then lowers expressions, arithmetic, structured `if`/`match`,
    ADT construction/projection, coercion physical effects, and closures. Every
-   construct not yet landed continues to fail closed.
+   construct not yet landed continues to fail closed. P6-1 landed the scalar
+   stack machine (Literal/ValueRef/Unary/Binary + computed goto) compiled inline
+   in step(); P6-2 promotes each computed handler to its own `() -> i32` wasm
+   function and lowers structured `if` to wasm block/if/else, where a goto is a
+   `br` to the handler's `block (result i32)` label (label depth = enclosing
+   statement-if nesting). Pattern/`match` lowering (P6-3), aggregate memory
+   (P6-4), and coercion physical effects (P6-6) remain.

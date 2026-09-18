@@ -1,0 +1,45 @@
+module wasm::p6_elseless_taken;
+
+// RFC 0026 P6-2 (KR6.6) companion: x=250 makes BOTH guards true so the inner
+// then-branch goto High actually fires from two ifs deep (br 2).
+pub struct Frame {
+    value: String;
+}
+
+pub agent ElselessTakenAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for ElselessTakenAgent {
+    state Decide {
+        let x = 250;
+        if (x > 100) {
+            if (x > 200) {
+                goto High;
+            }
+        }
+        goto Low;
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

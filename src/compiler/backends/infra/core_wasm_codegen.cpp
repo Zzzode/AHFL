@@ -198,6 +198,10 @@ constexpr std::uint32_t kDefinedIsFinal = 3;
 constexpr std::uint32_t kDefinedStep = 4;
 constexpr std::uint32_t kDefinedRun = 5;
 constexpr std::uint32_t kDefinedRun2 = 6;
+// RFC 0026 P6-2 (KR6.6): compiled per-state handler FUNCTIONS follow the seven
+// fixed ABI functions. An agent with no computed handler declares none, so the
+// E1-E3 artifacts keep byte-identical function/code section counts.
+constexpr std::uint32_t kDefinedHandlerBase = 7;
 
 constexpr std::uint32_t kTypeNoArgsI32 = 0;
 constexpr std::uint32_t kTypeI32ToI32 = 1;
@@ -212,24 +216,19 @@ static_assert(AHFL_CAP_PENDING == 2u);
 struct GotoAction {
     CoreStateId target{};
 };
-// RFC 0026 P6-1 (KR6.6): a non-final handler whose next state is decided by a
-// lowered scalar computation (e.g. `if (a + b > c) goto X else goto Y`). The
-// body bytes are emitted INLINE in `step()`'s dispatch arm: every path updates
-// global current_state + transition_count exactly as a bare GotoAction does,
-// or traps. `targets` are every state the body may branch to (the handler may
-// be non-deterministic across runs), and `local_reprs` / `local_base` describe
-// the step-function SSA locals the body references (i32 for Bool/narrow Int,
-// i64 for wide Int — the repr is read from the P4-D layout table, never
-// recomputed).
+// RFC 0026 P6-2 (KR6.6): a non-final handler whose next state is decided by a
+// lowered scalar computation (e.g. `if (a + b > c) goto X else goto Y`). P6-1
+// emitted such a body INLINE in `step()`'s dispatch arm; P6-2 compiles it to a
+// REAL wasm function of type `() -> i32` (no parameters, the new state id as
+// the result). The function body runs the lowered statement region inside a
+// `block (result i32)`, updates global current_state + transition_count on
+// every goto path and exits the block with `br`, or traps. `targets` are every
+// state the body may branch to (the handler may be non-deterministic across
+// runs); the graph analysis treats the action as nondeterministic over this
+// successor set.
 struct ComputedGotoAction {
-    // Pre-lowered step()-inline body: every path updates global current_state
-    // + transition_count exactly as a bare GotoAction does and returns the new
-    // state id, or traps. References only the step-function SSA locals declared
-    // once in make_step_body (i32 group then i64 group; indices shared across
-    // all computed handlers since each step() dispatch runs one handler).
-    std::vector<std::uint8_t> body;
-    // Every state the body may branch to; the graph analysis treats the action
-    // as nondeterministic over this successor set.
+    // Import-indexed function index of the compiled handler (see FunctionTable).
+    std::uint32_t function{0};
     std::vector<CoreStateId> targets;
 };
 struct IdentityAction {
@@ -241,18 +240,25 @@ struct CapabilityAction {
 };
 using StateAction = std::variant<GotoAction, ComputedGotoAction, IdentityAction, CapabilityAction>;
 
+// RFC 0026 P6-2 (KR6.6): one compiled non-final handler FUNCTION. The body is
+// the complete wasm function body (local declarations + a `block (result i32)`
+// wrapping the lowered statement region + the terminating `end`), ready for the
+// Code section's `sized()` framing. `targets` are every state the body may
+// branch to.
+struct CompiledHandler {
+    std::vector<std::uint8_t> body;
+    std::vector<CoreStateId> targets;
+};
+
 struct AgentPlan {
     CoreAgentId agent{};
     CoreStateId initial{};
     std::vector<StateAction> actions;
     std::vector<CoreCapabilityId> imports;
-    // RFC 0026 P6-1: step()-function SSA locals consumed by computed-goto
-    // handler bodies. Wasm locals are FUNCTION scoped, so every computed
-    // handler draws from two disjoint function-global pools (all i32 locals
-    // occupy the low indices, i64 locals follow); the two counters are the
-    // group sizes emitted by make_step_body's local declaration.
-    std::uint32_t step_i32_locals{0};
-    std::uint32_t step_i64_locals{0};
+    // RFC 0026 P6-2: compiled handler functions in ascending function-index
+    // order. Empty for a pure E1-E3 agent, so its function/code sections keep
+    // their byte-identical 7-entry shape.
+    std::vector<CompiledHandler> handlers;
 };
 
 struct AgentPlanPolicy {
@@ -304,6 +310,10 @@ struct WorkflowPlan {
 
 struct FunctionTable {
     std::uint32_t import_count{0};
+    // RFC 0026 P6-2: number of compiled per-state handler functions following
+    // the seven fixed ABI functions. Zero for a pure E1-E3 agent, so its
+    // function/code sections keep their byte-identical shape.
+    std::uint32_t handler_count{0};
     [[nodiscard]] std::uint32_t alloc() const noexcept { return import_count + kDefinedAlloc; }
     [[nodiscard]] std::uint32_t dealloc() const noexcept { return import_count + kDefinedDealloc; }
     [[nodiscard]] std::uint32_t current_state() const noexcept {
@@ -315,6 +325,12 @@ struct FunctionTable {
     [[nodiscard]] std::uint32_t step() const noexcept { return import_count + kDefinedStep; }
     [[nodiscard]] std::uint32_t run() const noexcept { return import_count + kDefinedRun; }
     [[nodiscard]] std::uint32_t run2() const noexcept { return import_count + kDefinedRun2; }
+    [[nodiscard]] std::uint32_t handler(std::uint32_t index) const noexcept {
+        return import_count + kDefinedHandlerBase + index;
+    }
+    [[nodiscard]] std::uint32_t defined_count() const noexcept {
+        return kDefinedHandlerBase + handler_count;
+    }
 };
 
 struct WorkflowFunctionTable {
@@ -655,23 +671,23 @@ validate_capability_final(const CoreProgram &program,
 // The KR6.5 backend emits one ACTION per state (goto / identity / capability)
 // and validates those three canonical shapes. KR6.6 adds real per-handler
 // computation lowering (scalar expressions, SSA locals, structured control
-// flow). P6-0 introduces the infrastructure every later P6 slice hangs from,
-// WITHOUT accepting a single new program:
+// flow). The scaffold every P6 slice hangs from:
 //
 //   * `is_p6_computation_region` is the fail-closed subset gate that separates a
 //     P6 computation handler (ANF scalar lets, if/match structure, goto/trap
 //     terminators; NO capability effect) from the KR6.5 orchestration shapes.
 //   * `P6ComputationHandlerBuilder` is the per-handler body builder: its own
-//     ByteBuffer plus a CoreValueId -> wasm-local table (handler parameters
-//     bound first, then freshly allocated SSA locals). Expression and statement
+//     ByteBuffer plus a CoreValueId -> wasm-local table. Expression and statement
 //     lowering are COMPILE-TIME-EXHAUSTIVE std::variant visitors over all nine
 //     CoreExprNode / CoreStmtNode arms — no catch-all, so a tenth IR node is a
 //     compile error here, not a silent miscompile.
 //
-// Every visitor arm emits unreachable and publishes a diagnostic in P6-0, so
-// try_build() always fails closed and no partial artifact is ever returned.
-// P6-1 replaces the scalar arms one at a time; until then the E1-E3 byte paths
-// are untouched.
+// P6-1 landed the scalar stack machine (Literal/ValueRef/Unary/Binary + computed
+// goto), compiled INLINE in step(). P6-2 (this slice) promotes each computed
+// handler to its own `() -> i32` wasm FUNCTION and lowers structured `if` to
+// wasm block/if/else with a goto = `br` to the handler block. Expression kinds
+// not yet landed (path/qualified/construct/coerce) still fail closed per-arm, so
+// no partial artifact is ever returned and the E1-E3 byte paths stay untouched.
 
 [[nodiscard]] bool is_p6_computation_region(const CoreRegion &region) {
     for (const CoreStmt &statement : region.statements) {
@@ -761,10 +777,13 @@ enum class P6ScalarKind {
 }
 
 // Structural all-paths termination predicate for a P6 scalar handler region.
-// P6-1 accepts a computed-goto handler only when EVERY path leaves via a goto
-// or trap (so `step()` always performs exactly one transition or traps and
-// never falls through with an undefined next state). If/branch fallthrough and
-// every other terminator keep the handler on a later slice.
+// A computed-goto handler is accepted only when EVERY path leaves via a goto or
+// trap (so `step()` always performs exactly one transition or traps and never
+// falls through with an undefined next state). It examines the region's LAST
+// statement because everything after a terminator is unreachable: a trailing
+// if must diverge on BOTH branches, and a trailing goto/trap diverges outright.
+// A region ending in let / match / fall-through keeps the handler on a later
+// slice.
 [[nodiscard]] bool p6_region_always_diverges(const CoreRegion &region) {
     if (region.statements.empty()) {
         return false;
@@ -806,11 +825,9 @@ class P6ComputationHandlerBuilder {
           unsupported_code_(unsupported_code), used_exprs_(used_exprs), used_values_(used_values),
           result_(result), locals_(flow.value_count, LocalInfo{}) {}
 
-    // Validate the handler is in the P6-1 scalar subset, assign every bound
-    // SSA value a per-repr pool slot, and record the goto target set. The i64
-    // pool's concrete indices depend on the FUNCTION-wide i32 group size (wasm
-    // locals are function scoped with one fixed type per index), so a second
-    // emit() pass resolves final indices once all handlers are planned.
+    // Validate the handler is in the scalar subset and assign every bound SSA
+    // value a per-repr pool slot (i32 group first, then i64 — a real function
+    // needs one fixed type per local index), recording the goto target set.
     [[nodiscard]] bool plan() {
         if (!p6_region_always_diverges(handler_.body)) {
             return reject("non-final scalar handler must goto or trap on every path",
@@ -821,26 +838,47 @@ class P6ComputationHandlerBuilder {
         return plan_region(handler_.body);
     }
 
-    [[nodiscard]] std::uint32_t i32_count() const noexcept {
-        return i32_count_;
-    }
-    [[nodiscard]] std::uint32_t i64_count() const noexcept {
-        return i64_count_;
-    }
     [[nodiscard]] const std::vector<CoreStateId> &targets() const noexcept {
         return targets_;
     }
 
-    // Emit the step()-inline body. `i64_base` is the function-wide count of
-    // i32 SSA locals (i64 slots follow them). Every goto path performs exactly
-    // the E1 transition (set current_state, bump transition_count) and returns
-    // the new state; trap paths emit unreachable.
-    [[nodiscard]] std::optional<std::vector<std::uint8_t>> emit(std::uint32_t i64_base) {
-        i64_base_ = i64_base;
+    // Emit the complete body of this handler's own `() -> i32` wasm function:
+    // the local declarations (its OWN i32 group then i64 group — a real function
+    // has private locals, so the P6-1 shared step()-pools hack is gone), a
+    // `block (result i32)` that every goto path leaves with `br`, the lowered
+    // region, and the closing `end`s. The block is the structured early-exit
+    // target RFC 0026 Q2 mandates: no relooper, no arbitrary jump.
+    [[nodiscard]] std::optional<std::vector<std::uint8_t>> emit() {
         if (!emit_region(handler_.body)) {
             return std::nullopt;
         }
-        return std::move(body_).take();
+        ByteBuffer function;
+        std::uint32_t local_groups = 0;
+        if (i32_count_ != 0) {
+            ++local_groups;
+        }
+        if (i64_count_ != 0) {
+            ++local_groups;
+        }
+        function.u32(local_groups);
+        if (i32_count_ != 0) {
+            function.u32(i32_count_);
+            function.byte(kI32);
+        }
+        if (i64_count_ != 0) {
+            function.u32(i64_count_);
+            function.byte(kI64);
+        }
+        function.byte(kOpBlock);
+        function.byte(kI32); // block (result i32): the new state id
+        function.raw_span(body_.span());
+        // plan() proved the region diverges on every path, so no real
+        // fallthrough reaches here; the trailing unreachable exists only to type
+        // the block's result-i32 requirement on the (dead) fallthrough path.
+        function.byte(kOpUnreachable);
+        function.byte(kOpEnd);
+        function.byte(kOpEnd);
+        return std::move(function).take();
     }
 
   private:
@@ -863,7 +901,9 @@ class P6ComputationHandlerBuilder {
     std::vector<LocalInfo> locals_; // CoreValueId -> pool slot
     std::uint32_t i32_count_{0};
     std::uint32_t i64_count_{0};
-    std::uint32_t i64_base_{0};
+    // Statement-level `if` opens one wasm label per nesting level, so a goto must
+    // `br` past all of them to reach the handler's `block (result i32)`.
+    std::uint32_t label_depth_{0};
     std::vector<CoreStateId> targets_;
 
     [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
@@ -885,7 +925,9 @@ class P6ComputationHandlerBuilder {
             return std::nullopt;
         }
         const LocalInfo &info = locals_[value.value];
-        return info.kind == P6ScalarKind::IntI64 ? i64_base_ + info.slot : info.slot;
+        // The handler function has no parameters: the i32 pool starts at local 0
+        // and the i64 pool follows it (wider types cannot share an index).
+        return info.kind == P6ScalarKind::IntI64 ? i32_count_ + info.slot : info.slot;
     }
 
     // Assign a pool slot to a let-bound value (one slot per CoreValueId; the
@@ -1327,10 +1369,12 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
+    // A goto ends THIS handler: latch current_state, bump transition_count
+    // exactly once, then leave the enclosing `block (result i32)` with the new
+    // state id on the stack. The `br` skips every label opened by the enclosing
+    // statement-level ifs, so a goto exits structurally from any nesting depth
+    // (RFC 0026 Q2: structured early-exit, no relooper).
     void emit_goto_transition(const CoreGotoStmt &go) {
-        // Mirrors the E1 bare-goto step tail exactly: latch current_state,
-        // bump transition_count once, return the new state id. `return` works
-        // from any nested if/block depth.
         emit_const_i32(static_cast<std::int32_t>(go.target.value));
         body_.byte(kOpGlobalSet);
         body_.u32(kGlobalCurrentState);
@@ -1341,7 +1385,11 @@ class P6ComputationHandlerBuilder {
         body_.byte(kOpGlobalSet);
         body_.u32(kGlobalTransitionCount);
         emit_const_i32(static_cast<std::int32_t>(go.target.value));
-        body_.byte(kOpReturn);
+        body_.byte(kOpBr);
+        // The handler function wraps the region in ONE `block (result i32)`; each
+        // enclosing statement-level `if` adds one label. `br label_depth_` leaves
+        // every enclosing `if` and lands on that block with the state id.
+        body_.u32(label_depth_);
     }
 
     [[nodiscard]] bool emit_statement(const CoreStmt &statement) {
@@ -1366,25 +1414,25 @@ class P6ComputationHandlerBuilder {
                     }
                     emit_local_get(*cond);
                     body_.byte(kOpIf);
-                    // Every flow statement-level if is emitted as a VOID block.
-                    // plan() proves the whole handler diverges on every path, so
-                    // a fully-diverging if never needs to yield a value: its
-                    // branches return/trap polymorphically, and make_step_body
-                    // appends one unreachable after the inlined handler body to
-                    // satisfy the i32 dispatch arm. Typing an if i32 merely
-                    // because *it* always diverges is wrong when it is nested
-                    // inside a void/fall-through branch: the polymorphic
-                    // branches would then leave a stray i32 ('expected 0
+                    // Every statement-level if is emitted as a VOID block. Each
+                    // goto path leaves the WHOLE handler via `br` (carrying the
+                    // new state id to the enclosing result-i32 block), so a fully
+                    // diverging if never needs to yield a value itself. Typing an
+                    // if i32 merely because *it* always diverges is wrong when it
+                    // is nested inside a void/fall-through branch: the branching
+                    // goto path would then leave a stray i32 ('expected 0
                     // elements on the stack for fallthru, found 1').
                     body_.byte(kEmptyBlock);
-                    if (s.then_region && !emit_region(*s.then_region)) {
-                        return false;
-                    }
-                    if (s.else_region) {
+                    ++label_depth_;
+                    const bool then_ok = !s.then_region || emit_region(*s.then_region);
+                    bool else_ok = true;
+                    if (then_ok && s.else_region) {
                         body_.byte(kOpElse);
-                        if (!emit_region(*s.else_region)) {
-                            return false;
-                        }
+                        else_ok = emit_region(*s.else_region);
+                    }
+                    --label_depth_;
+                    if (!then_ok || !else_ok) {
+                        return false;
                     }
                     body_.byte(kOpEnd);
                     return true;
@@ -1447,7 +1495,7 @@ build_agent_plan(const CoreProgram &program,
     // P6 computation region actually containing a match — otherwise canonical
     // E1-E3 shapes that merely carry leftover pattern artifacts keep the exact
     // legacy rejection. The admitted flow still fails closed per-handler below,
-    // because P6-0 lowers no arm.
+    // because match lowering is a later P6 slice.
     if (!flow->coercion_plans.empty() ||
         (!flow->patterns.empty() &&
          !std::any_of(flow->states.begin(),
@@ -1497,16 +1545,9 @@ build_agent_plan(const CoreProgram &program,
     std::vector<bool> used_exprs(flow->exprs.size(), false);
     std::vector<bool> used_values(flow->value_count, false);
 
-    // RFC 0026 P6-1: computed-goto handlers planned in the per-state loop and
-    // emitted in a second pass once the function-wide maximum per-repr local
-    // group sizes are known (wasm locals are function scoped; disjoint handler
-    // invocations reuse the same local indices).
-    struct PendingComputed {
-        std::uint32_t state{0};
-        std::unique_ptr<P6ComputationHandlerBuilder> builder;
-    };
-    std::vector<PendingComputed> pending_computed;
-
+    // RFC 0026 P6-2: a computed-goto handler compiles to its OWN `() -> i32`
+    // function, so its locals are private and every handler can be emitted
+    // immediately (no function-wide local-pool base to resolve first).
     for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
         const auto *handler = handlers[state];
         if (handler == nullptr) {
@@ -1562,9 +1603,9 @@ build_agent_plan(const CoreProgram &program,
         // single bare CoreGotoStmt. Anything that is NOT that shape but IS a
         // pure computation region (ANF scalar lets + structured if + goto/trap
         // terminators, never a capability effect) enters the per-handler scalar
-        // builder (P6-1: Literal/ValueRef/Unary/Binary + computed goto). All
-        // effect-bearing or otherwise out-of-subset regions keep the legacy
-        // rejections below.
+        // builder and compiles to its own function (P6-2: Literal/ValueRef/
+        // Unary/Binary + structured if + goto/trap). All effect-bearing or
+        // otherwise out-of-subset regions keep the legacy rejections below.
         const bool single_goto =
             statements.size() == 1 &&
             std::holds_alternative<CoreGotoStmt>(statements.front().node);
@@ -1609,9 +1650,15 @@ build_agent_plan(const CoreProgram &program,
                         return std::nullopt;
                     }
                 }
-                plan.step_i32_locals = std::max(plan.step_i32_locals, builder->i32_count());
-                plan.step_i64_locals = std::max(plan.step_i64_locals, builder->i64_count());
-                pending_computed.push_back(PendingComputed{state, std::move(builder)});
+                auto body = builder->emit();
+                if (!body.has_value()) {
+                    return std::nullopt;
+                }
+                const auto function =
+                    static_cast<std::uint32_t>(plan.handlers.size());
+                plan.handlers.push_back(
+                    CompiledHandler{std::move(*body), builder->targets()});
+                plan.actions[state] = ComputedGotoAction{function, builder->targets()};
                 continue;
             }
             const bool contains_capability = region_contains_capability(handler->body);
@@ -1642,17 +1689,6 @@ build_agent_plan(const CoreProgram &program,
             return std::nullopt;
         }
         plan.actions[state] = GotoAction{go.target};
-    }
-
-    // Second pass: emit every planned computed-goto body now that the shared
-    // i32 group size (the i64 local base) is final.
-    for (auto &pending : pending_computed) {
-        auto body = pending.builder->emit(plan.step_i32_locals);
-        if (!body.has_value()) {
-            return std::nullopt;
-        }
-        plan.actions[pending.state] =
-            ComputedGotoAction{std::move(*body), pending.builder->targets()};
     }
 
     if (std::any_of(used_exprs.begin(), used_exprs.end(), [](bool used) { return !used; }) ||
@@ -2333,27 +2369,12 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
     body.byte(kOpEnd);
     return body;
 }
-[[nodiscard]] ByteBuffer make_step_body(const AgentPlan &plan) {
+[[nodiscard]] ByteBuffer make_step_body(const AgentPlan &plan,
+                                       const FunctionTable &functions) {
     ByteBuffer body;
-    // RFC 0026 P6-1: step()-function SSA locals for computed-goto handlers.
-    // All i32 temporaries occupy the low group; i64 temporaries follow. Pure
-    // E1-E2 agents declare none, so their bytes are unchanged.
-    std::uint32_t local_groups = 0;
-    if (plan.step_i32_locals != 0) {
-        ++local_groups;
-    }
-    if (plan.step_i64_locals != 0) {
-        ++local_groups;
-    }
-    body.u32(local_groups);
-    if (plan.step_i32_locals != 0) {
-        body.u32(plan.step_i32_locals);
-        body.byte(kI32);
-    }
-    if (plan.step_i64_locals != 0) {
-        body.u32(plan.step_i64_locals);
-        body.byte(kI64);
-    }
+    // The dispatch ladder is stateless: every handler is a real function now
+    // (RFC 0026 P6-2), so step() declares no locals of its own.
+    body.u32(0);
     for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
         append_indexed_op(body, kOpGlobalGet, kGlobalCurrentState);
         append_const(body, state);
@@ -2370,14 +2391,10 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
             append_indexed_op(body, kOpGlobalSet, kGlobalTransitionCount);
             append_const(body, go->target.value);
         } else if (const auto *computed = std::get_if<ComputedGotoAction>(&action)) {
-            // The pre-lowered handler body runs the scalar stack machine and
-            // returns the next state id itself (bumping globals on every goto
-            // path), or traps. It is emitted inline inside this dispatch arm.
-            // Its statement ifs are all void blocks (plan() proves every path
-            // returns or traps), so the body leaves no i32: supply the arm's
-            // required i32 polymorphically with a trailing unreachable.
-            body.raw_span(computed->body);
-            body.byte(kOpUnreachable);
+            // The compiled handler function owns the whole transition: it
+            // latches current_state, bumps transition_count exactly once on the
+            // path it takes, and yields the new state id. step() only calls it.
+            append_indexed_op(body, kOpCall, functions.handler(computed->function));
         } else {
             // Identity / capability final: the state is stable and reports
             // itself without incrementing the transition counter.
@@ -2573,7 +2590,8 @@ void append_capability_return(ByteBuffer &body,
 encode_module(const CoreProgram &program,
               const AgentPlan &plan,
               std::span<const std::uint8_t> wire_schema_payload) {
-    const FunctionTable functions{static_cast<std::uint32_t>(plan.imports.size())};
+    const FunctionTable functions{static_cast<std::uint32_t>(plan.imports.size()),
+                                  static_cast<std::uint32_t>(plan.handlers.size())};
     ByteBuffer module;
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
 
@@ -2606,7 +2624,7 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer functions_section;
-    functions_section.u32(7);
+    functions_section.u32(functions.defined_count());
     functions_section.u32(kTypeI32ToI32);
     functions_section.u32(kTypeTwoI32ToVoid);
     functions_section.u32(kTypeNoArgsI32);
@@ -2614,6 +2632,12 @@ encode_module(const CoreProgram &program,
     functions_section.u32(kTypeNoArgsI32);
     functions_section.u32(kTypeTwoI32ToI32);
     functions_section.u32(kTypeCapabilityTuple);
+    // RFC 0026 P6-2: each compiled handler is a `() -> i32` function (same type
+    // as alloc/current_state/is_final). Absent handlers contribute no entry, so
+    // a pure E1-E3 agent keeps its canonical 7-function section bytes.
+    for (std::uint32_t index = 0; index < plan.handlers.size(); ++index) {
+        functions_section.u32(kTypeNoArgsI32);
+    }
     if (!append_section(module, kSectionFunction, functions_section)) {
         return std::nullopt;
     }
@@ -2665,17 +2689,27 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer code;
-    code.u32(7);
+    code.u32(functions.defined_count());
     const auto alloc = make_alloc_body();
     const auto dealloc = make_dealloc_body();
     const auto current = make_current_state_body();
     const auto final = make_is_final_body(plan);
-    const auto step = make_step_body(plan);
+    const auto step = make_step_body(plan, functions);
     const auto run = make_run_body(plan, functions);
     const auto run2 = make_run2_body(plan, functions);
     if (!code.sized(alloc) || !code.sized(dealloc) || !code.sized(current) ||
         !code.sized(final) || !code.sized(step) || !code.sized(run) ||
-        !code.sized(run2) || !append_section(module, kSectionCode, code)) {
+        !code.sized(run2)) {
+        return std::nullopt;
+    }
+    // RFC 0026 P6-2: the compiled handler function bodies follow run2, in the
+    // same order their indices were assigned (ascending function index).
+    for (const auto &handler : plan.handlers) {
+        if (!code.sized(handler.body)) {
+            return std::nullopt;
+        }
+    }
+    if (!append_section(module, kSectionCode, code)) {
         return std::nullopt;
     }
 

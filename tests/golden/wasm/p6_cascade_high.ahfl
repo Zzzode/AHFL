@@ -1,0 +1,66 @@
+module wasm::p6_cascade_high;
+
+// RFC 0026 P6-2 (KR6.6) companion to p6_cascade. Identical 4-way cascade, but
+// x=42 makes the OUTERMOST guard true so the first arm is taken: the goto is only
+// one `if` deep (br 1), unlike the deeply nested arms. Together the pair proves
+// the emitted `br` depth tracks real nesting rather than a fixed constant.
+pub struct Frame {
+    value: String;
+}
+
+pub agent CascadeHighAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Mid, Low, None_, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Mid;
+    transition Decide -> Low;
+    transition Decide -> None_;
+    transition High -> Done;
+    transition Mid -> Done;
+    transition Low -> Done;
+    transition None_ -> Done;
+}
+
+flow for CascadeHighAgent {
+    state Decide {
+        let x = 42;
+        if (x > 10) {
+            goto High;
+        } else {
+            if (x > 5) {
+                goto Mid;
+            } else {
+                if (x > 0) {
+                    goto Low;
+                } else {
+                    goto None_;
+                }
+            }
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Mid {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state None_ {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}
