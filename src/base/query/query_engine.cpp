@@ -27,6 +27,10 @@ std::string CycleError::describe() const {
         text = "coinductive cycle reached a derived family without a "
                "conservative assumption hook; cycle path:";
         break;
+    case CycleErrorKind::ResolutionBound:
+        text = "query engine internal resolution bound exceeded after " +
+               std::to_string(iterations) + " step(s) while resolving";
+        break;
     }
     for (std::size_t i = 0; i < path.size(); ++i) {
         const SlotKey &key = path[i];
@@ -422,10 +426,14 @@ void QueryEngine::resolve_coinductive(const CoinductiveCycleDetected &detected) 
         return true;
     };
 
-    if (!validate(0)) {
+    const auto missing_assumption = [&]() -> CyclePropagation {
         CycleError error = detected.error;
         error.kind = CycleErrorKind::MissingAssumption;
-        throw CyclePropagation{std::move(error)};
+        return CyclePropagation{std::move(error)};
+    };
+
+    if (!validate(0)) {
+        throw missing_assumption();
     }
 
     // Seed every member with its conservative initial iterate and mark it
@@ -435,17 +443,41 @@ void QueryEngine::resolve_coinductive(const CoinductiveCycleDetected &detected) 
             const FlatSlotKey member = members[i];
             Family &family = families_[member.family];
             Slot &slot = family.slots[member.slot];
-            family.assume(DerivedId{member.slot}, slot.value);
+            try {
+                family.assume(DerivedId{member.slot}, slot.value);
+            } catch (...) {
+                // A hook that yields no conservative assumption (throws) is
+                // equivalent to a missing hook: the cycle cannot be unfolded.
+                // Fail closed as MissingAssumption rather than seeding the
+                // remaining members from a half-populated SCC.
+                throw missing_assumption();
+            }
             slot.has_value = true;
             slot.state = SlotState::Visiting;
             fixpoint_members_.insert(member);
         }
     };
-    seed(0);
+
+    // Tear down everything the fixpoint attempt touched: reset every member
+    // (including members added by mid-pass SCC expansion), invalidate external
+    // slots computed against tentative iterates, and leave no active pass.
+    const auto rollback = [&]() {
+        for (const FlatSlotKey member : members) {
+            reset_member(member);
+        }
+        invalidate_touched_external();
+        fixpoint_members_.clear();
+    };
 
     bool committed = false;
     std::size_t iterations = 0;
     try {
+        // Seeding runs inside the cleanup scope: a throwing assumption hook
+        // (or one of several hooks failing partway) must never leave Visiting
+        // iterates or a populated member set behind, which would fail-open on
+        // the next eval and leak internal control-flow types.
+        seed(0);
+
         // Gauss-Seidel fixpoint: members run in evaluation order and each
         // result commits immediately, so later members in a pass see the
         // freshest iterates. A pass converges when every member produces a
@@ -490,9 +522,7 @@ void QueryEngine::resolve_coinductive(const CoinductiveCycleDetected &detected) 
                     fixpoint_members_.clear();
                     invalidate_touched_external();
                     if (!validate(existing)) {
-                        CycleError error = detected.error;
-                        error.kind = CycleErrorKind::MissingAssumption;
-                        throw CyclePropagation{std::move(error)};
+                        throw missing_assumption();
                     }
                     seed(0);
                     break;
@@ -502,12 +532,16 @@ void QueryEngine::resolve_coinductive(const CoinductiveCycleDetected &detected) 
                 }
             }
 
+            // Both settled passes and passes voided by SCC expansion are
+            // equation passes and share the cap: a value-gated external frame
+            // that rejoins with a freshly keyed slot on every restart must
+            // terminate with Diverged instead of looping forever.
+            ++iterations;
+            ++stats_.fixpoint_iterations;
+
             if (expanded) {
                 continue;
             }
-
-            ++iterations;
-            ++stats_.fixpoint_iterations;
 
             if (all_stable) {
                 committed = true;
@@ -518,11 +552,7 @@ void QueryEngine::resolve_coinductive(const CoinductiveCycleDetected &detected) 
             invalidate_touched_external();
         }
     } catch (...) {
-        for (const FlatSlotKey member : members) {
-            reset_member(member);
-        }
-        invalidate_touched_external();
-        fixpoint_members_.clear();
+        rollback();
         throw;
     }
 
@@ -569,11 +599,31 @@ std::expected<const std::any *, CycleError> QueryEngine::eval_slot(FamilyId fami
         }
         return total;
     };
+    // Fail-closed result for the internal safety net: no frame chain exists to
+    // build a closed cycle from, so carry the offending slot and step count
+    // under a distinct kind rather than fabricating a one-key cycle path.
+    const auto resolution_bound = [&](std::size_t steps) -> CycleError {
+        CycleError error;
+        error.kind = CycleErrorKind::ResolutionBound;
+        error.iterations = steps;
+        error.path.push_back(materialize_key(target));
+        return error;
+    };
+    // Tear down an orphaned fixpoint pass so a later top-level eval starts
+    // from clean bookkeeping rather than a half-open Visiting set.
+    const auto abandon_orphaned_pass = [&] {
+        if (fixpoint_members_.empty()) {
+            return;
+        }
+        for (const FlatSlotKey member : fixpoint_members_) {
+            reset_member(member);
+        }
+        fixpoint_members_.clear();
+        invalidate_touched_external();
+    };
     for (std::size_t resolutions = 0;; ++resolutions) {
         if (resolutions > derived_slot_count() + 1) {
-            CycleError error = current_cycle_path(target);
-            error.kind = CycleErrorKind::Diverged;
-            return std::unexpected(std::move(error));
+            return std::unexpected(resolution_bound(resolutions));
         }
         try {
             bool target_recomputed = false;
@@ -596,6 +646,14 @@ std::expected<const std::any *, CycleError> QueryEngine::eval_slot(FamilyId fami
             }
         } catch (const CyclePropagation &propagation) {
             return std::unexpected(propagation.error);
+        } catch (const FixpointMembership &) {
+            // Defensive boundary: the SCC-expansion signal is internal to a
+            // fixpoint pass and must never cross the public eval() API. If it
+            // escapes, bookkeeping is corrupt; reset the orphaned pass and
+            // fail closed instead of letting a private type reach
+            // std::terminate.
+            abandon_orphaned_pass();
+            return std::unexpected(resolution_bound(resolutions));
         }
     }
 }

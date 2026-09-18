@@ -746,3 +746,110 @@ TEST_CASE("SCC expansion fails closed when the joining family has no hook") {
     CHECK_FALSE(engine.inspect_slot(ab.family(), 0).has_value);
     CHECK_FALSE(engine.inspect_slot(c.family(), 0).has_value);
 }
+
+TEST_CASE("per-pass fresh external keys can not bypass the coinductive iteration cap") {
+    // Equations:
+    //   A = B > 5 ? E(k) : B, where k is a FRESH derived slot every pass
+    //   B = A
+    //   E(k) = B
+    // The initial SCC {A, B} expands through E(k) on every pass; without
+    // charging the voided restarts against the cap, freshly keyed E slots make
+    // the member set grow forever. With cap 3 the attempt must return Diverged
+    // after 3 equation passes instead of looping.
+    QueryEngine engine(CyclePolicy::Coinductive,
+                       QueryEngineOptions{.coinductive_iteration_cap = 3});
+    int counter = 0;
+    DerivedQueryT<int> *abp = nullptr;
+    DerivedQueryT<int> ext = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId) { return ctx.read(*abp, DerivedId{1}); },
+        [](DerivedId) { return 0; });
+    DerivedQueryT<int> ab = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId self) -> int {
+            if (self.index() == 0) {
+                const int b = ctx.read(ab, DerivedId{1});
+                if (b > 5) {
+                    const int k = counter++;
+                    return ctx.read(ext, DerivedId{static_cast<std::size_t>(k)});
+                }
+                return b;
+            }
+            return ctx.read(ab, DerivedId{0});
+        },
+        [](DerivedId key) { return key.index() == 0 ? 0 : 10; });
+    abp = &ab;
+
+    auto result = engine.eval(ab, DerivedId{0});
+    REQUIRE_FALSE(result.has_value());
+    const CycleError &error = result.error();
+    CHECK(error.kind == CycleErrorKind::Diverged);
+    CHECK(error.iterations == 3);
+    CHECK(error.describe().find("did not converge") != std::string::npos);
+    // Exactly cap voided expansion passes ran: no unbounded restart loop.
+    CHECK(counter == 3);
+    CHECK(engine.stats().fixpoint_iterations == 3);
+
+    // Every involved slot is left without a cached value.
+    CHECK_FALSE(engine.inspect_slot(ab.family(), 0).has_value);
+    CHECK_FALSE(engine.inspect_slot(ab.family(), 1).has_value);
+    for (int k = 0; k < counter; ++k) {
+        CHECK_FALSE(engine.inspect_slot(ext.family(), static_cast<std::size_t>(k)).has_value);
+    }
+
+    // Retry is deterministic and equally bounded.
+    auto retry = engine.eval(ab, DerivedId{0});
+    REQUIRE_FALSE(retry.has_value());
+    CHECK(retry.error().kind == CycleErrorKind::Diverged);
+}
+
+TEST_CASE("a throwing assumption hook fails closed and never poisons later evals") {
+    // Mutual family A <-> B: A seeds 7, B's hook throws. The public eval must
+    // return MissingAssumption (the user exception never escapes), reset every
+    // seeded member, and a later unrelated coinductive family must still work.
+    QueryEngine engine(CyclePolicy::Coinductive);
+    DerivedQueryT<int> ab = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId self) {
+            if (self.index() == 0) {
+                return ctx.read(ab, DerivedId{1});
+            }
+            return ctx.read(ab, DerivedId{0});
+        },
+        [](DerivedId key) -> int {
+            if (key.index() == 1) {
+                throw std::runtime_error("seed failure");
+            }
+            return 7;
+        });
+
+    const auto assert_failed_closed = [&] {
+        auto result = engine.eval(ab, DerivedId{0});
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().kind == CycleErrorKind::MissingAssumption);
+        // The tentative seed must never be served as a settled answer.
+        CHECK_FALSE(engine.inspect_slot(ab.family(), 0).has_value);
+        CHECK_FALSE(engine.inspect_slot(ab.family(), 1).has_value);
+        CHECK(engine.inspect_slot(ab.family(), 0).state == SlotState::Dirty);
+        CHECK(engine.inspect_slot(ab.family(), 1).state == SlotState::Dirty);
+    };
+    assert_failed_closed(); // first eval: seeding throws partway
+    assert_failed_closed(); // retry at the same revision stays fail-closed
+
+    // An unrelated coinductive family still evaluates: no internal
+    // FixpointMembership state leaked across the boundary.
+    DerivedQueryT<int> g = engine.register_derived<int>(
+        [&](QueryContext &ctx, DerivedId me) { return ctx.read(g, me); },
+        [](DerivedId) { return 1; });
+    auto unrelated = engine.eval(g, DerivedId{0});
+    REQUIRE(unrelated.has_value());
+    CHECK(*unrelated == 1);
+    CHECK(engine.inspect_slot(g.family(), 0).state == SlotState::Clean);
+}
+
+TEST_CASE("the resolution-bound diagnostic reports steps, not a fake cycle path") {
+    CycleError error;
+    error.kind = CycleErrorKind::ResolutionBound;
+    error.iterations = 7;
+    const std::string text = error.describe();
+    CHECK(text.find("resolution bound exceeded") != std::string::npos);
+    CHECK(text.find("7 step(s)") != std::string::npos);
+    CHECK(text.find("cycle path") == std::string::npos);
+}

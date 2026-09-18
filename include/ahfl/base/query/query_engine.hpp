@@ -115,6 +115,12 @@ enum class CycleErrorKind {
     // family with no registered assumption hook and no prior memo to seed
     // from: no conservative value exists, so the cycle cannot be unfolded.
     MissingAssumption,
+    // Engine-internal safety net tripped rather than hanging or leaking a
+    // private control-flow type across eval(): the resolution-step bound was
+    // exceeded, or fixpoint bookkeeping escaped a resolution. This is not a
+    // user cycle; the payload identifies the slot under evaluation and the
+    // number of steps taken.
+    ResolutionBound,
 };
 
 // Closed cycle result: the evaluation path from the outer eval() entry through
