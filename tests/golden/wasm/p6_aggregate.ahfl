@@ -1,0 +1,76 @@
+module wasm::p6_aggregate;
+
+// RFC 0026 P6-4 (KR6.6) aggregate-memory fixture. A struct field is read from
+// the host-written input frame at its P4-D offset, a struct literal is
+// materialized through the scratch allocator, a nested field is projected back
+// out, and a context field is stored at ITS P4-D offset. The result is observed
+// purely through the state ids step() moves to (no JSON, no frame encoding), so
+// a wrong field offset, a source-order store, or a mis-sized load changes the
+// branch that is taken.
+//
+// Layout (wasm32, P4-D): all three Int fields are unbounded -> i64 (8 bytes,
+// align 8), so with two input fields the input frame is `a@0`, `b@8` and the
+// context frame is `sum@0`.
+pub struct Frame {
+    a: Int;
+    b: Int;
+}
+
+pub struct Context {
+    sum: Int = 0;
+}
+
+pub struct Pair {
+    x: Int;
+    y: Int;
+}
+
+pub agent AggregateAgent {
+    input: Frame;
+    context: Context;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for AggregateAgent {
+    state Decide {
+        // Read both input fields at their P4-D offsets.
+        let a: Int = input.a;
+        let b: Int = input.b;
+        // Construct a Pair{b: …, a: …} with the fields written OUT OF ORDER to
+        // prove field IDENTITY (not source order) selects the slot, then read
+        // the fields back through an aggregate local.
+        let pair: Pair = Pair {
+            y: b,
+            x: a,
+        };
+        let x: Int = pair.x;
+        let y: Int = pair.y;
+        // Persist the sum into the (zero-initialised) context frame.
+        ctx.sum = x + y;
+        if (x > 50) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

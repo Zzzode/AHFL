@@ -31,4 +31,43 @@ inline constexpr std::uint32_t kCoreWasmFixedLinearMemoryCapacityBytes =
 static_assert(kCoreWasmFixedLinearMemoryCapacityBytes == 65536,
               "Core-Wasm linear memory is fixed at exactly one 64 KiB page");
 
+// RFC 0026 P6-4 (KR6.6): the internal aggregate-frame convention — the INPUT
+// side of the eventual P6-7 frame decision, deliberately NOT a wire format.
+//
+// An aggregate value (a struct, or an enum with a payload) is represented at
+// runtime by an i32 ADDRESS into the module's private linear memory pointing at
+// its P4-D shaped bytes (`CoreLayoutStruct::field_offsets` /
+// `CoreLayoutEnum::payload_offset`). Three regions are reserved below the host
+// bump heap so that the compiler, the emitted module, and the embedded host all
+// derive their addresses from ONE place:
+//
+//   [kP6AggregateInputBase,   + input_size)  the agent input frame
+//   [kP6AggregateContextBase, + ctx_size)    the agent context frame (0-init)
+//   [kP6AggregateScratchBase,            )   per-plan constructor scratch slots
+//
+// The input frame is written by the HOST at the P4-D offsets of the input
+// struct (real memory, no JSON); the context frame starts zeroed; the scratch
+// arena backs `CoreConstructExpr`, whose monotone slot allocator is the same
+// stack-slot discipline the P6-3 match scratch locals use. Every address is a
+// compile-time constant of the shape kind, so a module carries no per-run state
+// for them and `step()` stays argument-free.
+inline constexpr std::uint32_t kP6AggregateInputBase = 1024;
+inline constexpr std::uint32_t kP6AggregateContextBase = 4096;
+inline constexpr std::uint32_t kP6AggregateScratchBase = 7168;
+
+// The scratch arena is every byte from its base to the end of the fixed page.
+// A plan whose constructors need more fails closed (RESOURCE-class rejection),
+// so the arena can never overflow into unowned memory.
+inline constexpr std::uint32_t kP6AggregateScratchCapacity =
+    kCoreWasmFixedLinearMemoryCapacityBytes - kP6AggregateScratchBase;
+
+static_assert(kP6AggregateInputBase % 8 == 0 && kP6AggregateContextBase % 8 == 0 &&
+                  kP6AggregateScratchBase % 8 == 0,
+              "P6 aggregate frame bases are 8-byte aligned (the widest P4-D scalar)");
+static_assert(kP6AggregateContextBase >= kP6AggregateInputBase &&
+                  kP6AggregateScratchBase >= kP6AggregateContextBase,
+              "P6 aggregate frame regions are ordered and non-overlapping");
+static_assert(kP6AggregateScratchBase < kCoreWasmFixedLinearMemoryCapacityBytes,
+              "the P6 aggregate scratch arena starts inside the fixed single page");
+
 } // namespace ahfl::ir::core

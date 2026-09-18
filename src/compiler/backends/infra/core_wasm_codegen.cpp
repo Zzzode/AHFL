@@ -34,6 +34,7 @@ using ir::core::CoreBindingPat;
 using ir::core::CoreCapabilityCallStmt;
 using ir::core::CoreCapabilityId;
 using ir::core::CoreCoerceExpr;
+using ir::core::CoreConstructArg;
 using ir::core::CoreConstructExpr;
 using ir::core::CoreExpr;
 using ir::core::CoreExprId;
@@ -64,6 +65,8 @@ using ir::core::CoreStmt;
 using ir::core::CoreStoreStmt;
 using ir::core::CoreTrapStmt;
 using ir::core::CoreTuplePat;
+using ir::core::CoreTypeDecl;
+using ir::core::CoreTypeId;
 using ir::core::CoreUnaryExpr;
 using ir::core::CoreUnaryOp;
 using ir::core::CoreUnsupportedExpr;
@@ -71,7 +74,9 @@ using ir::core::CoreValueId;
 using ir::core::CoreValueRefExpr;
 using ir::core::CoreValueTypeId;
 using ir::core::CoreValueTypeNode;
+using ir::core::CoreVariantId;
 using ir::core::CoreVariantPat;
+using ir::core::CoreVariantPatField;
 using ir::core::CoreVtBool;
 using ir::core::CoreVtInt;
 using ir::core::CoreVtNominal;
@@ -82,6 +87,10 @@ using ir::core::CoreWorkflowNodeId;
 using ir::core::CoreYieldStmt;
 using ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
 using ir::core::kCoreWasmFixedLinearMemoryMinPages;
+using ir::core::kP6AggregateContextBase;
+using ir::core::kP6AggregateInputBase;
+using ir::core::kP6AggregateScratchBase;
+using ir::core::kP6AggregateScratchCapacity;
 using detail::ByteBuffer;
 
 constexpr std::uint8_t kI32 = 0x7f;
@@ -151,8 +160,14 @@ constexpr std::uint8_t kOpLocalTee = 0x22;
 constexpr std::uint8_t kOpGlobalGet = 0x23;
 constexpr std::uint8_t kOpGlobalSet = 0x24;
 constexpr std::uint8_t kOpI32Load = 0x28;
+constexpr std::uint8_t kOpI64Load = 0x29;
 constexpr std::uint8_t kOpI32Store = 0x36;
 constexpr std::uint8_t kOpI64Store = 0x37;
+// RFC 0026 P6-4: the natural-alignment exponents a `memarg` carries for the two
+// scalar widths P6 loads/stores. Wasm takes log2(alignment); a value at its
+// natural alignment lets the engine use the widest access.
+constexpr std::uint32_t kAlignI32 = 2;
+constexpr std::uint32_t kAlignI64 = 3;
 constexpr std::uint8_t kOpI32Const = 0x41;
 constexpr std::uint8_t kOpI64Const = 0x42;
 constexpr std::uint8_t kOpI32Eqz = 0x45;
@@ -727,10 +742,11 @@ validate_capability_final(const CoreProgram &program,
                 // guard are independently checked in a `Role::MatchRegion` pass by
                 // the caller's planner, so the arena is never trusted here.
                 [](const CoreMatchStmt &) { return true; },
-                // Effects and non-P6 control flow stay on the KR6.5
-                // orchestration lane (capability / store / return).
+                // RFC 0026 P6-4: a context store (`ctx.field = v`) is now a
+                // computation statement lowered to a memory store. Capability and
+                // return stay on the KR6.5 orchestration lane.
+                [](const CoreStoreStmt &) { return true; },
                 [](const CoreCapabilityCallStmt &) { return false; },
-                [](const CoreStoreStmt &) { return false; },
                 [](const CoreReturnStmt &) { return false; },
             },
             statement.node);
@@ -757,7 +773,24 @@ enum class P6ScalarKind {
     Bool,
     IntI32,
     IntI64,
-    Index
+    Index,
+    // RFC 0026 P6-4: an AGGREGATE value (a struct, or an enum with a payload)
+    // whose whole runtime representation is an i32 linear-memory ADDRESS of its
+    // P4-D shaped bytes. Distinct from IntI32 so no arithmetic/compare operator
+    // can consume an address; only a field projection, a store, or a payload
+    // pattern touches one.
+    Ptr
+};
+
+// The location in the scrutinee a pattern is tested at (RFC 0026 P6-4). The root
+// site is the scrutinee itself — a scalar in a local (`in_memory == false`), or
+// address 0 of an aggregate's address (`in_memory == true`, kind `Ptr`). A
+// payload sub-pattern descends to `base + payload_offset + slot_offset`, so ONE
+// test/latch path covers any nesting depth; only the accumulated offset differs.
+struct P6PatternSite {
+    P6ScalarKind kind{P6ScalarKind::IntI32};
+    bool in_memory{false};
+    std::uint64_t offset{0};
 };
 
 // The P4-D layout of `type`, or null when the value type / layout id is out of
@@ -795,6 +828,76 @@ p6_value_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &lay
                                [](std::uint64_t size) { return size == 0; });
 }
 
+// Whether `type` is an AGGREGATE whose runtime representation is an i32 linear
+// memory ADDRESS of its P4-D shaped bytes (RFC 0026 P6-4): a struct nominal or
+// a payload-bearing enum. A tag-only enum is NOT one — its whole value is the
+// i32 discriminant and it projects no payload. A zero-sized struct is rejected:
+// it has no fields to load or store, so admitting it would be a meaningless
+// address with no observable effect (fail closed rather than emit a dummy).
+[[nodiscard]] bool p6_is_aggregate(const CoreProgram &program,
+                                   const ir::core::CoreLayoutTable &layouts,
+                                   CoreValueTypeId type) {
+    const ir::core::CoreLayout *layout = p6_value_layout(program, layouts, type);
+    if (layout == nullptr || layout->is_zero_sized) {
+        return false;
+    }
+    if (std::holds_alternative<ir::core::CoreLayoutStruct>(layout->shape)) {
+        return true;
+    }
+    if (std::holds_alternative<ir::core::CoreLayoutEnum>(layout->shape)) {
+        return !p6_is_tag_only_enum(program, layouts, type);
+    }
+    return false;
+}
+
+// The single logical value type that names the argument-less nominal `type`
+// (index identity, never a name — Principle 2). A generic instantiation carries
+// a non-empty argument list and is deliberately NOT matched, so a parameterized
+// aggregate fails closed rather than silently picking the wrong instantiation.
+[[nodiscard]] std::optional<CoreValueTypeId>
+p6_nominal_value_type(const CoreProgram &program, CoreTypeId type) {
+    if (type.value >= program.types.size()) {
+        return std::nullopt;
+    }
+    for (std::uint32_t i = 0; i < program.value_types.size(); ++i) {
+        const auto *nominal = std::get_if<CoreVtNominal>(&program.value_types[i].node);
+        if (nominal != nullptr && nominal->base == type && nominal->args.empty()) {
+            return CoreValueTypeId{i};
+        }
+    }
+    return std::nullopt;
+}
+
+// The P4-D struct layout of a (non-generic) nominal struct type, or null.
+[[nodiscard]] const ir::core::CoreLayoutStruct *
+p6_nominal_struct_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
+                         CoreTypeId type) {
+    const auto value_type = p6_nominal_value_type(program, type);
+    if (!value_type.has_value()) {
+        return nullptr;
+    }
+    const ir::core::CoreLayout *layout = p6_value_layout(program, layouts, *value_type);
+    if (layout == nullptr) {
+        return nullptr;
+    }
+    return std::get_if<ir::core::CoreLayoutStruct>(&layout->shape);
+}
+
+// The P4-D enum layout of a (non-generic) nominal enum type, or null.
+[[nodiscard]] const ir::core::CoreLayoutEnum *
+p6_nominal_enum_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
+                       CoreTypeId type) {
+    const auto value_type = p6_nominal_value_type(program, type);
+    if (!value_type.has_value()) {
+        return nullptr;
+    }
+    const ir::core::CoreLayout *layout = p6_value_layout(program, layouts, *value_type);
+    if (layout == nullptr) {
+        return nullptr;
+    }
+    return std::get_if<ir::core::CoreLayoutEnum>(&layout->shape);
+}
+
 [[nodiscard]] std::optional<P6ScalarKind> p6_scalar_kind(const CoreProgram &program,
                                                          const ir::core::CoreLayoutTable &layouts,
                                                          CoreValueTypeId type) {
@@ -810,11 +913,17 @@ p6_value_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &lay
     if (scalar == nullptr || scalar->repr == ir::core::CoreScalarRepr::F64) {
         // F64 needs the f64 opcode ladder, which is a later P6 slice; every
         // non-scalar aggregate is outside the scalar subset.
-        // A tag-only enum is the ONE non-scalar shape in the subset: it is an
-        // i32 discriminant and is consumed only by `match` (never by an
-        // arithmetic operator, which is what the kind distinction enforces).
+        // A tag-only enum is one non-scalar shape in the subset: it is an i32
+        // discriminant consumed only by `match` (never by an arithmetic operator,
+        // which the distinct kind enforces). A STRUCT or a PAYLOAD-BEARING enum
+        // (RFC 0026 P6-4) is the other: its whole representation is the i32
+        // address of its P4-D shaped bytes, consumed only by a field projection,
+        // a store, or a payload pattern — never by an operator.
         if (p6_is_tag_only_enum(program, layouts, type)) {
             return P6ScalarKind::Index;
+        }
+        if (p6_is_aggregate(program, layouts, type)) {
+            return P6ScalarKind::Ptr;
         }
         return std::nullopt;
     }
@@ -915,7 +1024,10 @@ class P6ComputationHandlerBuilder {
           unsupported_code_(unsupported_code), used_exprs_(used_exprs), used_values_(used_values),
           result_(result), locals_(flow.value_count, LocalInfo{}),
           binding_locals_(flow.value_count, LocalInfo{}),
-          match_result_locals_(flow.value_count, LocalInfo{}) {}
+          match_result_locals_(flow.value_count, LocalInfo{}),
+          construct_addrs_(flow.exprs.size(), std::nullopt),
+          binding_offsets_(flow.value_count, std::nullopt),
+          binding_in_memory_(flow.value_count, false) {}
 
     // Validate the handler is in the scalar subset and assign every bound SSA
     // value a per-repr pool slot (i32 group first, then i64 — a real function
@@ -1027,6 +1139,25 @@ class P6ComputationHandlerBuilder {
     std::uint32_t scratch_i32_count_{0};
     std::uint32_t scratch_i64_count_{0};
 
+    // --- P6-4 aggregate memory state ---
+    //
+    // `construct_addrs_`: CoreExprId -> the scratch linear-memory address a
+    // CoreConstructExpr materializes its aggregate at. Assigned during the plan
+    // pass from ONE monotone cursor (`scratch_addr_cursor_`) exactly like the
+    // scratch locals above, so two construct sites can never alias and emit only
+    // reads the address. `scratch_addr_cursor_` is a byte offset RELATIVE to the
+    // scratch arena base (an absolute wasm32 address).
+    //
+    // `binding_offsets_` / `binding_in_memory_`: for a payload binding, the byte
+    // offset of the bound payload slot from the SCRUTINEE's address, and whether
+    // the binding is memory-backed (a payload slot) rather than the scrutinee
+    // value already sitting in a local. A binding deeper in nested payloads
+    // accumulates the offset chain, so the latch is always `addr + offset`.
+    std::vector<std::optional<std::uint32_t>> construct_addrs_;
+    std::vector<std::optional<std::uint64_t>> binding_offsets_;
+    std::vector<bool> binding_in_memory_;
+    std::uint32_t scratch_addr_cursor_{0};
+
     [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
         body_.byte(kOpUnreachable);
         add_diag(result_,
@@ -1066,6 +1197,31 @@ class P6ComputationHandlerBuilder {
             return std::nullopt;
         }
         return match_pool_local(binding_locals_[value.value]);
+    }
+
+    // The SITE an arm binding was planned at, reconstructed from the plan pass'
+    // binding tables. A binding with no recorded site (a pattern kind that could
+    // not produce one) reads the whole scrutinee, i.e. its own local.
+    [[nodiscard]] P6PatternSite binding_site_of(CoreValueId value, P6ScalarKind root_kind) const {
+        P6PatternSite site{root_kind, root_kind == P6ScalarKind::Ptr, 0};
+        if (value.value < binding_offsets_.size() && binding_in_memory_[value.value]) {
+            site.in_memory = true;
+            site.offset = binding_offsets_[value.value].value_or(0);
+        }
+        return site;
+    }
+
+    // Latch one arm binding's value into its scratch local from its SITE: a
+    // scalar is loaded, and an aggregate (a `Ptr` site) has its ADDRESS copied
+    // (the binding then reads fields through that address later).
+    [[nodiscard]] bool emit_binding_latch(std::uint32_t scrutinee_local, std::uint32_t dest,
+                                          const P6PatternSite &site, ir::SourceRangeOpt range) {
+        if (!emit_site_value(scrutinee_local, site, range)) {
+            return false;
+        }
+        body_.byte(kOpLocalSet);
+        body_.u32(dest);
+        return true;
     }
 
     [[nodiscard]] std::optional<std::uint32_t> match_result_local(CoreValueId value) const {
@@ -1112,6 +1268,195 @@ class P6ComputationHandlerBuilder {
         }
         emit_local_get(*local);
         return true;
+    }
+
+    // --- P6-4 aggregate places ---
+    //
+    // A `P6Place` is the compiler's model of "where an object lives". Either the
+    // object IS a scalar already sitting in a wasm local (`in_memory == false`),
+    // or it lives at `local + offset` in linear memory (`in_memory == true`),
+    // where `local` holds an i32 ADDRESS. `kind` is the object's P6 kind: a
+    // scalar (`Bool`/`IntI32`/`IntI64`), a tag-only enum discriminant (`Index`,
+    // also i32), or `Ptr` — an aggregate whose whole value IS its address.
+    //
+    // This ONE structure is what lets a projection step, a payload sub-pattern,
+    // and a plain value read share one emission path: only the address arithmetic
+    // differs, and it is derived from the P4-D offsets the plan pass already
+    // validated.
+    struct P6Place {
+        bool in_memory{false};
+        P6ScalarKind kind{P6ScalarKind::IntI32};
+        std::uint32_t local{0};
+        // An address base is either a wasm local holding an i32 address (an
+        // aggregate SSA value / arm binding) or a compile-time constant (the
+        // reserved input / context frames). One flag selects which.
+        bool base_is_const{false};
+        std::uint32_t base_const{0};
+        std::uint64_t offset{0};
+    };
+
+    // Push the base address of a place (before any field offset).
+    void emit_place_base(const P6Place &place) {
+        if (place.base_is_const) {
+            emit_const_i32(static_cast<std::int32_t>(place.base_const));
+        } else {
+            emit_local_get(place.local);
+        }
+    }
+
+    // Push the scalar at `place` (or, for a `Ptr` place, its address). A `Ptr`
+    // place's address is `base + offset`; a scalar in memory is loaded at its
+    // physical width from `base + offset`.
+    [[nodiscard]] bool emit_place_value(const P6Place &place, ir::SourceRangeOpt range) {
+        if (place.kind == P6ScalarKind::Ptr) {
+            emit_place_base(place);
+            if (place.offset != 0) {
+                if (place.offset > std::numeric_limits<std::int32_t>::max()) {
+                    return reject("aggregate address offset exceeds the i32 immediate domain",
+                                  std::move(range));
+                }
+                emit_const_i32(static_cast<std::int32_t>(place.offset));
+                body_.byte(kOpI32Add);
+            }
+            return true;
+        }
+        if (place.offset > std::numeric_limits<std::uint32_t>::max()) {
+            return reject("aggregate field offset exceeds the wasm32 address domain",
+                          std::move(range));
+        }
+        if (!place.in_memory) {
+            emit_place_base(place);
+            return true;
+        }
+        emit_place_base(place);
+        const bool wide = place.kind == P6ScalarKind::IntI64;
+        body_.byte(wide ? kOpI64Load : kOpI32Load);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(static_cast<std::uint32_t>(place.offset));
+        return true;
+    }
+
+    // Store the scalar currently on the operand stack into a memory-only place.
+    [[nodiscard]] bool emit_place_store(const P6Place &place, ir::SourceRangeOpt range) {
+        if (!place.in_memory || place.kind == P6ScalarKind::Ptr) {
+            return reject("store destination is not a scalar field in linear memory",
+                          std::move(range));
+        }
+        if (place.offset > std::numeric_limits<std::uint32_t>::max()) {
+            return reject("aggregate field offset exceeds the wasm32 address domain",
+                          std::move(range));
+        }
+        const bool wide = place.kind == P6ScalarKind::IntI64;
+        body_.byte(wide ? kOpI64Store : kOpI32Store);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(static_cast<std::uint32_t>(place.offset));
+        return true;
+    }
+
+    // The P6 kind of the object at a P4-D layout edge. A scalar keeps its width;
+    // a tag-only enum edge is `Index` (its whole representation is the i32 tag at
+    // offset 0, loaded/stored like a narrow Int); a STRUCT or a payload-bearing
+    // enum is `Ptr` — its whole value IS its address. Every other shape (a
+    // PtrLen pair, bytes, a collection handle, f64) is NOT a single-word P6 value
+    // and maps to `Ptr` only so the CALLER's leaf-repr check rejects it: a field
+    // read/store of such a leaf must fail closed rather than truncate.
+    [[nodiscard]] P6ScalarKind place_kind_of_layout(CoreLayoutId layout_id) const {
+        if (layout_id.value < layouts_.layouts.size()) {
+            const ir::core::CoreLayout &layout = layouts_.layouts[layout_id.value];
+            if (const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(&layout.shape)) {
+                switch (scalar->repr) {
+                case ir::core::CoreScalarRepr::I32:
+                    return P6ScalarKind::IntI32;
+                case ir::core::CoreScalarRepr::I64:
+                    return P6ScalarKind::IntI64;
+                case ir::core::CoreScalarRepr::F64:
+                    break;
+                }
+            }
+            if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
+                if (std::ranges::all_of(tagged->variant_payload_sizes,
+                                        [](std::uint64_t size) { return size == 0; })) {
+                    return P6ScalarKind::Index;
+                }
+                return P6ScalarKind::Ptr;
+            }
+            if (std::holds_alternative<ir::core::CoreLayoutStruct>(layout.shape)) {
+                return P6ScalarKind::Ptr;
+            }
+        }
+        return P6ScalarKind::Ptr;
+    }
+
+    // Whether a P4-D layout edge is a leaf the P6 memory model can load/store as
+    // ONE word: an i32 / i64 scalar, or a tag-only enum (an i32 discriminant).
+    // Everything else — a PtrLen String, bytes, a collection handle, f64, or a
+    // nested aggregate — is not a single-word field, so a leaf read/store of it
+    // fails closed.
+    [[nodiscard]] bool place_is_scalar_leaf(CoreLayoutId layout_id) const {
+        const P6ScalarKind kind = place_kind_of_layout(layout_id);
+        return kind == P6ScalarKind::IntI32 || kind == P6ScalarKind::IntI64 ||
+               kind == P6ScalarKind::Index;
+    }
+
+    // Whether a P4-D layout edge is an ADDRESSABLE aggregate leaf: a struct or a
+    // payload-bearing enum, whose whole P6 representation is an i32 address. A
+    // PtrLen String / bytes / collection handle is NOT one — it has no address
+    // the P6 model owns — so this is the predicate a store destination uses to
+    // decide "one i32 slot" vs "fail closed".
+    [[nodiscard]] bool place_is_aggregate_leaf(CoreLayoutId layout_id) const {
+        if (layout_id.value >= layouts_.layouts.size()) {
+            return false;
+        }
+        const ir::core::CoreLayout &layout = layouts_.layouts[layout_id.value];
+        if (std::holds_alternative<ir::core::CoreLayoutStruct>(layout.shape)) {
+            return true;
+        }
+        const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape);
+        return tagged != nullptr &&
+               !std::ranges::all_of(tagged->variant_payload_sizes,
+                                    [](std::uint64_t size) { return size == 0; });
+    }
+
+    // Whether a P4-D layout edge is a single-word P6 value at all: a scalar, a
+    // tag-only enum discriminant, or an addressable aggregate.
+    [[nodiscard]] bool place_is_p6_value(CoreLayoutId layout_id) const {
+        return place_is_scalar_leaf(layout_id) || place_is_aggregate_leaf(layout_id);
+    }
+
+    // The place of a value id whose runtime representation is an ADDRESS (a
+    // `Ptr`-kind SSA local or an arm binding holding an address).
+    [[nodiscard]] std::optional<P6Place> address_place_of(CoreValueId value) const {
+        const auto local = readable_local(value);
+        if (local == std::nullopt || readable_kind(value) != P6ScalarKind::Ptr) {
+            return std::nullopt;
+        }
+        return P6Place{false, P6ScalarKind::Ptr, *local, false, 0, 0};
+    }
+
+    // The place of a value id consumed as a SCALAR (its own kind, in its local).
+    [[nodiscard]] std::optional<P6Place> scalar_place_of(CoreValueId value) const {
+        const auto local = readable_local(value);
+        const auto kind = readable_kind(value);
+        if (local == std::nullopt || kind == std::nullopt || *kind == P6ScalarKind::Ptr) {
+            return std::nullopt;
+        }
+        return P6Place{false, *kind, *local, false, 0, 0};
+    }
+
+    // The address base of a projection step's ROOT. `Input` / `Context` are the
+    // reserved, module-owned frames; `Local` is the aggregate's own `Ptr` local.
+    [[nodiscard]] std::optional<P6Place> projection_root_base(const CorePathExpr &path) const {
+        if (path.has_local) {
+            return address_place_of(path.local);
+        }
+        switch (path.root) {
+        case ir::core::CorePathRoot::Input:
+            return P6Place{true, P6ScalarKind::Ptr, 0, true, kP6AggregateInputBase, 0};
+        case ir::core::CorePathRoot::Context:
+            return P6Place{true, P6ScalarKind::Ptr, 0, true, kP6AggregateContextBase, 0};
+        default:
+            return std::nullopt;
+        }
     }
 
     // Allocate a fresh scratch slot for `value` in whichever pool the physical
@@ -1182,31 +1527,12 @@ class P6ComputationHandlerBuilder {
                 },
                 [&](const CoreUnaryExpr &u) { return plan_expr(u.operand); },
                 [&](const CoreBinaryExpr &b) { return plan_expr(b.lhs) && plan_expr(b.rhs); },
-                [&](const CorePathExpr &) {
-                    return reject("input/context field loads are a later P6 slice",
-                                  expr.source_range);
-                },
+                [&](const CorePathExpr &p) { return plan_path(p, expr.source_range); },
                 [&](const CoreQualifiedExpr &q) {
-                    // A unit enum variant (`Level::High`): its runtime value IS the
-                    // i32 discriminant, so it lowers to a plain constant. The owning
-                    // enum must be tag-only (no payload to materialize).
-                    if (!q.resolved) {
-                        return reject("qualified variant is not resolved to a typed enum",
-                                      expr.source_range);
-                    }
-                    if (!p6_is_tag_only_enum(program_, layouts_, expr.result_type)) {
-                        return reject("qualified variant requires a tag-only enum type",
-                                      expr.source_range);
-                    }
-                    if (q.type_id.value >= program_.types.size() ||
-                        q.variant.value >= program_.types[q.type_id.value].variants.size()) {
-                        return reject("qualified variant identity is out of range",
-                                      expr.source_range);
-                    }
-                    return true;
+                    return plan_qualified(id, q, expr.source_range);
                 },
-                [&](const CoreConstructExpr &) {
-                    return reject("aggregate construction is a later P6 slice", expr.source_range);
+                [&](const CoreConstructExpr &c) {
+                    return plan_construct(id, c, expr.source_range);
                 },
                 [&](const CoreCoerceExpr &) {
                     return reject("scalar coercion is outside the P6 scalar subset",
@@ -1241,8 +1567,8 @@ class P6ComputationHandlerBuilder {
             }
             return true;
         case CoreLiteralKind::Integer:
-            if (*kind == P6ScalarKind::Bool) {
-                return reject("integer literal has a Bool scalar type", expr.source_range);
+            if (*kind != P6ScalarKind::IntI32 && *kind != P6ScalarKind::IntI64) {
+                return reject("integer literal has a non-Int scalar type", expr.source_range);
             }
             return true;
         default:
@@ -1251,7 +1577,275 @@ class P6ComputationHandlerBuilder {
         }
     }
 
-    // --- P6-3 match planning ---
+    // --- P6-4 aggregate memory planning ---
+    //
+    // A projection path is a READ: a chain of member steps from a root struct.
+    // Planning meters the result kind (the last step's layout edge) and hands the
+    // emit pass the typed step chain it must walk. The buffers differ by ROOT:
+    //   * `Input`   -> the host-written input frame at `kP6AggregateInputBase`
+    //   * `Context` -> the zero-initialised context frame at `kP6AggregateContextBase`
+    //   * `Local`   -> an aggregate SSA value's address (its `Ptr` local)
+    // A workflow-rooted / identifier / free-root path is outside the flow
+    // computation subset, so it fails closed rather than reading garbage.
+    [[nodiscard]] bool plan_path(const CorePathExpr &path, ir::SourceRangeOpt range) {
+        if (!path.projection_resolved) {
+            return reject("projection path is unresolved in an executable program", range);
+        }
+        if (!path.has_local && path.root != ir::core::CorePathRoot::Input &&
+            path.root != ir::core::CorePathRoot::Context) {
+            return reject("only input / context / local path roots are in the P6 subset", range);
+        }
+        for (std::uint32_t i = 0; i < path.projection.size(); ++i) {
+            const ir::core::CoreProjectionStep &step = path.projection[i];
+            const CoreTypeId expected =
+                (i == 0) ? path.root_type : path.projection[i - 1].result_type;
+            if (!plan_projection_owner(step.owner_type, expected, range)) {
+                return false;
+            }
+        }
+        // No member chain (a bare `input` / `ctx` / aggregate local) reads the
+        // whole frame: that is legal only for an aggregate, and only when the
+        // frame really lives in a buffer the module owns. A bare scalar root is
+        // NOT a memory read — reject so a malformed IR never reads raw bytes.
+        if (path.projection.empty()) {
+            if (path.has_local) {
+                if (readable_kind(path.local) != P6ScalarKind::Ptr) {
+                    return reject("a bare local aggregate read requires a struct value", range);
+                }
+                return true;
+            }
+            return reject("a bare input/context root is not a memory read in the P6 subset", range);
+        }
+        return true;
+    }
+
+    // Whether `owner` is the struct a projection step walks and continues from the
+    // expected type (the root type for the first step, the previous step's
+    // declared result otherwise). The emit pass re-reads the exact edge from the
+    // P4-D layout, so this is a fail-closed shape check, not a second authority.
+    [[nodiscard]] bool plan_projection_owner(CoreTypeId owner, CoreTypeId expected,
+                                             ir::SourceRangeOpt range) {
+        if (owner.value >= program_.types.size() ||
+            program_.types[owner.value].kind != CoreTypeDecl::Kind::Struct) {
+            return reject("projection owner is not a struct type", range);
+        }
+        if (owner != expected) {
+            return reject("projection step does not continue from the expected owner type", range);
+        }
+        if (p6_nominal_struct_layout(program_, layouts_, owner) == nullptr) {
+            return reject("projection owner has no finalized struct layout", range);
+        }
+        return true;
+    }
+
+    // A constructor materializes an aggregate at a fresh scratch address. Planning
+    // meters the address and validates every operand against its DECLARED field /
+    // payload slot (identity, never source order — Principle 2), so emit only
+    // stores the operands at the offsets the field identities name.
+    [[nodiscard]] bool plan_construct(CoreExprId id, const CoreConstructExpr &construct,
+                                      ir::SourceRangeOpt range) {
+        if (id.value >= construct_addrs_.size() || construct_addrs_[id.value].has_value()) {
+            return reject("constructor is planned more than once", range);
+        }
+        if (!construct.resolved) {
+            return reject("constructor is unresolved in an executable program", range);
+        }
+        const auto result_kind = scalar_kind(flow_.exprs[id.value].result_type);
+        if (result_kind != P6ScalarKind::Ptr) {
+            return reject("constructor result is not an aggregate type", range);
+        }
+        if (!construct.is_enum_variant) {
+            const auto *structure =
+                p6_nominal_struct_layout(program_, layouts_, construct.type_id);
+            if (structure == nullptr || structure->field_offsets.size() != construct.args.size()) {
+                return reject("struct constructor does not match its declared field layout", range);
+            }
+            for (const CoreConstructArg &arg : construct.args) {
+                if (arg.field.value >= structure->field_offsets.size()) {
+                    return reject("struct constructor field id is out of range", range);
+                }
+                if (!plan_construct_operand(arg.value, structure->field_layouts[arg.field.value],
+                                            range)) {
+                    return false;
+                }
+            }
+        } else {
+            if (construct.variant.value >= program_.types[construct.type_id.value].variants.size()) {
+                return reject("enum variant constructor id is out of range", range);
+            }
+            const int kind = enum_payload_kind(construct.type_id, construct.variant);
+            if (kind < 0) {
+                return reject("enum variant constructor owner has no payload metadata", range);
+            }
+            if (kind == 0 && !construct.args.empty()) {
+                return reject("unit enum variant constructor must have no payload args", range);
+            }
+            if (kind != 0) {
+                if (construct.args.size() != enum_payload_arity(construct.type_id,
+                                                                construct.variant)) {
+                    return reject("enum variant constructor payload arity does not match its "
+                                  "declaration",
+                                  range);
+                }
+            }
+            const auto *tagged = p6_nominal_enum_layout(program_, layouts_, construct.type_id);
+            const CoreLayoutId payload_layout =
+                tagged != nullptr && construct.variant.value < tagged->variant_payload_layouts.size()
+                    ? tagged->variant_payload_layouts[construct.variant.value]
+                    : CoreLayoutId{};
+            const ir::core::CoreLayoutStruct *payload = nullptr;
+            if (payload_layout.value < layouts_.layouts.size()) {
+                payload = std::get_if<ir::core::CoreLayoutStruct>(
+                    &layouts_.layouts[payload_layout.value].shape);
+            }
+            for (const CoreConstructArg &arg : construct.args) {
+                if (payload == nullptr) {
+                    return reject("enum payload constructor has no struct payload layout", range);
+                }
+                if (arg.field.value >= payload->field_layouts.size()) {
+                    return reject("enum payload constructor slot id is out of range", range);
+                }
+                if (!plan_construct_operand(arg.value, payload->field_layouts[arg.field.value],
+                                            range)) {
+                    return false;
+                }
+            }
+        }
+        // Meter the scratch address LAST so a rejected constructor never consumes
+        // an address slot (plans stay deterministic regardless of reject order).
+        const std::uint64_t size = aggregate_size(construct.type_id);
+        const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
+        if (start + size > kP6AggregateScratchCapacity ||
+            start + size > std::numeric_limits<std::uint32_t>::max()) {
+            return reject("constructor scratch arena is exhausted", range);
+        }
+        construct_addrs_[id.value] = static_cast<std::uint32_t>(kP6AggregateScratchBase + start);
+        scratch_addr_cursor_ = static_cast<std::uint32_t>(start + size);
+        return true;
+    }
+
+    // Validate ONE constructor operand against its P4-D SLOT edge: a scalar slot
+    // takes an i32/i64 operand of the same width, an addressable-aggregate slot
+    // takes a `Ptr` operand, and any other slot (a String / collection / f64, or
+    // an inline tag-only enum the P6 model cannot address) fails closed.
+    [[nodiscard]] bool plan_construct_operand(CoreValueId value, CoreLayoutId slot,
+                                              ir::SourceRangeOpt range) {
+        if (value.value >= flow_.value_types.size()) {
+            return reject("constructor operand value id is out of range", range);
+        }
+        const auto kind = scalar_kind(flow_.value_types[value.value]);
+        if (kind == std::nullopt) {
+            return reject("constructor operand has a non-aggregate, non-scalar type", range);
+        }
+        if (place_is_aggregate_leaf(slot)) {
+            if (*kind != P6ScalarKind::Ptr) {
+                return reject("constructor operand is not an aggregate for its aggregate slot",
+                              range);
+            }
+            return true;
+        }
+        if (place_is_scalar_leaf(slot)) {
+            // A scalar slot takes a scalar of the same PHYSICAL width. A tag-only
+            // enum discriminant is an i32 and matches a narrow-Int slot; a Bool
+            // and a narrow Int share the i32 repr. A `Ptr` operand into a scalar
+            // slot (or vice versa) is a shape error.
+            const bool slot_wide = place_kind_of_layout(slot) == P6ScalarKind::IntI64;
+            const bool operand_wide = *kind == P6ScalarKind::IntI64;
+            if (*kind == P6ScalarKind::Ptr || slot_wide != operand_wide) {
+                return reject("constructor operand width does not match its slot", range);
+            }
+            return true;
+        }
+        return reject("constructor slot is not a single-word P6 value", range);
+    }
+
+    // The P4-D size of an aggregate nominal (0 when the layout is missing).
+    [[nodiscard]] std::uint64_t aggregate_size(CoreTypeId type) const {
+        const auto value_type = p6_nominal_value_type(program_, type);
+        if (!value_type.has_value()) {
+            return 0;
+        }
+        const ir::core::CoreLayout *layout = p6_value_layout(program_, layouts_, *value_type);
+        return layout == nullptr ? 0 : layout->size;
+    }
+
+    // 0: unit payload, 1: tuple payload, 2: struct payload, -1: no metadata.
+    [[nodiscard]] int enum_payload_kind(CoreTypeId type, CoreVariantId variant) const {
+        if (type.value >= program_.types.size()) {
+            return -1;
+        }
+        const CoreTypeDecl &decl = program_.types[type.value];
+        if (variant.value >= decl.variant_payloads.size()) {
+            return -1;
+        }
+        switch (decl.variant_payloads[variant.value].kind) {
+        case CoreTypeDecl::VariantPayload::Kind::Unit:
+            return 0;
+        case CoreTypeDecl::VariantPayload::Kind::Tuple:
+            return 1;
+        case CoreTypeDecl::VariantPayload::Kind::Struct:
+            return 2;
+        }
+        return -1;
+    }
+
+    [[nodiscard]] std::uint32_t enum_payload_arity(CoreTypeId type, CoreVariantId variant) const {
+        if (type.value >= program_.types.size()) {
+            return 0;
+        }
+        const CoreTypeDecl &decl = program_.types[type.value];
+        if (variant.value >= decl.variant_payloads.size()) {
+            return 0;
+        }
+        return static_cast<std::uint32_t>(
+            decl.variant_payloads[variant.value].slot_type_template_roots.size());
+    }
+
+    [[nodiscard]] static std::uint64_t align_up(std::uint64_t value, std::uint64_t align) {
+        return (value + align - 1) & ~(align - 1);
+    }
+
+    // A qualified unit variant (`Level::High`) is a constructor-like value: for a
+    // TAG-ONLY enum its whole value is the i32 discriminant (a plain constant),
+    // and for a PAYLOAD-BEARING enum it is an ADDRESSED aggregate whose tag is at
+    // offset 0 and whose payload slots are zero (P6 has no default materializer
+    // yet, so a unit variant of a payload enum must have an all-unit payload to be
+    // lowerable). Planning meters the scratch address and records it, so emit only
+    // stores the tag.
+    [[nodiscard]] bool plan_qualified(CoreExprId id, const CoreQualifiedExpr &q,
+                                      ir::SourceRangeOpt range) {
+        if (!q.resolved) {
+            return reject("qualified variant is not resolved to a typed enum", range);
+        }
+        if (q.type_id.value >= program_.types.size() ||
+            q.variant.value >= program_.types[q.type_id.value].variants.size()) {
+            return reject("qualified variant identity is out of range", range);
+        }
+        if (p6_is_tag_only_enum(program_, layouts_, flow_.exprs[id.value].result_type)) {
+            return true; // a plain i32 discriminant constant
+        }
+        if (!p6_is_aggregate(program_, layouts_, flow_.exprs[id.value].result_type)) {
+            return reject("qualified variant requires an enum type", range);
+        }
+        const int kind = enum_payload_kind(q.type_id, q.variant);
+        if (kind != 0) {
+            return reject("a payload-bearing variant cannot be a unit qualified value", range);
+        }
+        if (id.value >= construct_addrs_.size() || construct_addrs_[id.value].has_value()) {
+            return reject("qualified variant is planned more than once", range);
+        }
+        const std::uint64_t size = aggregate_size(q.type_id);
+        const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
+        if (start + size > kP6AggregateScratchCapacity ||
+            start + size > std::numeric_limits<std::uint32_t>::max()) {
+            return reject("constructor scratch arena is exhausted", range);
+        }
+        construct_addrs_[id.value] = static_cast<std::uint32_t>(kP6AggregateScratchBase + start);
+        scratch_addr_cursor_ = static_cast<std::uint32_t>(start + size);
+        return true;
+    }
+
+
     //
     // Planning a match carves every arm binding and (for an expression match) the
     // match result a scratch local, validates each arm's pattern against the
@@ -1277,7 +1871,8 @@ class P6ComputationHandlerBuilder {
             }
             const auto result_kind = scalar_kind(flow_.value_types[match.result.value]);
             if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Index) {
-                return reject("expression match result must have a scalar type", range);
+                return reject("expression match result must have a scalar or aggregate type",
+                              range);
             }
             if (!bind_scratch(match.result, *result_kind, match_result_locals_)) {
                 return reject("match result scratch local could not be allocated", range);
@@ -1285,13 +1880,18 @@ class P6ComputationHandlerBuilder {
             used_values_[match.result.value] = true;
         }
 
+        // The scrutinee's ROOT site: a scalar sits in its local; an aggregate is
+        // addressed (offset 0 of its own address).
+        const P6PatternSite root_site{*scrutinee_kind,
+                                      *scrutinee_kind == P6ScalarKind::Ptr, 0};
+
         for (const CoreMatchArm &arm : match.arms) {
             for (const CorePatternBinding &binding : arm.bindings) {
                 if (binding.value.value >= flow_.value_types.size()) {
                     return reject("match arm binding value id is out of range", range);
                 }
                 const auto binding_kind = scalar_kind(flow_.value_types[binding.value.value]);
-                if (binding_kind == std::nullopt) {
+                if (binding_kind == std::nullopt || *binding_kind == P6ScalarKind::Index) {
                     return reject("match arm binding has a non-scalar or f64 type", range);
                 }
                 if (!bind_scratch(binding.value, *binding_kind, binding_locals_)) {
@@ -1299,7 +1899,8 @@ class P6ComputationHandlerBuilder {
                 }
                 used_values_[binding.value.value] = true;
             }
-            if (!plan_arm_pattern(arm.pattern, *scrutinee_kind, range)) {
+            if (!plan_arm_pattern(arm.pattern, root_site, /*allow_payload_bindings=*/true,
+                                  range)) {
                 return false;
             }
             // A guard region is present iff the source arm wrote `if <guard>`.
@@ -1349,12 +1950,21 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    // Validate a pattern tree against the subset and the scrutinee's kind. Every
-    // alternative is COMPILE-TIME-EXHAUSTIVE over CorePatternNode's seven arms, so
-    // a pattern kind that is not yet lowerable rejects with a specific message
-    // rather than silently matching nothing.
-    [[nodiscard]] bool plan_arm_pattern(CorePatternId id, P6ScalarKind scrutinee_kind,
-                                        ir::SourceRangeOpt range) {
+    // A pattern site: WHERE in the scrutinee a pattern is tested. The root site
+    // is the scrutinee itself (a scalar local, or address 0 of an aggregate's
+    // address). A payload sub-pattern descends to `base + payload_offset +
+    // field_offset`, so the same test/latch code covers a level-1 payload field
+    // and a level-N nested one — only the accumulated offset differs.
+
+    // Validate a pattern tree against the subset and the scrutinee's kind, and
+    // record every binding's SITE. Every alternative is COMPILE-TIME-EXHAUSTIVE
+    // over CorePatternNode's seven arms, so a pattern kind that is not yet
+    // lowerable rejects with a specific message rather than silently matching
+    // nothing. `allow_payload_bindings` is false inside an or-pattern: two
+    // alternatives may not bind one name at two different payload offsets, so a
+    // payload binding under an or fails closed rather than aliasing.
+    [[nodiscard]] bool plan_arm_pattern(CorePatternId id, P6PatternSite site,
+                                        bool allow_payload_bindings, ir::SourceRangeOpt range) {
         if (id.value >= flow_.patterns.size()) {
             return reject("pattern id is out of range for this flow", range);
         }
@@ -1363,17 +1973,31 @@ class P6ComputationHandlerBuilder {
             Overloaded{
                 [&](const CoreWildcardPat &) { return true; },
                 [&](const CoreBindingPat &b) {
-                    // `x` and `x @ nested`: the binding is latched from the
-                    // scrutinee before the test, so a nested pattern is tested
-                    // after it, on the same scrutinee kind.
-                    return !b.has_nested || plan_arm_pattern(b.nested, scrutinee_kind, range);
+                    // `x` and `x @ nested`: the binding is latched from its SITE
+                    // before the test, so a nested pattern is tested after it, on
+                    // the same site.
+                    if (b.binding.value < binding_offsets_.size()) {
+                        if (!allow_payload_bindings && (site.in_memory || site.offset != 0)) {
+                            return reject("or-pattern alternatives may not bind a payload slot",
+                                          range);
+                        }
+                        binding_offsets_[b.binding.value] = site.offset;
+                        binding_in_memory_[b.binding.value] = site.in_memory;
+                    }
+                    return !b.has_nested ||
+                           plan_arm_pattern(b.nested, site, allow_payload_bindings, range);
                 },
                 [&](const CoreLiteralPat &lit) {
-                    return plan_literal_pattern(lit, scrutinee_kind, range);
+                    if (site.in_memory) {
+                        return reject("literal pattern requires a scalar scrutinee", range);
+                    }
+                    return plan_literal_pattern(lit, site.kind, range);
                 },
                 [&](const CoreIntRangePat &r) {
-                    if (scrutinee_kind == P6ScalarKind::Bool ||
-                        scrutinee_kind == P6ScalarKind::Index) {
+                    if (site.in_memory) {
+                        return reject("int-range pattern requires a scalar scrutinee", range);
+                    }
+                    if (site.kind == P6ScalarKind::Bool || site.kind == P6ScalarKind::Index) {
                         return reject("int-range pattern requires an Int scrutinee", range);
                     }
                     if (r.start > r.end) {
@@ -1382,37 +2006,106 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [&](const CoreVariantPat &v) {
-                    if (scrutinee_kind != P6ScalarKind::Index) {
-                        return reject("variant pattern requires a tag-only enum scrutinee", range);
-                    }
-                    if (v.owner_enum.value >= program_.types.size()) {
-                        return reject("variant pattern owner type id is out of range", range);
-                    }
-                    if (v.variant.value >= program_.types[v.owner_enum.value].variants.size()) {
-                        return reject("variant pattern variant id is out of range", range);
-                    }
-                    // A tag-only enum has no payload to project, so a payload
-                    // sub-pattern is a layout slice (P6-4), never a silent no-op.
-                    if (!v.tuple_subpatterns.empty() || !v.struct_fields.empty()) {
-                        return reject("variant payload patterns need aggregate layout (a later slice)",
-                                      range);
-                    }
-                    return true;
+                    return plan_variant_pattern_site(v, site, allow_payload_bindings, range);
                 },
                 [&](const CoreOrPat &o) {
                     if (o.alternatives.size() < 2) {
                         return reject("or-pattern must have at least two alternatives", range);
                     }
                     return std::ranges::all_of(o.alternatives, [&](CorePatternId alt) {
-                        return plan_arm_pattern(alt, scrutinee_kind, range);
+                        return plan_arm_pattern(alt, site, /*allow_payload_bindings=*/false, range);
                     });
                 },
-                [&](const CoreTuplePat &) {
-                    return reject("tuple patterns need aggregate payload layout (a later P6 slice)",
-                                  range);
-                },
+                [&](const CoreTuplePat &t) { return plan_tuple_pattern_site(t, site, range); },
             },
             pattern.node);
+    }
+
+    // A variant pattern: the scrutinee must be a tag-only enum (an `Index` value)
+    // or an ADDRESSED enum. With a payload, the tag is at the address and each
+    // sub-pattern descends to `payload_offset + slot_offset`.
+    [[nodiscard]] bool plan_variant_pattern_site(const CoreVariantPat &v, P6PatternSite site,
+                                                 bool allow_payload_bindings,
+                                                 ir::SourceRangeOpt range) {
+        if (v.owner_enum.value >= program_.types.size()) {
+            return reject("variant pattern owner type id is out of range", range);
+        }
+        const CoreTypeDecl &decl = program_.types[v.owner_enum.value];
+        if (v.variant.value >= decl.variants.size()) {
+            return reject("variant pattern variant id is out of range", range);
+        }
+        const bool has_subpatterns = !v.tuple_subpatterns.empty() || !v.struct_fields.empty();
+        // A tag-only enum as a VALUE carries no payload, so a payload sub-pattern
+        // there is a shape error, never a silent no-op.
+        if (!site.in_memory) {
+            if (site.kind != P6ScalarKind::Index) {
+                return reject("variant pattern requires an enum scrutinee", range);
+            }
+            if (has_subpatterns) {
+                return reject("variant payload pattern requires an addressed enum scrutinee",
+                              range);
+            }
+            return true;
+        }
+        if (site.kind != P6ScalarKind::Ptr) {
+            return reject("variant pattern requires an enum scrutinee", range);
+        }
+        const auto *tagged = p6_nominal_enum_layout(program_, layouts_, v.owner_enum);
+        if (tagged == nullptr || v.variant.value >= tagged->variant_payload_layouts.size()) {
+            return reject("variant pattern owner has no finalized enum layout", range);
+        }
+        if (!has_subpatterns) {
+            return true; // a unit variant matches on the tag alone
+        }
+        const CoreLayoutId payload_layout = tagged->variant_payload_layouts[v.variant.value];
+        const ir::core::CoreLayoutStruct *payload = nullptr;
+        if (payload_layout.value < layouts_.layouts.size()) {
+            payload = std::get_if<ir::core::CoreLayoutStruct>(
+                &layouts_.layouts[payload_layout.value].shape);
+        }
+        if (payload == nullptr) {
+            return reject("variant payload pattern has no struct payload layout", range);
+        }
+        const std::uint64_t payload_base = site.offset + tagged->payload_offset;
+        const auto sub_site = [&](std::uint32_t slot, std::uint64_t &out) -> bool {
+            if (slot >= payload->field_offsets.size() ||
+                slot >= payload->field_layouts.size()) {
+                return false;
+            }
+            out = payload_base + payload->field_offsets[slot];
+            return true;
+        };
+        for (std::uint32_t i = 0; i < v.tuple_subpatterns.size(); ++i) {
+            std::uint64_t sub_offset = 0;
+            if (!sub_site(i, sub_offset)) {
+                return reject("variant tuple payload sub-pattern slot is out of range", range);
+            }
+            const P6PatternSite sub{place_kind_of_layout(payload->field_layouts[i]), true,
+                                    sub_offset};
+            if (!plan_arm_pattern(v.tuple_subpatterns[i], sub, allow_payload_bindings, range)) {
+                return false;
+            }
+        }
+        for (const CoreVariantPatField &field : v.struct_fields) {
+            std::uint64_t sub_offset = 0;
+            if (!sub_site(field.slot.value, sub_offset)) {
+                return reject("variant struct payload sub-pattern slot is out of range", range);
+            }
+            const P6PatternSite sub{
+                place_kind_of_layout(payload->field_layouts[field.slot.value]), true, sub_offset};
+            if (!plan_arm_pattern(field.pattern, sub, allow_payload_bindings, range)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // An anonymous tuple pattern is not in the P6 aggregate subset: no Core path
+    // / construct in this slice materializes a tuple value (Sema's match scrutinee
+    // is an enum), so a tuple pattern fails closed rather than matching nothing.
+    [[nodiscard]] bool plan_tuple_pattern_site(const CoreTuplePat &, P6PatternSite,
+                                               ir::SourceRangeOpt range) {
+        return reject("tuple patterns are not in the P6 aggregate subset", std::move(range));
     }
 
     [[nodiscard]] bool plan_literal_pattern(const CoreLiteralPat &lit, P6ScalarKind scrutinee_kind,
@@ -1475,9 +2168,7 @@ class P6ComputationHandlerBuilder {
                     return reject("capability effects stay on the orchestration lane",
                                   statement.source_range);
                 },
-                [&](const CoreStoreStmt &) {
-                    return reject("context stores are a later P6 slice", statement.source_range);
-                },
+                [&](const CoreStoreStmt &s) { return plan_store(s, statement.source_range); },
                 [&](const CoreReturnStmt &) {
                     return reject("value-returning handlers are a later P6 slice",
                                   statement.source_range);
@@ -1548,7 +2239,8 @@ class P6ComputationHandlerBuilder {
             emit_const_i32(lit.spelling == "true" ? 1 : 0);
             return true;
         }
-        if (lit.kind != CoreLiteralKind::Integer || kind == P6ScalarKind::Bool) {
+        if (lit.kind != CoreLiteralKind::Integer ||
+            (kind != P6ScalarKind::IntI32 && kind != P6ScalarKind::IntI64)) {
             return reject("only Bool and Integer literals are in the scalar subset",
                           std::move(range));
         }
@@ -1604,18 +2296,12 @@ class P6ComputationHandlerBuilder {
                 },
                 [&](const CoreUnaryExpr &u) { return emit_unary(u, expr.source_range); },
                 [&](const CoreBinaryExpr &b) { return emit_binary(b, expr.source_range); },
-                [&](const CorePathExpr &) {
-                    return reject("input/context field loads are a later P6 slice",
-                                  expr.source_range);
-                },
+                [&](const CorePathExpr &p) { return emit_path(p, expr.source_range); },
                 [&](const CoreQualifiedExpr &q) {
-                    // The i32 discriminant. plan_expr proved the type is a resolved,
-                    // in-range tag-only enum, so this is a pure constant emit.
-                    emit_const_i32(static_cast<std::int32_t>(q.variant.value));
-                    return true;
+                    return emit_qualified(id, q, expr.source_range);
                 },
-                [&](const CoreConstructExpr &) {
-                    return reject("aggregate construction is a later P6 slice", expr.source_range);
+                [&](const CoreConstructExpr &c) {
+                    return emit_construct(id, c, expr.source_range);
                 },
                 [&](const CoreCoerceExpr &) {
                     return reject("scalar coercion is outside the P6 scalar subset",
@@ -1627,6 +2313,284 @@ class P6ComputationHandlerBuilder {
             },
             expr.node);
         return ok;
+    }
+
+    // Emit a projection path READ. The plan pass proved the root is input /
+    // context / a local aggregate and every step owner is a struct, so this walks
+    // the chain accumulating each step's P4-D field offset and leaves the last
+    // place's value (a scalar load, a `Ptr` address, or a `Index` tag) on the
+    // stack.
+    [[nodiscard]] bool emit_path(const CorePathExpr &path, ir::SourceRangeOpt range) {
+        if (path.projection.empty()) {
+            if (!path.has_local) {
+                return reject("a bare input/context root is not a memory read in the P6 subset",
+                              std::move(range));
+            }
+            // A bare local aggregate read is just its address.
+            return emit_value_read(path.local, std::move(range));
+        }
+        auto place = projection_root_base(path);
+        if (place == std::nullopt) {
+            return reject("projection root is not input, context, or an aggregate local",
+                          std::move(range));
+        }
+        const auto *structure = p6_nominal_struct_layout(program_, layouts_, path.root_type);
+        if (structure == nullptr) {
+            return reject("projection root type has no finalized struct layout", std::move(range));
+        }
+        for (std::size_t i = 0; i < path.projection.size(); ++i) {
+            const ir::core::CoreProjectionStep &step = path.projection[i];
+            if (step.field.value >= structure->field_offsets.size() ||
+                step.field.value >= structure->field_layouts.size()) {
+                return reject("projection step field id is out of range for its owner",
+                              std::move(range));
+            }
+            place->offset += structure->field_offsets[step.field.value];
+            const CoreLayoutId edge = structure->field_layouts[step.field.value];
+            place->kind = place_kind_of_layout(edge);
+            place->in_memory = true;
+            const bool is_last = (i + 1 == path.projection.size());
+            if (is_last) {
+                // A projected LEAF must be a single-word P6 value: a scalar, a
+                // tag-only enum discriminant, or an addressable aggregate. A
+                // PtrLen String / bytes / collection handle / f64 has no
+                // single-word P6 representation, so fail closed rather than load
+                // half of it.
+                if (!place_is_p6_value(edge)) {
+                    return reject("projection leaf is not a single-word P6 value",
+                                  std::move(range));
+                }
+                break;
+            }
+            // A non-last step must walk a nested STRUCT; the next step re-reads
+            // that owner's layout (its `owner_type` is this step's result).
+            const auto *nested = p6_nominal_struct_layout(program_, layouts_, step.result_type);
+            if (!place_is_aggregate_leaf(edge) || nested == nullptr) {
+                return reject("projection step does not continue through a struct",
+                              std::move(range));
+            }
+            structure = nested;
+        }
+        if (path.has_local) {
+            // A local-rooted chain replaces the root's local with the per-step
+            // base; the address arithmetic above already folded every offset in.
+            place->base_is_const = false;
+            place->local = *readable_local(path.local);
+        }
+        return emit_place_value(*place, std::move(range));
+    }
+
+    // Emit a qualified unit variant: a tag-only enum's discriminant constant, or
+    // an addressed aggregate with its tag stored at offset 0 and no payload stores
+    // (a unit variant of a payload enum has all-unit slots in P6).
+    [[nodiscard]] bool emit_qualified(CoreExprId id, const CoreQualifiedExpr &q,
+                                      ir::SourceRangeOpt range) {
+        if (p6_is_tag_only_enum(program_, layouts_, flow_.exprs[id.value].result_type)) {
+            emit_const_i32(static_cast<std::int32_t>(q.variant.value));
+            return true;
+        }
+        if (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value()) {
+            return reject("qualified variant has no planned scratch address", std::move(range));
+        }
+        const std::uint32_t address = *construct_addrs_[id.value];
+        emit_const_i32(static_cast<std::int32_t>(address));
+        emit_const_i32(static_cast<std::int32_t>(q.variant.value));
+        body_.byte(kOpI32Store);
+        body_.u32(kAlignI32);
+        body_.u32(0);
+        emit_const_i32(static_cast<std::int32_t>(address));
+        return true;
+    }
+
+    // Emit a constructor: allocate its scratch bytes and store every operand at
+    // its DECLARED slot offset, then leave the address on the stack. Field
+    // IDENTITY (never source write order) selects the destination, so
+    // `Pair { b: 2, a: 1 }` cannot be mis-assigned (Principle 2). An enum stores
+    // its i32 tag at offset 0 and its payload slots at `payload_offset`.
+    [[nodiscard]] bool emit_construct(CoreExprId id, const CoreConstructExpr &construct,
+                                      ir::SourceRangeOpt range) {
+        if (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value()) {
+            return reject("constructor has no planned scratch address", std::move(range));
+        }
+        const std::uint32_t address = *construct_addrs_[id.value];
+        if (!construct.is_enum_variant) {
+            const auto *structure =
+                p6_nominal_struct_layout(program_, layouts_, construct.type_id);
+            if (structure == nullptr) {
+                return reject("struct constructor has no finalized layout", std::move(range));
+            }
+            for (const CoreConstructArg &arg : construct.args) {
+                if (!emit_construct_store(arg, address, structure->field_layouts[arg.field.value],
+                                          structure->field_offsets[arg.field.value], 0,
+                                          std::move(range))) {
+                    return false;
+                }
+            }
+        } else {
+            const auto *tagged =
+                p6_nominal_enum_layout(program_, layouts_, construct.type_id);
+            if (tagged == nullptr || construct.variant.value >= tagged->variant_payload_sizes.size()) {
+                return reject("enum constructor has no finalized layout", std::move(range));
+            }
+            const CoreLayoutId payload_layout =
+                tagged->variant_payload_layouts[construct.variant.value];
+            const ir::core::CoreLayoutStruct *payload = nullptr;
+            if (payload_layout.value < layouts_.layouts.size()) {
+                payload = std::get_if<ir::core::CoreLayoutStruct>(
+                    &layouts_.layouts[payload_layout.value].shape);
+            }
+            if (!construct.args.empty() && payload == nullptr) {
+                return reject("enum payload constructor has no struct payload layout",
+                              std::move(range));
+            }
+            for (const CoreConstructArg &arg : construct.args) {
+                if (payload == nullptr) {
+                    return reject("enum unit variant constructor has an unexpected payload arg",
+                                  std::move(range));
+                }
+                if (!emit_construct_store(arg, address, payload->field_layouts[arg.field.value],
+                                          payload->field_offsets[arg.field.value],
+                                          tagged->payload_offset, std::move(range))) {
+                    return false;
+                }
+            }
+            // The discriminant is written after the payload so the tag is the LAST
+            // store; the value is the variant id (its declaration-order index).
+            emit_const_i32(address);
+            emit_const_i32(static_cast<std::int32_t>(construct.variant.value));
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+        }
+        emit_const_i32(static_cast<std::int32_t>(address));
+        return true;
+    }
+
+    // Store ONE constructor operand at its declared slot offset (plus an optional
+    // enum payload base). A scalar operand is loaded from its local; an aggregate
+    // operand is copied by its address. The SLOT's layout edge selects the width,
+    // and the plan pass already proved the operand matches it.
+    [[nodiscard]] bool emit_construct_store(const CoreConstructArg &arg, std::uint32_t address,
+                                            const CoreLayoutId slot_layout,
+                                            std::uint64_t slot_offset,
+                                            std::uint64_t payload_base, ir::SourceRangeOpt range) {
+        const std::uint64_t offset = payload_base + slot_offset;
+        const auto kind = readable_kind(arg.value);
+        const auto local = readable_local(arg.value);
+        if (kind == std::nullopt || local == std::nullopt) {
+            return reject("constructor operand is not a readable value", std::move(range));
+        }
+        if (place_is_aggregate_leaf(slot_layout)) {
+            // An aggregate operand materializes as a 32-bit ADDRESS; it is one i32
+            // slot. A P6 aggregate is never flattened inline.
+            emit_const_i32(static_cast<std::int32_t>(address));
+            emit_local_get(*local);
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(static_cast<std::uint32_t>(offset));
+            return true;
+        }
+        const bool wide = place_kind_of_layout(slot_layout) == P6ScalarKind::IntI64;
+        // Stack order: [address][value] for a store, so push the address first.
+        emit_const_i32(static_cast<std::int32_t>(address));
+        emit_local_get(*local);
+        body_.byte(wide ? kOpI64Store : kOpI32Store);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(static_cast<std::uint32_t>(offset));
+        return true;
+    }
+
+    // A store into a place (`ctx.field = v`, `ctx.nested.field = v`). The plan
+    // pass bounds-checks the projection; emit walks the same typed step chain to
+    // the scalar leaf and stores the value at the P4-D field offset. A store into
+    // a bare `ctx.field` is the common case; a deeper chain accumulates offsets.
+    [[nodiscard]] bool plan_store(const CoreStoreStmt &store, ir::SourceRangeOpt range) {
+        if (!store.place.projection_resolved) {
+            return reject("store place projection is unresolved in an executable program", range);
+        }
+        if (store.place.root != ir::core::CorePathRoot::Context) {
+            return reject("only a context store is in the P6 subset", range);
+        }
+        if (store.place.projection.empty()) {
+            return reject("a context store requires a member projection", range);
+        }
+        for (std::uint32_t i = 0; i < store.place.projection.size(); ++i) {
+            const ir::core::CoreProjectionStep &step = store.place.projection[i];
+            const CoreTypeId expected =
+                (i == 0) ? store.place.root_type : store.place.projection[i - 1].result_type;
+            if (!plan_projection_owner(step.owner_type, expected, range)) {
+                return false;
+            }
+        }
+        if (readable_kind(store.value) == std::nullopt) {
+            return reject("store value is not a readable value", range);
+        }
+        used_values_[store.value.value] = true;
+        return true;
+    }
+
+    [[nodiscard]] bool emit_store(const CoreStoreStmt &store, ir::SourceRangeOpt range) {
+        const auto *structure = p6_nominal_struct_layout(program_, layouts_, store.place.root_type);
+        if (structure == nullptr) {
+            return reject("store root type has no finalized struct layout", std::move(range));
+        }
+        std::uint64_t offset = 0;
+        for (std::size_t i = 0; i < store.place.projection.size(); ++i) {
+            const ir::core::CoreProjectionStep &step = store.place.projection[i];
+            if (step.field.value >= structure->field_offsets.size() ||
+                step.field.value >= structure->field_layouts.size()) {
+                return reject("store projection field id is out of range for its owner",
+                              std::move(range));
+            }
+            offset += structure->field_offsets[step.field.value];
+            const CoreLayoutId edge = structure->field_layouts[step.field.value];
+            const bool is_last = (i + 1 == store.place.projection.size());
+            if (is_last) {
+                // A store leaf must be a single-word P6 value: a scalar or an
+                // addressable aggregate. A PtrLen / bytes / collection / f64 leaf
+                // has no single-word P6 representation, so fail closed.
+                if (!place_is_p6_value(edge)) {
+                    return reject("store destination is not a single-word P6 value",
+                                  std::move(range));
+                }
+                // Stack order for a store is [address][value].
+                emit_const_i32(static_cast<std::int32_t>(kP6AggregateContextBase));
+                const auto place_kind = place_kind_of_layout(edge);
+                if (place_kind == P6ScalarKind::Ptr) {
+                    const auto local = readable_local(store.value);
+                    if (local == std::nullopt) {
+                        return reject("store value is not a readable address", std::move(range));
+                    }
+                    emit_local_get(*local);
+                    body_.byte(kOpI32Store);
+                    body_.u32(kAlignI32);
+                    body_.u32(static_cast<std::uint32_t>(offset));
+                    return true;
+                }
+                if (place_kind == P6ScalarKind::Index ||
+                    readable_kind(store.value) != place_kind) {
+                    return reject("store value kind does not match its destination field",
+                                  std::move(range));
+                }
+                const auto local = readable_local(store.value);
+                if (local == std::nullopt) {
+                    return reject("store value is not a readable scalar", std::move(range));
+                }
+                const bool wide = place_kind == P6ScalarKind::IntI64;
+                emit_local_get(*local);
+                body_.byte(wide ? kOpI64Store : kOpI32Store);
+                body_.u32(wide ? kAlignI64 : kAlignI32);
+                body_.u32(static_cast<std::uint32_t>(offset));
+                return true;
+            }
+            const auto *nested = p6_nominal_struct_layout(program_, layouts_, step.result_type);
+            if (nested == nullptr) {
+                return reject("store projection does not continue through a struct",
+                              std::move(range));
+            }
+            structure = nested;
+        }
+        return reject("store place has no scalar leaf field", std::move(range));
     }
 
     [[nodiscard]] bool emit_unary(const CoreUnaryExpr &u, ir::SourceRangeOpt range) {
@@ -1787,21 +2751,16 @@ class P6ComputationHandlerBuilder {
     }
 
     // Emit one arm's PATTERN TEST, leaving a single i32 on the stack: nonzero iff
-    // the scrutinee matches. The scrutinee is already latched into the arm
-    // binding locals by the caller, so a sub-pattern only ever compares against
-    // the scrutinee local (a unit-variant enum's tag is its whole representation,
-    // an Int/Bool scrutinee is compared as a value). No branch instruction is
-    // emitted: an or-pattern combines its alternatives with `i32.or`, which is
-    // correct because a pattern test is pure and binding alternatives share the
-    // scrutinee local.
-    [[nodiscard]] bool emit_pattern_test(CorePatternId id, CoreValueId scrutinee,
-                                         ir::SourceRangeOpt range) {
+    // the value at `site` matches. `scrutinee_local` holds the scrutinee (a scalar
+    // value, or an aggregate's i32 address); a payload sub-pattern descends by
+    // adding the plan-recorded P4-D offset, so one emitter covers every depth. No
+    // branch instruction is emitted: an or-pattern combines its alternatives with
+    // `i32.or`, correct because a pattern test is pure and all alternatives read
+    // the same value.
+    [[nodiscard]] bool emit_pattern_test(CorePatternId id, std::uint32_t scrutinee_local,
+                                         P6PatternSite site, ir::SourceRangeOpt range) {
         if (id.value >= flow_.patterns.size()) {
             return reject("pattern id is out of range for this flow", std::move(range));
-        }
-        const auto scrutinee_local = readable_local(scrutinee);
-        if (scrutinee_local == std::nullopt) {
-            return reject("scrutinee has no readable local", std::move(range));
         }
         const CorePattern &pattern = flow_.patterns[id.value];
         return std::visit(
@@ -1814,28 +2773,20 @@ class P6ComputationHandlerBuilder {
                 },
                 [&](const CoreBindingPat &b) {
                     if (b.has_nested) {
-                        return emit_pattern_test(b.nested, scrutinee, std::move(range));
+                        return emit_pattern_test(b.nested, scrutinee_local, site,
+                                                 std::move(range));
                     }
                     emit_const_i32(1);
                     return true;
                 },
                 [&](const CoreLiteralPat &lit) {
-                    return emit_literal_test(lit, scrutinee, *scrutinee_local, std::move(range));
+                    return emit_literal_test(lit, scrutinee_local, site, std::move(range));
                 },
                 [&](const CoreIntRangePat &r) {
-                    return emit_int_range_test(r, scrutinee, *scrutinee_local, std::move(range));
+                    return emit_int_range_test(r, scrutinee_local, site, std::move(range));
                 },
                 [&](const CoreVariantPat &v) {
-                    const auto scrutinee_type = flow_.value_types[scrutinee.value];
-                    const auto kind = scalar_kind(scrutinee_type);
-                    if (kind != P6ScalarKind::Index) {
-                        return reject("variant pattern requires a tag-only enum scrutinee",
-                                      std::move(range));
-                    }
-                    emit_local_get(*scrutinee_local);
-                    emit_const_i32(static_cast<std::int32_t>(v.variant.value));
-                    body_.byte(kOpI32Eq);
-                    return true;
+                    return emit_variant_test(v, scrutinee_local, site, std::move(range));
                 },
                 [&](const CoreOrPat &o) {
                     // Any alternative matching => the pattern matches. Each
@@ -1844,7 +2795,7 @@ class P6ComputationHandlerBuilder {
                     // operands.
                     emit_const_i32(0);
                     for (const CorePatternId alt : o.alternatives) {
-                        if (!emit_pattern_test(alt, scrutinee, range)) {
+                        if (!emit_pattern_test(alt, scrutinee_local, site, range)) {
                             return false;
                         }
                         body_.byte(kOpI32Or);
@@ -1852,22 +2803,141 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [&](const CoreTuplePat &) {
-                    return reject("tuple patterns need aggregate payload layout (a later slice)",
+                    return reject("tuple patterns are not in the P6 aggregate subset",
                                   std::move(range));
                 },
             },
             pattern.node);
     }
 
-    [[nodiscard]] bool emit_literal_test(const CoreLiteralPat &lit, CoreValueId scrutinee,
-                                         std::uint32_t scrutinee_local, ir::SourceRangeOpt range) {
-        const auto kind = scalar_kind(flow_.value_types[scrutinee.value]);
-        if (kind == std::nullopt) {
-            return reject("pattern scrutinee has no scalar kind", std::move(range));
+    // Push the ADDRESS a pattern site names: the scrutinee local (an aggregate's
+    // address) advanced by the site's accumulated field offset.
+    void emit_site_address(std::uint32_t scrutinee_local, const P6PatternSite &site) {
+        emit_local_get(scrutinee_local);
+        if (site.offset != 0) {
+            emit_const_i32(static_cast<std::int32_t>(site.offset));
+            body_.byte(kOpI32Add);
         }
-        const bool wide = *kind == P6ScalarKind::IntI64;
+    }
+
+    // Push the VALUE at a pattern site: a scalar in a local (`local.get`), or a
+    // scalar at a memory offset (`local.get; i32.load offset=`). A `Ptr` site's
+    // "value" is its address, which is what a nested payload test needs.
+    [[nodiscard]] bool emit_site_value(std::uint32_t scrutinee_local, const P6PatternSite &site,
+                                       ir::SourceRangeOpt range) {
+        if (site.kind == P6ScalarKind::Ptr) {
+            emit_site_address(scrutinee_local, site);
+            return true;
+        }
+        if (!site.in_memory) {
+            emit_local_get(scrutinee_local);
+            return true;
+        }
+        if (site.offset > std::numeric_limits<std::uint32_t>::max()) {
+            return reject("pattern site offset exceeds the wasm32 address domain",
+                          std::move(range));
+        }
+        emit_local_get(scrutinee_local);
+        const bool wide = site.kind == P6ScalarKind::IntI64;
+        body_.byte(wide ? kOpI64Load : kOpI32Load);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(static_cast<std::uint32_t>(site.offset));
+        return true;
+    }
+
+    // A variant pattern: compare the tag. A tag-only enum value test compares the
+    // i32 discriminant in the scrutinee local; an ADDRESSED enum loads the tag
+    // from offset 0 of the site, then (with a payload) each sub-pattern is tested
+    // at `site + payload_offset + slot_offset`.
+    [[nodiscard]] bool emit_variant_test(const CoreVariantPat &v, std::uint32_t scrutinee_local,
+                                         const P6PatternSite &site, ir::SourceRangeOpt range) {
+        if (v.owner_enum.value >= program_.types.size() ||
+            v.variant.value >= program_.types[v.owner_enum.value].variants.size()) {
+            return reject("variant pattern identity is out of range", std::move(range));
+        }
+        if (!site.in_memory) {
+            if (site.kind != P6ScalarKind::Index) {
+                return reject("variant pattern requires an enum scrutinee", std::move(range));
+            }
+            emit_local_get(scrutinee_local);
+        } else {
+            if (site.kind != P6ScalarKind::Ptr) {
+                return reject("variant pattern requires an enum scrutinee", std::move(range));
+            }
+            emit_site_address(scrutinee_local, site);
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(0); // tag at offset 0
+        }
+        emit_const_i32(static_cast<std::int32_t>(v.variant.value));
+        body_.byte(kOpI32Eq);
+        const bool has_subpatterns = !v.tuple_subpatterns.empty() || !v.struct_fields.empty();
+        if (!has_subpatterns) {
+            return true;
+        }
+        // Tag AND every payload sub-pattern. The tag test is already on the stack;
+        // each sub-pattern leaves its own i32 and `i32.and` folds them.
+        const auto *tagged = p6_nominal_enum_layout(program_, layouts_, v.owner_enum);
+        if (tagged == nullptr || v.variant.value >= tagged->variant_payload_layouts.size()) {
+            return reject("variant pattern owner has no finalized enum layout",
+                          std::move(range));
+        }
+        const CoreLayoutId payload_layout = tagged->variant_payload_layouts[v.variant.value];
+        const ir::core::CoreLayoutStruct *payload = nullptr;
+        if (payload_layout.value < layouts_.layouts.size()) {
+            payload = std::get_if<ir::core::CoreLayoutStruct>(
+                &layouts_.layouts[payload_layout.value].shape);
+        }
+        if (payload == nullptr) {
+            return reject("variant payload pattern has no struct payload layout",
+                          std::move(range));
+        }
+        const std::uint64_t payload_base = site.offset + tagged->payload_offset;
+        const auto sub_site = [&](std::uint32_t slot, P6PatternSite &out) -> bool {
+            if (slot >= payload->field_offsets.size() ||
+                slot >= payload->field_layouts.size()) {
+                return false;
+            }
+            out = P6PatternSite{place_kind_of_layout(payload->field_layouts[slot]), true,
+                                payload_base + payload->field_offsets[slot]};
+            return true;
+        };
+        for (std::uint32_t i = 0; i < v.tuple_subpatterns.size(); ++i) {
+            P6PatternSite sub{};
+            if (!sub_site(i, sub)) {
+                return reject("variant tuple payload sub-pattern slot is out of range",
+                              std::move(range));
+            }
+            if (!emit_pattern_test(v.tuple_subpatterns[i], scrutinee_local, sub,
+                                   std::move(range))) {
+                return false;
+            }
+            body_.byte(kOpI32And);
+        }
+        for (const CoreVariantPatField &field : v.struct_fields) {
+            P6PatternSite sub{};
+            if (!sub_site(field.slot.value, sub)) {
+                return reject("variant struct payload sub-pattern slot is out of range",
+                              std::move(range));
+            }
+            if (!emit_pattern_test(field.pattern, scrutinee_local, sub, std::move(range))) {
+                return false;
+            }
+            body_.byte(kOpI32And);
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool emit_literal_test(const CoreLiteralPat &lit, std::uint32_t scrutinee_local,
+                                         const P6PatternSite &site, ir::SourceRangeOpt range) {
+        if (site.in_memory || (site.kind != P6ScalarKind::Bool &&
+                               site.kind != P6ScalarKind::IntI32 &&
+                               site.kind != P6ScalarKind::IntI64)) {
+            return reject("literal pattern requires a scalar scrutinee", std::move(range));
+        }
+        const bool wide = site.kind == P6ScalarKind::IntI64;
         if (lit.kind == CoreLiteralKind::Bool) {
-            if (*kind != P6ScalarKind::Bool) {
+            if (site.kind != P6ScalarKind::Bool) {
                 return reject("bool pattern requires a Bool scrutinee", std::move(range));
             }
             if (lit.spelling != "true" && lit.spelling != "false") {
@@ -1878,8 +2948,8 @@ class P6ComputationHandlerBuilder {
             body_.byte(kOpI32Eq);
             return true;
         }
-        if (lit.kind != CoreLiteralKind::Integer || *kind == P6ScalarKind::Bool ||
-            *kind == P6ScalarKind::Index) {
+        if (lit.kind != CoreLiteralKind::Integer ||
+            (site.kind != P6ScalarKind::IntI32 && site.kind != P6ScalarKind::IntI64)) {
             return reject("only Bool and Integer patterns are in the scalar subset",
                           std::move(range));
         }
@@ -1907,18 +2977,16 @@ class P6ComputationHandlerBuilder {
     // needs the scrutinee's repr to pick the compare width, plus a bound range
     // check against it (a range bound that does not fit the scrutinee's repr
     // could never be reached / could wrap, so it fails closed).
-    [[nodiscard]] bool emit_int_range_test(const CoreIntRangePat &r, CoreValueId scrutinee,
-                                           std::uint32_t scrutinee_local,
-                                           ir::SourceRangeOpt range) {
+    [[nodiscard]] bool emit_int_range_test(const CoreIntRangePat &r, std::uint32_t scrutinee_local,
+                                           const P6PatternSite &site, ir::SourceRangeOpt range) {
         if (r.start > r.end) {
             return reject("int-range pattern has start greater than end", std::move(range));
         }
-        const auto kind = scalar_kind(flow_.value_types[scrutinee.value]);
-        if (kind == std::nullopt || *kind == P6ScalarKind::Bool ||
-            *kind == P6ScalarKind::Index) {
+        if (site.in_memory ||
+            (site.kind != P6ScalarKind::IntI32 && site.kind != P6ScalarKind::IntI64)) {
             return reject("int-range pattern requires an Int scrutinee", std::move(range));
         }
-        const bool wide = *kind == P6ScalarKind::IntI64;
+        const bool wide = site.kind == P6ScalarKind::IntI64;
         if (!wide &&
             (r.start < std::numeric_limits<std::int32_t>::min() ||
              r.end > std::numeric_limits<std::int32_t>::max())) {
@@ -2017,6 +3085,11 @@ class P6ComputationHandlerBuilder {
         if (scrutinee_local == std::nullopt) {
             return reject("match scrutinee has no readable local", range);
         }
+        const auto scrutinee_kind = readable_kind(match.scrutinee);
+        if (scrutinee_kind == std::nullopt) {
+            return reject("match scrutinee has no readable kind", range);
+        }
+        const P6PatternSite root_site{*scrutinee_kind, *scrutinee_kind == P6ScalarKind::Ptr, 0};
         std::optional<std::uint32_t> result_local;
         if (match.has_result) {
             result_local = match_result_local(match.result);
@@ -2043,21 +3116,23 @@ class P6ComputationHandlerBuilder {
             body_.byte(kEmptyBlock);
             ++label_depth_;
 
-            // Latch every arm binding from the whole scrutinee BEFORE the test.
-            // The IR gives a binding no independent value (its value id is
-            // arm-scoped), so the scrutinee's local is the value to copy; a
-            // binding introduced by a payload sub-pattern would need that
-            // payload, which the subset rejects in planning.
+            // Latch every arm binding from its SITE before the test. The IR gives
+            // a binding no independent value (its value id is arm-scoped), so a
+            // root binding copies the whole scrutinee and a payload binding loads
+            // (or addresses) its P4-D slot. The site was recorded by the plan pass
+            // as `(in_memory, offset)`, so a deeper nested payload latch reuses
+            // this one emission path.
             for (const CorePatternBinding &binding : arm.bindings) {
                 const auto dest = binding_local(binding.value);
                 if (dest == std::nullopt) {
                     return reject("arm binding has no scratch local", range);
                 }
-                emit_local_get(*scrutinee_local);
-                body_.byte(kOpLocalSet);
-                body_.u32(*dest);
+                const P6PatternSite site = binding_site_of(binding.value, *scrutinee_kind);
+                if (!emit_binding_latch(*scrutinee_local, *dest, site, range)) {
+                    return false;
+                }
             }
-            if (!emit_pattern_test(arm.pattern, match.scrutinee, range)) {
+            if (!emit_pattern_test(arm.pattern, *scrutinee_local, root_site, range)) {
                 return false;
             }
             // A pattern test leaves "matched" as a nonzero i32; `br_if` branches
@@ -2161,9 +3236,7 @@ class P6ComputationHandlerBuilder {
                     return reject("capability effects stay on the orchestration lane",
                                   statement.source_range);
                 },
-                [&](const CoreStoreStmt &) {
-                    return reject("context stores are a later P6 slice", statement.source_range);
-                },
+                [&](const CoreStoreStmt &s) { return emit_store(s, statement.source_range); },
                 [&](const CoreReturnStmt &) {
                     return reject("value-returning handlers are a later P6 slice",
                                   statement.source_range);

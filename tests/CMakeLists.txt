@@ -225,6 +225,40 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-4 (KR6.6): aggregate memory. A struct field is read from the
+    # host-written input frame at its P4-D offset, a struct literal is
+    # materialized through the scratch allocator, a nested field is projected
+    # back, and a context field is stored at ITS P4-D offset. Observable output
+    # still awaits the P6-7 frame decision, so the Node host writes the input
+    # frame as RAW BYTES at the offsets the producer reports and reads the
+    # transformed context sum back out of linear memory — real memory semantics,
+    # no JSON in the loop. The producer pins the native state path; the host
+    # compiles the module (a malformed module is a hard rejection) and asserts
+    # both the state path and the read-back bytes.
+    add_test(NAME ahfl.wasm.p6_aggregate_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_aggregate.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_aggregate.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_aggregate_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_aggregate_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_aggregate_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_aggregate_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "aggregate-memory Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     add_test(NAME ahfl.wasm.e2_same_frontend_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"

@@ -3524,6 +3524,26 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         }
     }
 
+    // RFC 0026 P6-4: an agent's input / context / output struct types are the
+    // ADDRESSABLE frame roots of the aggregate-memory convention, so each must be
+    // interned into the one logical value-type arena even when no body expression
+    // happens to reference it as a value (a `ctx.field = v` store reads the
+    // context frame's P4-D layout, and the layout SSOT is keyed by value type).
+    // Interning is idempotent (hash-cons), so a type already interned by a body
+    // reference keeps its existing id and a program with no aggregate use is
+    // unchanged. A Unit context has no struct to intern.
+    for (const Decl &decl : ahfl_ir.declarations) {
+        const auto *agent = std::get_if<AgentDecl>(&decl);
+        if (agent == nullptr) {
+            continue;
+        }
+        static_cast<void>(intern_value_type(agent->input_type_ref, nullptr));
+        static_cast<void>(intern_value_type(agent->output_type_ref, nullptr));
+        if (agent->context_type_ref.kind != TypeRefKind::Unit) {
+            static_cast<void>(intern_value_type(agent->context_type_ref, nullptr));
+        }
+    }
+
     // Pass 2: flows. Resolve each flow's target agent BY IDENTITY; a missing
     // target or an unknown handler state is a fail-closed Error (never a
     // silent fallback to state 0).

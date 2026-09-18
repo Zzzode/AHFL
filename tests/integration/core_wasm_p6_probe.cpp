@@ -10,6 +10,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
@@ -32,6 +33,13 @@
 namespace {
 
 using namespace ahfl;
+
+// RFC 0026 P6-4: the input-frame values this probe writes for a fixture whose
+// input struct is `{ a: Int; b: Int }`, in DECLARATION order. A fixture that
+// wants a specific branch supplies its own by editing these two constants; the
+// probe prints the P4-D offsets it used so the Node host writes the SAME bytes.
+constexpr std::int64_t kAggregateInputA = 100;
+constexpr std::int64_t kAggregateInputB = 7;
 
 [[nodiscard]] std::optional<ir::Program> compile_fixture(const std::filesystem::path &path) {
     const Frontend frontend;
@@ -65,6 +73,30 @@ using namespace ahfl;
     evaluator::FieldMap fields;
     fields.set("value", std::make_unique<evaluator::Value>(evaluator::make_string("identity")));
     return evaluator::Value{evaluator::StructValue{"wasm::p6::Frame", std::move(fields)}};
+}
+
+// RFC 0026 P6-4: the aggregate fixture's input frame. The struct is
+// `{ a: Int; b: Int }` (both unbounded Int -> i64), so the frame is written with
+// those two typed values in DECLARATION order and the native run reads them
+// through the same `input.a` / `input.b` projections the wasm path uses.
+[[nodiscard]] evaluator::Value aggregate_input() {
+    evaluator::FieldMap fields;
+    fields.set("a", std::make_unique<evaluator::Value>(evaluator::make_int(kAggregateInputA)));
+    fields.set("b", std::make_unique<evaluator::Value>(evaluator::make_int(kAggregateInputB)));
+    return evaluator::Value{evaluator::StructValue{"wasm::p6::Frame", std::move(fields)}};
+}
+
+// The single argument-less nominal value type naming core type `type` (index
+// identity, never a name — Principle 2).
+[[nodiscard]] std::optional<ir::core::CoreValueTypeId>
+nominal_value_type(const ir::core::CoreProgram &program, ir::core::CoreTypeId type) {
+    for (std::uint32_t i = 0; i < program.value_types.size(); ++i) {
+        const auto *nominal = std::get_if<ir::core::CoreVtNominal>(&program.value_types[i].node);
+        if (nominal != nullptr && nominal->base == type && nominal->args.empty()) {
+            return ir::core::CoreValueTypeId{i};
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace
@@ -101,10 +133,25 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // RFC 0026 P6-4: an input struct with a leading `a` field selects the
+    // aggregate frame; every other fixture keeps the identity frame.
+    const ir::StructDecl *input_struct = nullptr;
+    for (const auto &decl : program->declarations) {
+        if (const auto *candidate = std::get_if<ir::StructDecl>(&decl)) {
+            if (candidate->name == agent->input_type_ref.canonical_name ||
+                candidate->name == agent->input_type_ref.display_name) {
+                input_struct = candidate;
+            }
+        }
+    }
+    const bool aggregate_fixture =
+        input_struct != nullptr && !input_struct->fields.empty() &&
+        input_struct->fields.front().name == "a";
+
     // Native observation: collect every entered state NAME in order. The
     // observer requires a valid invocation agent id to fire.
     std::vector<std::string> entered_names;
-    auto input = fixture_input();
+    auto input = aggregate_fixture ? aggregate_input() : fixture_input();
     runtime::AgentRuntime native(*agent, *flow);
     runtime::CapabilityInvocationContext context;
     context.agent_id = runtime::AgentId{0};
@@ -186,5 +233,36 @@ int main(int argc, char **argv) {
               << (std::find(agent->states.begin(), agent->states.end(), agent->initial_state) -
                   agent->states.begin())
               << "\n";
+
+    // RFC 0026 P6-4: for the aggregate fixture, report the P4-D input frame the
+    // host must write (base + per-field offset/width/value) so the Node host
+    // mirrors the SAME layout instead of re-deriving it. Empty for the scalar /
+    // match fixtures, which keep their own observation protocol.
+    if (aggregate_fixture && input_struct != nullptr) {
+        const auto value_type =
+            nominal_value_type(core.program, core.program.agents.front().input_type);
+        if (!value_type.has_value() || value_type->value >= layouts.table->value_layouts.size()) {
+            std::cerr << "aggregate fixture input struct has no interned value type\n";
+            return 1;
+        }
+        const auto &layout =
+            layouts.table->layouts[layouts.table->value_layouts[value_type->value].value];
+        const auto *structure = std::get_if<ir::core::CoreLayoutStruct>(&layout.shape);
+        if (structure == nullptr || structure->field_offsets.size() != input_struct->fields.size()) {
+            std::cerr << "aggregate fixture input layout is not a matching struct\n";
+            return 1;
+        }
+        std::cout << "aggregate_base=" << ir::core::kP6AggregateInputBase << " fields=";
+        for (std::size_t i = 0; i < input_struct->fields.size(); ++i) {
+            const std::int64_t value =
+                input_struct->fields[i].name == "a" ? kAggregateInputA : kAggregateInputB;
+            if (i != 0) {
+                std::cout << ",";
+            }
+            std::cout << input_struct->fields[i].name << "@" << structure->field_offsets[i] << ":"
+                      << value;
+        }
+        std::cout << "\n";
+    }
     return 0;
 }
