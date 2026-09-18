@@ -920,7 +920,7 @@ class P6ComputationHandlerBuilder {
 
     [[nodiscard]] bool plan_expr(const CoreExprId id) {
         if (id.value >= flow_.exprs.size()) {
-            return false;
+            return reject("expression id is out of range for this flow", ir::SourceRangeOpt{});
         }
         used_exprs_[id.value] = true;
         const CoreExpr &expr = flow_.exprs[id.value];
@@ -972,15 +972,26 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool plan_literal(const CoreExpr &expr) {
-        const auto kind = *scalar_kind(expr.result_type);
+        const auto kind = scalar_kind(expr.result_type);
+        if (kind == std::nullopt) {
+            return reject("scalar literal has a non-scalar or f64 result type",
+                          expr.source_range);
+        }
         const auto &lit = std::get<CoreLiteralExpr>(expr.node);
         switch (lit.kind) {
         case CoreLiteralKind::Bool:
-            return kind == P6ScalarKind::Bool;
+            if (*kind != P6ScalarKind::Bool) {
+                return reject("bool literal has a non-Bool scalar type", expr.source_range);
+            }
+            return true;
         case CoreLiteralKind::Integer:
-            return kind != P6ScalarKind::Bool;
+            if (*kind == P6ScalarKind::Bool) {
+                return reject("integer literal has a Bool scalar type", expr.source_range);
+            }
+            return true;
         default:
-            return false;
+            return reject("only Bool and Integer literals are in the scalar subset",
+                          expr.source_range);
         }
     }
 
@@ -1138,7 +1149,7 @@ class P6ComputationHandlerBuilder {
 
     [[nodiscard]] bool emit_expr(const CoreExprId id) {
         if (id.value >= flow_.exprs.size()) {
-            return false;
+            return reject("expression id is out of range for this flow", ir::SourceRangeOpt{});
         }
         const CoreExpr &expr = flow_.exprs[id.value];
         const auto result_kind = scalar_kind(expr.result_type);
@@ -1189,12 +1200,15 @@ class P6ComputationHandlerBuilder {
 
     [[nodiscard]] bool emit_unary(const CoreUnaryExpr &u, ir::SourceRangeOpt range) {
         if (u.operand.value >= flow_.exprs.size()) {
-            return false;
+            return reject("unary operand id is out of range for this flow", std::move(range));
         }
-        const P6ScalarKind operand_kind = *scalar_kind(flow_.exprs[u.operand.value].result_type);
+        const auto operand_kind = scalar_kind(flow_.exprs[u.operand.value].result_type);
+        if (operand_kind == std::nullopt) {
+            return reject("unary operand has a non-scalar or f64 result type", std::move(range));
+        }
         switch (u.op) {
         case CoreUnaryOp::Not:
-            if (operand_kind != P6ScalarKind::Bool) {
+            if (*operand_kind != P6ScalarKind::Bool) {
                 return reject("logical not requires a Bool operand", std::move(range));
             }
             if (!emit_expr(u.operand)) {
@@ -1203,12 +1217,12 @@ class P6ComputationHandlerBuilder {
             body_.byte(kOpI32Eqz);
             return true;
         case CoreUnaryOp::Neg:
-            if (operand_kind == P6ScalarKind::Bool) {
+            if (*operand_kind == P6ScalarKind::Bool) {
                 return reject("arithmetic negation requires an Int operand", std::move(range));
             }
             // 0 - x; wasm wrap semantics (negating INT_MIN wraps), matching the
             // documented P6 integer contract.
-            if (operand_kind == P6ScalarKind::IntI32) {
+            if (*operand_kind == P6ScalarKind::IntI32) {
                 emit_const_i32(0);
             } else {
                 emit_const_i64(0);
@@ -1216,15 +1230,15 @@ class P6ComputationHandlerBuilder {
             if (!emit_expr(u.operand)) {
                 return false;
             }
-            body_.byte(operand_kind == P6ScalarKind::IntI32 ? kOpI32Sub : kOpI64Sub);
+            body_.byte(*operand_kind == P6ScalarKind::IntI32 ? kOpI32Sub : kOpI64Sub);
             return true;
         }
-        return false;
+        return reject("unary operator is outside the P6 scalar subset", std::move(range));
     }
 
     [[nodiscard]] bool emit_binary(const CoreBinaryExpr &b, ir::SourceRangeOpt range) {
         if (b.lhs.value >= flow_.exprs.size() || b.rhs.value >= flow_.exprs.size()) {
-            return false;
+            return reject("binary operand id is out of range for this flow", std::move(range));
         }
         const auto lhs_kind = scalar_kind(flow_.exprs[b.lhs.value].result_type);
         const auto rhs_kind = scalar_kind(flow_.exprs[b.rhs.value].result_type);
@@ -1352,16 +1366,17 @@ class P6ComputationHandlerBuilder {
                     }
                     emit_local_get(*cond);
                     body_.byte(kOpIf);
-                    // A fully-diverging if (both branches goto/trap on every
-                    // path) is the handler's terminator and is typed i32: every
-                    // branch returns polymorphically, and the produced i32 also
-                    // satisfies the enclosing step()-dispatch arm. An if that
-                    // can fall through is a plain void control block; the
-                    // verifier proves a fully-diverging if is always terminal.
-                    const bool diverges = s.then_region && s.else_region &&
-                                          p6_region_always_diverges(*s.then_region) &&
-                                          p6_region_always_diverges(*s.else_region);
-                    body_.byte(diverges ? kI32 : kEmptyBlock);
+                    // Every flow statement-level if is emitted as a VOID block.
+                    // plan() proves the whole handler diverges on every path, so
+                    // a fully-diverging if never needs to yield a value: its
+                    // branches return/trap polymorphically, and make_step_body
+                    // appends one unreachable after the inlined handler body to
+                    // satisfy the i32 dispatch arm. Typing an if i32 merely
+                    // because *it* always diverges is wrong when it is nested
+                    // inside a void/fall-through branch: the polymorphic
+                    // branches would then leave a stray i32 ('expected 0
+                    // elements on the stack for fallthru, found 1').
+                    body_.byte(kEmptyBlock);
                     if (s.then_region && !emit_region(*s.then_region)) {
                         return false;
                     }
@@ -2358,7 +2373,11 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
             // The pre-lowered handler body runs the scalar stack machine and
             // returns the next state id itself (bumping globals on every goto
             // path), or traps. It is emitted inline inside this dispatch arm.
+            // Its statement ifs are all void blocks (plan() proves every path
+            // returns or traps), so the body leaves no i32: supply the arm's
+            // required i32 polymorphically with a trailing unreachable.
             body.raw_span(computed->body);
+            body.byte(kOpUnreachable);
         } else {
             // Identity / capability final: the state is stable and reports
             // itself without incrementing the transition counter.

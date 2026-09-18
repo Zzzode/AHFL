@@ -1,0 +1,49 @@
+module wasm::p6_nested_elseless_taken;
+
+// RFC 0026 P6-1 (KR6.6) nested-control-flow fixture. The inner if has NO else
+// and only diverges on its single then-branch (goto High); when its guard is
+// false it implicitly falls through to Low. x=150 makes the outer guard true
+// but the inner guard false, exercising the implicit-else fall-through of a
+// nested void if. x=300 makes both guards true, ENTERING the inner
+// then-branch: Decide -> High (companion to p6_nested_elseless).
+pub struct Frame {
+    value: String;
+}
+
+pub agent NestedElselessTakenAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for NestedElselessTakenAgent {
+    state Decide {
+        let x = 300;
+        if (x > 100) {
+            if (x > 200) {
+                goto High;
+            }
+        }
+        goto Low;
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

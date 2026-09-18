@@ -142,6 +142,24 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-1 (KR6.6): nested control flow. A fully-diverging if nested
+    # inside a void/fall-through branch used to be typed i32 from divergence
+    # alone, producing a module WebAssembly.compile rejects. These fixtures
+    # cover nested/taken/fall-through/else-less/depth-3 shapes; the Node host
+    # compiles each module and drives step() against the native state-id path.
+    add_test(NAME ahfl.wasm.p6_nested_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_nested_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_nested_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "nested-control-flow Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     add_test(NAME ahfl.wasm.e2_same_frontend_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"

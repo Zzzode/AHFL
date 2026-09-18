@@ -1,0 +1,60 @@
+module wasm::p6_nested_depth3_taken;
+
+// RFC 0026 P6-1 (KR6.6) nested-control-flow fixture. A fully-diverging if is
+// nested THREE levels deep inside void ifs that fall through. Before the
+// context-sensitive blocktype fix the innermost if was typed i32 (it always
+// diverges) while both enclosing ifs were void, leaving a stray i32 two
+// blocks out and failing validation. x=300 takes all three guards, ENTERING
+// the innermost then-branch: Decide -> High (companion to
+// p6_nested_depth3).
+pub struct Frame {
+    value: String;
+}
+
+pub agent NestedDepth3TakenAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Mid, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Mid;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Mid -> Done;
+    transition Low -> Done;
+}
+
+flow for NestedDepth3TakenAgent {
+    state Decide {
+        let x = 300;
+        if (x > 100) {
+            if (x > 150) {
+                if (x > 200) {
+                    goto High;
+                } else {
+                    goto Mid;
+                }
+            }
+        }
+        goto Low;
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Mid {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}
