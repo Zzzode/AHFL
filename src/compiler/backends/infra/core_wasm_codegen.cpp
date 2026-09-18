@@ -34,6 +34,10 @@ using ir::core::CoreBindingPat;
 using ir::core::CoreCapabilityCallStmt;
 using ir::core::CoreCapabilityId;
 using ir::core::CoreCoerceExpr;
+using ir::core::CoreCoercionOp;
+using ir::core::CoreCoercionOpKind;
+using ir::core::CoreCoercionPlanId;
+using ir::core::CoreCoercionPlanNode;
 using ir::core::CoreConstructArg;
 using ir::core::CoreConstructExpr;
 using ir::core::CoreExpr;
@@ -209,6 +213,10 @@ constexpr std::uint8_t kOpI64Sub = 0x7d;
 constexpr std::uint8_t kOpI64Mul = 0x7e;
 constexpr std::uint8_t kOpI64DivS = 0x7f;
 constexpr std::uint8_t kOpI64RemS = 0x81;
+// RFC 0026 P6-6: the integer-width widening. i64.extend_i32_s decodes an i32 in
+// the low lane and SIGN-extends it to i64, which is the exact physical effect of
+// a `BoundedInt <: Int` widening whose bounded side is the i32 scalar repr.
+constexpr std::uint8_t kOpI64ExtendI32S = 0xac;
 
 constexpr std::uint32_t kGlobalCurrentState = 0;
 constexpr std::uint32_t kGlobalTransitionCount = 1;
@@ -945,6 +953,106 @@ p6_nominal_enum_layout(const CoreProgram &program, const ir::core::CoreLayoutTab
     return std::nullopt;
 }
 
+// --- P6-6 coercion physical effects (RFC 0026 Q4) ---
+//
+// A `CoreCoerceExpr` is executable exactly when EVERY op in its proof plan has a
+// known PHYSICAL action under the P6 value model. The action is LAYOUT-DERIVED,
+// never re-derived from the op's spelling: the P4-D `CoreLayoutTable` decides
+// whether the two endpoints are the same bytes (no code), a scalar width growth
+// (one extend instruction), or a shape P6 cannot carry (fail closed).
+//
+//   IntWiden     : `BoundedInt <: Int`. A bounds refinement at the SAME physical
+//                  repr is a physical no-op; a repr growth i32 -> i64 is
+//                  `i64.extend_i32_s`. Anything else (e.g. a bounded value wider
+//                  than the target) is not a widening P6 can perform.
+//   TypeArg / FnParam / FnReturn : a type-level proof whose physical meaning is
+//                  "the same representation". Realized ONLY when the endpoints
+//                  are the same bytes (a covariant projection through an
+//                  unchanged layout, e.g. an unbounded phantom argument); a
+//                  projection that changes the shape fails closed, because
+//                  performing it would need the child plan's own effects.
+//   StringWiden  : no runtime code in principle — a `CoreVtString` is a 2-word
+//                  PtrLen pair whose width is layout-identical at both endpoints,
+//                  so the words would move unchanged. But the P6 value model has
+//                  NO 2-word value at all (a `PtrLen` is neither a scalar local
+//                  nor a single-word aggregate address), so no P6 local can hold
+//                  the result: it fails closed rather than truncating.
+//   CapacityWiden: likewise outside the P6 value model. A bounded collection is
+//                  a `CoreLayoutContainer` keyed by `capacity` -> `backing_size`,
+//                  and P6 has no collection handle, element store, or length
+//                  word, so there is no layout-derived action to emit.
+//
+// The classifier is total over `CoreCoercionOpKind` and returns the exact
+// physical action, so the caller never has to re-inspect the kind.
+enum class P6CoercionEffect {
+    None,      // no runtime code: the operand's word IS the result's word
+    ExtendI32, // i32 -> i64 sign extension (`BoundedInt <: Int` with repr growth)
+};
+
+/// Stable display name of a coercion op kind for a P6 fail-closed diagnostic
+/// (never used as identity — the enum is).
+[[nodiscard]] constexpr std::string_view core_coercion_op_name(CoreCoercionOpKind kind) noexcept {
+    switch (kind) {
+    case CoreCoercionOpKind::IntWiden:
+        return "IntWiden";
+    case CoreCoercionOpKind::StringWiden:
+        return "StringWiden";
+    case CoreCoercionOpKind::CapacityWiden:
+        return "CapacityWiden";
+    case CoreCoercionOpKind::TypeArg:
+        return "TypeArg";
+    case CoreCoercionOpKind::FnParam:
+        return "FnParam";
+    case CoreCoercionOpKind::FnReturn:
+        return "FnReturn";
+    }
+    return "unknown";
+}
+
+// The single physical-effect decision for one coercion op kind. `source`/`result`
+// are the plan node's endpoints; the widths come from the same `p6_scalar_kind`
+// the rest of the scalar ladder uses and the byte-shape equality from the P4-D
+// `value_layouts_equivalent` SSOT — codegen never re-derives a repr.
+[[nodiscard]] std::optional<P6CoercionEffect>
+p6_coercion_effect(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
+                   CoreCoercionOpKind kind, CoreValueTypeId source, CoreValueTypeId result,
+                   std::string &why) {
+    const bool same_bytes = ir::core::value_layouts_equivalent(layouts, source, result);
+    const auto source_kind = p6_scalar_kind(program, layouts, source);
+    const auto result_kind = p6_scalar_kind(program, layouts, result);
+
+    switch (kind) {
+    case CoreCoercionOpKind::CapacityWiden:
+        why = "capacity widening has no P6 collection value representation";
+        return std::nullopt;
+    case CoreCoercionOpKind::IntWiden:
+        if (same_bytes) {
+            return P6CoercionEffect::None; // same physical width: a bounds refinement
+        }
+        if (source_kind == P6ScalarKind::IntI32 && result_kind == P6ScalarKind::IntI64) {
+            return P6CoercionEffect::ExtendI32;
+        }
+        why = "IntWiden is neither a same-width bounds refinement nor an i32 -> i64 widening";
+        return std::nullopt;
+    case CoreCoercionOpKind::StringWiden:
+    case CoreCoercionOpKind::TypeArg:
+    case CoreCoercionOpKind::FnParam:
+    case CoreCoercionOpKind::FnReturn:
+        if (same_bytes && source_kind != std::nullopt && result_kind != std::nullopt) {
+            // The operand's own P6 word IS a valid P6 word of the result type;
+            // a projection that lands on a shape P6 has no local for (Index /
+            // aggregate / f64 / a 2-word String) is rejected by the caller's
+            // result-kind check, so this branch stays a true no-op.
+            return P6CoercionEffect::None;
+        }
+        why = "a " + std::string(core_coercion_op_name(kind)) +
+              " projection is not a same-layout transformation of a P6 value";
+        return std::nullopt;
+    }
+    why = "unknown coercion operation kind";
+    return std::nullopt;
+}
+
 // Structural all-paths termination predicate for a P6 scalar handler region.
 // A computed-goto handler is accepted only when EVERY path leaves via a goto or
 // trap (so `step()` always performs exactly one transition or traps and never
@@ -1534,10 +1642,7 @@ class P6ComputationHandlerBuilder {
                 [&](const CoreConstructExpr &c) {
                     return plan_construct(id, c, expr.source_range);
                 },
-                [&](const CoreCoerceExpr &) {
-                    return reject("scalar coercion is outside the P6 scalar subset",
-                                  expr.source_range);
-                },
+                [&](const CoreCoerceExpr &c) { return plan_coerce(id, c, expr.source_range); },
                 [&](const CoreUnsupportedExpr &) {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
@@ -1757,6 +1862,91 @@ class P6ComputationHandlerBuilder {
             return true;
         }
         return reject("constructor slot is not a single-word P6 value", range);
+    }
+
+    // --- P6-6 coercion planning (RFC 0026 P4 proof plans, physical effects) ---
+    //
+    // A `CoreCoerceExpr` consumes an existing SSA value and produces a fresh one.
+    // The result is a NEW SSA value (the Core lowerer binds it via `bind_pure`),
+    // so it takes an ordinary SSA local of the RESULT's kind, exactly like a let
+    // whose expression happens to be a coercion. Planning:
+    //   * proves the operand is readable and its recorded type is the plan root's
+    //     SOURCE (the Core verifier also proves this — this is the fail-closed
+    //     backend-side restatement that never trusts a partial arena),
+    //   * walks every op of the root plan node through `p6_coercion_effect`, so an
+    //     op with no P6 physical action rejects HERE with its own message.
+    //
+    // The RESULT's own P6 kind is not re-checked here: the `plan_expr` entry guard
+    // already rejected a result with no `p6_scalar_kind` (a 2-word String, a
+    // collection handle, an f64, a closure), so a coercion whose result P6 cannot
+    // hold has failed closed one frame up. The enclosing `let` binds the result
+    // id to a local of that same kind (`bind_value` reads the result type), so a
+    // repr-growing widening lands in an i64 local.
+    [[nodiscard]] bool plan_coerce(CoreExprId id, const CoreCoerceExpr &coerce,
+                                   ir::SourceRangeOpt range) {
+        if (id.value >= flow_.exprs.size()) {
+            return reject("coercion expression id is out of range for this flow", range);
+        }
+        if (coerce.operand.value >= flow_.value_types.size()) {
+            return reject("coercion operand value id is out of range", range);
+        }
+        if (coerce.plan.value >= flow_.coercion_plans.size()) {
+            return reject("coercion plan id is out of range for this flow", range);
+        }
+        const CoreCoercionPlanNode &root = flow_.coercion_plans[coerce.plan.value];
+        if (flow_.value_types[coerce.operand.value] != root.source) {
+            return reject("coercion operand type does not equal its plan root source", range);
+        }
+        // Every op must name a physical action the P6 value model can perform.
+        // (The result's own P6 kind is already checked by the `plan_expr` entry
+        // guard before this visitor runs, so a 2-word String / collection / f64
+        // coercion result has failed closed one frame up.)
+        for (const CoreCoercionOp &op : root.ops) {
+            std::string why;
+            if (p6_coercion_effect(program_, layouts_, op.kind, root.source, root.result, why) ==
+                std::nullopt) {
+                return reject("coercion plan contains an unsupported op: " + why, range);
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool emit_coerce(const CoreCoerceExpr &coerce, ir::SourceRangeOpt range) {
+        if (coerce.operand.value >= flow_.value_types.size() ||
+            coerce.plan.value >= flow_.coercion_plans.size()) {
+            return reject("coercion expression references an out-of-range id", std::move(range));
+        }
+        const CoreCoercionPlanNode &root = flow_.coercion_plans[coerce.plan.value];
+        const auto source_kind = readable_kind(coerce.operand);
+        if (source_kind == std::nullopt) {
+            return reject("coercion operand is not a readable local in this handler",
+                          std::move(range));
+        }
+        if (!emit_value_read(coerce.operand, range)) {
+            return false;
+        }
+        // Apply each op's physical effect in canonical plan order. A `None` op is
+        // a no-op on the stack (the same word is the result word); `ExtendI32` is
+        // the one real instruction.
+        for (const CoreCoercionOp &op : root.ops) {
+            std::string why;
+            const auto effect =
+                p6_coercion_effect(program_, layouts_, op.kind, root.source, root.result, why);
+            if (effect == std::nullopt) {
+                return reject("coercion plan contains an unsupported op: " + why, std::move(range));
+            }
+            switch (*effect) {
+            case P6CoercionEffect::None:
+                break;
+            case P6CoercionEffect::ExtendI32:
+                if (*source_kind != P6ScalarKind::IntI32) {
+                    return reject("i32 -> i64 widening requires an i32 operand", std::move(range));
+                }
+                body_.byte(kOpI64ExtendI32S);
+                break;
+            }
+        }
+        return true;
     }
 
     // The P4-D size of an aggregate nominal (0 when the layout is missing).
@@ -2303,10 +2493,7 @@ class P6ComputationHandlerBuilder {
                 [&](const CoreConstructExpr &c) {
                     return emit_construct(id, c, expr.source_range);
                 },
-                [&](const CoreCoerceExpr &) {
-                    return reject("scalar coercion is outside the P6 scalar subset",
-                                  expr.source_range);
-                },
+                [&](const CoreCoerceExpr &c) { return emit_coerce(c, expr.source_range); },
                 [&](const CoreUnsupportedExpr &) {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
@@ -3270,21 +3457,22 @@ build_agent_plan(const CoreProgram &program,
                  "explicit Core agent entry does not have one unique target flow");
         return std::nullopt;
     }
-    // RFC 0026 P6 (KR6.6): coercion plans stay on the KR6.5 reject path
-    // (scalar coercion lowering is the P6-6 slice). A non-empty PATTERN arena is
-    // admitted past this gate only when some handler is a pure P6 computation
-    // region actually containing a match — otherwise canonical E1-E3 shapes that
-    // merely carry leftover pattern artifacts keep the exact legacy rejection.
-    // The admitted flow still fails closed per-handler below for any pattern kind
-    // or expression node outside the landed subset.
-    if (!flow->coercion_plans.empty() ||
-        (!flow->patterns.empty() &&
-         !std::any_of(flow->states.begin(),
-                      flow->states.end(),
-                      [](const ir::core::CoreFlowState &state) {
-                          return region_contains_match(state.body) &&
-                                 is_p6_computation_region(state.body);
-                      }))) {
+    // RFC 0026 P6 (KR6.6): the coercion proof arena is executable from P6-6
+    // onward (a normalized coercion lowers to a real physical effect per
+    // CoreCoercionPlanNode op, or fails closed per-handler in the scalar
+    // builder). A non-empty PATTERN arena is admitted past this gate only when
+    // some handler is a pure P6 computation region actually containing a match —
+    // otherwise canonical E1-E3 shapes that merely carry leftover pattern
+    // artifacts keep the exact legacy rejection. The admitted flow still fails
+    // closed per-handler below for any pattern kind or expression node outside
+    // the landed subset.
+    if (!flow->patterns.empty() &&
+        !std::any_of(flow->states.begin(),
+                     flow->states.end(),
+                     [](const ir::core::CoreFlowState &state) {
+                         return region_contains_match(state.body) &&
+                                is_p6_computation_region(state.body);
+                     })) {
         const bool contains_capability =
             std::any_of(flow->states.begin(),
                         flow->states.end(),
@@ -3297,7 +3485,7 @@ build_agent_plan(const CoreProgram &program,
                                                 : policy.unsupported_code)
                      : policy.unsupported_code,
                  "KR6.5 " + std::string(policy.slice) +
-                     " rejects hidden pattern or coercion arenas");
+                     " rejects a hidden pattern arena with no matched computation handler");
         return std::nullopt;
     }
     if (agent.states.size() >=

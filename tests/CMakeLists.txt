@@ -259,6 +259,39 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-6 (KR6.6): coercion physical effects. The KR6.5
+    # `coercion_plans` arena gate is lifted; a CoreCoerceExpr lowers to a real
+    # effect derived from the P4-D layout table. The producer emits a real
+    # annotated-let widening fixture whose bounded side is the i32 scalar repr
+    # and whose target is i64 (so the handler must carry i64.extend_i32_s), plus
+    # a same-layout bounds relaxation (which must emit NO widening at all). The
+    # producer pins the native state path; the Node host compiles the module (a
+    # malformed body is a hard rejection), asserts the layout-derived opcode by
+    # walking the CODE section, and drives step() against the native ids.
+    add_test(NAME ahfl.wasm.p6_coerce_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_coerce.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_coerce.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_coerce_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_coerce_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_coerce_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_coerce_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "coercion Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     add_test(NAME ahfl.wasm.e2_same_frontend_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"

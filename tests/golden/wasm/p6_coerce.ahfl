@@ -1,0 +1,61 @@
+module wasm::p6_coerce;
+
+// RFC 0026 P6-6 (KR6.6) coercion physical-effect fixture. An annotated `let`
+// whose initializer type differs from the declared type is the ONE real frontend
+// producer of a CoreCoerceExpr: the semantics layer persists a subtype witness
+// and Core lowers it to a normalized coercion proof plan (CoreCoercionPlanNode)
+// bound to a fresh SSA value.
+//
+// `narrow` is a BOUNDED Int whose declared range fits the wasm32 i32 scalar repr
+// (P4-D `CoreLayoutScalar{I32}`); `wide` is an UNBOUNDED Int (i64). The single
+// `IntWiden` proof op therefore names a real PHYSICAL effect, not just a logical
+// refinement: the emitted handler must contain `i64.extend_i32_s` (0xac) to
+// sign-extend the i32 word into the i64 slot. The comparison below is observed
+// purely through the state ids step() moves to, so a missing (or wrongly
+// sized) extension changes the branch the agent takes.
+//
+// The input domain straddles zero on purpose: the widened value is
+// NEGATIVE, so a zero-extension (or a dropped extension) would read it as a huge
+// positive and take the Low branch instead of High. That is the exact
+// miscompile this fixture pins.
+pub struct Frame {
+    value: String;
+}
+
+pub agent CoerceAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for CoerceAgent {
+    state Decide {
+        let narrow: Int(-100, 100) = 0 - 100;
+        let wide: Int = narrow;
+        if (wide < 0) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

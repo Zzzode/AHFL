@@ -3326,6 +3326,201 @@ int main() {
                       !has_codegen_message(emitted, kP6ScaffoldPrefix),
                   "P6 gate classifies an effectful region as orchestration, not computation");
         }
+
+        // P6-6 (RFC 0026 KR6.6): CoreCoerceExpr physical effects. The KR6.5
+        // `coercion_plans` arena gate is LIFTED: a normalized coercion proof plan
+        // now lowers op-by-op through the P4-D layout table — an `IntWiden` whose
+        // repr grows is `i64.extend_i32_s`, a same-layout op is a physical no-op,
+        // and an op with no P6 value representation fails closed with its own
+        // message rather than emitting a half-correct no-op.
+        constexpr std::uint8_t kOpI64ExtendI32S = 0xac;
+
+        // Build a 3-state agent whose Start handler widens a BOUNDED i32 Int
+        // (0..10) to a WIDER bounded i32 Int (0..100) through one IntWiden, then
+        // compares the widened value. Both endpoints are the i32 scalar repr, so
+        // the P4-D layout comparison proves the coercion is a physical no-op.
+        // Every expr and SSA value is consumed exactly once (the orphan check).
+        const auto make_same_repr_coercion_program = [&]() {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{
+                CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 10)}});  // vt1 i32
+            program.value_types.push_back(CoreValueType{
+                CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 100)}}); // vt2 i32
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});           // vt3
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start", "High"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}},
+                                 {CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{2}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            // SSA values: v0 is the Done handler's own; v1..v6 are this handler's,
+            // each defined exactly once (the orphan check forbids a gap).
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "5"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr1 -> v1 (0..10)
+            flow.exprs.push_back(
+                CoreExpr{CoreCoerceExpr{CoreValueId{1}, CoreCoercionPlanId{0}},
+                         std::nullopt,
+                         CoreValueTypeId{2}}); // expr2 -> v2 (0..100, same repr)
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{2}}, std::nullopt, CoreValueTypeId{2}}); // expr3
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "3"},
+                                          std::nullopt,
+                                          CoreValueTypeId{2}}); // expr4 -> v4
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{2}}); // expr5
+            flow.exprs.push_back(CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{3},
+                                                         CoreExprId{5}},
+                                          std::nullopt,
+                                          CoreValueTypeId{3}}); // expr6 -> v6
+            flow.value_count = 7;
+            flow.value_types = {CoreValueTypeId{0},
+                                CoreValueTypeId{1},
+                                CoreValueTypeId{2},
+                                CoreValueTypeId{2},
+                                CoreValueTypeId{2},
+                                CoreValueTypeId{2},
+                                CoreValueTypeId{3}};
+            flow.coercion_plans = {CoreCoercionPlanNode{
+                CoreValueTypeId{1},
+                CoreValueTypeId{2},
+                {CoreCoercionOp{.kind = CoreCoercionOpKind::IntWiden}}}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{3}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{4}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{5}, CoreExprId{5}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{6}, CoreExprId{6}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{6};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            CoreFlowState high;
+            high.state = CoreStateId{2};
+            high.state_name = "High";
+            high.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(high));
+            return program;
+        };
+
+        // P6-6 negative: an IntWiden whose two endpoints are the SAME P4-D bytes
+        // is a physical no-op — the layout comparison decides, NOT the bounds — so
+        // no widening instruction may be emitted and the comparison stays i32.
+        {
+            auto program = make_same_repr_coercion_program();
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-6 same-repr coercion fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            const auto count_of = [&](std::uint8_t op) {
+                return handler_body.has_value()
+                           ? static_cast<std::size_t>(std::count(handler_body->begin(),
+                                                                 handler_body->end(), op))
+                           : 0u;
+            };
+            check(emitted.ok() && handler_body.has_value(),
+                  "P6-6 lowers a same-repr coercion handler to its own function");
+            check(count_of(kOpI64ExtendI32S) == 0,
+                  "P6-6 emits NO widening when the P4-D layouts are byte-identical");
+            check(count_of(kOpI32GtS) == 1,
+                  "P6-6 keeps the same-repr coercion's comparison in the i32 ladder");
+        }
+
+        // P6-6 positive: an IntWiden from a BOUNDED i32 Int to an UNBOUNDED Int
+        // grows the physical repr, so the handler must carry exactly one
+        // i64.extend_i32_s and the comparison moves to the i64 ladder. This is
+        // the coercion the real frontend produces for `let wide: Int = narrow`.
+        {
+            auto program = make_same_repr_coercion_program();
+            // Widen the target from the bounded i32 (0..100) to an UNBOUNDED i64.
+            program.value_types[2] = CoreValueType{CoreVtInt{std::nullopt}};
+            // The comparison must then be an i64 compare.
+            auto &flow = program.flows[0];
+            flow.exprs[4].result_type = CoreValueTypeId{2};
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-6 i32 -> i64 coercion fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            const auto count_of = [&](std::uint8_t op) {
+                return handler_body.has_value()
+                           ? static_cast<std::size_t>(std::count(handler_body->begin(),
+                                                                 handler_body->end(), op))
+                           : 0u;
+            };
+            check(emitted.ok() && handler_body.has_value() && count_of(kOpI64ExtendI32S) == 1,
+                  "P6-6 emits exactly one i64.extend_i32_s (0xac) for the repr-growing widening");
+            check(handler_body.has_value() && count_of(kOpI64GtS) == 1 &&
+                      count_of(kOpI32GtS) == 0,
+                  "P6-6 compares the widened value in the i64 ladder");
+            check(!has_codegen_message(emitted, "coercion is outside the P6 scalar subset") &&
+                      !has_codegen_message(emitted, "rejects a hidden pattern arena"),
+                  "P6-6 lifts the coercion arena gate and the per-expr coercion reject");
+        }
+
+        // P6-6 fail-closed: a `StringWiden` plan is a Core-legal strict length
+        // widening whose endpoints are BOTH the 2-word PtrLen String layout, but
+        // the P6 value model has no 2-word value at all (a PtrLen is neither a
+        // scalar local nor a single-word aggregate address), so the coercion's
+        // RESULT has no P6 kind and the handler fails closed before any byte is
+        // emitted — a truncated handle is never produced.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(
+                CoreValueType{CoreVtString{std::make_pair<std::uint64_t, std::uint64_t>(0, 10)}});
+            program.value_types.push_back(CoreValueType{CoreVtString{std::nullopt}});
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::String, "abc"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr1 -> v1
+            flow.exprs.push_back(
+                CoreExpr{CoreCoerceExpr{CoreValueId{1}, CoreCoercionPlanId{0}},
+                         std::nullopt,
+                         CoreValueTypeId{2}}); // expr2 -> v2
+            flow.value_count = 3;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2}};
+            flow.coercion_plans = {CoreCoercionPlanNode{
+                CoreValueTypeId{1},
+                CoreValueTypeId{2},
+                {CoreCoercionOp{.kind = CoreCoercionOpKind::StringWiden}}}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-6 StringWiden fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(emitted,
+                                       backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                      has_codegen_message(emitted, "non-scalar or f64"),
+                  "P6-6 fails closed on a StringWiden whose result has no P6 value form");
+        }
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
