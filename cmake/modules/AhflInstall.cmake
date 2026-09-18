@@ -56,10 +56,12 @@ set(AHFL_INTERNAL_INSTALL_TARGETS
     antlr4_runtime
     ahfl_base_support
     ahfl_base_json
+    ahfl_base_query
     ahfl_compiler_syntax_parser
     ahfl_compiler_syntax
     ahfl_compiler_syntax_recovery
     ahfl_compiler_frontend
+    ahfl_compiler_query
     ahfl_compiler_semantics
     ahfl_compiler_ir
     ahfl_compiler_assurance

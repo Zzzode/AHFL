@@ -1293,6 +1293,12 @@ add_test(NAME ahfl.query.engine_all
     COMMAND $<TARGET_FILE:ahfl_base_query_tests>
 )
 
+# RFC 0027 P2 (KR6.11-S3): parse(file) derived query over source_text(file),
+# with the query-vs-direct equivalence guard over the golden corpus.
+add_test(NAME ahfl.query.parse_equiv_all
+    COMMAND $<TARGET_FILE:ahfl_compiler_query_tests>
+)
+
 add_test(NAME ahfl.manifest.schema_all
     COMMAND $<TARGET_FILE:ahfl_compiler_manifest_tests>
 )

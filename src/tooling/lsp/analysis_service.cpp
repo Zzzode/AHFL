@@ -873,12 +873,6 @@ paths_from_scope_kinds(const NavigationScopeKindMap &scope_kinds) {
     return false;
 }
 
-struct SourceIdHash {
-    [[nodiscard]] std::size_t operator()(SourceId id) const noexcept {
-        return std::hash<std::size_t>{}(id.value);
-    }
-};
-
 /// Computes the reverse import closure of the changed paths inside a source
 /// graph. For every changed source unit S the result contains S itself plus
 /// every source unit that (transitively) imports S. The graph is typically

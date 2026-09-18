@@ -675,6 +675,22 @@ target_link_libraries(ahfl_base_query_tests
 )
 ahfl_apply_project_warnings(ahfl_base_query_tests)
 
+# RFC 0027 P2 (KR6.11-S3): parse(file) derived query + the query-vs-direct
+# equivalence guard over the golden corpus.
+add_executable(ahfl_compiler_query_tests
+    unit/compiler/query/parse_query_equiv.cpp
+)
+target_link_libraries(ahfl_compiler_query_tests
+    PRIVATE
+        ahfl_compiler_query
+        doctest
+)
+target_compile_definitions(ahfl_compiler_query_tests
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+ahfl_apply_project_warnings(ahfl_compiler_query_tests)
+
 add_executable(ahfl_compiler_manifest_tests
     unit/compiler/manifest/manifest.cpp
 )

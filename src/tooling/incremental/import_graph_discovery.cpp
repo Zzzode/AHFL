@@ -16,14 +16,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// SourceId is a struct (not an enum), so std::hash is not provided. Mirrors
-// the LSP's SourceIdHash in analysis_service.cpp.
-struct SourceIdHash {
-    [[nodiscard]] std::size_t operator()(SourceId id) const noexcept {
-        return std::hash<std::size_t>{}(id.value);
-    }
-};
-
 [[nodiscard]] std::vector<std::string>
 dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
                                 package_graph::PackageId package_id) {

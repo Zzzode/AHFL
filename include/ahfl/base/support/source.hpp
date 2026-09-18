@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,17 @@ struct SourceId {
     std::size_t value{0};
 
     [[nodiscard]] friend bool operator==(SourceId lhs, SourceId rhs) noexcept = default;
+};
+
+// Hash for SourceId. SourceId is a struct rather than an enum, so the standard
+// library provides no std::hash; this is the one canonical hasher shared by
+// every SourceId-keyed container (the LSP workspace index and the incremental
+// import graph), replacing the two byte-identical local copies that had to be
+// kept in sync by hand.
+struct SourceIdHash {
+    [[nodiscard]] std::size_t operator()(SourceId id) const noexcept {
+        return std::hash<std::size_t>{}(id.value);
+    }
 };
 
 struct SourcePosition {
