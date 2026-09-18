@@ -2526,6 +2526,99 @@ int main() {
                   "P6-3 fails closed on a tuple pattern");
         }
 
+        // P6-3: an IntRange pattern cannot reach Core through the frontend (a
+        // `match` scrutinee must be an enum, and the range patterns are for
+        // Int), so its two-signed-compare lowering is pinned here directly. The
+        // closed interval [start, end] is `not(v < start) and not(v > end)`, so
+        // an open-interval or swapped-bound lowering misroutes half the domain.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(
+                CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 1000)}});
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "5"}, std::nullopt, CoreValueTypeId{1}});
+            flow.value_count = 2;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.patterns.push_back(
+                CorePattern{CoreIntRangePat{3, 7}, std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{1};
+            match.has_result = false;
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{0};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-3 int-range fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            constexpr std::uint8_t kOpI32Eqz = 0x45;
+            constexpr std::uint8_t kOpI32LtS = 0x48;
+            constexpr std::uint8_t kOpI32GtS = 0x4a;
+            constexpr std::uint8_t kOpI32And = 0x71;
+            // `not(5 < 3)` -> 0x45, `not(5 > 7)` -> 0x45, folded by 0x71.
+            check(emitted.artifact.has_value() && handler_body.has_value() &&
+                      contains_bytes(*handler_body, {kOpI32LtS, kOpI32Eqz}) &&
+                      contains_bytes(*handler_body, {kOpI32GtS, kOpI32Eqz}) &&
+                      std::count(handler_body->begin(), handler_body->end(), kOpI32And) == 1,
+                  "P6-3 int-range pattern emits two negated signed compares + i32.and");
+        }
+
+        // P6-3: an IntRange pattern whose bound does not fit the scrutinee's i32
+        // repr can never be reached at that width, so it fails closed rather
+        // than wrapping the compare operand.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(
+                CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 1000)}});
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "5"}, std::nullopt, CoreValueTypeId{1}});
+            flow.value_count = 2;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.patterns.push_back(
+                CorePattern{CoreIntRangePat{0, 5'000'000'000LL}, std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{1};
+            match.has_result = false;
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{0};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = layout.table.has_value()
+                                     ? emit_agent(program, *layout.table)
+                                     : backends::CoreWasmCodegenResult{};
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(emitted,
+                                       backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                      has_codegen_message(emitted, "i32 scalar range"),
+                  "P6-3 fails closed on an int-range bound exceeding the i32 repr");
+        }
+
         // P6-3: a non-exhaustive fallback containing CoreTrapStmt emits the wasm
         // `unreachable` opcode (0x00), so a non-total match traps at runtime
         // instead of silently completing.
