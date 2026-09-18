@@ -34,10 +34,13 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <signal.h>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
+#include <unistd.h>
 
 #include "base/support/process.hpp"
 #include "core_wasm_node_resume_engine.hpp"
@@ -51,6 +54,7 @@ using namespace ahfl::runtime::resume_test_support;
 namespace fs = std::filesystem;
 
 namespace neng = ahfl::runtime::core_wasm_node_resume_engine;
+namespace engine = ahfl::runtime::core_wasm_resume_engine;
 namespace host = ahfl::runtime::core_wasm_resume_host;
 namespace ps = ahfl::runtime::payload_store;
 namespace support = ahfl::support;
@@ -273,6 +277,37 @@ int main(int argc, char **argv) {
     if (after.has_value() && std::holds_alternative<ps::ResolvedConsumed>(*after)) {
         const auto &c = std::get<ps::ResolvedConsumed>(*after);
         check(c.generation == 3 && c.consumed_generation == 2, "store.resolved_consumed_3_2");
+    }
+
+    // (7) Regression for the child-death fail-closed contract: a Node child that
+    // is SIGKILLed mid-session must surface as a typed engine error and a clean
+    // host exit -- never a SIGPIPE that signal-kills the host (exit 141).
+    {
+        auto dead = neng::launch_node_resume_engine(
+            *node_executable, host_script.string(), artifact.string());
+        check(dead.has_value(), "childdeath.relaunch");
+        if (dead.has_value()) {
+            auto dead_engine = std::move(*dead);
+            const int child_pid = dead_engine.child_pid_for_test();
+            check(child_pid > 0, "childdeath.pid_visible");
+            if (child_pid > 0) {
+                ::kill(child_pid, SIGKILL);
+            }
+            // Reap-and-drain window so the kernel closes the child's read end.
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            // A command to the dead child WRITES to the command channel: the
+            // MSG_NOSIGNAL socketpair turns that into EPIPE -> typed
+            // InstanceUnavailable. Under the pre-fix default-disposition SIGPIPE
+            // the next call below would signal-kill this process (exit 141).
+            const auto typed_err = dead_engine.fresh_instance(
+                std::span<const std::uint8_t>(*module_bytes),
+                [](const auto &) -> engine::ImportCallbackResult { return engine::ImportAbort{}; });
+            check(!typed_err.has_value() &&
+                      typed_err.error() == engine::EngineError::InstanceUnavailable,
+                  "childdeath.command_fails_typed");
+            // Destruction runs teardown() -> send(kCmdBye) on the dead channel;
+            // reaching the success print below is the exit-0 assertion.
+        }
     }
 
     if (g_failures != 0) {

@@ -11,9 +11,13 @@
 // ahfl_cap import and exposes the single exported 64 KiB linear memory, the bump
 // `alloc`, and the multivalue run2.
 //
-// The protocol is the SIMPLEST SOUND synchronous one over two anonymous pipes
-// (child fd 0 = parent->child commands, child fd 1 = child->parent frames; child
-// stderr is drained to a diagnostic string). Every frame is:
+// The protocol is the SIMPLEST SOUND synchronous one over two channels (child fd
+// 0 = parent->child commands, child fd 1 = child->parent frames; child stderr is
+// drained to a diagnostic string). The command channel is a SOCK_STREAM
+// socketpair and every command byte is sent with MSG_NOSIGNAL, so a write to a
+// dead child surfaces as EPIPE -> a typed InstanceUnavailable instead of a
+// SIGPIPE that would signal-kill the host (the frames travel on an anonymous
+// pipe, read-only on the parent side). Every frame is:
 //   u8 kind | u32 little-endian payload length n | n payload bytes
 // Directions are segregated by fd (no direction tag can desync the stream), and
 // every transfer is exact-length.
@@ -66,6 +70,7 @@ namespace engine = core_wasm_resume_engine;
 enum class NodeEngineError : std::uint8_t {
     NodeUnavailable, // no node executable found on PATH
     ScriptFailed,    // host.mjs could not be materialized
+    PipeFailed,      // the command/frame/stderr channel could not be created
     SpawnFailed,     // the subprocess could not be started
     ProtocolFailed,  // malformed / short / unknown frame, or a child fatal report
     ChildExited,     // the child exited before the expected frame
@@ -103,6 +108,12 @@ class NodeResumeEngine final : public engine::CoreWasmResumeEngine {
     [[nodiscard]] std::expected<engine::Run2Outcome, engine::EngineError>
     invoke_run2(engine::GuestPointer entry_ptr, std::uint32_t entry_len) override;
 
+    // TEST-SUPPORT ONLY: the child pid. Lets the regression prove that a child
+    // that dies mid-session surfaces as a typed engine error / clean teardown
+    // instead of a SIGPIPE that would exit the host process 141. Not part of
+    // the engine-port contract.
+    [[nodiscard]] int child_pid_for_test() const noexcept;
+
   private:
     struct Impl;
     friend std::expected<NodeResumeEngine, NodeEngineLaunchError> launch_node_resume_engine(
@@ -119,6 +130,11 @@ class NodeResumeEngine final : public engine::CoreWasmResumeEngine {
 
 // Spawn `node <host_script_path> <module_path>` and wait for the startup ready
 // frame. `host_script_path` must already contain node_resume_host_script().
+//
+// `module_path` is the byte authority: the child compiles that file, so
+// fresh_instance accepts only a span byte-equal to the launch file's content and
+// refuses anything else (a divergence would execute un-admitted bytes and bypass
+// the caller's A2 admission).
 [[nodiscard]] std::expected<NodeResumeEngine, NodeEngineLaunchError> launch_node_resume_engine(
     std::string node_executable, std::string host_script_path, std::string module_path);
 

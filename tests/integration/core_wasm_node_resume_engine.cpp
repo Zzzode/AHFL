@@ -5,14 +5,19 @@
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -96,9 +101,15 @@ class Fd {
     int fd_{-1};
 };
 
-[[nodiscard]] bool write_all(int fd, const std::uint8_t *data, std::size_t size) {
+// Exact write of a command-channel frame. The command channel is a SOCK_STREAM
+// socketpair and MSG_NOSIGNAL suppresses SIGPIPE, so a peer that has closed its
+// read end (crashed, killed, or drained past its deadline) yields EPIPE -> false
+// and the caller maps it to a typed InstanceUnavailable. A default-disposition
+// SIGPIPE would instead terminate the whole host process before the EPIPE check
+// could run, which is the exact fail-open the port contract forbids.
+[[nodiscard]] bool send_all(int fd, const std::uint8_t *data, std::size_t size) {
     while (size > 0) {
-        const auto n = ::write(fd, data, size);
+        const auto n = ::send(fd, data, size, MSG_NOSIGNAL);
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
@@ -160,7 +171,27 @@ enum class ReadState {
     return ReadState::Ok;
 }
 
-[[nodiscard]] std::chrono::steady_clock::time_point deadline() {
+// The launch module file's bytes, read once so fresh_instance can hold the port
+// to its contract ("instantiate ... the digest-admitted module bytes"): the JS
+// child instantiates the file at process.argv[2], so the launch file -- not the
+// span handed to fresh_instance -- is the authority. Binding the two is what
+// keeps a future reuse from silently executing un-admitted bytes.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> read_module_file(const std::string &path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return std::nullopt;
+    }
+    return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in),
+                                     std::istreambuf_iterator<char>());
+}
+
+// One steady_clock bound shared by every read of a session exchange. It is
+// computed once per session entry (launch, or an engine call) and threaded
+// through every recv()/read_exact() -- including all nested import exchanges of
+// a single invoke_run2 -- so the bound covers the whole session, not each
+// individual read. A child that trickles one well-formed frame just under the
+// per-read window can therefore not extend the session unboundedly.
+[[nodiscard]] std::chrono::steady_clock::time_point read_bound() {
     return std::chrono::steady_clock::now() + std::chrono::seconds(kReadTimeoutSeconds);
 }
 
@@ -179,6 +210,12 @@ struct NodeResumeEngine::Impl {
     // Scratch storage backing the spans the port hands out: the most recent
     // whole-page observation (re-filled by read_whole_memory / an import).
     std::vector<std::uint8_t> page;
+
+    // The exact bytes of the module file the child compiled at launch. The JS
+    // peer instantiates process.argv[2], so this -- not the span passed to
+    // fresh_instance -- is what actually executes; fresh_instance refuses a
+    // mismatch rather than let the adapter run un-admitted bytes.
+    std::vector<std::uint8_t> launch_module_bytes;
 
     eng::ImportCallback callback;
 
@@ -215,8 +252,8 @@ struct NodeResumeEngine::Impl {
         header[2] = static_cast<std::uint8_t>((n >> 8) & 0xFFu);
         header[3] = static_cast<std::uint8_t>((n >> 16) & 0xFFu);
         header[4] = static_cast<std::uint8_t>((n >> 24) & 0xFFu);
-        return write_all(cmd_write.get(), header, sizeof(header)) &&
-               write_all(cmd_write.get(), payload.data(), payload.size());
+        return send_all(cmd_write.get(), header, sizeof(header)) &&
+               send_all(cmd_write.get(), payload.data(), payload.size());
     }
 
     // One inbound frame: kind + owned payload. Eof/timeout/error all surface as
@@ -225,10 +262,10 @@ struct NodeResumeEngine::Impl {
         std::uint8_t kind{0};
         std::vector<std::uint8_t> payload;
     };
-    [[nodiscard]] std::optional<InFrame> recv(bool &eof) {
+    [[nodiscard]] std::optional<InFrame> recv(bool &eof, std::chrono::steady_clock::time_point bound) {
         eof = false;
         std::uint8_t header[kFrameHeaderBytes]{};
-        const auto hs = read_exact(frame_read.get(), header, sizeof(header), deadline());
+        const auto hs = read_exact(frame_read.get(), header, sizeof(header), bound);
         if (hs != ReadState::Ok) {
             eof = (hs == ReadState::Eof);
             return std::nullopt;
@@ -248,7 +285,7 @@ struct NodeResumeEngine::Impl {
         frame.payload.resize(static_cast<std::size_t>(n));
         if (n > 0) {
             const auto ps = read_exact(
-                frame_read.get(), frame.payload.data(), frame.payload.size(), deadline());
+                frame_read.get(), frame.payload.data(), frame.payload.size(), bound);
             if (ps != ReadState::Ok) {
                 eof = (ps == ReadState::Eof);
                 return std::nullopt;
@@ -258,10 +295,13 @@ struct NodeResumeEngine::Impl {
     }
 
     void teardown() {
-        // Best-effort clean shutdown; never throw from the destructor. Closing
-        // the command pipe gives the child's blocking readSync EOF; the kill
-        // covers a child parked inside the Wasm import. The stderr drain thread
-        // is joined BEFORE its read fd is closed (child death ends the read).
+        // Best-effort clean shutdown; never throw from the destructor. Sending
+        // kCmdBye then closing the command channel gives the child's blocking
+        // readSync EOF; the kill covers a child parked inside the Wasm import.
+        // The command channel is a socketpair written with MSG_NOSIGNAL, so this
+        // send is EPIPE-safe when the child is already dead (the pre-fix
+        // default-disposition SIGPIPE killed the host here). The stderr drain
+        // thread is joined BEFORE its read fd is closed (child death ends it).
         if (instantiated || pid > 0) {
             static_cast<void>(send(kCmdBye));
         }
@@ -292,10 +332,22 @@ NodeResumeEngine::~NodeResumeEngine() = default;
 NodeResumeEngine::NodeResumeEngine(NodeResumeEngine &&) noexcept = default;
 NodeResumeEngine &NodeResumeEngine::operator=(NodeResumeEngine &&) noexcept = default;
 
+int NodeResumeEngine::child_pid_for_test() const noexcept {
+    return impl_ == nullptr ? -1 : static_cast<int>(impl_->pid);
+}
+
 std::expected<void, eng::EngineError>
 NodeResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
                                  eng::ImportCallback import_callback) {
     if (impl_ == nullptr || impl_->instantiated || module_bytes.empty()) {
+        return std::unexpected(eng::EngineError::InvalidSequence);
+    }
+    // The child compiles the launch FILE, so fresh_instance is only sound when
+    // the span it is handed IS that file's content: the caller's A2 admission
+    // covers the bytes it passed, and any divergence would execute un-admitted
+    // bytes. Refuse rather than trust.
+    if (module_bytes.size() != impl_->launch_module_bytes.size() ||
+        !std::equal(module_bytes.begin(), module_bytes.end(), impl_->launch_module_bytes.begin())) {
         return std::unexpected(eng::EngineError::InvalidSequence);
     }
     impl_->callback = std::move(import_callback);
@@ -303,7 +355,7 @@ NodeResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
     bool eof = false;
-    auto frame = impl_->recv(eof);
+    auto frame = impl_->recv(eof, read_bound());
     if (!frame.has_value() || frame->kind != kFrameInstantiated) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
@@ -330,7 +382,7 @@ NodeResumeEngine::alloc_then_write(std::span<const std::uint8_t> bytes) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
     bool eof = false;
-    auto frame = impl_->recv(eof);
+    auto frame = impl_->recv(eof, read_bound());
     if (!frame.has_value() || frame->kind != kFrameAllocResult || frame->payload.size() != 4) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
@@ -354,7 +406,7 @@ NodeResumeEngine::read_whole_memory() {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
     bool eof = false;
-    auto frame = impl_->recv(eof);
+    auto frame = impl_->recv(eof, read_bound());
     if (!frame.has_value() || frame->kind != kFrameWholeMemory ||
         frame->payload.size() != kPageBytes) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
@@ -382,10 +434,13 @@ NodeResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_l
     }
 
     // Drive run2 until its terminal outcome, serving every nested ahfl_cap
-    // import synchronously on this same stack.
+    // import synchronously on this same stack. ONE bound covers the whole
+    // run2 exchange (including every nested import) so an open-ended import
+    // loop cannot refresh the deadline frame by frame.
+    const auto bound = read_bound();
     while (true) {
         bool eof = false;
-        auto frame = impl_->recv(eof);
+        auto frame = impl_->recv(eof, bound);
         if (!frame.has_value()) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
@@ -627,18 +682,44 @@ std::expected<NodeResumeEngine, NodeEngineLaunchError> launch_node_resume_engine
     std::string node_executable, std::string host_script_path, std::string module_path) {
     auto impl = std::make_unique<NodeResumeEngine::Impl>();
 
-    int cmd_pipe[2] = {-1, -1};
+    // Bind the port to the exact bytes the child will compile. A read failure
+    // here is a launch failure, not a later fresh_instance surprise.
+    auto launch_bytes = read_module_file(module_path);
+    if (!launch_bytes.has_value() || launch_bytes->empty()) {
+        return std::unexpected(NodeEngineLaunchError{NodeEngineError::ScriptFailed,
+                                                     "cannot read launch module: " + module_path});
+    }
+    impl->launch_module_bytes = std::move(*launch_bytes);
+
+    int cmd_pair[2] = {-1, -1};
     int frame_pipe[2] = {-1, -1};
     int stderr_pipe[2] = {-1, -1};
-    if (::pipe(cmd_pipe) != 0 || ::pipe(frame_pipe) != 0 || ::pipe(stderr_pipe) != 0) {
+    // The command channel is a SOCK_STREAM socketpair so every command byte can
+    // be sent with MSG_NOSIGNAL: a write to a dead child then surfaces as EPIPE
+    // -> typed InstanceUnavailable instead of a SIGPIPE that signal-kills the
+    // host. The frames and diagnostics channels are only ever read by the parent,
+    // so they stay anonymous pipes. All parent ends are close-on-exec.
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, cmd_pair) != 0 ||
+        ::pipe(frame_pipe) != 0 || ::pipe(stderr_pipe) != 0) {
+        const int saved_errno = errno;
+        for (const int fd : {cmd_pair[0], cmd_pair[1], frame_pipe[0], frame_pipe[1],
+                             stderr_pipe[0], stderr_pipe[1]}) {
+            if (fd >= 0) {
+                ::close(fd);
+            }
+        }
         return std::unexpected(
-            NodeEngineLaunchError{NodeEngineError::SpawnFailed, std::strerror(errno)});
+            NodeEngineLaunchError{NodeEngineError::PipeFailed, std::strerror(saved_errno)});
+    }
+    for (const int fd : {cmd_pair[0], cmd_pair[1], frame_pipe[0], frame_pipe[1],
+                         stderr_pipe[0], stderr_pipe[1]}) {
+        static_cast<void>(::fcntl(fd, F_SETFD, FD_CLOEXEC));
     }
     // Parent ends; child ends are dup2'd by the spawn actions.
-    impl->cmd_write = Fd{cmd_pipe[1]};
+    impl->cmd_write = Fd{cmd_pair[1]};
     impl->frame_read = Fd{frame_pipe[0]};
     impl->stderr_read = Fd{stderr_pipe[0]};
-    Fd child_cmd_read{cmd_pipe[0]};
+    Fd child_cmd_read{cmd_pair[0]};
     Fd child_frame_write{frame_pipe[1]};
     Fd child_stderr_write{stderr_pipe[1]};
 
@@ -647,6 +728,20 @@ std::expected<NodeResumeEngine, NodeEngineLaunchError> launch_node_resume_engine
     posix_spawn_file_actions_adddup2(&actions, child_cmd_read.get(), STDIN_FILENO);
     posix_spawn_file_actions_adddup2(&actions, child_frame_write.get(), STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, child_stderr_write.get(), STDERR_FILENO);
+    // The child would otherwise inherit a duplicate of EVERY parent-made fd: the
+    // dup2 sources plus the three parent-only ends. Close them all so the child's
+    // fd table is exactly its three stdio descriptors -- the repo reference
+    // src/base/support/process.cpp:196 addclose()'s its unused end for the same
+    // reason. In particular an extra child copy of the frame WRITE end keeps the
+    // parent's frame_read from ever seeing EOF if the script execs/spawns a
+    // descendant that inherits it, and the parent-only command write-end copy
+    // would keep the child's command read alive past the parent's close.
+    posix_spawn_file_actions_addclose(&actions, child_cmd_read.get());
+    posix_spawn_file_actions_addclose(&actions, child_frame_write.get());
+    posix_spawn_file_actions_addclose(&actions, child_stderr_write.get());
+    posix_spawn_file_actions_addclose(&actions, impl->cmd_write.get());
+    posix_spawn_file_actions_addclose(&actions, impl->frame_read.get());
+    posix_spawn_file_actions_addclose(&actions, impl->stderr_read.get());
 
     std::vector<std::string> arguments_storage = {node_executable, host_script_path, module_path};
     std::vector<char *> argv;
@@ -675,7 +770,7 @@ std::expected<NodeResumeEngine, NodeEngineLaunchError> launch_node_resume_engine
 
     // Wait for startup: ready (kind 0) or fatal (kind 99).
     bool eof = false;
-    auto frame = impl->recv(eof);
+    auto frame = impl->recv(eof, read_bound());
     if (!frame.has_value()) {
         const auto reason = eof ? NodeEngineError::ChildExited : NodeEngineError::ProtocolFailed;
         std::string diag = impl->diagnostic();
