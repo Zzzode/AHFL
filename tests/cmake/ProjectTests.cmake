@@ -1162,6 +1162,18 @@ add_test(NAME ahfl.conformance.evaluator_mutation
             e1_identity_agent
 )
 
+# KR6.7 (RFC 0026 P7): the wasm eligibility classifier. It runs the REAL
+# frontend -> Core -> P4-D -> emit_core_wasm pipeline over every committed case
+# and cross-checks each manifest's declared `engines.wasm` lane against the
+# computed verdict, so the KR6.6 skip list is machine-verified instead of
+# hand-curated. A manifest overclaiming wasm eligibility fails here even
+# though no WASM engine needs to be installed.
+if(AHFL_ENABLE_BACKEND_INFRA)
+    add_test(NAME ahfl.conformance.wasm_eligibility
+        COMMAND $<TARGET_FILE:ahfl_conformance_wasm_eligibility_tests>
+    )
+endif()
+
 add_test(NAME ahfl.runtime.payload_store
     COMMAND $<TARGET_FILE:ahfl_payload_store_tests>
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/payload-store"

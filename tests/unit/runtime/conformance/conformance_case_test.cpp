@@ -149,7 +149,10 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "runtime::float_output_e2e::FloatPipeline",
             0,
             1,
-            WasmEligibility::Computation,
+            // The classifier (ahfl.conformance.wasm_eligibility) proved this
+            // f64 identity passthrough emits on the orchestration lane; the
+            // former `computation` claim was a stale hand-curated skip.
+            WasmEligibility::Orchestration,
         },
     };
 

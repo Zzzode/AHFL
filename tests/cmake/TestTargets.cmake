@@ -449,6 +449,31 @@ target_include_directories(ahfl_conformance_evaluator_runner
 )
 ahfl_apply_project_warnings(ahfl_conformance_evaluator_runner)
 
+# KR6.7 (RFC 0026 P7): WASM eligibility classifier. Links the real compiler
+# wasm backend (so it can actually run lower -> layout -> emit) plus the
+# engine-independent manifest parser. Registered only when the infra wasm
+# backend exists, because its whole point is to exercise that emit path.
+if(AHFL_ENABLE_BACKEND_INFRA)
+    add_executable(ahfl_conformance_wasm_eligibility_tests
+        unit/runtime/conformance/wasm_eligibility_test.cpp
+        conformance/wasm_eligibility.cpp
+    )
+    target_link_libraries(ahfl_conformance_wasm_eligibility_tests
+        PRIVATE
+            ahfl_compiler_backend_infra_wasm
+    )
+    target_include_directories(ahfl_conformance_wasm_eligibility_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(ahfl_conformance_wasm_eligibility_tests
+        PRIVATE
+            AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    )
+    ahfl_apply_project_warnings(ahfl_conformance_wasm_eligibility_tests)
+endif()
+
 add_executable(ahfl_payload_store_tests
     unit/runtime/engine/payload_store.cpp
 )

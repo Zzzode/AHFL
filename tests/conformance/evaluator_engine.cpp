@@ -8,13 +8,9 @@
 #include <utility>
 #include <vector>
 
-#include "ahfl/compiler/frontend/frontend.hpp"
-#include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
-#include "ahfl/compiler/semantics/resolver.hpp"
-#include "ahfl/compiler/semantics/typecheck.hpp"
-#include "ahfl/compiler/semantics/validate.hpp"
 #include "base/json/json_value.hpp"
+#include "conformance/compile_source.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
@@ -39,51 +35,6 @@ using ahfl::runtime::WorkflowRuntime;
 using ahfl::runtime::WorkflowRuntimeConfig;
 using ahfl::runtime::WorkflowStatus;
 namespace json = ahfl::json;
-
-// Standard parse -> resolve -> typecheck -> validate -> lower pipeline. This
-// is the single compile seam for the conformance runner (it replaces the
-// per-driver copies the bespoke e2e binaries carried).
-[[nodiscard]] std::optional<Program>
-compile_ahfl_file(const std::filesystem::path &file_path, std::string &error_out) {
-    const Frontend frontend;
-    const auto parse_result = frontend.parse_file(file_path);
-    if (parse_result.has_errors() || !parse_result.program) {
-        std::ostringstream out;
-        parse_result.diagnostics.render(out);
-        error_out = "parse failed:\n" + out.str();
-        return std::nullopt;
-    }
-
-    const Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    if (resolve_result.has_errors()) {
-        std::ostringstream out;
-        resolve_result.diagnostics.render(out);
-        error_out = "resolve failed:\n" + out.str();
-        return std::nullopt;
-    }
-
-    const TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(*parse_result.program, resolve_result);
-    if (type_check_result.has_errors()) {
-        std::ostringstream out;
-        type_check_result.diagnostics.render(out);
-        error_out = "typecheck failed:\n" + out.str();
-        return std::nullopt;
-    }
-
-    const Validator validator;
-    const auto validation_result =
-        validator.validate(*parse_result.program, resolve_result, type_check_result);
-    if (validation_result.has_errors()) {
-        std::ostringstream out;
-        validation_result.diagnostics.render(out);
-        error_out = "validate failed:\n" + out.str();
-        return std::nullopt;
-    }
-
-    return lower_program_ir(*parse_result.program, resolve_result, type_check_result);
-}
 
 // Builds the mock capability table declared by the case. `ok` outcomes are
 // materialized ONCE from canonical wire JSON (value_from_json) and cloned per
@@ -333,7 +284,7 @@ EvaluatorScenarioResult run_evaluator_scenario(const LoadedConformanceCase &load
     const ConformanceCase &manifest = loaded.manifest;
 
     std::string error;
-    auto program = compile_ahfl_file(loaded.source_path, error);
+    auto program = compile_conformance_source(loaded.source_path, error);
     if (!program.has_value()) {
         return EvaluatorScenarioResult{.ok = false, .observation_json = {}, .error = error};
     }

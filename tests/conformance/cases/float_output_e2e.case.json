@@ -19,8 +19,8 @@
   "engines": {
     "evaluator": true,
     "wasm": {
-      "eligible": "computation",
-      "reason": "float-valued frame requires in-wasm expression evaluation on the KR6.6 computation lane"
+      "eligible": "orchestration",
+      "reason": "single-agent two-state f64 identity passthrough: the frame is copied whole at its P4-D layout, so it emits on the orchestration wasm subset (E1 shape with an f64 field)"
     }
   }
 }

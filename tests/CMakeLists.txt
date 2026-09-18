@@ -292,6 +292,26 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # KR6.7 (RFC 0026 P7): execution witness for the case the eligibility
+    # classifier promoted across the wasm boundary. `float_output_e2e` is an
+    # f64 identity passthrough whose physical repr the E1 string identity does
+    # not exercise; the Node embedded host writes a real IEEE-754 double into
+    # the module's own allocated frame and reads it back out of the returned
+    # frame, so a mis-sized/mis-aligned f64 field cannot pass. Real Node-engine
+    # evidence, NOT wasmtime evidence; SKIPs (77) when Node is unavailable.
+    add_test(NAME ahfl.wasm.eligibility_runnable_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_eligibility_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/runtime/float_output_e2e.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.eligibility_runnable_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "wasm eligibility f64 identity execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     add_test(NAME ahfl.wasm.e2_same_frontend_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"

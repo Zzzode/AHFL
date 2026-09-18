@@ -254,7 +254,8 @@ ahfl_label_tests(
 
 # KR6.7 (RFC 0026 P7): engine-independent conformance. The manifest parser
 # unit test plus the evaluator-engine adapter lanes (blessed byte compare,
-# determinism, mutation gate) and the three migrated e2e identities.
+# determinism, mutation gate), the WASM eligibility classifier, and the three
+# migrated e2e identities.
 ahfl_label_tests(
     LABELS conformance
     TESTS
@@ -266,6 +267,14 @@ ahfl_label_tests(
         ahfl.runtime.enum_variant_e2e
         ahfl.runtime.if_let_e2e
 )
+
+if(AHFL_ENABLE_BACKEND_INFRA)
+    ahfl_label_tests(
+        LABELS conformance
+        TESTS
+            ahfl.conformance.wasm_eligibility
+    )
+endif()
 
 ahfl_label_tests(
     LABELS llm-provider
