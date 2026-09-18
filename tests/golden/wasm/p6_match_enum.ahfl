@@ -1,0 +1,65 @@
+module wasm::p6_match_enum;
+
+// RFC 0026 P6-3 (KR6.6) statement-match lowering fixture. `level` is a TAG-ONLY
+// enum (every variant has no payload), so the whole value is its i32
+// discriminant; the if-let (`match` in statement position) tests the tag and
+// drives a distinct state per arm. Its arm diverges (goto) and the implicit
+// else completes and falls through to the trailing goto, so the compiled handler
+// exercises BOTH the arm chain and its completion block. The observed path is
+// Decide -> High_ -> Done (the High tag matches, so the fall-through goto never
+// runs); a wrong tag compare or a misrouted `br` depth changes that path.
+pub struct Frame {
+    value: String;
+}
+
+pub enum Level {
+    Low,
+    High,
+    Mid,
+}
+
+pub agent MatchAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Low, High, Mid, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+    transition Decide -> Low;
+    transition Decide -> High;
+    transition Decide -> Mid;
+    transition Low -> Done;
+    transition High -> Done;
+    transition Mid -> Done;
+}
+
+flow for MatchAgent {
+    state Decide {
+        let level: Level = Level::High;
+        if let High = level {
+            goto High;
+        }
+        if let Low = level {
+            goto Low;
+        }
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Mid {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

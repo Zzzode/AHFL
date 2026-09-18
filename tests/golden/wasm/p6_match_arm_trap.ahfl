@@ -1,0 +1,46 @@
+module wasm::p6_match_arm_trap;
+
+// RFC 0026 P6-3 (KR6.6) match-arm trap fixture. The matched High arm divides
+// by zero, so step() raises a real WebAssembly.RuntimeError (the documented
+// P6 integer semantics) instead of transitioning. The Node host asserts the
+// trap is reached through the match arm, not merely declared.
+pub struct Frame {
+    value: String;
+}
+
+pub enum Level {
+    Low,
+    High,
+}
+
+pub agent MatchAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Boom, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+    transition Decide -> Boom;
+    transition Boom -> Done;
+}
+
+flow for MatchAgent {
+state Decide {
+    let level: Level = Level::High;
+    let y: Int = match level {
+        High => 1 / 0,
+        Low => 0,
+    };
+    goto Boom;
+}
+
+state Boom {
+    goto Done;
+}
+
+state Done {
+    return input;
+}
+}

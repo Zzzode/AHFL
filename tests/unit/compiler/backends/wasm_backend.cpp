@@ -2065,8 +2065,6 @@ int main() {
               "P6-0 scaffold leaves the canonical E1 artifact byte-identical");
 
         constexpr std::string_view kP6ScaffoldPrefix = "RFC 0026 P6 scalar codegen cannot lower";
-        constexpr std::string_view kLegacyShapeMessage =
-            "non-final handler";
 
         // Opcode byte constants pinned here (mirror of the encoder's scalar
         // ladder); byte-pattern assertions prove the right physical instruction
@@ -2357,9 +2355,12 @@ int main() {
                   "P6-2 rejects a computed goto outside the legal transition table");
         }
 
-        // P6-2 fail-closed: a CoreMatchStmt inside a computation region is a
-        // later P6 slice, so it still rejects with the scalar codegen prefix
-        // and produces no artifact.
+        // P6-3: a CoreMatchStmt in a computation region is now LOWERED, not
+        // rejected. A wildcard statement match compiles to the S/B/C arm chain:
+        // three nested `block` (0x02 0x40) per arm level plus the completion and
+        // chain blocks, and the `i32.eqz` (0x45) + `br_if` (0x0d) inversion that
+        // routes a mis-match to the next arm. The arm/fallback bodies here are
+        // gotos, so the match diverges and needs no completion block.
         {
             auto program = make_e1_core_program();
             program.value_types.push_back(CoreValueType{CoreVtBool{}});
@@ -2387,17 +2388,186 @@ int main() {
                 CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
             start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
             check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
-                  "P6-2 match fixture is verified Core with a finalized layout");
+                  "P6-3 match fixture is verified Core with a finalized layout");
             const auto layout = compute_core_layouts(program);
             const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            check(emitted.artifact.has_value() && handler_body.has_value(),
+                  "P6-3 lowers a wildcard statement match to a real function");
+            constexpr std::uint8_t kOpBlock = 0x02;
+            constexpr std::uint8_t kOpBrIf = 0x0d;
+            constexpr std::uint8_t kOpI32Eqz = 0x45;
+            constexpr std::uint8_t kEmptyBlock = 0x40;
+            check(handler_body.has_value() &&
+                      // S, B and C_i each open a void block, in that order.
+                      contains_bytes(*handler_body,
+                                     {kOpBlock, kEmptyBlock, kOpBlock, kEmptyBlock,
+                                      kOpBlock, kEmptyBlock}) &&
+                      // A mis-match is negated then branches to the next arm.
+                      contains_bytes(*handler_body, {kOpI32Eqz, kOpBrIf, 0x00}),
+                  "P6-3 emits the S/B/C nested blocks + a negated br_if per arm");
+            check(emitted.artifact.has_value() &&
+                      !has_codegen_message(emitted, "match lowering is a later P6 slice"),
+                  "P6-3 no longer rejects a CoreMatchStmt");
+        }
+
+        // P6-3 fail-closed: a variant PATTERN with a payload needs aggregate
+        // layout (P6-4). The scrutinee's payload-bearing enum is already outside
+        // the scalar subset, so the match rejects (never a silent no-match).
+        {
+            auto program = make_e1_core_program();
+            // The payload slot is an ordinary Bool, so the enum layout is finite:
+            // only the PATTERN is out of subset here, never the layout.
+            program.value_types.push_back(CoreValueType{CoreVtBool{}}); // vt1
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}}); // vt2
+            CoreTypeDecl level;
+            level.kind = CoreTypeDecl::Kind::Enum;
+            level.name = "app::Level";
+            level.variants = {"Low", "High"};
+            level.variant_payloads = {CoreTypeDecl::VariantPayload{},
+                                      CoreTypeDecl::VariantPayload{
+                                          CoreTypeDecl::VariantPayload::Kind::Tuple,
+                                          {CoreMemberTypeTemplateNodeId{0}},
+                                          {}}};
+            level.member_type_templates.push_back(
+                CoreMemberTypeTemplateNode{CoreMemberTypeTemplateKind::Concrete,
+                                           CoreValueTypeId{1},
+                                           0,
+                                           CoreTypeId{},
+                                           std::nullopt,
+                                           {},
+                                           CoreMemberTypeTemplateNodeId{}});
+            program.types.push_back(std::move(level));
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{
+                CoreQualifiedExpr{"app::Level::Low", CoreTypeId{1}, CoreVariantId{0}, true},
+                std::nullopt,
+                CoreValueTypeId{2}});
+            flow.value_count = 2;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{2}};
+            // Pattern 0: Low (unit). Pattern 1: High(<one payload>).
+            flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+            flow.patterns.push_back(CorePattern{
+                CoreVariantPat{CoreTypeId{1}, CoreVariantId{1}, {CorePatternId{0}}, {}, false},
+                std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{1};
+            match.has_result = false;
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{1};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = layout.table.has_value()
+                                     ? emit_agent(program, *layout.table)
+                                     : backends::CoreWasmCodegenResult{};
+            // A payload-bearing enum is NOT a tag-only scalar, so its scrutinee
+            // itself is out of subset: the dependency on aggregate layout (P6-4)
+            // surfaces on the scrutinee, which is the earliest and most precise
+            // point the subset can be judged. Fails closed with no artifact.
             check(!emitted.artifact.has_value() &&
                       has_codegen_code(emitted,
                                        backends::core_wasm_diag::kUnsupportedOrchestration) &&
-                      has_codegen_message(emitted, "match lowering is a later P6 slice") &&
-                      has_codegen_message(emitted, kP6ScaffoldPrefix) &&
-                      !has_codegen_message(emitted, kLegacyShapeMessage),
-                  "P6-2 CoreMatchStmt arm itself rejects (node-specific message), not a "
-                  "leading literal arm");
+                      has_codegen_message(emitted, "non-scalar") &&
+                      has_codegen_message(emitted, kP6ScaffoldPrefix),
+                  "P6-3 fails closed on a payload-bearing enum scrutinee (needs P6-4)");
+        }
+
+        // P6-3 fail-closed: a tuple pattern is a later slice; it rejects with a
+        // node-specific message and no artifact.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{1}});
+            flow.value_count = 2;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+            flow.patterns.push_back(
+                CorePattern{CoreTuplePat{{CorePatternId{0}}}, std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{1};
+            match.has_result = false;
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{1};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = layout.table.has_value()
+                                     ? emit_agent(program, *layout.table)
+                                     : backends::CoreWasmCodegenResult{};
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(emitted,
+                                       backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                      has_codegen_message(emitted, "tuple patterns"),
+                  "P6-3 fails closed on a tuple pattern");
+        }
+
+        // P6-3: a non-exhaustive fallback containing CoreTrapStmt emits the wasm
+        // `unreachable` opcode (0x00), so a non-total match traps at runtime
+        // instead of silently completing.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{1}});
+            flow.value_count = 2;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            // `false` pattern: the arm never matches, so the trap fallback runs.
+            flow.patterns.push_back(
+                CorePattern{CoreLiteralPat{CoreLiteralKind::Bool, "false"}, std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{1};
+            match.has_result = false;
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{0};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-3 non-exhaustive-trap fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            constexpr std::uint8_t kOpLiteralFalseAndEq = 0x46; // i32.eq after a false test
+            check(emitted.artifact.has_value() && handler_body.has_value() &&
+                      contains_bytes(*handler_body, {0x41, 0x00, kOpLiteralFalseAndEq}) &&
+                      std::count(handler_body->begin(), handler_body->end(), 0x00) > 0,
+                  "P6-3 lowers the trap fallback to wasm `unreachable` (0x00)");
         }
 
         // P6-2 opcode-pinning regression: the signed comparison ladder must

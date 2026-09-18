@@ -1,0 +1,56 @@
+module wasm::p6_match_or;
+
+// RFC 0026 P6-3 (KR6.6) or-pattern fixture. `level` holds Off, which the
+// `High | Off` arm accepts, so the first arm leads and `goto High` runs.
+// A single-alternative test (dropping the `i32.or` fold) would let the arm
+// fall through and reach Low instead.
+pub struct Frame {
+    value: String;
+}
+
+pub enum Level {
+    Low,
+    High,
+    Mid,
+    Off,
+}
+
+pub agent MatchAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MatchAgent {
+state Decide {
+    let level: Level = Level::Off;
+    if let High | Off = level {
+        goto High;
+    }
+    if let Low = level {
+        goto Low;
+    }
+    goto Done;
+}
+
+state High {
+    goto Done;
+}
+
+state Low {
+    goto Done;
+}
+
+state Done {
+    return input;
+}
+}

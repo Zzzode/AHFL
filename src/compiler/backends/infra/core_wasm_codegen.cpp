@@ -30,6 +30,7 @@ using ir::core::CoreAgentId;
 using ir::core::CoreAgentInstance;
 using ir::core::CoreBinaryExpr;
 using ir::core::CoreBinaryOp;
+using ir::core::CoreBindingPat;
 using ir::core::CoreCapabilityCallStmt;
 using ir::core::CoreCapabilityId;
 using ir::core::CoreCoerceExpr;
@@ -41,13 +42,19 @@ using ir::core::CoreFlowState;
 using ir::core::CoreGotoStmt;
 using ir::core::CoreIfStmt;
 using ir::core::CoreInstanceId;
+using ir::core::CoreIntRangePat;
 using ir::core::CoreLayoutId;
 using ir::core::CoreLetStmt;
 using ir::core::CoreLiteralExpr;
 using ir::core::CoreLiteralKind;
+using ir::core::CoreLiteralPat;
 using ir::core::CoreMatchArm;
 using ir::core::CoreMatchStmt;
+using ir::core::CoreOrPat;
 using ir::core::CorePathExpr;
+using ir::core::CorePattern;
+using ir::core::CorePatternBinding;
+using ir::core::CorePatternId;
 using ir::core::CoreProgram;
 using ir::core::CoreQualifiedExpr;
 using ir::core::CoreRegion;
@@ -56,6 +63,7 @@ using ir::core::CoreStateId;
 using ir::core::CoreStmt;
 using ir::core::CoreStoreStmt;
 using ir::core::CoreTrapStmt;
+using ir::core::CoreTuplePat;
 using ir::core::CoreUnaryExpr;
 using ir::core::CoreUnaryOp;
 using ir::core::CoreUnsupportedExpr;
@@ -63,9 +71,11 @@ using ir::core::CoreValueId;
 using ir::core::CoreValueRefExpr;
 using ir::core::CoreValueTypeId;
 using ir::core::CoreValueTypeNode;
+using ir::core::CoreVariantPat;
 using ir::core::CoreVtBool;
 using ir::core::CoreVtInt;
 using ir::core::CoreVtNominal;
+using ir::core::CoreWildcardPat;
 using ir::core::CoreWorkflowDecl;
 using ir::core::CoreWorkflowId;
 using ir::core::CoreWorkflowNodeId;
@@ -683,45 +693,45 @@ validate_capability_final(const CoreProgram &program,
 //     compile error here, not a silent miscompile.
 //
 // P6-1 landed the scalar stack machine (Literal/ValueRef/Unary/Binary + computed
-// goto), compiled INLINE in step(). P6-2 (this slice) promotes each computed
-// handler to its own `() -> i32` wasm FUNCTION and lowers structured `if` to
-// wasm block/if/else with a goto = `br` to the handler block. Expression kinds
-// not yet landed (path/qualified/construct/coerce) still fail closed per-arm, so
-// no partial artifact is ever returned and the E1-E3 byte paths stay untouched.
+// goto), compiled INLINE in step(). P6-2 promotes each computed handler to its
+// own `() -> i32` wasm FUNCTION and lowers structured `if` to wasm block/if/else
+// with a goto = `br` to the handler block. P6-3 (this slice) lowers `match`:
+// arms become a nested block+br_if chain, guards are ANDed Bools gated by br_if,
+// and the fallback is the instruction after the last arm. Expression kinds not
+// yet landed (path/qualified/construct/coerce) still fail closed per-arm, so no
+// partial artifact is ever returned and the E1-E3 byte paths stay untouched.
 
-[[nodiscard]] bool is_p6_computation_region(const CoreRegion &region) {
+// Does this region belong to the P6 subset? `allow_yield` distinguishes the two
+// region ROLES the IR defines: an ordinary flow region (no yield — a yield there
+// is illegal, `core_verify.cpp` kYieldOutsideMatchArm) and a match-consumed
+// region (a guard / arm body / fallback, where the yield IS the completion
+// hand-off the enclosing match consumes). Both roles otherwise share one subset:
+// ANF scalar lets, structured if, match, and goto/trap terminators, with no
+// capability effect. An `if` branch inherits its parent region's role, so a
+// yield nested in an if branch of an arm body stays legal.
+[[nodiscard]] bool is_p6_subset_region(const CoreRegion &region, bool allow_yield) {
     for (const CoreStmt &statement : region.statements) {
         const bool in_subset = std::visit(
             Overloaded{
                 [](const CoreLetStmt &) { return true; },
                 [](const CoreGotoStmt &) { return true; },
                 [](const CoreTrapStmt &) { return true; },
-                [](const CoreIfStmt &s) {
-                    const bool then_ok =
-                        !s.then_region || is_p6_computation_region(*s.then_region);
-                    const bool else_ok =
-                        !s.else_region || is_p6_computation_region(*s.else_region);
-                    return then_ok && else_ok;
+                [&](const CoreYieldStmt &) { return allow_yield; },
+                [&](const CoreIfStmt &s) {
+                    return (s.then_region == nullptr ||
+                            is_p6_subset_region(*s.then_region, allow_yield)) &&
+                           (s.else_region == nullptr ||
+                            is_p6_subset_region(*s.else_region, allow_yield));
                 },
-                [](const CoreMatchStmt &s) {
-                    for (const CoreMatchArm &arm : s.arms) {
-                        if (arm.guard_region &&
-                            !is_p6_computation_region(*arm.guard_region)) {
-                            return false;
-                        }
-                        if (!arm.body || !is_p6_computation_region(*arm.body)) {
-                            return false;
-                        }
-                    }
-                    return s.fallback_region &&
-                           is_p6_computation_region(*s.fallback_region);
-                },
+                // A match is always in-subset structurally; its arms / fallback /
+                // guard are independently checked in a `Role::MatchRegion` pass by
+                // the caller's planner, so the arena is never trusted here.
+                [](const CoreMatchStmt &) { return true; },
                 // Effects and non-P6 control flow stay on the KR6.5
-                // orchestration lane (capability / store / return / yield).
+                // orchestration lane (capability / store / return).
                 [](const CoreCapabilityCallStmt &) { return false; },
                 [](const CoreStoreStmt &) { return false; },
                 [](const CoreReturnStmt &) { return false; },
-                [](const CoreYieldStmt &) { return false; },
             },
             statement.node);
         if (!in_subset) {
@@ -731,15 +741,59 @@ validate_capability_final(const CoreProgram &program,
     return true;
 }
 
+[[nodiscard]] bool is_p6_computation_region(const CoreRegion &region) {
+    return is_p6_subset_region(region, /*allow_yield=*/false);
+}
+
 // The scalar kind of a value type for the P6 ladder, with the physical repr
 // read from the P4-D layout table (design §2.1: codegen never recomputes a
 // repr). Bool and narrow Int share the i32 repr but stay distinct KINDS so the
-// boolean-only operators (! && ||) cannot be applied to an integer.
+// boolean-only operators (! && ||) cannot be applied to an integer. `Index` is a
+// TAG-ONLY enum's value kind (design `CoreLayoutEnum` with every variant
+// payload size 0): its scratch representation is the i32 discriminant, exactly
+// like a bounded Int. It is distinct from IntI32 so an arithmetic operator can
+// never be applied to a discriminant — only `match` consumes it.
 enum class P6ScalarKind {
     Bool,
     IntI32,
-    IntI64
+    IntI64,
+    Index
 };
+
+// The P4-D layout of `type`, or null when the value type / layout id is out of
+// range. One shared bounds-checked accessor for every P6 kind query.
+[[nodiscard]] const ir::core::CoreLayout *
+p6_value_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
+                CoreValueTypeId type) {
+    if (type.value >= program.value_types.size() || type.value >= layouts.value_layouts.size()) {
+        return nullptr;
+    }
+    const CoreLayoutId layout_id = layouts.value_layouts[type.value];
+    if (layout_id.value >= layouts.layouts.size()) {
+        return nullptr;
+    }
+    return &layouts.layouts[layout_id.value];
+}
+
+// Whether `type` is a TAG-ONLY enum (an enum whose every variant payload is
+// zero-sized): its whole runtime representation is the i32 discriminant, so a
+// `match` on it compiles to tag compares with no payload projection. This is
+// the unit-variant pattern + qualified-variant-constructor lane; a payload-
+// bearing enum needs struct layout and lands with P6-4.
+[[nodiscard]] bool p6_is_tag_only_enum(const CoreProgram &program,
+                                       const ir::core::CoreLayoutTable &layouts,
+                                       CoreValueTypeId type) {
+    const ir::core::CoreLayout *layout = p6_value_layout(program, layouts, type);
+    if (layout == nullptr) {
+        return false;
+    }
+    const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout->shape);
+    if (tagged == nullptr || tagged->tag_size != 4) {
+        return false;
+    }
+    return std::ranges::all_of(tagged->variant_payload_sizes,
+                               [](std::uint64_t size) { return size == 0; });
+}
 
 [[nodiscard]] std::optional<P6ScalarKind> p6_scalar_kind(const CoreProgram &program,
                                                          const ir::core::CoreLayoutTable &layouts,
@@ -756,6 +810,12 @@ enum class P6ScalarKind {
     if (scalar == nullptr || scalar->repr == ir::core::CoreScalarRepr::F64) {
         // F64 needs the f64 opcode ladder, which is a later P6 slice; every
         // non-scalar aggregate is outside the scalar subset.
+        // A tag-only enum is the ONE non-scalar shape in the subset: it is an
+        // i32 discriminant and is consumed only by `match` (never by an
+        // arithmetic operator, which is what the kind distinction enforces).
+        if (p6_is_tag_only_enum(program, layouts, type)) {
+            return P6ScalarKind::Index;
+        }
         return std::nullopt;
     }
     const CoreValueTypeNode &node = program.value_types[type.value].node;
@@ -811,6 +871,36 @@ enum class P6ScalarKind {
                       last.node);
 }
 
+// --- P6-3 match lowering: the arm-chain shape (RFC 0026 Q2) ---
+//
+// A `match` compiles to three nested wasm blocks per arm, no relooper:
+//
+//     block                      <- S: "this match is DONE" (skips the fallback)
+//       block                    <- B: the arm chain + the fallback
+//         block                  <- C_i: THIS arm (its mismatch/guard-false exit)
+//           <bindings latched>   <- the whole scrutinee, one scratch local each
+//           <pattern test>       <- leaves i32
+//           br_if 0              <- not matched  -> end of C_i -> arm i+1
+//           <guard>; br_if 0     <- guard false  -> end of C_i -> arm i+1
+//           <body>               <- completes -> `br` to S; may diverge instead
+//         end
+//         ... remaining arms ...
+//         <fallback region>      <- runs when no arm matched
+//       end                      <- B
+//     end                        <- S
+//
+// Why S exists: a statement arm whose body COMPLETES (the lowered `if let` then
+// block) must skip the fallback, which sits after every arm inside B — only a
+// label outside B can express that in structured control flow. A mismatched
+// test and a false guard both continue to the NEXT ARM, which is exactly the
+// position after C_i's `end`, so they are `br 0`.
+//
+// `label_depth_` is "labels between here and the handler block", so inside C_i
+// it counts S, B and C_i; S is therefore at `label_depth_ - 1` and the handler
+// block at `label_depth_` (unchanged from `emit_goto_transition`). Every
+// reachable goto target is recorded by the ordinary statement emitter as it
+// walks the regions, so `targets()` is exact without a separate region walk.
+
 class P6ComputationHandlerBuilder {
   public:
     P6ComputationHandlerBuilder(const CoreProgram &program,
@@ -823,7 +913,9 @@ class P6ComputationHandlerBuilder {
                                 CoreWasmCodegenResult &result)
         : program_(program), layouts_(layouts), flow_(flow), handler_(handler),
           unsupported_code_(unsupported_code), used_exprs_(used_exprs), used_values_(used_values),
-          result_(result), locals_(flow.value_count, LocalInfo{}) {}
+          result_(result), locals_(flow.value_count, LocalInfo{}),
+          binding_locals_(flow.value_count, LocalInfo{}),
+          match_result_locals_(flow.value_count, LocalInfo{}) {}
 
     // Validate the handler is in the scalar subset and assign every bound SSA
     // value a per-repr pool slot (i32 group first, then i64 — a real function
@@ -853,20 +945,22 @@ class P6ComputationHandlerBuilder {
             return std::nullopt;
         }
         ByteBuffer function;
+        const std::uint32_t i32_locals = i32_count_ + scratch_i32_count_;
+        const std::uint32_t i64_locals = i64_count_ + scratch_i64_count_;
         std::uint32_t local_groups = 0;
-        if (i32_count_ != 0) {
+        if (i32_locals != 0) {
             ++local_groups;
         }
-        if (i64_count_ != 0) {
+        if (i64_locals != 0) {
             ++local_groups;
         }
         function.u32(local_groups);
-        if (i32_count_ != 0) {
-            function.u32(i32_count_);
+        if (i32_locals != 0) {
+            function.u32(i32_locals);
             function.byte(kI32);
         }
-        if (i64_count_ != 0) {
-            function.u32(i64_count_);
+        if (i64_locals != 0) {
+            function.u32(i64_locals);
             function.byte(kI64);
         }
         function.byte(kOpBlock);
@@ -906,6 +1000,33 @@ class P6ComputationHandlerBuilder {
     std::uint32_t label_depth_{0};
     std::vector<CoreStateId> targets_;
 
+    // --- P6-3 match lowering state ---
+    //
+    // A match arm binds pattern variables and, in expression position, produces a
+    // value. Both need a scratch local, and both must be known before the body is
+    // emitted (a wasm function declares all its locals up front, but wasm has no
+    // way to free a local at a point in the instruction stream). This ONE scratch
+    // pool therefore grows MONOTONICALLY in lexical order — the standard stack
+    // slot allocator a compiler frame builder uses: every match statement takes
+    // fresh slots from the current cursor, so a later match (a sibling statement,
+    // or a nested match deeper in the stream) can never alias an earlier one's.
+    // The cost is a few unused slots for a match whose scope ended early;
+    // correctness is unaffected.
+    //
+    // `binding_locals_`      : CoreValueId -> slot, for a `CoreBindingPat`'s arm
+    //                          binding (the value a `ValueRef` inside the arm reads).
+    // `match_result_locals_` : CoreValueId -> slot, for a match's `result` id; an
+    //                          expression arm's yielded value is stored there.
+    //
+    // Slots are indexed within a kind's pool (one pool per physical repr), and
+    // `match_pool_local` folds in the SSA pool size, so the emitted function's
+    // local declaration order stays the uniform "all i32 locals, then all i64
+    // locals" grouping wasm requires.
+    std::vector<LocalInfo> binding_locals_;
+    std::vector<LocalInfo> match_result_locals_;
+    std::uint32_t scratch_i32_count_{0};
+    std::uint32_t scratch_i64_count_{0};
+
     [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
         body_.byte(kOpUnreachable);
         add_diag(result_,
@@ -928,6 +1049,84 @@ class P6ComputationHandlerBuilder {
         // The handler function has no parameters: the i32 pool starts at local 0
         // and the i64 pool follows it (wider types cannot share an index).
         return info.kind == P6ScalarKind::IntI64 ? i32_count_ + info.slot : info.slot;
+    }
+
+    // The wasm local index of a match scratch slot. The declared layout is the
+    // i32 group [SSA i32][scratch i32] followed by the i64 group
+    // [SSA i64][scratch i64]; a Bool / narrow Int / tag-only enum discriminant is
+    // i32, an unbounded Int is i64.
+    [[nodiscard]] std::uint32_t match_pool_local(const LocalInfo &info) const {
+        return info.kind == P6ScalarKind::IntI64
+                   ? i32_count_ + scratch_i32_count_ + i64_count_ + info.slot
+                   : i32_count_ + info.slot;
+    }
+
+    [[nodiscard]] std::optional<std::uint32_t> binding_local(CoreValueId value) const {
+        if (value.value >= binding_locals_.size() || !binding_locals_[value.value].bound) {
+            return std::nullopt;
+        }
+        return match_pool_local(binding_locals_[value.value]);
+    }
+
+    [[nodiscard]] std::optional<std::uint32_t> match_result_local(CoreValueId value) const {
+        if (value.value >= match_result_locals_.size() || !match_result_locals_[value.value].bound) {
+            return std::nullopt;
+        }
+        return match_pool_local(match_result_locals_[value.value]);
+    }
+
+    // The wasm local a value id is readable from at this point in the stream: an
+    // SSA let local, an arm binding scratch slot, or a match result slot, in that
+    // order (the three are disjoint by construction — an id is produced by
+    // exactly one statement kind). This is the ONE place `ValueRef` resolution
+    // happens, so a match binding and an ordinary let read identically.
+    [[nodiscard]] std::optional<std::uint32_t> readable_local(CoreValueId value) const {
+        if (const auto local = final_local(value)) {
+            return local;
+        }
+        if (const auto local = binding_local(value)) {
+            return local;
+        }
+        return match_result_local(value);
+    }
+
+    // Plan-side twin of `readable_local` (no emit-only i64 base in the way).
+    [[nodiscard]] std::optional<P6ScalarKind> readable_kind(CoreValueId value) const {
+        if (const auto kind = final_local_like(value)) {
+            return kind;
+        }
+        if (value.value < binding_locals_.size() && binding_locals_[value.value].bound) {
+            return binding_locals_[value.value].kind;
+        }
+        if (value.value < match_result_locals_.size() && match_result_locals_[value.value].bound) {
+            return match_result_locals_[value.value].kind;
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] bool emit_value_read(CoreValueId value, ir::SourceRangeOpt range) {
+        const auto local = readable_local(value);
+        if (local == std::nullopt) {
+            return reject("value is not a readable local at this point in the handler",
+                          std::move(range));
+        }
+        emit_local_get(*local);
+        return true;
+    }
+
+    // Allocate a fresh scratch slot for `value` in whichever pool the physical
+    // repr needs. `pool` selects binding-vs-result for the diagnostics-free local
+    // table; the slot itself comes from the shared cursor.
+    [[nodiscard]] bool bind_scratch(CoreValueId value, P6ScalarKind kind,
+                                    std::vector<LocalInfo> &pool) {
+        if (value.value >= pool.size() || pool[value.value].bound) {
+            return false;
+        }
+        LocalInfo &info = pool[value.value];
+        info.bound = true;
+        info.kind = kind;
+        info.slot = kind == P6ScalarKind::IntI64 ? scratch_i64_count_++ : scratch_i32_count_++;
+        return true;
     }
 
     // Assign a pool slot to a let-bound value (one slot per CoreValueId; the
@@ -975,8 +1174,8 @@ class P6ComputationHandlerBuilder {
                 [&](const CoreLiteralExpr &) { return plan_literal(expr); },
                 [&](const CoreValueRefExpr &r) {
                     used_values_[r.value.value] = true;
-                    if (final_local_like(r.value) == std::nullopt) {
-                        return reject("value reference is not a scalar local bound in this handler",
+                    if (readable_kind(r.value) == std::nullopt) {
+                        return reject("value reference is not a readable local in this handler",
                                       expr.source_range);
                     }
                     return true;
@@ -987,9 +1186,24 @@ class P6ComputationHandlerBuilder {
                     return reject("input/context field loads are a later P6 slice",
                                   expr.source_range);
                 },
-                [&](const CoreQualifiedExpr &) {
-                    return reject("enum variant projections are a later P6 slice",
-                                  expr.source_range);
+                [&](const CoreQualifiedExpr &q) {
+                    // A unit enum variant (`Level::High`): its runtime value IS the
+                    // i32 discriminant, so it lowers to a plain constant. The owning
+                    // enum must be tag-only (no payload to materialize).
+                    if (!q.resolved) {
+                        return reject("qualified variant is not resolved to a typed enum",
+                                      expr.source_range);
+                    }
+                    if (!p6_is_tag_only_enum(program_, layouts_, expr.result_type)) {
+                        return reject("qualified variant requires a tag-only enum type",
+                                      expr.source_range);
+                    }
+                    if (q.type_id.value >= program_.types.size() ||
+                        q.variant.value >= program_.types[q.type_id.value].variants.size()) {
+                        return reject("qualified variant identity is out of range",
+                                      expr.source_range);
+                    }
+                    return true;
                 },
                 [&](const CoreConstructExpr &) {
                     return reject("aggregate construction is a later P6 slice", expr.source_range);
@@ -1037,6 +1251,187 @@ class P6ComputationHandlerBuilder {
         }
     }
 
+    // --- P6-3 match planning ---
+    //
+    // Planning a match carves every arm binding and (for an expression match) the
+    // match result a scratch local, validates each arm's pattern against the
+    // scrutinee's kind, and recurses into the guard / body / fallback regions so
+    // their own lets and nested matches are planned too. Emission only reads the
+    // slots, so the whole scratch-local layout is fixed before the first byte of
+    // the function body is written — a wasm function declares its locals up front.
+
+    [[nodiscard]] bool plan_match(const CoreMatchStmt &match, ir::SourceRangeOpt range) {
+        const auto scrutinee_kind = readable_kind(match.scrutinee);
+        if (scrutinee_kind == std::nullopt) {
+            return reject("match scrutinee is not a readable local in this handler", range);
+        }
+        used_values_[match.scrutinee.value] = true;
+        // A scrutinee is a scalar or a tag-only enum: a literal / Bool pattern
+        // tests the value itself, a variant pattern tests the i32 tag. Each
+        // pattern node re-checks which of the two it may consume.
+
+        if (match.has_result) {
+            if (match.result.value >= match_result_locals_.size() ||
+                match_result_locals_[match.result.value].bound) {
+                return reject("match result is bound more than once", range);
+            }
+            const auto result_kind = scalar_kind(flow_.value_types[match.result.value]);
+            if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Index) {
+                return reject("expression match result must have a scalar type", range);
+            }
+            if (!bind_scratch(match.result, *result_kind, match_result_locals_)) {
+                return reject("match result scratch local could not be allocated", range);
+            }
+            used_values_[match.result.value] = true;
+        }
+
+        for (const CoreMatchArm &arm : match.arms) {
+            for (const CorePatternBinding &binding : arm.bindings) {
+                if (binding.value.value >= flow_.value_types.size()) {
+                    return reject("match arm binding value id is out of range", range);
+                }
+                const auto binding_kind = scalar_kind(flow_.value_types[binding.value.value]);
+                if (binding_kind == std::nullopt) {
+                    return reject("match arm binding has a non-scalar or f64 type", range);
+                }
+                if (!bind_scratch(binding.value, *binding_kind, binding_locals_)) {
+                    return reject("match arm binding scratch local could not be allocated", range);
+                }
+                used_values_[binding.value.value] = true;
+            }
+            if (!plan_arm_pattern(arm.pattern, *scrutinee_kind, range)) {
+                return false;
+            }
+            // A guard region is present iff the source arm wrote `if <guard>`.
+            if (arm.guard_region && !plan_match_region(*arm.guard_region, range)) {
+                return false;
+            }
+            if (!arm.body) {
+                return reject("match arm has no body region", range);
+            }
+            if (!plan_match_region(*arm.body, range)) {
+                return false;
+            }
+        }
+        if (!match.fallback_region) {
+            return reject("match has no fallback region", range);
+        }
+        return plan_match_region(*match.fallback_region, range);
+    }
+
+    // Plan a match-consumed region: a guard, an arm body, or the fallback. Its
+    // statements are ordinary P6 statements EXCEPT a trailing `CoreYieldStmt` —
+    // that is the region's completion hand-off to the enclosing match (the
+    // guard's Bool, the expression arm's value, or a statement arm's unit), which
+    // the emitter consumes, so it must not be planned as a flow-region yield.
+    [[nodiscard]] bool plan_match_region(const CoreRegion &region, ir::SourceRangeOpt range) {
+        for (std::size_t index = 0; index < region.statements.size(); ++index) {
+            const CoreStmt &statement = region.statements[index];
+            if (const auto *yield = std::get_if<CoreYieldStmt>(&statement.node)) {
+                if (index + 1 != region.statements.size()) {
+                    return reject("a match region's yield must be its final statement",
+                                  statement.source_range);
+                }
+                if (yield->has_value) {
+                    used_values_[yield->value.value] = true;
+                    if (readable_kind(yield->value) == std::nullopt) {
+                        return reject("match region yields a value that is not a readable local",
+                                      statement.source_range);
+                    }
+                }
+                continue;
+            }
+            if (!plan_statement(statement)) {
+                return false;
+            }
+        }
+        (void)range;
+        return true;
+    }
+
+    // Validate a pattern tree against the subset and the scrutinee's kind. Every
+    // alternative is COMPILE-TIME-EXHAUSTIVE over CorePatternNode's seven arms, so
+    // a pattern kind that is not yet lowerable rejects with a specific message
+    // rather than silently matching nothing.
+    [[nodiscard]] bool plan_arm_pattern(CorePatternId id, P6ScalarKind scrutinee_kind,
+                                        ir::SourceRangeOpt range) {
+        if (id.value >= flow_.patterns.size()) {
+            return reject("pattern id is out of range for this flow", range);
+        }
+        const CorePattern &pattern = flow_.patterns[id.value];
+        return std::visit(
+            Overloaded{
+                [&](const CoreWildcardPat &) { return true; },
+                [&](const CoreBindingPat &b) {
+                    // `x` and `x @ nested`: the binding is latched from the
+                    // scrutinee before the test, so a nested pattern is tested
+                    // after it, on the same scrutinee kind.
+                    return !b.has_nested || plan_arm_pattern(b.nested, scrutinee_kind, range);
+                },
+                [&](const CoreLiteralPat &lit) {
+                    return plan_literal_pattern(lit, scrutinee_kind, range);
+                },
+                [&](const CoreIntRangePat &r) {
+                    if (scrutinee_kind == P6ScalarKind::Bool ||
+                        scrutinee_kind == P6ScalarKind::Index) {
+                        return reject("int-range pattern requires an Int scrutinee", range);
+                    }
+                    if (r.start > r.end) {
+                        return reject("int-range pattern has start greater than end", range);
+                    }
+                    return true;
+                },
+                [&](const CoreVariantPat &v) {
+                    if (scrutinee_kind != P6ScalarKind::Index) {
+                        return reject("variant pattern requires a tag-only enum scrutinee", range);
+                    }
+                    if (v.owner_enum.value >= program_.types.size()) {
+                        return reject("variant pattern owner type id is out of range", range);
+                    }
+                    if (v.variant.value >= program_.types[v.owner_enum.value].variants.size()) {
+                        return reject("variant pattern variant id is out of range", range);
+                    }
+                    // A tag-only enum has no payload to project, so a payload
+                    // sub-pattern is a layout slice (P6-4), never a silent no-op.
+                    if (!v.tuple_subpatterns.empty() || !v.struct_fields.empty()) {
+                        return reject("variant payload patterns need aggregate layout (a later slice)",
+                                      range);
+                    }
+                    return true;
+                },
+                [&](const CoreOrPat &o) {
+                    if (o.alternatives.size() < 2) {
+                        return reject("or-pattern must have at least two alternatives", range);
+                    }
+                    return std::ranges::all_of(o.alternatives, [&](CorePatternId alt) {
+                        return plan_arm_pattern(alt, scrutinee_kind, range);
+                    });
+                },
+                [&](const CoreTuplePat &) {
+                    return reject("tuple patterns need aggregate payload layout (a later P6 slice)",
+                                  range);
+                },
+            },
+            pattern.node);
+    }
+
+    [[nodiscard]] bool plan_literal_pattern(const CoreLiteralPat &lit, P6ScalarKind scrutinee_kind,
+                                            ir::SourceRangeOpt range) {
+        switch (lit.kind) {
+        case CoreLiteralKind::Bool:
+            return scrutinee_kind == P6ScalarKind::Bool ||
+                   reject("bool pattern requires a Bool scrutinee", range);
+        case CoreLiteralKind::Integer:
+            if (scrutinee_kind == P6ScalarKind::Bool || scrutinee_kind == P6ScalarKind::Index) {
+                return reject("integer pattern requires an Int scrutinee", range);
+            }
+            return parse_unsigned_spelling(lit.spelling).has_value() ||
+                   reject("integer pattern spelling does not parse", range);
+        default:
+            return reject("only Bool and Integer patterns are in the scalar subset", range);
+        }
+    }
+
     [[nodiscard]] bool plan_statement(const CoreStmt &statement) {
         return std::visit(
             Overloaded{
@@ -1075,9 +1470,7 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [](const CoreTrapStmt &) { return true; },
-                [&](const CoreMatchStmt &) {
-                    return reject("match lowering is a later P6 slice", statement.source_range);
-                },
+                [&](const CoreMatchStmt &s) { return plan_match(s, statement.source_range); },
                 [&](const CoreCapabilityCallStmt &) {
                     return reject("capability effects stay on the orchestration lane",
                                   statement.source_range);
@@ -1207,13 +1600,7 @@ class P6ComputationHandlerBuilder {
                     return emit_literal(lit, *result_kind, int_type, expr.source_range);
                 },
                 [&](const CoreValueRefExpr &r) {
-                    const auto local = final_local(r.value);
-                    if (local == std::nullopt) {
-                        return reject("value reference is not a scalar local bound in this handler",
-                                      expr.source_range);
-                    }
-                    emit_local_get(*local);
-                    return true;
+                    return emit_value_read(r.value, expr.source_range);
                 },
                 [&](const CoreUnaryExpr &u) { return emit_unary(u, expr.source_range); },
                 [&](const CoreBinaryExpr &b) { return emit_binary(b, expr.source_range); },
@@ -1221,9 +1608,11 @@ class P6ComputationHandlerBuilder {
                     return reject("input/context field loads are a later P6 slice",
                                   expr.source_range);
                 },
-                [&](const CoreQualifiedExpr &) {
-                    return reject("enum variant projections are a later P6 slice",
-                                  expr.source_range);
+                [&](const CoreQualifiedExpr &q) {
+                    // The i32 discriminant. plan_expr proved the type is a resolved,
+                    // in-range tag-only enum, so this is a pure constant emit.
+                    emit_const_i32(static_cast<std::int32_t>(q.variant.value));
+                    return true;
                 },
                 [&](const CoreConstructExpr &) {
                     return reject("aggregate construction is a later P6 slice", expr.source_range);
@@ -1392,6 +1781,325 @@ class P6ComputationHandlerBuilder {
         body_.u32(label_depth_);
     }
 
+    void emit_br(std::uint32_t depth) {
+        body_.byte(kOpBr);
+        body_.u32(depth);
+    }
+
+    // Emit one arm's PATTERN TEST, leaving a single i32 on the stack: nonzero iff
+    // the scrutinee matches. The scrutinee is already latched into the arm
+    // binding locals by the caller, so a sub-pattern only ever compares against
+    // the scrutinee local (a unit-variant enum's tag is its whole representation,
+    // an Int/Bool scrutinee is compared as a value). No branch instruction is
+    // emitted: an or-pattern combines its alternatives with `i32.or`, which is
+    // correct because a pattern test is pure and binding alternatives share the
+    // scrutinee local.
+    [[nodiscard]] bool emit_pattern_test(CorePatternId id, CoreValueId scrutinee,
+                                         ir::SourceRangeOpt range) {
+        if (id.value >= flow_.patterns.size()) {
+            return reject("pattern id is out of range for this flow", std::move(range));
+        }
+        const auto scrutinee_local = readable_local(scrutinee);
+        if (scrutinee_local == std::nullopt) {
+            return reject("scrutinee has no readable local", std::move(range));
+        }
+        const CorePattern &pattern = flow_.patterns[id.value];
+        return std::visit(
+            Overloaded{
+                // `_` and `x`: irrefutable — a constant true, so the enclosing
+                // `br_if 0` never fires. A binding's own latch already happened.
+                [&](const CoreWildcardPat &) {
+                    emit_const_i32(1);
+                    return true;
+                },
+                [&](const CoreBindingPat &b) {
+                    if (b.has_nested) {
+                        return emit_pattern_test(b.nested, scrutinee, std::move(range));
+                    }
+                    emit_const_i32(1);
+                    return true;
+                },
+                [&](const CoreLiteralPat &lit) {
+                    return emit_literal_test(lit, scrutinee, *scrutinee_local, std::move(range));
+                },
+                [&](const CoreIntRangePat &r) {
+                    return emit_int_range_test(r, scrutinee, *scrutinee_local, std::move(range));
+                },
+                [&](const CoreVariantPat &v) {
+                    const auto scrutinee_type = flow_.value_types[scrutinee.value];
+                    const auto kind = scalar_kind(scrutinee_type);
+                    if (kind != P6ScalarKind::Index) {
+                        return reject("variant pattern requires a tag-only enum scrutinee",
+                                      std::move(range));
+                    }
+                    emit_local_get(*scrutinee_local);
+                    emit_const_i32(static_cast<std::int32_t>(v.variant.value));
+                    body_.byte(kOpI32Eq);
+                    return true;
+                },
+                [&](const CoreOrPat &o) {
+                    // Any alternative matching => the pattern matches. Each
+                    // alternative leaves its own i32; `i32.or` folds them. The
+                    // chain must start from a pushed 0 so the first `or` has two
+                    // operands.
+                    emit_const_i32(0);
+                    for (const CorePatternId alt : o.alternatives) {
+                        if (!emit_pattern_test(alt, scrutinee, range)) {
+                            return false;
+                        }
+                        body_.byte(kOpI32Or);
+                    }
+                    return true;
+                },
+                [&](const CoreTuplePat &) {
+                    return reject("tuple patterns need aggregate payload layout (a later slice)",
+                                  std::move(range));
+                },
+            },
+            pattern.node);
+    }
+
+    [[nodiscard]] bool emit_literal_test(const CoreLiteralPat &lit, CoreValueId scrutinee,
+                                         std::uint32_t scrutinee_local, ir::SourceRangeOpt range) {
+        const auto kind = scalar_kind(flow_.value_types[scrutinee.value]);
+        if (kind == std::nullopt) {
+            return reject("pattern scrutinee has no scalar kind", std::move(range));
+        }
+        const bool wide = *kind == P6ScalarKind::IntI64;
+        if (lit.kind == CoreLiteralKind::Bool) {
+            if (*kind != P6ScalarKind::Bool) {
+                return reject("bool pattern requires a Bool scrutinee", std::move(range));
+            }
+            if (lit.spelling != "true" && lit.spelling != "false") {
+                return reject("bool pattern has an unrecognized spelling", std::move(range));
+            }
+            emit_local_get(scrutinee_local);
+            emit_const_i32(lit.spelling == "true" ? 1 : 0);
+            body_.byte(kOpI32Eq);
+            return true;
+        }
+        if (lit.kind != CoreLiteralKind::Integer || *kind == P6ScalarKind::Bool ||
+            *kind == P6ScalarKind::Index) {
+            return reject("only Bool and Integer patterns are in the scalar subset",
+                          std::move(range));
+        }
+        const auto parsed = parse_unsigned_spelling(lit.spelling);
+        if (!parsed.has_value() ||
+            *parsed > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            return reject("integer pattern spelling does not parse or overflows", std::move(range));
+        }
+        emit_local_get(scrutinee_local);
+        if (wide) {
+            emit_const_i64(static_cast<std::int64_t>(*parsed));
+        } else {
+            if (*parsed >
+                static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+                return reject("integer pattern exceeds the i32 scalar range", std::move(range));
+            }
+            emit_const_i32(static_cast<std::int32_t>(*parsed));
+        }
+        body_.byte(wide ? kOpI64Eq : kOpI32Eq);
+        return true;
+    }
+
+    // `start..end` is a CLOSED interval (`core_ir.hpp`): matches iff
+    // start <= v <= end. The IR stores both bounds as typed i64, so lowering
+    // needs the scrutinee's repr to pick the compare width, plus a bound range
+    // check against it (a range bound that does not fit the scrutinee's repr
+    // could never be reached / could wrap, so it fails closed).
+    [[nodiscard]] bool emit_int_range_test(const CoreIntRangePat &r, CoreValueId scrutinee,
+                                           std::uint32_t scrutinee_local,
+                                           ir::SourceRangeOpt range) {
+        if (r.start > r.end) {
+            return reject("int-range pattern has start greater than end", std::move(range));
+        }
+        const auto kind = scalar_kind(flow_.value_types[scrutinee.value]);
+        if (kind == std::nullopt || *kind == P6ScalarKind::Bool ||
+            *kind == P6ScalarKind::Index) {
+            return reject("int-range pattern requires an Int scrutinee", std::move(range));
+        }
+        const bool wide = *kind == P6ScalarKind::IntI64;
+        if (!wide &&
+            (r.start < std::numeric_limits<std::int32_t>::min() ||
+             r.end > std::numeric_limits<std::int32_t>::max())) {
+            return reject("int-range pattern bound exceeds the i32 scalar range",
+                          std::move(range));
+        }
+        // `not (v < start)` — the first operand of the `and`.
+        emit_local_get(scrutinee_local);
+        if (wide) {
+            emit_const_i64(r.start);
+        } else {
+            emit_const_i32(static_cast<std::int32_t>(r.start));
+        }
+        body_.byte(wide ? kOpI64LtS : kOpI32LtS);
+        body_.byte(kOpI32Eqz);
+        // `and not (v > end)` — same width.
+        emit_local_get(scrutinee_local);
+        if (wide) {
+            emit_const_i64(r.end);
+        } else {
+            emit_const_i32(static_cast<std::int32_t>(r.end));
+        }
+        body_.byte(wide ? kOpI64GtS : kOpI32GtS);
+        body_.byte(kOpI32Eqz);
+        body_.byte(kOpI32And);
+        return true;
+    }
+
+    // Emit an arm body (or the fallback region) and then leave the arm's
+    // completion: a trailing `CoreYieldStmt` is the region's hand-off to this
+    // match, so a value yield stores the match result and a unit yield is a
+    // no-op; both then `br` to the match-completion block S (skipping every
+    // remaining arm and the fallback). A region whose paths diverge (goto /
+    // trap / a fully-diverging if or nested match) emits its own exits and needs
+    // no completion here — the same "completes vs diverges" split the verifier's
+    // `core_region_exit` draws.
+    //
+    // `completion_offset` is S's label depth measured from the START of this
+    // region's instruction stream: 2 for an arm body (S is outside C_i and B) and
+    // 1 for the fallback (only B is between it and S). A statement-level `if`
+    // opened inside the region adds one label per nesting level, so the emitted
+    // depth grows with `label_depth_` past the region's own base.
+    [[nodiscard]] bool emit_match_region(const CoreRegion &region,
+                                         std::optional<std::uint32_t> result_local,
+                                         std::uint32_t completion_offset,
+                                         ir::SourceRangeOpt default_range) {
+        const std::uint32_t region_base = label_depth_;
+        for (const CoreStmt &statement : region.statements) {
+            if (const auto *yield = std::get_if<CoreYieldStmt>(&statement.node)) {
+                if (result_local.has_value()) {
+                    if (!yield->has_value) {
+                        return reject("expression match arm must yield a value", default_range);
+                    }
+                    if (!emit_value_read(yield->value, default_range)) {
+                        return false;
+                    }
+                    body_.byte(kOpLocalSet);
+                    body_.u32(*result_local);
+                }
+                emit_br(completion_offset + (label_depth_ - region_base));
+                return true;
+            }
+            if (!emit_statement(statement)) {
+                return false;
+            }
+        }
+        if (!p6_region_always_diverges(region)) {
+            return reject("match region must yield or diverge on every path", default_range);
+        }
+        return true;
+    }
+
+    // Emit a guard region, leaving its Bool on the stack. The region ends in
+    // exactly one value yield (so no completion block is involved), and every
+    // other statement is an ordinary P6 statement.
+    [[nodiscard]] bool emit_guard_region(const CoreRegion &region, ir::SourceRangeOpt range) {
+        if (region.statements.empty()) {
+            return reject("guard region must yield a value", std::move(range));
+        }
+        const auto *yield = std::get_if<CoreYieldStmt>(&region.statements.back().node);
+        if (yield == nullptr || !yield->has_value) {
+            return reject("guard region must end in a value yield", std::move(range));
+        }
+        for (std::size_t index = 0; index + 1 < region.statements.size(); ++index) {
+            if (!emit_statement(region.statements[index])) {
+                return false;
+            }
+        }
+        return emit_value_read(yield->value, std::move(range));
+    }
+
+    // The match arm chain described above. `S` and `B` are opened once, then one
+    // `C_i` per arm; the fallback runs at B's tail.
+    [[nodiscard]] bool emit_match(const CoreMatchStmt &match, ir::SourceRangeOpt range) {
+        const auto scrutinee_local = readable_local(match.scrutinee);
+        if (scrutinee_local == std::nullopt) {
+            return reject("match scrutinee has no readable local", range);
+        }
+        std::optional<std::uint32_t> result_local;
+        if (match.has_result) {
+            result_local = match_result_local(match.result);
+            if (result_local == std::nullopt) {
+                return reject("match result has no scratch local", range);
+            }
+        }
+
+        // S: the completion target, typeless — a completing arm leaves through
+        // it, skipping the remaining arms and the fallback below.
+        body_.byte(kOpBlock);
+        body_.byte(kEmptyBlock);
+        ++label_depth_;
+        // B: the arm chain. Its own block so an arm can reach S (br past B) while
+        // a mismatched test / false guard only reaches the next arm (br 0).
+        body_.byte(kOpBlock);
+        body_.byte(kEmptyBlock);
+        ++label_depth_;
+
+        for (const CoreMatchArm &arm : match.arms) {
+            // C_i: this arm. A test/guard failure `br 0` lands right after the
+            // `end` below, i.e. at the next arm.
+            body_.byte(kOpBlock);
+            body_.byte(kEmptyBlock);
+            ++label_depth_;
+
+            // Latch every arm binding from the whole scrutinee BEFORE the test.
+            // The IR gives a binding no independent value (its value id is
+            // arm-scoped), so the scrutinee's local is the value to copy; a
+            // binding introduced by a payload sub-pattern would need that
+            // payload, which the subset rejects in planning.
+            for (const CorePatternBinding &binding : arm.bindings) {
+                const auto dest = binding_local(binding.value);
+                if (dest == std::nullopt) {
+                    return reject("arm binding has no scratch local", range);
+                }
+                emit_local_get(*scrutinee_local);
+                body_.byte(kOpLocalSet);
+                body_.u32(*dest);
+            }
+            if (!emit_pattern_test(arm.pattern, match.scrutinee, range)) {
+                return false;
+            }
+            // A pattern test leaves "matched" as a nonzero i32; `br_if` branches
+            // on NONZERO, but a mis-match must continue to the NEXT arm, so the
+            // test is negated first: branch exactly when it did not match.
+            body_.byte(kOpI32Eqz);
+            body_.byte(kOpBrIf);
+            body_.u32(0); // not matched -> next arm
+            if (arm.guard_region) {
+                if (!emit_guard_region(*arm.guard_region, range)) {
+                    return false;
+                }
+                // Same inversion: skip the arm when the guard yields false.
+                body_.byte(kOpI32Eqz);
+                body_.byte(kOpBrIf);
+                body_.u32(0); // guard false -> next arm
+            }
+            if (arm.body && !emit_match_region(*arm.body, result_local, /*completion_offset=*/2,
+                                               range)) {
+                return false;
+            }
+            --label_depth_;
+            body_.byte(kOpEnd);
+        }
+
+        // The fallback runs when no arm matched. It is a separate region (never a
+        // synthetic arm), so it shares the arm-body shape: a completing fallback
+        // leaves through S, a diverging one (a non-exhaustive match's trap, or a
+        // goto) leaves on its own.
+        if (match.fallback_region &&
+            !emit_match_region(*match.fallback_region, result_local, /*completion_offset=*/1,
+                               range)) {
+            return false;
+        }
+
+        --label_depth_;
+        body_.byte(kOpEnd); // B
+        --label_depth_;
+        body_.byte(kOpEnd); // S
+        return true;
+    }
+
     [[nodiscard]] bool emit_statement(const CoreStmt &statement) {
         return std::visit(
             Overloaded{
@@ -1446,8 +2154,8 @@ class P6ComputationHandlerBuilder {
                     body_.byte(kOpUnreachable);
                     return true;
                 },
-                [&](const CoreMatchStmt &) {
-                    return reject("match lowering is a later P6 slice", statement.source_range);
+                [&](const CoreMatchStmt &s) {
+                    return emit_match(s, statement.source_range);
                 },
                 [&](const CoreCapabilityCallStmt &) {
                     return reject("capability effects stay on the orchestration lane",
@@ -1490,12 +2198,12 @@ build_agent_plan(const CoreProgram &program,
         return std::nullopt;
     }
     // RFC 0026 P6 (KR6.6): coercion plans stay on the KR6.5 reject path
-    // (scalar coercion lowering is not part of the P6 ladder). A non-empty
-    // PATTERN arena is admitted past this gate only when some handler is a pure
-    // P6 computation region actually containing a match — otherwise canonical
-    // E1-E3 shapes that merely carry leftover pattern artifacts keep the exact
-    // legacy rejection. The admitted flow still fails closed per-handler below,
-    // because match lowering is a later P6 slice.
+    // (scalar coercion lowering is the P6-6 slice). A non-empty PATTERN arena is
+    // admitted past this gate only when some handler is a pure P6 computation
+    // region actually containing a match — otherwise canonical E1-E3 shapes that
+    // merely carry leftover pattern artifacts keep the exact legacy rejection.
+    // The admitted flow still fails closed per-handler below for any pattern kind
+    // or expression node outside the landed subset.
     if (!flow->coercion_plans.empty() ||
         (!flow->patterns.empty() &&
          !std::any_of(flow->states.begin(),
@@ -1632,6 +2340,15 @@ build_agent_plan(const CoreProgram &program,
                 if (!builder->plan()) {
                     return std::nullopt;
                 }
+                // Emit BEFORE the legality check: a match arm's gotos live in the
+                // pattern/guard/body regions and are recorded by the statement
+                // emitter as it walks them, so `targets()` is only complete once
+                // the body has been emitted. A rejection during emit discards the
+                // body, so no partial artifact can escape.
+                auto body = builder->emit();
+                if (!body.has_value()) {
+                    return std::nullopt;
+                }
                 // Every dynamically reachable target must be a declared legal
                 // edge of THIS state.
                 for (const CoreStateId destination : builder->targets()) {
@@ -1649,10 +2366,6 @@ build_agent_plan(const CoreProgram &program,
                                  statements.front().source_range);
                         return std::nullopt;
                     }
-                }
-                auto body = builder->emit();
-                if (!body.has_value()) {
-                    return std::nullopt;
                 }
                 const auto function =
                     static_cast<std::uint32_t>(plan.handlers.size());

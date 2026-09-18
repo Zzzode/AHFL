@@ -1,0 +1,59 @@
+module wasm::p6_match_expr;
+
+// RFC 0026 P6-3 (KR6.6) expression-match fixture. The match joins the arms'
+// yielded values through the result SSA local; `level` holds High, whose arm
+// yields 100, so `y > 75` takes High. A missing per-arm result store (or a
+// completion `br` that skipped the store) would leave `y` at its initial
+// value and route to Low.
+pub struct Frame {
+    value: String;
+}
+
+pub enum Level {
+    Low,
+    High,
+    Mid,
+}
+
+pub agent MatchAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MatchAgent {
+state Decide {
+    let level: Level = Level::High;
+    let y: Int = match level {
+        High => 100,
+        Mid => 10,
+        Low => 50,
+    };
+    if (y > 75) {
+        goto High;
+    } else {
+        goto Low;
+    }
+}
+
+state High {
+    goto Done;
+}
+
+state Low {
+    goto Done;
+}
+
+state Done {
+    return input;
+}
+}

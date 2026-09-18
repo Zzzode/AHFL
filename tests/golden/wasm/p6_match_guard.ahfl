@@ -1,0 +1,61 @@
+module wasm::p6_match_guard;
+
+// RFC 0026 P6-3 (KR6.6) guard fixture. The first High arm is gated on the
+// Bool `flag` (true here), so the guard passes and its arm yields 100; the
+// unguarded High arm (10) is the fall-through a false guard would reach.
+// A guard emitted without its `br_if` (or ANDed the wrong way) picks 10
+// and routes to Low.
+pub struct Frame {
+    value: String;
+}
+
+pub enum Level {
+    Low,
+    High,
+    Mid,
+}
+
+pub agent MatchAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MatchAgent {
+state Decide {
+    let level: Level = Level::High;
+    let flag = true;
+    let y: Int = match level {
+        High if flag => 100,
+        High => 10,
+        Mid => 30,
+        Low => 50,
+    };
+    if (y > 75) {
+        goto High;
+    } else {
+        goto Low;
+    }
+}
+
+state High {
+    goto Done;
+}
+
+state Low {
+    goto Done;
+}
+
+state Done {
+    return input;
+}
+}

@@ -1,0 +1,56 @@
+module wasm::p6_match_fallthrough;
+
+// RFC 0026 P6-3 (KR6.6) statement-match fall-through fixture. `level` holds
+// Low, which neither if-let arm tests, so both arm chains fall through to
+// the trailing `goto Done` — the path that exercises the match's B-block
+// fallback position. A misrouted `br_if` (jumping to the completion block
+// instead of the next arm) would route to High/Low instead.
+pub struct Frame {
+    value: String;
+}
+
+pub enum Level {
+    Low,
+    High,
+    Mid,
+}
+
+pub agent MatchAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MatchAgent {
+state Decide {
+    let level: Level = Level::Low;
+    if let High = level {
+        goto High;
+    }
+    if let Mid = level {
+        goto Low;
+    }
+    goto Done;
+}
+
+state High {
+    goto Done;
+}
+
+state Low {
+    goto Done;
+}
+
+state Done {
+    return input;
+}
+}

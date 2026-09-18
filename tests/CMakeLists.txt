@@ -192,6 +192,39 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-3 (KR6.6): match lowering. Arms compile to three nested wasm
+    # blocks (S = match completion, B = the arm chain + fallback, C = one arm)
+    # with the pattern test and guard negated into `br_if 0` (next arm); the
+    # fallback is the code after the last arm and a Trap fallback is `unreachable`.
+    # The structural probe pins the native state path for a statement if-let whose
+    # arm diverges; the Node host compiles every fixture (a wrong `br` depth or an
+    # unbalanced block/end is a hard WebAssembly.compile rejection), drives step()
+    # against the native state-id path, and asserts a matched arm that divides by
+    # zero raises a real WebAssembly.RuntimeError with no transition.
+    add_test(NAME ahfl.wasm.p6_match_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_match_enum.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_match_enum.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_match_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=4,2,0 final_state_id=0 transition_count=2"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_match_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_match_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_match_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "match-lowering Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     add_test(NAME ahfl.wasm.e2_same_frontend_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"
