@@ -447,10 +447,6 @@ target_include_directories(ahfl_conformance_evaluator_runner
         ${PROJECT_SOURCE_DIR}/src
         ${PROJECT_SOURCE_DIR}/tests
 )
-target_compile_definitions(ahfl_conformance_evaluator_runner
-    PRIVATE
-        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
-)
 ahfl_apply_project_warnings(ahfl_conformance_evaluator_runner)
 
 add_executable(ahfl_payload_store_tests

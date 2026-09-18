@@ -229,7 +229,16 @@ build_mock_registry(const ConformanceCase &manifest, std::string &error_out) {
         }
     }
 
-    return json::serialize_json(*root);
+    // Emit the envelope through the SAME canonical emitter the manifest
+    // expectation gate uses (detail::canonical_json): `_type` stays first,
+    // remaining keys sort deterministically, and the embedded output subtree
+    // reproduces value_to_json byte-for-byte for every kind. Serializing with
+    // json::serialize_json instead would diverge on integral-valued floats,
+    // whose float syntax (e.g. "2.0") it would collapse to a bare integer
+    // ("2") - the non-canonical spelling the wire codec's "no int widening"
+    // contract rejects - making such a case un-blessable and any cross-engine
+    // adapter that emits canonical bytes fail the byte gate falsely.
+    return detail::canonical_json(*root);
 }
 
 [[nodiscard]] EvaluatorScenarioResult

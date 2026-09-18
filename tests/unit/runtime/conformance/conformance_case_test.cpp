@@ -4,7 +4,7 @@
 //
 // Coverage (per slice spec):
 //   (a) every committed sidecar under tests/conformance/cases loads and every
-//       one references an existing AHFL source (the 4 tests/golden/wasm and 3
+//       one references an existing AHFL source (the 4 tests/golden/wasm and 4
 //       tests/golden/runtime fixtures);
 //   (b) loaded manifests round-trip the expected name-only contract: kind,
 //       entry, named scenarios with canonical wire input + expectations,
@@ -15,7 +15,7 @@
 //       format_version / kind / run_status / eligibility enum / pending+result
 //       / duplicate capability / unconfigured invoked capability / workflow
 //       state-sequence / source-path escapes / duplicate or anonymous
-//       scenario / empty scenario list;
+//       scenario / empty scenario list / path-unsafe scenario name;
 //   (d) the canonicality gate distinguishes a compact correctly-ordered wire
 //       fragment from one carrying whitespace or a shuffled struct field.
 
@@ -140,6 +140,15 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "runtime::e2e_multi_agent::CustomerSupportWorkflow",
             4,
             2,
+            WasmEligibility::Computation,
+        },
+        {
+            "float_output_e2e.case.json",
+            "tests/golden/runtime/float_output_e2e.ahfl",
+            CaseKind::Workflow,
+            "runtime::float_output_e2e::FloatPipeline",
+            0,
+            1,
             WasmEligibility::Computation,
         },
     };
@@ -771,6 +780,44 @@ void test_malformed_manifests() {
               "wasm": {"eligible": "orchestration", "reason": "E1"}}
 })",
                     "is missing required field 'input'");
+
+    // A scenario name is concatenated into the blessing filename
+    // (<stem>.<name>.json), so anything outside [A-Za-z0-9_-] is rejected -
+    // this closes path traversal (a name such as "../x") from a manifest data
+    // field into the bless/verify/observation-path sink.
+    expect_rejected("path-traversing scenario name",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "scenarios": [
+    {"name": "../escape", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "E1"}}
+})",
+                    "must be a path-safe name matching [A-Za-z0-9_-]+");
+
+    expect_rejected("scenario name with a path separator",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "wasm::e1_identity::IdentityAgent",
+  "scenarios": [
+    {"name": "a/b", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "E1"}}
+})",
+                    "must be a path-safe name matching [A-Za-z0-9_-]+");
 
     expect_rejected("unknown scenario field",
                     R"({

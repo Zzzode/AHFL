@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/runtime/float_output_e2e.ahfl",
+  "kind": "workflow",
+  "entry": "runtime::float_output_e2e::FloatPipeline",
+  "scenarios": [
+    {
+      "name": "integral_float",
+      "input": {"_type":"runtime::float_output_e2e::Sample","ratio":2.0},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": [],
+        "output_json": {"_type":"runtime::float_output_e2e::Sample","ratio":2.0}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "computation",
+      "reason": "float-valued frame requires in-wasm expression evaluation on the KR6.6 computation lane"
+    }
+  }
+}

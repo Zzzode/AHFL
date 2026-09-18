@@ -191,9 +191,9 @@ fixture knowledge:
   the same provenance discipline as the Wasmtime preflight SKIP 77 lane.
 
 The current catalogue marks the four `tests/golden/wasm/` fixtures
-`orchestration` (they are the E1-E3 codegen fixtures) and the three
-`tests/golden/runtime/` fixtures `computation` (enum/match/if-let projection
-and multi-agent capability chains).
+`orchestration` (they are the E1-E3 codegen fixtures) and the four
+`tests/golden/runtime/` fixtures `computation` (enum/match/if-let projection,
+multi-agent capability chains, and the integral-float output pin).
 
 ## 7. Validation rules and diagnostics
 

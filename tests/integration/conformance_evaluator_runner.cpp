@@ -34,6 +34,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -135,10 +136,25 @@ bool write_file(const fs::path &path, std::string_view contents) {
     return static_cast<bool>(out);
 }
 
-[[nodiscard]] fs::path observation_path(const fs::path &observations_dir,
-                                        std::string_view stem,
-                                        const ConformanceScenario &scenario) {
-    return observations_dir / (std::string{stem} + "." + scenario.name + ".json");
+// Resolves the blessing path for one scenario. The scenario name is validated
+// to the path-safe charset [A-Za-z0-9_-]+ by the manifest parser; the extra
+// lexical-normalization check below is defense in depth so a future parser
+// regression can never let a manifest data field select a write target outside
+// `observations_dir` (path traversal). Returns nullopt when the joined path
+// escapes the directory.
+[[nodiscard]] std::optional<fs::path> observation_path(const fs::path &observations_dir,
+                                                       std::string_view stem,
+                                                       const ConformanceScenario &scenario) {
+    const fs::path candidate =
+        observations_dir / (std::string{stem} + "." + scenario.name + ".json");
+    const fs::path base = observations_dir.lexically_normal();
+    const fs::path normalized = candidate.lexically_normal();
+    const auto base_str = base.generic_string();
+    const auto candidate_str = normalized.generic_string();
+    if (candidate_str != base_str && !candidate_str.starts_with(base_str + "/")) {
+        return std::nullopt;
+    }
+    return normalized;
 }
 
 [[nodiscard]] std::string case_stem(const LoadedCase &candidate) {
@@ -221,10 +237,14 @@ int mode_verify(const fs::path &repo_root,
         const std::string stem = case_stem(candidate);
         for (const auto &scenario : candidate.loaded.manifest.scenarios) {
             const std::string label = stem + "/" + scenario.name;
-            const fs::path blessed_path = observation_path(observations_dir, stem, scenario);
-            const auto verdict = verify_observation(candidate, scenario, blessed_path, label);
+            const auto blessed_path = observation_path(observations_dir, stem, scenario);
+            if (!blessed_path.has_value()) {
+                check(false, "scenario name is path-safe: " + label);
+                continue;
+            }
+            const auto verdict = verify_observation(candidate, scenario, *blessed_path, label);
             if (!verdict.has_value()) {
-                check(false, "blessed observation exists and runs: " + blessed_path.string());
+                check(false, "blessed observation exists and runs: " + blessed_path->string());
                 continue;
             }
             check(*verdict, "observation byte-matches blessing: " + label);
@@ -297,8 +317,12 @@ int mode_bless(const fs::path &repo_root,
             if (!observed.has_value()) {
                 continue;
             }
-            const fs::path path = observation_path(observations_dir, stem, scenario);
-            check(write_file(path, *observed), "blessing written: " + path.string());
+            const auto path = observation_path(observations_dir, stem, scenario);
+            if (!path.has_value()) {
+                check(false, "scenario name is path-safe: " + stem + "/" + scenario.name);
+                continue;
+            }
+            check(write_file(*path, *observed), "blessing written: " + path->string());
         }
     }
     return g_failures == 0 ? 0 : 1;
@@ -319,15 +343,19 @@ int mode_mutation(const fs::path &repo_root,
     check(!candidate.loaded.manifest.scenarios.empty(), "mutation case has a scenario");
     const auto &scenario = candidate.loaded.manifest.scenarios.front();
 
-    const fs::path blessed_path = observation_path(observations_dir, stem, scenario);
+    const auto blessed_path = observation_path(observations_dir, stem, scenario);
+    check(blessed_path.has_value(), "mutation scenario name is path-safe");
+    if (!blessed_path.has_value()) {
+        return 1;
+    }
 
     // The pristine blessing passes the shared verify comparison.
     const auto pristine_verdict =
-        verify_observation(candidate, scenario, blessed_path, stem + "/" + scenario.name);
+        verify_observation(candidate, scenario, *blessed_path, stem + "/" + scenario.name);
     check(pristine_verdict.has_value(), "pristine blessing present and scenario runs");
     check(pristine_verdict.value_or(false), "pristine blessing byte-matches before mutation");
 
-    const auto blessed = read_file(blessed_path);
+    const auto blessed = read_file(*blessed_path);
     if (!blessed.has_value()) {
         return 1;
     }
@@ -345,8 +373,12 @@ int mode_mutation(const fs::path &repo_root,
     std::error_code ec;
     fs::create_directories(scratch_dir, ec);
     check(!ec, "mutation scratch directory created");
-    const fs::path mutated_path = observation_path(scratch_dir, stem, scenario);
-    check(write_file(mutated_path, *mutated), "mutated blessing staged");
+    const auto mutated_path = observation_path(scratch_dir, stem, scenario);
+    check(mutated_path.has_value(), "mutation scratch path is path-safe");
+    if (!mutated_path.has_value()) {
+        return 1;
+    }
+    check(write_file(*mutated_path, *mutated), "mutated blessing staged");
 
     // Save and restore the global failure counter so the deliberate gate
     // failure does not leak into this lane's own pass/fail accounting. The
@@ -361,7 +393,7 @@ int mode_mutation(const fs::path &repo_root,
     check(gate_status == 1, "verify gate FAILS (exit 1) on the mutated blessing");
     check(gate_failures > 0, "verify gate recorded the mutated blessing divergence");
 
-    fs::remove(mutated_path, ec);
+    fs::remove(*mutated_path, ec);
 
     return g_failures == 0 ? 0 : 1;
 }

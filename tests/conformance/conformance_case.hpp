@@ -109,7 +109,9 @@ struct CaseExpectations {
 /// path.
 struct ConformanceScenario {
     /// Stable name unique within the case (used in observation documents and
-    /// diagnostics); never numeric engine identity.
+    /// diagnostics); never numeric engine identity. Constrained to the
+    /// path-safe charset [A-Za-z0-9_-] because the runners embed it directly
+    /// into a blessing filename (<stem>.<name>.json).
     std::string name;
     /// Canonical wire JSON fed to the run as input.
     std::string input_json;
@@ -563,6 +565,31 @@ class ConformanceCaseReader {
         return value;
     }
 
+    /// Reads a string that is used as a single filename component (e.g. a
+    /// scenario name embedded into `<stem>.<name>.json`). Rejects anything
+    /// outside `[A-Za-z0-9_-]`, so a name can never contain a path separator,
+    /// a `..` traversal component, a leading dot, or any other byte that would
+    /// let a manifest data field drive a write outside the observations dir.
+    [[nodiscard]] std::optional<std::string>
+    require_path_segment(const json::JsonValue &node, std::string_view field) {
+        auto value = require_nonempty_string(node, field);
+        if (!value.has_value()) {
+            return std::nullopt;
+        }
+        for (const char ch : *value) {
+            const bool safe = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                              (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+            if (!safe) {
+                error("conformance case field '" + std::string(field) +
+                          "' must be a path-safe name matching [A-Za-z0-9_-]+, got '" + *value +
+                          "'",
+                      range_of(node));
+                return std::nullopt;
+            }
+        }
+        return value;
+    }
+
     /// Extracts a fragment as canonical wire bytes, rejecting insignificant
     /// whitespace, wrong key order, or any spelling that differs from the
     /// canonical `value_json` form.
@@ -659,7 +686,7 @@ class ConformanceCaseReader {
 
         for (const auto &[key, value] : object.object_fields) {
             if (key == "name") {
-                name = require_nonempty_string(*value, "scenarios[].name");
+                name = require_path_segment(*value, "scenarios[].name");
             } else if (key == "input") {
                 input_json = require_canonical_wire_json(*value, "scenarios[].input");
             } else if (key == "expect") {

@@ -1,0 +1,35 @@
+module runtime::float_output_e2e;
+
+pub struct Sample {
+    ratio: Float;
+}
+
+pub agent SampleAgent {
+    input: Sample;
+    context: Unit;
+    output: Sample;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for SampleAgent {
+    state Done {
+        return input;
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow FloatPipeline {
+    input: Sample;
+    output: Sample;
+
+    node sample: SampleAgent(input);
+
+    return: sample;
+}
