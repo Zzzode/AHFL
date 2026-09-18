@@ -15,9 +15,9 @@ harness syntax-only-compiles every fixture twice:
      error) is the sole cause of the negative result.
 
 Fixtures:
-  * ahfl::ir::ExprNode (RFC 0027 P8, KR6.13-G) from tests/fixtures/ir/ssot/
-    expr_nodes.def, sentinel SsotUnhandledExpr, injected with
-    AHFL_SSOT_INJECT_UNHANDLED.
+  * ahfl::ir::ExprNode (RFC 0027 P6/P7, KR6.13-E) straight from the production
+    include/ahfl/compiler/ir/expr_nodes.def, sentinel SsotUnhandledExpr,
+    injected with AHFL_SSOT_INJECT_UNHANDLED.
   * ahfl::ir::core::CoreValueTypeNode (RFC 0027 Q1, KR6.13-X) straight from the
     production include/ahfl/compiler/ir/core_value_types.def, sentinel
     SsotUnhandledVt, injected with AHFL_SSOT_INJECT_UNHANDLED_VT.

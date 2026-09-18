@@ -511,6 +511,38 @@ TEST_CASE("IR JSON deserializer fails closed on a negative adjustment child inde
     CHECK_FALSE(ahfl::parse_program_ir_json(bad_child).has_value());
 }
 
+// RFC 0027 P6/P7 (KR6.13-E): the ir_json reader resolves an expression's
+// `"kind"` through the single table generated from expr_nodes.def (the same
+// table the writer emits from). An unknown / misspelled wire name must therefore
+// FAIL CLOSED — it can no longer silently demote to a default node via a missing
+// `if (kind == ...)` branch.
+TEST_CASE("IR JSON deserializer fails closed on an unknown expression kind") {
+    using namespace ahfl::ir;
+
+    // Minimal flow handler holding one BoolLiteralExpr statement expression.
+    Program program;
+    StateHandler handler;
+    handler.state_name = "S";
+    auto stmt = std::make_unique<Statement>();
+    stmt->node = ExprStatement{program.expr_arena.make(BoolLiteralExpr{.value = true})};
+    handler.body.statements.push_back(std::move(stmt));
+    FlowDecl flow;
+    flow.target_ref.kind = SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    std::ostringstream out;
+    ahfl::print_program_ir_json(program, out);
+    const std::string base = out.str();
+    REQUIRE(base.find("\"bool_literal\"") != std::string::npos);
+    REQUIRE(ahfl::parse_program_ir_json(base).has_value());
+
+    // A wire-name typo is rejected through the shared table (no silent demotion).
+    const auto bad = replace_first(base, "\"bool_literal\"", "\"bool_litteral\"");
+    CHECK_FALSE(ahfl::parse_program_ir_json(bad).has_value());
+}
+
 namespace {
 
 // A deliberately field-complete TypeRef: a bounded generic collection

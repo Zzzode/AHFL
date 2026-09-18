@@ -1050,63 +1050,63 @@ class IrJsonPrinter final {
             Overloaded{
                 [&](const ir::BoolLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("bool_literal"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("value", [&]() { write_bool(value.value); });
                     });
                 },
                 [&](const ir::IntegerLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("integer_literal"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::FloatLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("float_literal"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::DecimalLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("decimal_literal"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::StringLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("string_literal"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::DurationLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("duration_literal"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::PathExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("path"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("path", [&]() { print_path(value.path, indent_level + 1); });
                     });
                 },
                 [&](const ir::QualifiedValueExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("qualified_value"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("value", [&]() { write_string(value.value); });
                     });
                 },
                 [&](const ir::CallExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("call"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("callee", [&]() { write_string(value.callee); });
                         field("callee_ref", [&]() {
@@ -1123,7 +1123,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::MethodCallExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("method_call"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("receiver", [&]() {
                             if (value.receiver) {
@@ -1147,7 +1147,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::LambdaExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("lambda"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("params",
                               [&]() { write_string_array(value.params, indent_level + 1); });
@@ -1167,7 +1167,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::StructLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("struct_literal"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("type_name", [&]() { write_string(value.type_name); });
                         if (value.is_enum_variant) {
@@ -1194,7 +1194,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::UnaryExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("unary"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("op", [&]() { write_string(expr_unary_op_name(value.op)); });
                         field("operand", [&]() { print_expr(*value.operand, indent_level + 1); });
@@ -1202,7 +1202,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::BinaryExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("binary"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("op", [&]() { write_string(expr_binary_op_name(value.op)); });
                         field("lhs", [&]() { print_expr(*value.lhs, indent_level + 1); });
@@ -1211,7 +1211,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::MemberAccessExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("member_access"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("base", [&]() { print_expr(*value.base, indent_level + 1); });
                         field("member", [&]() { write_string(value.member); });
@@ -1219,7 +1219,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::IndexAccessExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("index_access"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("base", [&]() { print_expr(*value.base, indent_level + 1); });
                         field("index", [&]() { print_expr(*value.index, indent_level + 1); });
@@ -1227,7 +1227,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::MatchExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("match"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("scrutinee",
                               [&]() { print_expr(*value.scrutinee, indent_level + 1); });
@@ -1259,7 +1259,7 @@ class IrJsonPrinter final {
                 // P4-02: unwrap(operand) — operand mandatory; fallback_message is optional.
                 [&](const ir::UnwrapExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("unwrap"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("operand", [&]() { print_expr(*value.operand, indent_level + 1); });
                         field("fallback_none_message", [&]() {
@@ -1274,7 +1274,7 @@ class IrJsonPrinter final {
                 // RFC 0013 P3-gaps-B: the unit literal `{}` — kind + common fields only.
                 [&](const ir::UnitLiteralExpr &) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("unit_literal"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                     });
                 },
@@ -1282,7 +1282,7 @@ class IrJsonPrinter final {
                 // collection operand, and body predicate.
                 [&](const ir::QuantifierExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("quantifier"); });
+                        field("kind", [&]() { write_string(expr_node_wire_name(expr.node)); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("quantifier", [&]() {
                             write_string(value.kind == ir::QuantifierExpr::Kind::Exists ? "exists"
@@ -3045,34 +3045,52 @@ class IrJsonReader final {
         return expr(*field);
     }
 
+    // Map a JSON `"kind"` wire spelling onto the shared ExprNode wire-name
+    // table (RFC 0027 P6/P7, KR6.13-E). This is the reader half of the single
+    // table the writer also emits from: an unknown / misspelled wire name
+    // returns nullopt, and the caller FAILS CLOSED instead of silently demoting
+    // the node.
+    [[nodiscard]] static std::optional<ir::expr_node_detail::ExprNodeIndex>
+    resolve_expr_node_identity(std::string_view wire) noexcept {
+        for (std::size_t i = 0; i < std::variant_size_v<ir::ExprNode>; ++i) {
+            if (ir::expr_node_wire_name(i) == wire) {
+                return static_cast<ir::expr_node_detail::ExprNodeIndex>(i);
+            }
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] ir::ExprNode build_expr_node(const JsonValue &obj, std::string_view kind) {
-        if (kind == "bool_literal") {
+        const auto node_identity = resolve_expr_node_identity(kind);
+        if (!node_identity.has_value()) {
+            fail();
+            return ir::UnitLiteralExpr{};
+        }
+        // One branch per ExprNode alternative, selected by the shared wire-name
+        // table above; per-node field parse bodies are unchanged. A new node
+        // added to expr_nodes.def without a case here is a -Wswitch error.
+        switch (*node_identity) {
+        using ir::expr_node_detail::ExprNodeIndex;
+        case ExprNodeIndex::BoolLiteralExpr:
             return ir::BoolLiteralExpr{.value = opt_bool(obj, "value")};
-        }
-        if (kind == "integer_literal") {
+        case ExprNodeIndex::IntegerLiteralExpr:
             return ir::IntegerLiteralExpr{.spelling = req_string(obj, "spelling")};
-        }
-        if (kind == "float_literal") {
+        case ExprNodeIndex::FloatLiteralExpr:
             return ir::FloatLiteralExpr{.spelling = req_string(obj, "spelling")};
-        }
-        if (kind == "decimal_literal") {
+        case ExprNodeIndex::DecimalLiteralExpr:
             return ir::DecimalLiteralExpr{.spelling = req_string(obj, "spelling")};
-        }
-        if (kind == "string_literal") {
+        case ExprNodeIndex::StringLiteralExpr:
             return ir::StringLiteralExpr{.spelling = req_string(obj, "spelling")};
-        }
-        if (kind == "duration_literal") {
+        case ExprNodeIndex::DurationLiteralExpr:
             return ir::DurationLiteralExpr{.spelling = req_string(obj, "spelling")};
-        }
-        if (kind == "path") {
+        case ExprNodeIndex::PathExpr: {
             const auto *p = obj.get("path");
             if (p == nullptr) { fail(); return ir::UnitLiteralExpr{}; }
             return ir::PathExpr{.path = path(*p)};
         }
-        if (kind == "qualified_value") {
+        case ExprNodeIndex::QualifiedValueExpr:
             return ir::QualifiedValueExpr{.value = req_string(obj, "value")};
-        }
-        if (kind == "call") {
+        case ExprNodeIndex::CallExpr: {
             ir::CallExpr call;
             call.callee = req_string(obj, "callee");
             if (const auto *cref = obj.get("callee_ref"); cref != nullptr) {
@@ -3085,7 +3103,7 @@ class IrJsonReader final {
             }
             return call;
         }
-        if (kind == "method_call") {
+        case ExprNodeIndex::MethodCallExpr: {
             ir::MethodCallExpr call;
             call.receiver = opt_expr(obj, "receiver");
             call.method = req_string(obj, "method");
@@ -3099,14 +3117,14 @@ class IrJsonReader final {
             }
             return call;
         }
-        if (kind == "lambda") {
+        case ExprNodeIndex::LambdaExpr: {
             ir::LambdaExpr lambda;
             lambda.params = string_array(obj, "params");
             lambda.captures = string_array(obj, "captures");
             lambda.body = opt_expr(obj, "body");
             return lambda;
         }
-        if (kind == "struct_literal") {
+        case ExprNodeIndex::StructLiteralExpr: {
             ir::StructLiteralExpr lit;
             lit.type_name = req_string(obj, "type_name");
             lit.is_enum_variant = opt_bool(obj, "is_enum_variant");
@@ -3122,32 +3140,32 @@ class IrJsonReader final {
             }
             return lit;
         }
-        if (kind == "unary") {
+        case ExprNodeIndex::UnaryExpr: {
             ir::UnaryExpr unary;
             if (!parse_expr_unary_op(req_string(obj, "op"), unary.op)) { fail(); }
             unary.operand = opt_expr(obj, "operand");
             return unary;
         }
-        if (kind == "binary") {
+        case ExprNodeIndex::BinaryExpr: {
             ir::BinaryExpr binary;
             if (!parse_expr_binary_op(req_string(obj, "op"), binary.op)) { fail(); }
             binary.lhs = opt_expr(obj, "lhs");
             binary.rhs = opt_expr(obj, "rhs");
             return binary;
         }
-        if (kind == "member_access") {
+        case ExprNodeIndex::MemberAccessExpr: {
             ir::MemberAccessExpr access;
             access.base = opt_expr(obj, "base");
             access.member = req_string(obj, "member");
             return access;
         }
-        if (kind == "index_access") {
+        case ExprNodeIndex::IndexAccessExpr: {
             ir::IndexAccessExpr access;
             access.base = opt_expr(obj, "base");
             access.index = opt_expr(obj, "index");
             return access;
         }
-        if (kind == "match") {
+        case ExprNodeIndex::MatchExpr: {
             ir::MatchExpr match;
             match.scrutinee = opt_expr(obj, "scrutinee");
             const auto *arms = obj.get("arms");
@@ -3164,16 +3182,15 @@ class IrJsonReader final {
             }
             return match;
         }
-        if (kind == "unwrap") {
+        case ExprNodeIndex::UnwrapExpr: {
             ir::UnwrapExpr unwrap;
             unwrap.operand = opt_expr(obj, "operand");
             unwrap.fallback_none_message = opt_expr(obj, "fallback_none_message");
             return unwrap;
         }
-        if (kind == "unit_literal") {
+        case ExprNodeIndex::UnitLiteralExpr:
             return ir::UnitLiteralExpr{};
-        }
-        if (kind == "quantifier") {
+        case ExprNodeIndex::QuantifierExpr: {
             ir::QuantifierExpr quant;
             quant.kind = req_string(obj, "quantifier") == "exists"
                              ? ir::QuantifierExpr::Kind::Exists
@@ -3183,6 +3200,7 @@ class IrJsonReader final {
             quant.collection = opt_expr(obj, "collection");
             quant.body = opt_expr(obj, "body");
             return quant;
+        }
         }
         fail();
         return ir::UnitLiteralExpr{};

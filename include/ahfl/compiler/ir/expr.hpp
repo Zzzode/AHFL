@@ -1,10 +1,14 @@
 #pragma once
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <tuple>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -373,51 +377,87 @@ struct QuantifierExpr {
 /// lowered to CallExpr via nominal stdlib constructors, Option variants via
 /// QualifiedValueExpr + CallExpr; KR5.5 added MethodCallExpr)
 ///
-/// ---------------------------------------------------------------------------
-/// SWEEP CHECKLIST — every new ExprNode alternative MUST update all 8 locations
-/// ---------------------------------------------------------------------------
-/// Whenever you add a variant to `ExprNode`, grep each file below for the
-/// pattern "case ExprKind::" / ".emplace<NewAlternative>" / the last similar
-/// alternative and add the matching branch.  Missing any one of these produces
-/// a silent data-loss bug (default branches tend to skip the new node).
+/// RFC 0027 P6/P7 (KR6.13-E): the alternative list AND its JSON wire names are
+/// generated from the single X-macro node list in expr_nodes.def — one line per
+/// node, declaration order preserved. To add a node, edit ONLY that .def; the
+/// variant, the internal `ExprNodeIndex` enum, the wire-name table, and (via
+/// the negative compile-test) every exhaustive visitor stay in lockstep. The
+/// SWEEP CHECKLIST that used to live here covered the eight hand-written
+/// consumer sites for ExprNode; those sites still route through std::visit and
+/// are now enumerated by the .def + this generated variant, so a new node that
+/// misses one is a compile error rather than a silent data-loss bug. The
+/// remaining IR families (Statement / TemporalExpr / MatchPattern / Decl / …)
+/// keep their own checklists until later KR6.13 slices migrate them.
 ///
-///   1. src/compiler/ir/analysis.cpp            – IR traversals / cost models
-///   2. src/compiler/ir/ir_print.cpp            – textual IR dumper
-///   3. src/compiler/ir/verify.cpp              – BackendReady structural verifier
-///   4. src/compiler/ir/ir_json.cpp             – JSON (de)serialization for IR
-///   5. src/compiler/ir/opt/opt_lower.cpp       – optimisation / simplification
-///   6. src/compiler/ir/visitor.cpp             – both const AND mutating visitors
-///   7. src/compiler/ir/typed_hir_lower.cpp     – Typed HIR → IR construction
-///   8. src/compiler/assurance/assurance.cpp    – assurance-probe IR walk
-///
-/// Wave-18 P4-02 baseline: this checklist was derived from a full repository
-/// sweep after introducing UnwrapExpr; treat the list as authoritative.
-using ExprNode = std::variant<BoolLiteralExpr,
-                              IntegerLiteralExpr,
-                              FloatLiteralExpr,
-                              DecimalLiteralExpr,
-                              StringLiteralExpr,
-                              DurationLiteralExpr,
-                              PathExpr,
-                              QualifiedValueExpr,
-                              CallExpr,
-                              MethodCallExpr,
-                              LambdaExpr,
-                              StructLiteralExpr,
-                              UnaryExpr,
-                              BinaryExpr,
-                              MemberAccessExpr,
-                              IndexAccessExpr,
-                              MatchExpr,
-                              UnwrapExpr,
-                              UnitLiteralExpr,
-                              QuantifierExpr>;
+/// The tuple-tag indirection mirrors core_value_types.def: a template argument
+/// list (unlike a braced-init list) rejects a trailing comma, so the macro
+/// cannot paste `Name,` straight into std::variant<...> and instead emits tag
+/// types the variant is reconstructed from.
+namespace expr_node_detail {
 
-// RFC 0027 P8 IR SSOT compile-time cardinality gate (see MatchPatternNode).
+template <typename T> struct node_tag {
+    using type = T;
+};
+
+template <typename TagTuple> struct variant_from_tags;
+template <typename... Ts> struct variant_from_tags<std::tuple<node_tag<Ts>...>> {
+    using type = std::variant<Ts...>;
+};
+
+#define HANDLE_EXPR_NODE(Name, Wire) node_tag<Name>{},
+inline constexpr auto kExprNodeTags = std::tuple{
+#include "ahfl/compiler/ir/expr_nodes.def"
+};
+
+} // namespace expr_node_detail
+
+using ExprNode =
+    expr_node_detail::variant_from_tags<std::remove_cvref_t<
+        decltype(expr_node_detail::kExprNodeTags)>>::type;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see MatchPatternNode). The
+// count itself now derives from expr_nodes.def; this pin turns "a node was added
+// to the .def" into a deliberate review event across every exhaustive visitor.
 static_assert(std::variant_size_v<ExprNode> == 20,
               "ahfl::ir::ExprNode cardinality drift (RFC 0027 P8 IR SSOT): "
-              "update every exhaustive visitor (see the SWEEP CHECKLIST "
-              "above) and this pin together with the alternative list.");
+              "update every exhaustive visitor, this pin, and the ExprNode "
+              "entry list (expr_nodes.def) together.");
+
+namespace expr_node_detail {
+
+/// Ordered strong index of each ExprNode alternative (RFC 0027 Q1 pattern:
+/// index-based identity, never strings). Value equals the alternative's
+/// `ExprNode::index()`; extension points that need named positions use this
+/// rather than a magic literal.
+enum class ExprNodeIndex : std::size_t {
+#define HANDLE_EXPR_NODE(Name, Wire) Name,
+#include "ahfl/compiler/ir/expr_nodes.def"
+};
+
+/// JSON wire name of each ExprNode alternative, indexed by
+/// `ExprNode::index()` (equivalently `ExprNodeIndex`). This is the ONE table
+/// both the ir_json writer and reader resolve the `"kind"` spelling from, so
+/// the two sides can never silently diverge on a wire name.
+inline constexpr std::array<std::string_view,
+                            std::tuple_size_v<std::remove_cvref_t<decltype(kExprNodeTags)>>>
+    kExprNodeWireNames = {
+#define HANDLE_EXPR_NODE(Name, Wire) Wire,
+#include "ahfl/compiler/ir/expr_nodes.def"
+};
+
+} // namespace expr_node_detail
+
+/// JSON wire name of the ExprNode alternative at `variant_index` (a
+/// `ExprNode::index()` value, therefore always in bounds).
+[[nodiscard]] inline constexpr std::string_view
+expr_node_wire_name(std::size_t variant_index) noexcept {
+    return expr_node_detail::kExprNodeWireNames[variant_index];
+}
+
+/// JSON wire name of an expression node (e.g. `"bool_literal"`).
+[[nodiscard]] inline std::string_view expr_node_wire_name(const ExprNode &node) noexcept {
+    return expr_node_wire_name(node.index());
+}
 
 /// Expression wrapper struct
 struct Expr {

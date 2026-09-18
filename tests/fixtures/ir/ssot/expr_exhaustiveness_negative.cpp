@@ -1,25 +1,28 @@
-// Negative compile-test fixture for the RFC 0027 P8 IR SSOT exhaustiveness
-// gate (KR6.13-G). This TU is syntax-only-compiled twice by
+// Negative compile-test fixture for the RFC 0027 P6/P7 (KR6.13-E) ExprNode
+// X-macro exhaustiveness gate, the production-list counterpart of
+// core_value_type_nodes_negative.cpp. This TU is syntax-only-compiled twice by
 // tests/scripts/ir_ssot_compile_fail.py:
 //
-//   * clean build (no macro): the rebuilt variant is identical to
-//     ahfl::ir::ExprNode and the one-handler-per-alternative visitor covers
-//     every alternative, so compilation MUST succeed.
+//   * clean build (no macro): the variant rebuilt from the PRODUCTION node list
+//     include/ahfl/compiler/ir/expr_nodes.def is static_assert-identical to
+//     ahfl::ir::ExprNode, and the one-handler-per-alternative visitor (also
+//     generated from the .def) covers every alternative, so compilation MUST
+//     succeed.
 //   * injected build (-DAHFL_SSOT_INJECT_UNHANDLED): one dummy extra
-//     alternative (SsotUnhandledExpr) is appended to the variant type list
-//     WITHOUT a matching visitor handler, so compilation MUST fail with a
-//     diagnostic that names SsotUnhandledExpr.
+//     alternative (SsotUnhandledExpr) is appended to the rebuilt variant WITHOUT
+//     a matching visitor handler, so compilation MUST fail with a diagnostic
+//     that names SsotUnhandledExpr.
 //
-// The alternative type list is the shared X-macro in expr_nodes.def; the
-// standalone compile resolves it relative to this file's directory.
+// Like the Core fixture (and unlike the pre-KR6.13-E Expr fixture), this one
+// consumes the SAME expr_nodes.def the compiler generates the variant and wire
+// table from, so a node added to the production list without a visitor handler
+// is caught without maintaining a second copy of the node list.
 
 #include <tuple>
 #include <type_traits>
 #include <variant>
 
 #include "ahfl/compiler/ir/expr.hpp"
-
-#include "expr_nodes.def"
 
 namespace ahfl::ir::ssot_exhaustiveness_test {
 
@@ -36,18 +39,16 @@ template <typename T> struct type_tag {
     using type = T;
 };
 
-#define AHFL_SSOT_EXPR_TAG(Name) type_tag<ahfl::ir::Name>{},
+#define HANDLE_EXPR_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
 
 // Trailing commas are legal in braced-init lists (unlike template argument
 // lists), which lets the X-macro emit comma-suffixed entries uniformly.
 constexpr auto kExprNodeTags = std::tuple{
-    AHFL_IR_EXPR_NODES(AHFL_SSOT_EXPR_TAG)
+#include "ahfl/compiler/ir/expr_nodes.def"
 #ifdef AHFL_SSOT_INJECT_UNHANDLED
     type_tag<ahfl::ir::ssot_exhaustiveness_test::SsotUnhandledExpr>{}
 #endif
 };
-
-#undef AHFL_SSOT_EXPR_TAG
 
 template <typename Tuple> struct tags_to_variant;
 template <typename... Ts> struct tags_to_variant<std::tuple<type_tag<Ts>...>> {
@@ -58,11 +59,11 @@ using FixtureExprNode =
     tags_to_variant<std::remove_cvref_t<decltype(kExprNodeTags)>>::type;
 
 #ifndef AHFL_SSOT_INJECT_UNHANDLED
-// The shared .def list MUST stay an exact mirror of the production variant.
+// The production .def list MUST stay an exact mirror of the production variant.
 static_assert(std::is_same_v<FixtureExprNode, ahfl::ir::ExprNode>,
-              "tests/fixtures/ir/ssot/expr_nodes.def drifted from "
-              "ahfl::ir::ExprNode; keep the SSOT list and the production "
-              "variant in lockstep.");
+              "include/ahfl/compiler/ir/expr_nodes.def drifted from "
+              "ahfl::ir::ExprNode; the X-list and the generated variant must "
+              "stay in lockstep.");
 #endif
 
 template <typename... Handlers> struct overloaded : Handlers... {
@@ -72,10 +73,9 @@ template <typename... Handlers> struct overloaded : Handlers... {
 // A non-template function body forces std::visit to instantiate the
 // exhaustiveness check at compile time.
 [[maybe_unused]] void force_exhaustive_visit(FixtureExprNode &node) {
+#define HANDLE_EXPR_NODE(Name, Wire) [](const ahfl::ir::Name &) {},
     overloaded visitor{
-#define AHFL_SSOT_EXPR_HANDLER(Name) [](const ahfl::ir::Name &) {},
-        AHFL_IR_EXPR_NODES(AHFL_SSOT_EXPR_HANDLER)
-#undef AHFL_SSOT_EXPR_HANDLER
+#include "ahfl/compiler/ir/expr_nodes.def"
     };
     std::visit(visitor, node);
 }

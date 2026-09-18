@@ -7,8 +7,9 @@
 // downstream code relies on `std::variant::index()` / alternative positions,
 // so reordering alternatives is a breaking change and must be intentional.
 //
-// The ExprNode expected order is derived from the same shared X-macro
-// (tests/fixtures/ir/ssot/expr_nodes.def) the negative compile-test consumes.
+// The ExprNode expected order is derived from the PRODUCTION X-macro
+// (include/ahfl/compiler/ir/expr_nodes.def) the variant, the ir_json wire table,
+// and the negative compile-test all consume — one list, no parallel copy.
 
 #include <doctest.h>
 
@@ -22,17 +23,44 @@
 #include <utility>
 #include <variant>
 
-#include "fixtures/ir/ssot/expr_nodes.def"
-
 namespace {
 
 template <typename T> struct type_tag {
     using type = T;
 };
 
-#define SSOT_EXPR_TAG(Name) type_tag<ahfl::ir::Name>{},
-constexpr auto kExprNodeTags = std::tuple{AHFL_IR_EXPR_NODES(SSOT_EXPR_TAG)};
-#undef SSOT_EXPR_TAG
+#define HANDLE_EXPR_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
+constexpr auto kExprNodeTags = std::tuple{
+#include "ahfl/compiler/ir/expr_nodes.def"
+};
+#undef HANDLE_EXPR_NODE
+
+// RFC 0027 P6/P7 (KR6.13-E): the production X-macro node list — the SAME
+// include/ahfl/compiler/ir/expr_nodes.def the variant and the ir_json wire
+// table are generated from — re-expanded here to recover the wire names. If the
+// production table and this expansion disagree, the assertion below fails.
+#define HANDLE_EXPR_NODE(Name, Wire) Wire,
+constexpr std::string_view kExprNodeWireNames[] = {
+#include "ahfl/compiler/ir/expr_nodes.def"
+};
+#undef HANDLE_EXPR_NODE
+
+// Static: the production .def list's wire names are exactly what
+// expr_node_wire_name(i) returns, in order — the writer/reader share ONE table.
+[[nodiscard]] constexpr bool expr_wire_table_matches() noexcept {
+    for (std::size_t i = 0; i < std::variant_size_v<ahfl::ir::ExprNode>; ++i) {
+        if (ahfl::ir::expr_node_wire_name(i) != kExprNodeWireNames[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(std::size(kExprNodeWireNames) == std::variant_size_v<ahfl::ir::ExprNode>,
+              "expr_nodes.def wire-name count must equal ahfl::ir::ExprNode cardinality");
+static_assert(expr_wire_table_matches(),
+              "ahfl::ir::expr_node_wire_name must equal the expr_nodes.def wire "
+              "column in declaration order (single wire-name SSOT)");
 
 // Static: the shared .def list is an exact, ORDER-PRESERVING mirror of
 // ahfl::ir::ExprNode. A tuple-position/type mismatch is a compile failure.
@@ -119,6 +147,27 @@ static_assert(alternative_at_index<ahfl::ir::core::CoreValueTypeNode, 0,
 static_assert(alternative_at_index<ahfl::ir::core::CoreValueTypeNode, 13,
                                    ahfl::ir::core::CoreVtClosure>());
 
+// Alternative index of T within the shared .def order (== std::variant index).
+template <typename T, typename Tuple, std::size_t... Is>
+[[nodiscard]] constexpr std::size_t
+tag_index_impl(std::index_sequence<Is...>) noexcept {
+    std::size_t result = 0;
+    ((std::is_same_v<std::tuple_element_t<Is, Tuple>, type_tag<T>> ? void(result = Is)
+                                                                    : void()),
+     ...);
+    return result;
+}
+
+template <typename T>
+[[nodiscard]] constexpr std::size_t expr_node_index() noexcept {
+    return tag_index_impl<T, std::remove_cvref_t<decltype(kExprNodeTags)>>(
+        std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<decltype(
+            kExprNodeTags)>>>{});
+}
+
+static_assert(expr_node_index<ahfl::ir::BoolLiteralExpr>() == 0);
+static_assert(expr_node_index<ahfl::ir::QuantifierExpr>() == 19);
+
 } // namespace
 
 TEST_CASE("ir node variants: pinned cardinalities") {
@@ -160,4 +209,23 @@ TEST_CASE("ir node variants: runtime variant index stability") {
         CHECK(first.index() == 0);
         CHECK(last.index() == 8);
     }
+}
+
+// RFC 0027 P6/P7 (KR6.13-E): the ExprNode wire-name table that both the ir_json
+// writer and reader resolve the `"kind"` spelling from is generated from
+// expr_nodes.def, so alternative index and wire name stay locked together.
+TEST_CASE("ir expr node wire names: single table pins index->name") {
+    using ahfl::ir::expr_node_wire_name;
+    // Ordered-index anchors: alternative at index I carries wire name W.
+    CHECK(expr_node_wire_name(0) == "bool_literal");
+    CHECK(expr_node_wire_name(expr_node_index<ahfl::ir::UnitLiteralExpr>()) == "unit_literal");
+    CHECK(expr_node_wire_name(19) == "quantifier");
+    CHECK(expr_node_wire_name(ahfl::ir::ExprNode{ahfl::ir::CallExpr{}}) == "call");
+
+    // The ExprNodeIndex enum enumerates the same order as the variant.
+    using ahfl::ir::expr_node_detail::ExprNodeIndex;
+    CHECK(static_cast<std::size_t>(ExprNodeIndex::BoolLiteralExpr) == 0);
+    CHECK(static_cast<std::size_t>(ExprNodeIndex::CallExpr) ==
+          expr_node_index<ahfl::ir::CallExpr>());
+    CHECK(static_cast<std::size_t>(ExprNodeIndex::QuantifierExpr) == 19);
 }
