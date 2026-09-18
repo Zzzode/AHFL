@@ -167,35 +167,38 @@ join_host_observations(std::span<const HostCallbackObservation> observations,
             continue;
         }
 
-        const ResumePendingEntry *pending = n.pending.has_value() ? &*n.pending : nullptr;
-        const ResumeMemoEntry *memo = n.memo.size() == 1 ? &n.memo[0] : nullptr;
-
-        if (i == frontier_pos) {
-            // Frontier: exactly one pending, no memo.
-            if (pending == nullptr || memo != nullptr) {
+        const bool is_frontier = i == frontier_pos;
+        if (is_frontier) {
+            // Frontier: exactly one pending, NO memo. Gate on the cardinalities
+            // directly -- never derive presence from memo.size() == 1, which
+            // would silently accept two-or-more stray memos that are then never
+            // coordinate-checked or counted.
+            if (!n.pending.has_value() || !n.memo.empty()) {
                 return diverge(DivergenceReason::LedgerCoordinateMismatch);
             }
+            const ResumePendingEntry &pending = *n.pending;
             if (!capability_coordinate_matches(module,
                                                *sched_map,
                                                i,
-                                               pending->capability,
-                                               pending->source_symbol,
-                                               pending->invocation_ordinal)) {
+                                               pending.capability,
+                                               pending.source_symbol,
+                                               pending.invocation_ordinal)) {
                 return diverge(DivergenceReason::LedgerCoordinateMismatch);
             }
             continue;
         }
 
         // Strictly below the frontier: exactly one ordinal-0 memo, no pending.
-        if (memo == nullptr || pending != nullptr) {
+        if (n.pending.has_value() || n.memo.size() != 1) {
             return diverge(DivergenceReason::MemoNotInLedger);
         }
+        const ResumeMemoEntry &memo = n.memo[0];
         if (!capability_coordinate_matches(module,
                                            *sched_map,
                                            i,
-                                           memo->capability,
-                                           memo->source_symbol,
-                                           memo->invocation_ordinal)) {
+                                           memo.capability,
+                                           memo.source_symbol,
+                                           memo.invocation_ordinal)) {
             return diverge(DivergenceReason::LedgerCoordinateMismatch);
         }
     }
@@ -273,6 +276,13 @@ join_host_observations(std::span<const HostCallbackObservation> observations,
             return diverge(DivergenceReason::InjectedBelowFrontier);
         case CallbackSourceState::MemoReplayed:
             break;
+        default:
+            // Fail closed: an out-of-set source state (legal for a
+            // fixed-underlying-type enum via static_cast, e.g. from an
+            // unvalidated wire decoder or host FFI boundary) must never be
+            // accepted as a clean MemoReplayed replay. -Wswitch gives no
+            // signal once every named enumerator is covered.
+            return diverge(DivergenceReason::ObservationSourceStateInvalid);
         }
         seen_callsite[obs.call_site.value] = true;
     }

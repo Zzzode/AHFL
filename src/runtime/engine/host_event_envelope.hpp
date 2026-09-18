@@ -99,6 +99,7 @@ enum class DivergenceReason : std::uint8_t {
     ObservationStatusNotOk,       // an observation carried a non-OK AHFL_CAP_* status
     LiveBelowFrontier,            // a LIVE callback below the suspended frontier (reinvoke)
     InjectedBelowFrontier,        // an Injected callback at a strictly below-frontier node
+    ObservationSourceStateInvalid, // source_state is none of MemoReplayed/Injected/Live
 };
 
 // The exact verdict. Only emitted when every join gate passes. The two claims

@@ -406,6 +406,68 @@ int main() {
         }
     }
 
+    // ---- (g) malformed-input arms of the verdict must fail closed -------------
+    {
+        // Out-of-range call-site index (== call_site_count()) never resolves.
+        auto obs = full_obs;
+        obs[0].call_site = csm::ManifestCallSiteIndex{mod.call_site_count()};
+        const auto v =
+            hee::join_host_observations(std::span<const hee::HostCallbackObservation>(obs),
+                                        std::span<const nev::NodeEventRecord>(full_events),
+                                        mod,
+                                        full_ledger);
+        check(diverged_with(v, hee::DivergenceReason::ObservationCoordinateInvalid),
+              "g.observation_coordinate_invalid");
+    }
+    {
+        // An out-of-set source state (legal for a fixed-underlying-type enum via
+        // static_cast: an unvalidated wire decoder / host FFI boundary could mint
+        // it) must diverge, never fall through as a clean MemoReplayed replay.
+        auto obs = full_obs;
+        obs[0].source_state = static_cast<hee::CallbackSourceState>(0xFF);
+        const auto v =
+            hee::join_host_observations(std::span<const hee::HostCallbackObservation>(obs),
+                                        std::span<const nev::NodeEventRecord>(full_events),
+                                        mod,
+                                        full_ledger);
+        check(diverged_with(v, hee::DivergenceReason::ObservationSourceStateInvalid),
+              "g.observation_source_state_invalid");
+    }
+    {
+        // A Suspended ledger with no nodes has no frontier to join against.
+        auto ledger = full_ledger;
+        ledger.nodes.clear();
+        const auto v =
+            hee::join_host_observations(std::span<const hee::HostCallbackObservation>(full_obs),
+                                        std::span<const nev::NodeEventRecord>(full_events),
+                                        mod,
+                                        ledger);
+        check(diverged_with(v, hee::DivergenceReason::LedgerFrontierInvalid),
+              "g.ledger_frontier_invalid_empty");
+    }
+    {
+        // The frontier carries its pending PLUS two stray memos: the documented
+        // invariant is "exactly one pending, NO memo", so this must diverge even
+        // though the pending coordinate matches -- the extra memos would
+        // otherwise never be coordinate-checked or counted.
+        auto ledger = full_ledger;
+        ResumeMemoEntry stray;
+        stray.invocation_ordinal = InvocationOrdinal{0};
+        stray.capability = CoreCapabilityId{5};
+        stray.source_symbol = 902;
+        stray.arg_hash = 0xBEEF;
+        stray.result_slot = PayloadSlotId{200};
+        ledger.nodes[kFullNodes - 1].memo.push_back(stray);
+        ledger.nodes[kFullNodes - 1].memo.push_back(stray);
+        const auto v =
+            hee::join_host_observations(std::span<const hee::HostCallbackObservation>(full_obs),
+                                        std::span<const nev::NodeEventRecord>(full_events),
+                                        mod,
+                                        ledger);
+        check(diverged_with(v, hee::DivergenceReason::LedgerCoordinateMismatch),
+              "g.frontier_stray_memos");
+    }
+
     if (g_failures != 0) {
         std::cerr << "host_event_envelope: " << g_failures << " failure(s)\n";
         return 1;
