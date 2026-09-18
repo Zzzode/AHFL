@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <initializer_list>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -14,6 +16,7 @@
 #include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "compiler/backends/infra/detail/wasm_byte_buffer.hpp"
 #include "compiler/backends/infra/wasm_backend.hpp"
 #include "compiler/backends/infra/wasm_runtime.hpp"
 
@@ -583,8 +586,74 @@ static bool same_e1_program(const ahfl::ir::core::CoreProgram &lhs,
     return true;
 }
 
+// RFC 0026 P6 (KR6.6): canonical signed-LEB128 byte vectors. Each tuple is
+// (signed value, minimal byte sequence) for the s32/s64 immediates backing
+// i32.const / i64.const. A value-roundtrip decode cannot catch an overlong
+// negative encoding (it still decodes to the same number), so the assertions
+// compare BYTE-FOR-BYTE and pin the minimal length — strict wasm validation
+// rejects unused sign bits in the final byte.
+struct SlebCase {
+    std::int64_t value;
+    std::initializer_list<std::uint8_t> s32_bytes;
+    std::initializer_list<std::uint8_t> s64_bytes;
+};
+
+static void run_sleb128_tests() {
+    using ahfl::backends::detail::ByteBuffer;
+    const SlebCase cases[] = {
+        {-1, {0x7f}, {0x7f}},
+        {-64, {0x40}, {0x40}},
+        {-65, {0xbf, 0x7f}, {0xbf, 0x7f}},
+        {-128, {0x80, 0x7f}, {0x80, 0x7f}},
+        {-129, {0xff, 0x7e}, {0xff, 0x7e}},
+        {-100000, {0xe0, 0xf2, 0x79}, {0xe0, 0xf2, 0x79}},
+        {std::numeric_limits<std::int32_t>::min(),
+         {0x80, 0x80, 0x80, 0x80, 0x78},
+         {0x80, 0x80, 0x80, 0x80, 0x78}},
+        {std::numeric_limits<std::int32_t>::max(),
+         {0xff, 0xff, 0xff, 0xff, 0x07},
+         {0xff, 0xff, 0xff, 0xff, 0x07}},
+        {std::numeric_limits<std::int64_t>::min(),
+         {},
+         {0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7f}},
+        {std::numeric_limits<std::int64_t>::max(),
+         {},
+         {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
+        {0, {0x00}, {0x00}},
+        {1, {0x01}, {0x01}},
+        {63, {0x3f}, {0x3f}},
+        {64, {0xc0, 0x00}, {0xc0, 0x00}},
+        {127, {0xff, 0x00}, {0xff, 0x00}},
+        {128, {0x80, 0x01}, {0x80, 0x01}},
+    };
+    for (const auto &tc : cases) {
+        if (tc.s32_bytes.size() != 0 &&
+            tc.value >= std::numeric_limits<std::int32_t>::min() &&
+            tc.value <= std::numeric_limits<std::int32_t>::max()) {
+            ByteBuffer buffer;
+            buffer.s32(static_cast<std::int32_t>(tc.value));
+            const auto encoded = std::move(buffer).take();
+            check(std::equal(tc.s32_bytes.begin(), tc.s32_bytes.end(),
+                             encoded.begin(), encoded.end()) &&
+                      encoded.size() == tc.s32_bytes.size(),
+                  "ByteBuffer::s32 emits canonical minimal signed-LEB128 bytes");
+        }
+        {
+            ByteBuffer buffer;
+            buffer.s64(tc.value);
+            const auto encoded = std::move(buffer).take();
+            check(std::equal(tc.s64_bytes.begin(), tc.s64_bytes.end(),
+                             encoded.begin(), encoded.end()) &&
+                      encoded.size() == tc.s64_bytes.size(),
+                  "ByteBuffer::s64 emits canonical minimal signed-LEB128 bytes");
+        }
+    }
+}
+
 int main() {
     std::printf("=== WASM Backend Tests ===\n\n");
+
+    run_sleb128_tests();
 
     // Test 1: generate_wasm produces valid WAT with module header
     {
@@ -2296,9 +2365,152 @@ int main() {
             check(!emitted.artifact.has_value() &&
                       has_codegen_code(emitted,
                                        backends::core_wasm_diag::kUnsupportedOrchestration) &&
+                      has_codegen_message(emitted, "match lowering is a later P6 slice") &&
                       has_codegen_message(emitted, kP6ScaffoldPrefix) &&
                       !has_codegen_message(emitted, kLegacyShapeMessage),
-                  "P6-1 still fails closed on a CoreMatchStmt computation handler");
+                  "P6-1 CoreMatchStmt arm itself rejects (node-specific message), not a "
+                  "leading literal arm");
+        }
+
+        // P6-1 opcode-pinning regression: the signed comparison ladder must
+        // emit the exact wasm byte for Le/Gt/Ge at the operand's P4-D scalar
+        // repr. The operands straddle zero (lhs = -1 via 0 - 1, rhs = 0), so
+        // a swapped-direction or unsigned opcode miscompiles half the input
+        // domain; the assertion pins the physical byte and proves the wrong
+        // sibling byte is absent. `wide` selects bounded-Int i32 vs unbounded
+        // i64.
+        constexpr std::uint8_t kOpI32GtS = 0x4a;
+        constexpr std::uint8_t kOpI32LeS = 0x4c;
+        constexpr std::uint8_t kOpI32GeS = 0x4e;
+        constexpr std::uint8_t kOpI64GtS = 0x55;
+        constexpr std::uint8_t kOpI64LeS = 0x57;
+        constexpr std::uint8_t kOpI64GeS = 0x59;
+        auto make_compare_program = [&](bool wide, CoreBinaryOp op) {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(
+                CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(-100, 100)}});
+            program.value_types.push_back(CoreValueType{CoreVtBool{}}); // vt2
+            if (wide) {
+                program.value_types[1] = CoreValueType{CoreVtInt{std::nullopt}};
+            }
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start", "High"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}},
+                                 {CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{2}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            // expr0 is the existing Done identity path (vt0).
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr1 -> v3 (1)
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{3}}, std::nullopt, CoreValueTypeId{1}}); // expr2
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr3 (0)
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{1}}, std::nullopt, CoreValueTypeId{1}}); // expr4
+            // 0 - 1 == -1 (wasm wrap), a scalar value strictly below zero.
+            flow.exprs.push_back(
+                CoreExpr{CoreBinaryExpr{CoreBinaryOp::Sub, CoreExprId{4}, CoreExprId{2}},
+                         std::nullopt,
+                         CoreValueTypeId{1}}); // expr5 -> v4
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{1}}); // expr6
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr7 -> v5
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{5}}, std::nullopt, CoreValueTypeId{1}}); // expr8
+            flow.exprs.push_back(
+                CoreExpr{CoreBinaryExpr{op, CoreExprId{6}, CoreExprId{8}},
+                         std::nullopt,
+                         CoreValueTypeId{2}}); // expr9 cmp(-1, 0) -> v2
+            flow.value_count = 6;
+            flow.value_types = {CoreValueTypeId{0},
+                                CoreValueTypeId{1},
+                                CoreValueTypeId{2},
+                                CoreValueTypeId{1},
+                                CoreValueTypeId{1},
+                                CoreValueTypeId{1}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{3}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{5}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{5}, CoreExprId{7}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{9}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{2};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            CoreFlowState high;
+            high.state = CoreStateId{2};
+            high.state_name = "High";
+            high.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(high));
+            return program;
+        };
+        struct CompareExpectation {
+            CoreBinaryOp op;
+            std::uint8_t correct;
+            std::optional<std::uint8_t> previous_wrong;
+            const char *label;
+        };
+        const CompareExpectation compare_cases[] = {
+            {CoreBinaryOp::Le, kOpI32LeS, 0x4a, "i32 Le emits le_s (not gt_s)"},
+            {CoreBinaryOp::Gt, kOpI32GtS, 0x4c, "i32 Gt emits gt_s (not le_s)"},
+            {CoreBinaryOp::Ge, kOpI32GeS, 0x4d, "i32 Ge emits ge_s (not le_u)"},
+        };
+        for (const auto &tc : compare_cases) {
+            auto program = make_compare_program(false, tc.op);
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-1 i32 signed-compare fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto step_body =
+                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            const auto has = [&](std::uint8_t b) {
+                return step_body.has_value() &&
+                       std::find(step_body->begin(), step_body->end(), b) != step_body->end();
+            };
+            check(emitted.ok() && step_body.has_value() && has(tc.correct) &&
+                      (!tc.previous_wrong.has_value() || !has(*tc.previous_wrong)),
+                  tc.label);
+        }
+        const CompareExpectation compare_wide_cases[] = {
+            {CoreBinaryOp::Le, kOpI64LeS, 0x54, "i64 Le emits le_s (not lt_u)"},
+            // i64 Gt was already assigned the correct byte (0x55); pin it.
+            {CoreBinaryOp::Gt, kOpI64GtS, std::nullopt, "i64 Gt emits gt_s"},
+            {CoreBinaryOp::Ge, kOpI64GeS, 0x56, "i64 Ge emits ge_s (not gt_u)"},
+        };
+        for (const auto &tc : compare_wide_cases) {
+            auto program = make_compare_program(true, tc.op);
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-1 i64 signed-compare fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto step_body =
+                emitted.artifact ? wasm_function_body(emitted.artifact->bytes, 4) : std::nullopt;
+            const auto has = [&](std::uint8_t b) {
+                return step_body.has_value() &&
+                       std::find(step_body->begin(), step_body->end(), b) != step_body->end();
+            };
+            check(emitted.ok() && step_body.has_value() && has(tc.correct) &&
+                      (!tc.previous_wrong.has_value() || !has(*tc.previous_wrong)),
+                  tc.label);
         }
 
         // A P6-shaped region that carries a capability EFFECT must NOT enter the

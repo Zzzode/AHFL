@@ -1,0 +1,55 @@
+module wasm::p6_neg_cmp;
+
+// RFC 0026 P6-1 (KR6.6) negative-operand signed-comparison execution
+// fixture. The operands straddle zero (a = -5, b = 0), the exact input
+// domain where a swapped-direction or unsigned comparison miscompiles:
+//
+//   -5 <= 0 is true  -> High
+//   (a wrong gt_s byte would compute -5 > 0 = false and take Low;
+//    a wrong unsigned byte would read -5 as a huge positive and also
+//    take Low)
+//
+// Both literals are unbounded Int, so the comparison selects the i64
+// signed ladder (i64.le_s). Like p6_scalar_cond.ahfl the result is
+// observable purely through the state ids step()/run transition through.
+pub struct Frame {
+    value: String;
+}
+
+pub agent NegCmpAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for NegCmpAgent {
+    state Decide {
+        let a = -5;
+        let b = 0;
+        if (a <= b) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

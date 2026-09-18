@@ -5,6 +5,7 @@
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/runtime/ahfl_host.h"
+#include "compiler/backends/infra/detail/wasm_byte_buffer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -71,6 +72,7 @@ using ir::core::CoreWorkflowNodeId;
 using ir::core::CoreYieldStmt;
 using ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
 using ir::core::kCoreWasmFixedLinearMemoryMinPages;
+using detail::ByteBuffer;
 
 constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kI64 = 0x7e;
@@ -145,36 +147,43 @@ constexpr std::uint8_t kOpI32Const = 0x41;
 constexpr std::uint8_t kOpI64Const = 0x42;
 constexpr std::uint8_t kOpI32Eqz = 0x45;
 constexpr std::uint8_t kOpI32Eq = 0x46;
-// RFC 0026 P6 (KR6.6): the scalar ladder opcode set. The P6-0 scaffold emits
-// unreachable from every expression/statement arm, so these are first
-// referenced by P6-1; [[maybe_unused]] keeps the exhaustive opcode table
-// present under clang's -Wunused-const-variable without per-reader guards.
-[[maybe_unused]] constexpr std::uint8_t kOpI32Ne = 0x47;
-[[maybe_unused]] constexpr std::uint8_t kOpI32LtS = 0x48;
+// RFC 0026 P6 (KR6.6): the scalar ladder opcode set. The wasm numeric
+// opcode table orders the integer comparisons as lt_s, lt_u, gt_s, gt_u,
+// le_s, le_u, ge_s, ge_u per bit width (i32: 0x48..0x4f, i64: 0x53..0x5a);
+// the constants below pin that full table, and emit_binary selects the
+// exact signed byte for the operand's P4-D scalar repr.
+constexpr std::uint8_t kOpI32Ne = 0x47;
+constexpr std::uint8_t kOpI32LtS = 0x48;
 constexpr std::uint8_t kOpI32LtU = 0x49;
-[[maybe_unused]] constexpr std::uint8_t kOpI32LeS = 0x4a;
+constexpr std::uint8_t kOpI32GtS = 0x4a;
 constexpr std::uint8_t kOpI32GtU = 0x4b;
-[[maybe_unused]] constexpr std::uint8_t kOpI32GtS = 0x4c;
-[[maybe_unused]] constexpr std::uint8_t kOpI32GeS = 0x4d;
+constexpr std::uint8_t kOpI32LeS = 0x4c;
+[[maybe_unused]] constexpr std::uint8_t kOpI32LeU = 0x4d;
+constexpr std::uint8_t kOpI32GeS = 0x4e;
+[[maybe_unused]] constexpr std::uint8_t kOpI32GeU = 0x4f;
 [[maybe_unused]] constexpr std::uint8_t kOpI64Eqz = 0x50;
-[[maybe_unused]] constexpr std::uint8_t kOpI64Eq = 0x51;
-[[maybe_unused]] constexpr std::uint8_t kOpI64Ne = 0x52;
-[[maybe_unused]] constexpr std::uint8_t kOpI64LtS = 0x53;
-[[maybe_unused]] constexpr std::uint8_t kOpI64LeS = 0x54;
-[[maybe_unused]] constexpr std::uint8_t kOpI64GtS = 0x55;
-[[maybe_unused]] constexpr std::uint8_t kOpI64GeS = 0x56;
+constexpr std::uint8_t kOpI64Eq = 0x51;
+constexpr std::uint8_t kOpI64Ne = 0x52;
+constexpr std::uint8_t kOpI64LtS = 0x53;
+[[maybe_unused]] constexpr std::uint8_t kOpI64LtU = 0x54;
+constexpr std::uint8_t kOpI64GtS = 0x55;
+[[maybe_unused]] constexpr std::uint8_t kOpI64GtU = 0x56;
+constexpr std::uint8_t kOpI64LeS = 0x57;
+[[maybe_unused]] constexpr std::uint8_t kOpI64LeU = 0x58;
+constexpr std::uint8_t kOpI64GeS = 0x59;
+[[maybe_unused]] constexpr std::uint8_t kOpI64GeU = 0x5a;
 constexpr std::uint8_t kOpI32Add = 0x6a;
 constexpr std::uint8_t kOpI32Sub = 0x6b;
 constexpr std::uint8_t kOpI32Mul = 0x6c;
-[[maybe_unused]] constexpr std::uint8_t kOpI32DivS = 0x6d;
-[[maybe_unused]] constexpr std::uint8_t kOpI32RemS = 0x6f;
-[[maybe_unused]] constexpr std::uint8_t kOpI32And = 0x71;
+constexpr std::uint8_t kOpI32DivS = 0x6d;
+constexpr std::uint8_t kOpI32RemS = 0x6f;
+constexpr std::uint8_t kOpI32And = 0x71;
 constexpr std::uint8_t kOpI32Or = 0x72;
-[[maybe_unused]] constexpr std::uint8_t kOpI64Add = 0x7c;
-[[maybe_unused]] constexpr std::uint8_t kOpI64Sub = 0x7d;
-[[maybe_unused]] constexpr std::uint8_t kOpI64Mul = 0x7e;
-[[maybe_unused]] constexpr std::uint8_t kOpI64DivS = 0x7f;
-[[maybe_unused]] constexpr std::uint8_t kOpI64RemS = 0x81;
+constexpr std::uint8_t kOpI64Add = 0x7c;
+constexpr std::uint8_t kOpI64Sub = 0x7d;
+constexpr std::uint8_t kOpI64Mul = 0x7e;
+constexpr std::uint8_t kOpI64DivS = 0x7f;
+constexpr std::uint8_t kOpI64RemS = 0x81;
 
 constexpr std::uint32_t kGlobalCurrentState = 0;
 constexpr std::uint32_t kGlobalTransitionCount = 1;
@@ -404,6 +413,10 @@ void add_diag(CoreWasmCodegenResult &result,
     return false;
 }
 
+// Flow-gate predicate: does the region contain any match statement? A
+// top-level match is caught directly; a match nested under an if is reached by
+// branch recursion. Match arm traversal is unnecessary (any arm containing a
+// match would itself hold a CoreMatchStmt somewhere already covered).
 [[nodiscard]] bool region_contains_match(const ir::core::CoreRegion &region) {
     for (const auto &statement : region.statements) {
         if (std::holds_alternative<ir::core::CoreMatchStmt>(statement.node)) {
@@ -414,19 +427,6 @@ void add_diag(CoreWasmCodegenResult &result,
                  region_contains_match(*branch->then_region)) ||
                 (branch->else_region != nullptr &&
                  region_contains_match(*branch->else_region))) {
-                return true;
-            }
-        }
-        if (const auto *match = std::get_if<ir::core::CoreMatchStmt>(&statement.node)) {
-            for (const auto &arm : match->arms) {
-                if ((arm.guard_region != nullptr &&
-                     region_contains_match(*arm.guard_region)) ||
-                    (arm.body != nullptr && region_contains_match(*arm.body))) {
-                    return true;
-                }
-            }
-            if (match->fallback_region != nullptr &&
-                region_contains_match(*match->fallback_region)) {
                 return true;
             }
         }
@@ -649,100 +649,6 @@ validate_capability_final(const CoreProgram &program,
     return CapabilityAction{call->capability};
 }
 
-class ByteBuffer {
-  public:
-    void byte(std::uint8_t value) { bytes_.push_back(value); }
-    void raw(std::initializer_list<std::uint8_t> values) {
-        bytes_.insert(bytes_.end(), values.begin(), values.end());
-    }
-    void raw_span(std::span<const std::uint8_t> values) {
-        bytes_.insert(bytes_.end(), values.begin(), values.end());
-    }
-    void u32(std::uint32_t value) {
-        do {
-            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            if (value != 0) {
-                next = static_cast<std::uint8_t>(next | 0x80u);
-            }
-            byte(next);
-        } while (value != 0);
-    }
-    void u64(std::uint64_t value) {
-        do {
-            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            if (value != 0) {
-                next = static_cast<std::uint8_t>(next | 0x80u);
-            }
-            byte(next);
-        } while (value != 0);
-    }
-    void s32_nonnegative(std::uint32_t value) {
-        bool more = true;
-        while (more) {
-            std::uint8_t next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            more = value != 0 || (next & 0x40u) != 0;
-            if (more) {
-                next = static_cast<std::uint8_t>(next | 0x80u);
-            }
-            byte(next);
-        }
-    }
-    // RFC 0026 P6 (KR6.6): signed LEB128 immediates for i32.const / i64.const.
-    // Logical-shift formulation of the canonical sign-extension termination
-    // rule: stop when the remaining bits are all zero with a clear sign bit, or
-    // all ones with a set sign bit.
-    void s32(std::int32_t signed_value) {
-        auto value = static_cast<std::uint32_t>(signed_value);
-        while (true) {
-            const auto next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            const bool sign_bit = (next & 0x40u) != 0;
-            if ((value == 0 && !sign_bit) ||
-                (value == 0x0fffffffu && sign_bit)) {
-                byte(next);
-                return;
-            }
-            byte(static_cast<std::uint8_t>(next | 0x80u));
-        }
-    }
-    void s64(std::int64_t signed_value) {
-        auto value = static_cast<std::uint64_t>(signed_value);
-        while (true) {
-            const auto next = static_cast<std::uint8_t>(value & 0x7fu);
-            value >>= 7u;
-            const bool sign_bit = (next & 0x40u) != 0;
-            if ((value == 0 && !sign_bit) ||
-                (value == 0x7fffffffffffffffull && sign_bit)) {
-                byte(next);
-                return;
-            }
-            byte(static_cast<std::uint8_t>(next | 0x80u));
-        }
-    }
-    [[nodiscard]] bool name(std::string_view value) {
-        if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
-            return false;
-        }
-        u32(static_cast<std::uint32_t>(value.size()));
-        bytes_.insert(bytes_.end(), value.begin(), value.end());
-        return true;
-    }
-    [[nodiscard]] bool sized(const ByteBuffer &payload) {
-        if (payload.bytes_.size() > std::numeric_limits<std::uint32_t>::max()) {
-            return false;
-        }
-        u32(static_cast<std::uint32_t>(payload.bytes_.size()));
-        bytes_.insert(bytes_.end(), payload.bytes_.begin(), payload.bytes_.end());
-        return true;
-    }
-    [[nodiscard]] std::vector<std::uint8_t> take() && { return std::move(bytes_); }
-
-  private:
-    std::vector<std::uint8_t> bytes_;
-};
 
 // RFC 0026 P6 (KR6.6) — computation codegen scaffold.
 //

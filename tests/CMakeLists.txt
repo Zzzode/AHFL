@@ -133,6 +133,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_node_host.py"
                 $<TARGET_FILE:ahfl_core_wasm_p6_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_scalar_cond.ahfl"
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_neg_compare.ahfl"
     )
     set_tests_properties(ahfl.wasm.p6_scalar_node PROPERTIES
         SKIP_RETURN_CODE 77

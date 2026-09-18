@@ -49,10 +49,11 @@ def parse_observation(stdout: str) -> dict[str, object]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    if len(argv) not in (2, 3):
         return fail(
             "usage: wasm_p6_node_host.py <p6-producer> <cond-source> "
-            "(trap source is derived alongside as p6_scalar_trap.ahfl)"
+            "[negative-compare-source] (trap source is derived alongside as "
+            "p6_scalar_trap.ahfl)"
         )
     node = shutil.which("node")
     if node is None:
@@ -61,13 +62,17 @@ def main(argv: list[str]) -> int:
     producer = Path(argv[0])
     cond_source = Path(argv[1])
     trap_source = cond_source.with_name("p6_scalar_trap.ahfl")
+    neg_source = Path(argv[2]) if len(argv) == 3 else None
     if not producer.is_file() or not cond_source.is_file() or not trap_source.is_file():
         return fail("missing P6 producer or scalar fixture(s)")
+    if neg_source is not None and not neg_source.is_file():
+        return fail("missing P6 negative-compare fixture")
 
     with tempfile.TemporaryDirectory(prefix="ahfl-p6-node-") as td:
         td_path = Path(td)
         cond_wasm = td_path / "p6_cond.wasm"
         trap_wasm = td_path / "p6_trap.wasm"
+        neg_wasm = td_path / "p6_neg.wasm"
 
         cond_native = subprocess.run(
             [str(producer), str(cond_source), str(cond_wasm)],
@@ -88,6 +93,19 @@ def main(argv: list[str]) -> int:
             return fail(f"P6 trap producer exited {trap_native.returncode}: "
                         f"{trap_native.stderr}")
         trap_obs = parse_observation(trap_native.stdout.strip())
+
+        neg_obs: dict[str, object] | None = None
+        if neg_source is not None:
+            neg_native = subprocess.run(
+                [str(producer), str(neg_source), str(neg_wasm)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if neg_native.returncode != 0:
+                return fail(f"P6 neg producer exited {neg_native.returncode}: "
+                            f"{neg_native.stderr}")
+            neg_obs = parse_observation(neg_native.stdout.strip())
+            if neg_obs["status"] != "completed" or not neg_obs["entered_ids"]:
+                return fail(f"native negative-compare run did not complete: {neg_obs}")
 
         host = td_path / "p6_host.mjs"
         host.write_text(
@@ -174,11 +192,55 @@ if (!trapped)
 if (t.current_state() !== trapInitial || t.transition_count.value !== trapCount)
   throw new Error("trap mutated state or transition_count");
 
+// --- negative-operand signed comparison: -5 <= 0 must select High ---
+// This is the input domain that exposes a swapped-direction or unsigned
+// opcode: a wrong gt_s/le_u byte would take Low instead of High. The
+// module is only present when the native comparison observation is.
+if (process.argv[7]) {
+  const negBytes = load(process.argv[7]);
+  const {exports: n} = await WebAssembly.instantiate(
+    await WebAssembly.compile(negBytes), {});
+  const negInitial = Number(process.argv[8]);
+  const negEntered = process.argv[9].split(",").map(Number);
+  const negExpected = negEntered.slice(1);
+  const negTransitions = Number(process.argv[10]);
+  if (n.current_state() !== negInitial)
+    throw new Error(`negative-compare initial state ${n.current_state()} != ${negInitial}`);
+  const negSequence = [];
+  let negPrevious = negInitial;
+  let negGuard = negExpected.length + 2;
+  while (negGuard-- > 0) {
+    const negNext = n.step();
+    negSequence.push(negNext);
+    if (negNext !== negPrevious) {
+      negPrevious = negNext;
+      continue;
+    }
+    break;
+  }
+  const negPath = negSequence.slice(0, negExpected.length);
+  if (JSON.stringify(negPath) !== JSON.stringify(negExpected))
+    throw new Error(
+      `negative-operand -5<=0 state path ${negPath} != native ${negExpected} ` +
+      "(signed comparison opcode miscompiled)");
+  if (n.transition_count.value !== negTransitions)
+    throw new Error(
+      `negative-compare transition_count ${n.transition_count.value} != ${negTransitions}`);
+}
+
 console.log("P6 scalar Node step/run execution passed");
 ''',
             encoding="utf-8",
         )
 
+        neg_args: list[str] = []
+        if neg_obs is not None:
+            neg_args = [
+                str(neg_wasm),
+                str(neg_obs["initial_state_id"]),
+                ",".join(str(x) for x in neg_obs["entered_ids"]),
+                str(neg_obs["transition_count"]),
+            ]
         executed = subprocess.run(
             [
                 node, str(host), str(cond_wasm),
@@ -186,6 +248,7 @@ console.log("P6 scalar Node step/run execution passed");
                 ",".join(str(x) for x in cond_obs["entered_ids"]),
                 str(cond_obs["transition_count"]),
                 str(trap_wasm),
+                *neg_args,
             ],
             capture_output=True, text=True, timeout=60,
         )
