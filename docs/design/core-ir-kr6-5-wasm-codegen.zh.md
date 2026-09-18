@@ -478,5 +478,11 @@ FOUNDATION; the rest remain), each separately reviewed:
    in step(); P6-2 promotes each computed handler to its own `() -> i32` wasm
    function and lowers structured `if` to wasm block/if/else, where a goto is a
    `br` to the handler's `block (result i32)` label (label depth = enclosing
-   statement-if nesting). Pattern/`match` lowering (P6-3), aggregate memory
-   (P6-4), and coercion physical effects (P6-6) remain.
+   statement-if nesting); P6-3 lowers `match` to a nested block+br_if arm chain;
+   P6-4 represents an aggregate as an i32 linear-memory address of its P4-D
+   shaped bytes (projection/construct/store + enum tag+payload); P6-6 lifts the
+   `coercion_plans` arena gate and gives each normalized coercion op its
+   layout-derived physical effect (`int_widen` repr growth = `i64.extend_i32_s`,
+   a byte-identical endpoint pair = no code). Everything else — closures, f64
+   float, value-returning finals, workflows carrying pattern/coercion arenas —
+   remains.
