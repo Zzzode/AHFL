@@ -44,7 +44,6 @@
 #include <functional>
 #include <span>
 #include <variant>
-#include <vector>
 namespace ahfl::runtime::core_wasm_resume_engine {
 
 // A guest linear-memory pointer (wasm32 address space). Distinct from every

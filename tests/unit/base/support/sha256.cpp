@@ -116,6 +116,35 @@ TEST_CASE("SHA-256 empty span equals empty string_view") {
           digest_from_hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
 }
 
+TEST_CASE("fixed_work_equal is true only for identical equal-length spans") {
+    const std::vector<std::uint8_t> a{0x00, 0x01, 0x02, 0x03};
+    const std::vector<std::uint8_t> b_identical = a;
+    const std::vector<std::uint8_t> c{0x00, 0x01, 0x02, 0x04};
+    const std::vector<std::uint8_t> shorter{0x00, 0x01, 0x02};
+    const std::vector<std::uint8_t> longer{0x00, 0x01, 0x02, 0x03, 0x04};
+    const std::vector<std::uint8_t> empty_a{};
+    const std::vector<std::uint8_t> empty_b{};
+
+    CHECK(ahfl::support::fixed_work_equal(std::span<const std::uint8_t>(a),
+                                          std::span<const std::uint8_t>(b_identical)));
+    CHECK_FALSE(ahfl::support::fixed_work_equal(std::span<const std::uint8_t>(a),
+                                                std::span<const std::uint8_t>(c)));
+    // A length difference is a mismatch without comparing content.
+    CHECK_FALSE(ahfl::support::fixed_work_equal(std::span<const std::uint8_t>(a),
+                                                std::span<const std::uint8_t>(shorter)));
+    CHECK_FALSE(ahfl::support::fixed_work_equal(std::span<const std::uint8_t>(a),
+                                                std::span<const std::uint8_t>(longer)));
+    // Two empty spans are equal.
+    CHECK(ahfl::support::fixed_work_equal(std::span<const std::uint8_t>(empty_a),
+                                          std::span<const std::uint8_t>(empty_b)));
+    // Works at the 32-byte digest width with a single-byte difference.
+    ahfl::support::Sha256Digest d1{};
+    ahfl::support::Sha256Digest d2{};
+    d2[31] = 0x01;
+    CHECK(ahfl::support::fixed_work_equal(d1, d1));
+    CHECK_FALSE(ahfl::support::fixed_work_equal(d1, d2));
+}
+
 TEST_CASE("HMAC-SHA-256 RFC 4231 known-answer vectors") {
     // Fixed expected digests from RFC 4231 (test cases 1-4, 6, 7). Case 5 is a
     // truncated-output vector, which this fixed-32-byte API does not implement.

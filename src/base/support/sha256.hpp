@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -46,5 +47,25 @@ using Sha256Digest = std::array<std::uint8_t, 32>;
 /// key-erasure guarantee).
 [[nodiscard]] Sha256Digest hmac_sha256(std::span<const std::uint8_t> key,
                                        std::span<const std::uint8_t> data);
+
+/// Fixed-work, no-early-exit BEST-EFFORT comparison of two equal-length byte
+/// ranges: every byte is XOR-accumulated and a single boolean is produced at
+/// the end. This is NOT a proof of constant-time on portable C++ (the compiler
+/// may still optimize or the hardware may vary), only defense-in-depth against
+/// a naive early-exit timing oracle on digests, auth tags and key ids. A length
+/// mismatch returns false without comparing content (the length domain is not
+/// secret for the call sites that use this: 32-byte digests/tags and 16-byte
+/// key ids).
+[[nodiscard]] inline bool fixed_work_equal(std::span<const std::uint8_t> a,
+                                           std::span<const std::uint8_t> b) noexcept {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    std::uint8_t diff = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        diff = static_cast<std::uint8_t>(diff | (a[i] ^ b[i]));
+    }
+    return diff == 0;
+}
 
 } // namespace ahfl::support

@@ -87,6 +87,9 @@ struct FakeScript {
     std::optional<eng::EngineError> fail_first_alloc{};
     // Make fresh_instance fail.
     std::optional<eng::EngineError> fail_instantiation{};
+    // Make read_whole_memory report a short page after a successful run2,
+    // simulating an engine port whose whole-page transport was truncated.
+    bool truncate_whole_memory{false};
 };
 
 // A record of every host frame transfer: its exact bytes and guest pointer.
@@ -128,6 +131,11 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
     read_whole_memory() override {
         if (!instantiated_) {
             return std::unexpected(eng::EngineError::InvalidSequence);
+        }
+        if (script_.truncate_whole_memory) {
+            // Simulate an engine port (e.g. a pipe-framed subprocess under a
+            // partial read) handing back a short, undersized page.
+            return std::span<const std::uint8_t>(memory_.data(), memory_.size() - 1);
         }
         return std::span<const std::uint8_t>(memory_);
     }
@@ -890,8 +898,108 @@ int main(int argc, char **argv) {
         nuke(work);
     }
 
-    if (g_failures != 0) {
-        std::cerr << "core_wasm_resume_host: " << g_failures << " of " << g_total
+    // ============ S11: module bytes not bound to the verified handle ========
+    // The verified artifact was admitted over bytes A, but the request hands
+    // the engine a DIFFERENT byte buffer B (swapped buffer / re-read race).
+    // Every other gate inspects the handle or the stored record; the
+    // module-bytes digest binding must fail closed before fresh_instance.
+    {
+        Topology topo = topology_two_nodes();
+        auto mod_res = admit_module(topo.spec);
+        check(mod_res.ok(), "S11.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(topo.spec);
+        // Bytes B: a valid fixed-page artifact, but NOT the admitted one (one
+        // irrelevant custom-section byte flipped so its digest differs).
+        auto swapped_bytes = module_bytes;
+        swapped_bytes.back() = static_cast<std::uint8_t>(swapped_bytes.back() ^ 0xFFu);
+
+        FakeResumeEngine engine(FakeScript{});
+        // No store is needed: the binding gate fails before open_snapshot and
+        // before the engine is touched.
+        host::ResumeRequest request;
+        request.module = &mod;
+        request.module_bytes = std::span<const std::uint8_t>(swapped_bytes);
+        request.engine = &engine;
+        request.store = nullptr;
+        request.workflow = kWf;
+        request.checkpoint = kCkpt;
+        request.key_id = id_span;
+        request.key = std::span<const std::uint8_t>(key);
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S11.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(),
+                                  host::ResumeHostReason::ArtifactMemoryContractMismatch),
+                  "S11.module_bytes_digest_mismatch");
+            check(host::host_code(done.error()) == "resume.preflight.resource_exhausted",
+                  "S11.host_code");
+        }
+        // The swapped bytes never reached the engine.
+        check(engine.host_allocations().empty(), "S11.engine_never_instantiated");
+    }
+
+    // ============ S12: post-run2 short page fails closed =====================
+    // run2 returns OK but the engine port yields a span shorter than the fixed
+    // 64 KiB page (partial transport read). The terminal gate must reject it
+    // before the event-prefix decode / L5 output copy, and no tombstone may be
+    // emitted.
+    {
+        const fs::path work = base / "s12-short-page";
+        Topology topo = topology_two_nodes();
+        auto mod_res = admit_module(topo.spec);
+        check(mod_res.ok(), "S12.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(topo.spec);
+
+        auto store = open_store(work);
+        check(store.has_value(), "S12.store");
+        // Reopen of an already-Injected generation: no new CAS, run2 reaches
+        // its OK terminal read where the truncated-page fault is injected.
+        const auto suspended = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto record = make_injected_record(suspended, kInjectedSlot);
+        std::vector<ps::Slot> slots = {
+            ps::Slot{kEntrySlot, std::span<const std::uint8_t>(kEntryBytes)},
+            ps::Slot{kInjectedSlot, std::span<const std::uint8_t>(injected)}};
+        auto pub0 = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
+        check(pub0.has_value() && *pub0 == 1, "S12.gen1");
+
+        FakeScript script;
+        script.nodes = topo.nodes;
+        script.caps = cap_steps(1);
+        script.truncate_whole_memory = true;
+        FakeResumeEngine engine(std::move(script));
+
+        host::ResumeRequest request;
+        request.module = &mod;
+        request.module_bytes = std::span<const std::uint8_t>(module_bytes);
+        request.engine = &engine;
+        request.store = &*store;
+        request.workflow = kWf;
+        request.checkpoint = kCkpt;
+        request.key_id = id_span;
+        request.key = std::span<const std::uint8_t>(key);
+        request.chosen_injected_slot = PayloadSlotId{PayloadSlotId::kInvalid};
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S12.fails_closed");
+        if (!done.has_value()) {
+            check(is_host_failure(done.error(),
+                                  host::ResumeHostReason::ArtifactMemoryContractMismatch),
+                  "S12.short_page");
+            check(host::host_code(done.error()) == "resume.preflight.resource_exhausted",
+                  "S12.host_code");
+        }
+        // The generation was never marked consumed.
+        auto after = store->load(kWf, kCkpt, id_span, key);
+        check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
+              "S12.still_available");
+        nuke(work);
+    }
+
+    if (g_failures != 0) {        std::cerr << "core_wasm_resume_host: " << g_failures << " of " << g_total
                   << " check(s) failed\n";
         return 1;
     }

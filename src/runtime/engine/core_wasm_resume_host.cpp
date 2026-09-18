@@ -2,10 +2,12 @@
 
 #include "runtime/engine/core_wasm_resume_host.hpp"
 
+#include <optional>
 #include <utility>
 
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
+#include "base/support/sha256.hpp"
 #include "runtime/engine/core_wasm_resume_capacity.hpp"
 #include "runtime/engine/core_wasm_resume_controller.hpp"
 
@@ -269,6 +271,21 @@ std::expected<ResumeCompleted, ResumeFailure> run_resume(const ResumeRequest &re
             host_failure(ResumeHostReason::ArtifactMemoryContractMismatch));
     }
 
+    // Bind the bytes the engine will instantiate to the VERIFIED handle: hash
+    // the request's module bytes and compare them (fixed work) against the
+    // digest the A2 module was admitted over. Every other gate (F3, the
+    // phase-1 record digests, the coordinate and slot admissions) inspects the
+    // handle or the stored record; without THIS compare nothing proves the
+    // byte stream handed across the engine port is the digest-admitted
+    // artifact rather than a swapped / re-read buffer. Failing closed here
+    // turns the ResumeRequest "never re-read" precondition into an enforced
+    // gate and future-proofs ports that read the artifact from a file path.
+    if (!support::fixed_work_equal(support::sha256(request.module_bytes),
+                                   module.module_sha256())) {
+        return std::unexpected(
+            host_failure(ResumeHostReason::ArtifactMemoryContractMismatch));
+    }
+
     if (request.engine == nullptr || request.store == nullptr) {
         return std::unexpected(host_failure(ResumeHostReason::EngineFailure,
                                             EngineError::InvalidSequence));
@@ -365,6 +382,15 @@ std::expected<ResumeCompleted, ResumeFailure> run_resume(const ResumeRequest &re
     auto whole = engine.read_whole_memory();
     if (!whole.has_value()) {
         return std::unexpected(host_failure(ResumeHostReason::EngineFailure, whole.error()));
+    }
+
+    // The engine-port contract promises the WHOLE fixed 64 KiB page (and the
+    // F3 gate proved the module declares exactly one): a short or oversized
+    // span from an engine port (e.g. a truncated transport read) violates the
+    // fixed-page identity the whole replay math assumes. Fail closed before
+    // the terminal event-prefix decode and the L5 output copy.
+    if (whole->size() != ir_core::kCoreWasmFixedLinearMemoryCapacityBytes) {
+        return std::unexpected(host_failure(ResumeHostReason::ArtifactMemoryContractMismatch));
     }
 
     // (6) Terminal gate on the raw status + full published prefix.

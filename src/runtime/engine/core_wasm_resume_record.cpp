@@ -64,23 +64,6 @@ constexpr std::size_t kMinBodyBytes = 6 + 1 + 1 + (3 * 64) + 1 + 1 + 1 + 1 + 1 +
     return true;
 }
 
-// Fixed-work, no-early-exit BEST-EFFORT comparison of two equal-length byte ranges.
-// Accumulates every byte difference and returns a single boolean at the end. This
-// is NOT a proof of constant-time on portable C++ (the compiler may still optimize
-// or the hardware may vary), only a defense-in-depth against a naive early-exit
-// timing oracle on the auth tag / key_id.
-[[nodiscard]] bool fixed_work_equal(std::span<const std::uint8_t> a,
-                                    std::span<const std::uint8_t> b) noexcept {
-    if (a.size() != b.size()) {
-        return false;
-    }
-    std::uint8_t diff = 0;
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        diff = static_cast<std::uint8_t>(diff | (a[i] ^ b[i]));
-    }
-    return diff == 0;
-}
-
 // ---- canonical LEB128 writer -----------------------------------------------
 
 void write_u64(std::vector<std::uint8_t> &out, std::uint64_t value) {
@@ -441,7 +424,7 @@ decode_and_authenticate(std::span<const std::uint8_t> record_bytes,
     }
     const std::span<const std::uint8_t> record_key_id =
         record_bytes.subspan(auth_off + 1, kKeyIdBytes);
-    if (!fixed_work_equal(record_key_id, expected_key_id)) {
+    if (!support::fixed_work_equal(record_key_id, expected_key_id)) {
         result.diagnostics.push_back(error("resume record key id does not match the expected key"));
         return result;
     }
@@ -449,7 +432,7 @@ decode_and_authenticate(std::span<const std::uint8_t> record_bytes,
     const std::span<const std::uint8_t> prefix = record_bytes.first(tag_off);
     const support::Sha256Digest expected_tag = support::hmac_sha256(key_bytes, prefix);
     const std::span<const std::uint8_t> record_tag = record_bytes.subspan(tag_off, kTagBytes);
-    if (!fixed_work_equal(expected_tag, record_tag)) {
+    if (!support::fixed_work_equal(expected_tag, record_tag)) {
         result.diagnostics.push_back(error("resume record authentication tag is invalid"));
         return result;
     }

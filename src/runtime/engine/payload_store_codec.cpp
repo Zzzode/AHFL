@@ -61,23 +61,6 @@ constexpr std::size_t kMinPointerBody = 6 + 1 + 1 + 1 + kGenerationBytes + kDige
     return true;
 }
 
-// Fixed-work, no-early-exit BEST-EFFORT comparison of two equal-length byte ranges.
-// Accumulates every byte difference and returns a single boolean at the end. This is
-// NOT a proof of constant-time on portable C++ (the compiler may still optimize or
-// the hardware may vary), only a defense-in-depth against a naive early-exit timing
-// oracle on the auth tag / key_id.
-[[nodiscard]] bool fixed_work_equal(std::span<const std::uint8_t> a,
-                                    std::span<const std::uint8_t> b) noexcept {
-    if (a.size() != b.size()) {
-        return false;
-    }
-    std::uint8_t diff = 0;
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        diff = static_cast<std::uint8_t>(diff | (a[i] ^ b[i]));
-    }
-    return diff == 0;
-}
-
 // ---- canonical LEB128 writer -----------------------------------------------
 
 void write_u64(std::vector<std::uint8_t> &out, std::uint64_t value) {
@@ -261,7 +244,7 @@ authenticate(std::span<const std::uint8_t> bytes, const std::array<std::uint8_t,
         return std::unexpected(PayloadStoreError::Malformed);
     }
     const std::span<const std::uint8_t> record_key_id = bytes.subspan(auth_off + 1, kKeyIdBytes);
-    if (!fixed_work_equal(record_key_id, expected_key_id)) {
+    if (!support::fixed_work_equal(record_key_id, expected_key_id)) {
         return std::unexpected(PayloadStoreError::KeyIdMismatch);
     }
     // Authenticity: single HMAC over the exact on-wire prefix [0, tag). Normal,
@@ -276,7 +259,7 @@ authenticate(std::span<const std::uint8_t> bytes, const std::array<std::uint8_t,
         return std::unexpected(PayloadStoreError::IntegrityFailed);
     }
     const std::span<const std::uint8_t> record_tag = bytes.subspan(tag_off, kTagBytes);
-    if (!fixed_work_equal(expected_tag, record_tag)) {
+    if (!support::fixed_work_equal(expected_tag, record_tag)) {
         return std::unexpected(PayloadStoreError::IntegrityFailed);
     }
     AuthHeader auth;

@@ -10,7 +10,9 @@
 // decides (seam 5 step 7 + 5.3 L0-L5):
 //
 //   1. A2 admit the artifact; F3 cross-check its OWN declared Memory section
-//      against the F1 fixed single-page SSOT BEFORE instantiation.
+//      against the F1 fixed single-page SSOT BEFORE instantiation, and bind the
+//      request's module bytes to the verified handle's module_sha256() so the
+//      engine can never instantiate a different buffer than the one admitted.
 //   2. IntegrityPayloadStore.open_snapshot -> rc::open_gated_resume (phase-1
 //      digest + coordinate gates).
 //   3. rc::admit_and_preflight with the F1 capacity (phase-2 slot admission,
@@ -41,12 +43,8 @@
 // a real Wasm VM. The first real-engine port (F5, Node embedded engine) and
 // the D2b live-result API remain separate slices; B2 / KR6.5 stay false.
 
-#include <array>
-#include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <filesystem>
-#include <optional>
 #include <span>
 #include <string_view>
 #include <variant>
@@ -75,7 +73,9 @@ namespace host_codes = core_wasm_resume_host_codes;
 struct ResumeRequest {
     const csm::VerifiedCoreWasmSchemaModule *module{nullptr};
     // The exact digest-admitted artifact bytes handed to the engine. They are
-    // the SAME bytes the A2 module was admitted over (never re-read).
+    // the SAME bytes the A2 module was admitted over (never re-read); run_resume
+    // enforces this precondition by hashing them and comparing against the
+    // verified handle's module_sha256() before fresh_instance.
     std::span<const std::uint8_t> module_bytes{};
     engine::CoreWasmResumeEngine *engine{nullptr};
     ps::IntegrityPayloadStore *store{nullptr};
@@ -126,7 +126,10 @@ struct DedupBackendFailure {
     durable_effect_authority::DurableEffectBackendError error{};
 };
 enum class ResumeHostReason : std::uint8_t {
-    ArtifactMemoryContractMismatch, // F3 declared memory != F1 fixed single page
+    // F3 declared memory != F1 fixed single page; the request's module bytes
+    // do not hash to the verified handle's module_sha256(); or the engine
+    // returned a post-run2 page other than the fixed 64 KiB.
+    ArtifactMemoryContractMismatch,
     ReadyForLiveBlocked,            // frontier passed; live result API is the D2b follow-on
     EngineFailure,                  // the engine port returned EngineError
 };

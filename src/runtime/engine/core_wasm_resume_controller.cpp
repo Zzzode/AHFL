@@ -88,15 +88,6 @@ struct DedupContext {
     return raw;
 }
 
-// Fixed-work equality over two 32-byte digests: always compares all 32 bytes.
-[[nodiscard]] bool digest_equal_fixed(const ArtifactDigest &a, const ArtifactDigest &b) noexcept {
-    std::uint8_t diff = 0;
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        diff = static_cast<std::uint8_t>(diff | (a[i] ^ b[i]));
-    }
-    return diff == 0;
-}
-
 // The whole controller phase machine. Every step / ACK / terminal API validates the
 // current phase before acting; any fault moves to the terminal Failed phase.
 enum class Phase : std::uint8_t {
@@ -251,11 +242,11 @@ digest_gate(const CoreWasmResumeRecord &record, const VerifiedCoreWasmSchemaModu
     const ArtifactDigest rec_module = hex_to_raw(record.module_sha256, module_hex_ok);
     const ArtifactDigest rec_schema = hex_to_raw(record.wire_schema_sha256, schema_hex_ok);
     const ArtifactDigest rec_manifest = hex_to_raw(record.exec_manifest_sha256, manifest_hex_ok);
-    const bool module_ok = module_hex_ok && digest_equal_fixed(rec_module, module.module_sha256());
+    const bool module_ok = module_hex_ok && support::fixed_work_equal(rec_module, module.module_sha256());
     const bool schema_ok =
-        schema_hex_ok && digest_equal_fixed(rec_schema, module.wire_schema_sha256());
+        schema_hex_ok && support::fixed_work_equal(rec_schema, module.wire_schema_sha256());
     const bool manifest_ok =
-        manifest_hex_ok && digest_equal_fixed(rec_manifest, module.exec_manifest_sha256());
+        manifest_hex_ok && support::fixed_work_equal(rec_manifest, module.exec_manifest_sha256());
     if (!module_ok) {
         return ResumePrepareReason::ModuleDigestMismatch;
     }
