@@ -92,7 +92,9 @@ using ir::core::CoreYieldStmt;
 using ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
 using ir::core::kCoreWasmFixedLinearMemoryMinPages;
 using ir::core::kP6AggregateContextBase;
+using ir::core::kP6AggregateContextCapacity;
 using ir::core::kP6AggregateInputBase;
+using ir::core::kP6AggregateInputCapacity;
 using ir::core::kP6AggregateScratchBase;
 using ir::core::kP6AggregateScratchCapacity;
 using detail::ByteBuffer;
@@ -912,6 +914,45 @@ p6_nominal_enum_layout(const CoreProgram &program, const ir::core::CoreLayoutTab
     return std::get_if<ir::core::CoreLayoutEnum>(&layout->shape);
 }
 
+// The P4-D byte size of a (non-generic) nominal type, or nullopt when the type
+// has no interned value type / finalized layout. ONE size query, shared by the
+// constructor scratch allocator and the fixed-frame capacity gate.
+[[nodiscard]] std::optional<std::uint64_t>
+p6_nominal_size(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
+                CoreTypeId type) {
+    const auto value_type = p6_nominal_value_type(program, type);
+    if (!value_type.has_value()) {
+        return std::nullopt;
+    }
+    const ir::core::CoreLayout *layout = p6_value_layout(program, layouts, *value_type);
+    if (layout == nullptr) {
+        return std::nullopt;
+    }
+    return layout->size;
+}
+
+// Whether a fixed aggregate frame (`input` / `context`) can hold the agent's
+// struct. The struct's P4-D size must fit the region's byte capacity, and the
+// last field's offset must stay inside it: a size-only check would still admit a
+// struct whose tail padding crosses the boundary. One RESOURCE-class rejection
+// names the frame and both sizes, so the failure is actionable.
+[[nodiscard]] bool fits_frame_region(const CoreProgram &program,
+                                     const ir::core::CoreLayoutTable &layouts, CoreTypeId type,
+                                     std::uint32_t capacity, std::string_view frame,
+                                     CoreWasmCodegenResult &result) {
+    const auto size = p6_nominal_size(program, layouts, type);
+    if (!size.has_value() || *size > capacity) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "agent " + std::string(frame) + " frame is " +
+                     (size.has_value() ? std::to_string(*size) : std::string("unknown")) +
+                     " bytes but its reserved region holds only " + std::to_string(capacity) +
+                     " bytes in the fixed 64 KiB linear-memory page");
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] std::optional<P6ScalarKind> p6_scalar_kind(const CoreProgram &program,
                                                          const ir::core::CoreLayoutTable &layouts,
                                                          CoreValueTypeId type) {
@@ -1410,85 +1451,118 @@ class P6ComputationHandlerBuilder {
 
     // --- P6-4 aggregate places ---
     //
-    // A `P6Place` is the compiler's model of "where an object lives". Either the
-    // object IS a scalar already sitting in a wasm local (`in_memory == false`),
-    // or it lives at `local + offset` in linear memory (`in_memory == true`),
-    // where `local` holds an i32 ADDRESS. `kind` is the object's P6 kind: a
-    // scalar (`Bool`/`IntI32`/`IntI64`), a tag-only enum discriminant (`Index`,
-    // also i32), or `Ptr` — an aggregate whose whole value IS its address.
+    // AGGREGATE FIELD REPRESENTATION (the ONE rule both directions obey): a
+    // struct / payload-bearing-enum FIELD slot holds a bare i32 ADDRESS of the
+    // child aggregate's bytes, NEVER the child inlined. `emit_construct_store`'s
+    // `place_is_aggregate_leaf` branch and `emit_store`'s aggregate leaf both
+    // write it that way. So walking INTO such a field is a DEREFERENCE: the
+    // projection walk loads the i32 at the field's offset and continues from THAT
+    // address, and a final aggregate field's VALUE is the address its slot holds
+    // (one load), not the slot's own address.
     //
-    // This ONE structure is what lets a projection step, a payload sub-pattern,
-    // and a plain value read share one emission path: only the address arithmetic
-    // differs, and it is derived from the P4-D offsets the plan pass already
-    // validated.
-    struct P6Place {
-        bool in_memory{false};
-        P6ScalarKind kind{P6ScalarKind::IntI32};
+    // `ProjectionRoot` is where a chain starts: a `Ptr`-kind SSA local / arm
+    // binding holding the aggregate's address, or a reserved frame base
+    // (`input` / `context`), which IS the aggregate's address.
+    struct ProjectionRoot {
+        bool is_local{false};
         std::uint32_t local{0};
-        // An address base is either a wasm local holding an i32 address (an
-        // aggregate SSA value / arm binding) or a compile-time constant (the
-        // reserved input / context frames). One flag selects which.
-        bool base_is_const{false};
-        std::uint32_t base_const{0};
-        std::uint64_t offset{0};
+        std::uint32_t base{0};
     };
 
-    // Push the base address of a place (before any field offset).
-    void emit_place_base(const P6Place &place) {
-        if (place.base_is_const) {
-            emit_const_i32(static_cast<std::int32_t>(place.base_const));
-        } else {
-            emit_local_get(place.local);
-        }
+    // An optional-returning companion to `reject`, for the helpers below that
+    // must report a layout/edge failure while building an address.
+    template <class T>
+    [[nodiscard]] std::optional<T> reject_as(std::string message, ir::SourceRangeOpt range) {
+        static_cast<void>(reject(std::move(message), std::move(range)));
+        return std::nullopt;
     }
 
-    // Push the scalar at `place` (or, for a `Ptr` place, its address). A `Ptr`
-    // place's address is `base + offset`; a scalar in memory is loaded at its
-    // physical width from `base + offset`.
-    [[nodiscard]] bool emit_place_value(const P6Place &place, ir::SourceRangeOpt range) {
-        if (place.kind == P6ScalarKind::Ptr) {
-            emit_place_base(place);
-            if (place.offset != 0) {
-                if (place.offset > std::numeric_limits<std::int32_t>::max()) {
-                    return reject("aggregate address offset exceeds the i32 immediate domain",
-                                  std::move(range));
-                }
-                emit_const_i32(static_cast<std::int32_t>(place.offset));
-                body_.byte(kOpI32Add);
+    // The final slot a projection chain lands on: its P4-D layout edge (which
+    // selects the load/store width), the byte offset of the slot within the
+    // address the chain leaves on the stack, and the P4-D offsets of the
+    // intermediate aggregate fields the address walk dereferences.
+    struct ProjectionSlot {
+        CoreLayoutId edge{};
+        std::uint32_t offset{0};
+        std::vector<std::uint32_t> deref_offsets;
+    };
+
+    // RESOLVE a projection chain without emitting anything: validate every step's
+    // owner/field against the P4-D layout and return the final slot plus the
+    // intermediate dereference offsets. The plan pass uses this to decide the
+    // leaf's shape (an aggregate leaf cannot persist into the durable context
+    // frame); the emit pass replays `deref_offsets` to build the address. ONE
+    // walk decides the shape and the encoding, so plan and emit cannot disagree.
+    [[nodiscard]] std::optional<ProjectionSlot>
+    resolve_projection_slot(const std::vector<ir::core::CoreProjectionStep> &projection,
+                            CoreTypeId root_type, ir::SourceRangeOpt range) {
+        const auto *structure = p6_nominal_struct_layout(program_, layouts_, root_type);
+        if (structure == nullptr) {
+            return reject_as<ProjectionSlot>("projection root type has no finalized struct layout",
+                                             range);
+        }
+        if (projection.empty()) {
+            return reject_as<ProjectionSlot>("a projection chain requires a member step", range);
+        }
+        ProjectionSlot slot;
+        for (std::size_t i = 0; i < projection.size(); ++i) {
+            const ir::core::CoreProjectionStep &step = projection[i];
+            if (step.field.value >= structure->field_offsets.size() ||
+                step.field.value >= structure->field_layouts.size()) {
+                return reject_as<ProjectionSlot>(
+                    "projection step field id is out of range for its owner", range);
             }
-            return true;
+            const std::uint64_t offset = structure->field_offsets[step.field.value];
+            if (offset > std::numeric_limits<std::uint32_t>::max()) {
+                return reject_as<ProjectionSlot>(
+                    "aggregate field offset exceeds the wasm32 address domain", range);
+            }
+            const CoreLayoutId edge = structure->field_layouts[step.field.value];
+            if (i + 1 == projection.size()) {
+                slot.edge = edge;
+                slot.offset = static_cast<std::uint32_t>(offset);
+                return slot;
+            }
+            // A non-final step continues INTO a nested struct whose slot holds the
+            // child aggregate's address.
+            const auto *nested =
+                p6_nominal_struct_layout(program_, layouts_, step.result_type);
+            if (!place_is_aggregate_leaf(edge) || nested == nullptr) {
+                return reject_as<ProjectionSlot>(
+                    "projection step does not continue through a struct", range);
+            }
+            slot.deref_offsets.push_back(static_cast<std::uint32_t>(offset));
+            structure = nested;
         }
-        if (place.offset > std::numeric_limits<std::uint32_t>::max()) {
-            return reject("aggregate field offset exceeds the wasm32 address domain",
-                          std::move(range));
-        }
-        if (!place.in_memory) {
-            emit_place_base(place);
-            return true;
-        }
-        emit_place_base(place);
-        const bool wide = place.kind == P6ScalarKind::IntI64;
-        body_.byte(wide ? kOpI64Load : kOpI32Load);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
-        body_.u32(static_cast<std::uint32_t>(place.offset));
-        return true;
+        return reject_as<ProjectionSlot>("projection path has no step", range);
     }
 
-    // Store the scalar currently on the operand stack into a memory-only place.
-    [[nodiscard]] bool emit_place_store(const P6Place &place, ir::SourceRangeOpt range) {
-        if (!place.in_memory || place.kind == P6ScalarKind::Ptr) {
-            return reject("store destination is not a scalar field in linear memory",
-                          std::move(range));
+    // Walk a projection chain, emitting the base ADDRESS of its final field slot:
+    // push the root, then for every intermediate step advance by the field offset
+    // and DEREFERENCE the slot (an aggregate field holds the child's address, the
+    // ONE representation rule `emit_construct_store` writes). The caller emits
+    // exactly ONE load (read) or ONE store (write) at the returned offset, so the
+    // read and the write direction share one walk and cannot disagree about
+    // whether an aggregate field is an inline value or an inline pointer.
+    [[nodiscard]] std::optional<ProjectionSlot>
+    emit_projection_slot(const std::vector<ir::core::CoreProjectionStep> &projection,
+                         CoreTypeId root_type, const ProjectionRoot &root,
+                         ir::SourceRangeOpt range) {
+        const auto slot = resolve_projection_slot(projection, root_type, range);
+        if (slot == std::nullopt) {
+            return std::nullopt;
         }
-        if (place.offset > std::numeric_limits<std::uint32_t>::max()) {
-            return reject("aggregate field offset exceeds the wasm32 address domain",
-                          std::move(range));
+        if (root.is_local) {
+            emit_local_get(root.local);
+        } else {
+            emit_const_i32(static_cast<std::int32_t>(root.base));
         }
-        const bool wide = place.kind == P6ScalarKind::IntI64;
-        body_.byte(wide ? kOpI64Store : kOpI32Store);
-        body_.u32(wide ? kAlignI64 : kAlignI32);
-        body_.u32(static_cast<std::uint32_t>(place.offset));
-        return true;
+        for (const std::uint32_t offset : slot->deref_offsets) {
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(offset);
+        }
+        return slot;
     }
 
     // The P6 kind of the object at a P4-D layout edge. A scalar keeps its width;
@@ -1561,40 +1635,37 @@ class P6ComputationHandlerBuilder {
         return place_is_scalar_leaf(layout_id) || place_is_aggregate_leaf(layout_id);
     }
 
-    // The place of a value id whose runtime representation is an ADDRESS (a
-    // `Ptr`-kind SSA local or an arm binding holding an address).
-    [[nodiscard]] std::optional<P6Place> address_place_of(CoreValueId value) const {
-        const auto local = readable_local(value);
-        if (local == std::nullopt || readable_kind(value) != P6ScalarKind::Ptr) {
-            return std::nullopt;
-        }
-        return P6Place{false, P6ScalarKind::Ptr, *local, false, 0, 0};
-    }
-
-    // The place of a value id consumed as a SCALAR (its own kind, in its local).
-    [[nodiscard]] std::optional<P6Place> scalar_place_of(CoreValueId value) const {
-        const auto local = readable_local(value);
-        const auto kind = readable_kind(value);
-        if (local == std::nullopt || kind == std::nullopt || *kind == P6ScalarKind::Ptr) {
-            return std::nullopt;
-        }
-        return P6Place{false, *kind, *local, false, 0, 0};
-    }
-
-    // The address base of a projection step's ROOT. `Input` / `Context` are the
-    // reserved, module-owned frames; `Local` is the aggregate's own `Ptr` local.
-    [[nodiscard]] std::optional<P6Place> projection_root_base(const CorePathExpr &path) const {
+    // The root of a projection chain as a `ProjectionRoot`. A local-rooted chain
+    // starts from the aggregate's own `Ptr` local; `input` / `context` start from
+    // the reserved frame base, which IS the frame struct's address.
+    [[nodiscard]] std::optional<ProjectionRoot>
+    projection_root_of(const CorePathExpr &path) const {
         if (path.has_local) {
-            return address_place_of(path.local);
+            const auto local = readable_local(path.local);
+            if (local == std::nullopt || readable_kind(path.local) != P6ScalarKind::Ptr) {
+                return std::nullopt;
+            }
+            return ProjectionRoot{true, *local, 0};
         }
         switch (path.root) {
         case ir::core::CorePathRoot::Input:
-            return P6Place{true, P6ScalarKind::Ptr, 0, true, kP6AggregateInputBase, 0};
+            return ProjectionRoot{false, 0, kP6AggregateInputBase};
         case ir::core::CorePathRoot::Context:
-            return P6Place{true, P6ScalarKind::Ptr, 0, true, kP6AggregateContextBase, 0};
+            return ProjectionRoot{false, 0, kP6AggregateContextBase};
         default:
             return std::nullopt;
         }
+    }
+
+    // The same root for a STORE place (`ctx.field = v`): only the context frame
+    // is a legal destination in the P6 subset, so this is the single place that
+    // decision lives.
+    [[nodiscard]] std::optional<ProjectionRoot>
+    store_root_of(const ir::core::CorePlace &place) const {
+        if (place.root != ir::core::CorePathRoot::Context) {
+            return std::nullopt;
+        }
+        return ProjectionRoot{false, 0, kP6AggregateContextBase};
     }
 
     // Allocate a fresh scratch slot for `value` in whichever pool the physical
@@ -1981,12 +2052,7 @@ class P6ComputationHandlerBuilder {
 
     // The P4-D size of an aggregate nominal (0 when the layout is missing).
     [[nodiscard]] std::uint64_t aggregate_size(CoreTypeId type) const {
-        const auto value_type = p6_nominal_value_type(program_, type);
-        if (!value_type.has_value()) {
-            return 0;
-        }
-        const ir::core::CoreLayout *layout = p6_value_layout(program_, layouts_, *value_type);
-        return layout == nullptr ? 0 : layout->size;
+        return p6_nominal_size(program_, layouts_, type).value_or(0);
     }
 
     // 0: unit payload, 1: tuple payload, 2: struct payload, -1: no metadata.
@@ -2560,55 +2626,36 @@ class P6ComputationHandlerBuilder {
             // A bare local aggregate read is just its address.
             return emit_value_read(path.local, std::move(range));
         }
-        auto place = projection_root_base(path);
-        if (place == std::nullopt) {
+        const auto root = projection_root_of(path);
+        if (root == std::nullopt) {
             return reject("projection root is not input, context, or an aggregate local",
                           std::move(range));
         }
-        const auto *structure = p6_nominal_struct_layout(program_, layouts_, path.root_type);
-        if (structure == nullptr) {
-            return reject("projection root type has no finalized struct layout", std::move(range));
+        // The walk leaves the final slot's ADDRESS on the stack, dereferencing
+        // every intermediate aggregate field exactly as `emit_construct_store`
+        // wrote it.
+        const auto slot = emit_projection_slot(path.projection, path.root_type, *root,
+                                               std::move(range));
+        if (slot == std::nullopt) {
+            return false;
         }
-        for (std::size_t i = 0; i < path.projection.size(); ++i) {
-            const ir::core::CoreProjectionStep &step = path.projection[i];
-            if (step.field.value >= structure->field_offsets.size() ||
-                step.field.value >= structure->field_layouts.size()) {
-                return reject("projection step field id is out of range for its owner",
-                              std::move(range));
-            }
-            place->offset += structure->field_offsets[step.field.value];
-            const CoreLayoutId edge = structure->field_layouts[step.field.value];
-            place->kind = place_kind_of_layout(edge);
-            place->in_memory = true;
-            const bool is_last = (i + 1 == path.projection.size());
-            if (is_last) {
-                // A projected LEAF must be a single-word P6 value: a scalar, a
-                // tag-only enum discriminant, or an addressable aggregate. A
-                // PtrLen String / bytes / collection handle / f64 has no
-                // single-word P6 representation, so fail closed rather than load
-                // half of it.
-                if (!place_is_p6_value(edge)) {
-                    return reject("projection leaf is not a single-word P6 value",
-                                  std::move(range));
-                }
-                break;
-            }
-            // A non-last step must walk a nested STRUCT; the next step re-reads
-            // that owner's layout (its `owner_type` is this step's result).
-            const auto *nested = p6_nominal_struct_layout(program_, layouts_, step.result_type);
-            if (!place_is_aggregate_leaf(edge) || nested == nullptr) {
-                return reject("projection step does not continue through a struct",
-                              std::move(range));
-            }
-            structure = nested;
+        // A projected LEAF must be a single-word P6 value: a scalar, a tag-only
+        // enum discriminant, or an addressable aggregate. A PtrLen String /
+        // bytes / collection handle / f64 has no single-word P6 representation,
+        // so fail closed rather than load half of it.
+        if (!place_is_p6_value(slot->edge)) {
+            return reject("projection leaf is not a single-word P6 value", std::move(range));
         }
-        if (path.has_local) {
-            // A local-rooted chain replaces the root's local with the per-step
-            // base; the address arithmetic above already folded every offset in.
-            place->base_is_const = false;
-            place->local = *readable_local(path.local);
-        }
-        return emit_place_value(*place, std::move(range));
+        const P6ScalarKind kind = place_kind_of_layout(slot->edge);
+        // An aggregate field's slot HOLDS the child's address (the ONE
+        // representation rule), so both forms are read as one i32, then the
+        // aggregate form is left as the pointer it read. A scalar field is
+        // loaded at its own physical width.
+        const bool wide = kind == P6ScalarKind::IntI64;
+        body_.byte(wide ? kOpI64Load : kOpI32Load);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(slot->offset);
+        return true;
     }
 
     // Emit a qualified unit variant: a tag-only enum's discriminant constant, or
@@ -2756,72 +2803,69 @@ class P6ComputationHandlerBuilder {
         if (readable_kind(store.value) == std::nullopt) {
             return reject("store value is not a readable value", range);
         }
+        // An aggregate-valued context store would write a SCRATCH ADDRESS into the
+        // durable context frame. The scratch arena is per-handler (its cursor
+        // resets to zero in every handler), so a later handler's first constructor
+        // reuses that byte range and silently clobbers the value the context slot
+        // still points at. P6 has no lifetime rule for a value that outlives its
+        // handler yet, so this fails closed exactly like the PtrLen / String leaf
+        // rather than emit a dangling pointer.
+        const auto slot = resolve_projection_slot(store.place.projection, store.place.root_type,
+                                                  range);
+        if (slot == std::nullopt) {
+            return false;
+        }
+        if (place_is_aggregate_leaf(slot->edge)) {
+            return reject("a context store may not persist an aggregate value in the P6 subset",
+                          range);
+        }
         used_values_[store.value.value] = true;
         return true;
     }
 
     [[nodiscard]] bool emit_store(const CoreStoreStmt &store, ir::SourceRangeOpt range) {
-        const auto *structure = p6_nominal_struct_layout(program_, layouts_, store.place.root_type);
-        if (structure == nullptr) {
-            return reject("store root type has no finalized struct layout", std::move(range));
+        const auto root = store_root_of(store.place);
+        if (root == std::nullopt) {
+            return reject("only a context store is in the P6 subset", std::move(range));
         }
-        std::uint64_t offset = 0;
-        for (std::size_t i = 0; i < store.place.projection.size(); ++i) {
-            const ir::core::CoreProjectionStep &step = store.place.projection[i];
-            if (step.field.value >= structure->field_offsets.size() ||
-                step.field.value >= structure->field_layouts.size()) {
-                return reject("store projection field id is out of range for its owner",
-                              std::move(range));
-            }
-            offset += structure->field_offsets[step.field.value];
-            const CoreLayoutId edge = structure->field_layouts[step.field.value];
-            const bool is_last = (i + 1 == store.place.projection.size());
-            if (is_last) {
-                // A store leaf must be a single-word P6 value: a scalar or an
-                // addressable aggregate. A PtrLen / bytes / collection / f64 leaf
-                // has no single-word P6 representation, so fail closed.
-                if (!place_is_p6_value(edge)) {
-                    return reject("store destination is not a single-word P6 value",
-                                  std::move(range));
-                }
-                // Stack order for a store is [address][value].
-                emit_const_i32(static_cast<std::int32_t>(kP6AggregateContextBase));
-                const auto place_kind = place_kind_of_layout(edge);
-                if (place_kind == P6ScalarKind::Ptr) {
-                    const auto local = readable_local(store.value);
-                    if (local == std::nullopt) {
-                        return reject("store value is not a readable address", std::move(range));
-                    }
-                    emit_local_get(*local);
-                    body_.byte(kOpI32Store);
-                    body_.u32(kAlignI32);
-                    body_.u32(static_cast<std::uint32_t>(offset));
-                    return true;
-                }
-                if (place_kind == P6ScalarKind::Index ||
-                    readable_kind(store.value) != place_kind) {
-                    return reject("store value kind does not match its destination field",
-                                  std::move(range));
-                }
-                const auto local = readable_local(store.value);
-                if (local == std::nullopt) {
-                    return reject("store value is not a readable scalar", std::move(range));
-                }
-                const bool wide = place_kind == P6ScalarKind::IntI64;
-                emit_local_get(*local);
-                body_.byte(wide ? kOpI64Store : kOpI32Store);
-                body_.u32(wide ? kAlignI64 : kAlignI32);
-                body_.u32(static_cast<std::uint32_t>(offset));
-                return true;
-            }
-            const auto *nested = p6_nominal_struct_layout(program_, layouts_, step.result_type);
-            if (nested == nullptr) {
-                return reject("store projection does not continue through a struct",
-                              std::move(range));
-            }
-            structure = nested;
+        // Stack order for a store is [address][value], so the shared walk pushes
+        // the destination slot's address (dereferencing every intermediate
+        // aggregate field) before the operand is read.
+        const auto slot = emit_projection_slot(store.place.projection, store.place.root_type, *root,
+                                               std::move(range));
+        if (slot == std::nullopt) {
+            return false;
         }
-        return reject("store place has no scalar leaf field", std::move(range));
+        // A store leaf must be a single-word P6 value: a scalar or an addressable
+        // aggregate. A PtrLen / bytes / collection / f64 leaf has no single-word
+        // P6 representation, so fail closed.
+        if (!place_is_p6_value(slot->edge)) {
+            return reject("store destination is not a single-word P6 value", std::move(range));
+        }
+        const auto place_kind = place_kind_of_layout(slot->edge);
+        const auto local = readable_local(store.value);
+        if (local == std::nullopt) {
+            return reject("store value is not a readable value", std::move(range));
+        }
+        if (place_kind == P6ScalarKind::Ptr) {
+            // An aggregate destination holds the operand's ADDRESS (one i32 slot),
+            // the ONE representation rule the projection walk above obeys.
+            emit_local_get(*local);
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(slot->offset);
+            return true;
+        }
+        if (place_kind == P6ScalarKind::Index || readable_kind(store.value) != place_kind) {
+            return reject("store value kind does not match its destination field",
+                          std::move(range));
+        }
+        const bool wide = place_kind == P6ScalarKind::IntI64;
+        emit_local_get(*local);
+        body_.byte(wide ? kOpI64Store : kOpI32Store);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(slot->offset);
+        return true;
     }
 
     [[nodiscard]] bool emit_unary(const CoreUnaryExpr &u, ir::SourceRangeOpt range) {
@@ -3552,6 +3596,31 @@ build_agent_plan(const CoreProgram &program,
             return std::nullopt;
         }
         handlers[handler.state.value] = &handler;
+    }
+
+    // RFC 0026 P6-4 (KR6.6): the input and context frames are FIXED regions of
+    // the single 64 KiB page (`core_wasm_abi_constants.hpp`). A projection path
+    // emits a load/store at `frame_base + field_offset`, so an agent whose
+    // input / context struct does not FIT its region would silently read or
+    // write into the neighbouring region (or past the page) with no diagnostic.
+    // Fail closed with the same RESOURCE-class rejection the constructor scratch
+    // arena uses, BEFORE any handler byte is emitted.
+    if (!fits_frame_region(program,
+                           layouts,
+                           agent.input_type,
+                           kP6AggregateInputCapacity,
+                           "input",
+                           result)) {
+        return std::nullopt;
+    }
+    if (agent.context_kind == CoreAgentDecl::ContextKind::Struct &&
+        !fits_frame_region(program,
+                           layouts,
+                           agent.context_type,
+                           kP6AggregateContextCapacity,
+                           "context",
+                           result)) {
+        return std::nullopt;
     }
 
     AgentPlan plan;

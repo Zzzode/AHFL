@@ -37,6 +37,11 @@ FIXTURES = [
     "p6_nested_elseless_taken.ahfl",
     "p6_nested_depth3.ahfl",
     "p6_nested_depth3_taken.ahfl",
+    # P6-4: a projection chain that descends THROUGH a nested struct field. The
+    # field's slot holds the child aggregate's address, so the walk must deref.
+    # A well-formed-but-wrong body reads the parent's own first slot and takes
+    # the wrong branch, which only a real-engine state-path comparison catches.
+    "p6_nested_projection.ahfl",
 ]
 
 

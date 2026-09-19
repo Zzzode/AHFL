@@ -1,0 +1,66 @@
+module wasm::p6_nested_projection;
+
+// RFC 0026 P6-4 (KR6.6) nested-aggregate projection regression fixture. A field
+// whose P4-D layout edge is itself a STRUCT is stored as a bare i32 ADDRESS (the
+// ONE representation rule `emit_construct_store` writes), so walking INTO it is a
+// DEREFERENCE. A projection walk that only accumulated offsets read Inner's first
+// field straight out of the Outer address instead of following the stored pointer:
+// `o.inner.p` read Outer's own first slot, so this fixture took Low(2) on the wasm
+// path while native entered High(1). The wasm module was otherwise WELL-FORMED,
+// so only a real-engine state-path comparison catches it — a byte-substring scan
+// cannot (the wrong body still contains an i64.load at a plausible offset).
+pub struct Frame {
+    value: String;
+}
+
+pub struct Inner {
+    p: Int;
+    q: Int;
+}
+
+pub struct Outer {
+    inner: Inner;
+    z: Int;
+}
+
+pub agent NestedProjectionAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for NestedProjectionAgent {
+    state Decide {
+        let i: Inner = Inner { p: 1, q: 2 };
+        let o: Outer = Outer { inner: i, z: 7 };
+        // A two-step chain THROUGH the nested struct field: the walk must follow
+        // the address `o.inner` holds, then read `p` at Inner's offset.
+        let r: Int = o.inner.p;
+        if (r == 1) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

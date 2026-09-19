@@ -2704,6 +2704,325 @@ int main() {
                   "P6-4 does not read the i64 context field as an i32");
         }
 
+        // P6-4: a projection chain that descends THROUGH a nested struct field
+        // must DEREFERENCE the field's slot. The slot holds the child aggregate's
+        // ADDRESS (the ONE representation rule `emit_construct_store` writes), so
+        // `o.inner.p` is `i32.load o.inner_slot; i64.load p_offset` — NOT a single
+        // i64.load at Outer's own offset, which reads Outer's first slot as if
+        // Inner were inlined and silently takes the wrong branch.
+        {
+            constexpr std::uint8_t kOpI32LoadP = 0x28;
+            constexpr std::uint8_t kOpI64LoadP = 0x29;
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}}); // vt2 Inner
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{2}, {}, std::nullopt}}); // vt3 Outer
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});         // vt4 Bool
+            auto make_struct = [](const char *name, const std::vector<std::string> &fields,
+                                  const std::vector<CoreValueTypeId> &field_types,
+                                  const std::vector<CoreTypeId> &field_nominals) {
+                CoreTypeDecl decl;
+                decl.kind = CoreTypeDecl::Kind::Struct;
+                decl.name = name;
+                decl.fields = fields;
+                decl.field_nominal_types = field_nominals;
+                decl.field_has_default.assign(fields.size(), false);
+                for (std::size_t i = 0; i < fields.size(); ++i) {
+                    decl.field_type_template_roots.push_back(
+                        CoreMemberTypeTemplateNodeId{static_cast<std::uint32_t>(i)});
+                    decl.member_type_templates.push_back(CoreMemberTypeTemplateNode{
+                        CoreMemberTypeTemplateKind::Concrete,
+                        field_types[i],
+                        0,
+                        CoreTypeId{},
+                        std::nullopt,
+                        {},
+                        CoreMemberTypeTemplateNodeId{}});
+                }
+                return decl;
+            };
+            // Inner{p:Int,q:Int}; Outer{z:Int, inner:Inner}. `inner` is placed at
+            // offset 8 so the dereference offset is NONZERO and cannot be confused
+            // with the leaf load, which is at Inner's `p` offset 0.
+            program.types.push_back(make_struct("app::Inner", {"p", "q"},
+                                                {CoreValueTypeId{1}, CoreValueTypeId{1}},
+                                                {CoreTypeId{}, CoreTypeId{}}));
+            program.types.push_back(make_struct("app::Outer", {"z", "inner"},
+                                                {CoreValueTypeId{1}, CoreValueTypeId{2}},
+                                                {CoreTypeId{}, CoreTypeId{1}}));
+            auto &flow = program.flows[0];
+            // v1/v2: Inner{p:1,q:2}; v3/v6: Outer{inner:v2, z:7}; v7: 0; v8: Bool.
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt, CoreValueTypeId{1}});
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "2"}, std::nullopt, CoreValueTypeId{1}});
+            flow.exprs.push_back(CoreExpr{
+                CoreConstructExpr{"app::Inner",
+                                  "",
+                                  false,
+                                  CoreTypeId{1},
+                                  CoreVariantId{},
+                                  true,
+                                  {CoreConstructArg{CoreFieldId{1}, CoreValueId{2}},
+                                   CoreConstructArg{CoreFieldId{0}, CoreValueId{1}}}},
+                std::nullopt,
+                CoreValueTypeId{2}});
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, CoreValueTypeId{1}});
+            flow.exprs.push_back(CoreExpr{
+                CoreConstructExpr{"app::Outer",
+                                  "",
+                                  false,
+                                  CoreTypeId{2},
+                                  CoreVariantId{},
+                                  true,
+                                  {CoreConstructArg{CoreFieldId{0}, CoreValueId{4}},
+                                   CoreConstructArg{CoreFieldId{1}, CoreValueId{3}}}},
+                std::nullopt,
+                CoreValueTypeId{3}});
+            // A two-step chain through the nested struct field (Outer.inner is
+            // field id 1, and Inner.p is field id 0).
+            flow.exprs.push_back(CoreExpr{
+                CorePathExpr{CorePathRoot::Local,
+                             "o",
+                             {"inner", "p"},
+                             CoreTypeId{2},
+                             {CoreProjectionStep{CoreTypeId{2}, CoreFieldId{1}, CoreTypeId{1}},
+                              CoreProjectionStep{CoreTypeId{1}, CoreFieldId{0}, CoreTypeId{}}},
+                             true,
+                             CoreValueId{5},
+                             true,
+                             {}},
+                std::nullopt,
+                CoreValueTypeId{1}});
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt, CoreValueTypeId{1}});
+            flow.exprs.push_back(CoreExpr{
+                CoreBinaryExpr{CoreBinaryOp::Eq, CoreExprId{6}, CoreExprId{7}},
+                std::nullopt,
+                CoreValueTypeId{4}});
+            flow.value_count = 9;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1},
+                                CoreValueTypeId{2}, CoreValueTypeId{1}, CoreValueTypeId{3},
+                                CoreValueTypeId{1}, CoreValueTypeId{1}, CoreValueTypeId{4}};
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start", "High", "Low"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{1}, CoreStateId{3}},
+                                 {CoreStateId{2}, CoreStateId{0}},
+                                 {CoreStateId{3}, CoreStateId{0}}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{3}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{4}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{5}, CoreExprId{5}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{6}, CoreExprId{6}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{7}, CoreExprId{7}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{8}, CoreExprId{8}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{8};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{3}, "Low"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            for (const std::uint32_t state : {2u, 3u}) {
+                CoreFlowState low;
+                low.state = CoreStateId{state};
+                low.state_name = state == 2 ? "High" : "Low";
+                low.body.statements.push_back(
+                    CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+                flow.states.push_back(std::move(low));
+            }
+            const auto verify = verify_core_program(program);
+            const auto layout = compute_core_layouts(program);
+            check(verify.ok() && layout.ok(),
+                  "P6-4 nested-projection fixture is verified Core with a layout");
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            // The deref: Outer is `{z:Int@0, inner:Inner@8}` and Inner is
+            // `{p:Int@0, q:Int@8}`, so `o.inner.p` is `i32.load offset=8` (follow
+            // the pointer the `inner` slot holds) followed by `i64.load offset=0`
+            // (read `p` from Inner). A walk that only accumulated offsets would
+            // emit `i64.load offset=8` and never an `i32.load offset=8`, so the
+            // exact byte pair is the discriminator.
+            check(emitted.ok() && handler_body.has_value() &&
+                      contains_bytes(*handler_body, {kOpI32LoadP, 0x02, 0x08}) &&
+                      contains_bytes(*handler_body, {kOpI64LoadP, 0x03, 0x00}),
+                  "P6-4 dereferences a nested aggregate field before the leaf load");
+        }
+
+        // P6-4 fail-closed: persisting an AGGREGATE value into the durable context
+        // frame would store a per-handler SCRATCH address that a later handler's
+        // first constructor reuses, so the context slot silently points at
+        // clobbered bytes. P6 has no lifetime rule for a value that outlives its
+        // handler, so this fails closed like the PtrLen / String leaf instead of
+        // emitting a dangling pointer.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}}); // vt2 Inner
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{2}, {}, std::nullopt}}); // vt3 Ctx
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});         // vt4 Bool
+            auto make_ctx_struct = [](const char *name, const std::vector<std::string> &fields,
+                                      const std::vector<CoreValueTypeId> &field_types,
+                                      const std::vector<CoreTypeId> &field_nominals) {
+                CoreTypeDecl decl;
+                decl.kind = CoreTypeDecl::Kind::Struct;
+                decl.name = name;
+                decl.fields = fields;
+                decl.field_nominal_types = field_nominals;
+                decl.field_has_default.assign(fields.size(), false);
+                for (std::size_t i = 0; i < fields.size(); ++i) {
+                    decl.field_type_template_roots.push_back(
+                        CoreMemberTypeTemplateNodeId{static_cast<std::uint32_t>(i)});
+                    decl.member_type_templates.push_back(CoreMemberTypeTemplateNode{
+                        CoreMemberTypeTemplateKind::Concrete,
+                        field_types[i],
+                        0,
+                        CoreTypeId{},
+                        std::nullopt,
+                        {},
+                        CoreMemberTypeTemplateNodeId{}});
+                }
+                return decl;
+            };
+            program.types.push_back(make_ctx_struct("app::Inner", {"p", "q"},
+                                                    {CoreValueTypeId{1}, CoreValueTypeId{1}},
+                                                    {CoreTypeId{}, CoreTypeId{}}));
+            program.types.push_back(make_ctx_struct("app::Ctx", {"inner"},
+                                                    {CoreValueTypeId{2}}, {CoreTypeId{1}}));
+            auto &agent = program.agents[0];
+            agent.context_kind = CoreAgentDecl::ContextKind::Struct;
+            agent.context_type = CoreTypeId{2};
+            agent.states = {"Done", "Start", "High"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}},
+                                 {CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{2}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt, CoreValueTypeId{1}});
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Integer, "2"}, std::nullopt, CoreValueTypeId{1}});
+            flow.exprs.push_back(CoreExpr{
+                CoreConstructExpr{"app::Inner",
+                                  "",
+                                  false,
+                                  CoreTypeId{1},
+                                  CoreVariantId{},
+                                  true,
+                                  {CoreConstructArg{CoreFieldId{0}, CoreValueId{1}},
+                                   CoreConstructArg{CoreFieldId{1}, CoreValueId{2}}}},
+                std::nullopt,
+                CoreValueTypeId{2}});
+            flow.exprs.push_back(CoreExpr{
+                CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{4}});
+            flow.value_count = 5;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1},
+                                CoreValueTypeId{2}, CoreValueTypeId{4}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{3}}, std::nullopt});
+            // `ctx.inner = <aggregate local>` — the escape this slice rejects.
+            CorePlace place;
+            place.root = CorePathRoot::Context;
+            place.root_name = "ctx";
+            place.root_type = CoreTypeId{2};
+            place.projection = {CoreProjectionStep{CoreTypeId{2}, CoreFieldId{0}, CoreTypeId{1}}};
+            place.projection_resolved = true;
+            place.members = {"inner"};
+            start.statements.push_back(
+                CoreStmt{CoreStoreStmt{std::move(place), CoreValueId{3}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{4}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{4};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            CoreFlowState high;
+            high.state = CoreStateId{2};
+            high.state_name = "High";
+            high.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(high));
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = layout.table.has_value()
+                                     ? emit_agent(program, *layout.table)
+                                     : backends::CoreWasmCodegenResult{};
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_message(emitted, "may not persist an aggregate value"),
+                  "P6-4 fails closed on an aggregate store into the durable context");
+        }
+
+        // P6-4 fail-closed: an input / context struct that does not FIT its fixed
+        // frame region would emit loads/stores into the neighbouring region (or
+        // past the single page) with no diagnostic. The region capacity is a
+        // compile-time constant, so the emitter must reject rather than trust the
+        // layout to stay inside it.
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
+            // 400 unbounded Int fields -> 3200 bytes > the 3072-byte input region.
+            constexpr std::size_t kFields = 400;
+            auto &input = program.types[0];
+            input.fields.clear();
+            input.field_nominal_types.clear();
+            input.field_has_default.clear();
+            input.field_type_template_roots.clear();
+            for (std::size_t i = 0; i < kFields; ++i) {
+                input.fields.push_back("f" + std::to_string(i));
+                input.field_nominal_types.push_back(CoreTypeId{});
+                input.field_has_default.push_back(false);
+                input.field_type_template_roots.push_back(
+                    CoreMemberTypeTemplateNodeId{static_cast<std::uint32_t>(i)});
+                input.member_type_templates.push_back(CoreMemberTypeTemplateNode{
+                    CoreMemberTypeTemplateKind::Concrete,
+                    CoreValueTypeId{1},
+                    0,
+                    CoreTypeId{},
+                    std::nullopt,
+                    {},
+                    CoreMemberTypeTemplateNodeId{}});
+            }
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = layout.table.has_value()
+                                     ? emit_agent(program, *layout.table)
+                                     : backends::CoreWasmCodegenResult{};
+            check(!emitted.artifact.has_value() &&
+                      has_codegen_code(emitted, backends::core_wasm_diag::kResourceExhausted) &&
+                      has_codegen_message(emitted, "input frame"),
+                  "P6-4 fails closed when an input frame exceeds its fixed region");
+        }
+
         // P6-4 fail-closed: a project-only fixture with a STRING leaf is not a
         // value the P6 memory model carries (a 2-word PtrLen), so reading it
         // fails closed rather than truncating to one word.

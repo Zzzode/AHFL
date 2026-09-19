@@ -61,6 +61,17 @@ inline constexpr std::uint32_t kP6AggregateScratchBase = 7168;
 inline constexpr std::uint32_t kP6AggregateScratchCapacity =
     kCoreWasmFixedLinearMemoryCapacityBytes - kP6AggregateScratchBase;
 
+// The input frame owns every byte from its base up to the context base, and the
+// context frame every byte up to the scratch arena. Each frame is a FIXED region
+// of the single page, so the agent's input / context struct must FIT its region:
+// a struct whose P4-D `CoreLayout::size` exceeds its capacity would silently emit
+// loads/stores into the neighbouring region (or past the page). The emitter fails
+// closed (RESOURCE-class) rather than produce an address no host ever wrote.
+inline constexpr std::uint32_t kP6AggregateInputCapacity =
+    kP6AggregateContextBase - kP6AggregateInputBase;
+inline constexpr std::uint32_t kP6AggregateContextCapacity =
+    kP6AggregateScratchBase - kP6AggregateContextBase;
+
 static_assert(kP6AggregateInputBase % 8 == 0 && kP6AggregateContextBase % 8 == 0 &&
                   kP6AggregateScratchBase % 8 == 0,
               "P6 aggregate frame bases are 8-byte aligned (the widest P4-D scalar)");
@@ -69,5 +80,7 @@ static_assert(kP6AggregateContextBase >= kP6AggregateInputBase &&
               "P6 aggregate frame regions are ordered and non-overlapping");
 static_assert(kP6AggregateScratchBase < kCoreWasmFixedLinearMemoryCapacityBytes,
               "the P6 aggregate scratch arena starts inside the fixed single page");
+static_assert(kP6AggregateInputCapacity > 0 && kP6AggregateContextCapacity > 0,
+              "each P6 aggregate frame region reserves at least one byte");
 
 } // namespace ahfl::ir::core
