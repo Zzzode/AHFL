@@ -183,6 +183,9 @@ struct CoreLayoutScalar { CoreScalarRepr repr; };
 struct CoreLayoutBytes { uint64 byte_count; }; // UUID: opaque inline bytes
 struct CoreLayoutPtrLen {};                   // (i32 ptr, i32 len)
 struct CoreLayoutFnRef {};                    // wasm32 table index i32
+struct CoreLayoutClosure {                    // (func_index:i32, env_ptr:i32), always 8/4
+    std::optional<CoreLayoutId> environment;  // INDIRECT env struct; absent iff no captures
+};
 struct CoreLayoutStruct {
     std::vector<uint64> field_offsets;         // declaration order
     std::vector<CoreLayoutId> field_layouts;   // INLINE edges
@@ -229,9 +232,16 @@ logical types may have different ids while still being physically equivalent.
   1: Core never loads it as an i32 lane, so stronger alignment would introduce
   padding without an ABI or access requirement.
 - String is `(ptr:i32,len:i32)` (size/alignment 8/4). `CoreVtFn` is a wasm32
-  table index i32 (size/alignment 4/4). `CoreVtClosure` is an explicit
-  `core.layout.UNSUPPORTED` in D1, including when reached through a member
-  template; `(func_index,env_ptr)` plus environment layout is deferred to D2.
+  table index i32 (size/alignment 4/4). `CoreVtClosure` is the D2
+  `(func_index:i32, env_ptr:i32)` word pair (size/alignment 8/4) — a function
+  reference word plus the address of its captured environment — so its size is
+  independent of how much it captured. The environment is a separate
+  `CoreLayoutStruct` over the capture slots in canonical env-slot order, reached
+  through an **Indirect** edge (design §3.3), absent iff the closure captures
+  nothing. Because that edge is Indirect, a closure that captures its own
+  enclosing struct type finalises (word pair + separate env) rather than
+  reporting a spurious `core.layout.INFINITE_RECURSION`. D1's explicit
+  `core.layout.UNSUPPORTED` is therefore gone.
 - Tuple elements and struct fields are inline in index/declaration order (never
   evaluator `FieldMap` name order). Enum is `(tag:i32,payload)` with one
   deterministic payload aggregate per variant and payload aligned to the
@@ -279,7 +289,7 @@ Layout dependencies are classified by the shape field that carries them:
 
 - struct fields and enum variant payload aggregates are **Inline** size edges;
 - collection element/key/value references are **Indirect** backing edges;
-- the future closure environment reference is Indirect.
+- the closure environment reference is Indirect.
 
 On first visit the builder reserves a stable placeholder id. Re-entering a
 `Visiting` value through an Inline edge is
@@ -309,8 +319,19 @@ D1 introduces `core.layout.UNSUPPORTED`, `core.layout.UNBOUNDED`,
 declaration-order struct offsets; enum tag/payload alignment; bounded
 List/Set/Map stride and backing size; generic/nested member materialization;
 same-id and distinct-id physical equivalence; indirect `Node` recursion;
-deterministic second computation; and fail-closed Closure, unbounded collection,
+deterministic second computation; and fail-closed unbounded collection,
 overflow, direct struct/enum recursion and deliberately unfinished placeholder.
+D2 (P6-8a) adds the closure representation: the fixed `(func_index, env_ptr)`
+word pair plus its Indirect environment aggregate, including the finite
+self-capture case — so the D1 fail-closed Closure probe is replaced by a
+positive D2 probe.
+
+The D2 layout is a *representation* fact only. The P6 value model has no
+closure value (no function-table index value, no env-field walk, no
+`call_indirect`), so a closure-typed edge is deliberately NOT a single-word P6
+value: codegen's `place_is_scalar_leaf` / `place_is_aggregate_leaf` both reject
+it and a closure projection leaf fails closed exactly like a `PtrLen` / bytes /
+f64 leaf. Closure VALUE codegen is a later slice.
 
 ## 4. Lowering boundary + resolved nominal identity (gap 1)
 
@@ -420,10 +441,11 @@ in a per-body `value_types[CoreValueId]` table (P4-B), never embedded in the id.
   shared `CoreValueType` hash-cons arena. Primitive/generic slot kInvalid holes
   are gone; `field_nominal_types` remains explicitly navigation-only.
 - **P4-D — layout pass.** `TargetDataLayout` + side `CoreLayoutTable`; scalar /
-  struct / enum / bounded-container D1, then closure env D2. D1 uses stable
-  placeholders and explicit Inline/Indirect dependency semantics (§3.3): direct
-  inline recursion is infinite layout and fails closed; collection backing
-  breaks a cycle. The pass uses a layout-private value-type closure backed by
+  struct / enum / bounded-container D1, then closure env D2 (landed, P6-8a). D1
+  uses stable placeholders and explicit Inline/Indirect dependency semantics
+  (§3.3): direct inline recursion is infinite layout and fails closed;
+  collection backing and the closure environment (both Indirect edges) break a
+  cycle. The pass uses a layout-private value-type closure backed by
   the P4-C materializer and never mutates `CoreProgram` (§3.2).
 - **Then** migrate projection result_type / construct / capability signatures /
   remaining kInvalid.

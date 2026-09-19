@@ -175,6 +175,97 @@ TEST_CASE("P4-D wasm32 scalar layouts are deterministic side artifacts") {
     CHECK_FALSE(value_layouts_equivalent(table, CoreValueTypeId{8}, CoreValueTypeId{9}));
 }
 
+// RFC 0026 P6-8a (P4-D D2): a closure finalises to the `(func_index, env_ptr)`
+// word pair plus an INDIRECT environment aggregate over its capture slots.
+TEST_CASE("P4-D D2 lays out closures as a fixed word pair plus an indirect env") {
+    CoreProgram program;
+    // 0: Bool, 1: Int (bounded -> i32), 2: Fn(Int)->Int, 3: the closure.
+    program.value_types = {
+        CoreValueType{CoreVtBool{}},
+        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{0, 255}}},
+        CoreValueType{CoreVtFn{{CoreValueTypeId{1}}, CoreValueTypeId{1}}},
+        CoreValueType{CoreVtClosure{CoreValueTypeId{2},
+                                    {{CoreValueTypeId{1}, CoreCaptureMode::ByValue}}}},
+    };
+    const auto result = compute_core_layouts(program);
+    REQUIRE(result.ok());
+    REQUIRE(result.table.has_value());
+    const auto &table = *result.table;
+
+    const CoreLayout &closure = table.layouts[table.value_layouts[3].value];
+    CHECK(closure.size == 8);
+    CHECK(closure.align == 4);
+    CHECK_FALSE(closure.is_zero_sized);
+    const auto &shape = std::get<CoreLayoutClosure>(closure.shape);
+    REQUIRE(shape.environment.has_value());
+    // The env holds exactly one captured Int slot, which is the i32 repr.
+    const CoreLayout &env = table.layouts[shape.environment->value];
+    const auto &env_struct = std::get<CoreLayoutStruct>(env.shape);
+    REQUIRE(env_struct.field_layouts.size() == 1);
+    CHECK(env_struct.field_offsets[0] == 0);
+    CHECK(env.size == 4);
+    CHECK(env.align == 4);
+    CHECK(table.layouts[env_struct.field_layouts[0].value].size == 4);
+
+    // Determinism: recomputing the same program yields a structurally equal table.
+    const auto second = compute_core_layouts(program);
+    REQUIRE(second.ok());
+    CHECK(*second.table == table);
+
+    // Physical equivalence: two closures with physically identical captures are
+    // equivalent even when they are distinct layout ids; a differently-shaped
+    // closure (no captures) is not.
+    program.value_types.push_back(
+        CoreValueType{CoreVtClosure{CoreValueTypeId{2},
+                                    {{CoreValueTypeId{1}, CoreCaptureMode::ByValue}}}});
+    program.value_types.push_back(
+        CoreValueType{CoreVtClosure{CoreValueTypeId{2}, {}}});
+    const auto three = compute_core_layouts(program);
+    REQUIRE(three.ok());
+    CHECK(value_layouts_equivalent(*three.table, CoreValueTypeId{3}, CoreValueTypeId{4}));
+    CHECK_FALSE(value_layouts_equivalent(*three.table, CoreValueTypeId{3}, CoreValueTypeId{5}));
+    // A capture-free closure still occupies the word pair (env absent).
+    const CoreLayout &bare = three.table->layouts[three.table->value_layouts[5].value];
+    CHECK(bare.size == 8);
+    CHECK_FALSE(std::get<CoreLayoutClosure>(bare.shape).environment.has_value());
+}
+
+// A closure that captures its own TRANSPARENT use-site's type is finite: the env
+// is an Indirect edge, so it is finalised after every root instead of descending
+// while the enclosing struct is still `Visiting`.
+TEST_CASE("P4-D D2 closure environments are indirect so self-capture is finite") {
+    CoreProgram program;
+    // struct Holder { f: Closure<capturing Holder> } — the closure captures a
+    // value whose type is the very struct being laid out.
+    CoreTypeDecl holder;
+    holder.kind = CoreTypeDecl::Kind::Struct;
+    holder.name = "app::Holder";
+    holder.fields = {"f"};
+    holder.field_nominal_types = {CoreTypeId{0}};
+    holder.field_has_default = {false};
+    holder.member_type_templates = {concrete(CoreValueTypeId{3})};
+    holder.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+    program.types.push_back(std::move(holder));
+    program.value_types = {
+        CoreValueType{CoreVtBool{}},
+        CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{0, 255}}},
+        CoreValueType{CoreVtFn{{CoreValueTypeId{1}}, CoreValueTypeId{1}}},
+        CoreValueType{CoreVtClosure{CoreValueTypeId{2},
+                                    {{CoreValueTypeId{4}, CoreCaptureMode::ByValue}}}},
+        CoreValueType{CoreVtNominal{CoreTypeId{0}, {}, std::nullopt}},
+    };
+    const auto result = compute_core_layouts(program);
+    REQUIRE(result.ok());
+    REQUIRE(result.table.has_value());
+    const auto &table = *result.table;
+    const CoreLayout &holder_layout = table.layouts[table.value_layouts[4].value];
+    const auto &holder_struct = std::get<CoreLayoutStruct>(holder_layout.shape);
+    REQUIRE(holder_struct.field_layouts.size() == 1);
+    // The closure FIELD is one 8-byte word pair; the env is a separate aggregate.
+    CHECK(table.layouts[holder_struct.field_layouts[0].value].size == 8);
+    CHECK_FALSE(has_code(result, layout::kInfiniteRecursion));
+}
+
 TEST_CASE("P4-D computes declaration-order struct tuple and enum aggregates") {
     CoreProgram program;
     program.value_types = {
@@ -411,17 +502,6 @@ TEST_CASE("P4-D permits only collection-indirect recursive layout cycles") {
 }
 
 TEST_CASE("P4-D fail-closes unsupported unbounded overflow and target cases") {
-    SUBCASE("closure") {
-        CoreProgram program;
-        program.value_types = {
-            CoreValueType{CoreVtFn{{}, CoreValueTypeId{0}}},
-            CoreValueType{CoreVtClosure{CoreValueTypeId{0}, {}}},
-        };
-        const auto result = compute_core_layouts(program);
-        CHECK_FALSE(result.ok());
-        CHECK(has_code(result, layout::kUnsupported));
-    }
-
     SUBCASE("unbounded collection") {
         CoreProgram program;
         program.types.push_back(

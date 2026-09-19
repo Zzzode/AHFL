@@ -4452,6 +4452,78 @@ int main() {
             check(!emit_agent(program, CoreLayoutTable{}).artifact.has_value(),
                   "P6-5 emits no artifact for an unbounded collection");
         }
+
+        // RFC 0026 P6-8a (KR6.6): the closure D2 layout is a P4-D-only slice. The
+        // P4-D table now finalises a closure (the `(func_index, env_ptr)` word pair
+        // plus an indirect env struct), but the P6 value model has no closure value,
+        // so a closure-typed INPUT field must fail closed at the codegen boundary
+        // rather than emit a read of half a two-word value. This pins the honest
+        // boundary: layout is done, closure VALUE codegen (function-table index,
+        // env construction, `call_indirect`) is a later slice.
+        {
+            auto program = make_e1_core_program();
+            // vt1 = `Fn(Int)->Int`; vt2 = a closure capturing one Int; vt3 = Bool.
+            program.value_types.push_back(
+                CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 1000)}});
+            program.value_types.push_back(
+                CoreValueType{CoreVtFn{{CoreValueTypeId{1}}, CoreValueTypeId{1}}});
+            program.value_types.push_back(
+                CoreValueType{CoreVtClosure{CoreValueTypeId{2},
+                                            {{CoreValueTypeId{1}, CoreCaptureMode::ByValue}}}});
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+            // The agent input struct gains one closure field.
+            auto &input = program.types[0];
+            input.fields = {"f"};
+            input.field_nominal_types = {CoreTypeId{0}};
+            input.field_has_default = {false};
+            CoreMemberTypeTemplateNode closure_template;
+            closure_template.kind = CoreMemberTypeTemplateKind::Concrete;
+            closure_template.concrete = CoreValueTypeId{3};
+            input.member_type_templates = {closure_template};
+            input.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+            // Start handler: project `input.f` into a fresh SSA value, then goto
+            // Done. `exprs[0]` stays the Done identity passthrough; the closure
+            // projection is a NEW expression at index 1 bound to value 1. The
+            // projection leaf's P4-D edge is the closure shape.
+            auto &flow = program.flows[0];
+            CorePathExpr closure_path;
+            closure_path.root = CorePathRoot::Input;
+            closure_path.root_name = "input";
+            closure_path.root_type = CoreTypeId{0};
+            closure_path.members = {"f"};
+            closure_path.projection = {
+                CoreProjectionStep{CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{0}}};
+            closure_path.projection_resolved = true;
+            flow.exprs.push_back(
+                CoreExpr{std::move(closure_path), std::nullopt, CoreValueTypeId{3}});
+            flow.value_count = 2;
+            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{3}};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+
+            // The D2 layout finalises: size 8 / align 4 with an env aggregate.
+            const auto layout = compute_core_layouts(program);
+            check(layout.ok() && layout.table.has_value(),
+                  "P6-8a a closure-typed field has a finalized D2 P4-D layout");
+            if (layout.table.has_value()) {
+                const CoreLayout &closure = layout.table->layouts[
+                    layout.table->value_layouts[CoreValueTypeId{3}.value].value];
+                const auto *shape = std::get_if<CoreLayoutClosure>(&closure.shape);
+                check(closure.size == 8 && closure.align == 4 && shape != nullptr &&
+                          shape->environment.has_value(),
+                      "P6-8a the D2 closure layout is the word pair plus an env struct");
+                // And it is NOT a P6 value: the projection leaf read fails closed.
+                const auto emitted = emit_agent(program, *layout.table);
+                check(!emitted.artifact.has_value() &&
+                          has_codegen_code(emitted,
+                                           backends::core_wasm_diag::kUnsupportedOrchestration),
+                      "P6-8a a closure projection leaf fails closed (no P6 closure value)");
+            }
+        }
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

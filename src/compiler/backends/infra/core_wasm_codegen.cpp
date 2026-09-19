@@ -1627,6 +1627,16 @@ class P6ComputationHandlerBuilder {
     // (a PtrLen pair, bytes, f64) is NOT a single-word P6 value and maps to `Ptr`
     // only so the CALLER's leaf-repr check rejects it: a field read/store of such
     // a leaf must fail closed rather than truncate.
+    //
+    // RFC 0026 P6-8a: a CLOSURE has a finalized P4-D layout (the D2
+    // `(func_index, env_ptr)` word pair), but NO P6 value model — P6 has no
+    // function-table index value, no env field walk, and no `call_indirect`, so a
+    // closure is NOT a single-word P6 value. It falls into the same "not a P6
+    // value" arm as a PtrLen / bytes / f64 leaf: `place_is_scalar_leaf` and
+    // `place_is_aggregate_leaf` both return false for it, so every consumer fails
+    // closed rather than reading its first word. The two-word size is deliberately
+    // NOT papered over by a scalar mapping — that would let a projection read half
+    // a closure.
     [[nodiscard]] P6ScalarKind place_kind_of_layout(CoreLayoutId layout_id) const {
         if (layout_id.value < layouts_.layouts.size()) {
             const ir::core::CoreLayout &layout = layouts_.layouts[layout_id.value];

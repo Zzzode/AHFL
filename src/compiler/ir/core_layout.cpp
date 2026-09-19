@@ -94,6 +94,14 @@ class LayoutBuilder {
                 return std::nullopt;
             }
         }
+        // Closure environments first: an env is an aggregate over capture value
+        // types, and building it may materialize a container layout that then
+        // needs its backing finalised. Container backings depend only on their
+        // element/value SHAPES (already final), never on an env, so this order
+        // leaves nothing pending.
+        if (!finalize_closure_envs()) {
+            return std::nullopt;
+        }
         if (!finalize_container_backings()) {
             return std::nullopt;
         }
@@ -251,11 +259,28 @@ class LayoutBuilder {
         const auto vt_Fn = [&](const CoreVtFn &) -> std::optional<CoreLayout> {
             return CoreLayout{4, 4, false, CoreLayoutFnRef{}};
         };
-        const auto vt_Closure = [&](const CoreVtClosure &) -> std::optional<CoreLayout> {
-            fail(layout::kUnsupported,
-                 "closure value layout is deferred to P4-D D2",
-                 type_range(type));
-            return std::nullopt;
+        const auto vt_Closure = [&](const CoreVtClosure &node) -> std::optional<CoreLayout> {
+            // RFC 0026 P6-8a (P4-D D2). A closure's representation is ALWAYS the
+            // `(func_index:i32, env_ptr:i32)` word pair — size 8 / alignment 4 —
+            // so its size never depends on how much it captured. The captured
+            // environment is a separate aggregate reached through an INDIRECT
+            // edge, which is exactly why the closure's size is fixed: the env is
+            // finalised AFTER every root layout (like a collection backing), so
+            // `struct S { f: Closure<capturing S> }` finalises — the closure
+            // FIELD is one word pair, and the env is a separate aggregate that
+            // inlines S — instead of reporting a spurious
+            // core.layout.INFINITE_RECURSION.
+            CoreLayoutClosure shape;
+            if (!node.captures.empty()) {
+                const auto environment = reserve_internal_layout();
+                if (!environment) {
+                    return std::nullopt;
+                }
+                shape.environment = *environment;
+                pending_closures_.push_back(PendingClosure{
+                    type_layouts_[type.value], node.captures, type_range(type)});
+            }
+            return CoreLayout{8, 4, false, std::move(shape)};
         };
 #define HANDLE_CORE_VT(Name) vt_##Name,
         return std::visit(
@@ -445,6 +470,49 @@ class LayoutBuilder {
         return CoreLayout{*padded, align, *padded == 0, std::move(shape)};
     }
 
+    // Finalise every closure's environment aggregate (RFC 0026 P6-8a). The env
+    // is a `CoreLayoutStruct` over the capture slots in canonical env-slot order
+    // (vector index == slot order, design §"Closure capture order"), reached
+    // from the closure through an INDIRECT edge. It is built HERE rather than
+    // inside `build_type` for the same reason a container backing is: an
+    // indirect edge must not descend while a root is still `Visiting`, or a
+    // closure capturing its own enclosing struct type would be misreported as
+    // infinite inline recursion. Building an env may materialize further
+    // layout-private types (a captured `List<T>(n)`), so this consumes a growing
+    // `pending_closures_` list exactly as the container pass does.
+    [[nodiscard]] bool finalize_closure_envs() {
+        for (std::size_t cursor = 0; cursor < pending_closures_.size(); ++cursor) {
+            const PendingClosure pending = pending_closures_[cursor];
+            if (pending.id.value >= table_.layouts.size()) {
+                fail(layout::kInvalid, "closure environment layout id is out of range",
+                     pending.range);
+                return false;
+            }
+            auto *closure = std::get_if<CoreLayoutClosure>(&table_.layouts[pending.id.value].shape);
+            if (closure == nullptr || !closure->environment.has_value()) {
+                fail(layout::kInvalid, "closure environment edge is invalid", pending.range);
+                return false;
+            }
+            const CoreLayoutId env_id = *closure->environment;
+            if (env_id.value >= table_.layouts.size()) {
+                fail(layout::kInvalid, "closure environment layout id is out of range",
+                     pending.range);
+                return false;
+            }
+            std::vector<CoreValueTypeId> slots;
+            slots.reserve(pending.captures.size());
+            for (const CoreClosureCapture &capture : pending.captures) {
+                slots.push_back(capture.value_type);
+            }
+            const auto environment = build_aggregate(slots, pending.range);
+            if (!environment) {
+                return false;
+            }
+            table_.layouts[env_id.value] = *environment;
+        }
+        return true;
+    }
+
     [[nodiscard]] bool finalize_container_backings() {
         for (const PendingContainer &pending : pending_containers_) {
             const CoreLayoutId id = pending.id;
@@ -507,11 +575,21 @@ class LayoutBuilder {
         CoreLayoutId id;
         SourceRangeOpt range;
     };
+    // RFC 0026 P6-8a: a closure's environment aggregate is finalised only after
+    // every root layout (like a container backing), because the env is an
+    // INDIRECT edge — descending into it eagerly would make a closure that
+    // captures itself report a spurious infinite inline recursion.
+    struct PendingClosure {
+        CoreLayoutId id;
+        std::vector<CoreClosureCapture> captures;
+        SourceRangeOpt range;
+    };
     std::vector<CoreValueType> scratch_types_;
     CoreLayoutTable table_;
     std::vector<CoreLayoutId> type_layouts_;
     std::vector<std::uint8_t> states_;
     std::vector<PendingContainer> pending_containers_;
+    std::vector<PendingClosure> pending_closures_;
     std::vector<CoreLowerDiagnostic> diagnostics_;
 };
 
@@ -609,6 +687,14 @@ class LayoutVerifier {
                 result.push_back(*container->value);
             }
         }
+        // RFC 0026 P6-8a: a closure's environment is an INDIRECT edge, so it is
+        // reached (never an inline-cycle participant) but must still be walked
+        // for reachability/orphan detection like a container backing edge.
+        if (const auto *closure = std::get_if<CoreLayoutClosure>(&entry.shape)) {
+            if (closure->environment) {
+                result.push_back(*closure->environment);
+            }
+        }
         return result;
     }
 
@@ -654,6 +740,7 @@ class LayoutVerifier {
                         error("function reference layout must be i32 on wasm32");
                     }
                 },
+                [&](const CoreLayoutClosure &shape) { verify_closure(entry, shape); },
                 [&](const CoreLayoutStruct &shape) { verify_struct(entry, shape); },
                 [&](const CoreLayoutEnum &shape) { verify_enum(entry, shape); },
                 [&](const CoreLayoutContainer &shape) { verify_container(entry, shape); },
@@ -694,6 +781,28 @@ class LayoutVerifier {
         const auto padded = checked_align_up(size, align);
         if (!padded || entry.size != *padded || entry.align != align) {
             error("struct aggregate size/alignment is inconsistent");
+        }
+    }
+
+    // A closure is ALWAYS the `(func_index:i32, env_ptr:i32)` word pair on
+    // wasm32 (RFC 0026 P6-8a), and its environment — an INDIRECT edge — is a
+    // struct aggregate whose field count is the capture count. The capture count
+    // is not repeated on the layout (it is the env's field count), so the two
+    // cannot disagree.
+    void verify_closure(const CoreLayout &entry, const CoreLayoutClosure &shape) {
+        if (entry.size != 8 || entry.align != 4) {
+            error("closure layout must be size 8 alignment 4 on wasm32");
+            return;
+        }
+        if (!shape.environment) {
+            return; // a capture-free closure has no environment aggregate
+        }
+        if (!child(*shape.environment, "closure environment")) {
+            return;
+        }
+        if (!std::holds_alternative<CoreLayoutStruct>(
+                table_.layouts[shape.environment->value].shape)) {
+            error("closure environment must be a struct aggregate");
         }
     }
 
@@ -881,6 +990,18 @@ bool layouts_equivalent(const CoreLayoutTable &table, CoreLayoutId lhs, CoreLayo
                     },
                     [&](const CoreLayoutFnRef &) {
                         return std::holds_alternative<CoreLayoutFnRef>(right.shape);
+                    },
+                    [&](const CoreLayoutClosure &x) {
+                        const auto *y = std::get_if<CoreLayoutClosure>(&right.shape);
+                        if (y == nullptr ||
+                            x.environment.has_value() != y->environment.has_value()) {
+                            return false;
+                        }
+                        // The environment is an INDIRECT edge: two closures are
+                        // physically equivalent iff the env aggregates are, which
+                        // the recursion decides (a re-entered Visiting PAIR is
+                        // provisionally equal, exactly as for a container).
+                        return !x.environment || self(self, *x.environment, *y->environment);
                     },
                     [&](const CoreLayoutStruct &x) {
                         const auto *y = std::get_if<CoreLayoutStruct>(&right.shape);

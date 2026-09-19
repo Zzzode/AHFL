@@ -56,6 +56,26 @@ struct CoreLayoutFnRef {
     [[nodiscard]] friend bool operator==(const CoreLayoutFnRef &,
                                          const CoreLayoutFnRef &) noexcept = default;
 };
+/// RFC 0026 P6-8a (P4-D D2): a closure's runtime representation is
+/// `(func_index:i32, env_ptr:i32)` — a wasm32 function-table index followed by
+/// the address of its captured environment — so the shape is ALWAYS size 8 /
+/// alignment 4 on the canonical wasm32 target (a `FnRef` word plus a pointer
+/// word, never a third unrelated one), independent of how much the closure
+/// captures.
+///
+/// The environment itself is a separate aggregate layout reached by an INDIRECT
+/// edge (design §3.3), holding one field per capture slot in canonical env-slot
+/// order; `environment` is absent iff the closure captures nothing. Keeping the
+/// edge indirect is what makes the closure's own size independent of its
+/// captures: `struct S { f: Closure<capturing S> }` finalises (the closure field
+/// is an 8-byte word pair; the env is a separate 8-byte aggregate that inlines
+/// S), and a closure capturing a `List<S>(n)` is finite because the collection's
+/// element edge is already indirect.
+struct CoreLayoutClosure {
+    std::optional<CoreLayoutId> environment; // Indirect edge; absent iff no captures.
+    [[nodiscard]] friend bool operator==(const CoreLayoutClosure &,
+                                         const CoreLayoutClosure &) noexcept = default;
+};
 struct CoreLayoutStruct {
     std::vector<std::uint64_t> field_offsets;
     std::vector<CoreLayoutId> field_layouts; // Inline edges, declaration/index order.
@@ -87,8 +107,8 @@ struct CoreLayoutUninhabited {
 
 using CoreLayoutShape =
     std::variant<CoreLayoutPending, CoreLayoutScalar, CoreLayoutBytes, CoreLayoutPtrLen,
-                 CoreLayoutFnRef, CoreLayoutStruct, CoreLayoutEnum, CoreLayoutContainer,
-                 CoreLayoutUninhabited>;
+                 CoreLayoutFnRef, CoreLayoutClosure, CoreLayoutStruct, CoreLayoutEnum,
+                 CoreLayoutContainer, CoreLayoutUninhabited>;
 
 struct CoreLayout {
     std::uint64_t size{0};
