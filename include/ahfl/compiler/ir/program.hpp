@@ -4,11 +4,13 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <tuple>
 #include <variant>
 #include <vector>
 
 #include "ahfl/compiler/ir/arena.hpp"
 #include "ahfl/compiler/ir/decl.hpp"
+#include "ahfl/compiler/ir/node_tags.hpp"
 #include "ahfl/compiler/ir/tower.hpp"
 
 namespace ahfl::ir {
@@ -48,31 +50,30 @@ struct AnalysisBundle {
 // Top-Level IR Structures
 // ----------------------------------------------------------------------------
 
-/// Declaration (variant, including all top-level declaration types)
-using Decl = std::variant<ModuleDecl,
-                          ImportDecl,
-                          ConstDecl,
-                          TypeAliasDecl,
-                          StructDecl,
-                          EnumDecl,
-                          CapabilityDecl,
-                          PredicateDecl,
-                          AgentDecl,
-                          ContractDecl,
-                          FlowDecl,
-                          WorkflowDecl,
-                          FnDecl,
-                          TraitDecl,
-                          ImplDecl,
-                          InstanceDecl>;
+namespace node_detail {
 
-// RFC 0027 P8 IR SSOT compile-time cardinality gate. Adding or removing an
-// alternative without updating every exhaustive Decl visitor MUST fail the
-// build; keep this pin adjacent to the declaration.
+#define HANDLE_DECL_NODE(Name) node_tag<Name>{},
+inline constexpr auto kDeclNodeTags = std::tuple{
+#include "ahfl/compiler/ir/decl_nodes.def"
+};
+#undef HANDLE_DECL_NODE
+
+} // namespace node_detail
+
+/// Declaration variant (KR6.13-F): the alternative list is generated from the
+/// single X-macro node list decl_nodes.def, so declaration order there IS
+/// alternative order and every exhaustive visitor / backend dispatch derived
+/// from it stays in lockstep with the node set.
+using Decl = node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(node_detail::kDeclNodeTags)>>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate. The count itself now
+// derives from decl_nodes.def; this pin turns "a node was added to the .def"
+// into a deliberate review event across every exhaustive Decl visitor.
 static_assert(std::variant_size_v<Decl> == 16,
               "ahfl::ir::Decl cardinality drift (RFC 0027 P8 IR SSOT): "
               "update every exhaustive visitor and this pin together with "
-              "the alternative list.");
+              "decl_nodes.def.");
 
 enum class ProgramPhase {
     Lowered,

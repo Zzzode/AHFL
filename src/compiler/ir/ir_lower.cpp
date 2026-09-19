@@ -48,13 +48,55 @@ class FormalObservationCollector final {
         observation_index_by_symbol_.clear();
 
         for (const auto &declaration : program.declarations) {
-            std::visit(Overloaded{
-                           [this](const ir::AgentDecl &agent) { collect_agent(agent); },
-                           [this](const ir::ContractDecl &contract) { collect_contract(contract); },
-                           [this](const ir::WorkflowDecl &workflow) { collect_workflow(workflow); },
-                           [](const auto &) {},
-                       },
-                       declaration);
+            // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per Decl alternative,
+            // generated from decl_nodes.def. Only agent / contract / workflow
+            // declarations carry formal observations; every other declaration
+            // names OBSERVE_DECL_LEAF (explicit, named no-op — the same behavior
+            // the unnamed catch-all had). The enumeration turns a NEW declaration
+            // node into a COMPILE ERROR here until it is classified.
+#define OBSERVE_DECL_LEAF(Name) [this](const ir::Name &) {},
+#define OBSERVE_AgentDecl(Name) [this](const ir::Name &agent) { collect_agent(agent); },
+#define OBSERVE_ContractDecl(Name)                                                              \
+    [this](const ir::Name &contract) { collect_contract(contract); },
+#define OBSERVE_WorkflowDecl(Name)                                                              \
+    [this](const ir::Name &workflow) { collect_workflow(workflow); },
+#define OBSERVE_ModuleDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_ImportDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_ConstDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_TypeAliasDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_StructDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_EnumDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_CapabilityDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_PredicateDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_FlowDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_FnDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_TraitDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_ImplDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define OBSERVE_InstanceDecl(Name) OBSERVE_DECL_LEAF(Name)
+#define HANDLE_DECL_NODE(Name) OBSERVE_##Name(Name)
+            std::visit(
+                Overloaded{
+#include "ahfl/compiler/ir/decl_nodes.def"
+                },
+                declaration);
+#undef HANDLE_DECL_NODE
+#undef OBSERVE_ModuleDecl
+#undef OBSERVE_ImportDecl
+#undef OBSERVE_ConstDecl
+#undef OBSERVE_TypeAliasDecl
+#undef OBSERVE_StructDecl
+#undef OBSERVE_EnumDecl
+#undef OBSERVE_CapabilityDecl
+#undef OBSERVE_PredicateDecl
+#undef OBSERVE_AgentDecl
+#undef OBSERVE_ContractDecl
+#undef OBSERVE_FlowDecl
+#undef OBSERVE_WorkflowDecl
+#undef OBSERVE_FnDecl
+#undef OBSERVE_TraitDecl
+#undef OBSERVE_ImplDecl
+#undef OBSERVE_InstanceDecl
+#undef OBSERVE_DECL_LEAF
         }
 
         return observations_;
@@ -121,29 +163,51 @@ class FormalObservationCollector final {
                                   std::string_view agent_name,
                                   std::size_t clause_index,
                                   std::size_t &atom_index) {
+        // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per TemporalExprNode
+        // alternative, generated from temporal_nodes.def. `called` / `embedded` /
+        // unary / binary atoms are indexed above; the in_state / running /
+        // completed atoms name OBSERVE_ATOM_LEAF (explicit, named no-op — the
+        // same behavior the unnamed catch-all had). The enumeration turns a NEW
+        // temporal node into a COMPILE ERROR here until it is classified.
+#define OBSERVE_ATOM_LEAF(Name) [&](const ir::Name &) {},
+#define OBSERVE_EmbeddedTemporalExpr(Name)                                                      \
+    [&](const ir::Name &) {                                                                     \
+        add_embedded_observation(ir::FormalObservationScope{                                    \
+            .kind = ir::FormalObservationScopeKind::ContractClause,                             \
+            .owner = std::string(agent_name),                                                   \
+            .clause_index = clause_index,                                                       \
+            .atom_index = atom_index++,                                                         \
+        });                                                                                     \
+    },
+#define OBSERVE_CalledTemporalExpr(Name)                                                        \
+    [&](const ir::Name &value) { add_called_observation(agent_name, value.capability); },
+#define OBSERVE_TemporalUnaryExpr(Name)                                                         \
+    [&](const ir::Name &value) {                                                                \
+        collect_contract_formula(*value.operand, agent_name, clause_index, atom_index);         \
+    },
+#define OBSERVE_TemporalBinaryExpr(Name)                                                        \
+    [&](const ir::Name &value) {                                                                \
+        collect_contract_formula(*value.lhs, agent_name, clause_index, atom_index);             \
+        collect_contract_formula(*value.rhs, agent_name, clause_index, atom_index);             \
+    },
+#define OBSERVE_InStateTemporalExpr(Name) OBSERVE_ATOM_LEAF(Name)
+#define OBSERVE_RunningTemporalExpr(Name) OBSERVE_ATOM_LEAF(Name)
+#define OBSERVE_CompletedTemporalExpr(Name) OBSERVE_ATOM_LEAF(Name)
+#define HANDLE_TEMPORAL_NODE(Name) OBSERVE_##Name(Name)
         std::visit(
             Overloaded{
-                [&](const ir::EmbeddedTemporalExpr &) {
-                    add_embedded_observation(ir::FormalObservationScope{
-                        .kind = ir::FormalObservationScopeKind::ContractClause,
-                        .owner = std::string(agent_name),
-                        .clause_index = clause_index,
-                        .atom_index = atom_index++,
-                    });
-                },
-                [&](const ir::CalledTemporalExpr &value) {
-                    add_called_observation(agent_name, value.capability);
-                },
-                [&](const ir::TemporalUnaryExpr &value) {
-                    collect_contract_formula(*value.operand, agent_name, clause_index, atom_index);
-                },
-                [&](const ir::TemporalBinaryExpr &value) {
-                    collect_contract_formula(*value.lhs, agent_name, clause_index, atom_index);
-                    collect_contract_formula(*value.rhs, agent_name, clause_index, atom_index);
-                },
-                [&](const auto &) {},
+#include "ahfl/compiler/ir/temporal_nodes.def"
             },
             expr.node);
+#undef HANDLE_TEMPORAL_NODE
+#undef OBSERVE_EmbeddedTemporalExpr
+#undef OBSERVE_CalledTemporalExpr
+#undef OBSERVE_InStateTemporalExpr
+#undef OBSERVE_RunningTemporalExpr
+#undef OBSERVE_CompletedTemporalExpr
+#undef OBSERVE_TemporalUnaryExpr
+#undef OBSERVE_TemporalBinaryExpr
+#undef OBSERVE_ATOM_LEAF
     }
 
     void collect_workflow_formula(const ir::TemporalExpr &expr,
@@ -151,28 +215,54 @@ class FormalObservationCollector final {
                                   std::string_view workflow_name,
                                   std::size_t clause_index,
                                   std::size_t &atom_index) {
-        std::visit(Overloaded{
-                       [&](const ir::EmbeddedTemporalExpr &) {
-                           add_embedded_observation(ir::FormalObservationScope{
-                               .kind = scope_kind,
-                               .owner = std::string(workflow_name),
-                               .clause_index = clause_index,
-                               .atom_index = atom_index++,
-                           });
-                       },
-                       [&](const ir::TemporalUnaryExpr &value) {
-                           collect_workflow_formula(
-                               *value.operand, scope_kind, workflow_name, clause_index, atom_index);
-                       },
-                       [&](const ir::TemporalBinaryExpr &value) {
-                           collect_workflow_formula(
-                               *value.lhs, scope_kind, workflow_name, clause_index, atom_index);
-                           collect_workflow_formula(
-                               *value.rhs, scope_kind, workflow_name, clause_index, atom_index);
-                       },
-                       [&](const auto &) {},
-                   },
-                   expr.node);
+        // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per TemporalExprNode
+        // alternative, generated from temporal_nodes.def. A workflow-scoped
+        // clause can only index an embedded bool observation plus the unary /
+        // binary connectives; the called / in_state / running / completed atoms
+        // name OBSERVE_WF_LEAF (explicit, named no-op — the same behavior the
+        // unnamed catch-all had). The enumeration turns a NEW temporal node into
+        // a COMPILE ERROR here until it is classified.
+#define OBSERVE_WF_LEAF(Name) [&](const ir::Name &) {},
+#define OBSERVE_WF_EmbeddedTemporalExpr(Name)                                                   \
+    [&](const ir::Name &) {                                                                     \
+        add_embedded_observation(ir::FormalObservationScope{                                    \
+            .kind = scope_kind,                                                                 \
+            .owner = std::string(workflow_name),                                                \
+            .clause_index = clause_index,                                                       \
+            .atom_index = atom_index++,                                                         \
+        });                                                                                     \
+    },
+#define OBSERVE_WF_TemporalUnaryExpr(Name)                                                      \
+    [&](const ir::Name &value) {                                                                \
+        collect_workflow_formula(                                                               \
+            *value.operand, scope_kind, workflow_name, clause_index, atom_index);               \
+    },
+#define OBSERVE_WF_TemporalBinaryExpr(Name)                                                     \
+    [&](const ir::Name &value) {                                                                \
+        collect_workflow_formula(                                                               \
+            *value.lhs, scope_kind, workflow_name, clause_index, atom_index);                   \
+        collect_workflow_formula(                                                               \
+            *value.rhs, scope_kind, workflow_name, clause_index, atom_index);                   \
+    },
+#define OBSERVE_WF_CalledTemporalExpr(Name) OBSERVE_WF_LEAF(Name)
+#define OBSERVE_WF_InStateTemporalExpr(Name) OBSERVE_WF_LEAF(Name)
+#define OBSERVE_WF_RunningTemporalExpr(Name) OBSERVE_WF_LEAF(Name)
+#define OBSERVE_WF_CompletedTemporalExpr(Name) OBSERVE_WF_LEAF(Name)
+#define HANDLE_TEMPORAL_NODE(Name) OBSERVE_WF_##Name(Name)
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/temporal_nodes.def"
+            },
+            expr.node);
+#undef HANDLE_TEMPORAL_NODE
+#undef OBSERVE_WF_EmbeddedTemporalExpr
+#undef OBSERVE_WF_CalledTemporalExpr
+#undef OBSERVE_WF_InStateTemporalExpr
+#undef OBSERVE_WF_RunningTemporalExpr
+#undef OBSERVE_WF_CompletedTemporalExpr
+#undef OBSERVE_WF_TemporalUnaryExpr
+#undef OBSERVE_WF_TemporalBinaryExpr
+#undef OBSERVE_WF_LEAF
     }
 
     void add_called_observation(std::string_view agent_name, std::string_view capability_name) {

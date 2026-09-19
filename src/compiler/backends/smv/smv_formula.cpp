@@ -65,6 +65,12 @@ SmvPrinter::render_agent_formula(const ir::TemporalExpr &expr,
             [&](const ir::InStateTemporalExpr &value) {
                 return "(" + agent_state_var(agent) + " = " + value.state + ")";
             },
+            // An agent-scoped clause cannot observe workflow-node progress, so
+            // `running` / `completed` atoms render SMV FALSE here (the same
+            // result the unnamed catch-all produced) — but through the explicit
+            // enumeration below, so a new temporal node is a compile error.
+            [](const ir::RunningTemporalExpr &) { return std::string("FALSE"); },
+            [](const ir::CompletedTemporalExpr &) { return std::string("FALSE"); },
             [&](const ir::TemporalUnaryExpr &value) {
                 return smv_unary_op(value.op) + " (" +
                        render_agent_formula(*value.operand,
@@ -83,7 +89,6 @@ SmvPrinter::render_agent_formula(const ir::TemporalExpr &expr,
                            *value.rhs, agent, clause_index, atom_index, observation_assumptions) +
                        ")";
             },
-            [&](const auto &) { return std::string("FALSE"); },
         },
         expr.node);
 }
@@ -144,7 +149,61 @@ std::optional<std::string> SmvPrinter::render_contract_expr_clause(const ir::Con
                         "] bounded_decreases_rank: length(self) == rank(self) + 1");
                     return "G (" + length_of_self + ")";
                 },
-                [](const auto &) -> std::optional<std::string> { return std::nullopt; },
+                // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per ExprNode
+                // alternative, generated from the X-list expr_nodes.def. Only the
+                // two `length(self)` shapes above (MemberAccessExpr / PathExpr,
+                // already listed explicitly) admit the bounded-rank encoding, so
+                // their routing macros are the identity; every other node names
+                // RENDER_BOUNDED_ABSENT and returns nullopt — the same result the
+                // old unnamed catch-all produced. The explicit enumeration turns a
+                // NEW expr node into a COMPILE ERROR here until it is classified,
+                // and the caller then degrades to an abstract observation.
+#define RENDER_BOUNDED_ABSENT(Name)                                                             \
+    [](const ir::Name &) -> std::optional<std::string> { return std::nullopt; },
+#define RENDER_PathExpr(Name)
+#define RENDER_MemberAccessExpr(Name)
+#define RENDER_BoolLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_IntegerLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_FloatLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_DecimalLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_StringLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_DurationLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_QualifiedValueExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_CallExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_MethodCallExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_LambdaExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_StructLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_UnaryExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_BinaryExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_IndexAccessExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_MatchExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_UnwrapExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_UnitLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_QuantifierExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) RENDER_##Name(Name)
+#include "ahfl/compiler/ir/expr_nodes.def"
+#undef HANDLE_EXPR_NODE
+#undef RENDER_BoolLiteralExpr
+#undef RENDER_IntegerLiteralExpr
+#undef RENDER_FloatLiteralExpr
+#undef RENDER_DecimalLiteralExpr
+#undef RENDER_StringLiteralExpr
+#undef RENDER_DurationLiteralExpr
+#undef RENDER_PathExpr
+#undef RENDER_QualifiedValueExpr
+#undef RENDER_CallExpr
+#undef RENDER_MethodCallExpr
+#undef RENDER_LambdaExpr
+#undef RENDER_StructLiteralExpr
+#undef RENDER_UnaryExpr
+#undef RENDER_BinaryExpr
+#undef RENDER_MemberAccessExpr
+#undef RENDER_IndexAccessExpr
+#undef RENDER_MatchExpr
+#undef RENDER_UnwrapExpr
+#undef RENDER_UnitLiteralExpr
+#undef RENDER_QuantifierExpr
+#undef RENDER_BOUNDED_ABSENT
             },
             expr.node);
 
@@ -242,6 +301,14 @@ SmvPrinter::render_workflow_formula(const ir::TemporalExpr &expr,
                                      " & (" + workflow_node_state_var(workflow, value.node) +
                                      " = " + *value.state_name + "))";
                           },
+                          // A workflow-scoped clause cannot observe an agent's
+                          // own capability call / state, so `called` / `in_state`
+                          // atoms render SMV FALSE here (the same result the old
+                          // unnamed catch-all produced) — through the explicit
+                          // enumeration, so a new temporal node is a compile
+                          // error until it is routed.
+                          [](const ir::CalledTemporalExpr &) { return std::string("FALSE"); },
+                          [](const ir::InStateTemporalExpr &) { return std::string("FALSE"); },
                           [&](const ir::TemporalUnaryExpr &value) {
                               return smv_unary_op(value.op) + " (" +
                                      render_workflow_formula(*value.operand,
@@ -269,7 +336,6 @@ SmvPrinter::render_workflow_formula(const ir::TemporalExpr &expr,
                                                              observation_assumptions) +
                                      ")";
                           },
-                          [&](const auto &) { return std::string("FALSE"); },
                       },
                       expr.node);
 }

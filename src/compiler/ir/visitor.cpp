@@ -173,13 +173,19 @@ void ProgramVisitor::visit_decl(const Decl &declaration) {
                            visit_block(*value.body);
                        }
                    },
-                   // Bodyless declarations (module/import/struct/enum/const/
-                   // type-alias/capability/predicate/agent/contract/workflow/
-                   // instance and P3 trait/impl) carry no traversable
-                   // expression bodies here — trait methods are interface-only
-                   // and impl method bodies live on their own FnDecls, which
+                   // RFC 0027 P6/P7/P8 (KR6.13-F): each declaration with no
+                   // traversable expression body is listed EXPLICITLY (one named
+                   // no-op per node) instead of an unnamed catch-all, so a new
+                   // declaration node is a COMPILE ERROR until it is classified
+                   // (CLAUDE.md Principle 5). `trait` methods are interface-only
+                   // and `impl` method bodies live on their own FnDecls, which
                    // are visited as separate top-level declarations.
-                   [](const auto &) {},
+                   [](const ModuleDecl &) {},
+                   [](const ImportDecl &) {},
+                   [](const TypeAliasDecl &) {},
+                   [](const InstanceDecl &) {},
+                   [](const TraitDecl &) {},
+                   [](const ImplDecl &) {},
                },
                declaration);
 

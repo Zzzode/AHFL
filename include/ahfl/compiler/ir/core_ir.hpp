@@ -1378,22 +1378,11 @@ struct CoreVtClosure {
 // RFC 0027 Q1 (KR6.13-X): the variant alternative list and the diagnostic name
 // table are BOTH generated from the single X-macro node list in
 // core_value_types.def — one line per node, declaration order preserved. The
-// tuple-tag indirection exists because a template argument list (unlike a
-// braced-init list) rejects a trailing comma, so the macro cannot paste
-// `CoreVt##Name,` straight into std::variant<...>; the tags also give every
-// consumer a compile-time ordered type sequence it can re-expand.
+// tuple-tag indirection lives in node_tags.hpp (KR6.13-F), shared by every
+// X-macro-generated IR variant.
 namespace core_value_type_detail {
 
-template <typename T> struct value_type_tag {
-    using type = T;
-};
-
-template <typename TagTuple> struct variant_from_tags;
-template <typename... Ts> struct variant_from_tags<std::tuple<value_type_tag<Ts>...>> {
-    using type = std::variant<Ts...>;
-};
-
-#define HANDLE_CORE_VT(Name) value_type_tag<CoreVt##Name>{},
+#define HANDLE_CORE_VT(Name) ::ahfl::ir::node_detail::node_tag<CoreVt##Name>{},
 inline constexpr auto kCoreValueTypeTags = std::tuple{
 #include "ahfl/compiler/ir/core_value_types.def"
 };
@@ -1410,8 +1399,8 @@ inline constexpr std::array<
 
 } // namespace core_value_type_detail
 
-using CoreValueTypeNode = core_value_type_detail::variant_from_tags<
-    std::remove_cvref_t<decltype(core_value_type_detail::kCoreValueTypeTags)>>::type;
+using CoreValueTypeNode = ::ahfl::ir::node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(core_value_type_detail::kCoreValueTypeTags)>>;
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
 // count itself now derives from core_value_types.def; this pin turns "a node was

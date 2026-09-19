@@ -1,0 +1,52 @@
+// X-macro node list for ahfl::ir::Decl (RFC 0027 P6/P7/P8, KR6.13-F): the
+// SINGLE source of truth for the AHFL-IR top-level declaration set.
+//
+// This file intentionally has NO include guard. It is a text fragment that is
+// re-included once per consumer; every consumer must first define the
+// HANDLE_DECL_NODE(Name) macro. The expansion is one HANDLE_DECL_NODE
+// invocation per node, IN DECLARATION ORDER. That order is simultaneously:
+//   * the Decl std::variant alternative order (generated in program.hpp
+//     through node_detail::node_tag), and
+//   * every per-node handler table / macro-expansion order at the consumer
+//     sites (verify / json / visitor / smv / ir_lower / program_view).
+// Reordering an entry changes std::variant::index() values and is therefore a
+// breaking change; append new nodes at the END.
+//
+// Every exhaustive consumer routes through one explicit per-node handler macro
+// (`<prefix>_##Name`), so adding a node here WITHOUT adding every per-node
+// handler is a COMPILE ERROR naming the missing type rather than a silently
+// skipped node (CLAUDE.md Principle 5). The property is pinned by the negative
+// compile-test tests/fixtures/ir/ssot/decl_nodes_negative.cpp (syntax-compiled
+// by tests/scripts/ir_ssot_compile_fail.py under ctest ahfl.ir.ssot_compile_fail)
+// and independently by tests/unit/compiler/ir/node_variant_coverage.cpp.
+//
+// Usage:
+//   #define HANDLE_DECL_NODE(Name) /* ... Name ... */
+//   #include "ahfl/compiler/ir/decl_nodes.def"
+//
+// The file #undefs HANDLE_DECL_NODE at the end so the driver macro never leaks
+// past a consumer; consumer-specific per-node helper macros are the consumer's
+// own responsibility to #undef.
+
+#ifndef HANDLE_DECL_NODE
+#error "decl_nodes.def: #define HANDLE_DECL_NODE(Name) before #include-ing this node list"
+#endif
+
+HANDLE_DECL_NODE(ModuleDecl)
+HANDLE_DECL_NODE(ImportDecl)
+HANDLE_DECL_NODE(ConstDecl)
+HANDLE_DECL_NODE(TypeAliasDecl)
+HANDLE_DECL_NODE(StructDecl)
+HANDLE_DECL_NODE(EnumDecl)
+HANDLE_DECL_NODE(CapabilityDecl)
+HANDLE_DECL_NODE(PredicateDecl)
+HANDLE_DECL_NODE(AgentDecl)
+HANDLE_DECL_NODE(ContractDecl)
+HANDLE_DECL_NODE(FlowDecl)
+HANDLE_DECL_NODE(WorkflowDecl)
+HANDLE_DECL_NODE(FnDecl)
+HANDLE_DECL_NODE(TraitDecl)
+HANDLE_DECL_NODE(ImplDecl)
+HANDLE_DECL_NODE(InstanceDecl)
+
+#undef HANDLE_DECL_NODE

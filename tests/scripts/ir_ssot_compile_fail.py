@@ -26,6 +26,14 @@ Fixtures:
   * ahfl::ir::core::CoreValueTypeNode (RFC 0027 Q1, KR6.13-X) straight from the
     production include/ahfl/compiler/ir/core_value_types.def, sentinel
     SsotUnhandledVt, injected with AHFL_SSOT_INJECT_UNHANDLED_VT.
+  * ahfl::ir::StatementNode / ahfl::ir::TemporalExprNode /
+    ahfl::ir::MatchPatternNode / ahfl::ir::Decl (RFC 0027 P6/P7/P8, KR6.13-F),
+    each straight from its production .def (stmt_nodes.def / temporal_nodes.def
+    / pattern_nodes.def / decl_nodes.def), sentinels SsotUnhandledStmt /
+    SsotUnhandledTemporal / SsotUnhandledPattern / SsotUnhandledDecl, injected
+    with the matching AHFL_SSOT_INJECT_UNHANDLED_* flag. These four families'
+    variants are now generated from those .def lists (KR6.13-F), so the negative
+    gate covers the whole AHFL-IR node set, not just expressions.
 
 A compiler is picked from $AHFL_CXX, then $CXX, then PATH discovery
 (c++/g++/clang++). The repository include root is added automatically.
@@ -71,6 +79,34 @@ FIXTURES = (
         relative_path="tests/fixtures/ir/ssot/core_value_type_nodes_negative.cpp",
         inject_flag="AHFL_SSOT_INJECT_UNHANDLED_VT",
         unhandled_type="SsotUnhandledVt",
+    ),
+    # RFC 0027 P6/P7/P8 (KR6.13-F): the four AHFL-IR node families whose variant
+    # is now generated from an X-macro .def list. Each fixture consumes the
+    # PRODUCTION .def, so a node added to a production list without a visitor
+    # handler breaks the fixture build with no second copy of the node list.
+    FixtureCase(
+        label="StatementNode",
+        relative_path="tests/fixtures/ir/ssot/stmt_nodes_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_STMT",
+        unhandled_type="SsotUnhandledStmt",
+    ),
+    FixtureCase(
+        label="TemporalExprNode",
+        relative_path="tests/fixtures/ir/ssot/temporal_nodes_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_TEMPORAL",
+        unhandled_type="SsotUnhandledTemporal",
+    ),
+    FixtureCase(
+        label="MatchPatternNode",
+        relative_path="tests/fixtures/ir/ssot/pattern_nodes_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_PATTERN",
+        unhandled_type="SsotUnhandledPattern",
+    ),
+    FixtureCase(
+        label="Decl",
+        relative_path="tests/fixtures/ir/ssot/decl_nodes_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_DECL",
+        unhandled_type="SsotUnhandledDecl",
     ),
 )
 

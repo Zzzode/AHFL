@@ -96,7 +96,20 @@ void ProgramIndex::rebuild(const Program &program) {
                         decls_by_id_.emplace(*alias.symbol_ref.id, &declaration);
                     }
                 },
-                [&](const auto &) {},
+                // RFC 0027 P6/P7/P8 (KR6.13-F): the nodes this index does not
+                // store are listed EXPLICITLY here (one named no-op per node)
+                // instead of an unnamed catch-all, so a new declaration node is a
+                // COMPILE ERROR until it is classified (CLAUDE.md Principle 5).
+                // Indexed nodes (agent / flow / workflow / capability / struct /
+                // enum / const / predicate / type-alias) keep their handlers
+                // above.
+                [&](const ModuleDecl &) {},
+                [&](const ImportDecl &) {},
+                [&](const ContractDecl &) {},
+                [&](const FnDecl &) {},
+                [&](const TraitDecl &) {},
+                [&](const ImplDecl &) {},
+                [&](const InstanceDecl &) {},
             },
             declaration);
     }

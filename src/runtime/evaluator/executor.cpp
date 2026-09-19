@@ -1,5 +1,6 @@
 #include "runtime/evaluator/executor.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "runtime/evaluator/evaluator.hpp"
 #include "runtime/evaluator/pattern_match.hpp"
 
@@ -124,226 +125,240 @@ namespace {
 
 } // anonymous namespace
 
+// RFC 0027 P6/P7/P8 (KR6.13-F): one NAMED per-node executor per StatementNode
+// alternative, generated from the X-list stmt_nodes.def. Before this slice the
+// whole variant was handled by a single generic-lambda if-constexpr chain, so a
+// new statement node was silently accepted (its body simply fell off the end)
+// instead of being routed. The explicit enumeration turns that into a COMPILE
+// ERROR naming the type (CLAUDE.md Principle 5).
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::LetStatement &node, ExecContext &ctx) {
+    // Evaluate the initializer and bind it to local scope
+    if (!node.initializer) {
+        return make_exec_error("LetStatement has null initializer");
+    }
+    auto eval_result = ctx.eval_expression(*node.initializer);
+    if (eval_result.should_unwind()) {
+        return wrap_expression_errors(std::move(eval_result));
+    }
+    ctx.bind_local(node.name, std::move(eval_result.value));
+    return make_continue(std::move(eval_result.diagnostics));
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::AssignStatement &node, ExecContext &ctx) {
+    // Only allow assignment to ctx.field paths
+    const auto &path = node.target;
+    if (path.root_kind != ir::PathRootKind::Context) {
+        return make_exec_error("assignment target must be a ctx field (e.g. ctx.field)");
+    }
+    if (path.members.empty()) {
+        return make_exec_error("assignment target must specify a field (e.g. ctx.field)");
+    }
+    if (!node.value) {
+        return make_exec_error("AssignStatement has null value expression");
+    }
+    auto eval_result = ctx.eval_expression(*node.value);
+    if (eval_result.should_unwind()) {
+        return wrap_expression_errors(std::move(eval_result));
+    }
+    ctx.assign_ctx(path.members[0], std::move(eval_result.value));
+    return make_continue(std::move(eval_result.diagnostics));
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::IfStatement &node, ExecContext &ctx) {
+    // Evaluate the condition expression
+    if (!node.condition) {
+        return make_exec_error("IfStatement has null condition");
+    }
+    auto cond_result = ctx.eval_expression(*node.condition);
+    if (cond_result.should_unwind()) {
+        return wrap_expression_errors(std::move(cond_result));
+    }
+    auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
+    if (!bv) {
+        return prepend_diagnostics(std::move(cond_result.diagnostics),
+                                   make_exec_error("if condition must evaluate to Bool"));
+    }
+    auto diagnostics = std::move(cond_result.diagnostics);
+    if (bv->value) {
+        // then branch
+        if (node.then_block) {
+            return prepend_diagnostics(std::move(diagnostics), exec_block(*node.then_block, ctx));
+        }
+        return make_continue(std::move(diagnostics));
+    }
+    // else branch
+    if (node.else_block) {
+        return prepend_diagnostics(std::move(diagnostics), exec_block(*node.else_block, ctx));
+    }
+    return make_continue(std::move(diagnostics));
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::IfLetStatement &node, ExecContext &ctx) {
+    if (!node.scrutinee) {
+        return make_exec_error("IfLetStatement has null scrutinee");
+    }
+    auto scrutinee_result = ctx.eval_expression(*node.scrutinee);
+    if (scrutinee_result.should_unwind()) {
+        return wrap_expression_errors(std::move(scrutinee_result));
+    }
+    auto diagnostics = std::move(scrutinee_result.diagnostics);
+
+    PatternBindings bindings;
+    if (match_pattern(node.pattern, scrutinee_result.value, bindings)) {
+        std::unordered_map<std::string, std::optional<Value>> saved_bindings;
+        saved_bindings.reserve(bindings.size());
+        for (const auto &[name, _] : bindings) {
+            saved_bindings.emplace(name, ctx.eval_ctx.get_local(name));
+        }
+        for (auto &[name, value] : bindings) {
+            ctx.bind_local(name, std::move(value));
+        }
+        ExecResult result = node.then_block ? exec_block(*node.then_block, ctx) : make_continue();
+        for (auto &[name, old_value] : saved_bindings) {
+            if (old_value.has_value()) {
+                ctx.bind_local(name, std::move(*old_value));
+            } else {
+                ctx.eval_ctx.erase_local(name);
+            }
+        }
+        return prepend_diagnostics(std::move(diagnostics), std::move(result));
+    }
+
+    if (node.else_block) {
+        return prepend_diagnostics(std::move(diagnostics), exec_block(*node.else_block, ctx));
+    }
+    return make_continue(std::move(diagnostics));
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::GotoStatement &node, ExecContext & /*ctx*/) {
+    return ExecResult{ExecGoto{node.target_state}, {}};
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::ReturnStatement &node, ExecContext &ctx) {
+    if (!node.value) {
+        return ExecResult{ExecReturn{make_none()}, {}};
+    }
+    auto eval_result = ctx.eval_expression(*node.value);
+    if (eval_result.should_unwind()) {
+        return wrap_expression_errors(std::move(eval_result));
+    }
+    return ExecResult{
+        ExecReturn{std::move(eval_result.value)},
+        std::move(eval_result.diagnostics),
+    };
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::AssertStatement &node, ExecContext &ctx) {
+    if (!node.condition) {
+        return make_exec_error("AssertStatement has null condition");
+    }
+    auto cond_result = ctx.eval_expression(*node.condition);
+    if (cond_result.should_unwind()) {
+        return wrap_expression_errors(std::move(cond_result));
+    }
+    auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
+    if (!bv) {
+        return prepend_diagnostics(std::move(cond_result.diagnostics),
+                                   make_exec_error("assert condition must evaluate to Bool"));
+    }
+    if (!bv->value) {
+        return ExecResult{
+            ExecAssertFailed{AssertionKind::ASSERT_CLAUSE,
+                             eval_failure_message(ctx, node.message, kAssertFailedDefault)},
+            std::move(cond_result.diagnostics)};
+    }
+    return make_continue(std::move(cond_result.diagnostics));
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::UnwrapStatement &node, ExecContext &ctx) {
+    // P4-01: "assert is Some" — fail if the operand is the None
+    // variant of a nominal Option<T>, or a BoolValue{false} when
+    // used in an ad-hoc truthiness context.  Value-extraction
+    // (producing the T payload) is a follow-up.
+    if (!node.operand) {
+        return make_exec_error("UnwrapStatement has null operand");
+    }
+    auto op_result = ctx.eval_expression(*node.operand);
+    if (op_result.should_unwind()) {
+        return wrap_expression_errors(std::move(op_result));
+    }
+    const bool is_some = [](const Value &v) {
+        if (is_optional(v)) {
+            return ahfl::evaluator::is_some(v);
+        }
+        return true;
+    }(op_result.value);
+    if (!is_some) {
+        return ExecResult{ExecAssertFailed{AssertionKind::UNWRAP_NONE, kUnwrapNoneDefault},
+                          std::move(op_result.diagnostics)};
+    }
+    return make_continue(std::move(op_result.diagnostics));
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::RequiresStatement &node, ExecContext &ctx) {
+    if (!node.condition) {
+        return make_exec_error("RequiresStatement has null condition");
+    }
+    auto cond_result = ctx.eval_expression(*node.condition);
+    if (cond_result.should_unwind()) {
+        return wrap_expression_errors(std::move(cond_result));
+    }
+    auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
+    if (!bv) {
+        return prepend_diagnostics(std::move(cond_result.diagnostics),
+                                   make_exec_error("requires condition must evaluate to Bool"));
+    }
+    if (!bv->value) {
+        return ExecResult{
+            ExecAssertFailed{
+                AssertionKind::REQUIRES_VIOLATION,
+                eval_failure_message(ctx, node.message, kRequiresFailedDefault)},
+            std::move(cond_result.diagnostics)};
+    }
+    return make_continue(std::move(cond_result.diagnostics));
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::UnreachableStatement &node,
+                                             ExecContext &ctx) {
+    // Unconditional runtime failure.  `unreachable;` is the user
+    // asserting that this code path cannot be taken — executing it
+    // means the caller's reasoning was wrong.
+    return ExecResult{
+        ExecAssertFailed{AssertionKind::UNREACHABLE_EXECUTED,
+                         eval_failure_message(ctx, node.message, kUnreachableDefault)},
+        {}};
+}
+
+[[nodiscard]] ExecResult exec_statement_node(const ir::ExprStatement &node, ExecContext &ctx) {
+    // Evaluate the expression and discard the result
+    if (!node.expr) {
+        return make_exec_error("ExprStatement has null expression");
+    }
+    auto eval_result = ctx.eval_expression(*node.expr);
+    if (eval_result.should_unwind()) {
+        return wrap_expression_errors(std::move(eval_result));
+    }
+    return make_continue(std::move(eval_result.diagnostics));
+}
+
 // ============================================================================
 // exec_statement - visit the StatementNode variant and dispatch execution
 // ============================================================================
 
 ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
+    // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per StatementNode alternative,
+    // generated from the X-list stmt_nodes.def. Every node routes to its named
+    // executor above; there is no generic catch-all, so a new statement node is a
+    // COMPILE ERROR here until it is routed (CLAUDE.md Principle 5).
+#define HANDLE_STMT_NODE(Name)                                                                  \
+    [&ctx](const ir::Name &node) -> ExecResult { return exec_statement_node(node, ctx); },
     return std::visit(
-        [&ctx](const auto &node) -> ExecResult {
-            using T = std::decay_t<decltype(node)>;
-
-            if constexpr (std::is_same_v<T, ir::LetStatement>) {
-                // Evaluate the initializer and bind it to local scope
-                if (!node.initializer) {
-                    return make_exec_error("LetStatement has null initializer");
-                }
-                auto eval_result = ctx.eval_expression(*node.initializer);
-                if (eval_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(eval_result));
-                }
-                ctx.bind_local(node.name, std::move(eval_result.value));
-                return make_continue(std::move(eval_result.diagnostics));
-
-            } else if constexpr (std::is_same_v<T, ir::AssignStatement>) {
-                // Only allow assignment to ctx.field paths
-                const auto &path = node.target;
-                if (path.root_kind != ir::PathRootKind::Context) {
-                    return make_exec_error(
-                        "assignment target must be a ctx field (e.g. ctx.field)");
-                }
-                if (path.members.empty()) {
-                    return make_exec_error(
-                        "assignment target must specify a field (e.g. ctx.field)");
-                }
-                if (!node.value) {
-                    return make_exec_error("AssignStatement has null value expression");
-                }
-                auto eval_result = ctx.eval_expression(*node.value);
-                if (eval_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(eval_result));
-                }
-                ctx.assign_ctx(path.members[0], std::move(eval_result.value));
-                return make_continue(std::move(eval_result.diagnostics));
-
-            } else if constexpr (std::is_same_v<T, ir::IfStatement>) {
-                // Evaluate the condition expression
-                if (!node.condition) {
-                    return make_exec_error("IfStatement has null condition");
-                }
-                auto cond_result = ctx.eval_expression(*node.condition);
-                if (cond_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(cond_result));
-                }
-                auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
-                if (!bv) {
-                    return prepend_diagnostics(std::move(cond_result.diagnostics),
-                                               make_exec_error(
-                                                   "if condition must evaluate to Bool"));
-                }
-                auto diagnostics = std::move(cond_result.diagnostics);
-                if (bv->value) {
-                    // then branch
-                    if (node.then_block) {
-                        return prepend_diagnostics(
-                            std::move(diagnostics), exec_block(*node.then_block, ctx));
-                    }
-                    return make_continue(std::move(diagnostics));
-                }
-                // else branch
-                if (node.else_block) {
-                    return prepend_diagnostics(
-                        std::move(diagnostics), exec_block(*node.else_block, ctx));
-                }
-                return make_continue(std::move(diagnostics));
-
-            } else if constexpr (std::is_same_v<T, ir::IfLetStatement>) {
-                if (!node.scrutinee) {
-                    return make_exec_error("IfLetStatement has null scrutinee");
-                }
-                auto scrutinee_result = ctx.eval_expression(*node.scrutinee);
-                if (scrutinee_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(scrutinee_result));
-                }
-                auto diagnostics = std::move(scrutinee_result.diagnostics);
-
-                PatternBindings bindings;
-                if (match_pattern(node.pattern, scrutinee_result.value, bindings)) {
-                    std::unordered_map<std::string, std::optional<Value>> saved_bindings;
-                    saved_bindings.reserve(bindings.size());
-                    for (const auto &[name, _] : bindings) {
-                        saved_bindings.emplace(name, ctx.eval_ctx.get_local(name));
-                    }
-                    for (auto &[name, value] : bindings) {
-                        ctx.bind_local(name, std::move(value));
-                    }
-                    ExecResult result =
-                        node.then_block ? exec_block(*node.then_block, ctx) : make_continue();
-                    for (auto &[name, old_value] : saved_bindings) {
-                        if (old_value.has_value()) {
-                            ctx.bind_local(name, std::move(*old_value));
-                        } else {
-                            ctx.eval_ctx.erase_local(name);
-                        }
-                    }
-                    return prepend_diagnostics(std::move(diagnostics), std::move(result));
-                }
-
-                if (node.else_block) {
-                    return prepend_diagnostics(
-                        std::move(diagnostics), exec_block(*node.else_block, ctx));
-                }
-                return make_continue(std::move(diagnostics));
-
-            } else if constexpr (std::is_same_v<T, ir::GotoStatement>) {
-                return ExecResult{ExecGoto{node.target_state}, {}};
-
-            } else if constexpr (std::is_same_v<T, ir::ReturnStatement>) {
-                if (!node.value) {
-                    return ExecResult{ExecReturn{make_none()}, {}};
-                }
-                auto eval_result = ctx.eval_expression(*node.value);
-                if (eval_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(eval_result));
-                }
-                return ExecResult{
-                    ExecReturn{std::move(eval_result.value)},
-                    std::move(eval_result.diagnostics),
-                };
-
-            } else if constexpr (std::is_same_v<T, ir::AssertStatement>) {
-                if (!node.condition) {
-                    return make_exec_error("AssertStatement has null condition");
-                }
-                auto cond_result = ctx.eval_expression(*node.condition);
-                if (cond_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(cond_result));
-                }
-                auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
-                if (!bv) {
-                    return prepend_diagnostics(
-                        std::move(cond_result.diagnostics),
-                        make_exec_error("assert condition must evaluate to Bool"));
-                }
-                if (!bv->value) {
-                    return ExecResult{
-                        ExecAssertFailed{
-                            AssertionKind::ASSERT_CLAUSE,
-                            eval_failure_message(ctx, node.message, kAssertFailedDefault)},
-                        std::move(cond_result.diagnostics)};
-                }
-                return make_continue(std::move(cond_result.diagnostics));
-
-            } else if constexpr (std::is_same_v<T, ir::UnwrapStatement>) {
-                // P4-01: "assert is Some" — fail if the operand is the None
-                // variant of a nominal Option<T>, or a BoolValue{false} when
-                // used in an ad-hoc truthiness context.  Value-extraction
-                // (producing the T payload) is a follow-up.
-                if (!node.operand) {
-                    return make_exec_error("UnwrapStatement has null operand");
-                }
-                auto op_result = ctx.eval_expression(*node.operand);
-                if (op_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(op_result));
-                }
-                const bool is_some = [](const Value &v) {
-                    if (is_optional(v)) {
-                        return ahfl::evaluator::is_some(v);
-                    }
-                    return true;
-                }(op_result.value);
-                if (!is_some) {
-                    return ExecResult{
-                        ExecAssertFailed{AssertionKind::UNWRAP_NONE, kUnwrapNoneDefault},
-                        std::move(op_result.diagnostics)};
-                }
-                return make_continue(std::move(op_result.diagnostics));
-
-            } else if constexpr (std::is_same_v<T, ir::RequiresStatement>) {
-                if (!node.condition) {
-                    return make_exec_error("RequiresStatement has null condition");
-                }
-                auto cond_result = ctx.eval_expression(*node.condition);
-                if (cond_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(cond_result));
-                }
-                auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
-                if (!bv) {
-                    return prepend_diagnostics(
-                        std::move(cond_result.diagnostics),
-                        make_exec_error("requires condition must evaluate to Bool"));
-                }
-                if (!bv->value) {
-                    return ExecResult{
-                        ExecAssertFailed{
-                            AssertionKind::REQUIRES_VIOLATION,
-                            eval_failure_message(ctx, node.message, kRequiresFailedDefault)},
-                        std::move(cond_result.diagnostics)};
-                }
-                return make_continue(std::move(cond_result.diagnostics));
-
-            } else if constexpr (std::is_same_v<T, ir::UnreachableStatement>) {
-                // Unconditional runtime failure.  `unreachable;` is the user
-                // asserting that this code path cannot be taken — executing it
-                // means the caller's reasoning was wrong.
-                return ExecResult{
-                    ExecAssertFailed{AssertionKind::UNREACHABLE_EXECUTED,
-                                     eval_failure_message(ctx, node.message, kUnreachableDefault)},
-                    {}};
-
-            } else if constexpr (std::is_same_v<T, ir::ExprStatement>) {
-                // Evaluate the expression and discard the result
-                if (!node.expr) {
-                    return make_exec_error("ExprStatement has null expression");
-                }
-                auto eval_result = ctx.eval_expression(*node.expr);
-                if (eval_result.should_unwind()) {
-                    return wrap_expression_errors(std::move(eval_result));
-                }
-                return make_continue(std::move(eval_result.diagnostics));
-            }
+        Overloaded{
+#include "ahfl/compiler/ir/stmt_nodes.def"
         },
         stmt.node);
+#undef HANDLE_STMT_NODE
 }
 
 // ============================================================================

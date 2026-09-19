@@ -19,18 +19,57 @@ void SmvPrinter::index_declarations(const ir::Program &program) {
     assignments_.clear();
     specs_.clear();
 
+    // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per Decl alternative, generated
+    // from the X-list decl_nodes.def. Only contract and workflow declarations
+    // carry the clauses this index consumes; every other declaration names
+    // INDEX_DECL_LEAF (an explicit, named no-op — the same behavior the unnamed
+    // catch-all had). The explicit enumeration turns a NEW declaration node into
+    // a COMPILE ERROR here until it is classified (CLAUDE.md Principle 5).
+#define INDEX_DECL_LEAF(Name) [](const ir::Name &) {},
+#define INDEX_ContractDecl(Name)                                                                \
+    [&](const ir::Name &contract) { contracts_.push_back(std::cref(contract)); },
+#define INDEX_WorkflowDecl(Name)                                                                \
+    [&](const ir::Name &workflow) { workflows_.push_back(std::cref(workflow)); },
+#define INDEX_ModuleDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_ImportDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_ConstDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_TypeAliasDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_StructDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_EnumDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_CapabilityDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_PredicateDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_AgentDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_FlowDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_FnDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_TraitDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_ImplDecl(Name) INDEX_DECL_LEAF(Name)
+#define INDEX_InstanceDecl(Name) INDEX_DECL_LEAF(Name)
+#define HANDLE_DECL_NODE(Name) INDEX_##Name(Name)
     for (const auto &declaration : program.declarations) {
-        std::visit(Overloaded{
-                       [&](const ir::ContractDecl &contract) {
-                           contracts_.push_back(std::cref(contract));
-                       },
-                       [&](const ir::WorkflowDecl &workflow) {
-                           workflows_.push_back(std::cref(workflow));
-                       },
-                       [&](const auto &) {},
-                   },
-                   declaration);
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/decl_nodes.def"
+            },
+            declaration);
     }
+#undef HANDLE_DECL_NODE
+#undef INDEX_ModuleDecl
+#undef INDEX_ImportDecl
+#undef INDEX_ConstDecl
+#undef INDEX_TypeAliasDecl
+#undef INDEX_StructDecl
+#undef INDEX_EnumDecl
+#undef INDEX_CapabilityDecl
+#undef INDEX_PredicateDecl
+#undef INDEX_AgentDecl
+#undef INDEX_ContractDecl
+#undef INDEX_FlowDecl
+#undef INDEX_WorkflowDecl
+#undef INDEX_FnDecl
+#undef INDEX_TraitDecl
+#undef INDEX_ImplDecl
+#undef INDEX_InstanceDecl
+#undef INDEX_DECL_LEAF
 }
 
 void SmvPrinter::index_observations(const ir::Program &program) {
@@ -222,7 +261,33 @@ const ir::Expr *SmvPrinter::find_embedded_expr_by_atom(const ir::TemporalExpr &e
                 }
                 return find_embedded_expr_by_atom(*value.rhs, target_atom, current_atom);
             },
-            [](const auto &) -> const ir::Expr * { return nullptr; },
+            // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per TemporalExprNode
+            // alternative, generated from temporal_nodes.def. Only embedded /
+            // unary / binary atoms nest an embedded expression, so those three
+            // route above; the called / in_state / running / completed atoms
+            // carry none and name FIND_ATOM_LEAF (explicit, named no-op — the
+            // same nullptr the unnamed catch-all returned). The enumeration turns
+            // a NEW temporal node into a COMPILE ERROR here until it is routed.
+#define FIND_ATOM_LEAF(Name)                                                                    \
+    [](const ir::Name &) -> const ir::Expr * { return nullptr; },
+#define FIND_EmbeddedTemporalExpr(Name)
+#define FIND_TemporalUnaryExpr(Name)
+#define FIND_TemporalBinaryExpr(Name)
+#define FIND_CalledTemporalExpr(Name) FIND_ATOM_LEAF(Name)
+#define FIND_InStateTemporalExpr(Name) FIND_ATOM_LEAF(Name)
+#define FIND_RunningTemporalExpr(Name) FIND_ATOM_LEAF(Name)
+#define FIND_CompletedTemporalExpr(Name) FIND_ATOM_LEAF(Name)
+#define HANDLE_TEMPORAL_NODE(Name) FIND_##Name(Name)
+#include "ahfl/compiler/ir/temporal_nodes.def"
+#undef HANDLE_TEMPORAL_NODE
+#undef FIND_EmbeddedTemporalExpr
+#undef FIND_TemporalUnaryExpr
+#undef FIND_TemporalBinaryExpr
+#undef FIND_CalledTemporalExpr
+#undef FIND_InStateTemporalExpr
+#undef FIND_RunningTemporalExpr
+#undef FIND_CompletedTemporalExpr
+#undef FIND_ATOM_LEAF
         },
         expr.node);
 }

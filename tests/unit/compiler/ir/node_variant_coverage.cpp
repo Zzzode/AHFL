@@ -82,6 +82,84 @@ static_assert(
             std::variant_size_v<ahfl::ir::ExprNode>>{}),
     "expr_nodes.def order must match ahfl::ir::ExprNode alternative order");
 
+// RFC 0027 P6/P7/P8 (KR6.13-F): the four AHFL-IR families whose variant is now
+// generated from an X-macro .def. Re-expand each PRODUCTION .def here and assert
+// it is an exact, ORDER-PRESERVING mirror of the production variant, so the .def
+// list and the generated variant can never silently drift.
+template <typename Tuple, typename Variant, std::size_t... Is>
+[[nodiscard]] constexpr bool tag_sequence_matches_variant(std::index_sequence<Is...>) noexcept {
+    return (std::is_same_v<std::tuple_element_t<Is, std::remove_cvref_t<Tuple>>,
+                           type_tag<std::variant_alternative_t<Is, Variant>>> &&
+            ...);
+}
+
+#define HANDLE_STMT_NODE(Name) type_tag<ahfl::ir::Name>{},
+constexpr auto kStmtNodeTags = std::tuple{
+#include "ahfl/compiler/ir/stmt_nodes.def"
+};
+#undef HANDLE_STMT_NODE
+
+#define HANDLE_TEMPORAL_NODE(Name) type_tag<ahfl::ir::Name>{},
+constexpr auto kTemporalNodeTags = std::tuple{
+#include "ahfl/compiler/ir/temporal_nodes.def"
+};
+#undef HANDLE_TEMPORAL_NODE
+
+#define HANDLE_PATTERN_NODE(Name) type_tag<ahfl::ir::Name>{},
+constexpr auto kPatternNodeTags = std::tuple{
+#include "ahfl/compiler/ir/pattern_nodes.def"
+};
+#undef HANDLE_PATTERN_NODE
+
+#define HANDLE_DECL_NODE(Name) type_tag<ahfl::ir::Name>{},
+constexpr auto kDeclNodeTags = std::tuple{
+#include "ahfl/compiler/ir/decl_nodes.def"
+};
+#undef HANDLE_DECL_NODE
+
+static_assert(std::tuple_size_v<std::remove_cvref_t<decltype(kStmtNodeTags)>> ==
+                  std::variant_size_v<ahfl::ir::StatementNode> &&
+                  tag_sequence_matches_variant<decltype(kStmtNodeTags), ahfl::ir::StatementNode>(
+                      std::make_index_sequence<
+                          std::variant_size_v<ahfl::ir::StatementNode>>{}),
+              "stmt_nodes.def must be an exact, order-preserving mirror of "
+              "ahfl::ir::StatementNode");
+
+static_assert(
+    std::tuple_size_v<std::remove_cvref_t<decltype(kTemporalNodeTags)>> ==
+            std::variant_size_v<ahfl::ir::TemporalExprNode> &&
+        tag_sequence_matches_variant<decltype(kTemporalNodeTags),
+                                     ahfl::ir::TemporalExprNode>(
+            std::make_index_sequence<std::variant_size_v<ahfl::ir::TemporalExprNode>>{}),
+    "temporal_nodes.def must be an exact, order-preserving mirror of "
+    "ahfl::ir::TemporalExprNode");
+
+static_assert(
+    std::tuple_size_v<std::remove_cvref_t<decltype(kPatternNodeTags)>> ==
+            std::variant_size_v<ahfl::ir::MatchPatternNode> &&
+        tag_sequence_matches_variant<decltype(kPatternNodeTags), ahfl::ir::MatchPatternNode>(
+            std::make_index_sequence<std::variant_size_v<ahfl::ir::MatchPatternNode>>{}),
+    "pattern_nodes.def must be an exact, order-preserving mirror of "
+    "ahfl::ir::MatchPatternNode");
+
+static_assert(std::tuple_size_v<std::remove_cvref_t<decltype(kDeclNodeTags)>> ==
+                      std::variant_size_v<ahfl::ir::Decl> &&
+                  tag_sequence_matches_variant<decltype(kDeclNodeTags), ahfl::ir::Decl>(
+                      std::make_index_sequence<std::variant_size_v<ahfl::ir::Decl>>{}),
+              "decl_nodes.def must be an exact, order-preserving mirror of ahfl::ir::Decl");
+
+// The generated ExprNode variant must still be reconstructible from the shared
+// node_detail helper (single tag-tuple -> variant SSOT, KR6.13-F).
+static_assert(std::is_same_v<ahfl::ir::node_detail::variant_from_tags_t<
+                                 decltype(ahfl::ir::expr_node_detail::kExprNodeTags)>,
+                             ahfl::ir::ExprNode>,
+              "expr_node_detail::kExprNodeTags must rebuild ahfl::ir::ExprNode through "
+              "the shared node_detail::variant_from_tags");
+static_assert(std::is_same_v<ahfl::ir::node_detail::variant_from_tags_t<
+                                 decltype(ahfl::ir::node_detail::kDeclNodeTags)>,
+                             ahfl::ir::Decl>,
+              "node_detail::kDeclNodeTags must rebuild ahfl::ir::Decl");
+
 // Static cardinality pins (mirror the header-adjacent static_asserts in one
 // auditable place; numbers cross-checked in the RFC 0027 P8 groundwork slice).
 static_assert(std::variant_size_v<ahfl::ir::MatchPatternNode> == 7);

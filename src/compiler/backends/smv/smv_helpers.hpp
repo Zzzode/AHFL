@@ -176,37 +176,106 @@ namespace ahfl::smv_detail {
     return std::nullopt;
 }
 
+/// Render an AHFL-IR expression into the BOUNDED SMV subset (see below for the
+/// per-node handlers). Declared up front so the recursive handlers can call it.
+[[nodiscard]] inline std::optional<std::string> render_bounded_expr(const ir::Expr &expr);
+
+[[nodiscard]] inline std::optional<std::string> render_bounded_expr_node(
+    const ir::BoolLiteralExpr &value) {
+    return value.value ? "TRUE" : "FALSE";
+}
+[[nodiscard]] inline std::optional<std::string> render_bounded_expr_node(
+    const ir::IntegerLiteralExpr &value) {
+    if (!is_integer_literal_spelling(value.spelling)) {
+        return std::nullopt;
+    }
+    return value.spelling;
+}
+[[nodiscard]] inline std::optional<std::string> render_bounded_expr_node(
+    const ir::UnaryExpr &value) {
+    const auto operand = render_bounded_expr(*value.operand);
+    const auto op = smv_expr_unary_op(value.op);
+    if (!operand.has_value() || !op.has_value()) {
+        return std::nullopt;
+    }
+    return "(" + *op + "(" + *operand + "))";
+}
+[[nodiscard]] inline std::optional<std::string> render_bounded_expr_node(
+    const ir::BinaryExpr &value) {
+    const auto lhs = render_bounded_expr(*value.lhs);
+    const auto rhs = render_bounded_expr(*value.rhs);
+    const auto op = smv_expr_binary_op(value.op);
+    if (!lhs.has_value() || !rhs.has_value() || !op.has_value()) {
+        return std::nullopt;
+    }
+    return "(" + *lhs + " " + *op + " " + *rhs + ")";
+}
+
+/// Render an AHFL-IR expression into the BOUNDED SMV subset (integer/boolean
+/// literals, unary and binary operators) when it fits, else `nullopt` so the
+/// caller degrades to an abstract observation. RFC 0027 P6/P7/P8 (KR6.13-F):
+/// one handler per ExprNode alternative, generated from the X-list
+/// expr_nodes.def. Nodes outside the bounded subset name RENDER_BOUNDED_ABSENT
+/// and return `nullopt` — exactly the old unnamed catch-all's behavior — but the
+/// explicit enumeration turns a NEW expr node into a COMPILE ERROR here until it
+/// is classified as bounded or absent (CLAUDE.md Principle 5).
 [[nodiscard]] inline std::optional<std::string> render_bounded_expr(const ir::Expr &expr) {
-    return std::visit(Overloaded{
-                          [](const ir::BoolLiteralExpr &value) -> std::optional<std::string> {
-                              return value.value ? "TRUE" : "FALSE";
-                          },
-                          [](const ir::IntegerLiteralExpr &value) -> std::optional<std::string> {
-                              if (!is_integer_literal_spelling(value.spelling)) {
-                                  return std::nullopt;
-                              }
-                              return value.spelling;
-                          },
-                          [](const ir::UnaryExpr &value) -> std::optional<std::string> {
-                              const auto operand = render_bounded_expr(*value.operand);
-                              const auto op = smv_expr_unary_op(value.op);
-                              if (!operand.has_value() || !op.has_value()) {
-                                  return std::nullopt;
-                              }
-                              return "(" + *op + "(" + *operand + "))";
-                          },
-                          [](const ir::BinaryExpr &value) -> std::optional<std::string> {
-                              const auto lhs = render_bounded_expr(*value.lhs);
-                              const auto rhs = render_bounded_expr(*value.rhs);
-                              const auto op = smv_expr_binary_op(value.op);
-                              if (!lhs.has_value() || !rhs.has_value() || !op.has_value()) {
-                                  return std::nullopt;
-                              }
-                              return "(" + *lhs + " " + *op + " " + *rhs + ")";
-                          },
-                          [](const auto &) -> std::optional<std::string> { return std::nullopt; },
-                      },
-                      expr.node);
+#define RENDER_BOUNDED_ABSENT(Name)                                                             \
+    [](const ir::Name &) -> std::optional<std::string> { return std::nullopt; },
+#define RENDER_BOUNDED_RENDERED(Name)                                                           \
+    [](const ir::Name &value) -> std::optional<std::string> {                                   \
+        return render_bounded_expr_node(value);                                                 \
+    },
+
+#define RENDER_BoolLiteralExpr(Name) RENDER_BOUNDED_RENDERED(Name)
+#define RENDER_IntegerLiteralExpr(Name) RENDER_BOUNDED_RENDERED(Name)
+#define RENDER_FloatLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_DecimalLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_StringLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_DurationLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_PathExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_QualifiedValueExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_CallExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_MethodCallExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_LambdaExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_StructLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_UnaryExpr(Name) RENDER_BOUNDED_RENDERED(Name)
+#define RENDER_BinaryExpr(Name) RENDER_BOUNDED_RENDERED(Name)
+#define RENDER_MemberAccessExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_IndexAccessExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_MatchExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_UnwrapExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_UnitLiteralExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define RENDER_QuantifierExpr(Name) RENDER_BOUNDED_ABSENT(Name)
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) RENDER_##Name(Name)
+    return std::visit(
+        Overloaded{
+#include "ahfl/compiler/ir/expr_nodes.def"
+        },
+        expr.node);
+#undef HANDLE_EXPR_NODE
+#undef RENDER_BoolLiteralExpr
+#undef RENDER_IntegerLiteralExpr
+#undef RENDER_FloatLiteralExpr
+#undef RENDER_DecimalLiteralExpr
+#undef RENDER_StringLiteralExpr
+#undef RENDER_DurationLiteralExpr
+#undef RENDER_PathExpr
+#undef RENDER_QualifiedValueExpr
+#undef RENDER_CallExpr
+#undef RENDER_MethodCallExpr
+#undef RENDER_LambdaExpr
+#undef RENDER_StructLiteralExpr
+#undef RENDER_UnaryExpr
+#undef RENDER_BinaryExpr
+#undef RENDER_MemberAccessExpr
+#undef RENDER_IndexAccessExpr
+#undef RENDER_MatchExpr
+#undef RENDER_UnwrapExpr
+#undef RENDER_UnitLiteralExpr
+#undef RENDER_QuantifierExpr
+#undef RENDER_BOUNDED_RENDERED
+#undef RENDER_BOUNDED_ABSENT
 }
 
 [[nodiscard]] inline std::string source_suffix(std::string_view source_path,

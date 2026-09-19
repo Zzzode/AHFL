@@ -1878,74 +1878,140 @@ EvalResult eval_unwrap_expr(const ir::UnwrapExpr &expr,
 // Main eval_expr dispatcher
 // ============================================================================
 
+// RFC 0027 P6/P7/P8 (KR6.13-F): one NAMED per-node evaluator per ExprNode
+// alternative, generated from the X-list expr_nodes.def. Before this slice the
+// whole variant was handled by a single generic-lambda if-constexpr chain whose
+// final `else` silently produced NOTHING (a new node would trip -Wreturn-type
+// only if the chain were truly reachable) — the explicit enumeration makes the
+// routing total and names the type on a miss (CLAUDE.md Principle 5).
+
+[[nodiscard]] EvalResult eval_expr_node(const ir::BoolLiteralExpr &node, const ir::Expr & /*expr*/,
+                                        const EvalContext &ctx, const CallEvalFn * /*call_eval*/) {
+    return eval_bool_literal(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::IntegerLiteralExpr &node,
+                                        const ir::Expr & /*expr*/, const EvalContext &ctx,
+                                        const CallEvalFn * /*call_eval*/) {
+    return eval_integer_literal(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::FloatLiteralExpr &node,
+                                        const ir::Expr & /*expr*/, const EvalContext &ctx,
+                                        const CallEvalFn * /*call_eval*/) {
+    return eval_float_literal(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::DecimalLiteralExpr &node,
+                                        const ir::Expr & /*expr*/, const EvalContext &ctx,
+                                        const CallEvalFn * /*call_eval*/) {
+    return eval_decimal_literal(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::StringLiteralExpr &node,
+                                        const ir::Expr & /*expr*/, const EvalContext &ctx,
+                                        const CallEvalFn * /*call_eval*/) {
+    return eval_string_literal(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::DurationLiteralExpr &node,
+                                        const ir::Expr & /*expr*/, const EvalContext &ctx,
+                                        const CallEvalFn * /*call_eval*/) {
+    return eval_duration_literal(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::PathExpr &node, const ir::Expr & /*expr*/,
+                                        const EvalContext &ctx, const CallEvalFn * /*call_eval*/) {
+    return eval_path_expr(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::QualifiedValueExpr &node,
+                                        const ir::Expr & /*expr*/, const EvalContext &ctx,
+                                        const CallEvalFn * /*call_eval*/) {
+    return eval_qualified_value_expr(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::CallExpr &node, const ir::Expr &expr,
+                                        const EvalContext &ctx, const CallEvalFn *call_eval) {
+    return eval_call_expr(node, expr.source_range, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::MethodCallExpr &node, const ir::Expr &expr,
+                                        const EvalContext &ctx, const CallEvalFn *call_eval) {
+    // KR5.5: a method call dispatches exactly like the equivalent
+    // free call — the receiver is the leading argument and `method`
+    // is the resolved dispatch target. Reconstruct the flattened
+    // CallExpr shape so the existing call machinery handles it
+    // unchanged (runtime behavior is identical to the pre-node form).
+    ir::CallExpr flattened;
+    flattened.callee = node.method;
+    flattened.callee_ref = node.method_ref;
+    flattened.arguments.reserve(node.arguments.size() + 1);
+    if (node.receiver) {
+        flattened.arguments.push_back(node.receiver);
+    }
+    for (const auto &argument : node.arguments) {
+        flattened.arguments.push_back(argument);
+    }
+    return eval_call_expr(flattened, expr.source_range, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::LambdaExpr &node, const ir::Expr & /*expr*/,
+                                        const EvalContext &ctx, const CallEvalFn * /*call_eval*/) {
+    return eval_lambda_expr(node, ctx);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::StructLiteralExpr &node,
+                                        const ir::Expr & /*expr*/, const EvalContext &ctx,
+                                        const CallEvalFn *call_eval) {
+    return eval_struct_literal(node, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::UnaryExpr &node, const ir::Expr & /*expr*/,
+                                        const EvalContext &ctx, const CallEvalFn *call_eval) {
+    return eval_unary_expr(node, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::BinaryExpr &node, const ir::Expr & /*expr*/,
+                                        const EvalContext &ctx, const CallEvalFn *call_eval) {
+    return eval_binary_expr(node, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::MemberAccessExpr &node,
+                                        const ir::Expr & /*expr*/, const EvalContext &ctx,
+                                        const CallEvalFn *call_eval) {
+    return eval_member_access(node, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::IndexAccessExpr &node, const ir::Expr & /*expr*/,
+                                        const EvalContext &ctx, const CallEvalFn *call_eval) {
+    return eval_index_access(node, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::MatchExpr &node, const ir::Expr & /*expr*/,
+                                        const EvalContext &ctx, const CallEvalFn *call_eval) {
+    return eval_match_expr(node, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::UnwrapExpr &node, const ir::Expr & /*expr*/,
+                                        const EvalContext &ctx, const CallEvalFn *call_eval) {
+    return eval_unwrap_expr(node, ctx, call_eval);
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::UnitLiteralExpr & /*node*/,
+                                        const ir::Expr & /*expr*/, const EvalContext & /*ctx*/,
+                                        const CallEvalFn * /*call_eval*/) {
+    // RFC 0013 P3-gaps-B: `{}` evaluates to the sole unit value.
+    return EvalResult{make_unit(), {}};
+}
+[[nodiscard]] EvalResult eval_expr_node(const ir::QuantifierExpr & /*node*/,
+                                        const ir::Expr & /*expr*/, const EvalContext & /*ctx*/,
+                                        const CallEvalFn * /*call_eval*/) {
+    // RFC 0024: bounded quantifiers are verification-only contract
+    // predicates encoded by the SMT-BMC backend; they never appear
+    // in executable IR, so reaching the runtime evaluator is a bug.
+    return make_error("quantifier expression is not executable at runtime "
+                      "(verification-only; SMT-BMC encoded)");
+}
+
 EvalResult
 eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
+    // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per ExprNode alternative,
+    // generated from the X-list expr_nodes.def. Every node routes to its named
+    // evaluator above; there is no generic catch-all, so a new expr node is a
+    // COMPILE ERROR here until it is routed (CLAUDE.md Principle 5).
+#define HANDLE_EXPR_NODE(Name, Wire, Edges)                                                     \
+    [&expr, &ctx, call_eval](const ir::Name &node) -> EvalResult {                              \
+        return eval_expr_node(node, expr, ctx, call_eval);                                      \
+    },
     return std::visit(
-        [&expr, &ctx, call_eval](const auto &node) -> EvalResult {
-            using T = std::decay_t<decltype(node)>;
-            if constexpr (std::is_same_v<T, ir::BoolLiteralExpr>) {
-                return eval_bool_literal(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::IntegerLiteralExpr>) {
-                return eval_integer_literal(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::FloatLiteralExpr>) {
-                return eval_float_literal(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::DecimalLiteralExpr>) {
-                return eval_decimal_literal(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::StringLiteralExpr>) {
-                return eval_string_literal(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::DurationLiteralExpr>) {
-                return eval_duration_literal(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::PathExpr>) {
-                return eval_path_expr(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::QualifiedValueExpr>) {
-                return eval_qualified_value_expr(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::CallExpr>) {
-                return eval_call_expr(node, expr.source_range, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::MethodCallExpr>) {
-                // KR5.5: a method call dispatches exactly like the equivalent
-                // free call — the receiver is the leading argument and `method`
-                // is the resolved dispatch target. Reconstruct the flattened
-                // CallExpr shape so the existing call machinery handles it
-                // unchanged (runtime behavior is identical to the pre-node form).
-                ir::CallExpr flattened;
-                flattened.callee = node.method;
-                flattened.callee_ref = node.method_ref;
-                flattened.arguments.reserve(node.arguments.size() + 1);
-                if (node.receiver) {
-                    flattened.arguments.push_back(node.receiver);
-                }
-                for (const auto &argument : node.arguments) {
-                    flattened.arguments.push_back(argument);
-                }
-                return eval_call_expr(flattened, expr.source_range, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::LambdaExpr>) {
-                return eval_lambda_expr(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::StructLiteralExpr>) {
-                return eval_struct_literal(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::UnaryExpr>) {
-                return eval_unary_expr(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::BinaryExpr>) {
-                return eval_binary_expr(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::MemberAccessExpr>) {
-                return eval_member_access(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::IndexAccessExpr>) {
-                return eval_index_access(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::MatchExpr>) {
-                return eval_match_expr(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::UnwrapExpr>) {
-                return eval_unwrap_expr(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::UnitLiteralExpr>) {
-                // RFC 0013 P3-gaps-B: `{}` evaluates to the sole unit value.
-                return EvalResult{make_unit(), {}};
-            } else if constexpr (std::is_same_v<T, ir::QuantifierExpr>) {
-                // RFC 0024: bounded quantifiers are verification-only contract
-                // predicates encoded by the SMT-BMC backend; they never appear
-                // in executable IR, so reaching the runtime evaluator is a bug.
-                return make_error("quantifier expression is not executable at runtime "
-                                  "(verification-only; SMT-BMC encoded)");
-            }
+        Overloaded{
+#include "ahfl/compiler/ir/expr_nodes.def"
         },
         expr.node);
+#undef HANDLE_EXPR_NODE
 }
 
 struct ProgramCallState : std::enable_shared_from_this<ProgramCallState> {

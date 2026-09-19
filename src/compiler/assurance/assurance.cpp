@@ -376,89 +376,176 @@ analyze_capability(const ir::CapabilityDecl &capability,
     return builder.str();
 }
 
-/// Render an IR expression into a compact human-readable string. Mirrors the
-/// same pattern ir_print uses but scoped to pure decreases-subject shapes so
-/// the obligation entries stay small.
+/// Render one IR expression node into a compact human-readable string. Mirrors
+/// the same pattern ir_print uses but scoped to the pure decreases-subject
+/// shapes the classifier can discharge; any other node shape renders the
+/// placeholder "<expr>" (display only — the obligation stays Unrecognized).
+[[nodiscard]] std::string render_decreases_subject_node(const ir::BoolLiteralExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::IntegerLiteralExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::FloatLiteralExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::DecimalLiteralExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::StringLiteralExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::DurationLiteralExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::PathExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::QualifiedValueExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::UnaryExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::BinaryExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::MemberAccessExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::CallExpr &v);
+[[nodiscard]] std::string render_decreases_subject_node(const ir::MethodCallExpr &v);
+
+/// Render an IR expression into a compact human-readable string (the entry
+/// point the decreases classifier calls). RFC 0027 P6/P7/P8 (KR6.13-F): one
+/// handler per ExprNode alternative, generated from the X-list expr_nodes.def.
+/// Only the shapes the decreases classifier can discharge get a real renderer;
+/// every other node names RENDER_UNSUPPORTED and produces the same "<expr>"
+/// placeholder the old unnamed catch-all did (display only — the obligation
+/// stays Unrecognized, so the placeholder is never a silently-accepted
+/// pattern). The explicit enumeration means a NEW expr node is a COMPILE ERROR
+/// here until it is classified as rendered or unsupported (CLAUDE.md
+/// Principle 5).
 [[nodiscard]] std::string render_decreases_subject(const ir::Expr &expr) {
+#define RENDER_UNSUPPORTED(Name) [](const ir::Name &) { return std::string("<expr>"); },
+#define RENDER_RENDERED(Name)                                                                   \
+    [](const ir::Name &v) { return render_decreases_subject_node(v); },
+
+#define RENDER_BoolLiteralExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_IntegerLiteralExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_FloatLiteralExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_DecimalLiteralExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_StringLiteralExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_DurationLiteralExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_PathExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_QualifiedValueExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_CallExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_MethodCallExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_LambdaExpr(Name) RENDER_UNSUPPORTED(Name)
+#define RENDER_StructLiteralExpr(Name) RENDER_UNSUPPORTED(Name)
+#define RENDER_UnaryExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_BinaryExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_MemberAccessExpr(Name) RENDER_RENDERED(Name)
+#define RENDER_IndexAccessExpr(Name) RENDER_UNSUPPORTED(Name)
+#define RENDER_MatchExpr(Name) RENDER_UNSUPPORTED(Name)
+#define RENDER_UnwrapExpr(Name) RENDER_UNSUPPORTED(Name)
+#define RENDER_UnitLiteralExpr(Name) RENDER_UNSUPPORTED(Name)
+#define RENDER_QuantifierExpr(Name) RENDER_UNSUPPORTED(Name)
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) RENDER_##Name(Name)
     return std::visit(
         Overloaded{
-            [](const ir::BoolLiteralExpr &v) { return std::string(v.value ? "true" : "false"); },
-            [](const ir::IntegerLiteralExpr &v) { return v.spelling; },
-            [](const ir::FloatLiteralExpr &v) { return v.spelling; },
-            [](const ir::DecimalLiteralExpr &v) { return v.spelling; },
-            [](const ir::StringLiteralExpr &v) { return v.spelling; },
-            [](const ir::DurationLiteralExpr &v) { return v.spelling; },
-            [](const ir::PathExpr &v) { return render_path(v.path); },
-            [](const ir::QualifiedValueExpr &v) { return v.value; },
-            [&](const ir::UnaryExpr &v) {
-                const char *op = v.op == ir::ExprUnaryOp::Negate     ? "-"
-                                 : v.op == ir::ExprUnaryOp::Positive ? "+"
-                                                                     : "!";
-                return std::string("(") + op +
-                       (v.operand ? render_decreases_subject(*v.operand) : std::string("none")) +
-                       ")";
-            },
-            [&](const ir::BinaryExpr &v) {
-                const char *op = [&]() {
-                    switch (v.op) {
-                    case ir::ExprBinaryOp::Implies:      return "=>";
-                    case ir::ExprBinaryOp::Or:           return "||";
-                    case ir::ExprBinaryOp::And:          return "&&";
-                    case ir::ExprBinaryOp::Equal:        return "==";
-                    case ir::ExprBinaryOp::NotEqual:     return "!=";
-                    case ir::ExprBinaryOp::Less:         return "<";
-                    case ir::ExprBinaryOp::LessEqual:    return "<=";
-                    case ir::ExprBinaryOp::Greater:      return ">";
-                    case ir::ExprBinaryOp::GreaterEqual: return ">=";
-                    case ir::ExprBinaryOp::Add:          return "+";
-                    case ir::ExprBinaryOp::Subtract:     return "-";
-                    case ir::ExprBinaryOp::Multiply:     return "*";
-                    case ir::ExprBinaryOp::Divide:       return "/";
-                    case ir::ExprBinaryOp::Modulo:       return "%";
-                    }
-                    return "?";
-                }();
-                return std::string("(") + (v.lhs ? render_decreases_subject(*v.lhs)
-                                                 : std::string("none")) +
-                       " " + op + " " +
-                       (v.rhs ? render_decreases_subject(*v.rhs) : std::string("none")) + ")";
-            },
-            [&](const ir::MemberAccessExpr &v) {
-                return (v.base ? render_decreases_subject(*v.base) : std::string("<none>")) +
-                       "." + v.member;
-            },
-            [&](const ir::CallExpr &v) {
-                std::ostringstream out;
-                out << v.callee << "(";
-                bool first = true;
-                for (const auto &arg : v.arguments) {
-                    if (!first) {
-                        out << ", ";
-                    }
-                    first = false;
-                    out << (arg ? render_decreases_subject(*arg) : std::string("none"));
-                }
-                out << ")";
-                return out.str();
-            },
-            [&](const ir::MethodCallExpr &v) {
-                std::ostringstream out;
-                out << (v.receiver ? render_decreases_subject(*v.receiver) : std::string("none"))
-                    << "." << v.method << "(";
-                bool first = true;
-                for (const auto &arg : v.arguments) {
-                    if (!first) {
-                        out << ", ";
-                    }
-                    first = false;
-                    out << (arg ? render_decreases_subject(*arg) : std::string("none"));
-                }
-                out << ")";
-                return out.str();
-            },
-            [](const auto &) { return std::string("<expr>"); },
+#include "ahfl/compiler/ir/expr_nodes.def"
         },
         expr.node);
+#undef HANDLE_EXPR_NODE
+#undef RENDER_BoolLiteralExpr
+#undef RENDER_IntegerLiteralExpr
+#undef RENDER_FloatLiteralExpr
+#undef RENDER_DecimalLiteralExpr
+#undef RENDER_StringLiteralExpr
+#undef RENDER_DurationLiteralExpr
+#undef RENDER_PathExpr
+#undef RENDER_QualifiedValueExpr
+#undef RENDER_CallExpr
+#undef RENDER_MethodCallExpr
+#undef RENDER_LambdaExpr
+#undef RENDER_StructLiteralExpr
+#undef RENDER_UnaryExpr
+#undef RENDER_BinaryExpr
+#undef RENDER_MemberAccessExpr
+#undef RENDER_IndexAccessExpr
+#undef RENDER_MatchExpr
+#undef RENDER_UnwrapExpr
+#undef RENDER_UnitLiteralExpr
+#undef RENDER_QuantifierExpr
+#undef RENDER_RENDERED
+#undef RENDER_UNSUPPORTED
+}
+
+[[nodiscard]] std::string render_decreases_subject_node(const ir::BoolLiteralExpr &v) {
+    return std::string(v.value ? "true" : "false");
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::IntegerLiteralExpr &v) {
+    return v.spelling;
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::FloatLiteralExpr &v) {
+    return v.spelling;
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::DecimalLiteralExpr &v) {
+    return v.spelling;
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::StringLiteralExpr &v) {
+    return v.spelling;
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::DurationLiteralExpr &v) {
+    return v.spelling;
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::PathExpr &v) {
+    return render_path(v.path);
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::QualifiedValueExpr &v) {
+    return v.value;
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::UnaryExpr &v) {
+    const char *op = v.op == ir::ExprUnaryOp::Negate     ? "-"
+                     : v.op == ir::ExprUnaryOp::Positive ? "+"
+                                                         : "!";
+    return std::string("(") + op +
+           (v.operand ? render_decreases_subject(*v.operand) : std::string("none")) + ")";
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::BinaryExpr &v) {
+    const char *op = [&]() {
+        switch (v.op) {
+        case ir::ExprBinaryOp::Implies:      return "=>";
+        case ir::ExprBinaryOp::Or:           return "||";
+        case ir::ExprBinaryOp::And:          return "&&";
+        case ir::ExprBinaryOp::Equal:        return "==";
+        case ir::ExprBinaryOp::NotEqual:     return "!=";
+        case ir::ExprBinaryOp::Less:         return "<";
+        case ir::ExprBinaryOp::LessEqual:    return "<=";
+        case ir::ExprBinaryOp::Greater:      return ">";
+        case ir::ExprBinaryOp::GreaterEqual: return ">=";
+        case ir::ExprBinaryOp::Add:          return "+";
+        case ir::ExprBinaryOp::Subtract:     return "-";
+        case ir::ExprBinaryOp::Multiply:     return "*";
+        case ir::ExprBinaryOp::Divide:       return "/";
+        case ir::ExprBinaryOp::Modulo:       return "%";
+        }
+        return "?";
+    }();
+    return std::string("(") + (v.lhs ? render_decreases_subject(*v.lhs) : std::string("none")) +
+           " " + op + " " +
+           (v.rhs ? render_decreases_subject(*v.rhs) : std::string("none")) + ")";
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::MemberAccessExpr &v) {
+    return (v.base ? render_decreases_subject(*v.base) : std::string("<none>")) + "." + v.member;
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::CallExpr &v) {
+    std::ostringstream out;
+    out << v.callee << "(";
+    bool first = true;
+    for (const auto &arg : v.arguments) {
+        if (!first) {
+            out << ", ";
+        }
+        first = false;
+        out << (arg ? render_decreases_subject(*arg) : std::string("none"));
+    }
+    out << ")";
+    return out.str();
+}
+[[nodiscard]] std::string render_decreases_subject_node(const ir::MethodCallExpr &v) {
+    std::ostringstream out;
+    out << (v.receiver ? render_decreases_subject(*v.receiver) : std::string("none")) << "."
+        << v.method << "(";
+    bool first = true;
+    for (const auto &arg : v.arguments) {
+        if (!first) {
+            out << ", ";
+        }
+        first = false;
+        out << (arg ? render_decreases_subject(*arg) : std::string("none"));
+    }
+    out << ")";
+    return out.str();
 }
 
 /// True iff expr is a PathExpr whose root is exactly "self" with no members.

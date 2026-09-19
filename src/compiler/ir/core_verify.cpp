@@ -27,6 +27,20 @@ namespace ahfl::ir::core {
 
 namespace {
 
+// RFC 0027 P6/P7/P8 (KR6.13-F): each generic-lambda fallback over an IR node
+// family in this file is replaced by ONE handler per alternative, with the
+// childless / child-free alternatives bound to a named no-op macro below. The
+// named no-op is the "curated, explicitly-listed leaf" the RFC calls for: it
+// keeps the genuinely-empty semantics visible in one place and makes a NEW node
+// a compile error instead of a silently skipped case (CLAUDE.md Principle 5).
+//
+// The macro spelling is the node struct name (e.g. CoreLiteralExpr) so the
+// expansion reads as the variant's alternative list; each is a typed per-node
+// lambda, so std::visit's exhaustiveness check catches a missing alternative.
+#define CORE_EXPR_ACYCLIC_LEAF(Name) [](const Name &) {}
+#define CORE_PATTERN_ACYCLIC_LEAF(Name) [](const Name &) {}
+#define CORE_EXPR_PATHS_LEAF(Name) [](const Name &) {}
+
 // RFC 0026 P4-B (P1): the type a value-yielding region's yields must have.
 // Threaded THROUGH nested `if` branches so `if { yield W } else { yield W }`
 // inside a guard / expression arm is type-checked, not just the top-level yield.
@@ -1328,13 +1342,28 @@ class Verifier {
                             stack.push_back(e.value);
                         }
                     };
+                    // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per CoreExprNode
+                    // alternative. Only CoreUnaryExpr / CoreBinaryExpr carry
+                    // intra-arena operand edges, so every other node names
+                    // CORE_EXPR_ACYCLIC_LEAF (an explicit, named no-op — the same
+                    // behavior the unnamed catch-all had). With no generic
+                    // catch-all, adding a CoreExprNode alternative is a COMPILE
+                    // ERROR here until it is classified (CLAUDE.md Principle 5);
+                    // the coverage pin below ties the handled set to the variant.
                     std::visit(Overloaded{
+                                   CORE_EXPR_ACYCLIC_LEAF(CoreLiteralExpr),
+                                   CORE_EXPR_ACYCLIC_LEAF(CoreValueRefExpr),
+                                   CORE_EXPR_ACYCLIC_LEAF(CorePathExpr),
+                                   CORE_EXPR_ACYCLIC_LEAF(CoreQualifiedExpr),
                                    [&](const CoreUnaryExpr &u) { push_edge(u.operand); },
                                    [&](const CoreBinaryExpr &b) {
                                        push_edge(b.lhs);
                                        push_edge(b.rhs);
                                    },
-                                   [&](const auto &) {},
+                                   CORE_EXPR_ACYCLIC_LEAF(CoreConstructExpr),
+                                   CORE_EXPR_ACYCLIC_LEAF(CoreCoerceExpr),
+                                   CORE_EXPR_ACYCLIC_LEAF(CoreCollectionExpr),
+                                   CORE_EXPR_ACYCLIC_LEAF(CoreUnsupportedExpr),
                                },
                                flow.exprs[id].node);
                 } else {
@@ -1519,7 +1548,17 @@ class Verifier {
                             stack.push_back(e.value);
                         }
                     };
+                    // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per
+                    // CorePatternNode alternative. Only CoreBindingPat /
+                    // CoreVariantPat / CoreTuplePat / CoreOrPat carry
+                    // sub-pattern edges, so those route above; the rest name
+                    // CORE_PATTERN_ACYCLIC_LEAF (explicit, named no-op). No
+                    // generic catch-all: a new pattern alternative is a COMPILE
+                    // ERROR here until it is classified.
                     std::visit(Overloaded{
+                                   CORE_PATTERN_ACYCLIC_LEAF(CoreWildcardPat),
+                                   CORE_PATTERN_ACYCLIC_LEAF(CoreLiteralPat),
+                                   CORE_PATTERN_ACYCLIC_LEAF(CoreIntRangePat),
                                    [&](const CoreBindingPat &b) {
                                        if (b.has_nested) {
                                            push(b.nested);
@@ -1543,7 +1582,6 @@ class Verifier {
                                            push(a);
                                        }
                                    },
-                                   [&](const auto &) {},
                                },
                                flow.patterns[id].node);
                 } else {
@@ -2819,6 +2857,13 @@ class Verifier {
                     stack.push_back(e.value);
                 }
             };
+            // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per CoreExprNode
+            // alternative. Only CorePathExpr yields a path and only
+            // CoreUnaryExpr / CoreBinaryExpr carry intra-arena operand edges, so
+            // those route above; every other node names
+            // CORE_EXPR_PATHS_LEAF (explicit, named no-op — the same behavior the
+            // unnamed catch-all had). No generic catch-all: a new expr
+            // alternative is a COMPILE ERROR here until it is classified.
             std::visit(Overloaded{
                            [&](const CorePathExpr &p) { fn(p, range); },
                            [&](const CoreUnaryExpr &u) { push(u.operand); },
@@ -2826,7 +2871,13 @@ class Verifier {
                                push(b.lhs);
                                push(b.rhs);
                            },
-                           [&](const auto &) {},
+                           CORE_EXPR_PATHS_LEAF(CoreLiteralExpr),
+                           CORE_EXPR_PATHS_LEAF(CoreValueRefExpr),
+                           CORE_EXPR_PATHS_LEAF(CoreQualifiedExpr),
+                           CORE_EXPR_PATHS_LEAF(CoreConstructExpr),
+                           CORE_EXPR_PATHS_LEAF(CoreCoerceExpr),
+                           CORE_EXPR_PATHS_LEAF(CoreCollectionExpr),
+                           CORE_EXPR_PATHS_LEAF(CoreUnsupportedExpr),
                        },
                        wf.exprs[id].node);
         }
@@ -3431,6 +3482,21 @@ class Verifier {
     const CoreProgram &program_;
     std::vector<CoreLowerDiagnostic> diags_;
 };
+
+// RFC 0027 P6/P7/P8 (KR6.13-F) coverage pins: the explicitly-enumerated handler
+// sets above are checked against the variant cardinalities at compile time, so a
+// node added to a variant without a matching arm is caught here even before the
+// std::visit instantiation. These are the "curated, commented allowlist ties the
+// handled set to the .def list" the slice requires (the .def list is the SSOT
+// that generates each variant's cardinality).
+static_assert(std::variant_size_v<CoreExprNode> == 10,
+              "core_verify.cpp: the CoreExprNode handler sets (acyclic-leaf 8 + "
+              "unary/binary 2) must stay in lockstep with the variant; add the "
+              "new alternative to CORE_EXPR_ACYCLIC_LEAF / CORE_EXPR_PATHS_LEAF "
+              "and its real handler.");
+static_assert(std::variant_size_v<CorePatternNode> == 7,
+              "core_verify.cpp: the CorePatternNode handler set (leaf 3 + "
+              "binding/variant/tuple/or 4) must stay in lockstep with the variant.");
 
 } // namespace
 

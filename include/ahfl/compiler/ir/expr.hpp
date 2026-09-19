@@ -14,6 +14,7 @@
 
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/base/support/source.hpp"
+#include "ahfl/compiler/ir/node_tags.hpp"
 #include "ahfl/compiler/ir/types.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
 
@@ -160,24 +161,35 @@ struct OrPattern {
     std::vector<Owned<MatchPattern>> branches;
 };
 
-using MatchPatternNode = std::variant<LiteralPattern,
-                                      IntRangePattern,
-                                      VariantPattern,
-                                      WildcardPattern,
-                                      BindingPattern,
-                                      TuplePattern,
-                                      OrPattern>;
+namespace node_detail {
 
-// RFC 0027 P8 IR SSOT compile-time cardinality gate. Adding or removing an
-// alternative without updating every exhaustive visitor MUST fail the build.
-// Keep this pin adjacent to the declaration; the negative compile-test harness
-// under tests/fixtures/ir/ssot/ independently proves a missing visitor handler
-// is uncompilable, and the follow-up X-macro slice generates the variant itself
-// from one shared node list.
+// Tag tuples for every X-macro-generated IR variant (KR6.13-F). Each is
+// expanded from its .def list; the variant is reconstructed from the element
+// types, so declaration order in the .def IS alternative order.
+#define HANDLE_PATTERN_NODE(Name) node_tag<Name>{},
+inline constexpr auto kPatternNodeTags = std::tuple{
+#include "ahfl/compiler/ir/pattern_nodes.def"
+};
+#undef HANDLE_PATTERN_NODE
+
+} // namespace node_detail
+
+// RFC 0027 P6/P7/P8 (KR6.13-F): the alternative list is generated from the
+// single X-macro node list pattern_nodes.def — one line per node, declaration
+// order preserved. To add a node, edit ONLY that .def; the variant, every
+// exhaustive visitor, and (via the negative compile-test) the whole consumer
+// set stay in lockstep, and a node that misses a handler is a compile error
+// naming the type rather than a silently skipped case.
+using MatchPatternNode = node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(node_detail::kPatternNodeTags)>>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate. The count itself now
+// derives from pattern_nodes.def; this pin turns "a node was added to the .def"
+// into a deliberate review event across every exhaustive visitor.
 static_assert(std::variant_size_v<MatchPatternNode> == 7,
               "ahfl::ir::MatchPatternNode cardinality drift (RFC 0027 P8 IR "
               "SSOT): update every exhaustive visitor and this pin together "
-              "with the alternative list.");
+              "with pattern_nodes.def.");
 
 struct MatchPattern {
     MatchPatternNode node;
@@ -389,34 +401,22 @@ struct QuantifierExpr {
 /// remaining IR families (Statement / TemporalExpr / MatchPattern / Decl / …)
 /// keep their own checklists until later KR6.13 slices migrate them.
 ///
-/// The tuple-tag indirection mirrors core_value_types.def: a template argument
-/// list (unlike a braced-init list) rejects a trailing comma, so the macro
-/// cannot paste `Name,` straight into std::variant<...> and instead emits tag
-/// types the variant is reconstructed from.
+/// The tuple-tag indirection lives in node_tags.hpp (KR6.13-F), shared by every
+/// X-macro-generated IR variant.
 namespace expr_node_detail {
-
-template <typename T> struct node_tag {
-    using type = T;
-};
-
-template <typename TagTuple> struct variant_from_tags;
-template <typename... Ts> struct variant_from_tags<std::tuple<node_tag<Ts>...>> {
-    using type = std::variant<Ts...>;
-};
 
 // The edge column (third .def argument, KR6.13-T) is unused by the variant and
 // wire-table derivations below; the child-edge traversal derives from it in
 // ahfl/compiler/ir/expr_child_edges.hpp.
-#define HANDLE_EXPR_NODE(Name, Wire, Edges) node_tag<Name>{},
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) node_detail::node_tag<Name>{},
 inline constexpr auto kExprNodeTags = std::tuple{
 #include "ahfl/compiler/ir/expr_nodes.def"
 };
 
 } // namespace expr_node_detail
 
-using ExprNode =
-    expr_node_detail::variant_from_tags<std::remove_cvref_t<
-        decltype(expr_node_detail::kExprNodeTags)>>::type;
+using ExprNode = node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(expr_node_detail::kExprNodeTags)>>;
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see MatchPatternNode). The
 // count itself now derives from expr_nodes.def; this pin turns "a node was added
@@ -514,20 +514,25 @@ struct TemporalBinaryExpr {
     TemporalExprPtr rhs;
 };
 
-/// Temporal expression node (7 variant alternatives)
-using TemporalExprNode = std::variant<EmbeddedTemporalExpr,
-                                      CalledTemporalExpr,
-                                      InStateTemporalExpr,
-                                      RunningTemporalExpr,
-                                      CompletedTemporalExpr,
-                                      TemporalUnaryExpr,
-                                      TemporalBinaryExpr>;
+namespace node_detail {
+
+#define HANDLE_TEMPORAL_NODE(Name) node_tag<Name>{},
+inline constexpr auto kTemporalNodeTags = std::tuple{
+#include "ahfl/compiler/ir/temporal_nodes.def"
+};
+#undef HANDLE_TEMPORAL_NODE
+
+} // namespace node_detail
+
+/// Temporal expression node — generated from temporal_nodes.def (KR6.13-F).
+using TemporalExprNode = node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(node_detail::kTemporalNodeTags)>>;
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see MatchPatternNode).
 static_assert(std::variant_size_v<TemporalExprNode> == 7,
               "ahfl::ir::TemporalExprNode cardinality drift (RFC 0027 P8 IR "
               "SSOT): update every exhaustive visitor and this pin together "
-              "with the alternative list.");
+              "with temporal_nodes.def.");
 
 /// Temporal expression wrapper struct
 struct TemporalExpr {
@@ -661,24 +666,25 @@ struct ExprStatement {
     ExprRef expr;
 };
 
-/// Statement node (11 variant alternatives)
-using StatementNode = std::variant<LetStatement,
-                                   AssignStatement,
-                                   IfStatement,
-                                   IfLetStatement,
-                                   GotoStatement,
-                                   ReturnStatement,
-                                   AssertStatement,
-                                   UnwrapStatement,
-                                   RequiresStatement,
-                                   UnreachableStatement,
-                                   ExprStatement>;
+namespace node_detail {
+
+#define HANDLE_STMT_NODE(Name) node_tag<Name>{},
+inline constexpr auto kStmtNodeTags = std::tuple{
+#include "ahfl/compiler/ir/stmt_nodes.def"
+};
+#undef HANDLE_STMT_NODE
+
+} // namespace node_detail
+
+/// Statement node — generated from stmt_nodes.def (KR6.13-F).
+using StatementNode =
+    node_detail::variant_from_tags_t<std::remove_cvref_t<decltype(node_detail::kStmtNodeTags)>>;
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see MatchPatternNode).
 static_assert(std::variant_size_v<StatementNode> == 11,
               "ahfl::ir::StatementNode cardinality drift (RFC 0027 P8 IR "
               "SSOT): update every exhaustive visitor and this pin together "
-              "with the alternative list.");
+              "with stmt_nodes.def.");
 
 /// Statement wrapper struct
 struct Statement {

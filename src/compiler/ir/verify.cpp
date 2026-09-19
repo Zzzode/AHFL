@@ -1,5 +1,6 @@
 #include "ahfl/compiler/ir/verify.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/analysis.hpp"
 
 #include <algorithm>
@@ -146,12 +147,60 @@ class ProgramVerifier {
     }
 
     void collect_decl_symbol_identities() {
-        for (const auto &decl : program_.declarations) {
-            std::visit([this](const auto &value) { collect_decl_symbol_identity(value); }, decl);
-        }
-    }
+        // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per Decl alternative,
+        // generated from decl_nodes.def. Declarations that define no addressable
+        // symbol (module / import / contract / flow / impl) name the
+        // explicitly-named COLLECT_DECL_LEAF no-op; the rest route to a per-node
+        // collector. No unnamed catch-all, so a new declaration node is a
+        // COMPILE ERROR here until it is routed (CLAUDE.md Principle 5).
+#define COLLECT_DECL_LEAF(Name) [this](const Name &) {},
+#define COLLECT_DECL_SYMBOL(Name)                                                               \
+    [this](const Name &value) { collect_decl_symbol_identity(value); },
 
-    template <typename DeclT> void collect_decl_symbol_identity(const DeclT & /*decl*/) {}
+#define COLLECT_ModuleDecl(Name) COLLECT_DECL_LEAF(Name)
+#define COLLECT_ImportDecl(Name) COLLECT_DECL_LEAF(Name)
+#define COLLECT_ConstDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_TypeAliasDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_StructDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_EnumDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_CapabilityDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_PredicateDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_AgentDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_ContractDecl(Name) COLLECT_DECL_LEAF(Name)
+#define COLLECT_FlowDecl(Name) COLLECT_DECL_LEAF(Name)
+#define COLLECT_WorkflowDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_FnDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_TraitDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define COLLECT_ImplDecl(Name) COLLECT_DECL_LEAF(Name)
+#define COLLECT_InstanceDecl(Name) COLLECT_DECL_SYMBOL(Name)
+#define HANDLE_DECL_NODE(Name) COLLECT_##Name(Name)
+        for (const auto &decl : program_.declarations) {
+            std::visit(
+                Overloaded{
+#include "ahfl/compiler/ir/decl_nodes.def"
+                },
+                decl);
+        }
+#undef HANDLE_DECL_NODE
+#undef COLLECT_ModuleDecl
+#undef COLLECT_ImportDecl
+#undef COLLECT_ConstDecl
+#undef COLLECT_TypeAliasDecl
+#undef COLLECT_StructDecl
+#undef COLLECT_EnumDecl
+#undef COLLECT_CapabilityDecl
+#undef COLLECT_PredicateDecl
+#undef COLLECT_AgentDecl
+#undef COLLECT_ContractDecl
+#undef COLLECT_FlowDecl
+#undef COLLECT_WorkflowDecl
+#undef COLLECT_FnDecl
+#undef COLLECT_TraitDecl
+#undef COLLECT_ImplDecl
+#undef COLLECT_InstanceDecl
+#undef COLLECT_DECL_SYMBOL
+#undef COLLECT_DECL_LEAF
+    }
 
     void collect_decl_symbol_identity(const ConstDecl &decl) {
         collect_symbol_identity(decl.symbol_ref, "const " + decl.name);
@@ -180,6 +229,14 @@ class ProgramVerifier {
     // P2c (RFC §3.2.2): collect a fn declaration's self symbol reference.
     void collect_decl_symbol_identity(const FnDecl &decl) {
         collect_symbol_identity(decl.symbol_ref, "fn " + decl.name);
+    }
+    // KR6.13-F: a trait declaration's `symbol_ref` is the trait's own symbol.
+    // The generic catch-all that used to route every unlisted declaration to a
+    // no-op silently skipped it (the class this slice removes); listing it here
+    // ties the trait's self symbol into the cross-declaration identity check,
+    // exactly as the fn / agent / workflow self symbols already are.
+    void collect_decl_symbol_identity(const TraitDecl &decl) {
+        collect_symbol_identity(decl.symbol_ref, "trait " + decl.name);
     }
 
     void collect_decl_symbol_identity(const InstanceDecl &decl) {
@@ -808,8 +865,45 @@ class ProgramVerifier {
             add_error(path, "duplicate statement id " + std::to_string(stmt.id));
         }
         verify_source_range(stmt.source_range, path, "source range");
-        std::visit([this, &path](const auto &value) { verify_statement_node(value, path); },
-                   stmt.node);
+        // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per StatementNode alternative,
+        // generated from stmt_nodes.def; a node without its own verifier names the
+        // explicitly-named VERIFY_STMT_LEAF no-op. No unnamed catch-all: a new
+        // statement node is a COMPILE ERROR here until it is routed.
+#define VERIFY_STMT_LEAF(Name) [this, &path](const Name &) {},
+#define VERIFY_STMT_CHECKED(Name)                                                                \
+    [this, &path](const Name &value) { verify_statement_node(value, path); },
+
+#define VERIFY_STMT_LetStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_AssignStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_IfStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_IfLetStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_GotoStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_ReturnStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_AssertStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_UnwrapStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_RequiresStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_UnreachableStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define VERIFY_STMT_ExprStatement(Name) VERIFY_STMT_CHECKED(Name)
+#define HANDLE_STMT_NODE(Name) VERIFY_STMT_##Name(Name)
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/stmt_nodes.def"
+            },
+            stmt.node);
+#undef HANDLE_STMT_NODE
+#undef VERIFY_STMT_LetStatement
+#undef VERIFY_STMT_AssignStatement
+#undef VERIFY_STMT_IfStatement
+#undef VERIFY_STMT_IfLetStatement
+#undef VERIFY_STMT_GotoStatement
+#undef VERIFY_STMT_ReturnStatement
+#undef VERIFY_STMT_AssertStatement
+#undef VERIFY_STMT_UnwrapStatement
+#undef VERIFY_STMT_RequiresStatement
+#undef VERIFY_STMT_UnreachableStatement
+#undef VERIFY_STMT_ExprStatement
+#undef VERIFY_STMT_CHECKED
+#undef VERIFY_STMT_LEAF
     }
 
     [[nodiscard]] static bool same_symbol_identity(const SymbolRef &lhs,
@@ -1289,11 +1383,68 @@ class ProgramVerifier {
     }
 
     void verify_expr_children(const Expr &expr, const std::string &path) {
-        std::visit([this, &path](const auto &value) { verify_expr_node(value, path); }, expr.node);
-    }
+        // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per ExprNode alternative,
+        // generated from the X-list expr_nodes.def. A node with genuinely empty
+        // verifier semantics (a pure literal / path leaf — its checks, if any,
+        // are its children's) is bound to the SINGLE explicitly-named
+        // VERIFY_EXPR_LEAF no-op; every node that carries its own check names a
+        // per-node handler below. There is no unnamed catch-all, so adding a node
+        // to expr_nodes.def without listing it here is a COMPILE ERROR naming the
+        // type (CLAUDE.md Principle 5) instead of a silently unchecked node.
+#define VERIFY_EXPR_LEAF(Name) [this, &path](const Name &) {},
+#define VERIFY_EXPR_CHECKED(Name)                                                                \
+    [this, &path](const Name &value) { verify_expr_node(value, path); },
 
-    template <typename ExprT>
-    void verify_expr_node(const ExprT & /*expr*/, const std::string & /*path*/) {}
+#define VERIFY_EXPR_BoolLiteralExpr(Name) VERIFY_EXPR_LEAF(Name)
+#define VERIFY_EXPR_IntegerLiteralExpr(Name) VERIFY_EXPR_LEAF(Name)
+#define VERIFY_EXPR_FloatLiteralExpr(Name) VERIFY_EXPR_LEAF(Name)
+#define VERIFY_EXPR_DecimalLiteralExpr(Name) VERIFY_EXPR_LEAF(Name)
+#define VERIFY_EXPR_StringLiteralExpr(Name) VERIFY_EXPR_LEAF(Name)
+#define VERIFY_EXPR_DurationLiteralExpr(Name) VERIFY_EXPR_LEAF(Name)
+#define VERIFY_EXPR_PathExpr(Name) VERIFY_EXPR_LEAF(Name)
+#define VERIFY_EXPR_QualifiedValueExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_CallExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_MethodCallExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_LambdaExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_StructLiteralExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_UnaryExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_BinaryExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_MemberAccessExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_IndexAccessExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_MatchExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_UnwrapExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define VERIFY_EXPR_UnitLiteralExpr(Name) VERIFY_EXPR_LEAF(Name)
+#define VERIFY_EXPR_QuantifierExpr(Name) VERIFY_EXPR_CHECKED(Name)
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) VERIFY_EXPR_##Name(Name)
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/expr_nodes.def"
+            },
+            expr.node);
+#undef HANDLE_EXPR_NODE
+#undef VERIFY_EXPR_BoolLiteralExpr
+#undef VERIFY_EXPR_IntegerLiteralExpr
+#undef VERIFY_EXPR_FloatLiteralExpr
+#undef VERIFY_EXPR_DecimalLiteralExpr
+#undef VERIFY_EXPR_StringLiteralExpr
+#undef VERIFY_EXPR_DurationLiteralExpr
+#undef VERIFY_EXPR_PathExpr
+#undef VERIFY_EXPR_QualifiedValueExpr
+#undef VERIFY_EXPR_CallExpr
+#undef VERIFY_EXPR_MethodCallExpr
+#undef VERIFY_EXPR_LambdaExpr
+#undef VERIFY_EXPR_StructLiteralExpr
+#undef VERIFY_EXPR_UnaryExpr
+#undef VERIFY_EXPR_BinaryExpr
+#undef VERIFY_EXPR_MemberAccessExpr
+#undef VERIFY_EXPR_IndexAccessExpr
+#undef VERIFY_EXPR_MatchExpr
+#undef VERIFY_EXPR_UnwrapExpr
+#undef VERIFY_EXPR_UnitLiteralExpr
+#undef VERIFY_EXPR_QuantifierExpr
+#undef VERIFY_EXPR_CHECKED
+#undef VERIFY_EXPR_LEAF
+    }
 
     void verify_expr_node(const CallExpr &expr, const std::string &path) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(expr.callee)) {
@@ -1449,14 +1600,64 @@ class ProgramVerifier {
         // other TypeRef (nominal_ref, refinements, nested params). Runs in every
         // mode; BackendReady adds the resolved-nominal-identity checks inside.
         verify_type_ref(pattern.matched_type_ref, path + ".matched_type_ref");
-        std::visit([this, &path, &pattern](
-                       const auto &node) { verify_match_pattern_node(node, path, pattern.matched_enum); },
+        std::visit(Overloaded{
+                       [this, &path, &pattern](const LiteralPattern &p) {
+                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                       },
+                       [this, &path, &pattern](const IntRangePattern &p) {
+                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                       },
+                       [this, &path, &pattern](const VariantPattern &p) {
+                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                       },
+                       [this, &path, &pattern](const WildcardPattern &p) {
+                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                       },
+                       [this, &path, &pattern](const BindingPattern &p) {
+                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                       },
+                       [this, &path, &pattern](const TuplePattern &p) {
+                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                       },
+                       [this, &path, &pattern](const OrPattern &p) {
+                           verify_match_pattern_node(p, path, pattern.matched_enum);
+                       },
+                   },
                    pattern.node);
     }
 
-    template <typename PatternT>
-    void verify_match_pattern_node(const PatternT & /*pattern*/, const std::string & /*path*/,
+    // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per MatchPatternNode alternative,
+    // generated from pattern_nodes.def. Literal / int-range / wildcard patterns
+    // carry no sub-pattern to verify, so they name the explicitly-named
+    // VERIFY_PATTERN_LEAF no-op; the rest route to a per-node handler. No unnamed
+    // catch-all: a new pattern node is a COMPILE ERROR here until it is routed.
+    // The dispatch above always passes the matched-enum identity; the leaf
+    // handlers simply ignore it.
+#define VERIFY_PATTERN_LEAF(Name)                                                               \
+    void verify_match_pattern_node(const Name & /*pattern*/, const std::string & /*path*/,      \
                                    const SymbolRef & /*matched_enum*/) {}
+
+// Variant / binding / tuple / or patterns carry children and already have a
+// three-argument verifier definition further down this class, so their routing
+// macro is the identity — the .def expansion below must NOT redeclare them.
+#define VERIFY_PATTERN_VariantPattern(Name)
+#define VERIFY_PATTERN_BindingPattern(Name)
+#define VERIFY_PATTERN_TuplePattern(Name)
+#define VERIFY_PATTERN_OrPattern(Name)
+#define VERIFY_PATTERN_LiteralPattern(Name) VERIFY_PATTERN_LEAF(Name)
+#define VERIFY_PATTERN_IntRangePattern(Name) VERIFY_PATTERN_LEAF(Name)
+#define VERIFY_PATTERN_WildcardPattern(Name) VERIFY_PATTERN_LEAF(Name)
+#define HANDLE_PATTERN_NODE(Name) VERIFY_PATTERN_##Name(Name)
+#include "ahfl/compiler/ir/pattern_nodes.def"
+#undef HANDLE_PATTERN_NODE
+#undef VERIFY_PATTERN_LiteralPattern
+#undef VERIFY_PATTERN_IntRangePattern
+#undef VERIFY_PATTERN_VariantPattern
+#undef VERIFY_PATTERN_WildcardPattern
+#undef VERIFY_PATTERN_BindingPattern
+#undef VERIFY_PATTERN_TuplePattern
+#undef VERIFY_PATTERN_OrPattern
+#undef VERIFY_PATTERN_LEAF
 
     void verify_match_pattern_node(const VariantPattern &pattern, const std::string &path,
                                    const SymbolRef &matched_enum) {
@@ -1552,8 +1753,35 @@ class ProgramVerifier {
             return;
         }
         verify_source_range(expr->source_range, path, "source range");
-        std::visit([this, &path](const auto &value) { verify_temporal_node(value, path); },
-                   expr->node);
+        // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per TemporalExprNode
+        // alternative, generated from temporal_nodes.def. Every temporal node has
+        // its own verifier rule, so all 7 name VERIFY_TEMPORAL_CHECKED; the
+        // explicit enumeration (rather than an unnamed generic lambda) means a new
+        // temporal node is a COMPILE ERROR here until it is routed.
+#define VERIFY_TEMPORAL_CHECKED(Name)                                                           \
+    [this, &path](const Name &value) { verify_temporal_node(value, path); },
+#define VERIFY_TEMPORAL_EmbeddedTemporalExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
+#define VERIFY_TEMPORAL_CalledTemporalExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
+#define VERIFY_TEMPORAL_InStateTemporalExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
+#define VERIFY_TEMPORAL_RunningTemporalExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
+#define VERIFY_TEMPORAL_CompletedTemporalExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
+#define VERIFY_TEMPORAL_TemporalUnaryExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
+#define VERIFY_TEMPORAL_TemporalBinaryExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
+#define HANDLE_TEMPORAL_NODE(Name) VERIFY_TEMPORAL_##Name(Name)
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/temporal_nodes.def"
+            },
+            expr->node);
+#undef HANDLE_TEMPORAL_NODE
+#undef VERIFY_TEMPORAL_EmbeddedTemporalExpr
+#undef VERIFY_TEMPORAL_CalledTemporalExpr
+#undef VERIFY_TEMPORAL_InStateTemporalExpr
+#undef VERIFY_TEMPORAL_RunningTemporalExpr
+#undef VERIFY_TEMPORAL_CompletedTemporalExpr
+#undef VERIFY_TEMPORAL_TemporalUnaryExpr
+#undef VERIFY_TEMPORAL_TemporalBinaryExpr
+#undef VERIFY_TEMPORAL_CHECKED
     }
 
     void verify_temporal_node(const EmbeddedTemporalExpr &expr, const std::string &path) {
