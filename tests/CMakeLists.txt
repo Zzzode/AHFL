@@ -293,12 +293,17 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
 
     # KR6.7 (RFC 0026 P7): execution witness for the case the eligibility
-    # classifier promoted across the wasm boundary. `float_output_e2e` is an
-    # f64 identity passthrough whose physical repr the E1 string identity does
-    # not exercise; the Node embedded host writes a real IEEE-754 double into
-    # the module's own allocated frame and reads it back out of the returned
-    # frame, so a mis-sized/mis-aligned f64 field cannot pass. Real Node-engine
-    # evidence, NOT wasmtime evidence; SKIPs (77) when Node is unavailable.
+    # classifier promoted across the wasm boundary. `float_output_e2e` is a
+    # single-agent f64 identity passthrough; the producer is asked for the
+    # WORKFLOW lane's artifact for the MANIFEST ENTRY (--workflow), which is by
+    # construction the artifact the classifier certified. The Node embedded host
+    # instantiates it and asserts the workflow lane's real execution contract
+    # (step/current_state trap before effects, run2 completes the schedule and
+    # returns the borrowed input frame verbatim, counters match the native run).
+    # The orchestration lane performs no frame field access, so this lane does
+    # NOT claim to pin f64 size/align -- that is the P6 layout Node lanes' job.
+    # Real Node-engine evidence, NOT wasmtime evidence; SKIPs (77) when Node is
+    # unavailable.
     add_test(NAME ahfl.wasm.eligibility_runnable_node
         COMMAND ${Python3_EXECUTABLE}
                 "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_eligibility_node_host.py"
@@ -307,7 +312,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
     set_tests_properties(ahfl.wasm.eligibility_runnable_node PROPERTIES
         SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "wasm eligibility f64 identity execution passed"
+        PASS_REGULAR_EXPRESSION "wasm eligibility workflow execution passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;node"
     )

@@ -3,21 +3,39 @@
 
 `ahfl.conformance.wasm_eligibility` classified the `float_output_e2e` case as
 `runnable_orchestration` -- and that promotion is only honest if the emitted
-module really executes. The other wasm execution lanes cover the E1-E3 and P6
-shapes; this lane is the execution witness for the case the classifier MOVED
-across the eligibility boundary.
+module really executes. This lane is the execution witness for the case the
+classifier MOVED across the eligibility boundary.
 
-The fixture is an f64 identity passthrough: an agent whose frame has one Float
-field, reached in two states, returned unchanged. It exercises the one physical
-repr (f64) the E1 string identity does not, so the evidence must be on the
-BYTES, not on a frame name: the host allocates a frame through the module's own
-`alloc`, writes an actual IEEE-754 double into linear memory, calls `run`, and
-reads the double back out of the returned frame. A layout that sized, aligned,
-or copied the frame wrongly reads a different number.
+The producer is asked for the WORKFLOW lane's artifact for the manifest entry
+(`--workflow runtime::float_output_e2e::FloatPipeline`), which is the artifact
+the classifier certified: it resolves the entry through the same
+`resolve_core_wasm_entry` seam with the manifest's typed kind + entry, instead of
+the agent-lane `CoreAgentId{0}` sibling the old wiring handed the host.
 
-The producer also runs the same source through the native AgentRuntime and
-reports the state-id path; the host asserts the module reaches the same ids and
-transition_count through `step()`.
+HONEST SCOPE -- read before extending. The orchestration lane is LAYOUT-FREE for
+identity frames: the emitted workflow runner returns `(OK, input_ptr, input_len)`
+and the legacy `run` returns its own input pointer (`make_workflow_run_body` +
+`make_workflow_runner_body`), so neither ever performs a wasm load/store of a
+frame field. The observable evidence is therefore the module's own execution
+contract, not a byte-offset readback:
+
+  * the module instantiates under the Node engine with no imports;
+  * `step()` / `current_state()` trap (RuntimeError) BEFORE any effect, which is
+    the workflow module's fail-closed contract (they are stubs there);
+  * `run2(ptr, len)` executes the full schedule and returns the identity
+    `(OK, ptr, len)` tuple;
+  * `workflow_completed_count` / `transition_count` reach the native counters
+    the producer reports;
+  * the returned frame IS the borrowed input frame: a poison sentinel written
+    into it is returned verbatim and NO byte of it is modified, which is what
+    "identity passthrough" actually means here.
+
+This pins the lane's real soundness property -- the certified module executes
+and its counters match the native runtime -- and does NOT claim to pin an f64
+field size/align, because no field access happens on this lane. A codegen change
+that biased an f64 field offset would leave this artifact byte-identical; that
+is a property of the orchestration subset, and the P6 Node lanes (which DO
+perform layout-derived loads/stores) are where field offsets are pinned.
 
 This is embedded-engine evidence, NOT wasmtime evidence. SKIP (77) when the node
 interpreter is unavailable.
@@ -33,11 +51,14 @@ from pathlib import Path
 
 SKIP = 77
 
-# The f64 written into the input frame and read back out of the returned frame.
-# Not 1.0 or 0.0: a byte-swapped, truncated, or zero-initialized frame would
-# still produce those, so the witness value has to be distinguishable in every
-# byte of the double.
-WITNESS_F64 = 2.0
+# The manifest entry whose module the classifier certified. Passed to the
+# producer's `--workflow` mode so the artifact under test is the certified one.
+CASE_ENTRY = "runtime::float_output_e2e::FloatPipeline"
+
+# The poison sentinel written across the borrowed frame. Not zero: a frame that
+# was copied from a zero-initialized source, or truncated, would still read back
+# zeros, so the witness has to be distinguishable in every byte.
+POISON = bytes([0xAB] * 16)
 
 
 def fail(message: str) -> int:
@@ -45,22 +66,16 @@ def fail(message: str) -> int:
     return 1
 
 
-def parse_observation(stdout: str) -> dict[str, object]:
+def parse_observation(stdout: str) -> dict[str, int]:
     match = re.search(
-        r"native_status=(\w+) entered_ids=([0-9,]*) "
-        r"final_state_id=(-?\d+) transition_count=(\d+) "
-        r"initial_state_id=(\d+)",
+        r"workflow_status=(\w+) completed_nodes=(\d+) transition_count=(\d+)",
         stdout,
     )
     if match is None:
-        raise ValueError(f"malformed native observation: {stdout!r}")
-    entered = [int(x) for x in match.group(2).split(",") if x]
+        raise ValueError(f"malformed workflow observation: {stdout!r}")
     return {
-        "status": match.group(1),
-        "entered_ids": entered,
-        "final_state_id": int(match.group(3)),
-        "transition_count": int(match.group(4)),
-        "initial_state_id": int(match.group(5)),
+        "completed_nodes": int(match.group(2)),
+        "transition_count": int(match.group(3)),
     }
 
 
@@ -82,99 +97,87 @@ def main(argv: list[str]) -> int:
         td_path = Path(td)
         wasm = td_path / (source.stem + ".wasm")
         native = subprocess.run(
-            [str(producer), str(source), str(wasm)],
+            [str(producer), "--workflow", CASE_ENTRY, str(source), str(wasm)],
             capture_output=True, text=True, timeout=60,
         )
         if native.returncode != 0:
             return fail(f"producer exited {native.returncode}: {native.stderr}")
         obs = parse_observation(native.stdout.strip())
-        if obs["status"] != "completed" or not obs["entered_ids"]:
-            return fail(f"native run did not complete: {obs}")
 
         host = td_path / "eligibility_host.mjs"
         host.write_text(
             r'''
 import fs from "node:fs";
 
-const witness = Number(process.argv[3]);
 const bytes = fs.readFileSync(process.argv[2]);
+const poison = Buffer.from(process.argv[3], "hex");
+const expectedCompleted = Number(process.argv[4]);
+const expectedTransitions = Number(process.argv[5]);
 
 // A malformed module is a hard WebAssembly.compile rejection.
 const module = await WebAssembly.compile(bytes);
 if (WebAssembly.Module.imports(module).length !== 0)
-  throw new Error("f64 identity agent expanded import authority");
-const {exports} = await WebAssembly.instantiate(module, {});
-if (exports.ahfl_abi_version.value !== 1)
+  throw new Error("f64 identity workflow expanded import authority");
+const {exports: e} = await WebAssembly.instantiate(module, {});
+if (e.ahfl_abi_version.value !== 1)
   throw new Error("abi version mismatch");
+if (e.workflow_node_count.value !== 1)
+  throw new Error(`workflow_node_count ${e.workflow_node_count.value} != 1`);
 
-const initial = Number(process.argv[4]);
-const entered = process.argv[5].split(",").map(Number);
-const expected = entered.slice(1);
-const transitions = Number(process.argv[6]);
-if (entered[0] !== initial)
-  throw new Error("native initial id does not match initial_state_id");
-if (exports.current_state() !== initial)
-  throw new Error(`initial state ${exports.current_state()} != ${initial}`);
-
-// Drive step() (no frame involved) and require the native state-id path.
-const sequence = [];
-let previous = initial;
-let guard = expected.length + 2;
-while (guard-- > 0) {
-  const before = exports.transition_count.value;
-  const next = exports.step();
-  sequence.push(next);
-  if (next !== previous) {
-    if (exports.current_state() !== next)
-      throw new Error("current_state does not match step result");
-    if (exports.transition_count.value !== before + 1)
-      throw new Error("transition_count not bumped exactly once per goto");
-    previous = next;
-    continue;
-  }
-  if (exports.current_state() !== next)
-    throw new Error("final state is not stable");
-  break;
+// The workflow lane's fail-closed contract: step()/current_state() are stubs
+// that trap BEFORE any effect (a PENDING must never leak through them).
+for (const name of ["step", "current_state"]) {
+  let trapped = false;
+  try { e[name](); } catch (error) { trapped = error instanceof WebAssembly.RuntimeError; }
+  if (!trapped)
+    throw new Error(`${name} did not trap before effects`);
+  if (e.workflow_completed_count.value !== 0 || e.transition_count.value !== 0)
+    throw new Error(`${name} had an effect before trapping`);
 }
-const observedPath = sequence.slice(0, expected.length);
-if (JSON.stringify(observedPath) !== JSON.stringify(expected))
-  throw new Error(`state-id path ${observedPath} != native ${expected}`);
-if (exports.transition_count.value !== transitions)
-  throw new Error(`transition_count ${exports.transition_count.value} != ${transitions}`);
 
-// Real payload evidence: write an IEEE-754 double into the frame the module
-// allocated for us, run the identity passthrough, and read the double back at
-// the returned frame. A mis-sized or mis-aligned f64 field cannot round-trip.
-const ptr = exports.alloc(8);
+// Poison the destination region, then execute the real workflow entry. The
+// identity passthrough returns the BORROWED input frame untouched, so the
+// sentinel must come back verbatim and no byte of the frame may change -- which
+// is the honest content of "identity passthrough" on this lane.
+const ptr = e.alloc(poison.length);
 if (ptr === 0)
   throw new Error("alloc returned the null frame");
-const input = new Float64Array(exports.memory.buffer, ptr, 1);
-input[0] = witness;
-if (new Float64Array(exports.memory.buffer, ptr, 1)[0] !== witness)
-  throw new Error("frame write did not land");
+new Uint8Array(e.memory.buffer, ptr, poison.length).set(poison);
 
-const out = exports.run(ptr, 8);
-if (out === 0)
-  throw new Error("run returned the null frame");
-const observed = new Float64Array(exports.memory.buffer, out, 1)[0];
-if (observed !== witness)
-  throw new Error(`identity frame round-tripped ${observed} != ${witness}`);
-if (exports.current_state() !== expected[expected.length - 1])
-  throw new Error("run() did not reach the native final state");
-if (exports.transition_count.value !== transitions)
-  throw new Error("run() did not reach the native transition_count");
-exports.dealloc(ptr, 8);
+const tuple = e.run2(ptr, poison.length);
+if (tuple[0] !== 0 || tuple[1] !== ptr || tuple[2] !== poison.length)
+  throw new Error(`run2 identity tuple mismatch: ${tuple}`);
+if (e.workflow_completed_count.value !== expectedCompleted)
+  throw new Error(
+    `workflow_completed_count ${e.workflow_completed_count.value} != ${expectedCompleted}`);
+if (e.transition_count.value !== expectedTransitions)
+  throw new Error(
+    `transition_count ${e.transition_count.value} != ${expectedTransitions}`);
 
-console.log("wasm eligibility f64 identity execution passed");
+const returned = Buffer.from(new Uint8Array(e.memory.buffer, tuple[1], tuple[2]));
+if (!returned.equals(poison))
+  throw new Error("the borrowed frame bytes were not returned verbatim");
+if (tuple[1] !== ptr)
+  throw new Error("run2 did not return the borrowed input frame");
+
+// The legacy run entry executes the same identity schedule and returns the same
+// borrowed pointer.
+if (e.run(ptr, poison.length) !== ptr)
+  throw new Error("legacy run did not return the borrowed input frame");
+if (e.workflow_completed_count.value !== expectedCompleted ||
+    e.transition_count.value !== expectedTransitions)
+  throw new Error("legacy run did not replay the same identity schedule");
+
+e.dealloc(ptr, poison.length);
+console.log("wasm eligibility workflow execution passed");
 ''',
             encoding="utf-8",
         )
 
         executed = subprocess.run(
             [
-                node, str(host), str(wasm), str(WITNESS_F64),
-                str(obs["initial_state_id"]),
-                ",".join(str(x) for x in obs["entered_ids"]),
+                node, str(host), str(wasm), POISON.hex(),
+                str(obs["completed_nodes"]),
                 str(obs["transition_count"]),
             ],
             capture_output=True, text=True, timeout=60,
@@ -185,7 +188,7 @@ console.log("wasm eligibility f64 identity execution passed");
                 f"stdout={executed.stdout!r} stderr={executed.stderr!r}"
             )
 
-    print("OK: KR6.7 wasm eligibility f64 identity execution passed "
+    print("OK: KR6.7 wasm eligibility workflow execution passed "
           "(real Node v22 engine, NOT wasmtime evidence)")
     return 0
 

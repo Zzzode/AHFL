@@ -35,7 +35,10 @@
 //
 // The runner then cross-checks the manifest's declared lane against the
 // computed verdict, so an overclaiming (or stale) manifest fails closed even
-// when no WASM engine is installed.
+// when no WASM engine is installed. The cross-check is a TOTAL lane mapping
+// (`required_wasm_lane`), not a runnable/not-runnable boolean: `computation`
+// and `none` are DIFFERENT claims, so a case blocked at a KR6.6 seam can never
+// be declared `none` (nor a genuinely host-side case declared `computation`).
 
 #include <filesystem>
 #include <optional>
@@ -59,6 +62,16 @@ enum class WasmEligibilityVerdict {
 [[nodiscard]] std::string_view
 wasm_eligibility_verdict_name(WasmEligibilityVerdict verdict) noexcept;
 
+/// The ONE manifest lane a verdict requires. This is the cross-field
+/// constraint the manifest schema alone cannot express: a case blocked at a
+/// KR6.6 computation seam REQUIRES `computation` (the skip list is only honest
+/// if it names the lane that will lift the block), while a case blocked
+/// anywhere else is never liftable by the KR6.6 lane and REQUIRES `none`.
+/// Pure and total, so the divergence check is a single equality and a new
+/// verdict cannot silently inherit another verdict's lane.
+[[nodiscard]] WasmEligibility
+required_wasm_lane(WasmEligibilityVerdict verdict) noexcept;
+
 /// One case's computed eligibility.
 struct WasmEligibilityClassification {
     WasmEligibilityVerdict verdict{WasmEligibilityVerdict::BlockedUnsupportedOrchestration};
@@ -78,9 +91,6 @@ namespace wasm_eligibility_diag {
 /// typecheck / validate rejected it), so no statement about wasm eligibility
 /// can be made.
 inline constexpr std::string_view kSourceRejected = "conformance.ELIGIBILITY_SOURCE_REJECTED";
-/// The manifest declares an entry identity that does not resolve inside the
-/// compiled Core program.
-inline constexpr std::string_view kEntryUnresolved = "conformance.ELIGIBILITY_ENTRY_UNRESOLVED";
 } // namespace wasm_eligibility_diag
 
 /// The single code -> verdict table. Pure, total, and the only place that

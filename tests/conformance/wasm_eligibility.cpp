@@ -16,7 +16,6 @@ namespace ahfl::conformance {
 
 namespace {
 
-namespace core_diag = ir::core::diag;
 namespace layout_diag = ir::core::layout;
 
 // The ORCHESTRATION lane's fail-closed seams. Each of these is raised by
@@ -25,6 +24,14 @@ namespace layout_diag = ir::core::layout;
 // lift: an out-of-subset handler body, a capability frame shape the
 // orchestration line cannot forward, a workflow region it cannot package, or a
 // reachable import whose ABI cannot be wire-projected.
+//
+// Every one of these IS reachable through `emit_core_wasm`:
+//   * `wasm.UNSUPPORTED_ORCHESTRATION` is the DEFAULT `AgentPlanPolicy::
+//     unsupported_code`, so it is what every non-capability P6 fail-closed
+//     reject raises (the `: policy.unsupported_code` arm of the capability
+//     ternaries, plus every `P6ComputationHandlerBuilder::reject`).
+//   * the other three are the capability/workflow arms of those same ternaries
+//     and the explicit workflow-packaging policy.
 //
 // This is the ONE place that mapping lives. `classify_wasm_diagnostic` is pure
 // and total over it, so adding a future seam means adding one table entry, not
@@ -57,6 +64,24 @@ std::string_view wasm_eligibility_verdict_name(WasmEligibilityVerdict verdict) n
         return "blocked_unsupported_orchestration";
     }
     return "blocked_unsupported_orchestration";
+}
+
+// The ONE verdict -> manifest-lane projection. It is the cross-field constraint
+// the manifest schema cannot state on its own: only a KR6.6 computation boundary
+// is liftable by the KR6.6 lane, so only it may be declared `computation`;
+// everything else is outside the wasm contract entirely (`none`), which is what
+// stops a `none` case from silently carrying a KR6.6 skip reason.
+WasmEligibility required_wasm_lane(WasmEligibilityVerdict verdict) noexcept {
+    switch (verdict) {
+    case WasmEligibilityVerdict::RunnableOrchestration:
+        return WasmEligibility::Orchestration;
+    case WasmEligibilityVerdict::BlockedComputation:
+        return WasmEligibility::Computation;
+    case WasmEligibilityVerdict::BlockedLayout:
+    case WasmEligibilityVerdict::BlockedUnsupportedOrchestration:
+        return WasmEligibility::None;
+    }
+    return WasmEligibility::None;
 }
 
 WasmEligibilityVerdict classify_wasm_diagnostic(std::string_view code) noexcept {
@@ -172,18 +197,18 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     };
 
     const WasmEligibilityVerdict verdict = computed.verdict;
-    const bool agrees =
-        (verdict == WasmEligibilityVerdict::RunnableOrchestration &&
-         declared.eligibility == WasmEligibility::Orchestration) ||
-        (verdict != WasmEligibilityVerdict::RunnableOrchestration &&
-         declared.eligibility != WasmEligibility::Orchestration);
-    if (agrees) {
+    // TOTAL lane equality. `computation` and `none` are distinct claims and are
+    // never interchangeable, so a `none` lane on a KR6.6-blocked case (or the
+    // converse) is a divergence in its own right -- the skip reason must name
+    // the lane the block actually belongs to.
+    const WasmEligibility required = required_wasm_lane(verdict);
+    if (declared.eligibility == required) {
         return std::nullopt;
     }
 
     // Both divergence directions are errors. An overclaim advertises a lane
-    // the compiler rejects; a stale skip pins a case to `computation` (or
-    // `none`) that the emit path already accepts, so the skip reason is a lie.
+    // the compiler rejects; a stale skip pins a case to a blocked lane the
+    // emit path no longer takes, so the skip reason is a lie.
     const std::string detail = "manifest declares engines.wasm.eligible='" +
                                std::string{lane(declared.eligibility)} + "' (reason: '" +
                                declared.reason + "')";
@@ -192,9 +217,16 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
                "(" + std::to_string(computed.artifact_bytes) + " bytes); " + detail +
                " -- the skip reason is stale";
     }
-    return "manifest marks the case wasm-orchestration-eligible but the compiler "
-           "rejects it (" + std::string{wasm_eligibility_verdict_name(verdict)} + ": " +
-           computed.reason + "); " + detail + " -- the manifest overclaims wasm eligibility";
+    if (required == WasmEligibility::None && declared.eligibility == WasmEligibility::Computation) {
+        return "manifest marks the case as needing the KR6.6 computation lane but the "
+               "compiler blocks it outside that lane (" +
+               std::string{wasm_eligibility_verdict_name(verdict)} + ": " + computed.reason +
+               "); " + detail +
+               " -- the case is permanently host-side, so the KR6.6 skip reason is wrong";
+    }
+    return "manifest's declared wasm lane does not match the computed verdict (" +
+           std::string{wasm_eligibility_verdict_name(verdict)} + ": " + computed.reason +
+           "); " + detail + " -- the manifest overclaims wasm eligibility";
 }
 
 } // namespace ahfl::conformance

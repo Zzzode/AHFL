@@ -24,6 +24,7 @@
 
 #include "conformance/wasm_eligibility.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -116,11 +117,45 @@ void test_diagnostic_table() {
     check(wasm_eligibility_verdict_name(Verdict::BlockedUnsupportedOrchestration) ==
               "blocked_unsupported_orchestration",
           "unsupported verdict spelling");
+
+    // The verdict -> manifest-lane projection is TOTAL and keeps `computation`
+    // and `none` distinct: only a KR6.6 seam is liftable by the KR6.6 lane.
+    check(ahfl::conformance::required_wasm_lane(Verdict::RunnableOrchestration) ==
+              WasmEligibility::Orchestration,
+          "runnable requires the orchestration lane");
+    check(ahfl::conformance::required_wasm_lane(Verdict::BlockedComputation) ==
+              WasmEligibility::Computation,
+          "a KR6.6 boundary requires the computation lane");
+    check(ahfl::conformance::required_wasm_lane(Verdict::BlockedLayout) ==
+              WasmEligibility::None,
+          "a layout block is not liftable by the KR6.6 lane");
+    check(ahfl::conformance::required_wasm_lane(Verdict::BlockedUnsupportedOrchestration) ==
+              WasmEligibility::None,
+          "an out-of-contract block is never liftable by the KR6.6 lane");
 }
 
 // ---------------------------------------------------------------------------
 // (b) + (c) the committed catalogue, classified by the real emit path
 // ---------------------------------------------------------------------------
+
+// Every committed sidecar, discovered from the on-disk case directory rather
+// than a hand-maintained list, so a newly committed case can never be silently
+// omitted from the machine-verified skip-list cross-check.
+[[nodiscard]] std::vector<std::string>
+discover_case_sidecars(const std::filesystem::path &repo_root) {
+    const auto cases_dir = repo_root / "tests" / "conformance" / "cases";
+    std::vector<std::string> discovered;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator(cases_dir, ec)) {
+        if (entry.is_regular_file() &&
+            ahfl::conformance::detail::is_conformance_case_sidecar(entry.path())) {
+            discovered.push_back(entry.path().filename().string());
+        }
+    }
+    check(!ec, "conformance cases directory scanned without error");
+    std::sort(discovered.begin(), discovered.end());
+    return discovered;
+}
 
 struct CaseVerdict {
     std::string_view sidecar;
@@ -193,6 +228,21 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         check(classification.artifact_bytes == 0,
               std::string{"blocked emitted no artifact: "} + std::string{expectation.sidecar});
     }
+
+    // The two tables above must cover the committed catalogue EXACTLY, so a
+    // newly committed case cannot be classified by the divergence check while
+    // silently escaping the "why is this blocked" pinning.
+    std::vector<std::string> pinned;
+    pinned.reserve(runnable.size() + blocked.size());
+    for (const auto &expectation : runnable) {
+        pinned.emplace_back(expectation.sidecar);
+    }
+    for (const auto &expectation : blocked) {
+        pinned.emplace_back(expectation.sidecar);
+    }
+    std::sort(pinned.begin(), pinned.end());
+    check(pinned == discover_case_sidecars(repo_root),
+          "the pinned catalogue equals the discovered committed case set");
 }
 
 // ---------------------------------------------------------------------------
@@ -202,24 +252,21 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
 void test_manifest_agreement(const std::filesystem::path &repo_root) {
     // Every committed manifest must agree with the computed verdict. This is
     // the machine-generated skip list: a stale reason or an overclaim fails
-    // here even though no WASM engine is installed.
-    const std::vector<std::string_view> sidecars = {
-        "e1_identity_agent.case.json",  "e2_capability_agent.case.json",
-        "e3_identity_workflow.case.json", "e3_capability_workflow.case.json",
-        "float_output_e2e.case.json",   "enum_variant_e2e.case.json",
-        "if_let_e2e.case.json",         "e2e_multi_agent.case.json",
-    };
-    for (const auto sidecar : sidecars) {
+    // here even though no WASM engine is installed. The set is DISCOVERED, so
+    // neither this table nor the tables above can quietly omit a case.
+    const auto sidecars = discover_case_sidecars(repo_root);
+    check(!sidecars.empty(), "at least one committed case sidecar was discovered");
+    for (const auto &sidecar : sidecars) {
         const auto manifest = load_manifest(repo_root, sidecar);
-        check(manifest.has_value(), std::string{"manifest loads: "} + std::string{sidecar});
+        check(manifest.has_value(), std::string{"manifest loads: "} + sidecar);
         if (!manifest.has_value()) {
             continue;
         }
         const auto classification = classify_case(repo_root, sidecar);
         const auto divergence = wasm_eligibility_divergence(*manifest, classification);
         if (divergence.has_value()) {
-            check(false, std::string{"committed manifest agrees with the compiler: "} +
-                             std::string{sidecar} + " -- " + *divergence);
+            check(false, std::string{"committed manifest agrees with the compiler: "} + sidecar +
+                             " -- " + *divergence);
         }
     }
 
@@ -271,6 +318,26 @@ void test_manifest_agreement(const std::filesystem::path &repo_root) {
         // ... while the untouched manifest agrees.
         check(!wasm_eligibility_divergence(*none_manifest, classification).has_value(),
               "untouched orchestration manifest agrees");
+    }
+
+    // The lanes are NOT interchangeable: a case blocked at a KR6.6 seam claims
+    // `computation` (only that lane lifts the block), so a `none` lane on the
+    // SAME case is a lie -- and, symmetrically, `computation` on a case the
+    // compiler blocks outside that lane is a lie too. Without this the skip
+    // list could not tell "needs the computation lane" from "permanently
+    // host-side".
+    const auto blocked_manifest_none = load_manifest(repo_root, "enum_variant_e2e.case.json");
+    check(blocked_manifest_none.has_value(),
+          "enum_variant manifest loads for the lane-projection probe");
+    if (blocked_manifest_none.has_value()) {
+        const auto classification = classify_case(repo_root, "enum_variant_e2e.case.json");
+        check(classification.verdict == WasmEligibilityVerdict::BlockedComputation,
+              "enum_variant is blocked at a KR6.6 computation seam");
+        ConformanceCase host_only = *blocked_manifest_none;
+        host_only.engines.wasm.eligibility = WasmEligibility::None;
+        host_only.engines.wasm.reason = "permanently host-side";
+        check(wasm_eligibility_divergence(host_only, classification).has_value(),
+              "a `none` lane on a KR6.6-blocked case is rejected as a lane mismatch");
     }
 }
 
