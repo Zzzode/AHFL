@@ -2934,6 +2934,224 @@ int main() {
                   "P6-3 lowers the trap fallback to wasm `unreachable` (0x00)");
         }
 
+        // P6-2 scratch-pool local-index regression: an i32 match SCRATCH slot and
+        // an i64 SSA let in ONE handler. The emitted function declares its locals
+        // as the single wasm grouping [SSA i32][scratch i32][SSA i64], so the i64
+        // group starts AFTER the whole i32 group. A `let` index computed from the
+        // SSA pool alone lands inside the i32 group: the body stores an i64 into a
+        // declared i32 local (`local.set` type mismatch) and the module is invalid
+        // wasm. This fixture pins every local.get/local.set immediate against the
+        // DECLARED layout, which the byte-pattern assertions elsewhere cannot make
+        // (they only skip the immediates).
+        //
+        // Slot layout: v1(level)/v2(arm)/v6(cond) are SSA i32, v3 is the match
+        // RESULT scratch i32, v4/v5 are SSA i64. So the declared grouping is 4
+        // i32 then 2 i64, and the i32 SCRATCH group is non-empty — exactly the
+        // condition under which a naive i64 base lands the i64 let on an i32 local.
+        constexpr std::uint8_t kOpLocalGetP = 0x20;
+        constexpr std::uint8_t kOpLocalSetP = 0x21;
+        constexpr std::uint8_t kI32T = 0x7f;
+        constexpr std::uint8_t kI64T = 0x7e;
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(
+                CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 9)}});
+            CoreTypeDecl level;
+            level.kind = CoreTypeDecl::Kind::Enum;
+            level.name = "app::Level";
+            level.variants = {"Low", "High"};
+            level.variant_payloads = {CoreTypeDecl::VariantPayload{},
+                                      CoreTypeDecl::VariantPayload{}};
+            program.types.push_back(std::move(level));
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});            // vt2 Bool
+            program.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}}); // vt3 i64
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}});    // vt4 Level
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start", "High"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}},
+                                 {CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{2}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            flow.exprs.push_back(CoreExpr{
+                CoreQualifiedExpr{"app::Level::High", CoreTypeId{1}, CoreVariantId{1}, true},
+                std::nullopt,
+                CoreValueTypeId{4}}); // expr1 -> v1 (Level::High, SSA i32)
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
+                                          std::nullopt,
+                                          CoreValueTypeId{2}}); // expr2 -> v2 (arm value)
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"},
+                                          std::nullopt,
+                                          CoreValueTypeId{3}}); // expr3 -> v4 (i64 let)
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "3"},
+                                          std::nullopt,
+                                          CoreValueTypeId{3}}); // expr4 -> v5 (i64 const)
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{3}}); // expr5
+            flow.exprs.push_back(CoreExpr{
+                CoreValueRefExpr{CoreValueId{5}}, std::nullopt, CoreValueTypeId{3}}); // expr6
+            flow.exprs.push_back(
+                CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{5}, CoreExprId{6}},
+                         std::nullopt,
+                         CoreValueTypeId{2}}); // expr7 -> v6 (Bool condition)
+            flow.value_count = 7;
+            flow.value_types = {CoreValueTypeId{0}, // v0 input nominal
+                                CoreValueTypeId{4}, // v1 Level    -> SSA i32
+                                CoreValueTypeId{2}, // v2 Bool     -> SSA i32
+                                CoreValueTypeId{2}, // v3 Bool     -> SCRATCH i32
+                                CoreValueTypeId{3}, // v4 i64      -> SSA i64
+                                CoreValueTypeId{3}, // v5 i64      -> SSA i64
+                                CoreValueTypeId{2}}; // v6 Bool    -> SSA i32
+            // Pattern 0: a tag-only variant pattern (High) with no payload.
+            flow.patterns.push_back(
+                CorePattern{CoreVariantPat{CoreTypeId{1}, CoreVariantId{1}, {}, {}, false},
+                            std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            // The expression match's Bool result takes the ONE i32 SCRATCH slot.
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{1};
+            match.has_result = true;
+            match.result = CoreValueId{3};
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{0};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            arm.body->statements.push_back(
+                CoreStmt{CoreYieldStmt{true, CoreValueId{2}}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreTrapStmt{CoreTrapKind::NonExhaustiveMatch}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            // `big` is an UNBOUNDED Int, so it is an SSA i64 slot and MUST land
+            // after the i32 scratch slot.
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{3}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{5}, CoreExprId{4}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{6}, CoreExprId{7}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{6};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            CoreFlowState high;
+            high.state = CoreStateId{2};
+            high.state_name = "High";
+            high.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(high));
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-2 i32-scratch + i64-let fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            check(emitted.ok() && handler_body.has_value(),
+                  "P6-2 i32-scratch + i64-let handler compiles to a real function");
+            if (handler_body.has_value()) {
+                const auto body = *handler_body;
+                std::size_t at = 0;
+                const auto read_leb = [&](std::size_t &pos) {
+                    std::uint32_t value = 0;
+                    std::uint32_t shift = 0;
+                    while (pos < body.size()) {
+                        const auto b = body[pos++];
+                        value |= static_cast<std::uint32_t>(b & 0x7fu) << shift;
+                        if ((b & 0x80u) == 0) {
+                            break;
+                        }
+                        shift += 7;
+                    }
+                    return value;
+                };
+                // Expand the declared local groups into kind-by-index.
+                std::vector<std::uint8_t> kinds;
+                const auto groups = read_leb(at);
+                for (std::uint32_t g = 0; g < groups; ++g) {
+                    const auto count = read_leb(at);
+                    const auto kind = body[at++];
+                    for (std::uint32_t n = 0; n < count; ++n) {
+                        kinds.push_back(kind);
+                    }
+                }
+                // The declared grouping is uniformly "all i32 locals, then all
+                // i64 locals": 4 i32 (3 SSA + the match-result scratch slot) then
+                // 2 i64.
+                const auto first_i64 = std::find(kinds.begin(), kinds.end(), kI64T);
+                const bool grouped =
+                    first_i64 != kinds.end() &&
+                    std::all_of(kinds.begin(), first_i64,
+                                [](std::uint8_t k) { return k == kI32T; }) &&
+                    std::all_of(first_i64, kinds.end(),
+                                [](std::uint8_t k) { return k == kI64T; });
+                const auto i64_index =
+                    static_cast<std::uint32_t>(std::distance(kinds.begin(), first_i64));
+                const auto i32_count =
+                    static_cast<std::uint32_t>(std::count(kinds.begin(), kinds.end(), kI32T));
+                check(grouped && i32_count == 4 && kinds.size() == 6,
+                      "P6-2 declares [3 SSA i32][1 scratch i32] then [2 SSA i64]");
+                // Walk the stream: every local.get / local.set immediate must
+                // name a local whose DECLARED kind matches the adjacent
+                // i32.const / i64.const source. A `let` index short by the
+                // scratch group names an i32 local here.
+                std::vector<std::uint32_t> i64_sets;
+                std::size_t i64_gets = 0;
+                std::optional<std::uint8_t> pending_kind;
+                std::vector<std::uint32_t> wrong_kind;
+                while (at < body.size()) {
+                    const auto op = body[at++];
+                    if (op == 0x41) { // i32.const
+                        (void)read_leb(at);
+                        pending_kind = kI32T;
+                    } else if (op == 0x42) { // i64.const
+                        (void)read_leb(at);
+                        pending_kind = kI64T;
+                    } else if (op == kOpLocalGetP || op == kOpLocalSetP) {
+                        const auto index = read_leb(at);
+                        if (pending_kind.has_value() && index < kinds.size() &&
+                            kinds[index] != *pending_kind) {
+                            wrong_kind.push_back(index);
+                        }
+                        if (op == kOpLocalSetP && pending_kind == kI64T) {
+                            i64_sets.push_back(index);
+                        }
+                        if (op == kOpLocalGetP && index >= i64_index && index < kinds.size()) {
+                            ++i64_gets;
+                        }
+                        pending_kind.reset();
+                    } else if (op == 0x02 || op == 0x04) { // block / if
+                        ++at; // blocktype
+                    } else if (op == 0x0c || op == 0x0d) { // br / br_if
+                        (void)read_leb(at);
+                    } else if (op == 0x28 || op == 0x29 || op == 0x36 || op == 0x37) {
+                        (void)read_leb(at); // align
+                        (void)read_leb(at); // offset
+                    }
+                }
+                check(wrong_kind.empty(),
+                      "P6-2 every local.get/set immediate matches its declared kind");
+                check(i64_sets.size() == 2 &&
+                          std::all_of(i64_sets.begin(), i64_sets.end(),
+                                      [i64_index](std::uint32_t index) {
+                                          return index >= i64_index;
+                                      }),
+                      "P6-2 every i64 let stores into the declared i64 group");
+                check(i64_gets >= 2,
+                      "P6-2 the i64 lets' locals are read back by the i64 compare");
+            }
+        }
+
         // P6-2 opcode-pinning regression: the signed comparison ladder must
         // emit the exact wasm byte for Le/Gt/Ge at the operand's P4-D scalar
         // repr. The operands straddle zero (lhs = -1 via 0 - 1, rhs = 0), so

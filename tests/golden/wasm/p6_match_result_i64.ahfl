@@ -1,0 +1,70 @@
+module wasm::p6_match_result_i64;
+
+// RFC 0026 P6-2 (KR6.6) scratch-pool local-index regression fixture. It is the
+// minimal shape that puts an i32 match-scratch slot and an i64 SSA let in ONE
+// handler function, which is exactly the combination the emitted local grouping
+// has to keep apart.
+//
+// `level` is a TAG-ONLY enum, so the expression match's Bool result takes an i32
+// scratch slot (scratch_i32_count_ == 1). The subsequent `big: Int` is an
+// UNBOUNDED Int, so it is the i64 scalar repr and takes an i64 SSA slot. The two
+// kinds therefore sit in different declared groups:
+//
+//     [ SSA i32 ][ scratch i32 ][ SSA i64 ]
+//
+// The `big > 3` comparison is what reads the i64 slot back. If the i64 local
+// index is computed without folding in the i32 scratch group, `big`'s local.set
+// lands inside the i32 group: the module declares an i32 local and stores an i64
+// into it, and the Node host's WebAssembly.compile rejects the function. The
+// observed `Decide -> High -> Done` path only happens if the i64 compare read the
+// right slot.
+pub struct Frame {
+    value: String;
+}
+
+pub enum Level {
+    Low,
+    High,
+}
+
+pub agent MatchResultAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MatchResultAgent {
+    state Decide {
+        let level: Level = Level::High;
+        let b: Bool = match level {
+            High => true,
+            Low => false,
+        };
+        let big: Int = 7;
+        if (big > 3) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

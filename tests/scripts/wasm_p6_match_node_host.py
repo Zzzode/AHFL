@@ -52,6 +52,10 @@ FIXTURES = [
     ("p6_match_expr.ahfl", "expression match: arm values joined through the result"),
     ("p6_match_guard.ahfl", "guarded arm taken; the unguarded sibling is the fallback"),
     ("p6_match_or.ahfl", "or-pattern: the second alternative matches"),
+    # The scratch/i64 grouping regression: an i32 match-scratch slot and an i64
+    # SSA let in ONE handler. A local index that forgets the i32 scratch group
+    # lands the i64 let inside the i32 group, which WebAssembly.compile rejects.
+    ("p6_match_result_i64.ahfl", "i32 match result + i64 let share one local layout"),
 ]
 
 TRAP_FIXTURES = [

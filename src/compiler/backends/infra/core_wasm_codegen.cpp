@@ -276,11 +276,11 @@ using StateAction = std::variant<GotoAction, ComputedGotoAction, IdentityAction,
 // RFC 0026 P6-2 (KR6.6): one compiled non-final handler FUNCTION. The body is
 // the complete wasm function body (local declarations + a `block (result i32)`
 // wrapping the lowered statement region + the terminating `end`), ready for the
-// Code section's `sized()` framing. `targets` are every state the body may
-// branch to.
+// Code section's `sized()` framing. The handler's successor set is NOT stored
+// here: it already lives on the `ComputedGotoAction` the state maps to, which is
+// the single source the goto-graph analysis reads.
 struct CompiledHandler {
     std::vector<std::uint8_t> body;
-    std::vector<CoreStateId> targets;
 };
 
 struct AgentPlan {
@@ -1165,7 +1165,7 @@ class P6ComputationHandlerBuilder {
             return std::nullopt;
         }
         ByteBuffer function;
-        const std::uint32_t i32_locals = i32_count_ + scratch_i32_count_;
+        const std::uint32_t i32_locals = i32_group_size();
         const std::uint32_t i64_locals = i64_count_ + scratch_i64_count_;
         std::uint32_t local_groups = 0;
         if (i32_locals != 0) {
@@ -1238,10 +1238,11 @@ class P6ComputationHandlerBuilder {
     // `match_result_locals_` : CoreValueId -> slot, for a match's `result` id; an
     //                          expression arm's yielded value is stored there.
     //
-    // Slots are indexed within a kind's pool (one pool per physical repr), and
-    // `match_pool_local` folds in the SSA pool size, so the emitted function's
-    // local declaration order stays the uniform "all i32 locals, then all i64
-    // locals" grouping wasm requires.
+    // Slots are indexed within a kind's pool (one pool per physical repr).
+    // `pool_local` derives every pool's base from the single
+    // `[ SSA i32 ][ scratch i32 ][ SSA i64 ][ scratch i64 ]` grouping, so a slot
+    // index is never constructed from one pool's size alone — the emitted local
+    // declaration order and the index space cannot diverge.
     std::vector<LocalInfo> binding_locals_;
     std::vector<LocalInfo> match_result_locals_;
     std::uint32_t scratch_i32_count_{0};
@@ -1280,24 +1281,45 @@ class P6ComputationHandlerBuilder {
         return p6_scalar_kind(program_, layouts_, type);
     }
 
+    // The declared size of the i32 group in the emitted local index space: every
+    // SSA i32 local followed by every scratch i32 local. The handler function has
+    // no parameters, so local 0 begins the i32 group, and a real wasm function
+    // declares its locals as one i32 group followed by one i64 group (wider types
+    // cannot share an index). EVERY kind's pool is carved from that single
+    // grouping:
+    //
+    //     [ SSA i32 ][ scratch i32 ][ SSA i64 ][ scratch i64 ]
+    //
+    // So the i64 group begins at THIS offset. This is the ONE definition of that
+    // boundary; `pool_local` derives both groups from it, which is what keeps the
+    // SSA pool and the match scratch pool from disagreeing on where i64 starts.
+    [[nodiscard]] std::uint32_t i32_group_size() const {
+        return i32_count_ + scratch_i32_count_;
+    }
+
+    // The wasm local index of a pool slot. `scratch_pool` selects the monotone
+    // match scratch pool (arm bindings / expression-match results) over the
+    // ordinary SSA let pool; within either pool the slot is already offset by
+    // its kind, so the base is the only arithmetic left.
+    [[nodiscard]] std::uint32_t pool_local(const LocalInfo &info, bool scratch_pool) const {
+        if (info.kind == P6ScalarKind::IntI64) {
+            return i32_group_size() + (scratch_pool ? i64_count_ : 0) + info.slot;
+        }
+        return (scratch_pool ? i32_count_ : 0) + info.slot;
+    }
+
     [[nodiscard]] std::optional<std::uint32_t> final_local(CoreValueId value) const {
         if (value.value >= locals_.size() || !locals_[value.value].bound) {
             return std::nullopt;
         }
-        const LocalInfo &info = locals_[value.value];
-        // The handler function has no parameters: the i32 pool starts at local 0
-        // and the i64 pool follows it (wider types cannot share an index).
-        return info.kind == P6ScalarKind::IntI64 ? i32_count_ + info.slot : info.slot;
+        return pool_local(locals_[value.value], /*scratch_pool=*/false);
     }
 
-    // The wasm local index of a match scratch slot. The declared layout is the
-    // i32 group [SSA i32][scratch i32] followed by the i64 group
-    // [SSA i64][scratch i64]; a Bool / narrow Int / tag-only enum discriminant is
-    // i32, an unbounded Int is i64.
+    // The wasm local index of a match scratch slot (a Bool / narrow Int /
+    // tag-only enum discriminant is i32, an unbounded Int is i64); the scratch
+    // group follows its kind's SSA group inside the declared grouping.
     [[nodiscard]] std::uint32_t match_pool_local(const LocalInfo &info) const {
-        return info.kind == P6ScalarKind::IntI64
-                   ? i32_count_ + scratch_i32_count_ + i64_count_ + info.slot
-                   : i32_count_ + info.slot;
+        return pool_local(info, /*scratch_pool=*/true);
     }
 
     [[nodiscard]] std::optional<std::uint32_t> binding_local(CoreValueId value) const {
@@ -3630,8 +3652,7 @@ build_agent_plan(const CoreProgram &program,
                 }
                 const auto function =
                     static_cast<std::uint32_t>(plan.handlers.size());
-                plan.handlers.push_back(
-                    CompiledHandler{std::move(*body), builder->targets()});
+                plan.handlers.push_back(CompiledHandler{std::move(*body)});
                 plan.actions[state] = ComputedGotoAction{function, builder->targets()};
                 continue;
             }
