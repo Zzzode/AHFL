@@ -1,0 +1,66 @@
+module wasm::p6_match_binding_payload;
+
+// RFC 0026 P6-3/P6-4 (KR6.6) arm-binding regression fixture. A payload field is
+// bound (`High { v }`), and the bound value is read back inside the arm body.
+//
+// The binding's read SITE is not the scrutinee root: it is the payload slot at
+// the P4-D payload offset. The plan pass records that site per binding, keyed by
+// the binding's SSA value id; a site reconstructed from the SCRUTINEE's root kind
+// instead latches the enum's ADDRESS (an i32) as if it were the field value, so
+// `v` holds a pointer, not `5`.
+//
+// `v` is 0, and the Low fallback yields 7, so a correct binding compares 0 > 0
+// (false) and reaches Low, while an address-as-value latch compares the scratch
+// address (nonzero) and reaches High. The int payload is unbounded -> i64, so a
+// mis-keyed latch is also a local.set type mismatch (`i64` slot fed an `i32`),
+// which WebAssembly.compile rejects outright.
+pub struct Frame {
+    value: String;
+}
+
+pub enum Level {
+    Low,
+    High { v: Int },
+}
+
+pub agent MatchBindingAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MatchBindingAgent {
+    state Decide {
+        let level: Level = Level::High { v: 0 };
+        let bound: Int = match level {
+            High { v } => v,
+            Low => 7,
+        };
+        if (bound > 0) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

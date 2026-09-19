@@ -724,31 +724,37 @@ validate_capability_final(const CoreProgram &program,
 // yet landed (path/qualified/construct/coerce) still fail closed per-arm, so no
 // partial artifact is ever returned and the E1-E3 byte paths stay untouched.
 
-// Does this region belong to the P6 subset? `allow_yield` distinguishes the two
-// region ROLES the IR defines: an ordinary flow region (no yield — a yield there
-// is illegal, `core_verify.cpp` kYieldOutsideMatchArm) and a match-consumed
-// region (a guard / arm body / fallback, where the yield IS the completion
-// hand-off the enclosing match consumes). Both roles otherwise share one subset:
-// ANF scalar lets, structured if, match, and goto/trap terminators, with no
-// capability effect. An `if` branch inherits its parent region's role, so a
-// yield nested in an if branch of an arm body stays legal.
-[[nodiscard]] bool is_p6_subset_region(const CoreRegion &region, bool allow_yield) {
+// Does this region belong to the P6 subset? ANF scalar lets, structured if, and
+// goto/trap terminators, with no capability effect. A `CoreYieldStmt` here means
+// the region is an ordinary flow region — a yield outside a match arm is illegal
+// (`core_verify.cpp` kYieldOutsideMatchArm), so it is NOT in the subset.
+//
+// A match is admitted STRUCTURALLY (see the CoreMatchStmt arm): the gate does not
+// descend into its arms / guards / fallback, because those regions are consumed
+// by the enclosing match and legitimately END in a yield (the guard's Bool, an
+// expression arm's value, a statement arm's unit). Their role is validated by
+// `plan_match` -> `plan_match_region`, which is the single authority for the
+// match-consumed role: it owns the "yield must be the final statement" rule and
+// rejects anything else by delegating to `plan_statement`. So the fail-closed
+// property is preserved — a match whose consumed region holds an out-of-subset
+// statement is rejected by the planner, one region deeper than this cheap
+// pre-filter, and never becomes a partial artifact.
+[[nodiscard]] bool is_p6_subset_region(const CoreRegion &region) {
     for (const CoreStmt &statement : region.statements) {
         const bool in_subset = std::visit(
             Overloaded{
                 [](const CoreLetStmt &) { return true; },
                 [](const CoreGotoStmt &) { return true; },
                 [](const CoreTrapStmt &) { return true; },
-                [&](const CoreYieldStmt &) { return allow_yield; },
-                [&](const CoreIfStmt &s) {
+                [](const CoreYieldStmt &) { return false; },
+                [](const CoreIfStmt &s) {
                     return (s.then_region == nullptr ||
-                            is_p6_subset_region(*s.then_region, allow_yield)) &&
+                            is_p6_subset_region(*s.then_region)) &&
                            (s.else_region == nullptr ||
-                            is_p6_subset_region(*s.else_region, allow_yield));
+                            is_p6_subset_region(*s.else_region));
                 },
-                // A match is always in-subset structurally; its arms / fallback /
-                // guard are independently checked in a `Role::MatchRegion` pass by
-                // the caller's planner, so the arena is never trusted here.
+                // A match is structurally in-subset; its consumed regions are
+                // validated by `plan_match_region` (see the header comment).
                 [](const CoreMatchStmt &) { return true; },
                 // RFC 0026 P6-4: a context store (`ctx.field = v`) is now a
                 // computation statement lowered to a memory store. Capability and
@@ -766,7 +772,7 @@ validate_capability_final(const CoreProgram &program,
 }
 
 [[nodiscard]] bool is_p6_computation_region(const CoreRegion &region) {
-    return is_p6_subset_region(region, /*allow_yield=*/false);
+    return is_p6_subset_region(region);
 }
 
 // The scalar kind of a value type for the P6 ladder, with the physical repr
@@ -1132,10 +1138,9 @@ class P6ComputationHandlerBuilder {
           unsupported_code_(unsupported_code), used_exprs_(used_exprs), used_values_(used_values),
           result_(result), locals_(flow.value_count, LocalInfo{}),
           binding_locals_(flow.value_count, LocalInfo{}),
+          binding_sites_(flow.value_count, std::nullopt),
           match_result_locals_(flow.value_count, LocalInfo{}),
-          construct_addrs_(flow.exprs.size(), std::nullopt),
-          binding_offsets_(flow.value_count, std::nullopt),
-          binding_in_memory_(flow.value_count, false) {}
+          construct_addrs_(flow.exprs.size(), std::nullopt) {}
 
     // Validate the handler is in the scalar subset and assign every bound SSA
     // value a per-repr pool slot (i32 group first, then i64 — a real function
@@ -1235,6 +1240,10 @@ class P6ComputationHandlerBuilder {
     //
     // `binding_locals_`      : CoreValueId -> slot, for a `CoreBindingPat`'s arm
     //                          binding (the value a `ValueRef` inside the arm reads).
+    // `binding_sites_`       : CoreValueId -> the `P6PatternSite` that binding
+    //                          latches from — the full site (kind + in-memory
+    //                          flag + byte offset), so a payload binding reads
+    //                          its own P4-D slot instead of the scrutinee root.
     // `match_result_locals_` : CoreValueId -> slot, for a match's `result` id; an
     //                          expression arm's yielded value is stored there.
     //
@@ -1243,7 +1252,13 @@ class P6ComputationHandlerBuilder {
     // `[ SSA i32 ][ scratch i32 ][ SSA i64 ][ scratch i64 ]` grouping, so a slot
     // index is never constructed from one pool's size alone — the emitted local
     // declaration order and the index space cannot diverge.
+    //
+    // All three tables are keyed by CoreValueId, the SAME domain the emit pass
+    // reads: the plan pass resolves a pattern's `CorePatternBindingId` (arm-local
+    // index) through the arm's binding list before recording, so the pattern
+    // index space and the value index space can never be confused.
     std::vector<LocalInfo> binding_locals_;
+    std::vector<std::optional<P6PatternSite>> binding_sites_;
     std::vector<LocalInfo> match_result_locals_;
     std::uint32_t scratch_i32_count_{0};
     std::uint32_t scratch_i64_count_{0};
@@ -1256,15 +1271,7 @@ class P6ComputationHandlerBuilder {
     // scratch locals above, so two construct sites can never alias and emit only
     // reads the address. `scratch_addr_cursor_` is a byte offset RELATIVE to the
     // scratch arena base (an absolute wasm32 address).
-    //
-    // `binding_offsets_` / `binding_in_memory_`: for a payload binding, the byte
-    // offset of the bound payload slot from the SCRUTINEE's address, and whether
-    // the binding is memory-backed (a payload slot) rather than the scrutinee
-    // value already sitting in a local. A binding deeper in nested payloads
-    // accumulates the offset chain, so the latch is always `addr + offset`.
     std::vector<std::optional<std::uint32_t>> construct_addrs_;
-    std::vector<std::optional<std::uint64_t>> binding_offsets_;
-    std::vector<bool> binding_in_memory_;
     std::uint32_t scratch_addr_cursor_{0};
 
     [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
@@ -1329,16 +1336,17 @@ class P6ComputationHandlerBuilder {
         return match_pool_local(binding_locals_[value.value]);
     }
 
-    // The SITE an arm binding was planned at, reconstructed from the plan pass'
-    // binding tables. A binding with no recorded site (a pattern kind that could
-    // not produce one) reads the whole scrutinee, i.e. its own local.
-    [[nodiscard]] P6PatternSite binding_site_of(CoreValueId value, P6ScalarKind root_kind) const {
-        P6PatternSite site{root_kind, root_kind == P6ScalarKind::Ptr, 0};
-        if (value.value < binding_offsets_.size() && binding_in_memory_[value.value]) {
-            site.in_memory = true;
-            site.offset = binding_offsets_[value.value].value_or(0);
+    // The SITE an arm binding was planned at. The plan pass recorded the FULL
+    // site (kind + in-memory flag + byte offset), so the kind here is the
+    // binding's own P4-D repr — a struct-payload binding is a `Ptr` (an address),
+    // an i64 payload field is `IntI64` — never the scrutinee's root kind. The
+    // previous reconstruction guessed the root kind and would latch a payload
+    // field's value as if it were the whole scrutinee.
+    [[nodiscard]] std::optional<P6PatternSite> binding_site_of(CoreValueId value) const {
+        if (value.value >= binding_sites_.size()) {
+            return std::nullopt;
         }
-        return site;
+        return binding_sites_[value.value];
     }
 
     // Latch one arm binding's value into its scratch local from its SITE: a
@@ -2111,8 +2119,8 @@ class P6ComputationHandlerBuilder {
                 }
                 used_values_[binding.value.value] = true;
             }
-            if (!plan_arm_pattern(arm.pattern, root_site, /*allow_payload_bindings=*/true,
-                                  range)) {
+            if (!plan_arm_pattern(arm.pattern, root_site, arm.bindings,
+                                  /*allow_payload_bindings=*/true, range)) {
                 return false;
             }
             // A guard region is present iff the source arm wrote `if <guard>`.
@@ -2175,7 +2183,14 @@ class P6ComputationHandlerBuilder {
     // nothing. `allow_payload_bindings` is false inside an or-pattern: two
     // alternatives may not bind one name at two different payload offsets, so a
     // payload binding under an or fails closed rather than aliasing.
+    //
+    // `bindings` is the enclosing ARM's binding list: a `CoreBindingPat` names
+    // its binding by `CorePatternBindingId`, an index into that list, and this
+    // function resolves it to the binding's CoreValueId before recording the
+    // site. That is the ONE place the two index spaces meet; everything the emit
+    // pass reads is keyed by value id.
     [[nodiscard]] bool plan_arm_pattern(CorePatternId id, P6PatternSite site,
+                                        const std::vector<CorePatternBinding> &bindings,
                                         bool allow_payload_bindings, ir::SourceRangeOpt range) {
         if (id.value >= flow_.patterns.size()) {
             return reject("pattern id is out of range for this flow", range);
@@ -2188,16 +2203,19 @@ class P6ComputationHandlerBuilder {
                     // `x` and `x @ nested`: the binding is latched from its SITE
                     // before the test, so a nested pattern is tested after it, on
                     // the same site.
-                    if (b.binding.value < binding_offsets_.size()) {
-                        if (!allow_payload_bindings && (site.in_memory || site.offset != 0)) {
-                            return reject("or-pattern alternatives may not bind a payload slot",
-                                          range);
-                        }
-                        binding_offsets_[b.binding.value] = site.offset;
-                        binding_in_memory_[b.binding.value] = site.in_memory;
+                    if (!allow_payload_bindings && (site.in_memory || site.offset != 0)) {
+                        return reject("or-pattern alternatives may not bind a payload slot", range);
                     }
+                    if (b.binding.value >= bindings.size()) {
+                        return reject("pattern binding id is out of range for this arm", range);
+                    }
+                    const CoreValueId value = bindings[b.binding.value].value;
+                    if (value.value >= binding_sites_.size()) {
+                        return reject("arm binding value id is out of range", range);
+                    }
+                    binding_sites_[value.value] = site;
                     return !b.has_nested ||
-                           plan_arm_pattern(b.nested, site, allow_payload_bindings, range);
+                           plan_arm_pattern(b.nested, site, bindings, allow_payload_bindings, range);
                 },
                 [&](const CoreLiteralPat &lit) {
                     if (site.in_memory) {
@@ -2218,14 +2236,16 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [&](const CoreVariantPat &v) {
-                    return plan_variant_pattern_site(v, site, allow_payload_bindings, range);
+                    return plan_variant_pattern_site(v, site, bindings, allow_payload_bindings,
+                                                     range);
                 },
                 [&](const CoreOrPat &o) {
                     if (o.alternatives.size() < 2) {
                         return reject("or-pattern must have at least two alternatives", range);
                     }
                     return std::ranges::all_of(o.alternatives, [&](CorePatternId alt) {
-                        return plan_arm_pattern(alt, site, /*allow_payload_bindings=*/false, range);
+                        return plan_arm_pattern(alt, site, bindings,
+                                                /*allow_payload_bindings=*/false, range);
                     });
                 },
                 [&](const CoreTuplePat &t) { return plan_tuple_pattern_site(t, site, range); },
@@ -2237,6 +2257,7 @@ class P6ComputationHandlerBuilder {
     // or an ADDRESSED enum. With a payload, the tag is at the address and each
     // sub-pattern descends to `payload_offset + slot_offset`.
     [[nodiscard]] bool plan_variant_pattern_site(const CoreVariantPat &v, P6PatternSite site,
+                                                 const std::vector<CorePatternBinding> &bindings,
                                                  bool allow_payload_bindings,
                                                  ir::SourceRangeOpt range) {
         if (v.owner_enum.value >= program_.types.size()) {
@@ -2294,7 +2315,8 @@ class P6ComputationHandlerBuilder {
             }
             const P6PatternSite sub{place_kind_of_layout(payload->field_layouts[i]), true,
                                     sub_offset};
-            if (!plan_arm_pattern(v.tuple_subpatterns[i], sub, allow_payload_bindings, range)) {
+            if (!plan_arm_pattern(v.tuple_subpatterns[i], sub, bindings, allow_payload_bindings,
+                                  range)) {
                 return false;
             }
         }
@@ -2305,7 +2327,7 @@ class P6ComputationHandlerBuilder {
             }
             const P6PatternSite sub{
                 place_kind_of_layout(payload->field_layouts[field.slot.value]), true, sub_offset};
-            if (!plan_arm_pattern(field.pattern, sub, allow_payload_bindings, range)) {
+            if (!plan_arm_pattern(field.pattern, sub, bindings, allow_payload_bindings, range)) {
                 return false;
             }
         }
@@ -3326,18 +3348,21 @@ class P6ComputationHandlerBuilder {
             ++label_depth_;
 
             // Latch every arm binding from its SITE before the test. The IR gives
-            // a binding no independent value (its value id is arm-scoped), so a
-            // root binding copies the whole scrutinee and a payload binding loads
-            // (or addresses) its P4-D slot. The site was recorded by the plan pass
-            // as `(in_memory, offset)`, so a deeper nested payload latch reuses
-            // this one emission path.
+            // a binding no independent value, so a root binding copies the whole
+            // scrutinee and a payload binding loads (or addresses) its P4-D slot.
+            // The plan pass recorded the FULL site for each binding, so the kind
+            // here is the binding's own repr (a struct payload is an address, an
+            // i64 field is i64) and the latch needs no scrutinee-root guess.
             for (const CorePatternBinding &binding : arm.bindings) {
                 const auto dest = binding_local(binding.value);
                 if (dest == std::nullopt) {
                     return reject("arm binding has no scratch local", range);
                 }
-                const P6PatternSite site = binding_site_of(binding.value, *scrutinee_kind);
-                if (!emit_binding_latch(*scrutinee_local, *dest, site, range)) {
+                const auto site = binding_site_of(binding.value);
+                if (site == std::nullopt) {
+                    return reject("arm binding has no planned pattern site", range);
+                }
+                if (!emit_binding_latch(*scrutinee_local, *dest, *site, range)) {
                     return false;
                 }
             }

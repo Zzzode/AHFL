@@ -2928,9 +2928,26 @@ int main() {
             const auto handler_body =
                 emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
             constexpr std::uint8_t kOpLiteralFalseAndEq = 0x46; // i32.eq after a false test
+            constexpr std::uint8_t kOpEndP = 0x0b;
+            constexpr std::uint8_t kOpUnreachableP = 0x00;
+            // The trap fallback is the LAST thing inside the arm chain, so the
+            // handler's instruction stream ends with an exact, position-anchored
+            // shape: the fallback's `unreachable`, then B's `end`, then S's `end`,
+            // then the `unreachable`/`end`/`end` that `emit()` appends to type the
+            // `block (result i32)` on its dead fall-through and close the function.
+            // A raw 0x00 count is worthless here (every `i32.const 0` / `br 0` /
+            // local index emits one), so pin the tail instead: dropping the trap
+            // lowering leaves the region ending at S's `end` and this fails.
+            const std::vector<std::uint8_t> kTrapFallbackTail = {
+                kOpEndP, kOpUnreachableP, kOpEndP, kOpEndP, // region: end C, trap, end B, end S
+                kOpUnreachableP, kOpEndP, kOpEndP};         // emit(): dead path, block, function
             check(emitted.artifact.has_value() && handler_body.has_value() &&
                       contains_bytes(*handler_body, {0x41, 0x00, kOpLiteralFalseAndEq}) &&
-                      std::count(handler_body->begin(), handler_body->end(), 0x00) > 0,
+                      handler_body->size() >= kTrapFallbackTail.size() &&
+                      std::equal(kTrapFallbackTail.begin(),
+                                 kTrapFallbackTail.end(),
+                                 handler_body->end() -
+                                     static_cast<std::ptrdiff_t>(kTrapFallbackTail.size())),
                   "P6-3 lowers the trap fallback to wasm `unreachable` (0x00)");
         }
 
@@ -3150,6 +3167,164 @@ int main() {
                 check(i64_gets >= 2,
                       "P6-2 the i64 lets' locals are read back by the i64 compare");
             }
+        }
+
+        // P6-3/P6-4 arm-binding SITE regression: a payload binding (`High { v }`)
+        // must latch from the PAYLOAD SLOT it was planned at, not from the
+        // scrutinee root. The binding's site is keyed by its SSA value id in the
+        // plan pass; a site reconstructed from the scrutinee's root kind instead
+        // copies the enum's ADDRESS (an i32) into the binding's local.
+        //
+        // The payload field here is an unbounded Int (i64), so the binding's
+        // scratch local is declared i64. Latching the address (i32) into it is a
+        // `local.set` type mismatch the wasm validator rejects, which is exactly
+        // what a real engine reports for the pre-fix codegen. The assertion is on
+        // the emitted local index space: the latch must be an `i64.load` at the
+        // payload offset, never a bare `local.get` of the scrutinee.
+        constexpr std::uint8_t kOpI64LoadP = 0x29;
+        {
+            auto program = make_e1_core_program();
+            program.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}}); // vt1 i64
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}}); // vt2 Level
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});         // vt3 Bool
+            CoreTypeDecl level;
+            level.kind = CoreTypeDecl::Kind::Enum;
+            level.name = "app::Level";
+            level.variants = {"Low", "High"};
+            level.variant_payloads = {CoreTypeDecl::VariantPayload{},
+                                      CoreTypeDecl::VariantPayload{
+                                          CoreTypeDecl::VariantPayload::Kind::Tuple,
+                                          {CoreMemberTypeTemplateNodeId{0}},
+                                          {}}};
+            level.member_type_templates.push_back(
+                CoreMemberTypeTemplateNode{CoreMemberTypeTemplateKind::Concrete,
+                                           CoreValueTypeId{1},
+                                           0,
+                                           CoreTypeId{},
+                                           std::nullopt,
+                                           {},
+                                           CoreMemberTypeTemplateNodeId{}});
+            program.types.push_back(std::move(level));
+            auto &agent = program.agents[0];
+            agent.states = {"Done", "Start", "High"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}},
+                                 {CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{2}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            // ANF (def-before-use): value ids are defined in increasing order.
+            //   v1 = the payload literal 0 (i64)
+            //   v2 = Level::High{v1}, an ADDRESSED enum -> v2's P4-D layout is
+            //        tag@0 + payload v@8, so the binding HAS a real memory slot
+            //   v3 = the arm BINDING (i64)
+            //   v4 = the match RESULT (i64)
+            //   v5 = the fallback literal 7
+            //   v6 = the 0 constant, v7 = the Bool condition
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr1 -> v1
+            flow.exprs.push_back(CoreExpr{
+                CoreConstructExpr{"app::Level",
+                                  "",
+                                  true,
+                                  CoreTypeId{1},
+                                  CoreVariantId{1},
+                                  true,
+                                  {CoreConstructArg{CoreFieldId{0}, CoreValueId{1}}}},
+                std::nullopt,
+                CoreValueTypeId{2}}); // expr2 -> v2 (Level)
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr3 -> v5
+            flow.exprs.push_back(
+                CoreExpr{CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{1}});
+            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+                                          std::nullopt,
+                                          CoreValueTypeId{1}}); // expr5 -> v6
+            flow.exprs.push_back(
+                CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{4}, CoreExprId{5}},
+                         std::nullopt,
+                         CoreValueTypeId{3}}); // expr6 -> v7 (Bool)
+            flow.value_count = 8;
+            flow.value_types = {CoreValueTypeId{0}, // v0 input
+                                CoreValueTypeId{1}, // v1 the payload literal (i64)
+                                CoreValueTypeId{2}, // v2 the scrutinee (addressed enum)
+                                CoreValueTypeId{1}, // v3 the arm BINDING (i64)
+                                CoreValueTypeId{1}, // v4 the match RESULT (i64)
+                                CoreValueTypeId{1}, // v5 the fallback 7 (i64)
+                                CoreValueTypeId{1}, // v6 the 0 constant (i64)
+                                CoreValueTypeId{3}}; // v7 the Bool condition
+            // Pattern 0: High(v) — a binding over one tuple payload slot.
+            flow.patterns.push_back(CorePattern{
+                CoreBindingPat{CorePatternBindingId{0}, CorePatternId{}, false}, std::nullopt});
+            flow.patterns.push_back(CorePattern{
+                CoreVariantPat{CoreTypeId{1},
+                               CoreVariantId{1},
+                               {CorePatternId{0}},
+                               {},
+                               false},
+                std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{2};
+            match.has_result = true;
+            match.result = CoreValueId{4};
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{1};
+            arm.bindings.push_back(CorePatternBinding{CoreValueId{3}});
+            arm.body = std::make_unique<CoreRegion>();
+            // The arm yields its BINDING (v3) as the match result, so the latched
+            // value is what the result local receives.
+            arm.body->statements.push_back(
+                CoreStmt{CoreYieldStmt{true, CoreValueId{3}}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{5}, CoreExprId{3}}, std::nullopt});
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreYieldStmt{true, CoreValueId{5}}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            // `bound > 0` drives a computed goto so the handler diverges on every
+            // path (the P6 handler contract). v6 is the 0 constant, v7 the Bool.
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{6}, CoreExprId{5}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{7}, CoreExprId{6}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{7};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            CoreFlowState high;
+            high.state = CoreStateId{2};
+            high.state_name = "High";
+            high.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(high));
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-3 payload-binding fixture is verified Core with a layout");
+            const auto layout = compute_core_layouts(program);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            // The latch must LOAD the field at the payload offset (a wide i64 load
+            // at a nonzero offset), not copy the scrutinee local. The pre-fix
+            // codegen emitted `local.get <scrutinee>; local.set <i64 binding>`,
+            // which has no i64.load at all.
+            check(emitted.ok() && handler_body.has_value() &&
+                      contains_bytes(*handler_body, {kOpI64LoadP, 0x03}) &&
+                      std::count(handler_body->begin(), handler_body->end(), kOpI64LoadP) >= 1,
+                  "P6-3 latches an arm payload binding from its recorded P4-D slot");
         }
 
         // P6-2 opcode-pinning regression: the signed comparison ladder must

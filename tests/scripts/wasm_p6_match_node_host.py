@@ -51,6 +51,10 @@ FIXTURES = [
     ("p6_match_fallthrough.ahfl", "statement if-let: no arm matches, fallback runs"),
     ("p6_match_expr.ahfl", "expression match: arm values joined through the result"),
     ("p6_match_guard.ahfl", "guarded arm taken; the unguarded sibling is the fallback"),
+    # A payload arm binding latched from its RECORDED SITE. Latching from the
+    # scrutinee root instead stores the enum address (i32) into the i64 binding
+    # slot, which WebAssembly.compile rejects; a byte-pattern scan cannot see it.
+    ("p6_match_binding_payload.ahfl", "payload arm binding latches its own P4-D slot"),
     ("p6_match_or.ahfl", "or-pattern: the second alternative matches"),
     # The scratch/i64 grouping regression: an i32 match-scratch slot and an i64
     # SSA let in ONE handler. A local index that forgets the i32 scratch group
