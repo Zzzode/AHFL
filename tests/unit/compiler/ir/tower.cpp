@@ -94,9 +94,9 @@ struct type_has_compensation<T, std::void_t<decltype(std::declval<const T &>().c
 
 TEST_CASE("Core-IR closed node sets keep their exact erasure-barrier size") {
     using namespace ahfl::ir::core;
-    static_assert(std::variant_size_v<CoreExprNode> == 9,
+    static_assert(std::variant_size_v<CoreExprNode> == 10,
                   "CoreExprNode alternatives: literal/value-ref/path/qualified/unary/binary/"
-                  "construct/coerce/unsupported");
+                  "construct/coerce/collection/unsupported");
     static_assert(std::variant_size_v<CoreStmtNode> == 9,
                   "CoreStmtNode alternatives: let/capability-call/store/if/goto/return/yield/"
                   "trap/match");
@@ -111,7 +111,7 @@ TEST_CASE("Core-IR closed node sets keep their exact erasure-barrier size") {
     static_assert(std::variant_size_v<CoreDecl> == 2,
                   "CoreDecl alternatives: agent/capability (flows and workflows live in "
                   "CoreProgram flat stores, never in the decl variant)");
-    CHECK(std::variant_size_v<CoreExprNode> == 9);
+    CHECK(std::variant_size_v<CoreExprNode> == 10);
     CHECK(std::variant_size_v<CoreStmtNode> == 9);
     CHECK(std::variant_size_v<CorePatternNode> == 7);
     CHECK(std::variant_size_v<CoreValueTypeNode> == 14);

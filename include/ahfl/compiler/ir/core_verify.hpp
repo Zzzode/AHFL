@@ -190,6 +190,13 @@ inline constexpr std::string_view kCoercionKindMismatch = "core.verify.COERCION_
 inline constexpr std::string_view kCoercionVarianceInvalid =
     "core.verify.COERCION_VARIANCE_INVALID";
 inline constexpr std::string_view kCoercionIdentity = "core.verify.COERCION_IDENTITY";
+// --- bounded-collection operations / CoreCollectionExpr ---
+// A collection op is legal only on a BOUNDED collection nominal (a `CoreVtNominal`
+// whose `capacity` is present and whose declaration role is List/Set/Map), only
+// with the operand set its op kind names, and only with a result type the op
+// kind can produce (an element read yields the element type, a set yields the
+// collection type, a length yields Int). Any other shape is fail-closed.
+inline constexpr std::string_view kCollectionOpInvalid = "core.verify.COLLECTION_OP_INVALID";
 } // namespace verify
 
 /// Result of verifying a Core-IR program: any structural violations, as

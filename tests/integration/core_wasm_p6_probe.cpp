@@ -53,6 +53,20 @@ using namespace ahfl;
 constexpr std::int64_t kAggregateInputA = 100;
 constexpr std::int64_t kAggregateInputB = 7;
 
+// RFC 0026 P6-5: the bounded-collection fixture's element values, in INDEX order.
+// Element 0 (`kCollectionInputHigh`) is ABOVE the fixture's threshold and
+// element 1 (`kCollectionInputLow`) is below it, so reading the WRONG element
+// (a wrong stride, a wrong header offset, or a mis-sized load) routes the branch
+// the other way and is visible in the state-id path.
+constexpr std::int64_t kCollectionInputHigh = 90;
+constexpr std::int64_t kCollectionInputLow = 1;
+// The element count the host writes into the header's `len` word. It is 2 (the
+// number of meaningful elements), NOT the capacity 4: the fixture's `n > 0` test
+// reads the length word, so a host that wrote the capacity instead of the count
+// would still pass a `> 0` test — hence the fixture also reads an element, and
+// the length word's exact value is checked by the host against this constant.
+constexpr std::uint32_t kCollectionInputLen = 2;
+
 [[nodiscard]] std::optional<ir::Program> compile_fixture(const std::filesystem::path &path) {
     const Frontend frontend;
     const auto parse = frontend.parse_file(path);
@@ -95,6 +109,22 @@ constexpr std::int64_t kAggregateInputB = 7;
     evaluator::FieldMap fields;
     fields.set("a", std::make_unique<evaluator::Value>(evaluator::make_int(kAggregateInputA)));
     fields.set("b", std::make_unique<evaluator::Value>(evaluator::make_int(kAggregateInputB)));
+    return evaluator::Value{evaluator::StructValue{"wasm::p6::Frame", std::move(fields)}};
+}
+
+// RFC 0026 P6-5: the bounded-collection fixture's input frame. The struct is
+// `{ items: List<Int>(4) }` — a four-element bounded list whose elements are
+// `[kCollectionInputLow, kCollectionInputHigh, ...]`. The native run reads
+// through the same `input.items[i]` / `input.items.length` surfaces the wasm
+// path uses, so the branch it takes pins the element offsets AND the length word
+// end to end.
+[[nodiscard]] evaluator::Value collection_input() {
+    evaluator::FieldMap fields;
+    std::vector<evaluator::Value> items;
+    items.push_back(evaluator::make_int(kCollectionInputHigh));
+    items.push_back(evaluator::make_int(kCollectionInputLow));
+    fields.set("items",
+               std::make_unique<evaluator::Value>(evaluator::make_list(std::move(items))));
     return evaluator::Value{evaluator::StructValue{"wasm::p6::Frame", std::move(fields)}};
 }
 
@@ -331,11 +361,18 @@ int main(int argc, char **argv) {
     const bool aggregate_fixture =
         input_struct != nullptr && !input_struct->fields.empty() &&
         input_struct->fields.front().name == "a";
+    // RFC 0026 P6-5: an input struct whose leading field is `items` selects the
+    // bounded-collection frame. The fixture's `items: List<Int>(4)` is the
+    // container the module's collection ops address.
+    const bool collection_fixture =
+        input_struct != nullptr && !input_struct->fields.empty() &&
+        input_struct->fields.front().name == "items";
 
     // Native observation: collect every entered state NAME in order. The
     // observer requires a valid invocation agent id to fire.
     std::vector<std::string> entered_names;
-    auto input = aggregate_fixture ? aggregate_input() : fixture_input();
+    auto input = aggregate_fixture ? aggregate_input()
+                                   : (collection_fixture ? collection_input() : fixture_input());
     runtime::AgentRuntime native(*agent, *flow);
     runtime::CapabilityInvocationContext context;
     context.agent_id = runtime::AgentId{0};
@@ -445,6 +482,65 @@ int main(int argc, char **argv) {
             }
             std::cout << input_struct->fields[i].name << "@" << structure->field_offsets[i] << ":"
                       << value;
+        }
+        std::cout << "\n";
+    }
+
+    // RFC 0026 P6-5: for the bounded-collection fixture, report the P4-D facts
+    // the Node host needs to materialize the frame — the input frame base, the
+    // container header's field offset, the P4-D element layout / stride /
+    // value_offset / capacity (so the host writes elements at the SAME stride),
+    // the backing base, and the element values in index order. The host mirrors
+    // this report; it never re-derives a layout.
+    if (collection_fixture && input_struct != nullptr) {
+        const auto value_type =
+            nominal_value_type(core.program, core.program.agents.front().input_type);
+        if (!value_type.has_value() || value_type->value >= layouts.table->value_layouts.size()) {
+            std::cerr << "collection fixture input struct has no interned value type\n";
+            return 1;
+        }
+        const auto &input_layout =
+            layouts.table->layouts[layouts.table->value_layouts[value_type->value].value];
+        const auto *structure = std::get_if<ir::core::CoreLayoutStruct>(&input_layout.shape);
+        if (structure == nullptr || structure->field_offsets.empty()) {
+            std::cerr << "collection fixture input layout is not a matching struct\n";
+            return 1;
+        }
+        const ir::core::CoreLayoutContainer *container = nullptr;
+        if (structure->field_layouts.front().value < layouts.table->layouts.size()) {
+            container = std::get_if<ir::core::CoreLayoutContainer>(
+                &layouts.table->layouts[structure->field_layouts.front().value].shape);
+        }
+        if (container == nullptr) {
+            std::cerr << "collection fixture input field has no container layout\n";
+            return 1;
+        }
+        // Map the element's logical value type to its P4-D scalar width. The
+        // fixture uses `List<Int>(4)` with UNBOUNDED Int elements (i64), which is
+        // the width the module's element load/store actually uses.
+        std::int64_t element_wide = 0;
+        if (container->element.value < layouts.table->layouts.size()) {
+            const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(
+                &layouts.table->layouts[container->element.value].shape);
+            if (scalar != nullptr && scalar->repr == ir::core::CoreScalarRepr::I64) {
+                element_wide = 1;
+            }
+        }
+        std::cout << "collection_base=" << ir::core::kP6AggregateInputBase
+                  << " backing_base=" << ir::core::kP6CollectionBackingBase << " header_offset="
+                  << structure->field_offsets.front() << " ptr_offset="
+                  << ir::core::kP6CollectionHeaderPtrOffset << " len_offset="
+                  << ir::core::kP6CollectionHeaderLenOffset << " len=" << kCollectionInputLen
+                  << " stride=" << container->stride
+                  << " value_offset=" << container->value_offset
+                  << " capacity=" << container->capacity << " backing_size=" << container->backing_size
+                  << " element_wide=" << element_wide << " elements=";
+        for (std::uint64_t i = 0; i < container->capacity; ++i) {
+            if (i != 0) {
+                std::cout << ",";
+            }
+            std::cout << (i == 0 ? kCollectionInputHigh
+                                 : (i == 1 ? kCollectionInputLow : std::int64_t{0}));
         }
         std::cout << "\n";
     }

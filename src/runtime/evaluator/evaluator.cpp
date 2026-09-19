@@ -988,6 +988,44 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
 // PathExpr
 // ============================================================================
 
+/// Read one member of a value, for BOTH `a.b` member access and a dotted path
+/// walk (`xs.length`, `input.items`). The two syntactic forms reach the same
+/// value model, so they share ONE accessor: a struct field, or a container's
+/// built-in `length` / `size` property (RFC 0025 / RFC P7 — the collection
+/// nominal declares no such field, the property is defined on the value). A
+/// divergent second implementation is exactly how `xs.length` came to resolve
+/// through `a.b` but not through a path walk.
+[[nodiscard]] EvalResult eval_value_member(const Value &base, std::string_view member) {
+    if (const auto *sv = std::get_if<StructValue>(&base.node)) {
+        const auto field_it = sv->fields.find(std::string(member));
+        if (field_it == sv->fields.end() || !field_it->value) {
+            return make_error("struct has no field: " + std::string(member));
+        }
+        return EvalResult{clone_value(*field_it->value), {}};
+    }
+    const bool is_length = member == "length";
+    const bool is_size = member == "size";
+    if (const auto *lv = get_list_if(base)) {
+        if (is_length) {
+            return EvalResult{make_int(static_cast<int64_t>(lv->items.size())), {}};
+        }
+        return make_error("list has no member: " + std::string(member));
+    }
+    if (const auto *sv = std::get_if<SetValue>(&base.node)) {
+        if (is_length || is_size) {
+            return EvalResult{make_int(static_cast<int64_t>(sv->items.size())), {}};
+        }
+        return make_error("set has no member: " + std::string(member));
+    }
+    if (const auto *mv = std::get_if<MapValue>(&base.node)) {
+        if (is_length || is_size) {
+            return EvalResult{make_int(static_cast<int64_t>(mv->entries.size())), {}};
+        }
+        return make_error("map has no member: " + std::string(member));
+    }
+    return make_error("cannot access member '" + std::string(member) + "' on this value");
+}
+
 EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
     const auto &path = expr.path;
 
@@ -1002,20 +1040,18 @@ EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
     // Prefer checking the local scope first for this root (e.g. let result = ...)
     auto local_val = ctx.get_local(path.root_name);
     if (local_val.has_value()) {
-        // Walk member access level by level from the local variable
-        std::optional<Value> val = std::move(local_val);
+        // Walk member access level by level from the local variable through the
+        // SHARED accessor, so a local container's `.length` reads the same as a
+        // member access on one.
+        Value val = std::move(*local_val);
         for (const auto &member : path.members) {
-            auto *sv = std::get_if<StructValue>(&val->node);
-            if (!sv) {
-                return make_error("cannot access member '" + member + "' on non-struct value");
+            auto stepped = eval_value_member(val, member);
+            if (stepped.should_unwind()) {
+                return stepped;
             }
-            auto field_it = sv->fields.find(member);
-            if (field_it == sv->fields.end() || !field_it->value) {
-                return make_error("struct has no field: " + member);
-            }
-            val = clone_value(*field_it->value);
+            val = std::move(stepped.value);
         }
-        return EvalResult{std::move(*val), {}};
+        return EvalResult{std::move(val), {}};
     }
 
     // Single member: root.member -> lookup_path (input/ctx/node_output scope)
@@ -1032,20 +1068,16 @@ EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
         return make_error("unresolved path: " + path.root_name + "." + path.members[0]);
     }
 
-    // Walk remaining members
+    // Walk remaining members through the shared accessor.
+    Value current = std::move(*val);
     for (size_t i = 1; i < path.members.size(); ++i) {
-        const auto &member = path.members[i];
-        auto *sv = std::get_if<StructValue>(&val->node);
-        if (!sv) {
-            return make_error("cannot access member '" + member + "' on non-struct value");
+        auto stepped = eval_value_member(current, path.members[i]);
+        if (stepped.should_unwind()) {
+            return stepped;
         }
-        auto field_it = sv->fields.find(member);
-        if (field_it == sv->fields.end() || !field_it->value) {
-            return make_error("struct has no field: " + member);
-        }
-        val = clone_value(*field_it->value);
+        current = std::move(stepped.value);
     }
-    return EvalResult{std::move(*val), {}};
+    return EvalResult{std::move(current), {}};
 }
 
 // ============================================================================
@@ -1414,40 +1446,9 @@ EvalResult eval_member_access(const ir::MemberAccessExpr &expr,
     if (base.should_unwind())
         return base;
 
-    // Struct member access
-    if (auto *sv = std::get_if<StructValue>(&base.value.node)) {
-        auto field_it = sv->fields.find(expr.member);
-        if (field_it == sv->fields.end() || !field_it->value) {
-            return make_error("struct has no field: " + expr.member);
-        }
-        return EvalResult{clone_value(*field_it->value), {}};
-    }
-
-    // List.length
-    if (auto *lv = get_list_if(base.value)) {
-        if (expr.member == "length") {
-            return EvalResult{make_int(static_cast<int64_t>(lv->items.size())), {}};
-        }
-        return make_error("list has no member: " + expr.member);
-    }
-
-    // RFC P7: Set.length / Set.size
-    if (auto *sv = std::get_if<SetValue>(&base.value.node)) {
-        if (expr.member == "length" || expr.member == "size") {
-            return EvalResult{make_int(static_cast<int64_t>(sv->items.size())), {}};
-        }
-        return make_error("set has no member: " + expr.member);
-    }
-
-    // RFC P7: Map.length / Map.size
-    if (auto *mv = std::get_if<MapValue>(&base.value.node)) {
-        if (expr.member == "length" || expr.member == "size") {
-            return EvalResult{make_int(static_cast<int64_t>(mv->entries.size())), {}};
-        }
-        return make_error("map has no member: " + expr.member);
-    }
-
-    return make_error("cannot access member '" + expr.member + "' on this value");
+    // `a.b` and a dotted path (`xs.length`) reach the SAME value model, so both
+    // go through ONE accessor (struct field / container length property).
+    return eval_value_member(base.value, expr.member);
 }
 
 // ============================================================================

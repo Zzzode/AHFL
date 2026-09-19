@@ -1,0 +1,74 @@
+// RFC 0026 P6-5 (KR6.6) bounded-collection fixture. A bounded `List<Int>(4)` is
+// a value whose whole runtime representation is the i32 ADDRESS of its INLINE
+// `(ptr,len)` header (P4-D `CoreLayoutContainer`), and the elements live in an
+// indirect backing store `stride` bytes apart. This fixture reads the header's
+// length word and two elements through that header and branches on them, so a
+// wrong header offset, a wrong element stride, a mis-sized element load, or a
+// wrong length word all change the branch the agent takes and are observable
+// purely through the state ids step() moves to (no JSON, no frame encoding).
+//
+// Layout (wasm32, P4-D): the UNBOUNDED `Int` element is i64 (8 bytes, align 8),
+// so the container stride is 8 and the four-element backing store is 32 bytes.
+// The header itself is `(ptr:i32, len:i32)` = 8 bytes INLINE in the input frame.
+//
+// The element values are supplied by the host (and the native run): element 0 is
+// ABOVE the threshold and element 1 is below it, so reading the WRONG element
+// (wrong stride / header offset / load width) routes to Low instead of High.
+//
+// The probe compiles ONE file with no sysroot, so the well-known collection
+// nominal is declared here at its canonical std path. That is exactly the shape
+// `builtin_nominal_table()` recognizes: the declaration role is stamped `List`
+// from the descriptor SSOT, so the container layout and the capacity rules are
+// the SAME as a sysroot-backed `std::collections::List`. Nothing about the
+// lowering or the emitted module depends on the module living in a real sysroot.
+module std::collections;
+
+pub struct List<T> { }
+
+pub struct Frame {
+    items: List<Int>(4);
+}
+
+pub agent CollectionAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for CollectionAgent {
+    state Decide {
+        // Bind the container once: the local's logical value type IS the
+        // container identity the Core collection ops read (never a name).
+        let xs: List<Int>(4) = input.items;
+        // The header's length word (i32 @ offset 4 of the container).
+        let n: Int = xs.length;
+        // Element 0 and element 1 at their P4-D stride, i64 loads.
+        let first: Int = xs[0];
+        let second: Int = xs[1];
+        if (n > 0 && first > 50) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

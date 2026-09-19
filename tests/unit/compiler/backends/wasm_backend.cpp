@@ -4233,6 +4233,225 @@ int main() {
                       has_codegen_message(emitted, "non-scalar or f64"),
                   "P6-6 fails closed on a StringWiden whose result has no P6 value form");
         }
+
+        // P6-5 (RFC 0026 KR6.6): bounded collections. A `List<Int>(4)` value is
+        // an i32 handle to its INLINE `(ptr,len)` header; every backing fact
+        // (stride, capacity, backing size, header offsets) comes from the P4-D
+        // `CoreLayoutContainer`. The handler reads the length word and an element
+        // and writes one back, so the emitted bytes must carry the layout-derived
+        // stride immediate and the element load/store at the element width.
+        constexpr std::uint8_t kOpI32Mul = 0x6c;
+        constexpr std::uint8_t kOpI64Load = 0x29;
+        constexpr std::uint8_t kOpI64Store = 0x37;
+
+        // Build a 3-state agent whose Start handler (a) reads `len`, (b) reads
+        // element 0, (c) writes element 1, then (d) branches on the length. The
+        // container value is an agent CONTEXT field, so its handle is the address
+        // of the P4-D container header inside the context frame — the module's
+        // collection ops then read/write the indirect backing store.
+        CoreValueTypeId list_vt{};
+        const auto make_collection_program = [&](bool bounded) {
+            auto program = make_e1_core_program();
+            // types[2] = the collection nominal, declared exactly as the std
+            // descriptor SSOT does (role List, arity 1).
+            const CoreTypeId list_type{static_cast<std::uint32_t>(program.types.size())};
+            CoreTypeDecl list_decl;
+            list_decl.kind = CoreTypeDecl::Kind::Struct;
+            list_decl.name = "std::collections::List";
+            list_decl.role = CoreNominalRole::List;
+            list_decl.type_param_count = 1;
+            list_decl.variances = {CoreVariance::Covariant};
+            program.types.push_back(std::move(list_decl));
+
+            const CoreValueTypeId int_vt{static_cast<std::uint32_t>(program.value_types.size())};
+            program.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}}); // i64 element
+            list_vt = CoreValueTypeId{static_cast<std::uint32_t>(program.value_types.size())};
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{list_type, {int_vt},
+                                            bounded ? std::optional<std::uint64_t>{4}
+                                                    : std::nullopt}});
+            const CoreValueTypeId bool_vt{static_cast<std::uint32_t>(program.value_types.size())};
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+
+            // The agent gains a CONTEXT struct holding one `items` field of the
+            // container type, so the container's handle is the address of its
+            // P4-D header inside the context frame. The E1 program has a Unit
+            // context, so the struct is appended and switched in here.
+            const CoreTypeId context_type{static_cast<std::uint32_t>(program.types.size())};
+            CoreTypeDecl context_decl;
+            context_decl.kind = CoreTypeDecl::Kind::Struct;
+            context_decl.name = "app::Context";
+            context_decl.fields = {"items"};
+            context_decl.field_nominal_types = {list_type};
+            context_decl.field_has_default = {false};
+            CoreMemberTypeTemplateNode items_template;
+            items_template.kind = CoreMemberTypeTemplateKind::Concrete;
+            items_template.concrete = list_vt;
+            context_decl.member_type_templates = {std::move(items_template)};
+            context_decl.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+            program.types.push_back(std::move(context_decl));
+            // The context frame's byte size comes from `p6_nominal_size`, which
+            // resolves the CoreTypeId through the LOGICAL value-type arena — so
+            // the new context struct needs its argument-less nominal value type
+            // interned, exactly as the input struct has one. Without it the
+            // emitter cannot size the reserved context frame and fails closed.
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{context_type, {}, std::nullopt}});
+
+            auto &agent = program.agents[0];
+            agent.context_kind = CoreAgentDecl::ContextKind::Struct;
+            agent.context_type = context_type;
+            agent.states = {"Done", "Start", "High"};
+            agent.finals = {CoreStateId{0}};
+            agent.transitions = {{CoreStateId{1}, CoreStateId{0}},
+                                 {CoreStateId{1}, CoreStateId{2}},
+                                 {CoreStateId{2}, CoreStateId{0}}};
+            auto &flow = program.flows[0];
+            // exprs: read the container field, then len / element read / element
+            // write over it.
+            {
+                CorePathExpr path;
+                path.root = CorePathRoot::Context;
+                path.root_name = "ctx";
+                path.root_type = context_type;
+                path.members = {"items"};
+                CoreProjectionStep step;
+                step.owner_type = context_type;
+                step.field = CoreFieldId{0};
+                step.result_type = list_type; // the field's declared nominal base
+                path.projection = {step};
+                path.projection_resolved = true;
+                flow.exprs.push_back(
+                    CoreExpr{std::move(path), std::nullopt, list_vt}); // -> v1
+            }
+            flow.exprs.push_back(CoreExpr{
+                CoreCollectionExpr{CoreCollectionOpKind::Len, CoreValueId{1}, {}, {}},
+                std::nullopt,
+                int_vt}); // -> v2 (len)
+            flow.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt,
+                         int_vt}); // -> v3 (index)
+            flow.exprs.push_back(
+                CoreExpr{CoreCollectionExpr{CoreCollectionOpKind::ElementGet, CoreValueId{1},
+                                            CoreValueId{3}, {}},
+                         std::nullopt,
+                         int_vt}); // -> v4 (element 0)
+            flow.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt,
+                         int_vt}); // -> v5 (index 1)
+            flow.exprs.push_back(
+                CoreExpr{CoreCollectionExpr{CoreCollectionOpKind::ElementSet, CoreValueId{1},
+                                            CoreValueId{5}, CoreValueId{4}},
+                         std::nullopt,
+                         list_vt}); // -> v6 (the container handle)
+            flow.exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{2}}, std::nullopt,
+                                          int_vt}); // -> v7 (len again)
+            flow.exprs.push_back(
+                CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt,
+                         int_vt}); // -> v8
+            // len > 1: BOTH operands are Ints (the length and the constant). The
+            // scale/capacity facts under test are proven by the element ops
+            // above; this comparison only routes the branch.
+            flow.exprs.push_back(
+                CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{7}, CoreExprId{8}},
+                         std::nullopt,
+                         bool_vt}); // -> v9 (len > 1)
+            flow.value_count = 10;
+            flow.value_types = {CoreValueTypeId{0}, list_vt, int_vt, int_vt, int_vt,
+                                int_vt,          list_vt, int_vt, int_vt, bool_vt};
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{2}, CoreExprId{2}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{3}, CoreExprId{3}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{4}, CoreExprId{4}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{5}, CoreExprId{5}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{6}, CoreExprId{6}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{7}, CoreExprId{7}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{8}, CoreExprId{8}}, std::nullopt});
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{9}, CoreExprId{9}}, std::nullopt});
+            CoreIfStmt branch;
+            branch.condition = CoreValueId{9};
+            branch.then_region = std::make_unique<CoreRegion>();
+            branch.then_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{2}, "High"}, std::nullopt});
+            branch.else_region = std::make_unique<CoreRegion>();
+            branch.else_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(branch), std::nullopt});
+            CoreFlowState high;
+            high.state = CoreStateId{2};
+            high.state_name = "High";
+            high.body.statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            flow.states.push_back(std::move(high));
+            return program;
+        };
+
+        // P6-5 positive: a BOUNDED `List<Int>(4)` lowers to real collection ops.
+        // The element is an i64 (unbounded Int), the P4-D stride is 8, and the
+        // capacity is 4 — so the handler must contain the i64 element load/store,
+        // the layout-derived `i32.const 8` stride, and the `i32.const 4` capacity
+        // bound. An UNBOUNDED `List<Int>` has no P4-D container layout, so the
+        // SAME program must fail closed rather than emit a wild read.
+        {
+            auto program = make_collection_program(/*bounded=*/true);
+            check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
+                  "P6-5 bounded-List fixture is verified Core with a finalized container layout");
+            const auto layout = compute_core_layouts(program);
+            // The P4-D facts the codegen must read (never re-derive).
+            const auto &container = std::get<CoreLayoutContainer>(
+                layout.table->layouts[layout.table->value_layouts[list_vt.value].value].shape);
+            const auto emitted = emit_agent(program, *layout.table);
+            const auto handler_body =
+                emitted.artifact ? scalar_handler_body(emitted.artifact->bytes) : std::nullopt;
+            const auto contains = [&](std::uint8_t op) {
+                return handler_body.has_value() &&
+                       std::find(handler_body->begin(), handler_body->end(), op) !=
+                           handler_body->end();
+            };
+            const auto count_of = [&](std::uint8_t op) {
+                return handler_body.has_value() ? static_cast<std::size_t>(std::count(
+                                                      handler_body->begin(), handler_body->end(), op))
+                                                : 0u;
+            };
+            check(emitted.ok() && handler_body.has_value() && container.stride == 8 &&
+                      container.capacity == 4 && container.backing_size == 32,
+                  "P6-5 lowers a bounded collection handler with a stride-8 / capacity-4 backing");
+            check(contains(kOpI64Load) && contains(kOpI64Store),
+                  "P6-5 loads and stores the i64 element at its layout-derived width");
+            check(count_of(kOpI32Mul) >= 1,
+                  "P6-5 scales the element index by the layout-derived stride");
+        }
+
+        // P6-5 negative: the SAME program with an UNBOUNDED `List<Int>` fails
+        // closed. There is no P4-D container layout (P4-D reports
+        // `core.layout.UNBOUNDED`), so the layout build itself rejects and no
+        // artifact is ever produced — the collection lane can never read a
+        // backing store that does not exist.
+        {
+            auto program = make_collection_program(/*bounded=*/false);
+            const auto layout = compute_core_layouts(program);
+            const auto cites_unbounded =
+                std::any_of(layout.diagnostics.begin(), layout.diagnostics.end(),
+                            [](const CoreLowerDiagnostic &d) {
+                                return d.code ==
+                                       std::string(layout::kUnbounded);
+                            });
+            check(!layout.ok() && !layout.table.has_value() && cites_unbounded,
+                  "P6-5 an unbounded List<Int> fails the P4-D layout with core.layout.UNBOUNDED");
+            check(!emit_agent(program, CoreLayoutTable{}).artifact.has_value(),
+                  "P6-5 emits no artifact for an unbounded collection");
+        }
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

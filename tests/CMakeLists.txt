@@ -292,6 +292,42 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-5 (KR6.6): bounded collections. A bounded `List<Int>(4)` is an
+    # i32 handle to an INLINE `(ptr,len)` header with an indirect element backing
+    # store `stride` bytes apart; every fact (header offsets, stride, capacity,
+    # backing size, element width) comes from the P4-D `CoreLayoutContainer`. The
+    # fixture reads the length word and two elements and branches on them.
+    # Observable `value_json` still awaits the P6-7 frame decision, so the Node
+    # host writes the header + elements as RAW BYTES at the addresses the producer
+    # reports, drives step(), and asserts the branch only a CORRECT header /
+    # stride / element-width read can reach (a wrong stride or load width reads
+    # the wrong element and takes the other branch). The producer pins the native
+    # state path and the P4-D facts. An UNBOUNDED collection has no wasm32 backing
+    # store and still fails closed (P4-D `core.layout.UNBOUNDED`).
+    add_test(NAME ahfl.wasm.p6_collection_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_collection.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_collection.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_collection_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2 initial_state_id=3"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_collection_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_collection_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_collection_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "bounded-collection Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # KR6.7 (RFC 0026 P7): execution witness for the case the eligibility
     # classifier promoted across the wasm boundary. `float_output_e2e` is a
     # single-agent f64 identity passthrough; the producer is asked for the

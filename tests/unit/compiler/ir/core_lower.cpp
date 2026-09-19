@@ -4390,3 +4390,133 @@ TEST_CASE("P4-C C2 materializes recursive member templates through the shared va
     CHECK(second.program.types == ir::core::lower_ahfl_to_core(*ahfl).program.types);
     CHECK(second.program.value_types == ir::core::lower_ahfl_to_core(*ahfl).program.value_types);
 }
+
+// RFC 0026 P6-5 (KR6.6): the `.length` container property. It is a LENGTH READ of
+// a BOUNDED collection's inline `(ptr,len)` header, lowered to a typed
+// `CoreCollectionExpr{Len}` — NOT a field projection (a collection nominal
+// declares no fields). The gate is the LOCAL BINDING's interned logical value
+// type judged by the declaration ROLE (never the `length` spelling alone), so a
+// struct that legitimately declares a field named `length` keeps the ordinary
+// projection path and the two can never be confused.
+TEST_CASE("P6-5: `.length` on a bounded collection local lowers to a typed length read") {
+    const std::string source = R"(
+module app::main;
+
+import std::collections as collections;
+
+pub struct Frame { items: collections::List<Int>(4); }
+
+pub agent A {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for A {
+    state Decide {
+        let xs: collections::List<Int>(4) = input.items;
+        let n: Int = xs.length;
+        let first: Int = xs[0];
+        goto Done;
+    }
+
+    state Done { return input; }
+}
+)";
+    const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("p65_length", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+
+    // The length read IS a CoreCollectionExpr{Len} over the container local...
+    bool saw_len = false;
+    bool saw_element_get = false;
+    for (const auto &flow : result.program.flows) {
+        for (const auto &expr : flow.exprs) {
+            const auto *collection = std::get_if<ir::core::CoreCollectionExpr>(&expr.node);
+            if (collection == nullptr) {
+                continue;
+            }
+            if (collection->op == ir::core::CoreCollectionOpKind::Len) {
+                saw_len = true;
+                // The base's logical value type is the BOUNDED container nominal.
+                const auto base_ty = flow.value_types[collection->base.value];
+                const auto *nominal = std::get_if<ir::core::CoreVtNominal>(
+                    &result.program.value_types[base_ty.value].node);
+                REQUIRE(nominal != nullptr);
+                CHECK(nominal->capacity.has_value());
+            }
+            if (collection->op == ir::core::CoreCollectionOpKind::ElementGet) {
+                saw_element_get = true;
+            }
+        }
+    }
+    CHECK(saw_len);
+    CHECK(saw_element_get);
+    // ...and never a plain field projection of a `length` member.
+    CHECK_FALSE(flow_has_unsupported(result.program, "PathExpr"));
+}
+
+TEST_CASE("P6-5: a STRUCT field named `length` is a projection, not a container read") {
+    const std::string source = R"(
+module app::main;
+
+pub struct Inner { length: Int; }
+pub struct Frame { value: String; }
+
+pub agent A {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for A {
+    state Decide {
+        let inner: Inner = Inner { length: 7 };
+        let v: Int = inner.length;
+        goto Done;
+    }
+
+    state Done { return input; }
+}
+)";
+    const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("p65_length_field", source);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+
+    // The struct field read is a CorePathExpr with a resolved one-step
+    // projection, and NO collection op was fabricated for it.
+    bool saw_length_path = false;
+    for (const auto &flow : result.program.flows) {
+        for (const auto &expr : flow.exprs) {
+            CHECK_FALSE(std::holds_alternative<ir::core::CoreCollectionExpr>(expr.node));
+            if (const auto *path = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
+                if (path->members.size() == 1 && path->members.front() == "length") {
+                    saw_length_path = true;
+                    CHECK(path->projection_resolved);
+                    CHECK(path->projection.size() == 1);
+                }
+            }
+        }
+    }
+    CHECK(saw_length_path);
+}

@@ -541,8 +541,37 @@ struct CoreCoerceExpr {
                                          const CoreCoerceExpr &) noexcept = default;
 };
 
+/// One operation on a BOUNDED collection value (RFC 0026 P6-5). The value model
+/// has no 2-word handle: a collection's P6 representation is the i32 ADDRESS of
+/// its inline `(ptr,len)` header, exactly like an aggregate's address, and every
+/// fact about its backing store (element layout, stride, capacity, Map value
+/// offset, checked `backing_size`) comes from the P4-D `CoreLayoutContainer` —
+/// codegen re-derives NOTHING.
+///
+/// `base` is the SSA value holding that address; `index` / `value` are the other
+/// already-bound operands (ANF), valid per op:
+///   * `Len`        : neither is valid; the result is the header's `len` word.
+///   * `ElementGet` : `index`; the result is element `index` (a Map's VALUE
+///                    entry for a Map base, offset by `value_offset`).
+///   * `ElementSet` : `index` + `value`; the result is the base address (so the
+///                    operation can be chained), and the element slot is written.
+///
+/// This is a typed node, never a string-keyed builtin call: the op is an enum and
+/// the collection identity is the base value's interned `CoreValueTypeId`, so a
+/// backend can never mistake one container for another.
+enum class CoreCollectionOpKind { Len, ElementGet, ElementSet };
+
+struct CoreCollectionExpr {
+    CoreCollectionOpKind op{CoreCollectionOpKind::Len};
+    CoreValueId base{};
+    CoreValueId index{};
+    CoreValueId value{};
+    [[nodiscard]] friend bool operator==(const CoreCollectionExpr &,
+                                         const CoreCollectionExpr &) noexcept = default;
+};
+
 /// A structurally-preserved but not-yet-lowered PURE expression (e.g. match,
-/// lambda, index/member access forms deferred to a later sub-slice). It carries
+/// lambda, member-access forms deferred to a later sub-slice). It carries
 /// the source expr kind + range so the Core-IR verifier can reject it if a
 /// backend reaches it, WITHOUT it ever hiding an effect (effectful unsupported
 /// shapes fail-closed in the lowerer and never reach here). This is NOT a
@@ -562,10 +591,11 @@ using CoreExprNode = std::variant<CoreLiteralExpr,
                                   CoreBinaryExpr,
                                   CoreConstructExpr,
                                   CoreCoerceExpr,
+                                  CoreCollectionExpr,
                                   CoreUnsupportedExpr>;
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
-static_assert(std::variant_size_v<CoreExprNode> == 9,
+static_assert(std::variant_size_v<CoreExprNode> == 10,
               "ahfl::ir::core::CoreExprNode cardinality drift (RFC 0027 P8 "
               "IR SSOT): update every exhaustive visitor and this pin "
               "together with the alternative list.");

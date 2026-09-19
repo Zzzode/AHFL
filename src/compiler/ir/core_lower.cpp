@@ -362,6 +362,16 @@ class TypeEnv {
         return std::nullopt;
     }
 
+    /// The nominal ROLE of a declaration id, or `Ordinary` when the id is out of
+    /// range. The bounded-collection predicate reads this (never a name), so a
+    /// user nominal named `List` is not mistaken for the stdlib collection.
+    [[nodiscard]] CoreNominalRole role_of(CoreTypeId id) const {
+        if (id.value >= types_.size()) {
+            return CoreNominalRole::Ordinary;
+        }
+        return types_[id.value].role;
+    }
+
     /// Resolve a struct/enum TypeRef to its CoreTypeId (nullopt for primitive /
     /// collection / unresolved types, which do not participate in projection).
     [[nodiscard]] std::optional<CoreTypeId> type_id_of(const TypeRef &type) const {
@@ -2032,6 +2042,20 @@ template <class RootPolicy> class ExprLowerer {
         if (rr.is_local && e.path.members.empty()) {
             return rr.local;
         }
+        // RFC 0026 P6-5: `xs.length` on a BOUNDED collection local is a length
+        // READ of the container's inline `(ptr,len)` header, not a field
+        // projection (a collection nominal declares no fields). The container
+        // identity is the LOCAL BINDING's interned logical value type, which is
+        // exactly what `value_type_is_bounded_collection` decides — never a name,
+        // never the `length` spelling alone. A struct that HAPPENS to declare a
+        // field named `length` is not a collection, so it keeps the ordinary
+        // projection path below; so does an UNBOUNDED collection (no P6 header).
+        if (rr.is_local && e.path.members.size() == 1 && e.path.members.front() == "length" &&
+            value_type_is_bounded_collection(rr.local)) {
+            const CoreValueTypeId result_ty = intern_value_type(expr.ptr->resolved_type, range);
+            return bind_pure(CoreCollectionExpr{CoreCollectionOpKind::Len, rr.local, {}, {}},
+                             result_ty, range, region);
+        }
         // A projection / external-root path DOES produce a fresh value; intern its
         // own resolved type for it (self-typed: not eagerly interned by lower_value).
         const CoreValueTypeId result_ty = intern_value_type(expr.ptr->resolved_type, range);
@@ -2056,6 +2080,20 @@ template <class RootPolicy> class ExprLowerer {
                                  node.projection, node.projection_resolved);
         }
         return bind_pure(std::move(node), result_ty, range, region);
+    }
+
+    /// Whether a bound value's recorded logical type is a BOUNDED collection
+    /// nominal (List / Set / Map with a static capacity). The single predicate the
+    /// collection accessor lowering reads, judged by the declaration ROLE from the
+    /// builtin descriptor SSOT — never by a name.
+    [[nodiscard]] bool value_type_is_bounded_collection(CoreValueId value) const {
+        const CoreValueTypeId ty = value_type_of(value);
+        if (ty.value >= value_type_pool_.size()) {
+            return false;
+        }
+        const auto *nominal = std::get_if<CoreVtNominal>(&value_type_pool_[ty.value].node);
+        return nominal != nullptr && nominal->capacity.has_value() &&
+               capacity_allowed(types_.role_of(nominal->base));
     }
 
     /// A path root resolved to its Core-IR root kind + type + optional local /
@@ -2728,6 +2766,17 @@ template <class RootPolicy> class ExprLowerer {
             region.statements.push_back(CoreStmt{std::move(stmt), range});
             return result;
         }
+        // A non-capability call may be an INTERNAL COLLECTION ACCESSOR builtin
+        // (`list_raw_get` / `list_raw_set` / `list_raw_length` — the frontend's
+        // desugar target for `xs[i]` / `xs[i] = v` / `xs.length()`). Those hooks
+        // are compiler-internal, so the callee string is matched against the
+        // compile-time hook SSOT and mapped to a typed `CoreCollectionOpKind`; the
+        // CONTAINER IDENTITY survives as the base operand's interned logical value
+        // type, never as this string. A hook call whose container is NOT a bounded
+        // collection fails closed.
+        if (const auto op = collection_op_of_hook(call.callee)) {
+            return lower_collection_builtin(call, *op, expr, range, region);
+        }
         // A non-capability call may be an ENUM-VARIANT CONSTRUCTOR — the front
         // end lowers `Enum::Variant(payload)` to a CallExpr whose `callee_ref`
         // resolves to the ENUM symbol and whose `callee` string ends in the
@@ -2771,6 +2820,85 @@ template <class RootPolicy> class ExprLowerer {
     [[nodiscard]] static std::string variant_suffix(const std::string &callee) {
         const auto last = callee.rfind("::");
         return last == std::string::npos ? callee : callee.substr(last + 2);
+    }
+
+    /// The bounded-collection operation an internal builtin hook names, or
+    /// nullopt when the hook is not a collection accessor. The hook spelling is
+    /// matched against the compile-time `known_builtin_hooks()` SSOT, NOT parsed:
+    /// a hook is a compiler-internal identifier, and this is the ONE place that
+    /// maps it to a typed `CoreCollectionOpKind`. The container's own identity
+    /// (its interned `CoreValueTypeId`) is what the verifier and codegen read —
+    /// never this string.
+    [[nodiscard]] static std::optional<CoreCollectionOpKind>
+    collection_op_of_hook(std::string_view hook) {
+        if (hook == "list_raw_get") {
+            return CoreCollectionOpKind::ElementGet;
+        }
+        if (hook == "list_raw_set") {
+            return CoreCollectionOpKind::ElementSet;
+        }
+        if (hook == "list_raw_length") {
+            return CoreCollectionOpKind::Len;
+        }
+        return std::nullopt;
+    }
+
+    /// Lower an internal collection-accessor builtin call to a typed
+    /// `CoreCollectionExpr`. The base operand's recorded logical value type is
+    /// the container identity: it MUST be a BOUNDED collection nominal (List /
+    /// Set / Map with a capacity), otherwise the program is not executable on the
+    /// P6 bounded-collection lane and this fails closed with an actionable
+    /// diagnostic instead of emitting a node whose backing store does not exist.
+    [[nodiscard]] CoreValueId
+    lower_collection_builtin(const CallExpr &call, CoreCollectionOpKind op,
+                             const ExprRef &expr, SourceRangeOpt range, CoreRegion &region) {
+        if (call.arguments.empty()) {
+            error(diag::kUnloweredExpression,
+                  "collection accessor '" + call.callee + "' has no container operand", range);
+            return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
+        }
+        CoreCollectionExpr node;
+        node.op = op;
+        node.base = lower_value(call.arguments[0], region);
+        // An already-invalid operand (an earlier diagnostic owns this partial
+        // value) must NOT get a second, misleading boundedness diagnostic; still
+        // produce a value of the accessor's own result type so the arrays stay
+        // parallel.
+        if (value_type_of(node.base).value == CoreValueTypeId::kInvalid) {
+            return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
+        }
+        if (!value_type_is_bounded_collection(node.base)) {
+            error(diag::kUnloweredExpression,
+                  "collection accessor '" + call.callee +
+                      "' requires a BOUNDED collection operand (List/Set/Map with a static "
+                      "capacity); an unbounded collection has no wasm32 backing store",
+                  range);
+            return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
+        }
+        const std::size_t expected = op == CoreCollectionOpKind::Len ? 1u : 2u;
+        if (op == CoreCollectionOpKind::ElementSet) {
+            // `list_raw_set(xs, i, x)` returns the updated collection.
+            if (call.arguments.size() != 3) {
+                error(diag::kUnloweredExpression,
+                      "collection accessor '" + call.callee + "' expects 3 operands", range);
+                return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
+            }
+            node.index = lower_value(call.arguments[1], region);
+            node.value = lower_value(call.arguments[2], region);
+        } else {
+            if (call.arguments.size() != expected) {
+                error(diag::kUnloweredExpression,
+                      "collection accessor '" + call.callee + "' expects " +
+                          std::to_string(expected) + " operand(s)",
+                      range);
+                return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
+            }
+            if (op == CoreCollectionOpKind::ElementGet) {
+                node.index = lower_value(call.arguments[1], region);
+            }
+        }
+        const CoreValueTypeId result_ty = intern_value_type(expr.ptr->resolved_type, range);
+        return bind_pure(std::move(node), result_ty, range, region);
     }
 
     /// Fail-closed handler for a not-yet-lowered expression. Whether it carries

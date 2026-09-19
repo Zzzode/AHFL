@@ -38,6 +38,8 @@ using ir::core::CoreCoercionOp;
 using ir::core::CoreCoercionOpKind;
 using ir::core::CoreCoercionPlanId;
 using ir::core::CoreCoercionPlanNode;
+using ir::core::CoreCollectionExpr;
+using ir::core::CoreCollectionOpKind;
 using ir::core::CoreConstructArg;
 using ir::core::CoreConstructExpr;
 using ir::core::CoreExpr;
@@ -219,6 +221,11 @@ constexpr std::uint8_t kOpI64RemS = 0x81;
 // the low lane and SIGN-extends it to i64, which is the exact physical effect of
 // a `BoundedInt <: Int` widening whose bounded side is the i32 scalar repr.
 constexpr std::uint8_t kOpI64ExtendI32S = 0xac;
+// RFC 0026 P6-5: a WIDE element index is confined to the wasm32 address domain
+// by wrapping to i32. The P4-D container capacity is what proves this is lossless
+// (the bounds compare rejects any index outside `[0, capacity)`, and capacity is
+// a wasm32-representable count), so the wrap never discards a live index bit.
+constexpr std::uint8_t kOpI32WrapI64 = 0xa7;
 
 constexpr std::uint32_t kGlobalCurrentState = 0;
 constexpr std::uint32_t kGlobalTransitionCount = 1;
@@ -795,7 +802,17 @@ enum class P6ScalarKind {
     // P4-D shaped bytes. Distinct from IntI32 so no arithmetic/compare operator
     // can consume an address; only a field projection, a store, or a payload
     // pattern touches one.
-    Ptr
+    Ptr,
+    // RFC 0026 P6-5: a BOUNDED COLLECTION value. Its whole runtime
+    // representation is the i32 linear-memory ADDRESS of its INLINE `(ptr,len)`
+    // header (P4-D `CoreLayoutContainer`, size 8/align 4), exactly analogous to
+    // an aggregate's address — the backing elements live at `ptr`, one `stride`
+    // apart. Distinct from BOTH IntI32 and Ptr so no arithmetic / aggregate op
+    // can consume a handle: only a collection op (len / element read / element
+    // write) touches one, and every backing fact (element layout, stride,
+    // capacity, Map value offset, checked backing size) comes from that
+    // `CoreLayoutContainer`, never re-derived.
+    Collection
 };
 
 // The location in the scrutinee a pattern is tested at (RFC 0026 P6-4). The root
@@ -824,7 +841,36 @@ p6_value_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &lay
     return &layouts.layouts[layout_id.value];
 }
 
-// Whether `type` is a TAG-ONLY enum (an enum whose every variant payload is
+// The P4-D CONTAINER layout of a BOUNDED collection value type, or null. A
+// bounded collection is a `CoreVtNominal` over a List / Set / Map declaration
+// whose `capacity` is present; its final layout shape is `CoreLayoutContainer`
+// (the one authority for element layout, stride, capacity, Map value offset and
+// checked backing size). An UNBOUNDED collection has no such layout (P4-D fails
+// `core.layout.UNBOUNDED`), so this returns null and every consumer fails
+// closed — the boundedness gate is the layout table's, never a second copy.
+[[nodiscard]] const ir::core::CoreLayoutContainer *
+p6_container_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
+                    CoreValueTypeId type) {
+    if (type.value >= program.value_types.size()) {
+        return nullptr;
+    }
+    const auto *nominal = std::get_if<CoreVtNominal>(&program.value_types[type.value].node);
+    if (nominal == nullptr || !nominal->capacity.has_value() ||
+        nominal->base.value >= program.types.size()) {
+        return nullptr;
+    }
+    const CoreTypeDecl &decl = program.types[nominal->base.value];
+    if (!ir::core::capacity_allowed(decl.role)) {
+        return nullptr;
+    }
+    const ir::core::CoreLayout *layout = p6_value_layout(program, layouts, type);
+    if (layout == nullptr) {
+        return nullptr;
+    }
+    return std::get_if<ir::core::CoreLayoutContainer>(&layout->shape);
+}
+
+// Whether `type` is a tag-only enum (an enum whose every variant payload is
 // zero-sized): its whole runtime representation is the i32 discriminant, so a
 // `match` on it compiles to tag compares with no payload projection. This is
 // the unit-variant pattern + qualified-variant-constructor lane; a payload-
@@ -979,6 +1025,13 @@ p6_nominal_size(const CoreProgram &program, const ir::core::CoreLayoutTable &lay
         }
         if (p6_is_aggregate(program, layouts, type)) {
             return P6ScalarKind::Ptr;
+        }
+        // RFC 0026 P6-5: a BOUNDED collection is a handle-shaped value like an
+        // aggregate (the address of its inline header). An UNBOUNDED collection
+        // has no P4-D container layout, so `p6_container_layout` returns null and
+        // this stays fail-closed — the exact `core.layout.UNBOUNDED` boundary.
+        if (p6_container_layout(program, layouts, type) != nullptr) {
+            return P6ScalarKind::Collection;
         }
         return std::nullopt;
     }
@@ -1568,10 +1621,12 @@ class P6ComputationHandlerBuilder {
     // The P6 kind of the object at a P4-D layout edge. A scalar keeps its width;
     // a tag-only enum edge is `Index` (its whole representation is the i32 tag at
     // offset 0, loaded/stored like a narrow Int); a STRUCT or a payload-bearing
-    // enum is `Ptr` — its whole value IS its address. Every other shape (a
-    // PtrLen pair, bytes, a collection handle, f64) is NOT a single-word P6 value
-    // and maps to `Ptr` only so the CALLER's leaf-repr check rejects it: a field
-    // read/store of such a leaf must fail closed rather than truncate.
+    // enum is `Ptr` — its whole value IS its address; a bounded-collection edge
+    // (RFC 0026 P6-5) is `Collection` — its whole value is the address of its
+    // inline `(ptr,len)` header, the SAME one-word handle rule. Every other shape
+    // (a PtrLen pair, bytes, f64) is NOT a single-word P6 value and maps to `Ptr`
+    // only so the CALLER's leaf-repr check rejects it: a field read/store of such
+    // a leaf must fail closed rather than truncate.
     [[nodiscard]] P6ScalarKind place_kind_of_layout(CoreLayoutId layout_id) const {
         if (layout_id.value < layouts_.layouts.size()) {
             const ir::core::CoreLayout &layout = layouts_.layouts[layout_id.value];
@@ -1595,14 +1650,17 @@ class P6ComputationHandlerBuilder {
             if (std::holds_alternative<ir::core::CoreLayoutStruct>(layout.shape)) {
                 return P6ScalarKind::Ptr;
             }
+            if (std::holds_alternative<ir::core::CoreLayoutContainer>(layout.shape)) {
+                return P6ScalarKind::Collection;
+            }
         }
         return P6ScalarKind::Ptr;
     }
 
     // Whether a P4-D layout edge is a leaf the P6 memory model can load/store as
     // ONE word: an i32 / i64 scalar, or a tag-only enum (an i32 discriminant).
-    // Everything else — a PtrLen String, bytes, a collection handle, f64, or a
-    // nested aggregate — is not a single-word field, so a leaf read/store of it
+    // Everything else — a PtrLen String, bytes, f64, or a nested aggregate /
+    // collection — is not a single-word field, so a leaf read/store of it
     // fails closed.
     [[nodiscard]] bool place_is_scalar_leaf(CoreLayoutId layout_id) const {
         const P6ScalarKind kind = place_kind_of_layout(layout_id);
@@ -1610,17 +1668,19 @@ class P6ComputationHandlerBuilder {
                kind == P6ScalarKind::Index;
     }
 
-    // Whether a P4-D layout edge is an ADDRESSABLE aggregate leaf: a struct or a
-    // payload-bearing enum, whose whole P6 representation is an i32 address. A
-    // PtrLen String / bytes / collection handle is NOT one — it has no address
-    // the P6 model owns — so this is the predicate a store destination uses to
-    // decide "one i32 slot" vs "fail closed".
+    // Whether a P4-D layout edge is an ADDRESS-SHAPED leaf: a struct, a
+    // payload-bearing enum, or a bounded collection (RFC 0026 P6-5), whose whole
+    // P6 representation is an i32 address (of the aggregate's bytes, or of the
+    // collection's inline header). A PtrLen String / bytes / f64 is NOT one — it
+    // has no address the P6 model owns — so this is the predicate a store
+    // destination uses to decide "one i32 slot" vs "fail closed".
     [[nodiscard]] bool place_is_aggregate_leaf(CoreLayoutId layout_id) const {
         if (layout_id.value >= layouts_.layouts.size()) {
             return false;
         }
         const ir::core::CoreLayout &layout = layouts_.layouts[layout_id.value];
-        if (std::holds_alternative<ir::core::CoreLayoutStruct>(layout.shape)) {
+        if (std::holds_alternative<ir::core::CoreLayoutStruct>(layout.shape) ||
+            std::holds_alternative<ir::core::CoreLayoutContainer>(layout.shape)) {
             return true;
         }
         const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape);
@@ -1630,7 +1690,7 @@ class P6ComputationHandlerBuilder {
     }
 
     // Whether a P4-D layout edge is a single-word P6 value at all: a scalar, a
-    // tag-only enum discriminant, or an addressable aggregate.
+    // tag-only enum discriminant, or an address-shaped leaf.
     [[nodiscard]] bool place_is_p6_value(CoreLayoutId layout_id) const {
         return place_is_scalar_leaf(layout_id) || place_is_aggregate_leaf(layout_id);
     }
@@ -1744,6 +1804,9 @@ class P6ComputationHandlerBuilder {
                     return plan_construct(id, c, expr.source_range);
                 },
                 [&](const CoreCoerceExpr &c) { return plan_coerce(id, c, expr.source_range); },
+                [&](const CoreCollectionExpr &c) {
+                    return plan_collection(id, c, expr.source_range);
+                },
                 [&](const CoreUnsupportedExpr &) {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
@@ -2047,6 +2110,260 @@ class P6ComputationHandlerBuilder {
                 break;
             }
         }
+        return true;
+    }
+
+    // Emit a bounded-collection operation. The handle in `base` is the address
+    // of the inline `(ptr,len)` header; `stride` / `value_offset` / `capacity`
+    // come from the P4-D `CoreLayoutContainer` (plan already proved it exists and
+    // the element slot is one P6 word). A bounds failure traps via `unreachable`
+    // — never a wild load/store.
+    //
+    //   Len        : base -> [len @4]                        (i32)
+    //   ElementGet : base -> [ptr @0] + idx*stride + voffset -> load
+    //   ElementSet : base -> [ptr @0] + idx*stride + voffset -> store(value);
+    //                the result is the base handle (chainable, like a `+=`)
+    //
+    // `stride` is a power-of-two multiple of the element alignment (P4-D aligns
+    // it up), so the index scaling is a `mul` and not a shift (a shift would
+    // silently be wrong for a non-power-of-two stride such as a 3-byte element
+    // padded to 4 — and the layout is the authority, never an assumption).
+    [[nodiscard]] bool emit_collection(CoreExprId id, const CoreCollectionExpr &collection,
+                                       ir::SourceRangeOpt range) {
+        const auto base_kind = readable_kind(collection.base);
+        if (base_kind != P6ScalarKind::Collection) {
+            return reject("collection operation base is not a bounded collection value",
+                          std::move(range));
+        }
+        const CoreValueTypeId base_type = flow_.value_types[collection.base.value];
+        const ir::core::CoreLayoutContainer *container =
+            p6_container_layout(program_, layouts_, base_type);
+        if (container == nullptr) {
+            return reject("collection operation base has no finalized container layout",
+                          std::move(range));
+        }
+        if (collection.op == CoreCollectionOpKind::Len) {
+            if (!emit_value_read(collection.base, range)) {
+                return false;
+            }
+            body_.byte(kOpI32Load); // len @ 4 (pointer @ 0 is the other word)
+            body_.u32(kAlignI32);
+            body_.u32(ir::core::kP6CollectionHeaderLenOffset);
+            // The header word is an i32 by construction; the LENGTH result is an
+            // `Int`, which may be the wider i64 repr, so widen it. `i64.extend_
+            // i32_s` is correct for a length (always >= 0 in a well-formed
+            // container, so signed vs unsigned is indistinguishable, but the
+            // signed form keeps ONE extension opcode in the module).
+            const auto result_kind = scalar_kind(flow_.exprs[id.value].result_type);
+            if (result_kind == P6ScalarKind::IntI64) {
+                body_.byte(kOpI64ExtendI32S);
+            }
+            return true;
+        }
+        const auto index_kind = readable_kind(collection.index);
+        const auto element_slot = container->element;
+        const bool element_wide = place_kind_of_layout(element_slot) == P6ScalarKind::IntI64;
+        const std::uint32_t element_offset =
+            static_cast<std::uint32_t>(container->value_offset);
+        // The bounds test: index must be within `capacity`. It is emitted BEFORE
+        // the address arithmetic so a bad index cannot compute a wild address
+        // even transiently. `stride` / `value_offset` are the P4-D facts.
+        if (index_kind == std::nullopt ||
+            (*index_kind != P6ScalarKind::IntI32 && *index_kind != P6ScalarKind::IntI64)) {
+            return reject("collection element index is not a scalar Int", std::move(range));
+        }
+        const bool index_wide = *index_kind == P6ScalarKind::IntI64;
+        // [in-bounds?] : (index >= 0) && (index < capacity). A FALSE result
+        // TRAPS: the test is negated (`i32.eqz`) so `if` takes the `unreachable`
+        // arm exactly when the index is out of range (the same "negate the
+        // condition, trap in the then-arm" discipline the match arm chain uses).
+        if (!emit_element_bounds(collection, container->capacity, range)) {
+            return false;
+        }
+        body_.byte(kOpI32Eqz);
+        body_.byte(kOpIf);
+        body_.byte(kEmptyBlock);
+        body_.byte(kOpUnreachable);
+        body_.byte(kOpEnd);
+        // [address] : ptr @0 + index*stride + value_offset. The stack already
+        // holds the `ptr` word from the header load; the index term is emitted
+        // next and combined with ONE `i32.add`.
+        if (!emit_value_read(collection.base, range)) {
+            return false;
+        }
+        body_.byte(kOpI32Load);
+        body_.u32(kAlignI32);
+        body_.u32(ir::core::kP6CollectionHeaderPtrOffset);
+        if (!emit_value_read(collection.index, range)) {
+            return false;
+        }
+        // Widen a narrow index to the address arithmetic's domain. A wide index is
+        // rejected below if it cannot be confined to wasm32; an i64 index is
+        // wrapped to i32 only when the layout proves capacity fits i32 (the same
+        // fact the bounds immediates rely on). A narrow index scales in i32.
+        if (index_wide) {
+            body_.byte(kOpI32WrapI64);
+        }
+        // Scale the index by the layout-derived stride, then add the Map value
+        // offset. BOTH steps are `i32` arithmetic on the raw index: the P4-D
+        // `stride` is an align-up multiple of the entry alignment, never assumed
+        // to be a power of two, so an explicit `mul` is used rather than a shift
+        // (a 3-byte element padded to a 4-byte stride would be silently wrong).
+        const bool stride_one = container->stride == 1;
+        if (!stride_one) {
+            emit_const_i32(static_cast<std::int32_t>(container->stride));
+            body_.byte(kOpI32Mul);
+        }
+        if (element_offset != 0) {
+            emit_const_i32(static_cast<std::int32_t>(element_offset));
+            body_.byte(kOpI32Add);
+        }
+        // Combine the header's `ptr` word with the scaled index term into the
+        // final element address. This add is ALWAYS required: the stack holds two
+        // independent values (the header pointer and the offset term), and the
+        // single-word load/store that follows consumes exactly one address.
+        body_.byte(kOpI32Add);
+        if (collection.op == CoreCollectionOpKind::ElementGet) {
+            body_.byte(element_wide ? kOpI64Load : kOpI32Load);
+            body_.u32(element_wide ? kAlignI64 : kAlignI32);
+            body_.u32(0);
+            return true;
+        }
+        // Store: [address][value] so the address is already on the stack; the
+        // operand is read next. An address-shaped element stores its child's
+        // address (the ONE representation rule the plan already proved).
+        if (!emit_value_read(collection.value, range)) {
+            return false;
+        }
+        if (place_is_aggregate_leaf(element_slot)) {
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+        } else {
+            body_.byte(element_wide ? kOpI64Store : kOpI32Store);
+            body_.u32(element_wide ? kAlignI64 : kAlignI32);
+            body_.u32(0);
+        }
+        // The result is the base handle itself, so an element write chains.
+        return emit_value_read(collection.base, std::move(range));
+    }
+
+    // Emit the `index in [0, capacity)` test as a single i32 flag, leaving the
+    // `if` body to trap. The index width selects the comparison ladder. The
+    // plan pass already proved the index is a scalar Int and that the layout's
+    // capacity fits the ladder's immediate, so this reads the local and emits
+    // the compare — it never re-derives a backing fact.
+    [[nodiscard]] bool emit_element_bounds(const CoreCollectionExpr &collection,
+                                           std::uint64_t capacity, ir::SourceRangeOpt range) {
+        const auto index_kind = readable_kind(collection.index);
+        if (index_kind == std::nullopt) {
+            return reject("collection element index is not a readable value", std::move(range));
+        }
+        const bool wide = *index_kind == P6ScalarKind::IntI64;
+        // (index >= 0) : not(index < 0)
+        if (!emit_value_read(collection.index, range)) {
+            return false;
+        }
+        if (wide) {
+            emit_const_i64(0);
+            body_.byte(kOpI64LtS);
+        } else {
+            emit_const_i32(0);
+            body_.byte(kOpI32LtS);
+        }
+        body_.byte(kOpI32Eqz);
+        // (index < capacity)
+        if (!emit_value_read(collection.index, range)) {
+            return false;
+        }
+        if (wide) {
+            emit_const_i64(static_cast<std::int64_t>(capacity));
+            body_.byte(kOpI64LtS);
+        } else {
+            emit_const_i32(static_cast<std::int32_t>(capacity));
+            body_.byte(kOpI32LtS);
+        }
+        body_.byte(kOpI32And);
+        return true;
+    }
+
+    // --- P6-5 bounded-collection planning (RFC 0026 P6-5) ---
+    //
+    // A collection value's whole P6 representation is the i32 ADDRESS of its
+    // inline `(ptr,len)` header. The plan pass:
+    //   * proves the BASE is a readable `Collection` local whose P4-D layout is a
+    //     `CoreLayoutContainer` (element layout, stride, capacity, value_offset,
+    //     checked backing_size — the ONE authority; an UNBOUNDED collection has
+    //     no container layout, so this fails closed exactly at `core.layout.
+    //     UNBOUNDED`);
+    //   * proves each extra operand exists, is readable, and matches the op's
+    //     required type (an element index must be a scalar Int, an element value
+    //     must match the element slot's kind);
+    //   * rejects an element op whose element slot is NOT a single-word P6 value
+    //     (a PtrLen String / collection / f64 element), so no load/store can
+    //     truncate a wider element.
+    // `Len` needs no further check beyond the base layout (its header word is an
+    // i32 by construction).
+    [[nodiscard]] bool plan_collection(CoreExprId id, const CoreCollectionExpr &collection,
+                                       ir::SourceRangeOpt range) {
+        if (id.value >= flow_.exprs.size()) {
+            return reject("collection expression id is out of range for this flow", range);
+        }
+        const auto base_kind = readable_kind(collection.base);
+        if (base_kind != P6ScalarKind::Collection) {
+            return reject("collection operation base is not a bounded collection value", range);
+        }
+        const CoreValueTypeId base_type = flow_.value_types[collection.base.value];
+        const ir::core::CoreLayoutContainer *container =
+            p6_container_layout(program_, layouts_, base_type);
+        if (container == nullptr) {
+            return reject("collection operation base has no finalized container layout", range);
+        }
+        used_values_[collection.base.value] = true;
+        if (collection.op == CoreCollectionOpKind::Len) {
+            return true;
+        }
+        // The P4-D backing facts must be representable in the wasm32 address
+        // domain: `stride` and the Map `value_offset` become `i32.const`
+        // immediates in the address arithmetic, and the capacity is the index
+        // ladder's bound. A layout whose stride / offset / capacity exceeds `i32`
+        // (a hostile or hand-built table) fails closed HERE rather than letting a
+        // truncating `static_cast` in emit compute a wild address.
+        if (container->stride > static_cast<std::uint64_t>(INT32_MAX) ||
+            container->value_offset > static_cast<std::uint64_t>(INT32_MAX) ||
+            container->capacity > static_cast<std::uint64_t>(INT32_MAX)) {
+            return reject("collection backing facts exceed the wasm32 address domain", range);
+        }
+        // An element slot must be ONE word the P6 memory model can load/store: a
+        // scalar, a tag-only enum, or an address-shaped leaf (the element's own
+        // layout edge decides which, exactly like an aggregate field).
+        if (!place_is_p6_value(container->element)) {
+            return reject("collection element is not a single-word P6 value", range);
+        }
+        const auto index_kind = readable_kind(collection.index);
+        if (index_kind == std::nullopt ||
+            (*index_kind != P6ScalarKind::IntI32 && *index_kind != P6ScalarKind::IntI64)) {
+            return reject("collection element index is not a scalar Int", range);
+        }
+        used_values_[collection.index.value] = true;
+        if (collection.op == CoreCollectionOpKind::ElementGet) {
+            return true;
+        }        // An element WRITE must match the element slot's kind. An address-shaped
+        // element takes the child's address (the ONE representation rule); a
+        // scalar slot takes a scalar of the same physical width.
+        const auto value_kind = readable_kind(collection.value);
+        if (value_kind == std::nullopt) {
+            return reject("collection element write value is not a readable value", range);
+        }
+        if (place_is_aggregate_leaf(container->element)) {
+            if (*value_kind != place_kind_of_layout(container->element)) {
+                return reject("collection element write value is not the element's address", range);
+            }
+        } else if (place_kind_of_layout(container->element) != *value_kind) {
+            return reject("collection element write value kind does not match the element slot",
+                          range);
+        }
+        used_values_[collection.value.value] = true;
         return true;
     }
 
@@ -2604,6 +2921,9 @@ class P6ComputationHandlerBuilder {
                     return emit_construct(id, c, expr.source_range);
                 },
                 [&](const CoreCoerceExpr &c) { return emit_coerce(c, expr.source_range); },
+                [&](const CoreCollectionExpr &c) {
+                    return emit_collection(id, c, expr.source_range);
+                },
                 [&](const CoreUnsupportedExpr &) {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
@@ -2640,13 +2960,27 @@ class P6ComputationHandlerBuilder {
             return false;
         }
         // A projected LEAF must be a single-word P6 value: a scalar, a tag-only
-        // enum discriminant, or an addressable aggregate. A PtrLen String /
-        // bytes / collection handle / f64 has no single-word P6 representation,
+        // enum discriminant, an addressable aggregate, or a bounded collection.
+        // A PtrLen String / bytes / f64 has no single-word P6 representation,
         // so fail closed rather than load half of it.
         if (!place_is_p6_value(slot->edge)) {
             return reject("projection leaf is not a single-word P6 value", std::move(range));
         }
         const P6ScalarKind kind = place_kind_of_layout(slot->edge);
+        if (kind == P6ScalarKind::Collection) {
+            // RFC 0026 P6-5: a bounded collection's P4-D layout is the INLINE
+            // `(ptr,len)` header itself, so its VALUE is the address of the field
+            // slot — NOT a load (the header is not a pointer to a header; the two
+            // words ARE the handle). `emit_projection_slot` left the OWNING
+            // struct's address on the stack, so advance to the slot. This is the
+            // exact counterpart of the aggregate-address rule, and header word
+            // loads happen inside `emit_collection`.
+            if (slot->offset != 0) {
+                emit_const_i32(static_cast<std::int32_t>(slot->offset));
+                body_.byte(kOpI32Add);
+            }
+            return true;
+        }
         // An aggregate field's slot HOLDS the child's address (the ONE
         // representation rule), so both forms are read as one i32, then the
         // aggregate form is left as the pointer it read. A scalar field is

@@ -1232,6 +1232,16 @@ class Verifier {
                                          expr.source_range);
                                }
                            },
+                           [&](const CoreCollectionExpr &c) {
+                               check_value_id(c.base, expr.source_range);
+                               if (c.op != CoreCollectionOpKind::Len) {
+                                   check_value_id(c.index, expr.source_range);
+                               }
+                               if (c.op == CoreCollectionOpKind::ElementSet) {
+                                   check_value_id(c.value, expr.source_range);
+                               }
+                               verify_collection_op(flow, c, expr, expr.source_range);
+                           },
                            [&](const CoreUnsupportedExpr &u) {
                                error(verify::kUnsupportedExpr,
                                      "executable program contains an unlowered '" + u.source_kind +
@@ -1692,6 +1702,103 @@ class Verifier {
         }
     }
 
+    // A bounded-collection operation is legal only on a BOUNDED collection value
+    // (a `CoreVtNominal` whose declaration role is List/Set/Map AND whose
+    // `capacity` is present — an unbounded collection has no P4-D backing) and
+    // only with the operand set + result type its op kind names. `Len` yields the
+    // header length (Int), an element read yields the element type (a Map's
+    // VALUE type), and an element write yields the collection type itself. The
+    // operand NODE KINDS are checked by the caller; this is the typed restatement
+    // the layout pass and codegen both rely on, so a backend never receives a
+    // collection op it cannot realize.
+    void verify_collection_op(const ArenaView &flow, const CoreCollectionExpr &c,
+                              const CoreExpr &expr, SourceRangeOpt range) {
+        if (c.base.value >= flow.value_count) {
+            return; // already reported as an out-of-range value id
+        }
+        const CoreValueTypeId base_vt = body_value_type(flow, c.base);
+        const auto *base_nominal = base_vt.value < program_.value_types.size()
+                                       ? std::get_if<CoreVtNominal>(
+                                             &program_.value_types[base_vt.value].node)
+                                       : nullptr;
+        if (base_nominal == nullptr || base_nominal->base.value >= program_.types.size() ||
+            !capacity_allowed(program_.types[base_nominal->base.value].role) ||
+            !base_nominal->capacity.has_value()) {
+            error(verify::kCollectionOpInvalid,
+                  "collection operation base is not a bounded collection value in '" +
+                      flow.label + "'",
+                  range);
+            return;
+        }
+        const CoreTypeDecl &decl = program_.types[base_nominal->base.value];
+        const bool is_map = decl.role == CoreNominalRole::Map;
+        // A Map's element read yields the VALUE type (arg #1); a List / Set yields
+        // the single element/key type. Reading an ABSENT Map value would need an
+        // Option wrapper this node does not model, so a Map's element op is
+        // rejected here — the caller (lowerer) is the one that decides whether a
+        // Map surface is in the subset at all.
+        if (c.op == CoreCollectionOpKind::ElementGet || c.op == CoreCollectionOpKind::ElementSet) {
+            if (is_map) {
+                error(verify::kCollectionOpInvalid,
+                      "Map element access needs the typed entry accessor, not a bare collection op "
+                      "in '" +
+                          flow.label + "'",
+                      range);
+                return;
+            }
+            if (c.index.value >= flow.value_count ||
+                (c.op == CoreCollectionOpKind::ElementSet && c.value.value >= flow.value_count)) {
+                return; // out-of-range operand already reported
+            }
+            // The index must be an Int (the header's length domain).
+            const CoreValueTypeId index_vt = body_value_type(flow, c.index);
+            const bool index_is_int =
+                index_vt.value < program_.value_types.size() &&
+                std::holds_alternative<CoreVtInt>(program_.value_types[index_vt.value].node);
+            if (!index_is_int) {
+                error(verify::kCollectionOpInvalid,
+                      "collection element index is not an Int in '" + flow.label + "'", range);
+            }
+        }
+        switch (c.op) {
+        case CoreCollectionOpKind::Len: {
+            const CoreValueTypeId result_vt = expr.result_type;
+            const bool result_is_int =
+                result_vt.value < program_.value_types.size() &&
+                std::holds_alternative<CoreVtInt>(program_.value_types[result_vt.value].node);
+            if (!result_is_int) {
+                error(verify::kCollectionOpInvalid,
+                      "collection length result is not an Int in '" + flow.label + "'", range);
+            }
+            return;
+        }
+        case CoreCollectionOpKind::ElementGet: {
+            if (!(expr.result_type == base_nominal->args.front())) {
+                error(verify::kCollectionOpInvalid,
+                      "collection element read result does not equal the element type in '" +
+                          flow.label + "'",
+                      range);
+            }
+            return;
+        }
+        case CoreCollectionOpKind::ElementSet: {
+            if (!(expr.result_type == base_vt)) {
+                error(verify::kCollectionOpInvalid,
+                      "collection element write result is not the collection type in '" +
+                          flow.label + "'",
+                      range);
+            }
+            if (!(body_value_type(flow, c.value) == base_nominal->args.front())) {
+                error(verify::kCollectionOpInvalid,
+                      "collection element write value does not equal the element type in '" +
+                          flow.label + "'",
+                      range);
+            }
+            return;
+        }
+        }
+    }
+
     // --- flow wiring + per-state statement discipline ---
     void verify_flow(const CoreFlowDecl &flow) {
         ArenaView av{flow.exprs, flow.value_count, flow.patterns, flow.agent_name};
@@ -1785,6 +1892,15 @@ class Verifier {
                                }
                            },
                            [&](const CoreCoerceExpr &c) { out.push_back(c.operand); },
+                           [&](const CoreCollectionExpr &c) {
+                               out.push_back(c.base);
+                               if (c.op != CoreCollectionOpKind::Len) {
+                                   out.push_back(c.index);
+                               }
+                               if (c.op == CoreCollectionOpKind::ElementSet) {
+                                   out.push_back(c.value);
+                               }
+                           },
                            [&](const CoreUnsupportedExpr &) {},
                        },
                        flow.exprs[cur].node);

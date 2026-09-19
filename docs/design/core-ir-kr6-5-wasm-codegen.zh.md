@@ -480,7 +480,12 @@ FOUNDATION; the rest remain), each separately reviewed:
    `br` to the handler's `block (result i32)` label (label depth = enclosing
    statement-if nesting); P6-3 lowers `match` to a nested block+br_if arm chain;
    P6-4 represents an aggregate as an i32 linear-memory address of its P4-D
-   shaped bytes (projection/construct/store + enum tag+payload); P6-6 lifts the
+   shaped bytes (projection/construct/store + enum tag+payload); P6-5
+   represents a BOUNDED collection as an i32 address of its inline `(ptr,len)`
+   header whose element/entry backing store lives in a reserved region, with
+   every backing fact (element layout, `stride`, `capacity`, Map `value_offset`,
+   checked `backing_size`) read from the P4-D `CoreLayoutContainer` and an
+   out-of-range index trapping via `unreachable`; P6-6 lifts the
    `coercion_plans` arena gate and gives each normalized coercion op its
    layout-derived physical effect (`int_widen` repr growth = `i64.extend_i32_s`,
    a byte-identical endpoint pair = no code). Everything else — closures, f64

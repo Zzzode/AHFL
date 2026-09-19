@@ -55,11 +55,20 @@ inline constexpr std::uint32_t kP6AggregateInputBase = 1024;
 inline constexpr std::uint32_t kP6AggregateContextBase = 4096;
 inline constexpr std::uint32_t kP6AggregateScratchBase = 7168;
 
-// The scratch arena is every byte from its base to the end of the fixed page.
-// A plan whose constructors need more fails closed (RESOURCE-class rejection),
-// so the arena can never overflow into unowned memory.
+// RFC 0026 P6-5 (KR6.6): the element BACKING STORE region — a fourth reserved
+// region for BOUNDED-collection element storage, immediately after the
+// constructor scratch arena. It is the counterpart of the aggregate frames for
+// the collection lane: a host materialises a collection's elements here (one
+// `stride` apart, from the P4-D `CoreLayoutContainer`), and the module's
+// `emit_collection` reads/writes them at the header's `ptr`.
+inline constexpr std::uint32_t kP6CollectionBackingBase = 16384;
+
+// The scratch arena is every byte from its base up to the collection backing
+// region. A plan whose constructors need more fails closed (RESOURCE-class
+// rejection), so the arena can never overflow into the collection region or any
+// other reserved bytes.
 inline constexpr std::uint32_t kP6AggregateScratchCapacity =
-    kCoreWasmFixedLinearMemoryCapacityBytes - kP6AggregateScratchBase;
+    kP6CollectionBackingBase - kP6AggregateScratchBase;
 
 // The input frame owns every byte from its base up to the context base, and the
 // context frame every byte up to the scratch arena. Each frame is a FIXED region
@@ -73,14 +82,40 @@ inline constexpr std::uint32_t kP6AggregateContextCapacity =
     kP6AggregateScratchBase - kP6AggregateContextBase;
 
 static_assert(kP6AggregateInputBase % 8 == 0 && kP6AggregateContextBase % 8 == 0 &&
-                  kP6AggregateScratchBase % 8 == 0,
-              "P6 aggregate frame bases are 8-byte aligned (the widest P4-D scalar)");
+                  kP6AggregateScratchBase % 8 == 0 && kP6CollectionBackingBase % 8 == 0,
+              "P6 frame / backing bases are 8-byte aligned (the widest P4-D scalar)");
 static_assert(kP6AggregateContextBase >= kP6AggregateInputBase &&
-                  kP6AggregateScratchBase >= kP6AggregateContextBase,
-              "P6 aggregate frame regions are ordered and non-overlapping");
-static_assert(kP6AggregateScratchBase < kCoreWasmFixedLinearMemoryCapacityBytes,
-              "the P6 aggregate scratch arena starts inside the fixed single page");
+                  kP6AggregateScratchBase >= kP6AggregateContextBase &&
+                  kP6CollectionBackingBase >= kP6AggregateScratchBase,
+              "P6 reserved regions are ordered and non-overlapping");
+static_assert(kP6CollectionBackingBase < kCoreWasmFixedLinearMemoryCapacityBytes,
+              "the P6 collection backing region starts inside the fixed single page");
 static_assert(kP6AggregateInputCapacity > 0 && kP6AggregateContextCapacity > 0,
               "each P6 aggregate frame region reserves at least one byte");
+
+// RFC 0026 P6-5 (KR6.6): the internal bounded-collection HANDLE convention — the
+// INPUT side of the eventual P6-7 frame decision, deliberately NOT a wire format.
+//
+// A bounded collection value is represented at runtime by an i32 ADDRESS into
+// the module's private linear memory pointing at its INLINE `(ptr, len)` header
+// (P4-D `CoreLayoutContainer`, size 8 / align 4). The header's two words are:
+//
+//   [ptr  : i32 @ 0]  the address of the element BACKING STORE (stride * capacity
+//                     bytes, reserved below the bump heap)
+//   [len  : i32 @ 4]  the current logical element count (<= capacity)
+//
+// The element at index `i` lives at `ptr + i * stride + value_offset`, where
+// `stride`, `capacity` and `value_offset` (a Map's value slot) all come from the
+// P4-D `CoreLayoutContainer` — the ONE layout authority. The header offsets are
+// a compile-time ABI constant so the compiler, the emitted module, and the
+// embedded host derive them from ONE place, exactly as the aggregate frame bases
+// above.
+inline constexpr std::uint32_t kP6CollectionHeaderPtrOffset = 0;
+inline constexpr std::uint32_t kP6CollectionHeaderLenOffset = 4;
+inline constexpr std::uint32_t kP6CollectionHeaderSize = 8;
+
+static_assert(kP6CollectionHeaderLenOffset == kP6CollectionHeaderPtrOffset + 4 &&
+                  kP6CollectionHeaderSize == kP6CollectionHeaderLenOffset + 4,
+              "the P6 collection header is exactly a (ptr:i32, len:i32) pair");
 
 } // namespace ahfl::ir::core
