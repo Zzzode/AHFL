@@ -1,11 +1,12 @@
-// X-macro node list for ahfl::ir::ExprNode (RFC 0027 P6/P7, KR6.13-E): the
-// SINGLE source of truth for the AHFL-IR expression node set AND its JSON wire
-// names.
+// X-macro node list for ahfl::ir::ExprNode (RFC 0027 P6/P7, KR6.13-E/T): the
+// SINGLE source of truth for the AHFL-IR expression node set, its JSON wire
+// names, AND its child-traversal edges.
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_EXPR_NODE(Name, Wire) macro. The expansion is one HANDLE_EXPR_NODE
-// invocation per node, IN DECLARATION ORDER. That order is simultaneously:
+// HANDLE_EXPR_NODE(Name, Wire, Edges) macro. The expansion is one
+// HANDLE_EXPR_NODE invocation per node, IN DECLARATION ORDER. That order is
+// simultaneously:
 //   * the ExprNode std::variant alternative order (generated in expr.hpp
 //     through expr_node_detail::node_tag),
 //   * the expr_node_detail::ExprNodeIndex enumerator order, and
@@ -21,14 +22,34 @@
 // sides resolve the mapping from THIS table, so a wire-name typo is a single
 // edit that both sides observe.
 //
+// The third macro argument (KR6.13-T) is the node's ordered CHILD-EDGE list
+// consumed by ahfl/compiler/ir/expr_child_edges.hpp:
+//   * `()`                            — leaf, no children to traverse;
+//   * `AHFL_EXPR_BRANCH(&N::m)`       — `m` is an `ExprRef` member;
+//   * `AHFL_EXPR_FANOUT(&N::m)`       — `m` is a `std::vector<ExprRef>` member;
+//   * `AHFL_EXPR_PER(&N::m, AHFL_EXPR_ELEM(&E::f), ...)` — `m` is a
+//                                       `std::vector<E>` member; per element in
+//                                       order, each listed `E::f` is a child
+//                                       (grouped so a `match` arm's guard and
+//                                       body are visited before the next arm).
+// These spellings are defined and #undef-ed by expr_child_edges.hpp around its
+// own include of this file, so a consumer that does not want the edge column
+// (variant / wire table / identity) simply ignores the third parameter. The
+// derived walkers in src/compiler/ir/visitor.cpp no longer enumerate edges by
+// hand: a node added here with children but without an edge entry is a compile
+// error (see expr_child_edges.hpp), and an edge naming a non-child field fails
+// that node's `static_assert`. Edge order is visit order, so it is part of the
+// contract.
+//
 // Every exhaustive visitor still routes through std::visit + Overloaded; the
-// compile-time exhaustiveness property is pinned by the negative compile-test
-// tests/fixtures/ir/ssot/expr_exhaustiveness_negative.cpp (syntax-compiled by
+// compile-time exhaustiveness property is pinned by the negative compile-tests
+// tests/fixtures/ir/ssot/expr_exhaustiveness_negative.cpp and
+// tests/fixtures/ir/ssot/expr_child_edges_negative.cpp (syntax-compiled by
 // tests/scripts/ir_ssot_compile_fail.py under ctest ahfl.ir.ssot_compile_fail),
-// which consumes this production list directly.
+// which consume this production list directly.
 //
 // Usage:
-//   #define HANDLE_EXPR_NODE(Name, Wire) /* ... Name / Wire ... */
+//   #define HANDLE_EXPR_NODE(Name, Wire, Edges) /* ... Name / Wire / Edges ... */
 //   #include "ahfl/compiler/ir/expr_nodes.def"
 //
 // The file #undefs HANDLE_EXPR_NODE at the end so the driver macro never leaks
@@ -36,28 +57,49 @@
 // responsibility to #undef.
 
 #ifndef HANDLE_EXPR_NODE
-#error "expr_nodes.def: #define HANDLE_EXPR_NODE(Name, Wire) before #include-ing this node list"
+#error "expr_nodes.def: #define HANDLE_EXPR_NODE(Name, Wire, Edges) before #include-ing this node list"
 #endif
 
-HANDLE_EXPR_NODE(BoolLiteralExpr, "bool_literal")
-HANDLE_EXPR_NODE(IntegerLiteralExpr, "integer_literal")
-HANDLE_EXPR_NODE(FloatLiteralExpr, "float_literal")
-HANDLE_EXPR_NODE(DecimalLiteralExpr, "decimal_literal")
-HANDLE_EXPR_NODE(StringLiteralExpr, "string_literal")
-HANDLE_EXPR_NODE(DurationLiteralExpr, "duration_literal")
-HANDLE_EXPR_NODE(PathExpr, "path")
-HANDLE_EXPR_NODE(QualifiedValueExpr, "qualified_value")
-HANDLE_EXPR_NODE(CallExpr, "call")
-HANDLE_EXPR_NODE(MethodCallExpr, "method_call")
-HANDLE_EXPR_NODE(LambdaExpr, "lambda")
-HANDLE_EXPR_NODE(StructLiteralExpr, "struct_literal")
-HANDLE_EXPR_NODE(UnaryExpr, "unary")
-HANDLE_EXPR_NODE(BinaryExpr, "binary")
-HANDLE_EXPR_NODE(MemberAccessExpr, "member_access")
-HANDLE_EXPR_NODE(IndexAccessExpr, "index_access")
-HANDLE_EXPR_NODE(MatchExpr, "match")
-HANDLE_EXPR_NODE(UnwrapExpr, "unwrap")
-HANDLE_EXPR_NODE(UnitLiteralExpr, "unit_literal")
-HANDLE_EXPR_NODE(QuantifierExpr, "quantifier")
+HANDLE_EXPR_NODE(BoolLiteralExpr, "bool_literal", ())
+HANDLE_EXPR_NODE(IntegerLiteralExpr, "integer_literal", ())
+HANDLE_EXPR_NODE(FloatLiteralExpr, "float_literal", ())
+HANDLE_EXPR_NODE(DecimalLiteralExpr, "decimal_literal", ())
+HANDLE_EXPR_NODE(StringLiteralExpr, "string_literal", ())
+HANDLE_EXPR_NODE(DurationLiteralExpr, "duration_literal", ())
+HANDLE_EXPR_NODE(PathExpr, "path", ())
+HANDLE_EXPR_NODE(QualifiedValueExpr, "qualified_value", ())
+HANDLE_EXPR_NODE(CallExpr, "call", (AHFL_EXPR_FANOUT(&CallExpr::arguments)))
+HANDLE_EXPR_NODE(MethodCallExpr,
+                 "method_call",
+                 (AHFL_EXPR_BRANCH(&MethodCallExpr::receiver),
+                  AHFL_EXPR_FANOUT(&MethodCallExpr::arguments)))
+HANDLE_EXPR_NODE(LambdaExpr, "lambda", (AHFL_EXPR_BRANCH(&LambdaExpr::body)))
+HANDLE_EXPR_NODE(StructLiteralExpr,
+                 "struct_literal",
+                 (AHFL_EXPR_PER(&StructLiteralExpr::fields, AHFL_EXPR_ELEM(&StructFieldInit::value))))
+HANDLE_EXPR_NODE(UnaryExpr, "unary", (AHFL_EXPR_BRANCH(&UnaryExpr::operand)))
+HANDLE_EXPR_NODE(BinaryExpr,
+                 "binary",
+                 (AHFL_EXPR_BRANCH(&BinaryExpr::lhs), AHFL_EXPR_BRANCH(&BinaryExpr::rhs)))
+HANDLE_EXPR_NODE(MemberAccessExpr, "member_access", (AHFL_EXPR_BRANCH(&MemberAccessExpr::base)))
+HANDLE_EXPR_NODE(IndexAccessExpr,
+                 "index_access",
+                 (AHFL_EXPR_BRANCH(&IndexAccessExpr::base),
+                  AHFL_EXPR_BRANCH(&IndexAccessExpr::index)))
+HANDLE_EXPR_NODE(MatchExpr,
+                 "match",
+                 (AHFL_EXPR_BRANCH(&MatchExpr::scrutinee),
+                  AHFL_EXPR_PER(&MatchExpr::arms,
+                                AHFL_EXPR_ELEM(&MatchArmExpr::guard),
+                                AHFL_EXPR_ELEM(&MatchArmExpr::body))))
+HANDLE_EXPR_NODE(UnwrapExpr,
+                 "unwrap",
+                 (AHFL_EXPR_BRANCH(&UnwrapExpr::operand),
+                  AHFL_EXPR_BRANCH(&UnwrapExpr::fallback_none_message)))
+HANDLE_EXPR_NODE(UnitLiteralExpr, "unit_literal", ())
+HANDLE_EXPR_NODE(QuantifierExpr,
+                 "quantifier",
+                 (AHFL_EXPR_BRANCH(&QuantifierExpr::collection),
+                  AHFL_EXPR_BRANCH(&QuantifierExpr::body)))
 
 #undef HANDLE_EXPR_NODE

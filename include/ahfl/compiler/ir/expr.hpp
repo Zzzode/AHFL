@@ -404,7 +404,10 @@ template <typename... Ts> struct variant_from_tags<std::tuple<node_tag<Ts>...>> 
     using type = std::variant<Ts...>;
 };
 
-#define HANDLE_EXPR_NODE(Name, Wire) node_tag<Name>{},
+// The edge column (third .def argument, KR6.13-T) is unused by the variant and
+// wire-table derivations below; the child-edge traversal derives from it in
+// ahfl/compiler/ir/expr_child_edges.hpp.
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) node_tag<Name>{},
 inline constexpr auto kExprNodeTags = std::tuple{
 #include "ahfl/compiler/ir/expr_nodes.def"
 };
@@ -430,7 +433,7 @@ namespace expr_node_detail {
 /// `ExprNode::index()`; extension points that need named positions use this
 /// rather than a magic literal.
 enum class ExprNodeIndex : std::size_t {
-#define HANDLE_EXPR_NODE(Name, Wire) Name,
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) Name,
 #include "ahfl/compiler/ir/expr_nodes.def"
 };
 
@@ -441,7 +444,7 @@ enum class ExprNodeIndex : std::size_t {
 inline constexpr std::array<std::string_view,
                             std::tuple_size_v<std::remove_cvref_t<decltype(kExprNodeTags)>>>
     kExprNodeWireNames = {
-#define HANDLE_EXPR_NODE(Name, Wire) Wire,
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) Wire,
 #include "ahfl/compiler/ir/expr_nodes.def"
 };
 

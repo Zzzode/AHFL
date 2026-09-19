@@ -39,7 +39,7 @@ template <typename T> struct type_tag {
     using type = T;
 };
 
-#define HANDLE_EXPR_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) type_tag<ahfl::ir::Name>{},
 
 // Trailing commas are legal in braced-init lists (unlike template argument
 // lists), which lets the X-macro emit comma-suffixed entries uniformly.
@@ -73,7 +73,7 @@ template <typename... Handlers> struct overloaded : Handlers... {
 // A non-template function body forces std::visit to instantiate the
 // exhaustiveness check at compile time.
 [[maybe_unused]] void force_exhaustive_visit(FixtureExprNode &node) {
-#define HANDLE_EXPR_NODE(Name, Wire) [](const ahfl::ir::Name &) {},
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) [](const ahfl::ir::Name &) {},
     overloaded visitor{
 #include "ahfl/compiler/ir/expr_nodes.def"
     };

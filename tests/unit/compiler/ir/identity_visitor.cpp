@@ -5,6 +5,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/analysis.hpp"
+#include "ahfl/compiler/ir/expr_child_edges.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
@@ -2245,4 +2246,337 @@ TEST_CASE("Semantic IR backend-ready verifier rejects a variant whose owner enum
     CHECK(backend_ready.has_errors());
     CHECK(has_ir_diagnostic_containing(backend_ready, ahfl::ir::VerificationSeverity::Error,
                                        "does not match the scrutinee enum"));
+}
+
+// RFC 0027 P6/P7 (KR6.13-T): the const and the mutating child walks are DERIVED
+// from the field metadata in expr_nodes.def (expr_child_edges.hpp) instead of
+// two hand-maintained 20-case enumerations in visitor.cpp. This case builds one
+// of EACH of the 20 node kinds and asserts:
+//   * the const walk reaches exactly the declared child set, in declared order;
+//   * the mutating walk reaches the SAME child set in the SAME order (the two
+//     enumerations that could previously drift are now one);
+//   * the derived traversal is exhaustive and short-circuits on stop.
+namespace {
+
+using ahfl::ir::Expr;
+using ahfl::ir::ExprArena;
+using ahfl::ir::ExprRef;
+
+/// Deterministic per-arena-node label so a walk can be compared by node
+/// identity without printing the whole IR.
+[[nodiscard]] std::string label_of(const Expr &expr) {
+    return std::string(ahfl::ir::expr_node_wire_name(expr.node)) + "#" +
+           std::to_string(expr.id);
+}
+
+/// Record every child the derived const walk reaches, in visit order.
+[[nodiscard]] std::vector<std::string> const_walk_labels(const Expr &expr) {
+    std::vector<std::string> labels;
+    auto sink = [&labels](const Expr &child) -> bool {
+        labels.push_back(label_of(child));
+        return true;
+    };
+    (void)ahfl::ir::expr_child_detail::walk_children(expr, sink);
+    return labels;
+}
+
+/// Build a program that owns every node kind; return the arena and the root's
+/// child labels keyed by the node the children hang off.
+struct NodeKindFixture {
+    ExprArena arena;
+
+    ExprRef lit;
+    ExprRef bool_lit;
+    ExprRef float_lit;
+    ExprRef decimal_lit;
+    ExprRef string_lit;
+    ExprRef duration_lit;
+    ExprRef path;
+    ExprRef qualified;
+    ExprRef unit;
+    ExprRef unary;
+    ExprRef binary;
+    ExprRef member;
+    ExprRef index;
+    ExprRef lambda;
+    ExprRef call;
+    ExprRef method_call;
+    ExprRef struct_lit;
+    ExprRef unwrap;
+    ExprRef quantifier;
+    ExprRef match;
+
+    void build() {
+        lit = arena.make(ahfl::ir::IntegerLiteralExpr{.spelling = "1"});
+        lit->id = 1;
+        bool_lit = arena.make(ahfl::ir::BoolLiteralExpr{.value = true});
+        bool_lit->id = 2;
+        float_lit = arena.make(ahfl::ir::FloatLiteralExpr{.spelling = "1.0"});
+        float_lit->id = 3;
+        decimal_lit = arena.make(ahfl::ir::DecimalLiteralExpr{.spelling = "1.0d"});
+        decimal_lit->id = 4;
+        string_lit = arena.make(ahfl::ir::StringLiteralExpr{.spelling = "\"s\""});
+        string_lit->id = 5;
+        duration_lit = arena.make(ahfl::ir::DurationLiteralExpr{.spelling = "1s"});
+        duration_lit->id = 6;
+        path = arena.make(ahfl::ir::PathExpr{});
+        path->id = 7;
+        qualified = arena.make(ahfl::ir::QualifiedValueExpr{.value = "E::V"});
+        qualified->id = 8;
+        unit = arena.make(ahfl::ir::UnitLiteralExpr{});
+        unit->id = 9;
+
+        unary = arena.make(ahfl::ir::UnaryExpr{.op = ahfl::ir::ExprUnaryOp::Not, .operand = lit});
+        unary->id = 10;
+        binary = arena.make(
+            ahfl::ir::BinaryExpr{.op = ahfl::ir::ExprBinaryOp::Add, .lhs = lit, .rhs = unary});
+        binary->id = 11;
+        member = arena.make(ahfl::ir::MemberAccessExpr{.base = unary, .member = "m"});
+        member->id = 12;
+        index = arena.make(ahfl::ir::IndexAccessExpr{.base = lit, .index = unary});
+        index->id = 13;
+        lambda = arena.make(
+            ahfl::ir::LambdaExpr{.params = {"x"}, .body = lit, .captures = {}});
+        lambda->id = 14;
+        call = arena.make(ahfl::ir::CallExpr{.callee = "f", .arguments = {lit, unary}});
+        call->id = 15;
+        method_call = arena.make(ahfl::ir::MethodCallExpr{
+            .receiver = call, .method = "m", .arguments = {unit, lit}});
+        method_call->id = 16;
+
+        std::vector<ahfl::ir::StructFieldInit> fields;
+        ahfl::ir::StructFieldInit field0;
+        field0.name = "a";
+        field0.value = lit;
+        fields.push_back(std::move(field0));
+        ahfl::ir::StructFieldInit field1;
+        field1.name = "b";
+        field1.value = bool_lit;
+        fields.push_back(std::move(field1));
+        struct_lit =
+            arena.make(ahfl::ir::StructLiteralExpr{.type_name = "T", .fields = std::move(fields)});
+        struct_lit->id = 17;
+
+        unwrap = arena.make(ahfl::ir::UnwrapExpr{.operand = lit, .fallback_none_message = string_lit});
+        unwrap->id = 18;
+        quantifier = arena.make(ahfl::ir::QuantifierExpr{.kind = ahfl::ir::QuantifierExpr::Kind::ForAll,
+                                                         .binder = "x",
+                                                         .value_binder = {},
+                                                         .collection = lit,
+                                                         .body = bool_lit});
+        quantifier->id = 19;
+
+        std::vector<ahfl::ir::MatchArmExpr> arms;
+        ahfl::ir::MatchArmExpr arm_with_guard;
+        arm_with_guard.guard = bool_lit;
+        arm_with_guard.body = lit;
+        arms.push_back(std::move(arm_with_guard));
+        // A SECOND guarded arm: with guards on BOTH arms, a flat per-member
+        // fan-out (all guards, then all bodies) would produce a different order
+        // than the hand-written per-arm loop, so this arm is what makes the
+        // traversal-order assertion bite.
+        ahfl::ir::MatchArmExpr arm_two_with_guard;
+        arm_two_with_guard.guard = string_lit;
+        arm_two_with_guard.body = unary;
+        arms.push_back(std::move(arm_two_with_guard));
+        ahfl::ir::MatchArmExpr arm_without_guard;
+        arm_without_guard.body = decimal_lit;
+        arms.push_back(std::move(arm_without_guard));
+        match = arena.make(ahfl::ir::MatchExpr{.scrutinee = lit, .arms = std::move(arms)});
+        match->id = 20;
+    }
+};
+
+/// The expected child label sequence for one node kind, spelled out here (NOT
+/// read back from the derivation) so a wrong edge list fails rather than
+/// agreeing with itself.
+using LabelList = std::vector<std::string>;
+
+} // namespace
+
+TEST_CASE("derived ExprNode child edges: const walk visits the declared child set of all 20 "
+          "node kinds") {
+    NodeKindFixture fixture;
+    fixture.build();
+
+    // Leaves: no children of any kind.
+    const LabelList none{};
+    CHECK(const_walk_labels(*fixture.lit) == none);
+    CHECK(const_walk_labels(*fixture.bool_lit) == none);
+    CHECK(const_walk_labels(*fixture.float_lit) == none);
+    CHECK(const_walk_labels(*fixture.decimal_lit) == none);
+    CHECK(const_walk_labels(*fixture.string_lit) == none);
+    CHECK(const_walk_labels(*fixture.duration_lit) == none);
+    CHECK(const_walk_labels(*fixture.path) == none);
+    CHECK(const_walk_labels(*fixture.qualified) == none);
+    CHECK(const_walk_labels(*fixture.unit) == none);
+
+    // Non-leaves: edge order is visit order and part of the contract.
+    CHECK(const_walk_labels(*fixture.unary) == LabelList{"integer_literal#1"});
+    CHECK(const_walk_labels(*fixture.binary) ==
+          (LabelList{"integer_literal#1", "unary#10"}));
+    CHECK(const_walk_labels(*fixture.member) == LabelList{"unary#10"});
+    CHECK(const_walk_labels(*fixture.index) ==
+          (LabelList{"integer_literal#1", "unary#10"}));
+    CHECK(const_walk_labels(*fixture.lambda) == LabelList{"integer_literal#1"});
+    CHECK(const_walk_labels(*fixture.call) ==
+          (LabelList{"integer_literal#1", "unary#10"}));
+    CHECK(const_walk_labels(*fixture.method_call) ==
+          (LabelList{"call#15", "unit_literal#9", "integer_literal#1"}));
+    CHECK(const_walk_labels(*fixture.struct_lit) ==
+          (LabelList{"integer_literal#1", "bool_literal#2"}));
+    CHECK(const_walk_labels(*fixture.unwrap) ==
+          (LabelList{"integer_literal#1", "string_literal#5"}));
+    CHECK(const_walk_labels(*fixture.quantifier) ==
+          (LabelList{"integer_literal#1", "bool_literal#2"}));
+    // MatchExpr: scrutinee, then PER ARM the guard (when present) then the body.
+    // Three arms (guarded, guarded, unguarded) so a flat per-member fan-out
+    // would reorder the traversal and fail here.
+    CHECK(const_walk_labels(*fixture.match) ==
+          (LabelList{"integer_literal#1", "bool_literal#2", "integer_literal#1", "string_literal#5",
+                     "unary#10", "decimal_literal#4"}));
+}
+
+TEST_CASE("derived ExprNode child edges: the mutating rewriter reaches the same child set and "
+          "mutates every reached node") {
+    NodeKindFixture fixture;
+    fixture.build();
+
+    // A rewriter that stamps every visited node so we can prove the mutating
+    // walk reached exactly the const walk's child set (the two enumerations
+    // that could previously drift are now one).
+    class StampRewriter final : public ahfl::ir::ProgramRewriter {
+      public:
+        std::vector<std::string> *labels{nullptr};
+
+      private:
+        bool on_expr(ahfl::ir::Expr &expr) override {
+            labels->push_back(label_of(expr));
+            return false;
+        }
+    };
+
+    // Rewriting the whole program would also visit the arena through the
+    // declared structure; instead, compare the derived mut walk edge-for-edge
+    // against the const walk by driving the same sink over a mutable view.
+    auto mut_labels = [](Expr &root) {
+        // Collect labels first (they embed ids), then mutate in a second pass so
+        // the recorded order is unaffected by the id stamping.
+        std::vector<std::string> labels;
+        auto collect = [&labels](Expr &child) -> bool {
+            labels.push_back(label_of(child));
+            return true;
+        };
+        (void)ahfl::ir::expr_child_detail::walk_children(root, collect);
+        auto stamp = [](Expr &child) -> bool {
+            child.id += 1000; // mutate: proves the walk hands out mutable refs
+            return true;
+        };
+        (void)ahfl::ir::expr_child_detail::walk_children(root, stamp);
+        return labels;
+    };
+
+    const auto expected = const_walk_labels(*fixture.match);
+    auto observed = mut_labels(*fixture.match);
+    CHECK(observed == expected);
+
+    // Every reached child was mutated (the walk truly exposed mutability).
+    // `lit` appears twice in the match fixture — as the scrutinee AND as the
+    // first arm's body — so it is stamped twice.
+    CHECK(fixture.lit->id == 2001);
+    CHECK(fixture.bool_lit->id == 1002);
+    CHECK(fixture.unary->id == 1010);
+
+    // The production ProgramRewriter must also reach these nodes; run it on a
+    // program whose only declaration evaluates `match`, then assert the guard
+    // and body were stamped.
+    ahfl::ir::Program program;
+    ahfl::ir::ConstDecl decl{};
+    decl.name = "pkg::C";
+    decl.value = fixture.match;
+    program.declarations.push_back(std::move(decl));
+
+    StampRewriter rewriter;
+    std::vector<std::string> stamped;
+    rewriter.labels = &stamped;
+    (void)rewriter.rewrite(program);
+    CHECK(std::find(stamped.begin(), stamped.end(), "match#20") != stamped.end());
+    CHECK(std::find(stamped.begin(), stamped.end(), "unary#1010") != stamped.end());
+}
+
+TEST_CASE("derived ExprNode child edges: the walk short-circuits when the sink stops") {
+    NodeKindFixture fixture;
+    fixture.build();
+
+    // Stop after the first child of a 4-child node; the remaining edges must
+    // not be visited (this is what the visitor's Abort relies on).
+    int visited = 0;
+    auto stop_after_one = [&visited](const Expr &) -> bool {
+        ++visited;
+        return false;
+    };
+    const bool completed =
+        ahfl::ir::expr_child_detail::walk_children(*fixture.match, stop_after_one);
+    CHECK(visited == 1);
+    CHECK_FALSE(completed);
+
+    // A sink that always continues reports completion.
+    auto keep_going = [](const Expr &) -> bool { return true; };
+    CHECK(ahfl::ir::expr_child_detail::walk_children(*fixture.match, keep_going));
+}
+
+TEST_CASE("derived ExprNode child edges: ProgramVisitor and ProgramRewriter reconstruct the "
+          "declared edges through the public protocol") {
+    // A program where the same MatchExpr is reachable from a const declaration.
+    auto arena_program = std::make_unique<ahfl::ir::Program>();
+    auto &arena = arena_program->expr_arena;
+    const ahfl::ir::ExprRef body = arena.make(ahfl::ir::IntegerLiteralExpr{.spelling = "1"});
+    const ahfl::ir::ExprRef scrutinee = arena.make(ahfl::ir::BoolLiteralExpr{.value = false});
+    std::vector<ahfl::ir::MatchArmExpr> arms;
+    ahfl::ir::MatchArmExpr arm;
+    arm.guard = scrutinee;
+    arm.body = body;
+    arms.push_back(std::move(arm));
+    const ahfl::ir::ExprRef match =
+        arena.make(ahfl::ir::MatchExpr{.scrutinee = scrutinee, .arms = std::move(arms)});
+
+    ahfl::ir::ConstDecl decl{};
+    decl.name = "pkg::C";
+    decl.value = match;
+    arena_program->declarations.push_back(std::move(decl));
+
+    // Count visits through the production ProgramVisitor.
+    struct CountingVisitor final : ahfl::ir::ProgramVisitor {
+        int exprs{0};
+
+      private:
+        void on_expr(const ahfl::ir::Expr &) override { ++exprs; }
+    };
+    CountingVisitor visitor;
+    visitor.visit(*arena_program);
+    // The const decl's value (the match) plus its three declared child edges:
+    // scrutinee, the first arm's guard (the same scrutinee), and the arm body.
+    CHECK(visitor.exprs == 4);
+
+    // The production ProgramRewriter reaches the same three nodes and can
+    // mutate each of them.
+    class CountAndStamp final : public ahfl::ir::ProgramRewriter {
+      public:
+        int seen{0};
+
+      private:
+        bool on_expr(ahfl::ir::Expr &expr) override {
+            ++seen;
+            expr.id += 1;
+            return false;
+        }
+    };
+    CountAndStamp rewriter;
+    (void)rewriter.rewrite(*arena_program);
+    CHECK(rewriter.seen == 4);
+    // The scrutinee is reached twice (its own edge and the arm guard edge), so
+    // its id is stamped twice; the body once.
+    CHECK(arena.get(static_cast<std::uint32_t>(match.index)).id == 1);
+    CHECK(arena.get(static_cast<std::uint32_t>(scrutinee.index)).id == 2);
+    CHECK(arena.get(static_cast<std::uint32_t>(body.index)).id == 1);
 }

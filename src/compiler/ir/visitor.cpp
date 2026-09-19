@@ -1,6 +1,7 @@
 #include "ahfl/compiler/ir/visitor.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/ir/expr_child_edges.hpp"
 
 #include <variant>
 
@@ -198,117 +199,18 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
         return;
     }
 
-    std::visit(Overloaded{
-                   [](const BoolLiteralExpr &) {},
-                   [](const IntegerLiteralExpr &) {},
-                   [](const FloatLiteralExpr &) {},
-                   [](const DecimalLiteralExpr &) {},
-                   [](const StringLiteralExpr &) {},
-                   [](const DurationLiteralExpr &) {},
-                   [](const PathExpr &) {},
-                   [](const QualifiedValueExpr &) {},
-                   [&](const CallExpr &value) {
-                       for (const auto &argument : value.arguments) {
-                           if (aborted_) {
-                               break;
-                           }
-                           if (argument) {
-                               visit_expr(*argument);
-                           }
-                       }
-                   },
-                   [&](const MethodCallExpr &value) {
-                       if (value.receiver && !aborted_) {
-                           visit_expr(*value.receiver);
-                       }
-                       for (const auto &argument : value.arguments) {
-                           if (aborted_) {
-                               break;
-                           }
-                           if (argument) {
-                               visit_expr(*argument);
-                           }
-                       }
-                   },
-                   [&](const LambdaExpr &value) {
-                       if (value.body) {
-                           visit_expr(*value.body);
-                       }
-                   },
-                   [&](const StructLiteralExpr &value) {
-                       for (const auto &field : value.fields) {
-                           if (aborted_) {
-                               break;
-                           }
-                           if (field.value) {
-                               visit_expr(*field.value);
-                           }
-                       }
-                   },
-                   [&](const UnaryExpr &value) {
-                       if (value.operand) {
-                           visit_expr(*value.operand);
-                       }
-                   },
-                   [&](const BinaryExpr &value) {
-                       if (value.lhs) {
-                           visit_expr(*value.lhs);
-                       }
-                       if (!aborted_ && value.rhs) {
-                           visit_expr(*value.rhs);
-                       }
-                   },
-                   [&](const MemberAccessExpr &value) {
-                       if (value.base) {
-                           visit_expr(*value.base);
-                       }
-                   },
-	                   [&](const IndexAccessExpr &value) {
-	                       if (value.base) {
-	                           visit_expr(*value.base);
-	                       }
-	                       if (!aborted_ && value.index) {
-	                           visit_expr(*value.index);
-	                       }
-	                   },
-	                   [&](const MatchExpr &value) {
-	                       if (value.scrutinee) {
-	                           visit_expr(*value.scrutinee);
-	                       }
-	                       for (const auto &arm : value.arms) {
-	                           if (aborted_) {
-	                               break;
-	                           }
-	                           if (arm.guard) {
-	                               visit_expr(*arm.guard);
-	                           }
-	                           if (!aborted_ && arm.body) {
-	                               visit_expr(*arm.body);
-	                           }
-	                       }
-	                   },
-	                   // P4-02: unwrap(operand) — walk operand; optional msg is data.
-	                   [&](const UnwrapExpr &value) {
-	                       if (!aborted_ && value.operand) {
-	                           visit_expr(*value.operand);
-	                       }
-	                       if (!aborted_ && value.fallback_none_message) {
-	                           visit_expr(*value.fallback_none_message);
-	                       }
-	                   },
-	                   // RFC 0013 P3-gaps-B: `{}` — leaf, no children to walk.
-	                   [](const UnitLiteralExpr &) {},
-	                   // RFC 0024: quantifier — walk collection then body.
-	                   [&](const QuantifierExpr &value) {
-	                       if (!aborted_ && value.collection) {
-	                           visit_expr(*value.collection);
-	                       }
-	                       if (!aborted_ && value.body) {
-	                           visit_expr(*value.body);
-	                       }
-	                   },
-	               },
-	               expr.node);
+    // RFC 0027 P6/P7 (KR6.13-T): the child set AND its visit order are DERIVED
+    // from the node's field metadata in expr_nodes.def (see
+    // ahfl/compiler/ir/expr_child_edges.hpp) instead of being enumerated by
+    // hand here. The pre/post/Skip/Abort protocol is unchanged: the sink visits
+    // one child and returns whether traversal may continue, so an Abort raised
+    // anywhere below short-circuits the remaining edges of this node in the same
+    // order the hand-written loops used.
+    auto sink = [this](const Expr &child) -> bool {
+        visit_expr(child);
+        return !aborted_;
+    };
+    (void)expr_child_detail::walk_children(expr, sink);
 
     if (!aborted_) {
         visit_expr_post(expr);
@@ -672,128 +574,16 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
         return modified;
     }
 
-    modified = std::visit(Overloaded{
-                              [](BoolLiteralExpr &) { return false; },
-                              [](IntegerLiteralExpr &) { return false; },
-                              [](FloatLiteralExpr &) { return false; },
-                              [](DecimalLiteralExpr &) { return false; },
-                              [](StringLiteralExpr &) { return false; },
-                              [](DurationLiteralExpr &) { return false; },
-                              [](PathExpr &) { return false; },
-                              [](QualifiedValueExpr &) { return false; },
-                              [&](CallExpr &value) {
-                                  bool changed = false;
-                                  for (auto &argument : value.arguments) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (argument) {
-                                          changed = rewrite_expr(*argument) || changed;
-                                      }
-                                  }
-                                  return changed;
-                              },
-                              [&](MethodCallExpr &value) {
-                                  bool changed = false;
-                                  if (value.receiver && !aborted_) {
-                                      changed = rewrite_expr(*value.receiver) || changed;
-                                  }
-                                  for (auto &argument : value.arguments) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (argument) {
-                                          changed = rewrite_expr(*argument) || changed;
-                                      }
-                                  }
-                                  return changed;
-                              },
-                              [&](LambdaExpr &value) {
-                                  return value.body != nullptr && rewrite_expr(*value.body);
-                              },
-                              [&](StructLiteralExpr &value) {
-                                  bool changed = false;
-                                  for (auto &field : value.fields) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (field.value) {
-                                          changed = rewrite_expr(*field.value) || changed;
-                                      }
-                                  }
-                                  return changed;
-                              },
-                              [&](UnaryExpr &value) {
-                                  return value.operand != nullptr && rewrite_expr(*value.operand);
-                              },
-                              [&](BinaryExpr &value) {
-                                  bool changed = false;
-                                  if (value.lhs) {
-                                      changed = rewrite_expr(*value.lhs) || changed;
-                                  }
-                                  if (!aborted_ && value.rhs) {
-                                      changed = rewrite_expr(*value.rhs) || changed;
-                                  }
-                                  return changed;
-                              },
-                              [&](MemberAccessExpr &value) {
-                                  return value.base != nullptr && rewrite_expr(*value.base);
-                              },
-	                              [&](IndexAccessExpr &value) {
-	                                  bool changed = false;
-	                                  if (value.base) {
-	                                      changed = rewrite_expr(*value.base) || changed;
-                                  }
-                                  if (!aborted_ && value.index) {
-                                      changed = rewrite_expr(*value.index) || changed;
-	                                  }
-	                                  return changed;
-	                              },
-	                              [&](MatchExpr &value) {
-	                                  bool changed = false;
-	                                  if (value.scrutinee) {
-	                                      changed = rewrite_expr(*value.scrutinee) || changed;
-	                                  }
-	                                  for (auto &arm : value.arms) {
-	                                      if (aborted_) {
-	                                          break;
-	                                      }
-	                                      if (arm.guard) {
-	                                          changed = rewrite_expr(*arm.guard) || changed;
-	                                      }
-	                                      if (!aborted_ && arm.body) {
-	                                          changed = rewrite_expr(*arm.body) || changed;
-	                                      }
-	                                  }
-	                                  return changed;
-	                              },
-	                              // P4-02: unwrap(operand) - walk + mutate children.
-	                              [&](UnwrapExpr &value) {
-	                                  bool changed = false;
-	                                  if (value.operand) {
-	                                      changed = rewrite_expr(*value.operand) || changed;
-	                                  }
-	                                  if (value.fallback_none_message) {
-	                                      changed = rewrite_expr(*value.fallback_none_message) || changed;
-	                                  }
-	                                  return changed;
-	                              },
-	                              // RFC 0013 P3-gaps-B: `{}` — leaf, nothing to rewrite.
-	                              [](UnitLiteralExpr &) { return false; },
-	                              // RFC 0024: quantifier — walk + mutate children.
-	                              [&](QuantifierExpr &value) {
-	                                  bool changed = false;
-	                                  if (value.collection) {
-	                                      changed = rewrite_expr(*value.collection) || changed;
-	                                  }
-	                                  if (value.body) {
-	                                      changed = rewrite_expr(*value.body) || changed;
-	                                  }
-	                                  return changed;
-	                              },
-	                          },
-	                          expr.node) ||
-               modified;
+    // RFC 0027 P6/P7 (KR6.13-T): the mutating child walk derives from the SAME
+    // expr_nodes.def edge metadata as ProgramVisitor::visit_expr, so the two
+    // walks can never drift apart. The sink rewrites one child in place and
+    // returns whether traversal may continue (false on Abort); edge order is
+    // visit order.
+    auto sink = [this, &modified](Expr &child) -> bool {
+        modified = rewrite_expr(child) || modified;
+        return !aborted_;
+    };
+    (void)expr_child_detail::walk_children(expr, sink);
 
     if (!aborted_) {
         modified = rewrite_expr_post(expr) || modified;

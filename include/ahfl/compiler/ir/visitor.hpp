@@ -4,6 +4,13 @@
 
 namespace ahfl::ir {
 
+// RFC 0027 P6/P7 (KR6.13-T): the per-node CHILD-EDGE enumeration both walks
+// below use is DERIVED from the field metadata in expr_nodes.def (see
+// ahfl/compiler/ir/expr_child_edges.hpp) rather than hand-written per visitor.
+// The pre/post/Skip/Abort protocol here is unchanged; only "which fields are
+// children, in which order" is now declared once next to each node and shared by
+// ProgramVisitor and ProgramRewriter.
+
 /// Controls traversal behavior when returned from pre-visit hooks.
 enum class VisitAction {
     Continue, // recurse into children

@@ -29,7 +29,7 @@ template <typename T> struct type_tag {
     using type = T;
 };
 
-#define HANDLE_EXPR_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) type_tag<ahfl::ir::Name>{},
 constexpr auto kExprNodeTags = std::tuple{
 #include "ahfl/compiler/ir/expr_nodes.def"
 };
@@ -39,7 +39,7 @@ constexpr auto kExprNodeTags = std::tuple{
 // include/ahfl/compiler/ir/expr_nodes.def the variant and the ir_json wire
 // table are generated from — re-expanded here to recover the wire names. If the
 // production table and this expansion disagree, the assertion below fails.
-#define HANDLE_EXPR_NODE(Name, Wire) Wire,
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) Wire,
 constexpr std::string_view kExprNodeWireNames[] = {
 #include "ahfl/compiler/ir/expr_nodes.def"
 };

@@ -18,6 +18,11 @@ Fixtures:
   * ahfl::ir::ExprNode (RFC 0027 P6/P7, KR6.13-E) straight from the production
     include/ahfl/compiler/ir/expr_nodes.def, sentinel SsotUnhandledExpr,
     injected with AHFL_SSOT_INJECT_UNHANDLED.
+  * ahfl::ir::expr_child_detail::ChildEdges<ExprNode> (RFC 0027 P6/P7,
+    KR6.13-T) — the DERIVED child-edge walk, sentinel SsotUnhandledChildExpr,
+    injected with AHFL_SSOT_INJECT_UNHANDLED_CHILD. Proves that a node added to
+    expr_nodes.def with children but without an edge entry breaks the build of
+    the const/mut traversal instead of being silently skipped.
   * ahfl::ir::core::CoreValueTypeNode (RFC 0027 Q1, KR6.13-X) straight from the
     production include/ahfl/compiler/ir/core_value_types.def, sentinel
     SsotUnhandledVt, injected with AHFL_SSOT_INJECT_UNHANDLED_VT.
@@ -54,6 +59,12 @@ FIXTURES = (
         relative_path="tests/fixtures/ir/ssot/expr_exhaustiveness_negative.cpp",
         inject_flag="AHFL_SSOT_INJECT_UNHANDLED",
         unhandled_type="SsotUnhandledExpr",
+    ),
+    FixtureCase(
+        label="ExprChildEdges",
+        relative_path="tests/fixtures/ir/ssot/expr_child_edges_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_CHILD",
+        unhandled_type="SsotUnhandledChildExpr",
     ),
     FixtureCase(
         label="CoreValueTypeNode",
