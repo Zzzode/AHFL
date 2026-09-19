@@ -58,9 +58,13 @@ struct ParseSnapshot {
                                          const ParseSnapshot &) noexcept = default;
 };
 
-// Canonical snapshot of a ParseResult. This is the single definition of parse
-// equivalence: the query body and the equivalence guard both route through it,
-// so they cannot drift apart.
+// Canonical snapshot of a ParseResult. This is the single *production*
+// definition of parse equivalence: the query body routes through it (and only
+// it). The query-vs-direct equivalence guard deliberately does NOT call it —
+// it re-derives the same two projections independently so that a regression
+// inside this definition is caught rather than reproduced. Do not
+// "de-duplicate" the guard by routing it through here: that would make the
+// guard tautological and blind to exactly the bugs it exists to find.
 [[nodiscard]] ParseSnapshot snapshot_parse_result(const ParseResult &result);
 
 // The frontend query graph. Owns the QueryEngine, the frontend, and the parse
@@ -84,10 +88,23 @@ class FrontendQueries {
     // transitive input changed), otherwise served from the memo.
     [[nodiscard]] std::expected<ParseSnapshot, CycleError> parse(FileId file);
 
-    // Borrow the AST of a file whose parse slot has been evaluated. Null when
-    // the slot has never been computed or the parse produced diagnostics that
-    // invalidated the program. The pointer is owned by this object and is valid
-    // until the file's text changes.
+    // Borrow the AST of the file whose parse slot is currently valid — i.e.
+    // whose parse(FileId) evaluation is still Clean or Verified at the current
+    // engine revision. This is revision-checked on every call: after
+    // set_source_text(file, ...) the file's parse slot is Dirty (a changed text
+    // bumped the revision and marked the slot dirty, or the slot was never
+    // computed), so this returns nullptr until parse(file) is re-evaluated.
+    // It therefore never hands back the AST of a superseded text revision.
+    //
+    // Null when the slot is unset/dirty/visiting, when it was never computed,
+    // or when the parse produced diagnostics that invalidated the program. The
+    // pointer is owned by this object; a borrowed pointer stays valid across
+    // further set_source_text / parse calls for OTHER files (deque storage) but
+    // is only meaningful for the revision it was checked at — a caller that
+    // edits this file must re-drive parse(file) before the AST is meaningful
+    // again. Later resolve/typecheck query bodies read the AST from inside
+    // their own compute function (which the engine has just brought up to
+    // date), so they borrow only a slot that is Clean/Verified.
     [[nodiscard]] const ast::Program *program(FileId file) const;
 
     // How many times parse(file) actually ran its compute function. Precise
@@ -98,15 +115,22 @@ class FrontendQueries {
     [[nodiscard]] QueryStats stats() const;
 
   private:
+    // Per-FileId slot record: the parse result (owning the AST) plus the
+    // compute counter. One store, one index — a single field added per slot
+    // threads through exactly one place, so the two can never desynchronize.
+    struct SlotRecord {
+        ParseResult result;
+        std::size_t computes = 0;
+    };
+
     Frontend frontend_;
     QueryEngine engine_;
     InputQueryT<SourceText> source_text_;
     DerivedQueryT<ParseSnapshot> parse_;
-    // ParseResult store indexed by FileId slot. A deque so that adding a file
-    // never moves an existing ParseResult (and thus never invalidates a
-    // borrowed ast::Program), mirroring QueryEngine's own slot storage choice.
-    std::deque<ParseResult> parse_results_;
-    std::deque<std::size_t> parse_computes_;
+    // Slot records indexed by FileId slot. A deque so that adding a file never
+    // moves an existing SlotRecord (and thus never invalidates a borrowed
+    // ast::Program), mirroring QueryEngine's own slot storage choice.
+    std::deque<SlotRecord> slots_;
 };
 
 } // namespace ahfl::query

@@ -103,13 +103,21 @@ flow for Worker {
 // The golden corpus deliberately includes malformed sources: equivalence is a
 // property of the whole projection, so erroring parses are part of the guard
 // (the diagnostics JSON must match, not just the success case).
-[[nodiscard]] std::vector<std::filesystem::path> collect_corpus() {
+//
+// `roots_found` reports, per expected root, how many .ahfl files it yielded, so
+// the guard can assert each root was present on disk (non-vacuity) without
+// hard-coding a corpus-size threshold that unrelated golden cleanups would
+// turn into a spurious red.
+[[nodiscard]] std::vector<std::filesystem::path>
+collect_corpus(std::vector<std::pair<std::string, std::size_t>> &roots_found) {
     std::vector<std::filesystem::path> files;
     const auto root = repo_root();
     for (const auto &relative : {"tests/golden", "examples"}) {
         const auto base = root / relative;
         std::error_code ec;
+        std::size_t found = 0;
         if (!std::filesystem::is_directory(base, ec)) {
+            roots_found.emplace_back(relative, 0);
             continue;
         }
         std::filesystem::recursive_directory_iterator it(base, ec);
@@ -119,8 +127,10 @@ flow for Worker {
             }
             if (it->path().extension() == ".ahfl") {
                 files.push_back(it->path());
+                ++found;
             }
         }
+        roots_found.emplace_back(relative, found);
     }
     std::ranges::sort(files);
     return files;
@@ -242,11 +252,65 @@ TEST_CASE("editing one file leaves a sibling file's parse memo intact") {
     CHECK(queries.parse_computes(file_b) == 1); // B untouched
 }
 
+TEST_CASE("program() never borrows a superseded revision's AST") {
+    // Regression guard for the out-of-band accessor contract: after a
+    // set_source_text that changes the text, the file's parse slot is dirty, so
+    // program(file) must report "no valid AST" instead of the PREVIOUS text's
+    // program. Without the revision check it returned a stale non-null AST.
+    const std::string v1 = "struct A { x: Int; }\n";
+    const std::string v2_malformed = "agent {\n";
+    const std::string v2_valid = "struct B { y: Int; }\n";
+
+    FrontendQueries queries;
+    const FileId file{0};
+    queries.set_source_text(file, "a.ahfl", v1);
+    REQUIRE(queries.parse(file).has_value());
+
+    const auto *v1_program = queries.program(file);
+    REQUIRE(v1_program != nullptr);
+
+    // Changed to a malformed text BEFORE re-evaluating: the slot is dirty, so
+    // there is no valid AST for the current revision.
+    queries.set_source_text(file, "a.ahfl", v2_malformed);
+    CHECK(queries.program(file) == nullptr);
+
+    // Re-evaluating the malformed text yields no program either.
+    REQUIRE(queries.parse(file).has_value());
+    CHECK(queries.program(file) == nullptr);
+
+    // Changed to a valid but different text: again null until re-driven.
+    queries.set_source_text(file, "a.ahfl", v2_valid);
+    CHECK(queries.program(file) == nullptr);
+
+    REQUIRE(queries.parse(file).has_value());
+    const auto *v2_program = queries.program(file);
+    REQUIRE(v2_program != nullptr);
+
+    // Now the borrow matches the current text, not the old one.
+    std::ostringstream outline;
+    ahfl::dump_program_outline(*v2_program, outline);
+    const auto direct = parse_directly("a.ahfl", v2_valid);
+    CHECK(outline.str() == direct.outline);
+    CHECK(outline.str().find("struct B") != std::string::npos);
+    CHECK(outline.str().find("struct A") == std::string::npos);
+
+    // An equal-text write is a no-op: the slot stays valid and borrowable.
+    queries.set_source_text(file, "a.ahfl", v2_valid);
+    CHECK(queries.program(file) == v2_program);
+}
+
 TEST_CASE("query parse is byte-identical to the direct frontend over the golden corpus") {
-    const auto files = collect_corpus();
-    // The corpus is the point of this guard; a silently empty walk would make
-    // the test vacuously green.
-    REQUIRE(files.size() >= 100);
+    std::vector<std::pair<std::string, std::size_t>> roots_found;
+    const auto files = collect_corpus(roots_found);
+    // Non-vacuity: the walk must find files, and each expected root must have
+    // been present on disk. Deliberately NOT a corpus-size threshold — golden
+    // cleanups move file counts independently of this guard, and a hard number
+    // would fail on unrelated changes (and tempt a bump back to vacuity).
+    REQUIRE_FALSE(files.empty());
+    for (const auto &[root_name, count] : roots_found) {
+        INFO("expected corpus root absent: " << root_name);
+        CHECK(count > 0);
+    }
 
     FrontendQueries queries;
     std::size_t checked = 0;

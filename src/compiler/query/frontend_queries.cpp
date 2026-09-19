@@ -36,15 +36,14 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
               ParseSnapshot snapshot = snapshot_parse_result(result);
 
               const std::size_t slot = key.index();
-              if (parse_results_.size() <= slot) {
-                  parse_results_.resize(slot + 1);
-                  parse_computes_.resize(slot + 1, 0);
+              if (slots_.size() <= slot) {
+                  slots_.resize(slot + 1);
               }
               // Replacing the whole ParseResult drops the previous Owned<program>
               // at exactly the point the memo is replaced: AST and snapshot
               // never disagree about which text they came from.
-              parse_results_[slot] = std::move(result);
-              ++parse_computes_[slot];
+              slots_[slot].result = std::move(result);
+              ++slots_[slot].computes;
               return snapshot;
           })) {}
 
@@ -59,18 +58,31 @@ std::expected<ParseSnapshot, CycleError> FrontendQueries::parse(FileId file) {
 
 const ast::Program *FrontendQueries::program(FileId file) const {
     const std::size_t slot = file.index();
-    if (parse_results_.size() <= slot) {
+    if (slots_.size() <= slot) {
+        return nullptr; // never computed
+    }
+    // Revision check: borrow only a slot the engine currently considers valid,
+    // i.e. Clean (memo produced at the current revision) or Verified (memo
+    // green-proven against the current dependency values). A Dirty/Visiting
+    // slot holds a superseded text revision's ParseResult; a stale borrow here
+    // would silently hand a later query body a different text's AST. State is
+    // the right predicate (not verified_at == revision) because the parse
+    // slot's only dependency is its own file's text: an edit marks it Dirty
+    // eagerly, while an unrelated file's edit leaves it valid.
+    const SlotInfo info = engine_.inspect_slot(parse_.family(), slot);
+    if (!info.has_value ||
+        (info.state != SlotState::Clean && info.state != SlotState::Verified)) {
         return nullptr;
     }
-    return parse_results_[slot].program.get();
+    return slots_[slot].result.program.get();
 }
 
 std::size_t FrontendQueries::parse_computes(FileId file) const {
     const std::size_t slot = file.index();
-    if (parse_computes_.size() <= slot) {
+    if (slots_.size() <= slot) {
         return 0;
     }
-    return parse_computes_[slot];
+    return slots_[slot].computes;
 }
 
 Revision FrontendQueries::revision() const noexcept {
