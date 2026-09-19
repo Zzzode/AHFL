@@ -12,6 +12,7 @@ tests/fuzz/
 ├── fuzz_parser.cpp        Frontend parse 入口
 ├── fuzz_typecheck.cpp     Parse → resolve → typecheck 全链路
 ├── fuzz_smv_emitter.cpp   SMV/NuSMV 后端 IR emission
+├── fuzz_query_edits.cpp   RFC 0027 (KR6.11-S5) 差分编辑序列 property：随机编辑序列下增量结果 == 冷缓存全量结果
 ├── corpus/                归档的历史 crash 样例（详见 corpus-location.md）
 ├── crashes/               回归门禁：已修复/待修复 crash 的最小化输入 + repro（见下文「Crash 回归语料」）
 └── seeds/                 可选：各 target 的初始语料（可空）
@@ -29,7 +30,7 @@ tests/fuzz/
 | Mode | CMake 开关 | 什么时候用 | 产出 |
 |---|---|---|---|
 | **Standalone smoke**（默认） | `AHFL_ENABLE_FUZZING=OFF` | 常规 CI（`ci.yml`）里确保 fuzz harness 本身能编、能跑、不 crash。 | `fuzz_*_check` 可执行文件（普通 main()，每个输入跑 5 条固定 smoke case） |
-| **libFuzzer** | `AHFL_ENABLE_FUZZING=ON` | 本地调试 / cron 归档真跑 fuzz。 | `fuzz_parser` / `fuzz_typecheck` / `fuzz_smv_emitter`（链接 `-fsanitize=fuzzer,address`，`LLVMFuzzerTestOneInput` 入口） |
+| **libFuzzer** | `AHFL_ENABLE_FUZZING=ON` | 本地调试 / cron 归档真跑 fuzz。 | `fuzz_parser` / `fuzz_typecheck` / `fuzz_smv_emitter` / `fuzz_query_edits`（链接 `-fsanitize=fuzzer,address`，`LLVMFuzzerTestOneInput` 入口） |
 
 Standalone 模式是 CI 的默认配置——不要奇怪 `ctest --preset test-dev` 里看到 "`ahfl.fuzz.parser_check ... PASS`"。那不是真跑 fuzz，只是 smoke 验证 harness 没坏。
 
@@ -76,7 +77,8 @@ tests/fuzz/crashes/
 │   ├── <sha256>           最小化后的 crash 输入（原始字节，无扩展名）
 │   └── <sha256>.repro.md  该 crash 的人读记录
 ├── fuzz_typecheck/
-└── fuzz_smv_emitter/
+├── fuzz_smv_emitter/
+└── fuzz_query_edits/
 ```
 
 目录初始为空——不放任何伪造样例，只定义「真 crash 落哪里」的约定。

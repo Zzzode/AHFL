@@ -1299,6 +1299,14 @@ add_test(NAME ahfl.query.parse_equiv_all
     COMMAND $<TARGET_FILE:ahfl_compiler_query_tests>
 )
 
+# RFC 0027 P2 (KR6.11-S5): differential property guard — under seeded random edit
+# sequences the incremental engine's results must equal a cold-cache
+# recomputation at every step, and must recompute only when the text actually
+# changed. This is the RFC Test Plan's core acceptance property of query-ification.
+add_test(NAME ahfl.query.incremental_equiv_all
+    COMMAND $<TARGET_FILE:ahfl_compiler_query_edit_property_tests>
+)
+
 add_test(NAME ahfl.manifest.schema_all
     COMMAND $<TARGET_FILE:ahfl_compiler_manifest_tests>
 )

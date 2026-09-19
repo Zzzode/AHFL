@@ -691,6 +691,29 @@ target_compile_definitions(ahfl_compiler_query_tests
 )
 ahfl_apply_project_warnings(ahfl_compiler_query_tests)
 
+# RFC 0027 P2 (KR6.11-S5): the differential property guard — seeded random edit
+# sequences must leave the incremental engine byte-identical to a cold-cache
+# recomputation, at every step, on every projection (parse snapshot, the
+# independently re-derived direct projection, and the resolve/typecheck/lower
+# artifacts the engine-held AST drives). ahfl_compiler_ir supplies
+# resolve/typecheck/lower for the downstream half of the property;
+# ahfl_base_support supplies serialize_diagnostic_report_json.
+add_executable(ahfl_compiler_query_edit_property_tests
+    unit/compiler/query/incremental_equiv_property.cpp
+)
+target_link_libraries(ahfl_compiler_query_edit_property_tests
+    PRIVATE
+        ahfl_compiler_query
+        ahfl_compiler_ir
+        ahfl_base_support
+        doctest
+)
+target_compile_definitions(ahfl_compiler_query_edit_property_tests
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+ahfl_apply_project_warnings(ahfl_compiler_query_edit_property_tests)
+
 add_executable(ahfl_compiler_manifest_tests
     unit/compiler/manifest/manifest.cpp
 )
@@ -1633,6 +1656,7 @@ foreach(_tgt
     ahfl_base_json_value_tests
     ahfl_base_toml_tests
     ahfl_base_query_tests
+    ahfl_compiler_query_edit_property_tests
     ahfl_compiler_manifest_tests
     ahfl_compiler_package_graph_tests
     ahfl_base_diagnostic_serialization_tests

@@ -23,6 +23,21 @@ if(AHFL_ENABLE_FUZZING)
     target_link_options(fuzz_smv_emitter PRIVATE ${FUZZ_LINK_FLAGS})
     ahfl_apply_project_warnings(fuzz_smv_emitter)
 
+    # RFC 0027 P2 (KR6.11-S5): the differential edit-sequence property. Links the
+    # same triple as the seeded doctest guard (query + ir + base_support) because
+    # a step compares parse, resolve/typecheck diagnostics and IR JSON.
+    add_executable(fuzz_query_edits fuzz/fuzz_query_edits.cpp)
+    target_link_libraries(fuzz_query_edits
+        PRIVATE
+            ahfl_compiler_query
+            ahfl_compiler_ir
+            ahfl_base_support
+    )
+    target_include_directories(fuzz_query_edits PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+    target_compile_options(fuzz_query_edits PRIVATE ${FUZZ_COMPILE_FLAGS})
+    target_link_options(fuzz_query_edits PRIVATE ${FUZZ_LINK_FLAGS})
+    ahfl_apply_project_warnings(fuzz_query_edits)
+
     # Crash regression replay: feed every saved crash input under
     # tests/fuzz/crashes/<target>/ to its libFuzzer binary as a single-run
     # file argument and assert exit 0 (no crash). With no crash files the
@@ -30,7 +45,7 @@ if(AHFL_ENABLE_FUZZING)
     # regression guard. Only registered in a fuzzer-enabled build, because
     # only the libFuzzer executables accept a file argument and run once.
     set(_fuzz_crash_replay ${CMAKE_CURRENT_LIST_DIR}/crash_replay.sh)
-    foreach(_fuzz_target IN ITEMS fuzz_parser fuzz_typecheck fuzz_smv_emitter)
+    foreach(_fuzz_target IN ITEMS fuzz_parser fuzz_typecheck fuzz_smv_emitter fuzz_query_edits)
         add_test(
             NAME ahfl.fuzz.${_fuzz_target}.crash_replay
             COMMAND ${_fuzz_crash_replay}
@@ -55,7 +70,19 @@ else()
     target_include_directories(fuzz_smv_emitter_check PRIVATE ${PROJECT_SOURCE_DIR}/src)
     ahfl_apply_project_warnings(fuzz_smv_emitter_check)
 
+    add_executable(fuzz_query_edits_check fuzz/fuzz_query_edits.cpp)
+    target_link_libraries(fuzz_query_edits_check
+        PRIVATE
+            ahfl_compiler_query
+            ahfl_compiler_ir
+            ahfl_base_support
+    )
+    target_compile_definitions(fuzz_query_edits_check PRIVATE AHFL_FUZZ_STANDALONE=1)
+    target_include_directories(fuzz_query_edits_check PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+    ahfl_apply_project_warnings(fuzz_query_edits_check)
+
     add_test(NAME ahfl.fuzz.parser_check COMMAND $<TARGET_FILE:fuzz_parser_check>)
     add_test(NAME ahfl.fuzz.typecheck_check COMMAND $<TARGET_FILE:fuzz_typecheck_check>)
     add_test(NAME ahfl.fuzz.smv_emitter_check COMMAND $<TARGET_FILE:fuzz_smv_emitter_check>)
+    add_test(NAME ahfl.fuzz.query_edits_check COMMAND $<TARGET_FILE:fuzz_query_edits_check>)
 endif()
