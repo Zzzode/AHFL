@@ -1659,7 +1659,7 @@ class ProgramVerifier {
 #define VERIFY_PATTERN_LiteralPattern(Name) VERIFY_PATTERN_LEAF(Name)
 #define VERIFY_PATTERN_IntRangePattern(Name) VERIFY_PATTERN_LEAF(Name)
 #define VERIFY_PATTERN_WildcardPattern(Name) VERIFY_PATTERN_LEAF(Name)
-#define HANDLE_PATTERN_NODE(Name) VERIFY_PATTERN_##Name(Name)
+#define HANDLE_PATTERN_NODE(Name, Wire) VERIFY_PATTERN_##Name(Name)
 #include "ahfl/compiler/ir/pattern_nodes.def"
 #undef HANDLE_PATTERN_NODE
 #undef VERIFY_PATTERN_LiteralPattern

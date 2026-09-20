@@ -166,7 +166,7 @@ namespace node_detail {
 // Tag tuples for every X-macro-generated IR variant (KR6.13-F). Each is
 // expanded from its .def list; the variant is reconstructed from the element
 // types, so declaration order in the .def IS alternative order.
-#define HANDLE_PATTERN_NODE(Name) node_tag<Name>{},
+#define HANDLE_PATTERN_NODE(Name, Wire) node_tag<Name>{},
 inline constexpr auto kPatternNodeTags = std::tuple{
 #include "ahfl/compiler/ir/pattern_nodes.def"
 };
@@ -174,7 +174,7 @@ inline constexpr auto kPatternNodeTags = std::tuple{
 
 } // namespace node_detail
 
-// RFC 0027 P6/P7/P8 (KR6.13-F): the alternative list is generated from the
+// RFC 0027 P6/P7/P8 (KR6.13-F/P7): the alternative list is generated from the
 // single X-macro node list pattern_nodes.def — one line per node, declaration
 // order preserved. To add a node, edit ONLY that .def; the variant, every
 // exhaustive visitor, and (via the negative compile-test) the whole consumer
@@ -190,6 +190,41 @@ static_assert(std::variant_size_v<MatchPatternNode> == 7,
               "ahfl::ir::MatchPatternNode cardinality drift (RFC 0027 P8 IR "
               "SSOT): update every exhaustive visitor and this pin together "
               "with pattern_nodes.def.");
+
+namespace match_pattern_node_detail {
+
+/// Ordered strong index of each MatchPatternNode alternative (RFC 0027 Q1
+/// pattern: index-based identity, never strings).
+enum class MatchPatternNodeIndex : std::size_t {
+#define HANDLE_PATTERN_NODE(Name, Wire) Name,
+#include "ahfl/compiler/ir/pattern_nodes.def"
+};
+
+/// JSON wire name of each MatchPatternNode alternative, indexed by
+/// `MatchPatternNode::index()`. The ONE table the ir_json writer and reader
+/// resolve the `"kind"` spelling from.
+inline constexpr std::array<std::string_view,
+                            std::tuple_size_v<std::remove_cvref_t<decltype(
+                                node_detail::kPatternNodeTags)>>>
+    kMatchPatternWireNames = {
+#define HANDLE_PATTERN_NODE(Name, Wire) Wire,
+#include "ahfl/compiler/ir/pattern_nodes.def"
+};
+
+} // namespace match_pattern_node_detail
+
+/// JSON wire name of the MatchPatternNode alternative at `variant_index` (a
+/// `MatchPatternNode::index()` value, therefore always in bounds).
+[[nodiscard]] inline constexpr std::string_view
+match_pattern_node_wire_name(std::size_t variant_index) noexcept {
+    return match_pattern_node_detail::kMatchPatternWireNames[variant_index];
+}
+
+/// JSON wire name of a match-pattern node (e.g. `"variant"`).
+[[nodiscard]] inline std::string_view
+match_pattern_node_wire_name(const MatchPatternNode &node) noexcept {
+    return match_pattern_node_wire_name(node.index());
+}
 
 struct MatchPattern {
     MatchPatternNode node;

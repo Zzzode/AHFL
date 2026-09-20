@@ -899,18 +899,22 @@ class IrJsonPrinter final {
     }
 
     void print_match_pattern(const ir::MatchPattern &pattern, int indent_level) {
+        // RFC 0027 P6/P7 (KR6.13-P7): the `"kind"` wire spelling of every
+        // alternative is the SHARED match_pattern_node_wire_name table derived
+        // from pattern_nodes.def — the same table the reader resolves. Per-node
+        // field bodies are unchanged.
         std::visit(
             Overloaded{
                 [&](const ir::LiteralPattern &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("literal"); });
+                        field("kind", [&]() { write_string(ir::match_pattern_node_wire_name(pattern.node)); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::IntRangePattern &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("int_range"); });
+                        field("kind", [&]() { write_string(ir::match_pattern_node_wire_name(pattern.node)); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                         field("start", [&]() { out_ << value.start; });
                         field("end", [&]() { out_ << value.end; });
@@ -918,7 +922,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::VariantPattern &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("variant"); });
+                        field("kind", [&]() { write_string(ir::match_pattern_node_wire_name(pattern.node)); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                         field("path", [&]() { write_string(value.path); });
                         // RFC 0026 (3)-3b: typed variant identity. owner_enum is
@@ -984,13 +988,13 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::WildcardPattern &) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("wildcard"); });
+                        field("kind", [&]() { write_string(ir::match_pattern_node_wire_name(pattern.node)); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                     });
                 },
                 [&](const ir::BindingPattern &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("binding"); });
+                        field("kind", [&]() { write_string(ir::match_pattern_node_wire_name(pattern.node)); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                         field("name", [&]() { write_string(value.name); });
                         field("is_mut", [&]() { write_bool(value.is_mut); });
@@ -1005,7 +1009,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::TuplePattern &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("tuple"); });
+                        field("kind", [&]() { write_string(ir::match_pattern_node_wire_name(pattern.node)); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                         field("elements", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -1024,7 +1028,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::OrPattern &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("or"); });
+                        field("kind", [&]() { write_string(ir::match_pattern_node_wire_name(pattern.node)); });
                         print_match_pattern_common(field, pattern, indent_level + 1);
                         field("branches", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -3238,15 +3242,38 @@ class IrJsonReader final {
         return result;
     }
 
+    // Map a JSON `"kind"` wire spelling onto the shared MatchPatternNode
+    // wire-name table (RFC 0027 P6/P7, KR6.13-P7). This is the reader half of the
+    // single table the writer also emits from: an unknown / misspelled wire name
+    // returns nullopt, and the caller FAILS CLOSED instead of silently demoting
+    // the pattern node.
+    [[nodiscard]] static std::optional<ir::match_pattern_node_detail::MatchPatternNodeIndex>
+    resolve_match_pattern_identity(std::string_view wire) noexcept {
+        for (std::size_t i = 0; i < std::variant_size_v<ir::MatchPatternNode>; ++i) {
+            if (ir::match_pattern_node_wire_name(i) == wire) {
+                return static_cast<ir::match_pattern_node_detail::MatchPatternNodeIndex>(i);
+            }
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] ir::MatchPatternNode build_pattern_node(const JsonValue &obj,
                                                           std::string_view kind) {
-        if (kind == "literal") {
+        const auto node_identity = resolve_match_pattern_identity(kind);
+        if (!node_identity.has_value()) {
+            fail();
+            return ir::WildcardPattern{};
+        }
+        // One branch per MatchPatternNode alternative, selected by the shared
+        // wire-name table above; per-node field parse bodies are unchanged. A new
+        // node added to pattern_nodes.def without a case here is a -Wswitch error.
+        switch (*node_identity) {
+        using ir::match_pattern_node_detail::MatchPatternNodeIndex;
+        case MatchPatternNodeIndex::LiteralPattern:
             return ir::LiteralPattern{.spelling = req_string(obj, "spelling")};
-        }
-        if (kind == "int_range") {
+        case MatchPatternNodeIndex::IntRangePattern:
             return ir::IntRangePattern{.start = req_i64(obj, "start"), .end = req_i64(obj, "end")};
-        }
-        if (kind == "variant") {
+        case MatchPatternNodeIndex::VariantPattern: {
             ir::VariantPattern variant;
             variant.path = req_string(obj, "path");
             // RFC 0026 (3)-3b: typed variant identity (absent => empty / "").
@@ -3271,10 +3298,9 @@ class IrJsonReader final {
             }
             return variant;
         }
-        if (kind == "wildcard") {
+        case MatchPatternNodeIndex::WildcardPattern:
             return ir::WildcardPattern{};
-        }
-        if (kind == "binding") {
+        case MatchPatternNodeIndex::BindingPattern: {
             ir::BindingPattern binding;
             binding.name = req_string(obj, "name");
             binding.is_mut = opt_bool(obj, "is_mut");
@@ -3282,10 +3308,9 @@ class IrJsonReader final {
             if (nested != nullptr) { binding.nested = opt_pattern_ptr(*nested); }
             return binding;
         }
-        if (kind == "tuple") {
+        case MatchPatternNodeIndex::TuplePattern:
             return ir::TuplePattern{.elements = pattern_ptr_array(obj, "elements")};
-        }
-        if (kind == "or") {
+        case MatchPatternNodeIndex::OrPattern:
             return ir::OrPattern{.branches = pattern_ptr_array(obj, "branches")};
         }
         fail();

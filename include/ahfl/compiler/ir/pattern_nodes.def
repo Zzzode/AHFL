@@ -3,14 +3,22 @@
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_PATTERN_NODE(Name) macro. The expansion is one HANDLE_PATTERN_NODE
+// HANDLE_PATTERN_NODE(Name, Wire) macro. The expansion is one HANDLE_PATTERN_NODE
 // invocation per node, IN DECLARATION ORDER. That order is simultaneously:
 //   * the MatchPatternNode std::variant alternative order (generated in
-//     expr.hpp through node_detail::node_tag), and
+//     expr.hpp through node_detail::node_tag),
+//   * the match_pattern_node_detail::MatchPatternNodeIndex enumerator order, and
+//   * the match_pattern_node_detail::kMatchPatternWireNames table order.
 //   * every per-node handler table / macro-expansion order at the consumer
 //     sites (verify / json / typecheck).
 // Reordering an entry changes std::variant::index() values and is therefore a
 // breaking change; append new nodes at the END.
+//
+// The second macro argument is the JSON wire spelling the `ir_json.cpp` writer
+// emits in the `"kind"` field and the reader accepts; that mapping is resolved
+// from THIS table on both sides, so a wire-name typo is a single edit that both
+// sides observe (a reader that sees an unknown spelling fails closed instead of
+// silently demoting the node).
 //
 // Every exhaustive consumer routes through one explicit per-node handler macro
 // (`<prefix>_##Name`), so adding a node here WITHOUT adding every per-node
@@ -21,7 +29,7 @@
 // by tests/unit/compiler/ir/node_variant_coverage.cpp.
 //
 // Usage:
-//   #define HANDLE_PATTERN_NODE(Name) /* ... Name ... */
+//   #define HANDLE_PATTERN_NODE(Name, Wire) /* ... Name ... */
 //   #include "ahfl/compiler/ir/pattern_nodes.def"
 //
 // The file #undefs HANDLE_PATTERN_NODE at the end so the driver macro never
@@ -29,15 +37,15 @@
 // consumer's own responsibility to #undef.
 
 #ifndef HANDLE_PATTERN_NODE
-#error "pattern_nodes.def: #define HANDLE_PATTERN_NODE(Name) before #include-ing this node list"
+#error "pattern_nodes.def: #define HANDLE_PATTERN_NODE(Name, Wire) before #include-ing this node list"
 #endif
 
-HANDLE_PATTERN_NODE(LiteralPattern)
-HANDLE_PATTERN_NODE(IntRangePattern)
-HANDLE_PATTERN_NODE(VariantPattern)
-HANDLE_PATTERN_NODE(WildcardPattern)
-HANDLE_PATTERN_NODE(BindingPattern)
-HANDLE_PATTERN_NODE(TuplePattern)
-HANDLE_PATTERN_NODE(OrPattern)
+HANDLE_PATTERN_NODE(LiteralPattern, "literal")
+HANDLE_PATTERN_NODE(IntRangePattern, "int_range")
+HANDLE_PATTERN_NODE(VariantPattern, "variant")
+HANDLE_PATTERN_NODE(WildcardPattern, "wildcard")
+HANDLE_PATTERN_NODE(BindingPattern, "binding")
+HANDLE_PATTERN_NODE(TuplePattern, "tuple")
+HANDLE_PATTERN_NODE(OrPattern, "or")
 
 #undef HANDLE_PATTERN_NODE

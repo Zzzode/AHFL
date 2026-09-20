@@ -2454,7 +2454,7 @@ template <class RootPolicy> class ExprLowerer {
 #define COLLECT_BINDINGS_LiteralPattern(Name) COLLECT_BINDINGS_LEAF(Name)
 #define COLLECT_BINDINGS_IntRangePattern(Name) COLLECT_BINDINGS_LEAF(Name)
 #define COLLECT_BINDINGS_WildcardPattern(Name) COLLECT_BINDINGS_LEAF(Name)
-#define HANDLE_PATTERN_NODE(Name) COLLECT_BINDINGS_##Name(Name)
+#define HANDLE_PATTERN_NODE(Name, Wire) COLLECT_BINDINGS_##Name(Name)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/pattern_nodes.def"

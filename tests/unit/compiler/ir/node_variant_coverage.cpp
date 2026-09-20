@@ -105,11 +105,35 @@ constexpr auto kTemporalNodeTags = std::tuple{
 };
 #undef HANDLE_TEMPORAL_NODE
 
-#define HANDLE_PATTERN_NODE(Name) type_tag<ahfl::ir::Name>{},
+#define HANDLE_PATTERN_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
 constexpr auto kPatternNodeTags = std::tuple{
 #include "ahfl/compiler/ir/pattern_nodes.def"
 };
 #undef HANDLE_PATTERN_NODE
+
+// RFC 0027 P6/P7 (KR6.13-P7): the production pattern_nodes.def wire column — the
+// SAME table ir_json's writer and reader resolve the `"kind"` spelling from.
+#define HANDLE_PATTERN_NODE(Name, Wire) Wire,
+constexpr std::string_view kPatternNodeWireNames[] = {
+#include "ahfl/compiler/ir/pattern_nodes.def"
+};
+#undef HANDLE_PATTERN_NODE
+
+[[nodiscard]] constexpr bool pattern_wire_table_matches() noexcept {
+    for (std::size_t i = 0; i < std::variant_size_v<ahfl::ir::MatchPatternNode>; ++i) {
+        if (ahfl::ir::match_pattern_node_wire_name(i) != kPatternNodeWireNames[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(std::size(kPatternNodeWireNames) ==
+                  std::variant_size_v<ahfl::ir::MatchPatternNode>,
+              "pattern_nodes.def wire-name count must equal MatchPatternNode cardinality");
+static_assert(pattern_wire_table_matches(),
+              "ahfl::ir::match_pattern_node_wire_name must equal the pattern_nodes.def "
+              "wire column in declaration order (single wire-name SSOT)");
 
 #define HANDLE_DECL_NODE(Name) type_tag<ahfl::ir::Name>{},
 constexpr auto kDeclNodeTags = std::tuple{
