@@ -3,7 +3,7 @@
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_STMT_NODE(Name) macro. The expansion is one HANDLE_STMT_NODE
+// HANDLE_STMT_NODE(Name, Wire) macro. The expansion is one HANDLE_STMT_NODE
 // invocation per node, IN DECLARATION ORDER. That order is simultaneously:
 //   * the StatementNode std::variant alternative order (generated in expr.hpp
 //     through node_detail::node_tag), and
@@ -21,7 +21,7 @@
 // and independently by tests/unit/compiler/ir/node_variant_coverage.cpp.
 //
 // Usage:
-//   #define HANDLE_STMT_NODE(Name) /* ... Name ... */
+//   #define HANDLE_STMT_NODE(Name, Wire) /* ... Name ... */
 //   #include "ahfl/compiler/ir/stmt_nodes.def"
 //
 // The file #undefs HANDLE_STMT_NODE at the end so the driver macro never leaks
@@ -29,19 +29,19 @@
 // own responsibility to #undef.
 
 #ifndef HANDLE_STMT_NODE
-#error "stmt_nodes.def: #define HANDLE_STMT_NODE(Name) before #include-ing this node list"
+#error "stmt_nodes.def: #define HANDLE_STMT_NODE(Name, Wire) before #include-ing this node list"
 #endif
 
-HANDLE_STMT_NODE(LetStatement)
-HANDLE_STMT_NODE(AssignStatement)
-HANDLE_STMT_NODE(IfStatement)
-HANDLE_STMT_NODE(IfLetStatement)
-HANDLE_STMT_NODE(GotoStatement)
-HANDLE_STMT_NODE(ReturnStatement)
-HANDLE_STMT_NODE(AssertStatement)
-HANDLE_STMT_NODE(UnwrapStatement)
-HANDLE_STMT_NODE(RequiresStatement)
-HANDLE_STMT_NODE(UnreachableStatement)
-HANDLE_STMT_NODE(ExprStatement)
+HANDLE_STMT_NODE(LetStatement, "let")
+HANDLE_STMT_NODE(AssignStatement, "assign")
+HANDLE_STMT_NODE(IfStatement, "if")
+HANDLE_STMT_NODE(IfLetStatement, "if_let")
+HANDLE_STMT_NODE(GotoStatement, "goto")
+HANDLE_STMT_NODE(ReturnStatement, "return")
+HANDLE_STMT_NODE(AssertStatement, "assert")
+HANDLE_STMT_NODE(UnwrapStatement, "unwrap")
+HANDLE_STMT_NODE(RequiresStatement, "requires")
+HANDLE_STMT_NODE(UnreachableStatement, "unreachable")
+HANDLE_STMT_NODE(ExprStatement, "expr")
 
 #undef HANDLE_STMT_NODE

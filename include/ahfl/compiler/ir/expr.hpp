@@ -551,7 +551,7 @@ struct TemporalBinaryExpr {
 
 namespace node_detail {
 
-#define HANDLE_TEMPORAL_NODE(Name) node_tag<Name>{},
+#define HANDLE_TEMPORAL_NODE(Name, Wire) node_tag<Name>{},
 inline constexpr auto kTemporalNodeTags = std::tuple{
 #include "ahfl/compiler/ir/temporal_nodes.def"
 };
@@ -568,6 +568,41 @@ static_assert(std::variant_size_v<TemporalExprNode> == 7,
               "ahfl::ir::TemporalExprNode cardinality drift (RFC 0027 P8 IR "
               "SSOT): update every exhaustive visitor and this pin together "
               "with temporal_nodes.def.");
+
+namespace temporal_node_detail {
+
+/// Ordered strong index of each TemporalExprNode alternative (RFC 0027 Q1
+/// pattern: index-based identity, never strings).
+enum class TemporalExprNodeIndex : std::size_t {
+#define HANDLE_TEMPORAL_NODE(Name, Wire) Name,
+#include "ahfl/compiler/ir/temporal_nodes.def"
+};
+
+/// JSON wire name of each TemporalExprNode alternative, indexed by
+/// `TemporalExprNode::index()`. The ONE table the ir_json writer and reader
+/// resolve the `"kind"` spelling from.
+inline constexpr std::array<std::string_view,
+                            std::tuple_size_v<std::remove_cvref_t<decltype(
+                                node_detail::kTemporalNodeTags)>>>
+    kTemporalWireNames = {
+#define HANDLE_TEMPORAL_NODE(Name, Wire) Wire,
+#include "ahfl/compiler/ir/temporal_nodes.def"
+};
+
+} // namespace temporal_node_detail
+
+/// JSON wire name of the TemporalExprNode alternative at `variant_index` (a
+/// `TemporalExprNode::index()` value, therefore always in bounds).
+[[nodiscard]] inline constexpr std::string_view
+temporal_node_wire_name(std::size_t variant_index) noexcept {
+    return temporal_node_detail::kTemporalWireNames[variant_index];
+}
+
+/// JSON wire name of a temporal node (e.g. `"embedded_expr"`).
+[[nodiscard]] inline std::string_view
+temporal_node_wire_name(const TemporalExprNode &node) noexcept {
+    return temporal_node_wire_name(node.index());
+}
 
 /// Temporal expression wrapper struct
 struct TemporalExpr {
@@ -703,7 +738,7 @@ struct ExprStatement {
 
 namespace node_detail {
 
-#define HANDLE_STMT_NODE(Name) node_tag<Name>{},
+#define HANDLE_STMT_NODE(Name, Wire) node_tag<Name>{},
 inline constexpr auto kStmtNodeTags = std::tuple{
 #include "ahfl/compiler/ir/stmt_nodes.def"
 };
@@ -720,6 +755,40 @@ static_assert(std::variant_size_v<StatementNode> == 11,
               "ahfl::ir::StatementNode cardinality drift (RFC 0027 P8 IR "
               "SSOT): update every exhaustive visitor and this pin together "
               "with stmt_nodes.def.");
+
+namespace stmt_node_detail {
+
+/// Ordered strong index of each StatementNode alternative (RFC 0027 Q1 pattern:
+/// index-based identity, never strings).
+enum class StmtNodeIndex : std::size_t {
+#define HANDLE_STMT_NODE(Name, Wire) Name,
+#include "ahfl/compiler/ir/stmt_nodes.def"
+};
+
+/// JSON wire name of each StatementNode alternative, indexed by
+/// `StatementNode::index()`. The ONE table the ir_json writer and reader resolve
+/// the `"kind"` spelling from.
+inline constexpr std::array<std::string_view,
+                            std::tuple_size_v<std::remove_cvref_t<decltype(
+                                node_detail::kStmtNodeTags)>>>
+    kStmtWireNames = {
+#define HANDLE_STMT_NODE(Name, Wire) Wire,
+#include "ahfl/compiler/ir/stmt_nodes.def"
+};
+
+} // namespace stmt_node_detail
+
+/// JSON wire name of the StatementNode alternative at `variant_index` (a
+/// `StatementNode::index()` value, therefore always in bounds).
+[[nodiscard]] inline constexpr std::string_view
+stmt_node_wire_name(std::size_t variant_index) noexcept {
+    return stmt_node_detail::kStmtWireNames[variant_index];
+}
+
+/// JSON wire name of a statement node (e.g. `"if_let"`).
+[[nodiscard]] inline std::string_view stmt_node_wire_name(const StatementNode &node) noexcept {
+    return stmt_node_wire_name(node.index());
+}
 
 /// Statement wrapper struct
 struct Statement {

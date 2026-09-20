@@ -44,7 +44,7 @@ void SmvPrinter::index_declarations(const ir::Program &program) {
 #define INDEX_TraitDecl(Name) INDEX_DECL_LEAF(Name)
 #define INDEX_ImplDecl(Name) INDEX_DECL_LEAF(Name)
 #define INDEX_InstanceDecl(Name) INDEX_DECL_LEAF(Name)
-#define HANDLE_DECL_NODE(Name) INDEX_##Name(Name)
+#define HANDLE_DECL_NODE(Name, Wire) INDEX_##Name(Name)
     for (const auto &declaration : program.declarations) {
         std::visit(
             Overloaded{
@@ -277,7 +277,7 @@ const ir::Expr *SmvPrinter::find_embedded_expr_by_atom(const ir::TemporalExpr &e
 #define FIND_InStateTemporalExpr(Name) FIND_ATOM_LEAF(Name)
 #define FIND_RunningTemporalExpr(Name) FIND_ATOM_LEAF(Name)
 #define FIND_CompletedTemporalExpr(Name) FIND_ATOM_LEAF(Name)
-#define HANDLE_TEMPORAL_NODE(Name) FIND_##Name(Name)
+#define HANDLE_TEMPORAL_NODE(Name, Wire) FIND_##Name(Name)
 #include "ahfl/compiler/ir/temporal_nodes.def"
 #undef HANDLE_TEMPORAL_NODE
 #undef FIND_EmbeddedTemporalExpr

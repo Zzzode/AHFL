@@ -78,7 +78,7 @@ class FormalObservationCollector final {
 #define OBSERVE_TraitDecl(Name) OBSERVE_DECL_LEAF(Name)
 #define OBSERVE_ImplDecl(Name) OBSERVE_DECL_LEAF(Name)
 #define OBSERVE_InstanceDecl(Name) OBSERVE_DECL_LEAF(Name)
-#define HANDLE_DECL_NODE(Name) OBSERVE_##Name(Name)
+#define HANDLE_DECL_NODE(Name, Wire) OBSERVE_##Name(Name)
             std::visit(
                 Overloaded{
 #include "ahfl/compiler/ir/decl_nodes.def"
@@ -198,7 +198,7 @@ class FormalObservationCollector final {
 #define OBSERVE_InStateTemporalExpr(Name) OBSERVE_ATOM_LEAF(Name)
 #define OBSERVE_RunningTemporalExpr(Name) OBSERVE_ATOM_LEAF(Name)
 #define OBSERVE_CompletedTemporalExpr(Name) OBSERVE_ATOM_LEAF(Name)
-#define HANDLE_TEMPORAL_NODE(Name) OBSERVE_##Name(Name)
+#define HANDLE_TEMPORAL_NODE(Name, Wire) OBSERVE_##Name(Name)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/temporal_nodes.def"
@@ -253,7 +253,7 @@ class FormalObservationCollector final {
 #define OBSERVE_WF_InStateTemporalExpr(Name) OBSERVE_WF_LEAF(Name)
 #define OBSERVE_WF_RunningTemporalExpr(Name) OBSERVE_WF_LEAF(Name)
 #define OBSERVE_WF_CompletedTemporalExpr(Name) OBSERVE_WF_LEAF(Name)
-#define HANDLE_TEMPORAL_NODE(Name) OBSERVE_WF_##Name(Name)
+#define HANDLE_TEMPORAL_NODE(Name, Wire) OBSERVE_WF_##Name(Name)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/temporal_nodes.def"

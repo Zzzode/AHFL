@@ -36,7 +36,7 @@ template <typename T> struct type_tag {
     using type = T;
 };
 
-#define HANDLE_DECL_NODE(Name) type_tag<ahfl::ir::Name>{},
+#define HANDLE_DECL_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
 
 constexpr auto kFixtureTags = std::tuple{
 #include "ahfl/compiler/ir/decl_nodes.def"
@@ -67,7 +67,7 @@ template <typename... Handlers> struct fixture_overloaded : Handlers... {
 // A non-template function body forces std::visit to instantiate the
 // exhaustiveness check at compile time.
 [[maybe_unused]] void force_exhaustive_visit(FixtureNode &node) {
-#define HANDLE_DECL_NODE(Name) [](const ahfl::ir::Name &) {},
+#define HANDLE_DECL_NODE(Name, Wire) [](const ahfl::ir::Name &) {},
     fixture_overloaded visitor{
 #include "ahfl/compiler/ir/decl_nodes.def"
     };

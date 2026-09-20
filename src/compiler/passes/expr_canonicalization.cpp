@@ -59,7 +59,7 @@ bool canonicalize_temporal(ir::TemporalExprPtr &expr) {
 #define CANON_TEMPORAL_InStateTemporalExpr(Name) CANON_TEMPORAL_LEAF(Name)
 #define CANON_TEMPORAL_RunningTemporalExpr(Name) CANON_TEMPORAL_LEAF(Name)
 #define CANON_TEMPORAL_CompletedTemporalExpr(Name) CANON_TEMPORAL_LEAF(Name)
-#define HANDLE_TEMPORAL_NODE(Name) CANON_TEMPORAL_##Name(Name)
+#define HANDLE_TEMPORAL_NODE(Name, Wire) CANON_TEMPORAL_##Name(Name)
     std::visit(Overloaded{
 #include "ahfl/compiler/ir/temporal_nodes.def"
                },

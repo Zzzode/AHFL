@@ -3,7 +3,7 @@
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_DECL_NODE(Name) macro. The expansion is one HANDLE_DECL_NODE
+// HANDLE_DECL_NODE(Name, Wire) macro. The expansion is one HANDLE_DECL_NODE
 // invocation per node, IN DECLARATION ORDER. That order is simultaneously:
 //   * the Decl std::variant alternative order (generated in program.hpp
 //     through node_detail::node_tag), and
@@ -21,7 +21,7 @@
 // and independently by tests/unit/compiler/ir/node_variant_coverage.cpp.
 //
 // Usage:
-//   #define HANDLE_DECL_NODE(Name) /* ... Name ... */
+//   #define HANDLE_DECL_NODE(Name, Wire) /* ... Name ... */
 //   #include "ahfl/compiler/ir/decl_nodes.def"
 //
 // The file #undefs HANDLE_DECL_NODE at the end so the driver macro never leaks
@@ -29,24 +29,24 @@
 // own responsibility to #undef.
 
 #ifndef HANDLE_DECL_NODE
-#error "decl_nodes.def: #define HANDLE_DECL_NODE(Name) before #include-ing this node list"
+#error "decl_nodes.def: #define HANDLE_DECL_NODE(Name, Wire) before #include-ing this node list"
 #endif
 
-HANDLE_DECL_NODE(ModuleDecl)
-HANDLE_DECL_NODE(ImportDecl)
-HANDLE_DECL_NODE(ConstDecl)
-HANDLE_DECL_NODE(TypeAliasDecl)
-HANDLE_DECL_NODE(StructDecl)
-HANDLE_DECL_NODE(EnumDecl)
-HANDLE_DECL_NODE(CapabilityDecl)
-HANDLE_DECL_NODE(PredicateDecl)
-HANDLE_DECL_NODE(AgentDecl)
-HANDLE_DECL_NODE(ContractDecl)
-HANDLE_DECL_NODE(FlowDecl)
-HANDLE_DECL_NODE(WorkflowDecl)
-HANDLE_DECL_NODE(FnDecl)
-HANDLE_DECL_NODE(TraitDecl)
-HANDLE_DECL_NODE(ImplDecl)
-HANDLE_DECL_NODE(InstanceDecl)
+HANDLE_DECL_NODE(ModuleDecl, "module")
+HANDLE_DECL_NODE(ImportDecl, "import")
+HANDLE_DECL_NODE(ConstDecl, "const")
+HANDLE_DECL_NODE(TypeAliasDecl, "type_alias")
+HANDLE_DECL_NODE(StructDecl, "struct")
+HANDLE_DECL_NODE(EnumDecl, "enum")
+HANDLE_DECL_NODE(CapabilityDecl, "capability")
+HANDLE_DECL_NODE(PredicateDecl, "predicate")
+HANDLE_DECL_NODE(AgentDecl, "agent")
+HANDLE_DECL_NODE(ContractDecl, "contract")
+HANDLE_DECL_NODE(FlowDecl, "flow")
+HANDLE_DECL_NODE(WorkflowDecl, "workflow")
+HANDLE_DECL_NODE(FnDecl, "fn")
+HANDLE_DECL_NODE(TraitDecl, "trait")
+HANDLE_DECL_NODE(ImplDecl, "impl")
+HANDLE_DECL_NODE(InstanceDecl, "instance")
 
 #undef HANDLE_DECL_NODE

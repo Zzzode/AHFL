@@ -3366,7 +3366,7 @@ class FlowLowerer {
 #define LOWER_STMT_UnwrapStatement(Name) LOWER_STMT_DEFERRED(Name)
 #define LOWER_STMT_RequiresStatement(Name) LOWER_STMT_DEFERRED(Name)
 #define LOWER_STMT_UnreachableStatement(Name) LOWER_STMT_DEFERRED(Name)
-#define HANDLE_STMT_NODE(Name) LOWER_STMT_##Name(Name)
+#define HANDLE_STMT_NODE(Name, Wire) LOWER_STMT_##Name(Name)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/stmt_nodes.def"

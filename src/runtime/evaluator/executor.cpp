@@ -351,7 +351,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
     // generated from the X-list stmt_nodes.def. Every node routes to its named
     // executor above; there is no generic catch-all, so a new statement node is a
     // COMPILE ERROR here until it is routed (CLAUDE.md Principle 5).
-#define HANDLE_STMT_NODE(Name)                                                                  \
+#define HANDLE_STMT_NODE(Name, Wire)                                                                  \
     [&ctx](const ir::Name &node) -> ExecResult { return exec_statement_node(node, ctx); },
     return std::visit(
         Overloaded{

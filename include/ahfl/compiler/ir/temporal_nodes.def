@@ -4,14 +4,21 @@
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_TEMPORAL_NODE(Name) macro. The expansion is one HANDLE_TEMPORAL_NODE
+// HANDLE_TEMPORAL_NODE(Name, Wire) macro. The expansion is one HANDLE_TEMPORAL_NODE
 // invocation per node, IN DECLARATION ORDER. That order is simultaneously:
 //   * the TemporalExprNode std::variant alternative order (generated in
-//     expr.hpp through node_detail::node_tag), and
+//     expr.hpp through node_detail::node_tag),
+//   * the temporal_node_detail::TemporalExprNodeIndex enumerator order, and
+//   * the temporal_node_detail::kTemporalWireNames table order.
 //   * every per-node handler table / macro-expansion order at the consumer
 //     sites (verify / smv / ir_lower / json).
 // Reordering an entry changes std::variant::index() values and is therefore a
 // breaking change; append new nodes at the END.
+//
+// The second macro argument is the JSON wire spelling the `ir_json.cpp` writer
+// emits in the `"kind"` field and the reader accepts; that mapping is resolved
+// from THIS table on both sides, so a wire-name typo is a single edit both sides
+// observe (a reader that sees an unknown spelling fails closed).
 //
 // Every exhaustive consumer routes through one explicit per-node handler macro
 // (`<prefix>_##Name`), so adding a node here WITHOUT adding every per-node
@@ -22,7 +29,7 @@
 // by tests/unit/compiler/ir/node_variant_coverage.cpp.
 //
 // Usage:
-//   #define HANDLE_TEMPORAL_NODE(Name) /* ... Name ... */
+//   #define HANDLE_TEMPORAL_NODE(Name, Wire) /* ... Name ... */
 //   #include "ahfl/compiler/ir/temporal_nodes.def"
 //
 // The file #undefs HANDLE_TEMPORAL_NODE at the end so the driver macro never
@@ -30,15 +37,15 @@
 // consumer's own responsibility to #undef.
 
 #ifndef HANDLE_TEMPORAL_NODE
-#error "temporal_nodes.def: #define HANDLE_TEMPORAL_NODE(Name) before #include-ing this node list"
+#error "temporal_nodes.def: #define HANDLE_TEMPORAL_NODE(Name, Wire) before #include-ing this node list"
 #endif
 
-HANDLE_TEMPORAL_NODE(EmbeddedTemporalExpr)
-HANDLE_TEMPORAL_NODE(CalledTemporalExpr)
-HANDLE_TEMPORAL_NODE(InStateTemporalExpr)
-HANDLE_TEMPORAL_NODE(RunningTemporalExpr)
-HANDLE_TEMPORAL_NODE(CompletedTemporalExpr)
-HANDLE_TEMPORAL_NODE(TemporalUnaryExpr)
-HANDLE_TEMPORAL_NODE(TemporalBinaryExpr)
+HANDLE_TEMPORAL_NODE(EmbeddedTemporalExpr, "embedded_expr")
+HANDLE_TEMPORAL_NODE(CalledTemporalExpr, "called")
+HANDLE_TEMPORAL_NODE(InStateTemporalExpr, "in_state")
+HANDLE_TEMPORAL_NODE(RunningTemporalExpr, "running")
+HANDLE_TEMPORAL_NODE(CompletedTemporalExpr, "completed")
+HANDLE_TEMPORAL_NODE(TemporalUnaryExpr, "unary")
+HANDLE_TEMPORAL_NODE(TemporalBinaryExpr, "binary")
 
 #undef HANDLE_TEMPORAL_NODE

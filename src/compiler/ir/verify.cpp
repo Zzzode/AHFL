@@ -177,7 +177,7 @@ class ProgramVerifier {
 #define COLLECT_TraitDecl(Name) COLLECT_DECL_SYMBOL(Name)
 #define COLLECT_ImplDecl(Name) COLLECT_DECL_LEAF(Name)
 #define COLLECT_InstanceDecl(Name) COLLECT_DECL_SYMBOL(Name)
-#define HANDLE_DECL_NODE(Name) COLLECT_##Name(Name)
+#define HANDLE_DECL_NODE(Name, Wire) COLLECT_##Name(Name)
         for (const auto &decl : program_.declarations) {
             std::visit(
                 Overloaded{
@@ -892,7 +892,7 @@ class ProgramVerifier {
 #define VERIFY_STMT_RequiresStatement(Name) VERIFY_STMT_CHECKED(Name)
 #define VERIFY_STMT_UnreachableStatement(Name) VERIFY_STMT_CHECKED(Name)
 #define VERIFY_STMT_ExprStatement(Name) VERIFY_STMT_CHECKED(Name)
-#define HANDLE_STMT_NODE(Name) VERIFY_STMT_##Name(Name)
+#define HANDLE_STMT_NODE(Name, Wire) VERIFY_STMT_##Name(Name)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/stmt_nodes.def"
@@ -1779,7 +1779,7 @@ class ProgramVerifier {
 #define VERIFY_TEMPORAL_CompletedTemporalExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
 #define VERIFY_TEMPORAL_TemporalUnaryExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
 #define VERIFY_TEMPORAL_TemporalBinaryExpr(Name) VERIFY_TEMPORAL_CHECKED(Name)
-#define HANDLE_TEMPORAL_NODE(Name) VERIFY_TEMPORAL_##Name(Name)
+#define HANDLE_TEMPORAL_NODE(Name, Wire) VERIFY_TEMPORAL_##Name(Name)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/temporal_nodes.def"

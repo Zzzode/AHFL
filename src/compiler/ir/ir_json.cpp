@@ -1304,39 +1304,42 @@ class IrJsonPrinter final {
     }
 
     void print_temporal_expr(const ir::TemporalExpr &expr, int indent_level) {
+        // RFC 0027 P6/P7 (KR6.13-P7): the `"kind"` wire spelling of every
+        // alternative is the SHARED temporal_node_wire_name table derived from
+        // temporal_nodes.def. Per-node field bodies are unchanged.
         std::visit(
             Overloaded{
                 [&](const ir::EmbeddedTemporalExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("embedded_expr"); });
+                        field("kind", [&]() { write_string(ir::temporal_node_wire_name(expr.node)); });
                         print_source_range_field(field, expr.source_range, indent_level + 1);
                         field("expr", [&]() { print_expr(*value.expr, indent_level + 1); });
                     });
                 },
                 [&](const ir::CalledTemporalExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("called"); });
+                        field("kind", [&]() { write_string(ir::temporal_node_wire_name(expr.node)); });
                         print_source_range_field(field, expr.source_range, indent_level + 1);
                         field("capability", [&]() { write_string(value.capability); });
                     });
                 },
                 [&](const ir::InStateTemporalExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("in_state"); });
+                        field("kind", [&]() { write_string(ir::temporal_node_wire_name(expr.node)); });
                         print_source_range_field(field, expr.source_range, indent_level + 1);
                         field("state", [&]() { write_string(value.state); });
                     });
                 },
                 [&](const ir::RunningTemporalExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("running"); });
+                        field("kind", [&]() { write_string(ir::temporal_node_wire_name(expr.node)); });
                         print_source_range_field(field, expr.source_range, indent_level + 1);
                         field("node", [&]() { write_string(value.node); });
                     });
                 },
                 [&](const ir::CompletedTemporalExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("completed"); });
+                        field("kind", [&]() { write_string(ir::temporal_node_wire_name(expr.node)); });
                         print_source_range_field(field, expr.source_range, indent_level + 1);
                         field("node", [&]() { write_string(value.node); });
                         field("state_name", [&]() {
@@ -1350,7 +1353,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::TemporalUnaryExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("unary"); });
+                        field("kind", [&]() { write_string(ir::temporal_node_wire_name(expr.node)); });
                         print_source_range_field(field, expr.source_range, indent_level + 1);
                         field("op", [&]() { write_string(temporal_unary_op_name(value.op)); });
                         field("operand",
@@ -1359,7 +1362,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::TemporalBinaryExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("binary"); });
+                        field("kind", [&]() { write_string(ir::temporal_node_wire_name(expr.node)); });
                         print_source_range_field(field, expr.source_range, indent_level + 1);
                         field("op", [&]() { write_string(temporal_binary_op_name(value.op)); });
                         field("lhs", [&]() { print_temporal_expr(*value.lhs, indent_level + 1); });
@@ -1371,11 +1374,14 @@ class IrJsonPrinter final {
     }
 
     void print_statement(const ir::Statement &statement, int indent_level) {
+        // RFC 0027 P6/P7 (KR6.13-P7): the `"kind"` wire spelling of every
+        // alternative is the SHARED stmt_node_wire_name table derived from
+        // stmt_nodes.def. Per-node field bodies are unchanged.
         std::visit(
             Overloaded{
                 [&](const ir::LetStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("let"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("name", [&]() { write_string(value.name); });
                         field("type", [&]() { write_string(type_name(value.type_ref)); });
@@ -1392,7 +1398,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::AssignStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("assign"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("target", [&]() { print_path(value.target, indent_level + 1); });
                         field("value", [&]() { print_expr(*value.value, indent_level + 1); });
@@ -1400,7 +1406,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::IfStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("if"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("condition",
                               [&]() { print_expr(*value.condition, indent_level + 1); });
@@ -1417,7 +1423,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::IfLetStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("if_let"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("pattern",
                               [&]() { print_match_pattern(value.pattern, indent_level + 1); });
@@ -1436,14 +1442,14 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::GotoStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("goto"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("target_state", [&]() { write_string(value.target_state); });
                     });
                 },
                 [&](const ir::ReturnStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("return"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("value", [&]() {
                             if (value.value) {
@@ -1456,7 +1462,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::AssertStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("assert"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("condition",
                               [&]() { print_expr(*value.condition, indent_level + 1); });
@@ -1468,7 +1474,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::UnwrapStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("unwrap"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         if (value.operand) {
                             field("operand",
@@ -1478,7 +1484,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::RequiresStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("requires"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         if (value.condition) {
                             field("condition",
@@ -1492,7 +1498,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::UnreachableStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("unreachable"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         if (value.message) {
                             field("message",
@@ -1502,7 +1508,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::ExprStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("expr"); });
+                        field("kind", [&]() { write_string(ir::stmt_node_wire_name(statement.node)); });
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("expr", [&]() { print_expr(*value.expr, indent_level + 1); });
                     });
@@ -1592,11 +1598,14 @@ class IrJsonPrinter final {
     }
 
     void print_decl(const ir::Decl &declaration, int indent_level) {
+        // RFC 0027 P6/P7 (KR6.13-P7): the `"kind"` wire spelling of every
+        // alternative is the SHARED decl_node_wire_name table derived from
+        // decl_nodes.def. Per-node field bodies are unchanged.
         std::visit(
             Overloaded{
                 [&](const ir::ModuleDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("module"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1606,7 +1615,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::ImportDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("import"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1623,7 +1632,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::ConstDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("const"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1643,7 +1652,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::TypeAliasDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("type_alias"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1664,7 +1673,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::StructDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("struct"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1727,7 +1736,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::EnumDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("enum"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1856,7 +1865,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::CapabilityDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("capability"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1883,7 +1892,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::PredicateDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("predicate"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1899,7 +1908,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::AgentDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("agent"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -1975,7 +1984,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::ContractDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("contract"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -2057,7 +2066,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::FlowDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("flow"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -2111,7 +2120,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::WorkflowDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("workflow"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -2209,7 +2218,7 @@ class IrJsonPrinter final {
                 // names and the three-state effect clause.
                 [&](const ir::FnDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("fn"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -2289,7 +2298,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::TraitDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("trait"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -2330,7 +2339,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::ImplDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("impl"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -2381,7 +2390,7 @@ class IrJsonPrinter final {
                 },
                 [&](const ir::InstanceDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("instance"); });
+                        field("kind", [&]() { write_string(ir::decl_node_wire_name(declaration)); });
                         if (has_provenance(value.provenance)) {
                             field("provenance",
                                   [&]() { print_provenance(value.provenance, indent_level + 1); });
@@ -3319,20 +3328,47 @@ class IrJsonReader final {
 
     // --- temporal expressions ----------------------------------------------
 
+    // Map a JSON `"kind"` wire spelling onto the shared TemporalExprNode
+    // wire-name table (RFC 0027 P6/P7, KR6.13-P7). An unknown / misspelled wire
+    // name returns nullopt, and the caller FAILS CLOSED.
+    [[nodiscard]] static std::optional<ir::temporal_node_detail::TemporalExprNodeIndex>
+    resolve_temporal_identity(std::string_view wire) noexcept {
+        for (std::size_t i = 0; i < std::variant_size_v<ir::TemporalExprNode>; ++i) {
+            if (ir::temporal_node_wire_name(i) == wire) {
+                return static_cast<ir::temporal_node_detail::TemporalExprNodeIndex>(i);
+            }
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] Owned<ir::TemporalExpr> temporal_expr(const JsonValue &obj) {
         auto result = make_owned<ir::TemporalExpr>();
         if (!obj.is_object()) { fail(); return result; }
         const auto kind = req_string(obj, "kind");
         result->source_range = source_range(obj);
-        if (kind == "embedded_expr") {
+        const auto node_identity = resolve_temporal_identity(kind);
+        if (!node_identity.has_value()) {
+            fail();
+            return result;
+        }
+        // One branch per TemporalExprNode alternative, selected by the shared
+        // wire-name table; a new node added to temporal_nodes.def without a case
+        // here is a -Wswitch error.
+        switch (*node_identity) {
+        using ir::temporal_node_detail::TemporalExprNodeIndex;
+        case TemporalExprNodeIndex::EmbeddedTemporalExpr:
             result->node = ir::EmbeddedTemporalExpr{.expr = opt_expr(obj, "expr")};
-        } else if (kind == "called") {
+            break;
+        case TemporalExprNodeIndex::CalledTemporalExpr:
             result->node = ir::CalledTemporalExpr{.capability = req_string(obj, "capability")};
-        } else if (kind == "in_state") {
+            break;
+        case TemporalExprNodeIndex::InStateTemporalExpr:
             result->node = ir::InStateTemporalExpr{.state = req_string(obj, "state")};
-        } else if (kind == "running") {
+            break;
+        case TemporalExprNodeIndex::RunningTemporalExpr:
             result->node = ir::RunningTemporalExpr{.node = req_string(obj, "node")};
-        } else if (kind == "completed") {
+            break;
+        case TemporalExprNodeIndex::CompletedTemporalExpr: {
             ir::CompletedTemporalExpr completed;
             completed.node = req_string(obj, "node");
             const auto *state = obj.get("state_name");
@@ -3341,13 +3377,17 @@ class IrJsonReader final {
                 if (!value.has_value()) { fail(); } else { completed.state_name = std::string(*value); }
             }
             result->node = std::move(completed);
-        } else if (kind == "unary") {
+            break;
+        }
+        case TemporalExprNodeIndex::TemporalUnaryExpr: {
             ir::TemporalUnaryExpr unary;
             if (!parse_temporal_unary_op(req_string(obj, "op"), unary.op)) { fail(); }
             const auto *operand = obj.get("operand");
             if (operand == nullptr) { fail(); } else { unary.operand = temporal_expr(*operand); }
             result->node = std::move(unary);
-        } else if (kind == "binary") {
+            break;
+        }
+        case TemporalExprNodeIndex::TemporalBinaryExpr: {
             ir::TemporalBinaryExpr binary;
             if (!parse_temporal_binary_op(req_string(obj, "op"), binary.op)) { fail(); }
             const auto *lhs = obj.get("lhs");
@@ -3357,39 +3397,68 @@ class IrJsonReader final {
                 binary.rhs = temporal_expr(*rhs);
             }
             result->node = std::move(binary);
-        } else {
-            fail();
+            break;
+        }
         }
         return result;
     }
 
     // --- statements & blocks -----------------------------------------------
 
+    // Map a JSON `"kind"` wire spelling onto the shared StatementNode wire-name
+    // table (RFC 0027 P6/P7, KR6.13-P7). An unknown / misspelled wire name returns
+    // nullopt, and the caller FAILS CLOSED instead of silently demoting the node.
+    [[nodiscard]] static std::optional<ir::stmt_node_detail::StmtNodeIndex>
+    resolve_stmt_identity(std::string_view wire) noexcept {
+        for (std::size_t i = 0; i < std::variant_size_v<ir::StatementNode>; ++i) {
+            if (ir::stmt_node_wire_name(i) == wire) {
+                return static_cast<ir::stmt_node_detail::StmtNodeIndex>(i);
+            }
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] Owned<ir::Statement> statement(const JsonValue &obj) {
         auto result = make_owned<ir::Statement>();
         if (!obj.is_object()) { fail(); return result; }
         const auto kind = req_string(obj, "kind");
         result->source_range = source_range(obj);
-        if (kind == "let") {
+        const auto node_identity = resolve_stmt_identity(kind);
+        if (!node_identity.has_value()) {
+            fail();
+            return result;
+        }
+        // One branch per StatementNode alternative, selected by the shared
+        // wire-name table above; a new node added to stmt_nodes.def without a
+        // case here is a -Wswitch error. Per-node field bodies are unchanged.
+        switch (*node_identity) {
+        using ir::stmt_node_detail::StmtNodeIndex;
+        case StmtNodeIndex::LetStatement: {
             ir::LetStatement let;
             let.name = req_string(obj, "name");
             let.type_ref = opt_type_ref(obj, "type_ref", "type");
             let.initializer = opt_expr(obj, "initializer");
             let.adjustment = opt_adjustment_plan(obj);
             result->node = std::move(let);
-        } else if (kind == "assign") {
+            break;
+        }
+        case StmtNodeIndex::AssignStatement: {
             ir::AssignStatement assign;
             const auto *target = obj.get("target");
             if (target == nullptr) { fail(); } else { assign.target = path(*target); }
             assign.value = opt_expr(obj, "value");
             result->node = std::move(assign);
-        } else if (kind == "if") {
+            break;
+        }
+        case StmtNodeIndex::IfStatement: {
             ir::IfStatement stmt;
             stmt.condition = opt_expr(obj, "condition");
             stmt.then_block = req_block_ptr(obj, "then_block");
             stmt.else_block = opt_block_ptr(obj, "else_block");
             result->node = std::move(stmt);
-        } else if (kind == "if_let") {
+            break;
+        }
+        case StmtNodeIndex::IfLetStatement: {
             ir::IfLetStatement stmt;
             const auto *pattern = obj.get("pattern");
             if (pattern == nullptr) { fail(); } else { stmt.pattern = match_pattern(*pattern); }
@@ -3397,28 +3466,42 @@ class IrJsonReader final {
             stmt.then_block = req_block_ptr(obj, "then_block");
             stmt.else_block = opt_block_ptr(obj, "else_block");
             result->node = std::move(stmt);
-        } else if (kind == "goto") {
+            break;
+        }
+        case StmtNodeIndex::GotoStatement: {
             result->node = ir::GotoStatement{.target_state = req_string(obj, "target_state")};
-        } else if (kind == "return") {
+            break;
+        }
+        case StmtNodeIndex::ReturnStatement: {
             result->node = ir::ReturnStatement{.value = opt_expr(obj, "value")};
-        } else if (kind == "assert") {
+            break;
+        }
+        case StmtNodeIndex::AssertStatement: {
             ir::AssertStatement stmt;
             stmt.condition = opt_expr(obj, "condition");
             stmt.message = opt_expr(obj, "message");
             result->node = std::move(stmt);
-        } else if (kind == "unwrap") {
+            break;
+        }
+        case StmtNodeIndex::UnwrapStatement: {
             result->node = ir::UnwrapStatement{.operand = opt_expr(obj, "operand")};
-        } else if (kind == "requires") {
+            break;
+        }
+        case StmtNodeIndex::RequiresStatement: {
             ir::RequiresStatement stmt;
             stmt.condition = opt_expr(obj, "condition");
             stmt.message = opt_expr(obj, "message");
             result->node = std::move(stmt);
-        } else if (kind == "unreachable") {
+            break;
+        }
+        case StmtNodeIndex::UnreachableStatement: {
             result->node = ir::UnreachableStatement{.message = opt_expr(obj, "message")};
-        } else if (kind == "expr") {
+            break;
+        }
+        case StmtNodeIndex::ExprStatement: {
             result->node = ir::ExprStatement{.expr = opt_expr(obj, "expr")};
-        } else {
-            fail();
+            break;
+        }
         }
         return result;
     }
@@ -3466,16 +3549,40 @@ class IrJsonReader final {
 
     // --- declarations -------------------------------------------------------
 
+    // Map a JSON `"kind"` wire spelling onto the shared Decl wire-name table
+    // (RFC 0027 P6/P7, KR6.13-P7). An unknown / misspelled wire name returns
+    // nullopt, and the caller FAILS CLOSED instead of silently dropping the
+    // declaration.
+    [[nodiscard]] static std::optional<ir::decl_node_detail::DeclNodeIndex>
+    resolve_decl_identity(std::string_view wire) noexcept {
+        for (std::size_t i = 0; i < std::variant_size_v<ir::Decl>; ++i) {
+            if (ir::decl_node_wire_name(i) == wire) {
+                return static_cast<ir::decl_node_detail::DeclNodeIndex>(i);
+            }
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] std::optional<ir::Decl> decl(const JsonValue &obj) {
         if (!obj.is_object()) { fail(); return std::nullopt; }
         const auto kind = req_string(obj, "kind");
-        if (kind == "module") {
+        const auto decl_identity = resolve_decl_identity(kind);
+        if (!decl_identity.has_value()) {
+            fail();
+            return std::nullopt;
+        }
+        // One branch per Decl alternative, selected by the shared wire-name
+        // table above; a new node added to decl_nodes.def without a case here is
+        // a -Wswitch error. Per-node field bodies are unchanged.
+        switch (*decl_identity) {
+        using ir::decl_node_detail::DeclNodeIndex;
+        case DeclNodeIndex::ModuleDecl: {
             ir::ModuleDecl d;
             d.provenance = provenance(obj);
             d.name = req_string(obj, "name");
             return ir::Decl{std::move(d)};
         }
-        if (kind == "import") {
+        case DeclNodeIndex::ImportDecl: {
             ir::ImportDecl d;
             d.provenance = provenance(obj);
             d.path = req_string(obj, "path");
@@ -3486,7 +3593,7 @@ class IrJsonReader final {
             }
             return ir::Decl{std::move(d)};
         }
-        if (kind == "const") {
+        case DeclNodeIndex::ConstDecl: {
             ir::ConstDecl d;
             d.provenance = provenance(obj);
             d.name = req_string(obj, "name");
@@ -3495,7 +3602,7 @@ class IrJsonReader final {
             d.value = opt_expr(obj, "value");
             return ir::Decl{std::move(d)};
         }
-        if (kind == "type_alias") {
+        case DeclNodeIndex::TypeAliasDecl: {
             ir::TypeAliasDecl d;
             d.provenance = provenance(obj);
             d.name = req_string(obj, "name");
@@ -3503,7 +3610,7 @@ class IrJsonReader final {
             d.aliased_type_ref = opt_type_ref(obj, "aliased_type_ref", "aliased_type");
             return ir::Decl{std::move(d)};
         }
-        if (kind == "struct") {
+        case DeclNodeIndex::StructDecl: {
             ir::StructDecl d;
             d.provenance = provenance(obj);
             d.name = req_string(obj, "name");
@@ -3526,10 +3633,10 @@ class IrJsonReader final {
             }
             return ir::Decl{std::move(d)};
         }
-        if (kind == "enum") {
+        case DeclNodeIndex::EnumDecl: {
             return enum_decl(obj);
         }
-        if (kind == "capability") {
+        case DeclNodeIndex::CapabilityDecl: {
             ir::CapabilityDecl d;
             d.provenance = provenance(obj);
             d.name = req_string(obj, "name");
@@ -3541,7 +3648,7 @@ class IrJsonReader final {
             }
             return ir::Decl{std::move(d)};
         }
-        if (kind == "predicate") {
+        case DeclNodeIndex::PredicateDecl: {
             ir::PredicateDecl d;
             d.provenance = provenance(obj);
             d.name = req_string(obj, "name");
@@ -3549,29 +3656,30 @@ class IrJsonReader final {
             d.params = params(obj, "params");
             return ir::Decl{std::move(d)};
         }
-        if (kind == "agent") {
+        case DeclNodeIndex::AgentDecl: {
             return agent_decl(obj);
         }
-        if (kind == "contract") {
+        case DeclNodeIndex::ContractDecl: {
             return contract_decl(obj);
         }
-        if (kind == "flow") {
+        case DeclNodeIndex::FlowDecl: {
             return flow_decl(obj);
         }
-        if (kind == "workflow") {
+        case DeclNodeIndex::WorkflowDecl: {
             return workflow_decl(obj);
         }
-        if (kind == "fn") {
+        case DeclNodeIndex::FnDecl: {
             return fn_decl(obj);
         }
-        if (kind == "trait") {
+        case DeclNodeIndex::TraitDecl: {
             return trait_decl(obj);
         }
-        if (kind == "impl") {
+        case DeclNodeIndex::ImplDecl: {
             return impl_decl(obj);
         }
-        if (kind == "instance") {
+        case DeclNodeIndex::InstanceDecl: {
             return instance_decl(obj);
+        }
         }
         fail();
         return std::nullopt;

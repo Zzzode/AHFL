@@ -93,13 +93,13 @@ template <typename Tuple, typename Variant, std::size_t... Is>
             ...);
 }
 
-#define HANDLE_STMT_NODE(Name) type_tag<ahfl::ir::Name>{},
+#define HANDLE_STMT_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
 constexpr auto kStmtNodeTags = std::tuple{
 #include "ahfl/compiler/ir/stmt_nodes.def"
 };
 #undef HANDLE_STMT_NODE
 
-#define HANDLE_TEMPORAL_NODE(Name) type_tag<ahfl::ir::Name>{},
+#define HANDLE_TEMPORAL_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
 constexpr auto kTemporalNodeTags = std::tuple{
 #include "ahfl/compiler/ir/temporal_nodes.def"
 };
@@ -135,7 +135,7 @@ static_assert(pattern_wire_table_matches(),
               "ahfl::ir::match_pattern_node_wire_name must equal the pattern_nodes.def "
               "wire column in declaration order (single wire-name SSOT)");
 
-#define HANDLE_DECL_NODE(Name) type_tag<ahfl::ir::Name>{},
+#define HANDLE_DECL_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
 constexpr auto kDeclNodeTags = std::tuple{
 #include "ahfl/compiler/ir/decl_nodes.def"
 };

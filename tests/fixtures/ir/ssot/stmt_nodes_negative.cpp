@@ -37,7 +37,7 @@ template <typename T> struct type_tag {
     using type = T;
 };
 
-#define HANDLE_STMT_NODE(Name) type_tag<ahfl::ir::Name>{},
+#define HANDLE_STMT_NODE(Name, Wire) type_tag<ahfl::ir::Name>{},
 
 constexpr auto kStmtTags = std::tuple{
 #include "ahfl/compiler/ir/stmt_nodes.def"
@@ -68,7 +68,7 @@ template <typename... Handlers> struct stmt_overloaded : Handlers... {
 // A non-template function body forces std::visit to instantiate the
 // exhaustiveness check at compile time.
 [[maybe_unused]] void force_exhaustive_stmt_visit(FixtureStatementNode &node) {
-#define HANDLE_STMT_NODE(Name) [](const ahfl::ir::Name &) {},
+#define HANDLE_STMT_NODE(Name, Wire) [](const ahfl::ir::Name &) {},
     stmt_overloaded visitor{
 #include "ahfl/compiler/ir/stmt_nodes.def"
     };

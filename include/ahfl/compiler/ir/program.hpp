@@ -1,9 +1,11 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <variant>
 #include <vector>
@@ -52,7 +54,7 @@ struct AnalysisBundle {
 
 namespace node_detail {
 
-#define HANDLE_DECL_NODE(Name) node_tag<Name>{},
+#define HANDLE_DECL_NODE(Name, Wire) node_tag<Name>{},
 inline constexpr auto kDeclNodeTags = std::tuple{
 #include "ahfl/compiler/ir/decl_nodes.def"
 };
@@ -74,6 +76,39 @@ static_assert(std::variant_size_v<Decl> == 16,
               "ahfl::ir::Decl cardinality drift (RFC 0027 P8 IR SSOT): "
               "update every exhaustive visitor and this pin together with "
               "decl_nodes.def.");
+
+namespace decl_node_detail {
+
+/// Ordered strong index of each Decl alternative (RFC 0027 Q1 pattern:
+/// index-based identity, never strings).
+enum class DeclNodeIndex : std::size_t {
+#define HANDLE_DECL_NODE(Name, Wire) Name,
+#include "ahfl/compiler/ir/decl_nodes.def"
+};
+
+/// JSON wire name of each Decl alternative, indexed by `Decl::index()`. The ONE
+/// table the ir_json writer and reader resolve the `"kind"` spelling from.
+inline constexpr std::array<std::string_view,
+                            std::tuple_size_v<std::remove_cvref_t<decltype(
+                                node_detail::kDeclNodeTags)>>>
+    kDeclWireNames = {
+#define HANDLE_DECL_NODE(Name, Wire) Wire,
+#include "ahfl/compiler/ir/decl_nodes.def"
+};
+
+} // namespace decl_node_detail
+
+/// JSON wire name of the Decl alternative at `variant_index` (a `Decl::index()`
+/// value, therefore always in bounds).
+[[nodiscard]] inline constexpr std::string_view
+decl_node_wire_name(std::size_t variant_index) noexcept {
+    return decl_node_detail::kDeclWireNames[variant_index];
+}
+
+/// JSON wire name of a declaration node (e.g. `"type_alias"`).
+[[nodiscard]] inline std::string_view decl_node_wire_name(const Decl &node) noexcept {
+    return decl_node_wire_name(node.index());
+}
 
 enum class ProgramPhase {
     Lowered,
