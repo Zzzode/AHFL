@@ -5,7 +5,7 @@ status: "implementing"
 area: ["compiler", "ir", "runtime"]
 stability: "experimental"
 created: "2026-08-28"
-updated: "2026-08-31"
+updated: "2026-09-21"
 authors: ["zzzode"]
 shepherd: "project lead"
 owners:
@@ -286,7 +286,10 @@ IR-JSON（`src/compiler/ir/ir_json.cpp`，RFC 0013 KR5.9 已做到逐字节 roun
    全套件绿。`BREAKING CHANGE:` 标注。
 9. **P9 IR-JSON 分层投影**：每层 JSON 投影 + round-trip；旧单层投影标记弃用。
 
-每片落地后追加 `implementation_prs` 与 Decision History 条目。
+front-matter `implementation_prs` 记录**已落地**的实现 commit(短 hash,与既有条目同格式);每个落地片、
+设计门、fix-forward 追加一条带日期的 Decision History 条目。**诚实**笔记:`implementation_prs` 自
+`cf3fa90e`(2026-08-31)起未再追加,而 Decision History 一直更新,故该列表目前**落后于** Decision History
+(含本片 `fef7c322` 这样的设计门,以及若干已落地的 code slice);补齐它是一项独立的 chore,本片不假装已完成。
 
 ## Test Plan
 
@@ -847,6 +850,50 @@ Implementation Plan 对应分片承载。
   field mask)。(7) **弃用边界 = mark-deprecate only**:旧单层投影**本次不删**,删除绑定 KR6.8(evaluator
   退役,与 Q5 逐字一致),本片不产生 `BREAKING CHANGE:` footer;过渡期两套 round-trip golden 双守护,既有
   `tests/golden/ir/*.json` 与 `ahflc.emit_ir_json.*` 车队字节不变。理由(与 Q5 同):单层投影**今日就是**
-  AHFL-IR 层的投影(KR6.3 alias-first,program.hpp:120),层拆分未完成前删它等于删一个**在役**层的投影。
+  AHFL-IR 层的投影(KR6.3 alias-first,program.hpp:155),层拆分未完成前删它等于删一个**在役**层的投影。
   **诚实**:**无任何实现代码**;`kCoreFormatVersion` 仍无 writer/reader/CLI 消费者(KR6.9 未落地);
   本片只解"实现前必须定死的决定",B1-B4 仍未开始;**P9/KR6.9 未完成**;evaluator 未退役、WASM 非唯一引擎。
+- 2026-09-21: **KR6.9 B0 FIX-FORWARD: P9 设计门事实性订正(docs only)**。订正 `fef7c322` 的设计文档
+  `docs/design/core-ir-p9-layered-json.zh.md` 中与当前源码不符 / 自相矛盾的论断(P0 x1、P1 x3、P2 x3),
+  使 B1-B4 可机械落地。
+  (1) **P0 `kInvalid` 词法规则**:原文"`kInvalid` **永不发射**"对
+  `CoreTypeDecl::field_nominal_types` 是**错的**。该表是 **navigation-only 稀疏表**,非 required-valid 位:
+  `fixup_field_nominal_types`(`core_lower.cpp:484-496`)只在 `names[i]` 非空且 `resolve_by_name` 命中时
+  写入,从不重置;向量在 `:249-250` 以 `CoreTypeId{}`(== kInvalid)预置。原语/非 struct/泛型 `T` 字段因此
+  **保持 kInvalid**,且 verifier **接受**它(仅拒 out-of-range 非 kInvalid,`core_verify.cpp:181-185`);
+  `tests/unit/compiler/ir/core_lower.cpp:4260` 与 in-tree fixture
+  `tests/golden/wasm/p6_collection.ahfl:31-35`(`struct Frame { items: List<Int>(4); }`)都在 lowering-clean
+  program 上钉死这一点。规则改为"**required-valid 位永不发射 kInvalid**,writer 在那里 fail-closed";并给出
+  该字段的唯一编码:**每个 `fields` 槽一个元素,`kInvalid` 发 `null`**(不是 `4294967295`),因数组长度被
+  verifier 钉到 `fields.size()`,省略会让 R1 逐字节相等失败。同时厘清 `context_type`:Unit context 时**整字段省略**
+  (§2 absent-optional 规则),与上面**数组元素**的 `null` 是两类位置、各一种编码。
+  (2) **P1 递归论断**:原文称 `core_region_exit` 与 verifier 的 per-path walk"是**迭代**写的"。**不实**:
+  `core_region_exit`(`core_ir.hpp:980`)经 `CORE_REGION_EXIT_*` handler 递归进 then/else/fallback;
+  `verify_region`(`core_verify.cpp:2049`)在 `:2210`/`:2217`/`:2390` 递归,`for_each_region_path_expr`
+  (`:2875`)经 `CORE_REGION_PATHS_*` 递归。`src/compiler/ir` / `include/ahfl/compiler/ir` 内
+  `kMaxDepth`/`max_depth`/`nesting_depth` **零命中** —— 该路径**根本不存在**深度上界。(既有迭代 walk
+  `:1315`/`:1943`/`:2707` 是 expr-arena 与 workflow DAG,**不同图**。)订正为:三者今日都是**递归**且**无界**;
+  depth bound 的**正当理由是 reader 是不可信输入 admission boundary**,必须无条件在 reader 强制;两条既存递归
+  walk 的溢出风险记为 **tracked follow-up**,不再隐式否认。
+  (3) **P1 §6.2 remap 清单不完整**:补 `CoreCoercionPlanNode::source`/`result`(`core_ir.hpp:529`/`:530`,
+  经 `normalize_adjustment_plan` 的 `intern_plan_type`(`core_lower.cpp:3096-3099`)走同一 program-global
+  `shared_arena`)与 `CoreMemberTypeTemplateNode::concrete`(`:1311`,`finalize_member_templates(shared_arena)`
+  `core_lower.cpp:3718` 注入)。并把枚举改成**构造上穷尽**的规则("凡索引 `CoreProgram::value_types` 的
+  `CoreValueTypeId` 一律重写")加 owning-site 清单,使未来新字段不会静默漏网 —— 正是 CLAUDE.md Principle 3
+  对 flat store 警告的失效模式。漏掉这两处会让 reordered-but-valid 文档的 coercion proof 端点与 member-template
+  conc 指向错误 arena 槽,而 R2 **查不出来**(`core_program_equal` 两侧一致地比较未重写的 id)。
+  (4) **P1 字段序自相矛盾**:§2 规定"字段序 = §4–§5 表",但 `agents[]` 把 `context_kind` 排在 `context_type`
+  之前、`workflows[]` 把 `value_count` 提到 `exprs` 前,偏离声明序且原文无例外条款。已把 `agents[]` 改回声明序
+  (`core_ir.hpp:233`:`input_type`,`context_type`,`output_type`,... `context_kind`),`workflows[]` 的
+  `value_count` 提前作为**显式记录的 deliberate promotion** 保留,并改写 §2 该行为"§4–§5 是 normative copy,
+  偏离处有 bullet 记录"。
+  (5) **P2**:§0 "IR 塔只有**一个** JSON 投影"收窄为"`ir::Program` 层只有一个",并注明 Opt IR 另有独立的
+  `AHFL_OPT_IR_V1` artifact(`ir-format.zh.md:26`);§7 钉死 B3 reader 签名 `CoreJsonParseResult
+  parse_core_ir_json(std::string_view)`(带 `CoreJsonDiagnostic{code,message,SourceRangeOpt}`),不复制单层
+  reader 的 `optional` 形状 —— `optional` 无 typed reason、无 range,恰是 §7 自己拒斥的形状;
+  若干 `file:line` 锚点按当前 `develop` 订正(经 KR6.13-P7 的 X-list 迁移后行号已漂移)。
+  (6) **诚实笔记**:本文件 Implementation Plan 原文"每片落地后追加 `implementation_prs` 与 Decision History
+  条目"已改写为准确表述 —— `implementation_prs` 自 `cf3fa90e`(2026-08-31)起**未再追加**(含 `fef7c322`
+  这一设计门及 `97ca6b31`/`e9314a07`/`d278e770` 等已落地片),只有 Decision History 在更新;补齐该列表是
+  独立 chore,本片不假装完成。**无生产代码变**;`kCoreFormatVersion` 仍无 writer/reader/CLI 消费者;
+  **P9/KR6.9 未完成**,B1-B4 未开始。
