@@ -1706,6 +1706,37 @@ class P6ComputationHandlerBuilder {
         return place_is_scalar_leaf(layout_id) || place_is_aggregate_leaf(layout_id);
     }
 
+    // The sub-site a PAYLOAD slot of a variant pattern descends to: the P4-D
+    // offset `payload_base + slot_offset`, with the slot's own P6 kind. This is
+    // the ONE constructor of a payload sub-site, shared by the plan pass
+    // (`plan_variant_pattern_site`) and the emit pass (`emit_variant_test`), so
+    // the two can never disagree about which slots are addressable. A slot whose
+    // P4-D edge is NOT a single-word P6 value — a PtrLen String / bytes / f64, or
+    // a D2 closure (RFC 0026 P6-8a; two words with no P6 representation) — fails
+    // closed here rather than latching / loading only its first word. The
+    // projection / store / collection leaf paths already reject exactly these
+    // edges through the same `place_is_p6_value` predicate; routing the
+    // pattern-site construction through it makes the P6 boundary uniform instead
+    // of relying on "no producer exists yet".
+    [[nodiscard]] std::optional<P6PatternSite>
+    payload_sub_site(const ir::core::CoreLayoutStruct &payload, std::uint32_t slot,
+                     std::uint64_t payload_base, ir::SourceRangeOpt range) {
+        if (slot >= payload.field_offsets.size() || slot >= payload.field_layouts.size()) {
+            static_cast<void>(
+                reject("variant payload sub-pattern slot is out of range", std::move(range)));
+            return std::nullopt;
+        }
+        const CoreLayoutId edge = payload.field_layouts[slot];
+        if (!place_is_p6_value(edge)) {
+            static_cast<void>(reject(
+                "variant payload sub-pattern slot is not a single-word P6 value",
+                std::move(range)));
+            return std::nullopt;
+        }
+        return P6PatternSite{place_kind_of_layout(edge), true,
+                             payload_base + payload.field_offsets[slot]};
+    }
+
     // The root of a projection chain as a `ProjectionRoot`. A local-rooted chain
     // starts from the aggregate's own `Ptr` local; `input` / `context` start from
     // the reserved frame base, which IS the frame struct's address.
@@ -2792,34 +2823,23 @@ class P6ComputationHandlerBuilder {
             return reject("variant payload pattern has no struct payload layout", range);
         }
         const std::uint64_t payload_base = site.offset + tagged->payload_offset;
-        const auto sub_site = [&](std::uint32_t slot, std::uint64_t &out) -> bool {
-            if (slot >= payload->field_offsets.size() ||
-                slot >= payload->field_layouts.size()) {
+        for (std::uint32_t i = 0; i < v.tuple_subpatterns.size(); ++i) {
+            const auto sub = payload_sub_site(*payload, i, payload_base, range);
+            if (sub == std::nullopt) {
                 return false;
             }
-            out = payload_base + payload->field_offsets[slot];
-            return true;
-        };
-        for (std::uint32_t i = 0; i < v.tuple_subpatterns.size(); ++i) {
-            std::uint64_t sub_offset = 0;
-            if (!sub_site(i, sub_offset)) {
-                return reject("variant tuple payload sub-pattern slot is out of range", range);
-            }
-            const P6PatternSite sub{place_kind_of_layout(payload->field_layouts[i]), true,
-                                    sub_offset};
-            if (!plan_arm_pattern(v.tuple_subpatterns[i], sub, bindings, allow_payload_bindings,
+            if (!plan_arm_pattern(v.tuple_subpatterns[i], *sub, bindings, allow_payload_bindings,
                                   range)) {
                 return false;
             }
         }
         for (const CoreVariantPatField &field : v.struct_fields) {
-            std::uint64_t sub_offset = 0;
-            if (!sub_site(field.slot.value, sub_offset)) {
-                return reject("variant struct payload sub-pattern slot is out of range", range);
+            const auto sub =
+                payload_sub_site(*payload, field.slot.value, payload_base, range);
+            if (sub == std::nullopt) {
+                return false;
             }
-            const P6PatternSite sub{
-                place_kind_of_layout(payload->field_layouts[field.slot.value]), true, sub_offset};
-            if (!plan_arm_pattern(field.pattern, sub, bindings, allow_payload_bindings, range)) {
+            if (!plan_arm_pattern(field.pattern, *sub, bindings, allow_payload_bindings, range)) {
                 return false;
             }
         }
@@ -3611,34 +3631,23 @@ class P6ComputationHandlerBuilder {
                           std::move(range));
         }
         const std::uint64_t payload_base = site.offset + tagged->payload_offset;
-        const auto sub_site = [&](std::uint32_t slot, P6PatternSite &out) -> bool {
-            if (slot >= payload->field_offsets.size() ||
-                slot >= payload->field_layouts.size()) {
+        for (std::uint32_t i = 0; i < v.tuple_subpatterns.size(); ++i) {
+            const auto sub = payload_sub_site(*payload, i, payload_base, range);
+            if (sub == std::nullopt) {
                 return false;
             }
-            out = P6PatternSite{place_kind_of_layout(payload->field_layouts[slot]), true,
-                                payload_base + payload->field_offsets[slot]};
-            return true;
-        };
-        for (std::uint32_t i = 0; i < v.tuple_subpatterns.size(); ++i) {
-            P6PatternSite sub{};
-            if (!sub_site(i, sub)) {
-                return reject("variant tuple payload sub-pattern slot is out of range",
-                              std::move(range));
-            }
-            if (!emit_pattern_test(v.tuple_subpatterns[i], scrutinee_local, sub,
+            if (!emit_pattern_test(v.tuple_subpatterns[i], scrutinee_local, *sub,
                                    std::move(range))) {
                 return false;
             }
             body_.byte(kOpI32And);
         }
         for (const CoreVariantPatField &field : v.struct_fields) {
-            P6PatternSite sub{};
-            if (!sub_site(field.slot.value, sub)) {
-                return reject("variant struct payload sub-pattern slot is out of range",
-                              std::move(range));
+            const auto sub = payload_sub_site(*payload, field.slot.value, payload_base, range);
+            if (sub == std::nullopt) {
+                return false;
             }
-            if (!emit_pattern_test(field.pattern, scrutinee_local, sub, std::move(range))) {
+            if (!emit_pattern_test(field.pattern, scrutinee_local, *sub, std::move(range))) {
                 return false;
             }
             body_.byte(kOpI32And);

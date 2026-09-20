@@ -4593,6 +4593,120 @@ int main() {
                       "P6-8a a closure projection leaf fails closed (no P6 closure value)");
             }
         }
+
+        // RFC 0026 P6-8a fix-forward (KR6.6): the pattern-site path must apply
+        // the SAME single-word P6 gate the projection / store / collection leaf
+        // paths do. `plan_variant_pattern_site` / `emit_variant_test` used to
+        // build a payload sub-site as
+        // `P6PatternSite{place_kind_of_layout(edge), true, offset}` with no
+        // `place_is_p6_value` gate; `place_kind_of_layout` maps every unhandled
+        // shape to its default `Ptr`, so a wildcard / binding sub-pattern over a
+        // closure-shaped payload slot was treated as an addressable `Ptr` leaf
+        // (latched as one i32) and the handler emitted an artifact with NO
+        // diagnostic — exactly the "reads half a two-word value" failure the
+        // P6-8a boundary claims is impossible. Reproduced before the fix: a
+        // `enum Level { Low, High(Closure<Fn(Int)->Int>) }` scrutinee projected
+        // from the input frame with `High(_)` (and `High(x)`) emitted a module
+        // (`artifact` non-null) instead of failing closed. The fix routes both
+        // passes through ONE `payload_sub_site` helper gated by
+        // `place_is_p6_value`, so the boundary is uniform rather than relying on
+        // "no closure constructor exists yet".
+        {
+            auto program = make_e1_core_program();
+            // vt1 = the capture; vt2 = `Fn(Int)->Int`; vt3 = the closure the
+            // payload slot holds; vt4 = Bool (unused by this case).
+            program.value_types.push_back(
+                CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 1000)}});
+            program.value_types.push_back(
+                CoreValueType{CoreVtFn{{CoreValueTypeId{1}}, CoreValueTypeId{1}}});
+            program.value_types.push_back(
+                CoreValueType{CoreVtClosure{CoreValueTypeId{2},
+                                            {{CoreValueTypeId{1}, CoreCaptureMode::ByValue}}}});
+            program.value_types.push_back(CoreValueType{CoreVtBool{}});
+            // types[1] = `enum Level { Low, High(Closure) }`.
+            CoreTypeDecl level;
+            level.kind = CoreTypeDecl::Kind::Enum;
+            level.name = "app::Level";
+            level.variants = {"Low", "High"};
+            level.variant_payloads = {CoreTypeDecl::VariantPayload{},
+                                      CoreTypeDecl::VariantPayload{
+                                          CoreTypeDecl::VariantPayload::Kind::Tuple,
+                                          {CoreMemberTypeTemplateNodeId{0}},
+                                          {}}};
+            level.member_type_templates.push_back(
+                CoreMemberTypeTemplateNode{CoreMemberTypeTemplateKind::Concrete,
+                                           CoreValueTypeId{3},
+                                           0,
+                                           CoreTypeId{},
+                                           std::nullopt,
+                                           {},
+                                           CoreMemberTypeTemplateNodeId{}});
+            program.types.push_back(std::move(level));
+            const CoreValueTypeId enum_vt{5};
+            program.value_types.push_back(
+                CoreValueType{CoreVtNominal{CoreTypeId{1}, {}, std::nullopt}});
+            // The input struct gains one `lvl` field of the enum type, so the
+            // scrutinee is a real projection (no constructor needed — the
+            // payload slot's closure layout comes straight from P4-D).
+            auto &input = program.types[0];
+            input.fields = {"lvl"};
+            input.field_nominal_types = {CoreTypeId{1}};
+            input.field_has_default = {false};
+            CoreMemberTypeTemplateNode lvl_template;
+            lvl_template.kind = CoreMemberTypeTemplateKind::Concrete;
+            lvl_template.concrete = enum_vt;
+            input.member_type_templates = {lvl_template};
+            input.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
+            auto &flow = program.flows[0];
+            CorePathExpr lvl_path;
+            lvl_path.root = CorePathRoot::Input;
+            lvl_path.root_name = "input";
+            lvl_path.root_type = CoreTypeId{0};
+            lvl_path.members = {"lvl"};
+            lvl_path.projection = {
+                CoreProjectionStep{CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{1}}};
+            lvl_path.projection_resolved = true;
+            flow.exprs.push_back(CoreExpr{std::move(lvl_path), std::nullopt, enum_vt});
+            flow.value_count = 2;
+            flow.value_types = {CoreValueTypeId{0}, enum_vt};
+            // Pattern 0 = a WILDCARD; pattern 1 = `High(_)` over one tuple
+            // payload slot. No arm binding is involved, so the only gate that can
+            // reject is the pattern-site one under test.
+            flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+            flow.patterns.push_back(CorePattern{
+                CoreVariantPat{CoreTypeId{1}, CoreVariantId{1}, {CorePatternId{0}}, {}, false},
+                std::nullopt});
+            auto &start = flow.states[1].body;
+            start.statements.clear();
+            start.statements.push_back(
+                CoreStmt{CoreLetStmt{CoreValueId{1}, CoreExprId{1}}, std::nullopt});
+            CoreMatchStmt match;
+            match.scrutinee = CoreValueId{1};
+            match.has_result = false;
+            CoreMatchArm arm;
+            arm.pattern = CorePatternId{1};
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            match.arms.push_back(std::move(arm));
+            match.fallback_region = std::make_unique<CoreRegion>();
+            match.fallback_region->statements.push_back(
+                CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+            start.statements.push_back(CoreStmt{std::move(match), std::nullopt});
+            // The enum layout finalises (tag i32 + an 8-byte closure payload), so
+            // the rejection is the PATTERN-SITE gate's own, never the layout
+            // verifier swallowing the case first.
+            const auto layout = compute_core_layouts(program);
+            check(verify_core_program(program).ok() && layout.ok() && layout.table.has_value(),
+                  "P6-8a closure-payload enum match fixture is verified Core with a layout");
+            if (layout.table.has_value()) {
+                const auto emitted = emit_agent(program, *layout.table);
+                check(!emitted.artifact.has_value() &&
+                          has_codegen_code(emitted,
+                                           backends::core_wasm_diag::kUnsupportedOrchestration),
+                      "P6-8a a closure payload sub-pattern fails closed (no half-closure latch)");
+            }
+        }
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

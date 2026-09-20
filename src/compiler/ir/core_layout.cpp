@@ -212,8 +212,8 @@ class LayoutBuilder {
         // core_value_types.def X-list; each entry token-pastes to a real,
         // explicitly-typed local lambda below. There is deliberately NO
         // catch-all: adding a 15th node to the .def without defining
-        // `vt_##Name` fails to compile. Per-node semantics (including the
-        // deferred-closure failure) are unchanged.
+        // `vt_##Name` fails to compile. Per-node semantics are those of each
+        // lambda below (the closure arm builds the D2 word-pair layout).
         const auto vt_Unit = [&](const CoreVtUnit &) -> std::optional<CoreLayout> {
             return CoreLayout{0, 1, true, CoreLayoutStruct{}};
         };
