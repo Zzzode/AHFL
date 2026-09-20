@@ -153,7 +153,11 @@ class ProgramVerifier {
         // explicitly-named COLLECT_DECL_LEAF no-op; the rest route to a per-node
         // collector. No unnamed catch-all, so a new declaration node is a
         // COMPILE ERROR here until it is routed (CLAUDE.md Principle 5).
-#define COLLECT_DECL_LEAF(Name) [this](const Name &) {},
+        //
+        // The leaf/collector lambdas capture NOTHING: a capture of `this` that
+        // the body never names is -Wunused-lambda-capture under clang, which is
+        // -Werror here, so every no-op expansion would break the build.
+#define COLLECT_DECL_LEAF(Name) [](const Name &) {},
 #define COLLECT_DECL_SYMBOL(Name)                                                               \
     [this](const Name &value) { collect_decl_symbol_identity(value); },
 
@@ -869,7 +873,11 @@ class ProgramVerifier {
         // generated from stmt_nodes.def; a node without its own verifier names the
         // explicitly-named VERIFY_STMT_LEAF no-op. No unnamed catch-all: a new
         // statement node is a COMPILE ERROR here until it is routed.
-#define VERIFY_STMT_LEAF(Name) [this, &path](const Name &) {},
+        //
+        // A leaf lambda that captured `this` / `&path` it never names would be
+        // -Wunused-lambda-capture under clang (-Werror here), so the leaf macro
+        // captures nothing and only the CHECKED expansion takes this/path.
+#define VERIFY_STMT_LEAF(Name) [](const Name &) {},
 #define VERIFY_STMT_CHECKED(Name)                                                                \
     [this, &path](const Name &value) { verify_statement_node(value, path); },
 
@@ -1391,7 +1399,11 @@ class ProgramVerifier {
         // per-node handler below. There is no unnamed catch-all, so adding a node
         // to expr_nodes.def without listing it here is a COMPILE ERROR naming the
         // type (CLAUDE.md Principle 5) instead of a silently unchecked node.
-#define VERIFY_EXPR_LEAF(Name) [this, &path](const Name &) {},
+        //
+        // The leaf macro captures nothing: a capture of `this` / `&path` the
+        // body never names is -Wunused-lambda-capture under clang, which is
+        // -Werror here, so every leaf expansion would break the build.
+#define VERIFY_EXPR_LEAF(Name) [](const Name &) {},
 #define VERIFY_EXPR_CHECKED(Name)                                                                \
     [this, &path](const Name &value) { verify_expr_node(value, path); },
 

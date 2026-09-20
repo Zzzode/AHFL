@@ -54,7 +54,12 @@ class FormalObservationCollector final {
             // names OBSERVE_DECL_LEAF (explicit, named no-op — the same behavior
             // the unnamed catch-all had). The enumeration turns a NEW declaration
             // node into a COMPILE ERROR here until it is classified.
-#define OBSERVE_DECL_LEAF(Name) [this](const ir::Name &) {},
+            //
+            // The leaf captures nothing: a `[this]` capture the body never names
+            // is -Wunused-lambda-capture under clang (-Werror here), so every
+            // leaf expansion would break the build. Only the handlers that
+            // actually call a member keep the capture.
+#define OBSERVE_DECL_LEAF(Name) [](const ir::Name &) {},
 #define OBSERVE_AgentDecl(Name) [this](const ir::Name &agent) { collect_agent(agent); },
 #define OBSERVE_ContractDecl(Name)                                                              \
     [this](const ir::Name &contract) { collect_contract(contract); },

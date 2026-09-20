@@ -555,10 +555,20 @@ bool ProgramRewriter::rewrite_decl(Decl &declaration) {
                     return changed;
                 },
                 [&](FnDecl &value) { return value.body != nullptr && rewrite_block(*value.body); },
-                // Bodyless declarations (including P3 trait/impl) have no
-                // expression body to rewrite here; impl method bodies are
-                // rewritten via their own FnDecls.
-                [](auto &) { return false; },
+                // RFC 0027 P6/P7/P8 (KR6.13-F): each declaration with no
+                // traversable expression body is listed EXPLICITLY (one named
+                // no-op per node), mirroring ProgramVisitor::visit_decl, so a new
+                // declaration node is a COMPILE ERROR in BOTH halves of the
+                // traversal until it is classified (CLAUDE.md Principle 5).
+                // `trait` methods are interface-only and `impl` method bodies
+                // live on their own FnDecls, which are rewritten as separate
+                // top-level declarations.
+                [](ModuleDecl &) { return false; },
+                [](ImportDecl &) { return false; },
+                [](TypeAliasDecl &) { return false; },
+                [](TraitDecl &) { return false; },
+                [](ImplDecl &) { return false; },
+                [](InstanceDecl &) { return false; },
             },
             declaration) ||
         modified;

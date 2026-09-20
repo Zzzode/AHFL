@@ -32,10 +32,4 @@ template <typename... Ts> struct variant_from_tags<std::tuple<node_tag<Ts>...>> 
 template <typename TagTuple>
 using variant_from_tags_t = typename variant_from_tags<std::remove_cvref_t<TagTuple>>::type;
 
-/// Compile-time ordered-coverage check: alternative `Ts...` must be the exact
-/// prefix-free set of `Variant`'s alternatives, at the same positions.
-template <typename Variant, typename... Ts> struct tags_match_variant {
-    static constexpr bool value = std::is_same_v<Variant, std::variant<Ts...>>;
-};
-
 } // namespace ahfl::ir::node_detail

@@ -1348,8 +1348,7 @@ class Verifier {
                     // CORE_EXPR_ACYCLIC_LEAF (an explicit, named no-op — the same
                     // behavior the unnamed catch-all had). With no generic
                     // catch-all, adding a CoreExprNode alternative is a COMPILE
-                    // ERROR here until it is classified (CLAUDE.md Principle 5);
-                    // the coverage pin below ties the handled set to the variant.
+                    // ERROR here until it is classified (CLAUDE.md Principle 5).
                     std::visit(Overloaded{
                                    CORE_EXPR_ACYCLIC_LEAF(CoreLiteralExpr),
                                    CORE_EXPR_ACYCLIC_LEAF(CoreValueRefExpr),
@@ -3488,20 +3487,16 @@ class Verifier {
     std::vector<CoreLowerDiagnostic> diags_;
 };
 
-// RFC 0027 P6/P7/P8 (KR6.13-F) coverage pins: the explicitly-enumerated handler
-// sets above are checked against the variant cardinalities at compile time, so a
-// node added to a variant without a matching arm is caught here even before the
-// std::visit instantiation. These are the "curated, commented allowlist ties the
-// handled set to the .def list" the slice requires (the .def list is the SSOT
-// that generates each variant's cardinality).
-static_assert(std::variant_size_v<CoreExprNode> == 10,
-              "core_verify.cpp: the CoreExprNode handler sets (acyclic-leaf 8 + "
-              "unary/binary 2) must stay in lockstep with the variant; add the "
-              "new alternative to CORE_EXPR_ACYCLIC_LEAF / CORE_EXPR_PATHS_LEAF "
-              "and its real handler.");
-static_assert(std::variant_size_v<CorePatternNode> == 7,
-              "core_verify.cpp: the CorePatternNode handler set (leaf 3 + "
-              "binding/variant/tuple/or 4) must stay in lockstep with the variant.");
+// RFC 0027 P6/P7/P8 (KR6.13-F): the three handler sets above are exhaustive
+// `std::visit` overload groups over CoreExprNode / CorePatternNode with NO
+// generic catch-all, so an alternative added to core_ir.hpp without a matching
+// arm is rejected by the .def-less variant's own exhaustiveness check — the
+// compiler names the unhandled type at the visit, before any build can go
+// silently unchecked. The cardinality of each variant is pinned once, in the
+// header that declares it (include/ahfl/compiler/ir/core_ir.hpp, "P8 IR SSOT
+// compile-time cardinality gate"); it is deliberately NOT re-asserted here,
+// because a second copy of the same number would only duplicate the header's
+// message without tying it to these handler sets.
 
 } // namespace
 
