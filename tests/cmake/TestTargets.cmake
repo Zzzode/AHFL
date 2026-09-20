@@ -793,6 +793,16 @@ target_link_libraries(ahfl_pass_manager_tests
 )
 ahfl_apply_project_warnings(ahfl_pass_manager_tests)
 
+add_executable(ahfl_transform_passes_tests
+    unit/compiler/passes/transform_passes.cpp
+)
+target_link_libraries(ahfl_transform_passes_tests
+    PRIVATE
+        ahfl_compiler_passes
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_transform_passes_tests)
+
 add_executable(ahfl_semantics_type_relations_tests
     unit/compiler/semantics/type_relations.cpp
 )
@@ -1667,6 +1677,7 @@ foreach(_tgt
     ahfl_runtime_provider_secret_provider_tests
     ahfl_vault_rotation_tests
     ahfl_pass_manager_tests
+    ahfl_transform_passes_tests
     ahfl_semantics_type_relations_tests
     ahfl_semantics_type_resolver_tests
     ahfl_semantics_typed_hir_tests

@@ -346,6 +346,7 @@ ahfl_label_tests(
     LABELS passes
     TESTS
         ahfl.passes.pass_manager_all
+        ahfl.passes.transform_passes_all
         ahflc.passes.semantic_backend_effect
         ahflc.passes.workflow_simplification_backend_effect
 )

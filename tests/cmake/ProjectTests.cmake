@@ -1331,6 +1331,10 @@ add_test(NAME ahfl.passes.pass_manager_all
     COMMAND $<TARGET_FILE:ahfl_pass_manager_tests>
 )
 
+add_test(NAME ahfl.passes.transform_passes_all
+    COMMAND $<TARGET_FILE:ahfl_transform_passes_tests>
+)
+
 add_test(NAME ahfl.semantics.type_relations_all
     COMMAND $<TARGET_FILE:ahfl_semantics_type_relations_tests>
 )
