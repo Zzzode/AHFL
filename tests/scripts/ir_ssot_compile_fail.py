@@ -74,6 +74,25 @@ FIXTURES = (
         inject_flag="AHFL_SSOT_INJECT_UNHANDLED_CHILD",
         unhandled_type="SsotUnhandledChildExpr",
     ),
+    # The same fixture TU, two more injected directions: an edge list that exists
+    # but is STRUCTURALLY WRONG rather than absent. `()` on a node whose struct
+    # has an ExprRef member is the "leaf placeholder while wiring incrementally"
+    # silent-skip mistake; a member named twice is the double-visit / re-stamp
+    # mistake. Each MUST fail, naming its sentinel, because the structural
+    # coverage gate in expr_child_edges.hpp compares the edge list against the
+    # struct itself instead of against the metadata alone.
+    FixtureCase(
+        label="ExprChildEdgesLeafWithChildren",
+        relative_path="tests/fixtures/ir/ssot/expr_child_edges_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_LEAF_WITH_CHILDREN",
+        unhandled_type="SsotLeafWithChildrenExpr",
+    ),
+    FixtureCase(
+        label="ExprChildEdgesDuplicateEdge",
+        relative_path="tests/fixtures/ir/ssot/expr_child_edges_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_DUPLICATE_EDGE",
+        unhandled_type="SsotDuplicateEdgeExpr",
+    ),
     FixtureCase(
         label="CoreValueTypeNode",
         relative_path="tests/fixtures/ir/ssot/core_value_type_nodes_negative.cpp",

@@ -37,9 +37,12 @@
 // (variant / wire table / identity) simply ignores the third parameter. The
 // derived walkers in src/compiler/ir/visitor.cpp no longer enumerate edges by
 // hand: a node added here with children but without an edge entry is a compile
-// error (see expr_child_edges.hpp), and an edge naming a non-child field fails
-// that node's `static_assert`. Edge order is visit order, so it is part of the
-// contract.
+// error (see expr_child_edges.hpp), an edge naming a non-child field fails that
+// node's `static_assert`, AND the list must cover exactly the node struct's
+// child-bearing members — `()` for a node whose struct carries an `ExprRef`, a
+// `std::vector<ExprRef>`, or a vector of element structs with an `ExprRef` is a
+// build error too, as is listing one member twice. Edge order is visit order, so
+// it is part of the contract.
 //
 // Every exhaustive visitor still routes through std::visit + Overloaded; the
 // compile-time exhaustiveness property is pinned by the negative compile-tests
