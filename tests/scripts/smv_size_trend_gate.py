@@ -5,16 +5,21 @@ thresholds.
 Unlike RunSmvSizeBudgetTest.cmake (fixed MAX/MIN per fixture), this gate records
 a *baseline* of emit-smv sizes and fails when any fixture's size regresses beyond
 a relative tolerance — turning the budget from a static ceiling into a trend
-guard. It also writes a machine-readable trend report artifact
-(`ahfl.smv-size-trend.v2`) with per-fixture baseline/current/delta so a release
-process can chart drift over time.
+guard. It also writes a machine-readable trend report (`ahfl.smv-size-trend.v2`)
+with per-fixture baseline/current/delta. The report is a local, per-run
+diagnostic written to the build tree: it is not uploaded as a CI artifact, so a
+release process cannot chart history from it.
 
 Fixture set (KR7.3): the baseline tracks the full representative set of five
 fixtures — the two formal-semantics fixtures plus the three productization
 fixtures that the static `ahflc.quality.smv_size_budget.*` tests already budget
-(pass-productization, workflow-simplification, refund-audit). Adding a fixture
-here is the only step needed; the ctest registration reads the baseline
-generically, so the fixture list has exactly one source of truth.
+(pass-productization, workflow-simplification, refund-audit). The fixture set is
+*required* to keep that breadth: the gate refuses to pass unless every fixture
+named in REQUIRED_FIXTURES is present in the baseline, and it blocks when a
+required fixture's entry is missing `metrics` or (deliberately) `pass_order`.
+Adding a fixture is otherwise mechanical — add its `source` and run `--update`
+to seed the measured `metrics` and `pass_order`; the ctest registration reads
+the baseline generically, so the fixture list has exactly one source of truth.
 
 Pass-order determinism: a fixture entry may declare `pass_order`, the exact
 sequence of optimization pass names the `-O` pipeline runs for that source. This
@@ -29,8 +34,11 @@ Usage:
   smv_size_trend_gate.py <ahflc> <baseline.json> <report-out.json> [--update]
 
 `--update` rewrites the baseline from the current measurements (for intentional,
-reviewed size changes) instead of enforcing it. It only rewrites fields the
-baseline already declares, so a fixture without `pass_order` stays unguarded.
+reviewed size changes) instead of enforcing it. It rewrites the metrics of every
+entry and the `pass_order` of every entry that declares one, so it seeds a
+newly added fixture (which need only supply `source`) rather than aborting on it.
+Coverage is never traded away: `--update` refuses to pass if a REQUIRED_FIXTURES
+entry has been dropped from the baseline.
 """
 import argparse
 import json
@@ -44,6 +52,28 @@ from pathlib import Path
 # always allowed (and, for ltlspec, a drop below baseline is also blocked since
 # it means specs were silently lost).
 GROWTH_TOLERANCE = 0.10
+
+# Fixtures the baseline is required to track (the "full 5 representative
+# fixtures" guarantee). This is the single source of truth for the *minimum*
+# fixture set: the gate blocks when one is missing, so coverage cannot be
+# silently deleted, and each is also required to carry guarded `metrics` and a
+# pinned `-O` `pass_order`. Deleting a fixture is therefore a source change that
+# trips the gate and must be a deliberate, reviewed edit here as well.
+REQUIRED_FIXTURES = (
+    "bounded_data_semantics",
+    "flow_workflow_semantics",
+    "pass_productization",
+    "refund_audit",
+    "workflow_simplification",
+)
+
+# Committed baseline schema. Adding the optional per-fixture `pass_order` field
+# was additive (a consumer that ignores it parses the document unchanged), so the
+# version string is unchanged (still v1) and is reserved for a real shape break.
+BASELINE_SCHEMA = "ahfl.smv-size-baseline.v1"
+# Trend report schema. Unlike the baseline this genuinely gained per-fixture
+# baseline_pass_order/current_pass_order fields, so it is v2.
+TREND_SCHEMA = "ahfl.smv-size-trend.v2"
 
 
 def measure(ahflc: Path, source: Path) -> dict[str, int]:
@@ -107,8 +137,8 @@ def main() -> int:
     args = parser.parse_args()
 
     baseline_doc = json.loads(args.baseline.read_text(encoding="utf-8"))
-    if baseline_doc.get("schema") != "ahfl.smv-size-baseline.v2":
-        print("baseline schema must be ahfl.smv-size-baseline.v2", file=sys.stderr)
+    if baseline_doc.get("schema") != BASELINE_SCHEMA:
+        print(f"baseline schema must be {BASELINE_SCHEMA}", file=sys.stderr)
         return 2
     # baseline lives at <repo>/config/smv-size-baseline.json → repo root is its
     # grandparent. Fixture sources are repo-root-relative.
@@ -118,10 +148,39 @@ def main() -> int:
     entries: list[dict[str, object]] = []
     failures: list[str] = []
 
+    # Coverage floor: the fixture set is a committed decision, not whatever the
+    # file happens to contain. A required fixture dropped from the baseline
+    # (or a wholesale emptied map) is a coverage regression that must fail, not
+    # a smaller-but-greener run.
+    missing_required = [name for name in REQUIRED_FIXTURES if name not in fixtures]
+    if missing_required:
+        failures.append(
+            f"baseline is missing required fixtures {missing_required} — coverage "
+            f"was removed; restore them (the set is a reviewed decision)"
+        )
+
     for name, spec in sorted(fixtures.items()):
         source = repo_root / spec["source"]
         current = measure(args.ahflc, source)
-        base = spec["metrics"]
+        # A fixture may be added with only `source`; `--update` seeds metrics.
+        # Absent metrics in enforce mode is a diagnostic, not a traceback.
+        base = spec.get("metrics")
+        if not isinstance(base, dict):
+            if args.update:
+                spec["metrics"] = current
+                base = current
+            elif name in REQUIRED_FIXTURES:
+                failures.append(
+                    f"{name}: required fixture has no `metrics` — the baseline entry "
+                    f"is incomplete; run with --update to seed it"
+                )
+                continue
+            else:
+                print(
+                    f"{name}: no baseline metrics; run with --update to seed them",
+                    file=sys.stderr,
+                )
+                return 2
         deltas = {k: current[k] - base[k] for k in current}
         entry = {
             "fixture": name,
@@ -152,20 +211,27 @@ def main() -> int:
                     f"{base['ltlspec']}"
                 )
 
-        # Pass order is guarded only for fixtures that declare it, so the field
-        # is opt-in per fixture rather than a second implicit fixture list.
-        if "pass_order" in spec:
+        # Pass order is guarded for every REQUIRED_FIXTURES entry (breadth is a
+        # committed decision) and stays opt-in for any extra fixture that does
+        # not declare it, so the field is not a second implicit fixture list.
+        if "pass_order" in spec or name in REQUIRED_FIXTURES:
             current_order = measure_pass_order(args.ahflc, source)
-            entry["baseline_pass_order"] = spec["pass_order"]
             entry["current_pass_order"] = current_order
-            if not args.update and current_order != spec["pass_order"]:
+            if "pass_order" in spec:
+                entry["baseline_pass_order"] = spec["pass_order"]
+                if not args.update and current_order != spec["pass_order"]:
+                    failures.append(
+                        f"{name}.pass_order changed: {current_order} != baseline "
+                        f"{spec['pass_order']}"
+                    )
+            elif not args.update:
                 failures.append(
-                    f"{name}.pass_order changed: {current_order} != baseline "
-                    f"{spec['pass_order']}"
+                    f"{name}: required fixture pins no `pass_order` — the -O pass "
+                    f"sequence is unguarded; run with --update to seed it"
                 )
 
     report = {
-        "schema": "ahfl.smv-size-trend.v2",
+        "schema": TREND_SCHEMA,
         "tolerance": GROWTH_TOLERANCE,
         "status": "updated" if args.update else ("failed" if failures else "passed"),
         "fixtures": entries,
@@ -177,10 +243,16 @@ def main() -> int:
     )
 
     if args.update:
+        # A coverage regression is never a legitimate update: refuse to write.
+        if failures:
+            print("baseline update refused:", file=sys.stderr)
+            for f in failures:
+                print(f"  {f}", file=sys.stderr)
+            return 1
         for entry in entries:
             fixture = fixtures[entry["fixture"]]
             fixture["metrics"] = entry["current"]
-            if "baseline_pass_order" in entry:
+            if "current_pass_order" in entry:
                 fixture["pass_order"] = entry["current_pass_order"]
         args.baseline.write_text(
             json.dumps(baseline_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"

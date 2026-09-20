@@ -265,13 +265,15 @@ add_test(NAME ahflc.quality.smv_size_budget.bounded_data
 # KR2.7 / KR7.3: SMV-size trend gate. Beyond the static per-fixture budgets
 # above, this compares emit-smv sizes against a committed baseline
 # (config/smv-size-baseline.json) and blocks on regression beyond a relative
-# tolerance, emitting a trend report artifact (ahfl.smv-size-trend.v2). Turns the
-# budget from a ceiling into a release-blocking drift guard. The baseline is the
-# single source of truth for the fixture set: it tracks all five representative
+# tolerance, emitting a trend report (ahfl.smv-size-trend.v2). Turns the budget
+# from a ceiling into a release-blocking drift guard. The baseline is the single
+# source of truth for the fixture set: it must track all five representative
 # fixtures (the two formal-semantics ones plus the three productization ones
-# budgeted above: pass_productization, workflow_simplification, refund_audit), and
-# each entry may also pin the `-O` pass order. Extend coverage by adding a fixture
-# to the baseline, not by editing this registration.
+# budgeted above: pass_productization, workflow_simplification, refund_audit) and
+# each pins the `-O` pass order — the gate fails if any of the five is missing,
+# so coverage cannot be silently dropped. To extend coverage, add the fixture's
+# `source` to the baseline and run the gate with `--update` to seed its `metrics`
+# and `pass_order`; do not edit this registration.
 add_test(NAME ahflc.quality.smv_size_trend
     COMMAND ${Python3_EXECUTABLE}
             "${AHFL_TESTS_DIR}/scripts/smv_size_trend_gate.py"
@@ -281,7 +283,7 @@ add_test(NAME ahflc.quality.smv_size_trend
 )
 set_tests_properties(ahflc.quality.smv_size_trend PROPERTIES
     PASS_REGULAR_EXPRESSION "SMV size trend gate passed"
-    FAIL_REGULAR_EXPRESSION "regressed|dropped|pass_order changed"
+    FAIL_REGULAR_EXPRESSION "regressed|dropped|pass_order changed|missing required fixtures|required fixture"
 )
 
 ahfl_add_output_test(
