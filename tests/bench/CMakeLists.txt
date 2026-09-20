@@ -1,15 +1,26 @@
-# The two compiler benches share bench_harness.hpp, which includes
-# "base/support/json.hpp" for the opt-in ahfl.bench-report.v1 artifact (KR7.3).
-# That header lives under src/ and is exposed here via the same private include
-# other src-internal consumers use.
+# KR7.3: the shared harness for both compiler benches. bench_harness.hpp is
+# dependency-free (standard library + the public fixture header); the one
+# private dependency, "base/support/json.hpp", lives in bench_harness.cpp, so
+# this target - and only this target - needs the src-private include root. A
+# bench that includes the header does not.
+add_library(ahfl_bench_harness STATIC
+    bench/bench_harness.cpp
+)
+target_link_libraries(ahfl_bench_harness
+    PRIVATE
+        ahfl_base_public
+)
+target_include_directories(ahfl_bench_harness PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_bench_harness)
+
 add_executable(ahfl_bench_compile_time
     bench/compile_time.cpp
 )
 target_link_libraries(ahfl_bench_compile_time
     PRIVATE
+        ahfl_bench_harness
         ahfl_compiler_ir
 )
-target_include_directories(ahfl_bench_compile_time PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_bench_compile_time)
 
 add_executable(ahfl_bench_memory_usage
@@ -17,9 +28,9 @@ add_executable(ahfl_bench_memory_usage
 )
 target_link_libraries(ahfl_bench_memory_usage
     PRIVATE
+        ahfl_bench_harness
         ahfl_compiler_ir
 )
-target_include_directories(ahfl_bench_memory_usage PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_bench_memory_usage)
 
 add_executable(ahfl_bench_smv_size
@@ -62,7 +73,20 @@ add_test(NAME ahflc.quality.benchmark_trend
 )
 set_tests_properties(ahflc.quality.benchmark_trend PROPERTIES
     PASS_REGULAR_EXPRESSION "Benchmark trend gate passed"
-    FAIL_REGULAR_EXPRESSION "regressed|drifted|no baseline entry|disagree"
+    FAIL_REGULAR_EXPRESSION "regressed|drifted|no baseline entry|disagree|refused"
+)
+
+# The trend gate's own contracts, pinned: --update resets the tolerance checks
+# but never the invariants (cross-bench disagreement / one-sided measurement
+# refuse the update and leave the baseline byte-identical), and a malformed
+# baseline entry is a diagnostic, not a traceback. Uses stub bench binaries, so
+# it needs neither the benches nor the compiler built.
+add_test(NAME ahflc.quality.benchmark_trend_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/benchmark_trend_gate_smoke.py"
+)
+set_tests_properties(ahflc.quality.benchmark_trend_smoke PROPERTIES
+    PASS_REGULAR_EXPRESSION "benchmark trend gate smoke passed"
 )
 
 add_test(NAME ahfl.bench.compile_time COMMAND $<TARGET_FILE:ahfl_bench_compile_time>)

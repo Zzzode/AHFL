@@ -18,6 +18,16 @@
 // Lexical rules follow the repository's existing `PrettyJsonWriter` (2-space
 // indent) — the same writer the IR / assurance / counterexample JSON artifacts
 // use — so one JSON spelling exists across all committed artifacts.
+//
+// This header deliberately stays dependency-free: it includes only the standard
+// library and the public fixture header, so including it never requires the
+// src-private include root (`${PROJECT_SOURCE_DIR}/src`) that
+// `base/support/json.hpp` needs. That private dependency lives in exactly one
+// translation unit, `bench_harness.cpp`, and is linked in through the
+// `ahfl_bench_harness` target. Keeping it in a .cpp mirrors how every other
+// src-internal consumer takes the private header directly and means a new bench
+// that includes this header cannot fail to compile for an undeclared include
+// root.
 
 #include "bench_compiler_fixture.hpp"
 
@@ -25,14 +35,10 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
 #include <optional>
-#include <ostream>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "base/support/json.hpp"
 
 namespace ahfl::bench {
 
@@ -97,54 +103,13 @@ struct BenchMetric {
     return std::nullopt;
 }
 
-class BenchReportWriter final : private PrettyJsonWriter {
-  public:
-    explicit BenchReportWriter(std::ostream &out) : PrettyJsonWriter(out) {}
-
-    void write(std::string_view kind, const std::vector<BenchMetric> &metrics) {
-        print_object(0, [&](const auto &field) {
-            field("schema", [&]() { write_string(kBenchReportSchema); });
-            field("kind", [&]() { write_string(kind); });
-            field("budgets", [&]() {
-                print_array(1, [&](const auto &item) {
-                    for (const auto &metric : metrics) {
-                        item([&]() { write_metric(metric, 2); });
-                    }
-                });
-            });
-        });
-        out_ << '\n';
-    }
-
-  private:
-    void write_metric(const BenchMetric &metric, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("name", [&]() { write_string(metric.name); });
-            field("source_bytes", [&]() { out_ << metric.source_bytes; });
-            field("typed_exprs", [&]() { out_ << metric.typed_exprs; });
-            field("typed_statements", [&]() { out_ << metric.typed_statements; });
-            field("ir_decls", [&]() { out_ << metric.ir_decls; });
-            field("ir_exprs", [&]() { out_ << metric.ir_exprs; });
-            field("proxy_bytes", [&]() { out_ << metric.proxy_bytes; });
-            field("duration_us", [&]() { out_ << metric.duration.count(); });
-        });
-    }
-};
-
-// Serialize `metrics` to `path`. Returns false when the file cannot be created
-// or written, so a caller can turn a bad report path into a hard failure rather
+// Serialize `metrics` to `path` as the `ahfl.bench-report.v1` document. Defined
+// in bench_harness.cpp, the one TU that owns the private JSON-writer dependency
+// (`base/support/json.hpp`). Returns false when the file cannot be created or
+// written, so a caller can turn a bad report path into a hard failure rather
 // than silently losing the artifact the trend gate depends on.
-[[nodiscard]] inline bool write_bench_report(const std::string &path, std::string_view kind,
-                                             const std::vector<BenchMetric> &metrics) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        return false;
-    }
-    BenchReportWriter writer(out);
-    writer.write(kind, metrics);
-    out.flush();
-    return static_cast<bool>(out);
-}
+[[nodiscard]] bool write_bench_report(const std::string &path, std::string_view kind,
+                                      const std::vector<BenchMetric> &metrics);
 
 // The PASS/FAIL tally both benches print. Kept here so the two binaries share
 // one definition of "a bench check" and one exit-code policy.

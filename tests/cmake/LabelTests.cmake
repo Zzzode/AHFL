@@ -668,6 +668,7 @@ ahfl_label_tests(
         ahflc.quality.smv_size_budget.bounded_data
         ahflc.quality.smv_size_trend
         ahflc.quality.benchmark_trend
+        ahflc.quality.benchmark_trend_smoke
 )
 
 ahfl_label_tests(
@@ -718,6 +719,7 @@ ahfl_label_tests(
         ahflc.quality.smv_size_budget.bounded_data
         ahflc.quality.smv_size_trend
         ahflc.quality.benchmark_trend
+        ahflc.quality.benchmark_trend_smoke
         ahfl.mutation.config_report
         ahfl.mutation.fallback_score
 )

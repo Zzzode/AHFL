@@ -45,6 +45,14 @@ Usage:
 intentional, reviewed changes) instead of enforcing them. It rewrites only the
 budgets the baseline already declares and refuses to add or drop one, so the
 baseline's budget set stays a reviewed decision.
+
+`--update` is exempt only from the *tolerance* checks (exact structural drift and
+proxy growth) — the ones a reviewed change deliberately resets. It is NOT exempt
+from the gate's invariants: a cross-bench disagreement, a budget measured by only
+one bench, a budget the baseline does not (or no longer) declares, or a malformed
+baseline entry all abort the update with a non-zero status and leave the baseline
+untouched. Persisting a number the gate itself flagged as non-authoritative would
+launder exactly the drift this gate exists to catch.
 """
 import argparse
 import json
@@ -103,10 +111,34 @@ def run_bench(binary: Path, kind: str) -> list[dict[str, object]]:
 
 
 def metrics_of(row: dict[str, object], fields: tuple[str, ...]) -> dict[str, int]:
+    """Extract `fields` from a measured report row, failing loudly if absent."""
     missing = [metric for metric in fields if metric not in row]
     if missing:
         raise RuntimeError(f"budget {row.get('name')!r} is missing metrics {missing}")
     return {metric: int(row[metric]) for metric in fields if metric in row}
+
+
+def baseline_metrics_of(name: str, entry: dict[str, object]) -> dict[str, int] | None:
+    """Extract a baseline entry's guarded metrics, or report the defect.
+
+    Mirrors `metrics_of()` on the baseline side so a hand-edited or partially
+    regenerated baseline fails with a diagnostic naming the budget and the
+    missing/non-integer key instead of an uncaught `KeyError` traceback. Prints
+    the defect and returns None; the caller turns that into a return code 2.
+    """
+    metrics = entry.get("metrics")
+    if not isinstance(metrics, dict):
+        print(f"baseline budget {name!r} declares no `metrics` object", file=sys.stderr)
+        return None
+    missing = [metric for metric in GUARDED_METRICS if metric not in metrics]
+    if missing:
+        print(f"baseline budget {name!r} is missing metrics {missing}", file=sys.stderr)
+        return None
+    bad = [metric for metric in GUARDED_METRICS if not isinstance(metrics[metric], int)]
+    if bad:
+        print(f"baseline budget {name!r} has non-integer metrics {bad}", file=sys.stderr)
+        return None
+    return {metric: metrics[metric] for metric in GUARDED_METRICS}
 
 
 def main() -> int:
@@ -129,6 +161,17 @@ def main() -> int:
     }
     baseline_budgets = baseline_doc["budgets"]
 
+    # Validate every declared baseline entry up front, the baseline-side mirror
+    # of `metrics_of()`. A missing / non-integer guarded metric is a gate defect
+    # (a hand-edit or a partial regeneration), not a measurement result, so it is
+    # reported by name and aborts with code 2 instead of an uncaught KeyError.
+    baseline_metrics: dict[str, dict[str, int]] = {}
+    for name in sorted(baseline_budgets):
+        metrics = baseline_metrics_of(name, baseline_budgets[name])
+        if metrics is None:
+            return 2
+        baseline_metrics[name] = metrics
+
     # name -> {kind -> {guarded metrics}}; the two benches must agree.
     measured: dict[str, dict[str, dict[str, int]]] = {}
     durations: dict[str, dict[str, int]] = {}
@@ -141,7 +184,14 @@ def main() -> int:
             ]
 
     entries: list[dict[str, object]] = []
+    # `failures` are the gate's invariants: a cross-bench disagreement, a budget
+    # measured by only one bench, a budget with no baseline entry, a budget the
+    # baseline declares but nothing measures, or a malformed baseline entry.
+    # `--update` never waives these.
     failures: list[str] = []
+    # `regressions` are the tolerance checks a reviewed change intentionally
+    # resets, so `--update` is exempt from them.
+    regressions: list[str] = []
     warnings: list[str] = []
 
     seen = set(measured)
@@ -183,25 +233,22 @@ def main() -> int:
             entries.append(entry)
             continue
 
-        base = baseline_budgets[name]["metrics"]
+        base = baseline_metrics[name]
         deltas = {metric: current[metric] - base[metric] for metric in GUARDED_METRICS}
         entry["baseline"] = base
         entry["delta"] = deltas
         entries.append(entry)
 
-        if args.update:
-            continue
-
         for metric in EXACT_METRICS:
             if current[metric] != base[metric]:
-                failures.append(
+                regressions.append(
                     f"{name}.{metric} drifted: {current[metric]} != baseline {base[metric]} "
                     f"(delta {deltas[metric]:+d})"
                 )
 
         limit = int(base[PROXY_METRIC] * (1.0 + PROXY_GROWTH_TOLERANCE))
         if current[PROXY_METRIC] > limit:
-            failures.append(
+            regressions.append(
                 f"{name}.{PROXY_METRIC} regressed: {current[PROXY_METRIC]} > baseline "
                 f"{base[PROXY_METRIC]} +{int(PROXY_GROWTH_TOLERANCE * 100)}% ({limit})"
             )
@@ -220,13 +267,14 @@ def main() -> int:
                     f"(report-only, machine-dependent)"
                 )
 
+    status = "updated" if args.update else ("failed" if (failures or regressions) else "passed")
     report = {
         "schema": TREND_SCHEMA,
-        "status": "updated" if args.update else ("failed" if failures else "passed"),
+        "status": status,
         "proxy_tolerance": PROXY_GROWTH_TOLERANCE,
         "benches": list(BENCHES),
         "budgets": entries,
-        "failures": failures,
+        "failures": failures + regressions,
         "warnings": warnings,
     }
     args.report_out.parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +283,14 @@ def main() -> int:
     )
 
     if args.update:
+        # Invariants are never a legitimate update: refuse to write and leave the
+        # baseline exactly as it was, rather than persisting a value the gate
+        # itself flagged as non-authoritative.
+        if failures:
+            print("baseline update refused:", file=sys.stderr)
+            for failure in failures:
+                print(f"  {failure}", file=sys.stderr)
+            return 1
         for entry in entries:
             name = entry["name"]
             if name in baseline_budgets:
@@ -249,9 +305,9 @@ def main() -> int:
 
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    if failures:
+    if failures or regressions:
         print("Benchmark trend gate failed:", file=sys.stderr)
-        for failure in failures:
+        for failure in failures + regressions:
             print(f"  {failure}", file=sys.stderr)
         return 1
     print(f"Benchmark trend gate passed ({len(entries)} budgets within tolerance)")
