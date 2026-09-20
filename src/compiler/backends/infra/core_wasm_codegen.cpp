@@ -1167,26 +1167,52 @@ p6_coercion_effect(const CoreProgram &program, const ir::core::CoreLayoutTable &
         return false;
     }
     const CoreStmt &last = region.statements.back();
-    return std::visit(Overloaded{
-                          [](const CoreGotoStmt &) { return true; },
-                          [](const CoreTrapStmt &) { return true; },
-                          [](const CoreIfStmt &s) {
-                              return s.then_region && s.else_region &&
-                                     p6_region_always_diverges(*s.then_region) &&
-                                     p6_region_always_diverges(*s.else_region);
-                          },
-                          [](const CoreMatchStmt &s) {
-                              if (!s.fallback_region ||
-                                  !p6_region_always_diverges(*s.fallback_region)) {
-                                  return false;
-                              }
-                              return std::ranges::all_of(s.arms, [](const CoreMatchArm &arm) {
-                                  return arm.body && p6_region_always_diverges(*arm.body);
-                              });
-                          },
-                          [](const auto &) { return false; },
-                      },
-                      last.node);
+    // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per CoreStmtNode alternative,
+    // generated from core_stmt_nodes.def. Only control-transfer statements can
+    // make a region "always diverge"; the rest name
+    // P6_REGION_DIVERGE_NEVER (explicit, named no-op). No generic catch-all: a
+    // new statement alternative is a COMPILE ERROR here until classified.
+#define P6_REGION_DIVERGE_NEVER(Name) [](const Name &) { return false; },
+#define P6_REGION_DIVERGE_CoreGotoStmt(Name) [](const Name &) { return true; },
+#define P6_REGION_DIVERGE_CoreTrapStmt(Name) [](const Name &) { return true; },
+#define P6_REGION_DIVERGE_CoreIfStmt(Name)                                                         \
+    [](const Name &s) {                                                                            \
+        return s.then_region && s.else_region &&                                                   \
+               p6_region_always_diverges(*s.then_region) &&                                        \
+               p6_region_always_diverges(*s.else_region);                                          \
+    },
+#define P6_REGION_DIVERGE_CoreMatchStmt(Name)                                                      \
+    [](const Name &s) {                                                                            \
+        if (!s.fallback_region || !p6_region_always_diverges(*s.fallback_region)) {                \
+            return false;                                                                          \
+        }                                                                                          \
+        return std::ranges::all_of(s.arms,                                                         \
+                                   [](const CoreMatchArm &arm) {                                   \
+                                       return arm.body && p6_region_always_diverges(*arm.body);    \
+                                   });                                                             \
+    },
+#define P6_REGION_DIVERGE_CoreLetStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
+#define P6_REGION_DIVERGE_CoreCapabilityCallStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
+#define P6_REGION_DIVERGE_CoreStoreStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
+#define P6_REGION_DIVERGE_CoreReturnStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
+#define P6_REGION_DIVERGE_CoreYieldStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
+#define HANDLE_CORE_STMT_NODE(Name) P6_REGION_DIVERGE_##Name(Name)
+    return std::visit(
+        Overloaded{
+#include "ahfl/compiler/ir/core_stmt_nodes.def"
+        },
+        last.node);
+#undef HANDLE_CORE_STMT_NODE
+#undef P6_REGION_DIVERGE_NEVER
+#undef P6_REGION_DIVERGE_CoreGotoStmt
+#undef P6_REGION_DIVERGE_CoreTrapStmt
+#undef P6_REGION_DIVERGE_CoreIfStmt
+#undef P6_REGION_DIVERGE_CoreMatchStmt
+#undef P6_REGION_DIVERGE_CoreLetStmt
+#undef P6_REGION_DIVERGE_CoreCapabilityCallStmt
+#undef P6_REGION_DIVERGE_CoreStoreStmt
+#undef P6_REGION_DIVERGE_CoreReturnStmt
+#undef P6_REGION_DIVERGE_CoreYieldStmt
 }
 
 // --- P6-3 match lowering: the arm-chain shape (RFC 0026 Q2) ---

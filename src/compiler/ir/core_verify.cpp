@@ -27,19 +27,14 @@ namespace ahfl::ir::core {
 
 namespace {
 
-// RFC 0027 P6/P7/P8 (KR6.13-F): each generic-lambda fallback over an IR node
-// family in this file is replaced by ONE handler per alternative, with the
-// childless / child-free alternatives bound to a named no-op macro below. The
-// named no-op is the "curated, explicitly-listed leaf" the RFC calls for: it
-// keeps the genuinely-empty semantics visible in one place and makes a NEW node
-// a compile error instead of a silently skipped case (CLAUDE.md Principle 5).
-//
-// The macro spelling is the node struct name (e.g. CoreLiteralExpr) so the
-// expansion reads as the variant's alternative list; each is a typed per-node
-// lambda, so std::visit's exhaustiveness check catches a missing alternative.
-#define CORE_EXPR_ACYCLIC_LEAF(Name) [](const Name &) {}
-#define CORE_PATTERN_ACYCLIC_LEAF(Name) [](const Name &) {}
-#define CORE_EXPR_PATHS_LEAF(Name) [](const Name &) {}
+// RFC 0027 P6/P7/P8 (KR6.13-P7): every handler group over a Core-IR node
+// family in this file is generated from that family's production X-macro .def
+// list (core_expr_nodes.def / core_pattern_nodes.def / core_stmt_nodes.def), with
+// ONE handler per alternative. Genuinely-empty alternatives (childless /
+// child-free nodes) are bound to a name-mangled no-op INSIDE each group (e.g.
+// CORE_EXPR_ACYCLIC_CoreLiteralExpr), so the empty semantics stay visible in one
+// place and a NEW node is a compile error instead of a silently skipped case
+// (CLAUDE.md Principle 5).
 
 // RFC 0026 P4-B (P1): the type a value-yielding region's yields must have.
 // Threaded THROUGH nested `if` branches so `if { yield W } else { yield W }`
@@ -1342,29 +1337,46 @@ class Verifier {
                             stack.push_back(e.value);
                         }
                     };
-                    // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per CoreExprNode
-                    // alternative. Only CoreUnaryExpr / CoreBinaryExpr carry
-                    // intra-arena operand edges, so every other node names
-                    // CORE_EXPR_ACYCLIC_LEAF (an explicit, named no-op — the same
-                    // behavior the unnamed catch-all had). With no generic
-                    // catch-all, adding a CoreExprNode alternative is a COMPILE
-                    // ERROR here until it is classified (CLAUDE.md Principle 5).
-                    std::visit(Overloaded{
-                                   CORE_EXPR_ACYCLIC_LEAF(CoreLiteralExpr),
-                                   CORE_EXPR_ACYCLIC_LEAF(CoreValueRefExpr),
-                                   CORE_EXPR_ACYCLIC_LEAF(CorePathExpr),
-                                   CORE_EXPR_ACYCLIC_LEAF(CoreQualifiedExpr),
-                                   [&](const CoreUnaryExpr &u) { push_edge(u.operand); },
-                                   [&](const CoreBinaryExpr &b) {
-                                       push_edge(b.lhs);
-                                       push_edge(b.rhs);
-                                   },
-                                   CORE_EXPR_ACYCLIC_LEAF(CoreConstructExpr),
-                                   CORE_EXPR_ACYCLIC_LEAF(CoreCoerceExpr),
-                                   CORE_EXPR_ACYCLIC_LEAF(CoreCollectionExpr),
-                                   CORE_EXPR_ACYCLIC_LEAF(CoreUnsupportedExpr),
-                               },
-                               flow.exprs[id].node);
+                    // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per CoreExprNode
+                    // alternative, generated from core_expr_nodes.def. Only
+                    // CoreUnaryExpr / CoreBinaryExpr carry intra-arena operand
+                    // edges, so every other node names CORE_EXPR_ACYCLIC_LEAF (an
+                    // explicit, named no-op — the same behavior the unnamed
+                    // catch-all had). With no generic catch-all, adding a
+                    // CoreExprNode alternative is a COMPILE ERROR here until it is
+                    // classified (CLAUDE.md Principle 5).
+#define CORE_EXPR_ACYCLIC_CoreLiteralExpr(Name) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreValueRefExpr(Name) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CorePathExpr(Name) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreQualifiedExpr(Name) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreConstructExpr(Name) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreCoerceExpr(Name) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreCollectionExpr(Name) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreUnsupportedExpr(Name) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreUnaryExpr(Name)                                                       \
+    [&](const Name &u) { push_edge(u.operand); },
+#define CORE_EXPR_ACYCLIC_CoreBinaryExpr(Name)                                                      \
+    [&](const Name &b) {                                                                            \
+        push_edge(b.lhs);                                                                           \
+        push_edge(b.rhs);                                                                           \
+    },
+#define HANDLE_CORE_EXPR_NODE(Name) CORE_EXPR_ACYCLIC_##Name(Name)
+                    std::visit(
+                        Overloaded{
+#include "ahfl/compiler/ir/core_expr_nodes.def"
+                        },
+                        flow.exprs[id].node);
+#undef HANDLE_CORE_EXPR_NODE
+#undef CORE_EXPR_ACYCLIC_CoreLiteralExpr
+#undef CORE_EXPR_ACYCLIC_CoreValueRefExpr
+#undef CORE_EXPR_ACYCLIC_CorePathExpr
+#undef CORE_EXPR_ACYCLIC_CoreQualifiedExpr
+#undef CORE_EXPR_ACYCLIC_CoreConstructExpr
+#undef CORE_EXPR_ACYCLIC_CoreCoerceExpr
+#undef CORE_EXPR_ACYCLIC_CoreCollectionExpr
+#undef CORE_EXPR_ACYCLIC_CoreUnsupportedExpr
+#undef CORE_EXPR_ACYCLIC_CoreUnaryExpr
+#undef CORE_EXPR_ACYCLIC_CoreBinaryExpr
                 } else {
                     if (color[id] == Color::Gray) {
                         color[id] = Color::Black;
@@ -1395,45 +1407,65 @@ class Verifier {
             }
         };
         for (const CorePattern &pat : flow.patterns) {
-            std::visit(Overloaded{
-                           [&](const CoreWildcardPat &) {},
-                           [&](const CoreLiteralPat &) {},
-                           [&](const CoreIntRangePat &r) {
-                               // AHFL `..` is a closed interval [start, end]; a
-                               // reverse range is empty and never authored. Sema
-                               // rejects it, but the standalone verifier guards
-                               // the JSON / backend consumption boundary too.
-                               if (r.start > r.end) {
-                                   error(verify::kPatternShapeInvalid,
-                                         "int-range pattern has start (" + std::to_string(r.start) +
-                                             ") greater than end (" + std::to_string(r.end) + ")",
-                                         pat.source_range);
-                               }
-                           },
-                           [&](const CoreBindingPat &b) {
-                               if (b.has_nested) {
-                                   check_id(b.nested, pat.source_range);
-                               }
-                           },
-                           [&](const CoreVariantPat &v) {
-                               verify_variant_pattern(v, pat_count, pat.source_range);
-                           },
-                           [&](const CoreTuplePat &t) {
-                               for (const CorePatternId e : t.elements) {
-                                   check_id(e, pat.source_range);
-                               }
-                           },
-                           [&](const CoreOrPat &o) {
-                               if (o.alternatives.size() < 2) {
-                                   error(verify::kPatternShapeInvalid,
-                                         "or-pattern must have at least two alternatives", pat.source_range);
-                               }
-                               for (const CorePatternId alt : o.alternatives) {
-                                   check_id(alt, pat.source_range);
-                               }
-                           },
-                       },
-                       pat.node);
+            // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per CorePatternNode
+            // alternative, generated from core_pattern_nodes.def. Wildcard /
+            // literal patterns carry no shape rule (CORE_PATTERN_SHAPE_LEAF);
+            // the rest route to a real per-node handler. No generic catch-all: a
+            // new pattern alternative is a COMPILE ERROR here until classified.
+#define CORE_PATTERN_SHAPE_LEAF(Name) [](const Name &) {},
+#define CORE_PATTERN_SHAPE_CoreWildcardPat(Name) CORE_PATTERN_SHAPE_LEAF(Name)
+#define CORE_PATTERN_SHAPE_CoreLiteralPat(Name) CORE_PATTERN_SHAPE_LEAF(Name)
+#define CORE_PATTERN_SHAPE_CoreIntRangePat(Name)                                                   \
+    [&](const Name &r) {                                                                           \
+        /* AHFL `..` is a closed interval [start, end]; a reverse range is empty and never */      \
+        /* authored. Sema rejects it, but the standalone verifier guards the JSON / backend */     \
+        /* consumption boundary too. */                                                            \
+        if (r.start > r.end) {                                                                     \
+            error(verify::kPatternShapeInvalid,                                                    \
+                  "int-range pattern has start (" + std::to_string(r.start) +                      \
+                      ") greater than end (" + std::to_string(r.end) + ")",                        \
+                  pat.source_range);                                                               \
+        }                                                                                          \
+    },
+#define CORE_PATTERN_SHAPE_CoreBindingPat(Name)                                                    \
+    [&](const Name &b) {                                                                           \
+        if (b.has_nested) {                                                                        \
+            check_id(b.nested, pat.source_range);                                                  \
+        }                                                                                          \
+    },
+#define CORE_PATTERN_SHAPE_CoreVariantPat(Name)                                                    \
+    [&](const Name &v) { verify_variant_pattern(v, pat_count, pat.source_range); },
+#define CORE_PATTERN_SHAPE_CoreTuplePat(Name)                                                      \
+    [&](const Name &t) {                                                                           \
+        for (const CorePatternId e : t.elements) {                                                 \
+            check_id(e, pat.source_range);                                                         \
+        }                                                                                          \
+    },
+#define CORE_PATTERN_SHAPE_CoreOrPat(Name)                                                         \
+    [&](const Name &o) {                                                                           \
+        if (o.alternatives.size() < 2) {                                                           \
+            error(verify::kPatternShapeInvalid,                                                    \
+                  "or-pattern must have at least two alternatives", pat.source_range);             \
+        }                                                                                          \
+        for (const CorePatternId alt : o.alternatives) {                                           \
+            check_id(alt, pat.source_range);                                                       \
+        }                                                                                          \
+    },
+#define HANDLE_CORE_PATTERN_NODE(Name) CORE_PATTERN_SHAPE_##Name(Name)
+            std::visit(
+                Overloaded{
+#include "ahfl/compiler/ir/core_pattern_nodes.def"
+                },
+                pat.node);
+#undef HANDLE_CORE_PATTERN_NODE
+#undef CORE_PATTERN_SHAPE_LEAF
+#undef CORE_PATTERN_SHAPE_CoreWildcardPat
+#undef CORE_PATTERN_SHAPE_CoreLiteralPat
+#undef CORE_PATTERN_SHAPE_CoreIntRangePat
+#undef CORE_PATTERN_SHAPE_CoreBindingPat
+#undef CORE_PATTERN_SHAPE_CoreVariantPat
+#undef CORE_PATTERN_SHAPE_CoreTuplePat
+#undef CORE_PATTERN_SHAPE_CoreOrPat
         }
         verify_pattern_arena_acyclic(flow);
     }
@@ -1547,42 +1579,57 @@ class Verifier {
                             stack.push_back(e.value);
                         }
                     };
-                    // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per
-                    // CorePatternNode alternative. Only CoreBindingPat /
-                    // CoreVariantPat / CoreTuplePat / CoreOrPat carry
-                    // sub-pattern edges, so those route above; the rest name
-                    // CORE_PATTERN_ACYCLIC_LEAF (explicit, named no-op). No
-                    // generic catch-all: a new pattern alternative is a COMPILE
-                    // ERROR here until it is classified.
-                    std::visit(Overloaded{
-                                   CORE_PATTERN_ACYCLIC_LEAF(CoreWildcardPat),
-                                   CORE_PATTERN_ACYCLIC_LEAF(CoreLiteralPat),
-                                   CORE_PATTERN_ACYCLIC_LEAF(CoreIntRangePat),
-                                   [&](const CoreBindingPat &b) {
-                                       if (b.has_nested) {
-                                           push(b.nested);
-                                       }
-                                   },
-                                   [&](const CoreVariantPat &v) {
-                                       for (const CorePatternId s : v.tuple_subpatterns) {
-                                           push(s);
-                                       }
-                                       for (const CoreVariantPatField &f : v.struct_fields) {
-                                           push(f.pattern);
-                                       }
-                                   },
-                                   [&](const CoreTuplePat &t) {
-                                       for (const CorePatternId e : t.elements) {
-                                           push(e);
-                                       }
-                                   },
-                                   [&](const CoreOrPat &o) {
-                                       for (const CorePatternId a : o.alternatives) {
-                                           push(a);
-                                       }
-                                   },
-                               },
-                               flow.patterns[id].node);
+                    // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per
+                    // CorePatternNode alternative, generated from
+                    // core_pattern_nodes.def. Only CoreBindingPat / CoreVariantPat
+                    // / CoreTuplePat / CoreOrPat carry sub-pattern edges, so
+                    // those route above; the rest name CORE_PATTERN_ACYCLIC_LEAF
+                    // (explicit, named no-op). No generic catch-all: a new
+                    // pattern alternative is a COMPILE ERROR here until classified.
+#define CORE_PATTERN_ACYCLIC_CoreWildcardPat(Name) [](const Name &) {},
+#define CORE_PATTERN_ACYCLIC_CoreLiteralPat(Name) [](const Name &) {},
+#define CORE_PATTERN_ACYCLIC_CoreIntRangePat(Name) [](const Name &) {},
+#define CORE_PATTERN_ACYCLIC_CoreBindingPat(Name)                                                  \
+    [&](const Name &b) {                                                                           \
+        if (b.has_nested) {                                                                        \
+            push(b.nested);                                                                        \
+        }                                                                                          \
+    },
+#define CORE_PATTERN_ACYCLIC_CoreVariantPat(Name)                                                  \
+    [&](const Name &v) {                                                                           \
+        for (const CorePatternId s : v.tuple_subpatterns) {                                        \
+            push(s);                                                                               \
+        }                                                                                          \
+        for (const CoreVariantPatField &f : v.struct_fields) {                                     \
+            push(f.pattern);                                                                       \
+        }                                                                                          \
+    },
+#define CORE_PATTERN_ACYCLIC_CoreTuplePat(Name)                                                    \
+    [&](const Name &t) {                                                                           \
+        for (const CorePatternId e : t.elements) {                                                 \
+            push(e);                                                                               \
+        }                                                                                          \
+    },
+#define CORE_PATTERN_ACYCLIC_CoreOrPat(Name)                                                       \
+    [&](const Name &o) {                                                                           \
+        for (const CorePatternId a : o.alternatives) {                                             \
+            push(a);                                                                               \
+        }                                                                                          \
+    },
+#define HANDLE_CORE_PATTERN_NODE(Name) CORE_PATTERN_ACYCLIC_##Name(Name)
+                    std::visit(
+                        Overloaded{
+#include "ahfl/compiler/ir/core_pattern_nodes.def"
+                        },
+                        flow.patterns[id].node);
+#undef HANDLE_CORE_PATTERN_NODE
+#undef CORE_PATTERN_ACYCLIC_CoreWildcardPat
+#undef CORE_PATTERN_ACYCLIC_CoreLiteralPat
+#undef CORE_PATTERN_ACYCLIC_CoreIntRangePat
+#undef CORE_PATTERN_ACYCLIC_CoreBindingPat
+#undef CORE_PATTERN_ACYCLIC_CoreVariantPat
+#undef CORE_PATTERN_ACYCLIC_CoreTuplePat
+#undef CORE_PATTERN_ACYCLIC_CoreOrPat
                 } else {
                     if (color[id] == Color::Gray) {
                         color[id] = Color::Black;
@@ -2055,219 +2102,248 @@ class Verifier {
                       "statement follows a terminator in flow '" + flow.label + "'",
                       stmt.source_range);
             }
-            std::visit(Overloaded{
-                           [&](const CoreLetStmt &s) {
-                               use_expr(s.expr, stmt.source_range);
-                               define_value(s.result, stmt.source_range);
-                               // RFC 0026 P4-B: the bound value's recorded logical
-                               // type must equal the bound expr's result_type
-                               // (both index the program-global value-type pool).
-                               if (s.expr.value < flow.exprs.size()) {
-                                   const CoreValueTypeId expr_ty =
-                                       flow.exprs[s.expr.value].result_type;
-                                   if (!(body_value_type(flow, s.result) == expr_ty)) {
-                                       error(verify::kValueTypeMismatch,
-                                             "let-bound value id " + std::to_string(s.result.value) +
-                                                 " recorded type does not equal its expression's "
-                                                 "result type in '" +
-                                                 flow.label + "'",
-                                             stmt.source_range);
-                                   }
-                               }
-                           },
-                           [&](const CoreCapabilityCallStmt &s) {
-                               const CoreCapabilityDecl *decl = nullptr;
-                               if (s.capability.value >= program_.capabilities.size()) {
-                                   error(verify::kCapabilityIdOutOfRange,
-                                         "capability call '" + s.callee_name + "' capability id " +
-                                             std::to_string(s.capability.value) + " is out of range",
-                                         stmt.source_range);
-                               } else {
-                                   decl = &program_.capabilities[s.capability.value];
-                                   const auto arity = decl->param_types.size();
-                                   if (s.args.size() != arity) {
-                                       error(verify::kCapabilityArityMismatch,
-                                             "capability call '" + s.callee_name + "' passes " +
-                                                 std::to_string(s.args.size()) +
-                                                 " args but the import signature has " +
-                                                 std::to_string(arity),
-                                             stmt.source_range);
-                                   }
-                                   const auto typed_args = std::min(s.args.size(), arity);
-                                   for (std::size_t index = 0; index < typed_args; ++index) {
-                                       if (flow.value_types != nullptr &&
-                                           s.args[index].value < flow.value_types->size() &&
-                                           !(body_value_type(flow, s.args[index]) ==
-                                             decl->param_types[index])) {
-                                           error(verify::kCapabilityArgumentTypeMismatch,
-                                                 "capability call '" + s.callee_name +
-                                                     "' argument #" + std::to_string(index) +
-                                                     " type does not match its import signature",
-                                                 stmt.source_range);
-                                       }
-                                   }
-                                   if (flow.value_types != nullptr &&
-                                       s.result.value < flow.value_types->size() &&
-                                       !(body_value_type(flow, s.result) == decl->return_type)) {
-                                       error(verify::kCapabilityResultTypeMismatch,
-                                             "capability call '" + s.callee_name +
-                                                 "' result type does not match its import signature",
-                                             stmt.source_range);
-                                   }
-                               }
+        const auto walk_let = [&](const CoreLetStmt &s) {
+            use_expr(s.expr, stmt.source_range);
+            define_value(s.result, stmt.source_range);
+            // RFC 0026 P4-B: the bound value's recorded logical
+            // type must equal the bound expr's result_type
+            // (both index the program-global value-type pool).
+            if (s.expr.value < flow.exprs.size()) {
+                const CoreValueTypeId expr_ty =
+                    flow.exprs[s.expr.value].result_type;
+                if (!(body_value_type(flow, s.result) == expr_ty)) {
+                    error(verify::kValueTypeMismatch,
+                          "let-bound value id " + std::to_string(s.result.value) +
+                              " recorded type does not equal its expression's "
+                              "result type in '" +
+                              flow.label + "'",
+                          stmt.source_range);
+                }
+            }
+        };
+        const auto walk_capabilityCall = [&](const CoreCapabilityCallStmt &s) {
+            const CoreCapabilityDecl *decl = nullptr;
+            if (s.capability.value >= program_.capabilities.size()) {
+                error(verify::kCapabilityIdOutOfRange,
+                      "capability call '" + s.callee_name + "' capability id " +
+                          std::to_string(s.capability.value) + " is out of range",
+                      stmt.source_range);
+            } else {
+                decl = &program_.capabilities[s.capability.value];
+                const auto arity = decl->param_types.size();
+                if (s.args.size() != arity) {
+                    error(verify::kCapabilityArityMismatch,
+                          "capability call '" + s.callee_name + "' passes " +
+                              std::to_string(s.args.size()) +
+                              " args but the import signature has " +
+                              std::to_string(arity),
+                          stmt.source_range);
+                }
+                const auto typed_args = std::min(s.args.size(), arity);
+                for (std::size_t index = 0; index < typed_args; ++index) {
+                    if (flow.value_types != nullptr &&
+                        s.args[index].value < flow.value_types->size() &&
+                        !(body_value_type(flow, s.args[index]) ==
+                          decl->param_types[index])) {
+                        error(verify::kCapabilityArgumentTypeMismatch,
+                              "capability call '" + s.callee_name +
+                                  "' argument #" + std::to_string(index) +
+                                  " type does not match its import signature",
+                              stmt.source_range);
+                    }
+                }
+                if (flow.value_types != nullptr &&
+                    s.result.value < flow.value_types->size() &&
+                    !(body_value_type(flow, s.result) == decl->return_type)) {
+                    error(verify::kCapabilityResultTypeMismatch,
+                          "capability call '" + s.callee_name +
+                              "' result type does not match its import signature",
+                          stmt.source_range);
+                }
+            }
 
-                               if (flow.owner != OwnerKind::Flow) {
-                                   error(verify::kCapabilityOutsideFlow,
-                                         "capability call '" + s.callee_name +
-                                             "' appears outside a flow region",
-                                         stmt.source_range);
-                               } else if (decl != nullptr &&
-                                          (flow.allowed_capabilities == nullptr ||
-                                           flow.allowed_capabilities->find(s.capability.value) ==
-                                               flow.allowed_capabilities->end())) {
-                                   error(verify::kCapabilityUnauthorized,
-                                         "capability call '" + s.callee_name +
-                                             "' is not in the target agent's whitelist",
-                                         stmt.source_range);
-                               }
-                               for (const CoreValueId a : s.args) {
-                                   use_value(a, stmt.source_range);
-                               }
-                               define_value(s.result, stmt.source_range);
-                           },
-                           [&](const CoreStoreStmt &s) {
-                               verify_projection(s.place.root_type, s.place.projection,
-                                                 s.place.projection_resolved, s.place.root_name,
-                                                 stmt.source_range);
-                               use_value(s.value, stmt.source_range);
-                           },
-                           [&](const CoreIfStmt &s) {
-                               use_value(s.condition, stmt.source_range);
-                               // RFC 0026 P4-B (P1): the branch condition must be a
-                               // Bool value (the dense value table now lets the
-                               // standalone verifier prove this instead of trusting
-                               // Sema).
-                               if (s.condition.value < flow.value_count &&
-                                   !is_bool_value_type(body_value_type(flow, s.condition))) {
-                                   error(verify::kValueTypeMismatch,
-                                         "if condition value must be Bool in '" + flow.label + "'",
-                                         stmt.source_range);
-                               }
-                               // Each branch: own `visible` copy (defs don't
-                               // escape), shared `all_definitions`, same `ctx`.
-                               // The else-less branch is an implicit fallthrough.
-                               RegionExit then_exit;
-                               RegionExit else_exit;
-                               else_exit.fallthrough = true;
-                               if (s.then_region) {
-                                   auto bv = visible;
-                                   then_exit = verify_region(flow, state_count, *s.then_region,
-                                                             all_definitions, bv, ctx, expected);
-                               } else {
-                                   then_exit.fallthrough = true;
-                               }
-                               if (s.else_region) {
-                                   auto bv = visible;
-                                   else_exit = verify_region(flow, state_count, *s.else_region,
-                                                             all_definitions, bv, ctx, expected);
-                               }
-                               RegionExit merged;
-                               merged.merge(then_exit);
-                               merged.merge(else_exit);
-                               // The `if` yields/diverges only if BOTH branches
-                               // leave; it falls through if EITHER branch can.
-                               exit.yields_value |= merged.yields_value;
-                               exit.yields_unit |= merged.yields_unit;
-                               exit.diverges_control |= merged.diverges_control;
-                               exit.diverges_trap |= merged.diverges_trap;
-                               live = then_exit.fallthrough || else_exit.fallthrough;
-                           },
-                           [&](const CoreGotoStmt &s) {
-                               if (is_workflow_ctx(ctx)) {
-                                   error(verify::kWorkflowRegionYield,
-                                         "workflow region '" + flow.label +
-                                             "' contains a goto (no flow-state control flow in a "
-                                             "workflow node input / return region)",
-                                         stmt.source_range);
-                               } else if (s.target.value >= state_count) {
-                                   error(verify::kGotoTargetInvalid,
-                                         "goto target state id " + std::to_string(s.target.value) +
-                                             " is out of range in flow '" + flow.label + "'",
-                                         stmt.source_range);
-                               }
-                               exit.diverges_control = true;
-                               live = false;
-                           },
-                           [&](const CoreReturnStmt &s) {
-                               if (is_workflow_ctx(ctx)) {
-                                   error(verify::kWorkflowRegionYield,
-                                         "workflow region '" + flow.label +
-                                             "' contains a return (a node input / return region "
-                                             "yields its value, it does not return)",
-                                         stmt.source_range);
-                               }
-                               if (s.has_value) {
-                                   use_value(s.value, stmt.source_range);
-                               }
-                               exit.diverges_control = true;
-                               live = false;
-                           },
-                           [&](const CoreYieldStmt &s) {
-                               if (ctx == RegionContext::Flow) {
-                                   error(verify::kYieldOutsideMatchArm,
-                                         "yield outside a match arm / guard region in flow '" +
-                                             flow.label + "'",
-                                         stmt.source_range);
-                               }
-                               if (s.has_value) {
-                                   use_value(s.value, stmt.source_range);
-                                   exit.yields_value = true;
-                                   // RFC 0026 P4-B (P1): the yielded value's type
-                                   // must satisfy the region's expected-yield
-                                   // constraint (a guard yields Bool; an expression
-                                   // match arm yields the match result type). HARD:
-                                   // a mismatch (or a Bool expectation that a
-                                   // non-Bool value cannot meet) fails closed even
-                                   // when the pool lacks the expected node.
-                                   if (s.value.value < flow.value_count) {
-                                       const CoreValueTypeId vt = body_value_type(flow, s.value);
-                                       if (expected.kind == ExpectedYield::Kind::Bool &&
-                                           !is_bool_value_type(vt)) {
-                                           error(verify::kValueTypeMismatch,
-                                                 "guard region must yield a Bool value in '" +
-                                                     flow.label + "'",
-                                                 stmt.source_range);
-                                       } else if (expected.kind == ExpectedYield::Kind::Exact &&
-                                                  !(vt == expected.exact)) {
-                                           error(verify::kValueTypeMismatch,
-                                                 "yielded value type does not match the match "
-                                                 "result type in '" +
-                                                     flow.label + "'",
-                                                 stmt.source_range);
-                                       }
-                                   }
-                               } else {
-                                   exit.yields_unit = true;
-                               }
-                               live = false;
-                           },
-                           [&](const CoreTrapStmt &) {
-                               exit.diverges_trap = true;
-                               live = false;
-                           },
-                           [&](const CoreMatchStmt &s) {
-                               const RegionExit m =
-                                   verify_match(flow, state_count, s, all_definitions, visible,
-                                                stmt.source_range);
-                               // A match consumes its arms' yields; only control /
-                               // trap divergence propagates to the parent, plus a
-                               // fallthrough when the match can normally complete.
-                               exit.diverges_control |= m.diverges_control;
-                               exit.diverges_trap |= m.diverges_trap;
-                               live = m.fallthrough;
-                           },
-                       },
-                       stmt.node);
+            if (flow.owner != OwnerKind::Flow) {
+                error(verify::kCapabilityOutsideFlow,
+                      "capability call '" + s.callee_name +
+                          "' appears outside a flow region",
+                      stmt.source_range);
+            } else if (decl != nullptr &&
+                       (flow.allowed_capabilities == nullptr ||
+                        flow.allowed_capabilities->find(s.capability.value) ==
+                            flow.allowed_capabilities->end())) {
+                error(verify::kCapabilityUnauthorized,
+                      "capability call '" + s.callee_name +
+                          "' is not in the target agent's whitelist",
+                      stmt.source_range);
+            }
+            for (const CoreValueId a : s.args) {
+                use_value(a, stmt.source_range);
+            }
+            define_value(s.result, stmt.source_range);
+        };
+        const auto walk_store = [&](const CoreStoreStmt &s) {
+            verify_projection(s.place.root_type, s.place.projection,
+                              s.place.projection_resolved, s.place.root_name,
+                              stmt.source_range);
+            use_value(s.value, stmt.source_range);
+        };
+        const auto walk_if = [&](const CoreIfStmt &s) {
+            use_value(s.condition, stmt.source_range);
+            // RFC 0026 P4-B (P1): the branch condition must be a
+            // Bool value (the dense value table now lets the
+            // standalone verifier prove this instead of trusting
+            // Sema).
+            if (s.condition.value < flow.value_count &&
+                !is_bool_value_type(body_value_type(flow, s.condition))) {
+                error(verify::kValueTypeMismatch,
+                      "if condition value must be Bool in '" + flow.label + "'",
+                      stmt.source_range);
+            }
+            // Each branch: own `visible` copy (defs don't
+            // escape), shared `all_definitions`, same `ctx`.
+            // The else-less branch is an implicit fallthrough.
+            RegionExit then_exit;
+            RegionExit else_exit;
+            else_exit.fallthrough = true;
+            if (s.then_region) {
+                auto bv = visible;
+                then_exit = verify_region(flow, state_count, *s.then_region,
+                                          all_definitions, bv, ctx, expected);
+            } else {
+                then_exit.fallthrough = true;
+            }
+            if (s.else_region) {
+                auto bv = visible;
+                else_exit = verify_region(flow, state_count, *s.else_region,
+                                          all_definitions, bv, ctx, expected);
+            }
+            RegionExit merged;
+            merged.merge(then_exit);
+            merged.merge(else_exit);
+            // The `if` yields/diverges only if BOTH branches
+            // leave; it falls through if EITHER branch can.
+            exit.yields_value |= merged.yields_value;
+            exit.yields_unit |= merged.yields_unit;
+            exit.diverges_control |= merged.diverges_control;
+            exit.diverges_trap |= merged.diverges_trap;
+            live = then_exit.fallthrough || else_exit.fallthrough;
+        };
+        const auto walk_goto = [&](const CoreGotoStmt &s) {
+            if (is_workflow_ctx(ctx)) {
+                error(verify::kWorkflowRegionYield,
+                      "workflow region '" + flow.label +
+                          "' contains a goto (no flow-state control flow in a "
+                          "workflow node input / return region)",
+                      stmt.source_range);
+            } else if (s.target.value >= state_count) {
+                error(verify::kGotoTargetInvalid,
+                      "goto target state id " + std::to_string(s.target.value) +
+                          " is out of range in flow '" + flow.label + "'",
+                      stmt.source_range);
+            }
+            exit.diverges_control = true;
+            live = false;
+        };
+        const auto walk_return = [&](const CoreReturnStmt &s) {
+            if (is_workflow_ctx(ctx)) {
+                error(verify::kWorkflowRegionYield,
+                      "workflow region '" + flow.label +
+                          "' contains a return (a node input / return region "
+                          "yields its value, it does not return)",
+                      stmt.source_range);
+            }
+            if (s.has_value) {
+                use_value(s.value, stmt.source_range);
+            }
+            exit.diverges_control = true;
+            live = false;
+        };
+        const auto walk_yield = [&](const CoreYieldStmt &s) {
+            if (ctx == RegionContext::Flow) {
+                error(verify::kYieldOutsideMatchArm,
+                      "yield outside a match arm / guard region in flow '" +
+                          flow.label + "'",
+                      stmt.source_range);
+            }
+            if (s.has_value) {
+                use_value(s.value, stmt.source_range);
+                exit.yields_value = true;
+                // RFC 0026 P4-B (P1): the yielded value's type
+                // must satisfy the region's expected-yield
+                // constraint (a guard yields Bool; an expression
+                // match arm yields the match result type). HARD:
+                // a mismatch (or a Bool expectation that a
+                // non-Bool value cannot meet) fails closed even
+                // when the pool lacks the expected node.
+                if (s.value.value < flow.value_count) {
+                    const CoreValueTypeId vt = body_value_type(flow, s.value);
+                    if (expected.kind == ExpectedYield::Kind::Bool &&
+                        !is_bool_value_type(vt)) {
+                        error(verify::kValueTypeMismatch,
+                              "guard region must yield a Bool value in '" +
+                                  flow.label + "'",
+                              stmt.source_range);
+                    } else if (expected.kind == ExpectedYield::Kind::Exact &&
+                               !(vt == expected.exact)) {
+                        error(verify::kValueTypeMismatch,
+                              "yielded value type does not match the match "
+                              "result type in '" +
+                                  flow.label + "'",
+                              stmt.source_range);
+                    }
+                }
+            } else {
+                exit.yields_unit = true;
+            }
+            live = false;
+        };
+        const auto walk_trap = [&](const CoreTrapStmt &/*s*/) {
+            exit.diverges_trap = true;
+            live = false;
+        };
+        const auto walk_match = [&](const CoreMatchStmt &s) {
+            const RegionExit m =
+                verify_match(flow, state_count, s, all_definitions, visible,
+                             stmt.source_range);
+            // A match consumes its arms' yields; only control /
+            // trap divergence propagates to the parent, plus a
+            // fallthrough when the match can normally complete.
+            exit.diverges_control |= m.diverges_control;
+            exit.diverges_trap |= m.diverges_trap;
+            live = m.fallthrough;
+        };
+
+        // RFC 0027 P6/P7/P8 (KR6.13-P7): one NAMED handler per CoreStmtNode
+        // alternative, generated from core_stmt_nodes.def. The per-node bodies live
+        // in the named lambdas above (declared in the .def's order); the routing
+        // macros below bind each alternative to its lambda. The .def order IS the
+        // dispatch order, and a new alternative is a COMPILE ERROR here until it
+        // is routed (CLAUDE.md Principle 5).
+#define STMT_WALK_CoreLetStmt(Name) walk_let
+#define STMT_WALK_CoreCapabilityCallStmt(Name) walk_capabilityCall
+#define STMT_WALK_CoreStoreStmt(Name) walk_store
+#define STMT_WALK_CoreIfStmt(Name) walk_if
+#define STMT_WALK_CoreGotoStmt(Name) walk_goto
+#define STMT_WALK_CoreReturnStmt(Name) walk_return
+#define STMT_WALK_CoreYieldStmt(Name) walk_yield
+#define STMT_WALK_CoreTrapStmt(Name) walk_trap
+#define STMT_WALK_CoreMatchStmt(Name) walk_match
+#define HANDLE_CORE_STMT_NODE(Name) STMT_WALK_##Name(Name),
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/core_stmt_nodes.def"
+            },
+            stmt.node);
+#undef HANDLE_CORE_STMT_NODE
+#undef STMT_WALK_CoreLetStmt
+#undef STMT_WALK_CoreCapabilityCallStmt
+#undef STMT_WALK_CoreStoreStmt
+#undef STMT_WALK_CoreIfStmt
+#undef STMT_WALK_CoreGotoStmt
+#undef STMT_WALK_CoreReturnStmt
+#undef STMT_WALK_CoreYieldStmt
+#undef STMT_WALK_CoreTrapStmt
+#undef STMT_WALK_CoreMatchStmt
         }
         if (live) {
             exit.fallthrough = true;
@@ -2798,39 +2874,60 @@ class Verifier {
     template <class Fn>
     void for_each_region_path_expr(const CoreWorkflowDecl &wf, const CoreRegion &region, Fn &&fn) {
         for (const CoreStmt &stmt : region.statements) {
-            std::visit(Overloaded{
-                           [&](const CoreLetStmt &s) {
-                               visit_expr_paths(wf, s.expr, stmt.source_range, fn);
-                           },
-                           [&](const CoreCapabilityCallStmt &) {},
-                           [&](const CoreStoreStmt &) {},
-                           [&](const CoreYieldStmt &) {},
-                           [&](const CoreReturnStmt &) {},
-                           [&](const CoreGotoStmt &) {},
-                           [&](const CoreTrapStmt &) {},
-                           [&](const CoreIfStmt &s) {
-                               if (s.then_region) {
-                                   for_each_region_path_expr(wf, *s.then_region, fn);
-                               }
-                               if (s.else_region) {
-                                   for_each_region_path_expr(wf, *s.else_region, fn);
-                               }
-                           },
-                           [&](const CoreMatchStmt &s) {
-                               for (const CoreMatchArm &arm : s.arms) {
-                                   if (arm.guard_region) {
-                                       for_each_region_path_expr(wf, *arm.guard_region, fn);
-                                   }
-                                   if (arm.body) {
-                                       for_each_region_path_expr(wf, *arm.body, fn);
-                                   }
-                               }
-                               if (s.fallback_region) {
-                                   for_each_region_path_expr(wf, *s.fallback_region, fn);
-                               }
-                           },
-                       },
-                       stmt.node);
+            // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per CoreStmtNode
+            // alternative, generated from core_stmt_nodes.def. Only Let (its bound
+            // expr) and the two nested-region statements walk sub-regions; the
+            // rest are leaves. No generic catch-all: a new statement alternative is
+            // a COMPILE ERROR here until classified.
+#define CORE_REGION_PATHS_LEAF(Name) [](const Name &) {},
+#define CORE_REGION_PATHS_CoreLetStmt(Name)                                                        \
+    [&](const Name &s) { visit_expr_paths(wf, s.expr, stmt.source_range, fn); },
+#define CORE_REGION_PATHS_CoreIfStmt(Name)                                                         \
+    [&](const Name &s) {                                                                           \
+        if (s.then_region) {                                                                       \
+            for_each_region_path_expr(wf, *s.then_region, fn);                                     \
+        }                                                                                          \
+        if (s.else_region) {                                                                       \
+            for_each_region_path_expr(wf, *s.else_region, fn);                                     \
+        }                                                                                          \
+    },
+#define CORE_REGION_PATHS_CoreMatchStmt(Name)                                                      \
+    [&](const Name &s) {                                                                           \
+        for (const CoreMatchArm &arm : s.arms) {                                                   \
+            if (arm.guard_region) {                                                                \
+                for_each_region_path_expr(wf, *arm.guard_region, fn);                              \
+            }                                                                                      \
+            if (arm.body) {                                                                        \
+                for_each_region_path_expr(wf, *arm.body, fn);                                      \
+            }                                                                                      \
+        }                                                                                          \
+        if (s.fallback_region) {                                                                   \
+            for_each_region_path_expr(wf, *s.fallback_region, fn);                                 \
+        }                                                                                          \
+    },
+#define CORE_REGION_PATHS_CoreCapabilityCallStmt(Name) CORE_REGION_PATHS_LEAF(Name)
+#define CORE_REGION_PATHS_CoreStoreStmt(Name) CORE_REGION_PATHS_LEAF(Name)
+#define CORE_REGION_PATHS_CoreYieldStmt(Name) CORE_REGION_PATHS_LEAF(Name)
+#define CORE_REGION_PATHS_CoreReturnStmt(Name) CORE_REGION_PATHS_LEAF(Name)
+#define CORE_REGION_PATHS_CoreGotoStmt(Name) CORE_REGION_PATHS_LEAF(Name)
+#define CORE_REGION_PATHS_CoreTrapStmt(Name) CORE_REGION_PATHS_LEAF(Name)
+#define HANDLE_CORE_STMT_NODE(Name) CORE_REGION_PATHS_##Name(Name)
+            std::visit(
+                Overloaded{
+#include "ahfl/compiler/ir/core_stmt_nodes.def"
+                },
+                stmt.node);
+#undef HANDLE_CORE_STMT_NODE
+#undef CORE_REGION_PATHS_LEAF
+#undef CORE_REGION_PATHS_CoreLetStmt
+#undef CORE_REGION_PATHS_CoreIfStmt
+#undef CORE_REGION_PATHS_CoreMatchStmt
+#undef CORE_REGION_PATHS_CoreCapabilityCallStmt
+#undef CORE_REGION_PATHS_CoreStoreStmt
+#undef CORE_REGION_PATHS_CoreYieldStmt
+#undef CORE_REGION_PATHS_CoreReturnStmt
+#undef CORE_REGION_PATHS_CoreGotoStmt
+#undef CORE_REGION_PATHS_CoreTrapStmt
         }
     }
 
@@ -2861,29 +2958,44 @@ class Verifier {
                     stack.push_back(e.value);
                 }
             };
-            // RFC 0027 P6/P7/P8 (KR6.13-F): one handler per CoreExprNode
-            // alternative. Only CorePathExpr yields a path and only
-            // CoreUnaryExpr / CoreBinaryExpr carry intra-arena operand edges, so
-            // those route above; every other node names
-            // CORE_EXPR_PATHS_LEAF (explicit, named no-op — the same behavior the
-            // unnamed catch-all had). No generic catch-all: a new expr
-            // alternative is a COMPILE ERROR here until it is classified.
-            std::visit(Overloaded{
-                           [&](const CorePathExpr &p) { fn(p, range); },
-                           [&](const CoreUnaryExpr &u) { push(u.operand); },
-                           [&](const CoreBinaryExpr &b) {
-                               push(b.lhs);
-                               push(b.rhs);
-                           },
-                           CORE_EXPR_PATHS_LEAF(CoreLiteralExpr),
-                           CORE_EXPR_PATHS_LEAF(CoreValueRefExpr),
-                           CORE_EXPR_PATHS_LEAF(CoreQualifiedExpr),
-                           CORE_EXPR_PATHS_LEAF(CoreConstructExpr),
-                           CORE_EXPR_PATHS_LEAF(CoreCoerceExpr),
-                           CORE_EXPR_PATHS_LEAF(CoreCollectionExpr),
-                           CORE_EXPR_PATHS_LEAF(CoreUnsupportedExpr),
-                       },
-                       wf.exprs[id].node);
+            // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per CoreExprNode
+            // alternative, generated from core_expr_nodes.def. Only CorePathExpr
+            // yields a path and only CoreUnaryExpr / CoreBinaryExpr carry
+            // intra-arena operand edges, so those route above; every other node
+            // names CORE_EXPR_PATHS_LEAF (explicit, named no-op — the same
+            // behavior the unnamed catch-all had). No generic catch-all: a new
+            // expr alternative is a COMPILE ERROR here until it is classified.
+#define CORE_EXPR_PATHS_CorePathExpr(Name) [&](const Name &p) { fn(p, range); },
+#define CORE_EXPR_PATHS_CoreUnaryExpr(Name) [&](const Name &u) { push(u.operand); },
+#define CORE_EXPR_PATHS_CoreBinaryExpr(Name)                                                       \
+    [&](const Name &b) {                                                                           \
+        push(b.lhs);                                                                               \
+        push(b.rhs);                                                                               \
+    },
+#define CORE_EXPR_PATHS_CoreLiteralExpr(Name) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreValueRefExpr(Name) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreQualifiedExpr(Name) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreConstructExpr(Name) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreCoerceExpr(Name) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreCollectionExpr(Name) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreUnsupportedExpr(Name) [](const Name &) {},
+#define HANDLE_CORE_EXPR_NODE(Name) CORE_EXPR_PATHS_##Name(Name)
+            std::visit(
+                Overloaded{
+#include "ahfl/compiler/ir/core_expr_nodes.def"
+                },
+                wf.exprs[id].node);
+#undef HANDLE_CORE_EXPR_NODE
+#undef CORE_EXPR_PATHS_CorePathExpr
+#undef CORE_EXPR_PATHS_CoreUnaryExpr
+#undef CORE_EXPR_PATHS_CoreBinaryExpr
+#undef CORE_EXPR_PATHS_CoreLiteralExpr
+#undef CORE_EXPR_PATHS_CoreValueRefExpr
+#undef CORE_EXPR_PATHS_CoreQualifiedExpr
+#undef CORE_EXPR_PATHS_CoreConstructExpr
+#undef CORE_EXPR_PATHS_CoreCoerceExpr
+#undef CORE_EXPR_PATHS_CoreCollectionExpr
+#undef CORE_EXPR_PATHS_CoreUnsupportedExpr
         }
     }
 

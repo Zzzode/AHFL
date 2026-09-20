@@ -48,6 +48,7 @@
 #include <variant>
 #include <vector>
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/program.hpp"
 #include "ahfl/compiler/ir/types.hpp" // ir::SymbolRef
 
@@ -583,22 +584,37 @@ struct CoreUnsupportedExpr {
                                          const CoreUnsupportedExpr &) noexcept = default;
 };
 
-using CoreExprNode = std::variant<CoreLiteralExpr,
-                                  CoreValueRefExpr,
-                                  CorePathExpr,
-                                  CoreQualifiedExpr,
-                                  CoreUnaryExpr,
-                                  CoreBinaryExpr,
-                                  CoreConstructExpr,
-                                  CoreCoerceExpr,
-                                  CoreCollectionExpr,
-                                  CoreUnsupportedExpr>;
+namespace core_node_detail {
 
-// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+// Tag tuples for the X-macro-generated Core node variants (KR6.13-P7). Each is
+// expanded from its .def list; the variant is reconstructed from the element
+// types, so declaration order in the .def IS alternative order. Each tag tuple
+// is defined adjacent to the node structs it names.
+#define HANDLE_CORE_EXPR_NODE(Name) ::ahfl::ir::node_detail::node_tag<Name>{},
+inline constexpr auto kCoreExprTags = std::tuple{
+#include "ahfl/compiler/ir/core_expr_nodes.def"
+};
+#undef HANDLE_CORE_EXPR_NODE
+
+} // namespace core_node_detail
+
+// RFC 0027 P6/P7/P8 (KR6.13-P7): the alternative list is generated from the
+// single X-macro node list core_expr_nodes.def — one line per node, declaration
+// order preserved. To add a node, edit ONLY that .def; the variant, every
+// exhaustive visitor, and (via the negative compile-test) the whole consumer
+// set stay in lockstep, and a node that misses a handler is a compile error
+// naming the type rather than a silently skipped case.
+using CoreExprNode = ::ahfl::ir::node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(core_node_detail::kCoreExprTags)>>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
+// count itself now derives from core_expr_nodes.def; this pin turns "a node was
+// added to the .def" into a deliberate review event across every exhaustive
+// visitor (verify / lower / json).
 static_assert(std::variant_size_v<CoreExprNode> == 10,
               "ahfl::ir::core::CoreExprNode cardinality drift (RFC 0027 P8 "
-              "IR SSOT): update every exhaustive visitor and this pin "
-              "together with the alternative list.");
+              "IR SSOT): update every exhaustive visitor, this pin, and "
+              "core_expr_nodes.def together.");
 
 struct CoreExpr {
     CoreExprNode node;
@@ -708,19 +724,26 @@ struct CoreTuplePat {
     [[nodiscard]] friend bool operator==(const CoreTuplePat &, const CoreTuplePat &) noexcept = default;
 };
 
-using CorePatternNode = std::variant<CoreWildcardPat,
-                                     CoreLiteralPat,
-                                     CoreIntRangePat,
-                                     CoreBindingPat,
-                                     CoreVariantPat,
-                                     CoreTuplePat,
-                                     CoreOrPat>;
+namespace core_node_detail {
 
-// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+#define HANDLE_CORE_PATTERN_NODE(Name) ::ahfl::ir::node_detail::node_tag<Name>{},
+inline constexpr auto kCorePatternTags = std::tuple{
+#include "ahfl/compiler/ir/core_pattern_nodes.def"
+};
+#undef HANDLE_CORE_PATTERN_NODE
+
+} // namespace core_node_detail
+
+// RFC 0027 P6/P7/P8 (KR6.13-P7): generated from core_pattern_nodes.def.
+using CorePatternNode = ::ahfl::ir::node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(core_node_detail::kCorePatternTags)>>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
+// count derives from core_pattern_nodes.def.
 static_assert(std::variant_size_v<CorePatternNode> == 7,
               "ahfl::ir::core::CorePatternNode cardinality drift (RFC 0027 "
-              "P8 IR SSOT): update every exhaustive visitor and this pin "
-              "together with the alternative list.");
+              "P8 IR SSOT): update every exhaustive visitor, this pin, and "
+              "core_pattern_nodes.def together.");
 
 struct CorePattern {
     CorePatternNode node;
@@ -865,21 +888,26 @@ struct CoreMatchStmt {
     friend bool operator==(const CoreMatchStmt &, const CoreMatchStmt &) noexcept;
 };
 
-using CoreStmtNode = std::variant<CoreLetStmt,
-                                  CoreCapabilityCallStmt,
-                                  CoreStoreStmt,
-                                  CoreIfStmt,
-                                  CoreGotoStmt,
-                                  CoreReturnStmt,
-                                  CoreYieldStmt,
-                                  CoreTrapStmt,
-                                  CoreMatchStmt>;
+namespace core_node_detail {
 
-// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+#define HANDLE_CORE_STMT_NODE(Name) ::ahfl::ir::node_detail::node_tag<Name>{},
+inline constexpr auto kCoreStmtTags = std::tuple{
+#include "ahfl/compiler/ir/core_stmt_nodes.def"
+};
+#undef HANDLE_CORE_STMT_NODE
+
+} // namespace core_node_detail
+
+// RFC 0027 P6/P7/P8 (KR6.13-P7): generated from core_stmt_nodes.def.
+using CoreStmtNode = ::ahfl::ir::node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(core_node_detail::kCoreStmtTags)>>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
+// count derives from core_stmt_nodes.def.
 static_assert(std::variant_size_v<CoreStmtNode> == 9,
               "ahfl::ir::core::CoreStmtNode cardinality drift (RFC 0027 P8 "
-              "IR SSOT): update every exhaustive visitor and this pin "
-              "together with the alternative list.");
+              "IR SSOT): update every exhaustive visitor, this pin, and "
+              "core_stmt_nodes.def together.");
 
 struct CoreStmt {
     CoreStmtNode node;
@@ -956,65 +984,98 @@ inline CoreRegionExit core_region_exit(const CoreRegion &region) noexcept {
         if (!live) {
             break; // statements after a terminator are unreachable
         }
+        // RFC 0027 P6/P7/P8 (KR6.13-P7): one NAMED handler per CoreStmtNode
+        // alternative, generated from core_stmt_nodes.def. The straight-line
+        // continuation nodes (Let / CapabilityCall / Store) name the
+        // capture-less CORE_REGION_EXIT_CONTINUE no-op; terminators / if / match
+        // each get a real handler. With no generic catch-all, a new
+        // CoreStmtNode alternative is a COMPILE ERROR here until it is
+        // classified (CLAUDE.md Principle 5).
+#define CORE_REGION_EXIT_CONTINUE(Name) [](const Name &) {},
+#define CORE_REGION_EXIT_DIVERGE(Name)                                                             \
+    [&](const Name &) {                                                                            \
+        exit.diverges = true;                                                                      \
+        live = false;                                                                              \
+    },
+#define CORE_REGION_EXIT_YIELD(Name)                                                               \
+    [&](const Name &) {                                                                            \
+        exit.yields = true;                                                                        \
+        live = false;                                                                              \
+    },
+#define CORE_REGION_EXIT_CoreIfStmt(Name)                                                              \
+    [&](const Name &node) {                                                                        \
+        CoreRegionExit then_exit;                                                                  \
+        if (node.then_region) {                                                                    \
+            then_exit = core_region_exit(*node.then_region);                                       \
+        } else {                                                                                   \
+            then_exit.fallthrough = true; /* absent then => implicit fallthrough */                \
+        }                                                                                          \
+        CoreRegionExit else_exit;                                                                  \
+        if (node.else_region) {                                                                    \
+            else_exit = core_region_exit(*node.else_region);                                       \
+        } else {                                                                                   \
+            else_exit.fallthrough = true; /* else-less => implicit fallthrough */                  \
+        }                                                                                          \
+        /* Both branches' yields / divergences are possible outcomes. */                           \
+        exit.yields |= then_exit.yields || else_exit.yields;                                       \
+        exit.diverges |= then_exit.diverges || else_exit.diverges;                                 \
+        /* Control continues past the `if` iff EITHER branch can. */                               \
+        live = then_exit.fallthrough || else_exit.fallthrough;                                     \
+    },
+#define CORE_REGION_EXIT_CoreMatchStmt(Name)                                                           \
+    [&](const Name &node) {                                                                        \
+        bool any_completes = false;                                                                \
+        bool any_diverges = false;                                                                 \
+        for (const auto &arm : node.arms) {                                                        \
+            if (arm.body) {                                                                        \
+                const CoreRegionExit ae = core_region_exit(*arm.body);                             \
+                any_completes |= ae.completes();                                                   \
+                any_diverges |= ae.diverges;                                                       \
+            } else {                                                                               \
+                any_completes = true; /* missing body: assume completion (verifier flags) */       \
+            }                                                                                      \
+        }                                                                                          \
+        if (node.fallback_region) {                                                                \
+            const CoreRegionExit fe = core_region_exit(*node.fallback_region);                     \
+            any_completes |= fe.completes();                                                       \
+            any_diverges |= fe.diverges;                                                           \
+        } else {                                                                                   \
+            any_completes = true; /* missing fallback: assume completion (verifier flags) */       \
+        }                                                                                          \
+        /* A nested match consumes its arms' yields (they are NOT the parent's yield); only */     \
+        /* control / trap divergence propagates. */                                                \
+        exit.diverges |= any_diverges;                                                             \
+        /* Control continues past the match iff SOME arm / fallback completes; if every arm + */    \
+        /* fallback diverges, the match terminates the parent's straight-line path. */             \
+        live = any_completes;                                                                      \
+    },
+
+#define CORE_REGION_EXIT_CoreLetStmt(Name) CORE_REGION_EXIT_CONTINUE(Name)
+#define CORE_REGION_EXIT_CoreCapabilityCallStmt(Name) CORE_REGION_EXIT_CONTINUE(Name)
+#define CORE_REGION_EXIT_CoreStoreStmt(Name) CORE_REGION_EXIT_CONTINUE(Name)
+#define CORE_REGION_EXIT_CoreGotoStmt(Name) CORE_REGION_EXIT_DIVERGE(Name)
+#define CORE_REGION_EXIT_CoreReturnStmt(Name) CORE_REGION_EXIT_DIVERGE(Name)
+#define CORE_REGION_EXIT_CoreTrapStmt(Name) CORE_REGION_EXIT_DIVERGE(Name)
+#define CORE_REGION_EXIT_CoreYieldStmt(Name) CORE_REGION_EXIT_YIELD(Name)
+#define HANDLE_CORE_STMT_NODE(Name) CORE_REGION_EXIT_##Name(Name)
         std::visit(
-            [&](const auto &node) {
-                using T = std::decay_t<decltype(node)>;
-                if constexpr (std::is_same_v<T, CoreReturnStmt> ||
-                              std::is_same_v<T, CoreGotoStmt> || std::is_same_v<T, CoreTrapStmt>) {
-                    exit.diverges = true;
-                    live = false;
-                } else if constexpr (std::is_same_v<T, CoreYieldStmt>) {
-                    exit.yields = true;
-                    live = false;
-                } else if constexpr (std::is_same_v<T, CoreIfStmt>) {
-                    CoreRegionExit then_exit;
-                    if (node.then_region) {
-                        then_exit = core_region_exit(*node.then_region);
-                    } else {
-                        then_exit.fallthrough = true; // absent then => implicit fallthrough
-                    }
-                    CoreRegionExit else_exit;
-                    if (node.else_region) {
-                        else_exit = core_region_exit(*node.else_region);
-                    } else {
-                        else_exit.fallthrough = true; // else-less => implicit fallthrough
-                    }
-                    // Both branches' yields / divergences are possible outcomes.
-                    exit.yields |= then_exit.yields || else_exit.yields;
-                    exit.diverges |= then_exit.diverges || else_exit.diverges;
-                    // Control continues past the `if` iff EITHER branch can.
-                    live = then_exit.fallthrough || else_exit.fallthrough;
-                } else if constexpr (std::is_same_v<T, CoreMatchStmt>) {
-                    bool any_completes = false;
-                    bool any_diverges = false;
-                    for (const auto &arm : node.arms) {
-                        if (arm.body) {
-                            const CoreRegionExit ae = core_region_exit(*arm.body);
-                            any_completes |= ae.completes();
-                            any_diverges |= ae.diverges;
-                        } else {
-                            any_completes = true; // missing body: assume completion (verifier flags)
-                        }
-                    }
-                    if (node.fallback_region) {
-                        const CoreRegionExit fe = core_region_exit(*node.fallback_region);
-                        any_completes |= fe.completes();
-                        any_diverges |= fe.diverges;
-                    } else {
-                        any_completes = true; // missing fallback: assume completion (verifier flags)
-                    }
-                    // A nested match consumes its arms' yields (they are NOT the
-                    // parent's yield); only control / trap divergence propagates.
-                    exit.diverges |= any_diverges;
-                    // Control continues past the match iff SOME arm / fallback
-                    // completes; if every arm + fallback diverges, the match
-                    // terminates the parent's straight-line path.
-                    live = any_completes;
-                } else {
-                    // Let / CapabilityCall / Store: fall through to the next stmt.
-                }
+            Overloaded{
+#include "ahfl/compiler/ir/core_stmt_nodes.def"
             },
             stmt.node);
+#undef HANDLE_CORE_STMT_NODE
+#undef CORE_REGION_EXIT_CoreLetStmt
+#undef CORE_REGION_EXIT_CoreCapabilityCallStmt
+#undef CORE_REGION_EXIT_CoreStoreStmt
+#undef CORE_REGION_EXIT_CoreGotoStmt
+#undef CORE_REGION_EXIT_CoreReturnStmt
+#undef CORE_REGION_EXIT_CoreTrapStmt
+#undef CORE_REGION_EXIT_CoreYieldStmt
+#undef CORE_REGION_EXIT_CONTINUE
+#undef CORE_REGION_EXIT_DIVERGE
+#undef CORE_REGION_EXIT_YIELD
+#undef CORE_REGION_EXIT_CoreIfStmt
+#undef CORE_REGION_EXIT_CoreMatchStmt
     }
     if (live) {
         exit.fallthrough = true;

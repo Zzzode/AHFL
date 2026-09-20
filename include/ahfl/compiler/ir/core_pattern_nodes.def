@@ -1,0 +1,46 @@
+// X-macro node list for ahfl::ir::core::CorePatternNode (RFC 0027 P6/P7/P8,
+// KR6.13-P7): the SINGLE source of truth for the Core-IR match-pattern node set
+// — the Core counterpart of pattern_nodes.def and a sibling of
+// core_value_types.def.
+//
+// This file intentionally has NO include guard. It is a text fragment that is
+// re-included once per consumer; every consumer must first define the
+// HANDLE_CORE_PATTERN_NODE(Name) macro. The expansion is one
+// HANDLE_CORE_PATTERN_NODE invocation per node, IN DECLARATION ORDER. That
+// order is simultaneously:
+//   * the CorePatternNode std::variant alternative order (generated in
+//     core_ir.hpp through node_detail::node_tag), and
+//   * every per-node handler table / macro-expansion order at the consumer
+//     sites (core_verify / core_lower / wasm codegen).
+// Reordering an entry changes std::variant::index() values and is therefore a
+// breaking change; append new nodes at the END.
+//
+// Every exhaustive consumer routes through one explicit per-node handler macro
+// (`<prefix>_##Name`), so adding a node here WITHOUT adding every per-node
+// handler is a COMPILE ERROR naming the missing type rather than a silently
+// skipped node (CLAUDE.md Principle 5). The property is pinned by the negative
+// compile-test tests/fixtures/ir/ssot/core_pattern_nodes_negative.cpp
+// (syntax-compiled by tests/scripts/ir_ssot_compile_fail.py under ctest
+// ahfl.ir.ssot_compile_fail) and independently by
+// tests/unit/compiler/ir/node_variant_coverage.cpp.
+//
+// Usage:
+//   #define HANDLE_CORE_PATTERN_NODE(Name) /* ... Name ... */
+//   #include "ahfl/compiler/ir/core_pattern_nodes.def"
+//
+// The file #undefs HANDLE_CORE_PATTERN_NODE at the end so the driver macro
+// never leaks past a consumer.
+
+#ifndef HANDLE_CORE_PATTERN_NODE
+#error "core_pattern_nodes.def: #define HANDLE_CORE_PATTERN_NODE(Name) before #include-ing this node list"
+#endif
+
+HANDLE_CORE_PATTERN_NODE(CoreWildcardPat)
+HANDLE_CORE_PATTERN_NODE(CoreLiteralPat)
+HANDLE_CORE_PATTERN_NODE(CoreIntRangePat)
+HANDLE_CORE_PATTERN_NODE(CoreBindingPat)
+HANDLE_CORE_PATTERN_NODE(CoreVariantPat)
+HANDLE_CORE_PATTERN_NODE(CoreTuplePat)
+HANDLE_CORE_PATTERN_NODE(CoreOrPat)
+
+#undef HANDLE_CORE_PATTERN_NODE

@@ -34,6 +34,13 @@ Fixtures:
     with the matching AHFL_SSOT_INJECT_UNHANDLED_* flag. These four families'
     variants are now generated from those .def lists (KR6.13-F), so the negative
     gate covers the whole AHFL-IR node set, not just expressions.
+  * ahfl::ir::core::CoreExprNode / CorePatternNode / CoreStmtNode (RFC 0027
+    P6/P7/P8, KR6.13-P7), each straight from its production .def
+    (core_expr_nodes.def / core_pattern_nodes.def / core_stmt_nodes.def),
+    sentinels SsotUnhandledCoreExpr / SsotUnhandledCorePattern /
+    SsotUnhandledCoreStmt, injected with AHFL_SSOT_INJECT_UNHANDLED_CORE_EXPR /
+    _CORE_PATTERN / _CORE_STMT. These three Core families' variants are now
+    generated from those .def lists, so the negative gate covers both IR layers.
 
 A compiler is picked from $AHFL_CXX, then $CXX, then PATH discovery
 (c++/g++/clang++). The repository include root is added automatically.
@@ -126,6 +133,28 @@ FIXTURES = (
         relative_path="tests/fixtures/ir/ssot/decl_nodes_negative.cpp",
         inject_flag="AHFL_SSOT_INJECT_UNHANDLED_DECL",
         unhandled_type="SsotUnhandledDecl",
+    ),
+    # RFC 0027 P6/P7/P8 (KR6.13-P7): the three Core-IR node families whose
+    # variant is now generated from an X-macro .def list. Each fixture consumes
+    # the PRODUCTION .def, so a node added to a production list without a visitor
+    # handler breaks the fixture build with no second copy of the node list.
+    FixtureCase(
+        label="CoreExprNode",
+        relative_path="tests/fixtures/ir/ssot/core_expr_nodes_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_CORE_EXPR",
+        unhandled_type="SsotUnhandledCoreExpr",
+    ),
+    FixtureCase(
+        label="CorePatternNode",
+        relative_path="tests/fixtures/ir/ssot/core_pattern_nodes_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_CORE_PATTERN",
+        unhandled_type="SsotUnhandledCorePattern",
+    ),
+    FixtureCase(
+        label="CoreStmtNode",
+        relative_path="tests/fixtures/ir/ssot/core_stmt_nodes_negative.cpp",
+        inject_flag="AHFL_SSOT_INJECT_UNHANDLED_CORE_STMT",
+        unhandled_type="SsotUnhandledCoreStmt",
     ),
 )
 

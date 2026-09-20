@@ -248,6 +248,46 @@ template <typename T>
 static_assert(expr_node_index<ahfl::ir::BoolLiteralExpr>() == 0);
 static_assert(expr_node_index<ahfl::ir::QuantifierExpr>() == 19);
 
+// RFC 0027 P6/P7/P8 (KR6.13-P7): the three Core-IR node variants are generated
+// from their production X-macro .def lists. Re-expand each list here and pin it
+// as an exact ordered mirror of the variant the header generated — the same
+// guard the AHFL-IR families have, extended to the Core layer.
+template <typename Tuple> struct tags_variant_of;
+template <typename... Ts> struct tags_variant_of<std::tuple<type_tag<Ts>...>> {
+    using type = std::variant<Ts...>;
+};
+
+#define HANDLE_CORE_EXPR_NODE(Name) type_tag<ahfl::ir::core::Name>{},
+constexpr auto kProdCoreExprTags = std::tuple{
+#include "ahfl/compiler/ir/core_expr_nodes.def"
+};
+#undef HANDLE_CORE_EXPR_NODE
+
+#define HANDLE_CORE_PATTERN_NODE(Name) type_tag<ahfl::ir::core::Name>{},
+constexpr auto kProdCorePatternTags = std::tuple{
+#include "ahfl/compiler/ir/core_pattern_nodes.def"
+};
+#undef HANDLE_CORE_PATTERN_NODE
+
+#define HANDLE_CORE_STMT_NODE(Name) type_tag<ahfl::ir::core::Name>{},
+constexpr auto kProdCoreStmtTags = std::tuple{
+#include "ahfl/compiler/ir/core_stmt_nodes.def"
+};
+#undef HANDLE_CORE_STMT_NODE
+
+static_assert(
+    std::is_same_v<tags_variant_of<std::remove_cvref_t<decltype(kProdCoreExprTags)>>::type,
+                   ahfl::ir::core::CoreExprNode>,
+    "core_expr_nodes.def must stay an exact ordered mirror of CoreExprNode");
+static_assert(
+    std::is_same_v<tags_variant_of<std::remove_cvref_t<decltype(kProdCorePatternTags)>>::type,
+                   ahfl::ir::core::CorePatternNode>,
+    "core_pattern_nodes.def must stay an exact ordered mirror of CorePatternNode");
+static_assert(
+    std::is_same_v<tags_variant_of<std::remove_cvref_t<decltype(kProdCoreStmtTags)>>::type,
+                   ahfl::ir::core::CoreStmtNode>,
+    "core_stmt_nodes.def must stay an exact ordered mirror of CoreStmtNode");
+
 } // namespace
 
 TEST_CASE("ir node variants: pinned cardinalities") {

@@ -1738,19 +1738,18 @@ class WorkflowRootPolicy {
 };
 
 /// Human-readable source expression kind for unsupported-node diagnostics.
+/// RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per ExprNode alternative,
+/// generated from expr_nodes.def — the name is the alternative's own type name,
+/// so the output can never silently drift from the node set and a NEW node is a
+/// COMPILE ERROR here until it is classified (CLAUDE.md Principle 5).
 [[nodiscard]] std::string expr_kind_name(const ExprNode &node) {
-    return std::visit(Overloaded{
-                          [](const MethodCallExpr &) { return std::string("MethodCallExpr"); },
-                          [](const LambdaExpr &) { return std::string("LambdaExpr"); },
-                          [](const MemberAccessExpr &) { return std::string("MemberAccessExpr"); },
-                          [](const IndexAccessExpr &) { return std::string("IndexAccessExpr"); },
-                          [](const MatchExpr &) { return std::string("MatchExpr"); },
-                          [](const UnwrapExpr &) { return std::string("UnwrapExpr"); },
-                          [](const QuantifierExpr &) { return std::string("QuantifierExpr"); },
-                          [](const CallExpr &) { return std::string("CallExpr"); },
-                          [](const auto &) { return std::string("Expr"); },
-                      },
-                      node);
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) [](const Name &) { return std::string(#Name); },
+    return std::visit(
+        Overloaded{
+#include "ahfl/compiler/ir/expr_nodes.def"
+        },
+        node);
+#undef HANDLE_EXPR_NODE
 }
 
 /// Reusable expression / pattern / match lowering machinery, parameterized on a
@@ -2385,69 +2384,91 @@ template <class RootPolicy> class ExprLowerer {
     // An or-alternative reusing a binding NAME must intern to the SAME id (index
     // equality == structural equality); a divergence is fail-closed.
     void collect_arm_bindings(const ir::MatchPattern &pattern, ArmBindings &out) {
-        std::visit(Overloaded{
-                       [&](const ir::BindingPattern &b) {
-                           // By (3)-3b, a bare identifier Sema resolved to a unit
-                           // variant is already an ir::VariantPattern here, so a
-                           // BindingPattern is always a genuine binding. Its type
-                           // is the pattern node's own matched type.
-                           if (!b.name.empty()) {
-                               const CoreValueTypeId vt =
-                                   intern_value_type(pattern.matched_type_ref, pattern.source_range);
-                               if (const auto existing = out.find(b.name)) {
-                                   // Or-alternative reusing the name: the interned
-                                   // type must be IDENTICAL across alternatives.
-                                   if (!(out.value_types[*existing] == vt)) {
-                                       error(diag::kUnresolvedType,
-                                             "match binding '" + b.name +
-                                                 "' has inconsistent value types across or-pattern "
-                                                 "alternatives",
-                                             pattern.source_range);
-                                   }
-                               } else {
-                                   static_cast<void>(out.add(b.name, fresh_value(vt), vt));
-                               }
-                           }
-                           if (b.nested) {
-                               // `x @ nested`: the outer name binds the whole
-                               // value; the nested pattern carries its own type.
-                               collect_arm_bindings(*b.nested, out);
-                           }
-                       },
-                       [&](const ir::VariantPattern &v) {
-                           // Each sub-pattern is its own MatchPattern node carrying
-                           // its own matched_type_ref (the instantiated payload
-                           // type), so no slot-type propagation is needed here.
-                           for (const auto &sub : v.subpatterns) {
-                               if (sub) {
-                                   collect_arm_bindings(*sub, out);
-                               }
-                           }
-                           for (const auto &f : v.fields) {
-                               if (f.pattern) {
-                                   collect_arm_bindings(*f.pattern, out);
-                               }
-                           }
-                       },
-                       [&](const ir::TuplePattern &t) {
-                           for (const auto &e : t.elements) {
-                               if (e) {
-                                   collect_arm_bindings(*e, out);
-                               }
-                           }
-                       },
-                       [&](const ir::OrPattern &o) {
-                           // Alternatives share bindings BY NAME (find/add dedups);
-                           // the identical-type check runs per binding above.
-                           for (const auto &alt : o.branches) {
-                               if (alt) {
-                                   collect_arm_bindings(*alt, out);
-                               }
-                           }
-                       },
-                       [&](const auto &) {}, // literal / int-range / wildcard bind nothing
-                   },
-                   pattern.node);
+        // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per MatchPatternNode
+        // alternative, generated from pattern_nodes.def. Literal / int-range /
+        // wildcard patterns bind nothing (COLLECT_BINDINGS_LEAF); the rest route
+        // to a real handler. No generic catch-all: a new pattern alternative is a
+        // COMPILE ERROR here until classified (CLAUDE.md Principle 5).
+#define COLLECT_BINDINGS_LEAF(Name) [](const Name &) {},
+#define COLLECT_BINDINGS_BindingPattern(Name)                                                         \
+    [&](const ir::BindingPattern &b) {                                                             \
+        /* By (3)-3b, a bare identifier Sema resolved to a unit variant is already an */           \
+        /* ir::VariantPattern here, so a BindingPattern is always a genuine binding. Its */        \
+        /* type is the pattern node's own matched type. */                                         \
+        if (!b.name.empty()) {                                                                     \
+            const CoreValueTypeId vt =                                                             \
+                intern_value_type(pattern.matched_type_ref, pattern.source_range);                 \
+            if (const auto existing = out.find(b.name)) {                                          \
+                /* Or-alternative reusing the name: the interned type must be IDENTICAL across */  \
+                /* alternatives. */                                                                \
+                if (!(out.value_types[*existing] == vt)) {                                         \
+                    error(diag::kUnresolvedType,                                                   \
+                          "match binding '" + b.name +                                             \
+                              "' has inconsistent value types across or-pattern "                  \
+                              "alternatives",                                                      \
+                          pattern.source_range);                                                   \
+                }                                                                                  \
+            } else {                                                                               \
+                static_cast<void>(out.add(b.name, fresh_value(vt), vt));                           \
+            }                                                                                      \
+        }                                                                                          \
+        if (b.nested) {                                                                            \
+            /* `x @ nested`: the outer name binds the whole value; the nested pattern carries */   \
+            /* its own type. */                                                                    \
+            collect_arm_bindings(*b.nested, out);                                                  \
+        }                                                                                          \
+    },
+#define COLLECT_BINDINGS_VariantPattern(Name)                                                         \
+    [&](const ir::VariantPattern &v) {                                                             \
+        /* Each sub-pattern is its own MatchPattern node carrying its own matched_type_ref (the */ \
+        /* instantiated payload type), so no slot-type propagation is needed here. */              \
+        for (const auto &sub : v.subpatterns) {                                                    \
+            if (sub) {                                                                             \
+                collect_arm_bindings(*sub, out);                                                   \
+            }                                                                                      \
+        }                                                                                          \
+        for (const auto &f : v.fields) {                                                           \
+            if (f.pattern) {                                                                       \
+                collect_arm_bindings(*f.pattern, out);                                             \
+            }                                                                                      \
+        }                                                                                          \
+    },
+#define COLLECT_BINDINGS_TuplePattern(Name)                                                           \
+    [&](const ir::TuplePattern &t) {                                                               \
+        for (const auto &e : t.elements) {                                                         \
+            if (e) {                                                                               \
+                collect_arm_bindings(*e, out);                                                     \
+            }                                                                                      \
+        }                                                                                          \
+    },
+#define COLLECT_BINDINGS_OrPattern(Name)                                                              \
+    [&](const ir::OrPattern &o) {                                                                  \
+        /* Alternatives share bindings BY NAME (find/add dedups); the identical-type check runs */ \
+        /* per binding above. */                                                                   \
+        for (const auto &alt : o.branches) {                                                       \
+            if (alt) {                                                                             \
+                collect_arm_bindings(*alt, out);                                                   \
+            }                                                                                      \
+        }                                                                                          \
+    },
+#define COLLECT_BINDINGS_LiteralPattern(Name) COLLECT_BINDINGS_LEAF(Name)
+#define COLLECT_BINDINGS_IntRangePattern(Name) COLLECT_BINDINGS_LEAF(Name)
+#define COLLECT_BINDINGS_WildcardPattern(Name) COLLECT_BINDINGS_LEAF(Name)
+#define HANDLE_PATTERN_NODE(Name) COLLECT_BINDINGS_##Name(Name)
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/pattern_nodes.def"
+            },
+            pattern.node);
+#undef HANDLE_PATTERN_NODE
+#undef COLLECT_BINDINGS_LEAF
+#undef COLLECT_BINDINGS_LiteralPattern
+#undef COLLECT_BINDINGS_IntRangePattern
+#undef COLLECT_BINDINGS_WildcardPattern
+#undef COLLECT_BINDINGS_BindingPattern
+#undef COLLECT_BINDINGS_VariantPattern
+#undef COLLECT_BINDINGS_TuplePattern
+#undef COLLECT_BINDINGS_OrPattern
     }
 
     // Lower one AHFL-IR MatchPattern into the flow's CorePattern arena, returning
@@ -2931,65 +2952,116 @@ template <class RootPolicy> class ExprLowerer {
     }
 
     // --- capability-effect detection over an arbitrary subtree ---
+    //
+    // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per ExprNode alternative,
+    // generated from expr_nodes.def, so a NEW node is a COMPILE ERROR here until
+    // it is classified as effect-carrier or leaf — never a silent `false` that
+    // could hide a capability call (CLAUDE.md Principle 5). The leaf set is the
+    // nodes that can never contain a capability invocation: literals, paths,
+    // qualified values, lambda / quantifier bodies (not yet lowered at all; they
+    // fail closed as unsupported shapes upstream), unit / match.
     [[nodiscard]] bool expr_has_capability_call(const ExprRef &expr) const {
         if (expr.ptr == nullptr) {
             return false;
         }
+#define CAPABILITY_LEAF(Name) [](const Name &) { return false; },
+#define CAPABILITY_CallExpr(Name)                                                                  \
+    [&](const Name &call) {                                                                        \
+        if (call.callee_ref.kind == SymbolRefKind::Capability) {                                   \
+            return true;                                                                           \
+        }                                                                                          \
+        for (const ExprRef &arg : call.arguments) {                                                \
+            if (expr_has_capability_call(arg)) {                                                   \
+                return true;                                                                       \
+            }                                                                                      \
+        }                                                                                          \
+        return false;                                                                              \
+    },
+#define CAPABILITY_MethodCallExpr(Name)                                                            \
+    [&](const Name &e) {                                                                           \
+        if (expr_has_capability_call(e.receiver)) {                                                \
+            return true;                                                                           \
+        }                                                                                          \
+        for (const ExprRef &arg : e.arguments) {                                                   \
+            if (expr_has_capability_call(arg)) {                                                   \
+                return true;                                                                       \
+            }                                                                                      \
+        }                                                                                          \
+        return false;                                                                              \
+    },
+#define CAPABILITY_UnaryExpr(Name) [&](const Name &e) { return expr_has_capability_call(e.operand); },
+#define CAPABILITY_BinaryExpr(Name)                                                                \
+    [&](const Name &e) {                                                                           \
+        return expr_has_capability_call(e.lhs) || expr_has_capability_call(e.rhs);                 \
+    },
+#define CAPABILITY_MemberAccessExpr(Name)                                                          \
+    [&](const Name &e) { return expr_has_capability_call(e.base); },
+#define CAPABILITY_IndexAccessExpr(Name)                                                           \
+    [&](const Name &e) {                                                                           \
+        return expr_has_capability_call(e.base) || expr_has_capability_call(e.index);              \
+    },
+#define CAPABILITY_UnwrapExpr(Name) [&](const Name &e) { return expr_has_capability_call(e.operand); },
+#define CAPABILITY_StructLiteralExpr(Name)                                                         \
+    [&](const Name &e) {                                                                           \
+        for (const StructFieldInit &f : e.fields) {                                                \
+            if (expr_has_capability_call(f.value)) {                                               \
+                return true;                                                                       \
+            }                                                                                      \
+        }                                                                                          \
+        return false;                                                                              \
+    },
+#define CAPABILITY_MatchExpr(Name)                                                                 \
+    [&](const Name &e) {                                                                           \
+        if (expr_has_capability_call(e.scrutinee)) {                                               \
+            return true;                                                                           \
+        }                                                                                          \
+        for (const MatchArmExpr &arm : e.arms) {                                                   \
+            if (expr_has_capability_call(arm.body)) {                                              \
+                return true;                                                                       \
+            }                                                                                      \
+        }                                                                                          \
+        return false;                                                                              \
+    },
+        // Leaves: no capability call can hide in these at this layer.
+#define CAPABILITY_BoolLiteralExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_IntegerLiteralExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_FloatLiteralExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_DecimalLiteralExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_StringLiteralExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_DurationLiteralExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_PathExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_QualifiedValueExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_LambdaExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_UnitLiteralExpr(Name) CAPABILITY_LEAF(Name)
+#define CAPABILITY_QuantifierExpr(Name) CAPABILITY_LEAF(Name)
+#define HANDLE_EXPR_NODE(Name, Wire, Edges) CAPABILITY_##Name(Name)
         return std::visit(
             Overloaded{
-                [&](const CallExpr &call) {
-                    if (call.callee_ref.kind == SymbolRefKind::Capability) {
-                        return true;
-                    }
-                    for (const ExprRef &arg : call.arguments) {
-                        if (expr_has_capability_call(arg)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                },
-                [&](const UnaryExpr &e) { return expr_has_capability_call(e.operand); },
-                [&](const BinaryExpr &e) {
-                    return expr_has_capability_call(e.lhs) || expr_has_capability_call(e.rhs);
-                },
-                [&](const MemberAccessExpr &e) { return expr_has_capability_call(e.base); },
-                [&](const IndexAccessExpr &e) {
-                    return expr_has_capability_call(e.base) || expr_has_capability_call(e.index);
-                },
-                [&](const UnwrapExpr &e) { return expr_has_capability_call(e.operand); },
-                [&](const StructLiteralExpr &e) {
-                    for (const StructFieldInit &f : e.fields) {
-                        if (expr_has_capability_call(f.value)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                },
-                [&](const MethodCallExpr &e) {
-                    if (expr_has_capability_call(e.receiver)) {
-                        return true;
-                    }
-                    for (const ExprRef &arg : e.arguments) {
-                        if (expr_has_capability_call(arg)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                },
-                [&](const MatchExpr &e) {
-                    if (expr_has_capability_call(e.scrutinee)) {
-                        return true;
-                    }
-                    for (const MatchArmExpr &arm : e.arms) {
-                        if (expr_has_capability_call(arm.body)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                },
-                [](const auto &) { return false; },
+#include "ahfl/compiler/ir/expr_nodes.def"
             },
             expr.ptr->node);
+#undef HANDLE_EXPR_NODE
+#undef CAPABILITY_LEAF
+#undef CAPABILITY_CallExpr
+#undef CAPABILITY_MethodCallExpr
+#undef CAPABILITY_UnaryExpr
+#undef CAPABILITY_BinaryExpr
+#undef CAPABILITY_MemberAccessExpr
+#undef CAPABILITY_IndexAccessExpr
+#undef CAPABILITY_UnwrapExpr
+#undef CAPABILITY_StructLiteralExpr
+#undef CAPABILITY_MatchExpr
+#undef CAPABILITY_BoolLiteralExpr
+#undef CAPABILITY_IntegerLiteralExpr
+#undef CAPABILITY_FloatLiteralExpr
+#undef CAPABILITY_DecimalLiteralExpr
+#undef CAPABILITY_StringLiteralExpr
+#undef CAPABILITY_DurationLiteralExpr
+#undef CAPABILITY_PathExpr
+#undef CAPABILITY_QualifiedValueExpr
+#undef CAPABILITY_LambdaExpr
+#undef CAPABILITY_UnitLiteralExpr
+#undef CAPABILITY_QuantifierExpr
     }
 
   private:
@@ -3255,33 +3327,71 @@ class FlowLowerer {
     }
 
     void lower_statement(const Statement &stmt, CoreRegion &region) {
-        std::visit(Overloaded{
-                       [&](const LetStatement &s) { lower_let(s, region); },
-                       [&](const AssignStatement &s) { lower_assign(s, stmt.source_range, region); },
-                       [&](const ExprStatement &s) {
-                           // An expression statement is evaluated for its effect;
-                           // the produced value id (if any) is discarded.
-                           static_cast<void>(ex_.lower_value(s.expr, region));
-                       },
-                       [&](const IfStatement &s) { lower_if(s, stmt.source_range, region); },
-                       [&](const IfLetStatement &s) { lower_if_let(s, stmt.source_range, region); },
-                       [&](const GotoStatement &s) { lower_goto(s, stmt.source_range, region); },
-                       [&](const ReturnStatement &s) { lower_return(s, stmt.source_range, region); },
-                       // Statements without an execution-layer form in this
-                       // slice (if-let / assert / requires / unwrap /
-                       // unreachable) are DEFERRED. Because dropping them would
-                       // change execution behaviour (e.g. `assert(false)` must
-                       // not silently become a no-op) and no Core-IR verifier
-                       // exists yet, this is an ERROR that marks the program
-                       // non-executable — never a silent Warning drop.
-                       [&](const auto &) {
-                           ex_.error(diag::kUnloweredStatement,
-                                     "statement kind is not yet lowered to Core-IR; the "
-                                     "program cannot be executed until this slice lands",
-                                     stmt.source_range);
-                       },
-                   },
-                   stmt.node);
+        // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per StatementNode
+        // alternative, generated from stmt_nodes.def. Statements without an
+        // execution-layer form in this slice (assert / requires / unwrap /
+        // unreachable) name LOWER_STMT_DEFERRED: because dropping them would
+        // change execution behaviour (e.g. `assert(false)` must not silently
+        // become a no-op), that is an ERROR marking the program non-executable —
+        // never a silent Warning drop. No generic catch-all: a new statement
+        // alternative is a COMPILE ERROR here until it is routed.
+#define LOWER_STMT_DEFERRED(Name)                                                                  \
+    [&](const Name &) {                                                                            \
+        ex_.error(diag::kUnloweredStatement,                                                       \
+                  "statement kind is not yet lowered to Core-IR; the "                             \
+                  "program cannot be executed until this slice lands",                             \
+                  stmt.source_range);                                                              \
+    },
+#define LOWER_STMT_Let(Name) [&](const Name &s) { lower_let(s, region); },
+#define LOWER_STMT_Assign(Name)                                                                    \
+    [&](const Name &s) { lower_assign(s, stmt.source_range, region); },
+#define LOWER_STMT_Expr(Name)                                                                      \
+    [&](const Name &s) {                                                                           \
+        /* An expression statement is evaluated for its effect; the produced value id (if any) */  \
+        /* is discarded. */                                                                        \
+        static_cast<void>(ex_.lower_value(s.expr, region));                                        \
+    },
+#define LOWER_STMT_If(Name) [&](const Name &s) { lower_if(s, stmt.source_range, region); },
+#define LOWER_STMT_IfLet(Name) [&](const Name &s) { lower_if_let(s, stmt.source_range, region); },
+#define LOWER_STMT_Goto(Name) [&](const Name &s) { lower_goto(s, stmt.source_range, region); },
+#define LOWER_STMT_Return(Name) [&](const Name &s) { lower_return(s, stmt.source_range, region); },
+#define LOWER_STMT_LetStatement(Name) LOWER_STMT_Let(Name)
+#define LOWER_STMT_AssignStatement(Name) LOWER_STMT_Assign(Name)
+#define LOWER_STMT_ExprStatement(Name) LOWER_STMT_Expr(Name)
+#define LOWER_STMT_IfStatement(Name) LOWER_STMT_If(Name)
+#define LOWER_STMT_IfLetStatement(Name) LOWER_STMT_IfLet(Name)
+#define LOWER_STMT_GotoStatement(Name) LOWER_STMT_Goto(Name)
+#define LOWER_STMT_ReturnStatement(Name) LOWER_STMT_Return(Name)
+#define LOWER_STMT_AssertStatement(Name) LOWER_STMT_DEFERRED(Name)
+#define LOWER_STMT_UnwrapStatement(Name) LOWER_STMT_DEFERRED(Name)
+#define LOWER_STMT_RequiresStatement(Name) LOWER_STMT_DEFERRED(Name)
+#define LOWER_STMT_UnreachableStatement(Name) LOWER_STMT_DEFERRED(Name)
+#define HANDLE_STMT_NODE(Name) LOWER_STMT_##Name(Name)
+        std::visit(
+            Overloaded{
+#include "ahfl/compiler/ir/stmt_nodes.def"
+            },
+            stmt.node);
+#undef HANDLE_STMT_NODE
+#undef LOWER_STMT_Let
+#undef LOWER_STMT_Assign
+#undef LOWER_STMT_Expr
+#undef LOWER_STMT_If
+#undef LOWER_STMT_IfLet
+#undef LOWER_STMT_Goto
+#undef LOWER_STMT_Return
+#undef LOWER_STMT_LetStatement
+#undef LOWER_STMT_AssignStatement
+#undef LOWER_STMT_ExprStatement
+#undef LOWER_STMT_IfStatement
+#undef LOWER_STMT_IfLetStatement
+#undef LOWER_STMT_GotoStatement
+#undef LOWER_STMT_ReturnStatement
+#undef LOWER_STMT_AssertStatement
+#undef LOWER_STMT_UnwrapStatement
+#undef LOWER_STMT_RequiresStatement
+#undef LOWER_STMT_UnreachableStatement
+#undef LOWER_STMT_DEFERRED
     }
 
     void lower_let(const LetStatement &s, CoreRegion &region) {
