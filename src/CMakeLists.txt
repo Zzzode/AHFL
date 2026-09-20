@@ -56,6 +56,10 @@ target_link_libraries(ahfl_compiler_core
         ahfl_compiler_backends
         ahfl_base_json
         ahfl_compiler_passes
+        # RFC 0027 P3 (KR6.11-S4): the feature-flagged CLI route evaluates the
+        # frontend through the query engine. The engine is part of the compiler
+        # core, so `ahfl_compiler` consumers see it without a second link line.
+        ahfl_compiler_query
 )
 
 add_library(ahfl_runtime_bundle INTERFACE)

@@ -3,6 +3,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/verify.hpp"
+#include "ahfl/compiler/query/frontend_queries.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
@@ -3684,6 +3685,83 @@ ExitCode CliDriver::format_source_file() {
     return ExitCode::Success;
 }
 
+// RFC 0027 P3 (KR6.11-S4): the opt-in CLI route through the query engine.
+//
+// The driver's `run_analysis<InputT>` is a single template instantiated for two
+// input shapes, `ast::Program` (single-file / CWD-discovered) and `SourceGraph`
+// (package / workspace). The query engine can only carry the single-file shape:
+// a `SourceGraph` is not `equality_comparable` (its `SourceUnit` holds an
+// `Owned<ast::Program>`), so it cannot be an engine input, and a SourceUnit's AST
+// is deliberately NOT a function of its text alone (`parse_project` injects the
+// std prelude as a post-parse import, resolves module roots, applies overlays and
+// resolves filesystem import edges). Routing only the Program instantiation would
+// make one CLI command behave differently depending on whether it arrived via the
+// file path or the package path — a half-cutover. Until `parse_project` is itself
+// expressed as a query graph (a later slice), the engine route is therefore
+// OPT-IN and single-file only: it is exercised exhaustively by
+// ahfl.query.cli_engine_equiv, while the default path (and every golden in the
+// fleet) stays on the direct pipeline, so their bytes are unchanged by
+// construction.
+[[nodiscard]] bool query_engine_route_requested() {
+    const char *flag = std::getenv("AHFL_QUERY_ENGINE");
+    return flag != nullptr && flag[0] != '\0' && std::string_view{flag} != "0";
+}
+
+// Whether to emit the non-vacuity trace the CLI equivalence gate reads. Kept
+// separate from the route flag so a normal engine-route run stays quiet.
+[[nodiscard]] bool query_engine_trace_requested() {
+    const char *flag = std::getenv("AHFL_QUERY_ENGINE_TRACE");
+    return flag != nullptr && flag[0] != '\0' && std::string_view{flag} != "0";
+}
+
+// The two stage results the rest of run_analysis consumes. `typecheck` is null
+// exactly when resolve errored (the pipeline stops before typechecking).
+struct QueryEngineStages {
+    const ahfl::ResolveResult *resolve = nullptr;
+    const ahfl::TypeCheckResult *typecheck = nullptr;
+};
+
+// Evaluate parse -> resolve -> typecheck for a single-file unit through the query
+// engine and hand back borrowed stage results owned by `queries` (which the
+// caller must keep alive). Returns nullopt when the engine cannot serve the
+// input at all (a cycle, or a parse that disagrees with the direct pipeline), so
+// the caller falls back rather than producing a wrong result.
+[[nodiscard]] std::optional<QueryEngineStages>
+run_query_engine_stages(ahfl::query::FrontendQueries &queries, const ahfl::SourceFile &source) {
+    const ahfl::query::FileId file{0};
+    const ahfl::query::ModuleId module{0};
+    // parse_file(path) is exactly parse_text(display_path(path), bytes); the
+    // SourceFile already carries both, so the engine input reproduces it.
+    queries.set_source_text(file, source.display_name, source.content);
+
+    const auto parsed = queries.parse(file);
+    if (!parsed.has_value() || parsed->has_errors) {
+        return std::nullopt;
+    }
+    const auto resolved = queries.resolve(module);
+    if (!resolved.has_value()) {
+        return std::nullopt;
+    }
+    const ahfl::ResolveResult *resolve_ptr = queries.resolve_result(module);
+    if (resolve_ptr == nullptr) {
+        return std::nullopt;
+    }
+    if (resolve_ptr->has_errors()) {
+        // Resolve ran and errored: the driver must render those diagnostics and
+        // stop, exactly as the direct pipeline does. Typecheck never ran.
+        return QueryEngineStages{resolve_ptr, nullptr};
+    }
+    const auto checked = queries.typecheck(module);
+    if (!checked.has_value()) {
+        return std::nullopt;
+    }
+    const ahfl::TypeCheckResult *typecheck_ptr = queries.typecheck_result(module);
+    if (typecheck_ptr == nullptr) {
+        return std::nullopt;
+    }
+    return QueryEngineStages{resolve_ptr, typecheck_ptr};
+}
+
 template <typename InputT>
 ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_file) {
     const auto *package_metadata_ptr =
@@ -3691,25 +3769,69 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
     const auto *capability_mock_set_ptr =
         capability_mock_set_.has_value() ? &*capability_mock_set_ : nullptr;
 
-    const ahfl::Resolver resolver;
-    auto resolve_result = resolver.resolve(input);
-    render_diagnostics(*diag_consumer_, resolve_result, source_file);
-    if (resolve_result.has_errors()) {
+    // The engine route borrows its stage results from a FrontendQueries that must
+    // outlive every use below; the direct route owns them outright. Exactly one
+    // of the two is populated, and the tail of this function is identical either
+    // way (the two references bound after the stage checks).
+    std::optional<ahfl::query::FrontendQueries> engine_holder;
+    ahfl::ResolveResult owned_resolve;
+    ahfl::TypeCheckResult owned_typecheck;
+    const ahfl::ResolveResult *resolve_ptr = nullptr;
+    const ahfl::TypeCheckResult *typecheck_ptr = nullptr;
+
+    if constexpr (std::is_same_v<InputT, ahfl::ast::Program>) {
+        if (query_engine_route_requested() && source_file.has_value()) {
+            engine_holder.emplace();
+            if (const auto stages = run_query_engine_stages(*engine_holder, source_file->get());
+                stages.has_value()) {
+                resolve_ptr = stages->resolve;
+                typecheck_ptr = stages->typecheck;
+            } else {
+                engine_holder.reset(); // engine could not serve: use the direct pipeline
+            }
+        }
+    }
+
+    // Non-vacuity trace for the CLI equivalence gate: exactly one route line per
+    // analysis, emitted only when this function was reached at all (a parse error
+    // returns before here, so the absence of any line is itself the signal that
+    // analysis never ran). stderr only — stdout (the golden artifact) is untouched.
+    if (query_engine_trace_requested() && source_file.has_value()) {
+        std::cerr << "query-engine-route: " << (resolve_ptr != nullptr ? "engine" : "direct")
+                  << '\n';
+    }
+
+    if (resolve_ptr == nullptr) {
+        const ahfl::Resolver resolver;
+        owned_resolve = resolver.resolve(input);
+        resolve_ptr = &owned_resolve;
+    }
+    render_diagnostics(*diag_consumer_, *resolve_ptr, source_file);
+    if (resolve_ptr->has_errors()) {
         return ExitCode::CompileError;
     }
 
-    const ahfl::TypeChecker type_checker;
-    auto type_check_result = type_checker.check(input, resolve_result);
-    render_diagnostics(*diag_consumer_, type_check_result, source_file);
+    if (typecheck_ptr == nullptr) {
+        const ahfl::TypeChecker type_checker;
+        owned_typecheck = type_checker.check(input, *resolve_ptr);
+        typecheck_ptr = &owned_typecheck;
+    }
+    render_diagnostics(*diag_consumer_, *typecheck_ptr, source_file);
 
     if (is_action_enabled(options_, CommandKind::DumpTypes)) {
         ahfl::dump_type_environment(
-            type_check_result.environment, resolve_result.symbol_table, std::cout);
+            typecheck_ptr->environment, resolve_ptr->symbol_table, std::cout);
     }
 
-    if (type_check_result.has_errors()) {
+    if (typecheck_ptr->has_errors()) {
         return ExitCode::CompileError;
     }
+
+    // The stage checks above are the only part that varies by route; bind the
+    // references the (long, route-independent) analysis tail consumes. All uses
+    // below are source-compatible with the direct-pipeline body.
+    const ahfl::ResolveResult &resolve_result = *resolve_ptr;
+    const ahfl::TypeCheckResult &type_check_result = *typecheck_ptr;
 
     const ahfl::Validator validator;
     auto validation_result = validator.validate(input, resolve_result, type_check_result);

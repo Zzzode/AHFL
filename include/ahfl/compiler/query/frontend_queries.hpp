@@ -1,33 +1,57 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <expected>
+#include <optional>
+#include <ostream>
 #include <string>
 
 #include "ahfl/base/query/query_engine.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
 
-// RFC 0027 P2 (KR6.11): parse(file) as a derived query over a source_text(file)
-// input. This is the first frontend stage moved onto the QueryEngine graph; it
-// is deliberately the safest one (file-scoped, const, trivially comparable
-// result identity) so that the query-vs-direct equivalence methodology is
-// established end to end before resolve/typecheck (P3) follow the same shape.
+// RFC 0027 P2/P3 (KR6.11): the frontend as a query graph over the QueryEngine.
 //
-// Two families are registered:
+// P2 moved `parse(file)` onto the graph — the safest stage (file-scoped, const,
+// trivially comparable identity) so the query-vs-direct equivalence methodology
+// was established end to end before the semantic stages followed.
 //
-//   source_text(FileId) -> SourceText     (input, set by the driver / editor)
-//   parse(FileId)       -> ParseSnapshot  (derived, compute = Frontend::parse_text)
+// P3 (this slice) adds the module-level semantic stages, preserving the RFC's
+// graded granularity (`resolve(module)` / `typecheck(module)` / `type_of(expr)`):
 //
-// Identity is index-based (CLAUDE.md Principle 2): a FileId is a numeric slot
-// index, never a path string. Display names exist only inside SourceText so the
-// frontend can label its diagnostics.
+//   source_text(FileId)  -> SourceText        (input, set by the driver / editor)
+//   parse(FileId)        -> ParseSnapshot     (derived)
+//   resolve(ModuleId)    -> ResolveSnapshot   (derived; reads parse, caches ResolveResult)
+//   typecheck(ModuleId)  -> TypecheckSnapshot (derived; reads resolve, caches TypeCheckResult)
+//   type_of(ModuleId, node_id, source_id)     (derived VIEW over the typecheck memo)
+//
+// Identity is index-based (CLAUDE.md Principle 2): a FileId / ModuleId is a
+// numeric slot index, never a path string. In the file-scoped frontend graph one
+// analysis unit is one file, so ModuleId slot i and FileId slot i name the same
+// unit — they are distinct phantom-typed keys precisely so the two granularities
+// in the RFC's diagram (file-level parse, module-level resolve) cannot be
+// confused at a call site.
+//
+// The semantic stages are *whole-unit* queries, matching the resolver's and type
+// checker's actual API (`resolve(const ast::Program&)` / `check(program, resolve)`):
+// the RFC's `resolve(module)` names the analysis unit, not a per-module split of
+// a graph-wide resolution. A graph-wide `SourceGraph` unit is a separate input
+// shape (see `FrontendQueries` docs) and is deliberately not synthesized here.
 
 namespace ahfl::query {
 
 // Phantom tag so an input index cannot be passed where a file index is expected.
 struct FileTag {};
 using FileId = QueryKey<FileTag>;
+
+// Phantom tag for the module-level (analysis-unit) granularity of resolve /
+// typecheck. Distinct from FileTag so a file index cannot be passed where a
+// module index is expected.
+struct ModuleTag {};
+using ModuleId = QueryKey<ModuleTag>;
 
 // Atomic editor/driver fact: the text of one file plus its display name.
 // Equality is what makes an equal-text write a no-op (no revision bump).
@@ -67,10 +91,91 @@ struct ParseSnapshot {
 // guard tautological and blind to exactly the bugs it exists to find.
 [[nodiscard]] ParseSnapshot snapshot_parse_result(const ParseResult &result);
 
-// The frontend query graph. Owns the QueryEngine, the frontend, and the parse
-// results (including each Owned<ast::Program>). Single-threaded, mirroring
-// QueryEngine's contract: register/set before evaluating, and do not call
-// set_source_text from inside a compute function.
+// Value identity of a resolve: the canonical symbol-table outline, the
+// canonical diagnostic JSON, the error flag, and whether the stage actually ran.
+// The `ran` flag is part of the identity on purpose — the CLI pipeline
+// short-circuits (a parse error means resolve never runs), and "the stage was
+// skipped" must be distinguishable from "the stage ran and produced no
+// diagnostics", or the query and the direct pipeline could disagree on when a
+// stage executed while still agreeing on the bytes.
+struct ResolveSnapshot {
+    std::string symbols_outline;
+    std::string diagnostics_json;
+    bool has_errors = false;
+    bool ran = false;
+
+    [[nodiscard]] friend bool operator==(const ResolveSnapshot &,
+                                         const ResolveSnapshot &) noexcept = default;
+};
+
+// Value identity of a typecheck: the canonical TypedProgram projection (the
+// existing `serialize_typed_program_json` — one SSOT, no second typed-tree
+// spelling), the canonical diagnostic JSON, the error flag, and the run flag
+// (false when parse or resolve short-circuited the stage).
+struct TypecheckSnapshot {
+    std::string typed_program_json;
+    std::string diagnostics_json;
+    bool has_errors = false;
+    bool ran = false;
+
+    [[nodiscard]] friend bool operator==(const TypecheckSnapshot &,
+                                         const TypecheckSnapshot &) noexcept = default;
+};
+
+// Canonical snapshots, mirroring snapshot_parse_result: the query bodies route
+// through these (and only these). The equivalence guard re-derives the same
+// projections independently so a regression inside these definitions is caught
+// rather than reproduced; do not route the guard through them.
+[[nodiscard]] ResolveSnapshot snapshot_resolve_result(const ResolveResult &result, bool ran);
+[[nodiscard]] TypecheckSnapshot snapshot_typecheck_result(const TypeCheckResult &result, bool ran);
+
+// Canonical textual projection of a ResolveResult: symbols, references, imports,
+// public aliases and reachability, each in its store's order. This is the
+// resolve stage's identity, and it must cover the symbol table — not just the
+// diagnostics. Two resolve runs of *different* ASTs can produce identical
+// diagnostics while carrying different symbols; keying the memo on the
+// diagnostics alone would then let a downstream typecheck reuse a stale typed
+// program. Serializing the whole result makes the memo identity the stage
+// result, exactly as the parse snapshot's outline makes the memo identity the
+// AST.
+void dump_resolve_outline(const ResolveResult &result, std::ostream &out);
+
+// Derived view of one expression's type. `found` is false when the typed program
+// carries no record for the requested AST node id (e.g. the node is not an
+// expression, or the stage chain short-circuited); `type` is then null.
+//
+// This view is a thin read over the *memoized* typecheck result: it does not
+// register a family of its own, because a per-expression query would need a
+// (module, node_id) key registry whose only purpose would be to re-read a table
+// the typecheck memo already holds. The brief's `type_of(module, node_id,
+// source_id)` therefore resolves to: bring the typecheck memo up to date, then
+// look the node up through `TypedProgram::find_expr` (the existing reverse
+// index). Repeated reads are memo hits at the typecheck slot; no per-expression
+// recompute is promised (RFC 0027 P3). The type pointer is interned through
+// TypeContext, so its identity is stable and the view is cheap to compare.
+struct TypeOfResult {
+    TypePtr type = nullptr;
+    bool found = false;
+
+    [[nodiscard]] friend bool operator==(const TypeOfResult &,
+                                         const TypeOfResult &) noexcept = default;
+};
+
+// The frontend query graph. Owns the QueryEngine, the frontend, and the stage
+// results (parse results including each Owned<ast::Program>, plus the resolve
+// and typecheck results). Single-threaded, mirroring QueryEngine's contract:
+// register/set before evaluating, and do not call set_source_text from inside a
+// compute function.
+//
+// Analysis-unit shape. `parse` is file-level and `resolve` / `typecheck` are
+// module-level, matching the RFC's graded granularity. This graph models the
+// single-analysis-unit shape the CLI's file path uses (`run_analysis<ast::Program>`):
+// one unit, one file, so ModuleId slot i names the same unit as FileId slot i.
+// The CLI's package path resolves a whole `SourceGraph` whose units are produced
+// by `parse_project` (prelude injection, module-root discovery, overlays, and
+// filesystem import-edge resolution) — that input shape is a different graph
+// input and is deliberately not synthesized here; see
+// docs/design/query-frontend-p3-migration.zh.md (§3).
 class FrontendQueries {
   public:
     explicit FrontendQueries(FrontendOptions options = {});
@@ -111,6 +216,43 @@ class FrontendQueries {
     // per-file instrumentation for the invalidation tests.
     [[nodiscard]] std::size_t parse_computes(FileId file) const;
 
+    // Evaluate resolve(module): runs the resolver over the unit's AST and caches
+    // the ResolveResult. Short-circuits (and records `ran == false`) when the
+    // unit's parse produced errors or no AST, mirroring the CLI pipeline. The
+    // AST is borrowed from the parse store inside the compute body, so the
+    // engine has just brought it up to date.
+    [[nodiscard]] std::expected<ResolveSnapshot, CycleError> resolve(ModuleId module);
+
+    // Evaluate typecheck(module): runs the type checker over the unit's AST and
+    // resolve result, caches the TypeCheckResult. Short-circuits when resolve
+    // short-circuited or errored.
+    [[nodiscard]] std::expected<TypecheckSnapshot, CycleError> typecheck(ModuleId module);
+
+    // Derived view: the type recorded for the AST expression `node_id` (with its
+    // `source_id` qualifier) in the unit's cached TypedProgram. Brings the
+    // typecheck memo up to date (a memo hit when nothing changed) and reads
+    // through the typed program's existing reverse index — no family of its own;
+    // see TypeOfResult. `found` is false when the stage chain short-circuited or
+    // the node is not a recorded expression.
+    [[nodiscard]] std::expected<TypeOfResult, CycleError>
+    type_of(ModuleId module, std::uint64_t node_id, std::optional<SourceId> source_id);
+
+    // Borrow the cached resolve result of a unit whose resolve slot is currently
+    // valid (Clean/Verified). Null when the slot is unset/dirty/visiting, never
+    // computed, or the stage short-circuited. The pointer is owned by this
+    // object (deque-backed store); it is meaningful only for the revision it was
+    // checked at.
+    [[nodiscard]] const ResolveResult *resolve_result(ModuleId module) const;
+
+    // Borrow the cached typecheck result, with the same validity contract as
+    // resolve_result.
+    [[nodiscard]] const TypeCheckResult *typecheck_result(ModuleId module) const;
+
+    // How many times resolve(module) / typecheck(module) actually ran their
+    // compute function. Per-stage instrumentation for the invalidation tests.
+    [[nodiscard]] std::size_t resolve_computes(ModuleId module) const;
+    [[nodiscard]] std::size_t typecheck_computes(ModuleId module) const;
+
     [[nodiscard]] Revision revision() const noexcept;
     [[nodiscard]] QueryStats stats() const;
 
@@ -123,14 +265,33 @@ class FrontendQueries {
         std::size_t computes = 0;
     };
 
+    // Per-ModuleId semantic-stage record. `ran` records whether the stage
+    // actually executed: a short-circuited stage stores a default-constructed
+    // result, and the flag keeps "skipped" distinguishable from "ran clean".
+    struct ResolveSlotRecord {
+        ResolveResult result;
+        bool ran = false;
+        std::size_t computes = 0;
+    };
+    struct TypecheckSlotRecord {
+        TypeCheckResult result;
+        bool ran = false;
+        std::size_t computes = 0;
+    };
+
     Frontend frontend_;
     QueryEngine engine_;
     InputQueryT<SourceText> source_text_;
     DerivedQueryT<ParseSnapshot> parse_;
-    // Slot records indexed by FileId slot. A deque so that adding a file never
-    // moves an existing SlotRecord (and thus never invalidates a borrowed
-    // ast::Program), mirroring QueryEngine's own slot storage choice.
+    DerivedQueryT<ResolveSnapshot> resolve_;
+    DerivedQueryT<TypecheckSnapshot> typecheck_;
+    // Slot records indexed by FileId / ModuleId slot. Deques so that adding a
+    // unit never moves an existing record (and thus never invalidates a borrowed
+    // ast::Program / ResolveResult / TypeCheckResult), mirroring QueryEngine's
+    // own slot storage choice.
     std::deque<SlotRecord> slots_;
+    std::deque<ResolveSlotRecord> resolve_slots_;
+    std::deque<TypecheckSlotRecord> typecheck_slots_;
 };
 
 } // namespace ahfl::query

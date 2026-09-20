@@ -1299,6 +1299,26 @@ add_test(NAME ahfl.query.parse_equiv_all
     COMMAND $<TARGET_FILE:ahfl_compiler_query_tests>
 )
 
+# RFC 0027 P3 (KR6.11-S4): resolve / typecheck / type_of queries, with the
+# query-vs-direct equivalence guard over the golden corpus (diagnostics, the
+# typed-program projection, and the IR JSON the CLI golden fleet feeds from).
+add_test(NAME ahfl.query.frontend_equiv_all
+    COMMAND $<TARGET_FILE:ahfl_compiler_frontend_queries_tests>
+)
+
+# RFC 0027 P3 (KR6.11-S4): the CLI query-engine route is byte-equivalent to the
+# direct pipeline. Runs `ahflc check` twice per bare-file corpus source (direct
+# vs AHFL_QUERY_ENGINE=1) and asserts identical exit code / stdout / stderr; the
+# route trace makes the gate non-vacuous (it fails if the engine route silently
+# falls back to the direct pipeline).
+add_test(NAME ahfl.query.cli_engine_equiv
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/query_engine_cli_equiv.py"
+            $<TARGET_FILE:ahflc>
+            "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/query-engine-cli-equiv"
+)
+
 # RFC 0027 P2 (KR6.11-S5): differential property guard — under seeded random edit
 # sequences the incremental engine's results must equal a cold-cache
 # recomputation at every step, and must recompute only when the text actually

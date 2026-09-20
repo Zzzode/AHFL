@@ -691,6 +691,27 @@ target_compile_definitions(ahfl_compiler_query_tests
 )
 ahfl_apply_project_warnings(ahfl_compiler_query_tests)
 
+# RFC 0027 P3 (KR6.11-S4): resolve / typecheck / type_of derived queries + the
+# query-vs-direct equivalence guard over the golden corpus, including the IR JSON
+# the CLI's golden fleet feeds from. ahfl_compiler_query publicly links
+# ahfl_compiler_semantics (the result types), and ahfl_compiler_ir supplies
+# lower_program_ir / print_program_ir_json for the byte-comparison half.
+add_executable(ahfl_compiler_frontend_queries_tests
+    unit/compiler/query/frontend_queries_equiv.cpp
+)
+target_link_libraries(ahfl_compiler_frontend_queries_tests
+    PRIVATE
+        ahfl_compiler_query
+        ahfl_compiler_ir
+        ahfl_base_support
+        doctest
+)
+target_compile_definitions(ahfl_compiler_frontend_queries_tests
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+ahfl_apply_project_warnings(ahfl_compiler_frontend_queries_tests)
+
 # RFC 0027 P2 (KR6.11-S5): the differential property guard — seeded random edit
 # sequences must leave the incremental engine byte-identical to a cold-cache
 # recomputation, at every step, on every projection (parse snapshot, the
@@ -1666,6 +1687,7 @@ foreach(_tgt
     ahfl_base_json_value_tests
     ahfl_base_toml_tests
     ahfl_base_query_tests
+    ahfl_compiler_frontend_queries_tests
     ahfl_compiler_query_edit_property_tests
     ahfl_compiler_manifest_tests
     ahfl_compiler_package_graph_tests
