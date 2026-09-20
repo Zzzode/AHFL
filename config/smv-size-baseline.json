@@ -1,22 +1,76 @@
 {
-  "schema": "ahfl.smv-size-baseline.v1",
-  "description": "KR2.7 SMV-size trend baseline. Records emit-smv sizes for representative fixtures so tests/scripts/smv_size_trend_gate.py can block release on regression beyond a relative tolerance (10%). Regenerate intentionally with `smv_size_trend_gate.py <ahflc> config/smv-size-baseline.json <report> --update` after a reviewed size change.",
+  "description": "KR2.7/KR7.3 SMV-size trend baseline. Records emit-smv sizes for the five representative fixtures (two formal-semantics + three productization) so tests/scripts/smv_size_trend_gate.py can block release on regression beyond a relative tolerance (10%) or on any change to the -O pass order. Regenerate intentionally with `smv_size_trend_gate.py <ahflc> config/smv-size-baseline.json <report> --update` after a reviewed size change.",
   "fixtures": {
-    "flow_workflow_semantics": {
-      "source": "tests/golden/formal/ok_flow_workflow_semantics.ahfl",
-      "metrics": {
-        "bytes": 18013,
-        "lines": 122,
-        "ltlspec": 12
-      }
-    },
     "bounded_data_semantics": {
-      "source": "tests/golden/formal/ok_bounded_data_semantics.ahfl",
       "metrics": {
         "bytes": 10520,
         "lines": 78,
         "ltlspec": 8
-      }
+      },
+      "pass_order": [
+        "dead-state-elimination",
+        "workflow-simplification",
+        "expr-canonicalization",
+        "temporal-simplification"
+      ],
+      "source": "tests/golden/formal/ok_bounded_data_semantics.ahfl"
+    },
+    "flow_workflow_semantics": {
+      "metrics": {
+        "bytes": 18013,
+        "lines": 122,
+        "ltlspec": 12
+      },
+      "pass_order": [
+        "dead-state-elimination",
+        "workflow-simplification",
+        "expr-canonicalization",
+        "temporal-simplification"
+      ],
+      "source": "tests/golden/formal/ok_flow_workflow_semantics.ahfl"
+    },
+    "pass_productization": {
+      "metrics": {
+        "bytes": 15281,
+        "lines": 107,
+        "ltlspec": 13
+      },
+      "pass_order": [
+        "dead-state-elimination",
+        "workflow-simplification",
+        "expr-canonicalization",
+        "temporal-simplification"
+      ],
+      "source": "tests/golden/ir/ok_pass_productization.ahfl"
+    },
+    "refund_audit": {
+      "metrics": {
+        "bytes": 25180,
+        "lines": 168,
+        "ltlspec": 26
+      },
+      "pass_order": [
+        "dead-state-elimination",
+        "workflow-simplification",
+        "expr-canonicalization",
+        "temporal-simplification"
+      ],
+      "source": "examples/refund/audit.ahfl"
+    },
+    "workflow_simplification": {
+      "metrics": {
+        "bytes": 43901,
+        "lines": 257,
+        "ltlspec": 35
+      },
+      "pass_order": [
+        "dead-state-elimination",
+        "workflow-simplification",
+        "expr-canonicalization",
+        "temporal-simplification"
+      ],
+      "source": "tests/golden/ir/ok_workflow_simplification.ahfl"
     }
-  }
+  },
+  "schema": "ahfl.smv-size-baseline.v2"
 }
