@@ -1761,7 +1761,12 @@ class Verifier {
                                        : nullptr;
         if (base_nominal == nullptr || base_nominal->base.value >= program_.types.size() ||
             !capacity_allowed(program_.types[base_nominal->base.value].role) ||
-            !base_nominal->capacity.has_value()) {
+            !base_nominal->capacity.has_value() || base_nominal->args.empty()) {
+            // A bounded collection always carries its element type argument (a
+            // Map carries key + value), so an EMPTY arg list is as malformed as a
+            // missing capacity. Guarding it here keeps the element-type
+            // comparisons below off `args.front()` on a hand-built / deserialized
+            // nominal whose arity never matched its declaration.
             error(verify::kCollectionOpInvalid,
                   "collection operation base is not a bounded collection value in '" +
                       flow.label + "'",

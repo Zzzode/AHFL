@@ -296,14 +296,15 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     # i32 handle to an INLINE `(ptr,len)` header with an indirect element backing
     # store `stride` bytes apart; every fact (header offsets, stride, capacity,
     # backing size, element width) comes from the P4-D `CoreLayoutContainer`. The
-    # fixture reads the length word and two elements and branches on them.
+    # fixture reads the length word and BOTH elements and branches on all three.
     # Observable `value_json` still awaits the P6-7 frame decision, so the Node
     # host writes the header + elements as RAW BYTES at the addresses the producer
-    # reports, drives step(), and asserts the branch only a CORRECT header /
-    # stride / element-width read can reach (a wrong stride or load width reads
-    # the wrong element and takes the other branch). The producer pins the native
-    # state path and the P4-D facts. An UNBOUNDED collection has no wasm32 backing
-    # store and still fails closed (P4-D `core.layout.UNBOUNDED`).
+    # reports, POISONS every slot outside the live length, drives step(), and
+    # asserts the branch only a CORRECT header / stride / element-width / length
+    # read can reach (a wrong stride, a wrong header offset, a mis-sized load, or
+    # a wrong len word all route to the other branch or trap). The producer pins
+    # the native state path and the P4-D facts. An UNBOUNDED collection has no
+    # wasm32 backing store and still fails closed (P4-D `core.layout.UNBOUNDED`).
     add_test(NAME ahfl.wasm.p6_collection_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
                 "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_collection.ahfl"

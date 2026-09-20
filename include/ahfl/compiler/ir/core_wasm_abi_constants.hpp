@@ -63,6 +63,16 @@ inline constexpr std::uint32_t kP6AggregateScratchBase = 7168;
 // `emit_collection` reads/writes them at the header's `ptr`.
 inline constexpr std::uint32_t kP6CollectionBackingBase = 16384;
 
+// The element BACKING region is every byte from its base up to the fixed page's
+// end, so the container's scaled extent must FIT it. A plan whose container
+// needs more fails closed (RESOURCE-class rejection): the emitter computes
+// `ptr + index * stride` in wrapping i32 arithmetic, so a capacity whose scaled
+// address leaves the region would silently wrap to an in-page address the index
+// has no right to. This is the ONE authority for that budget, shared by the plan
+// guard and any host materialising the backing store.
+inline constexpr std::uint32_t kP6CollectionBackingCapacity =
+    kCoreWasmFixedLinearMemoryCapacityBytes - kP6CollectionBackingBase;
+
 // The scratch arena is every byte from its base up to the collection backing
 // region. A plan whose constructors need more fails closed (RESOURCE-class
 // rejection), so the arena can never overflow into the collection region or any
@@ -90,6 +100,8 @@ static_assert(kP6AggregateContextBase >= kP6AggregateInputBase &&
               "P6 reserved regions are ordered and non-overlapping");
 static_assert(kP6CollectionBackingBase < kCoreWasmFixedLinearMemoryCapacityBytes,
               "the P6 collection backing region starts inside the fixed single page");
+static_assert(kP6CollectionBackingCapacity > 0,
+              "the P6 collection backing region reserves at least one byte");
 static_assert(kP6AggregateInputCapacity > 0 && kP6AggregateContextCapacity > 0,
               "each P6 aggregate frame region reserves at least one byte");
 

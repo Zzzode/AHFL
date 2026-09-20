@@ -4249,8 +4249,15 @@ int main() {
         // container value is an agent CONTEXT field, so its handle is the address
         // of the P4-D container header inside the context frame — the module's
         // collection ops then read/write the indirect backing store.
+        //
+        // `capacity` and `element_is_string` parameterise the two fail-closed
+        // lanes: a capacity whose scaled backing leaves the reserved region (the
+        // emit path's `index * stride` would wrap in i32), and a PtrLen String
+        // element (a two-word element, outside the single-word P6 value model).
         CoreValueTypeId list_vt{};
-        const auto make_collection_program = [&](bool bounded) {
+        const auto make_collection_program = [&](bool bounded,
+                                                 std::optional<std::uint64_t> capacity = 4,
+                                                 bool element_is_string = false) {
             auto program = make_e1_core_program();
             // types[2] = the collection nominal, declared exactly as the std
             // descriptor SSOT does (role List, arity 1).
@@ -4265,11 +4272,18 @@ int main() {
 
             const CoreValueTypeId int_vt{static_cast<std::uint32_t>(program.value_types.size())};
             program.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}}); // i64 element
+            // The element's logical type: the i64 Int by default, or a PtrLen
+            // String for the fail-closed two-word-element lane.
+            CoreValueTypeId element_vt = int_vt;
+            if (element_is_string) {
+                element_vt =
+                    CoreValueTypeId{static_cast<std::uint32_t>(program.value_types.size())};
+                program.value_types.push_back(CoreValueType{CoreVtString{}});
+            }
             list_vt = CoreValueTypeId{static_cast<std::uint32_t>(program.value_types.size())};
             program.value_types.push_back(
-                CoreValueType{CoreVtNominal{list_type, {int_vt},
-                                            bounded ? std::optional<std::uint64_t>{4}
-                                                    : std::nullopt}});
+                CoreValueType{CoreVtNominal{list_type, {element_vt},
+                                            bounded ? capacity : std::nullopt}});
             const CoreValueTypeId bool_vt{static_cast<std::uint32_t>(program.value_types.size())};
             program.value_types.push_back(CoreValueType{CoreVtBool{}});
 
@@ -4335,7 +4349,7 @@ int main() {
                 CoreExpr{CoreCollectionExpr{CoreCollectionOpKind::ElementGet, CoreValueId{1},
                                             CoreValueId{3}, {}},
                          std::nullopt,
-                         int_vt}); // -> v4 (element 0)
+                         element_vt}); // -> v4 (element 0)
             flow.exprs.push_back(
                 CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt,
                          int_vt}); // -> v5 (index 1)
@@ -4357,8 +4371,8 @@ int main() {
                          std::nullopt,
                          bool_vt}); // -> v9 (len > 1)
             flow.value_count = 10;
-            flow.value_types = {CoreValueTypeId{0}, list_vt, int_vt, int_vt, int_vt,
-                                int_vt,          list_vt, int_vt, int_vt, bool_vt};
+            flow.value_types = {CoreValueTypeId{0}, list_vt, int_vt,  int_vt, element_vt,
+                                int_vt,          list_vt, int_vt,  int_vt, bool_vt};
             auto &start = flow.states[1].body;
             start.statements.clear();
             start.statements.push_back(
@@ -4431,6 +4445,22 @@ int main() {
                   "P6-5 loads and stores the i64 element at its layout-derived width");
             check(count_of(kOpI32Mul) >= 1,
                   "P6-5 scales the element index by the layout-derived stride");
+            // P1 (native-vs-wasm parity): the element bounds check must compare
+            // the index against the header's RUNTIME len word (an i32.load at
+            // offset 4), never a capacity immediate alone. A capacity-only check
+            // would let an index in [len, capacity) read a dead slot the native
+            // run rejects. The emitted element load/store read the header's ptr
+            // word (offset 0), so an `i32.load align=2 offset=4` is the len word
+            // the bounds check (and only it) reads.
+            std::uint32_t len_word_loads = 0;
+            for (std::size_t i = 0; i + 2 < handler_body->size(); ++i) {
+                if ((*handler_body)[i] == 0x28 && (*handler_body)[i + 1] == 0x02 &&
+                    (*handler_body)[i + 2] == 0x04) {
+                    ++len_word_loads; // i32.load align=2 offset=4 -> the len word
+                }
+            }
+            check(len_word_loads >= 1,
+                  "P6-5 bounds the element index by the header len word, not capacity");
         }
 
         // P6-5 negative: the SAME program with an UNBOUNDED `List<Int>` fails
@@ -4449,8 +4479,47 @@ int main() {
                             });
             check(!layout.ok() && !layout.table.has_value() && cites_unbounded,
                   "P6-5 an unbounded List<Int> fails the P4-D layout with core.layout.UNBOUNDED");
-            check(!emit_agent(program, CoreLayoutTable{}).artifact.has_value(),
-                  "P6-5 emits no artifact for an unbounded collection");
+        }
+
+        // P6-5 negative: a VERIFIED layout whose container is not addressable by
+        // the P6 single-word model still fails closed at the CODEGEN boundary.
+        // Two real lanes:
+        //   (a) a capacity whose scaled backing (stride * capacity, and the last
+        //       slot's end) leaves the reserved linear-memory region — the emit
+        //       path forms `ptr + index * stride` in wrapping i32 arithmetic, so
+        //       an over-large capacity must be rejected by the plan, not wrapped;
+        //   (b) a PtrLen String element, whose value type is outside the P6 value
+        //       model — the element read has no single-word form.
+        // Both produce a verified Core program and a finalized P4-D table, so the
+        // rejection is the collection/expression lane's own gate — never the
+        // layout verifier swallowing the case first (which an empty
+        // `CoreLayoutTable{}` emission would do regardless of boundedness).
+        {
+            // (a) stride-8 element, capacity 600000000 -> backing 4.8e9 bytes,
+            // far past the ~48 KiB reserved region and past 2^32/8.
+            auto program = make_collection_program(/*bounded=*/true, /*capacity=*/600000000);
+            const auto layout = compute_core_layouts(program);
+            check(layout.ok() && layout.table.has_value(),
+                  "P6-5 an over-large capacity still has a finalized P4-D layout");
+            const auto emitted = emit_agent(program, *layout.table);
+            check(!emitted.artifact.has_value() &&
+                      (has_codegen_message(emitted, "backing region") ||
+                       has_codegen_message(emitted, "backing stride * capacity")),
+                  "P6-5 an over-large collection capacity fails closed in the plan");
+        }
+        {
+            // (b) a PtrLen String element sits outside the P6 single-word value
+            // model, so the handler must fail closed rather than emit a truncated
+            // read. The honest claim is that no artifact is produced (not which
+            // layer names the rejection), so assert the absence of an artifact.
+            auto program = make_collection_program(/*bounded=*/true, /*capacity=*/4,
+                                                   /*element_is_string=*/true);
+            const auto layout = compute_core_layouts(program);
+            check(layout.ok() && layout.table.has_value(),
+                  "P6-5 a String-element collection still has a finalized P4-D layout");
+            const auto emitted = emit_agent(program, *layout.table);
+            check(!emitted.artifact.has_value(),
+                  "P6-5 a two-word element produces no artifact");
         }
 
         // RFC 0026 P6-8a (KR6.6): the closure D2 layout is a P4-D-only slice. The

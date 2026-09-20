@@ -2,18 +2,23 @@
 // a value whose whole runtime representation is the i32 ADDRESS of its INLINE
 // `(ptr,len)` header (P4-D `CoreLayoutContainer`), and the elements live in an
 // indirect backing store `stride` bytes apart. This fixture reads the header's
-// length word and two elements through that header and branches on them, so a
-// wrong header offset, a wrong element stride, a mis-sized element load, or a
-// wrong length word all change the branch the agent takes and are observable
-// purely through the state ids step() moves to (no JSON, no frame encoding).
+// length word AND BOTH element 0 and element 1 through that header and branches
+// on all three, so a wrong header offset, a wrong element stride, a mis-sized
+// element load, or a wrong length word all change the branch the agent takes and
+// are observable purely through the state ids step() moves to (no JSON, no frame
+// encoding).
 //
 // Layout (wasm32, P4-D): the UNBOUNDED `Int` element is i64 (8 bytes, align 8),
 // so the container stride is 8 and the four-element backing store is 32 bytes.
 // The header itself is `(ptr:i32, len:i32)` = 8 bytes INLINE in the input frame.
 //
 // The element values are supplied by the host (and the native run): element 0 is
-// ABOVE the threshold and element 1 is below it, so reading the WRONG element
-// (wrong stride / header offset / load width) routes to Low instead of High.
+// ABOVE the threshold and element 1 is below it. The host poisons every slot
+// outside the LIVE length (>= len) with a value above the threshold, so reading
+// the WRONG element — a wrong stride, a wrong header offset, or a mis-sized load
+// that lands anywhere other than slot 1 — routes to Low instead of High. The
+// length word is compared for EQUALITY (n == 2), so a len word read from the
+// wrong offset also routes to Low.
 //
 // The probe compiles ONE file with no sysroot, so the well-known collection
 // nominal is declared here at its canonical std path. That is exactly the shape
@@ -48,12 +53,14 @@ flow for CollectionAgent {
         // Bind the container once: the local's logical value type IS the
         // container identity the Core collection ops read (never a name).
         let xs: List<Int>(4) = input.items;
-        // The header's length word (i32 @ offset 4 of the container).
+        // The header's length word (i32 @ offset 4 of the container). The native
+        // list holds exactly two live elements, so this is 2.
         let n: Int = xs.length;
-        // Element 0 and element 1 at their P4-D stride, i64 loads.
+        // Element 0 and element 1 at their P4-D stride, i64 loads. BOTH are used
+        // by the branch: element 0 above the threshold, element 1 below it.
         let first: Int = xs[0];
         let second: Int = xs[1];
-        if (n > 0 && first > 50) {
+        if (n == 2 && first > 50 && second < 50) {
             goto High;
         } else {
             goto Low;

@@ -2652,3 +2652,47 @@ TEST_CASE("mono verifier P1: a non-Unit context slot for a Unit-context agent is
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kInstanceShellMismatch));
 }
+
+// RFC 0026 P6-5 (KR6.6): `verify_collection_op` reads the base nominal's
+// element type only through `args.front()`. A bounded List nominal carrying a
+// capacity but ZERO type arguments is malformed (a List always has its element
+// argument), and a hand-built / deserialized CoreProgram can reach the
+// collection op with exactly that shape. The boundedness guard must reject it
+// (an empty arg list is as invalid as a missing capacity) rather than let the
+// element-type comparison read `front()` on an empty vector.
+TEST_CASE("P6-5 verifier: a bounded List nominal with empty args is fail-closed") {
+    GoodProgram g = make_good_program();
+    CoreProgram &p = g.program;
+    // types[5] = the std List nominal (role List, arity 1).
+    const CoreTypeId list_type{static_cast<std::uint32_t>(p.types.size())};
+    {
+        CoreTypeDecl list;
+        list.kind = CoreTypeDecl::Kind::Struct;
+        list.name = "std::collections::List";
+        list.role = CoreNominalRole::List;
+        list.type_param_count = 1;
+        list.variances = {CoreVariance::Covariant};
+        p.types.push_back(std::move(list));
+    }
+    // A BOUNDED List value type with ZERO args: the exact malformed shape.
+    const auto list_vt =
+        intern_program_vt(p, CoreValueType{CoreVtNominal{list_type, {}, std::uint64_t{4}}});
+    // Bind the malformed container to a fresh SSA value the Len op reads.
+    const CoreValueId container{g.flow->value_count++};
+    g.flow->value_types.push_back(list_vt);
+    const CoreExprId lit = static_cast<CoreExprId>(g.flow->exprs.size());
+    g.flow->exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt, g.vt_int});
+    const CoreExprId len_expr = static_cast<CoreExprId>(g.flow->exprs.size());
+    g.flow->exprs.push_back(CoreExpr{
+        CoreCollectionExpr{CoreCollectionOpKind::Len, container, {}, {}}, std::nullopt, g.vt_int});
+    const CoreValueId len_result{g.flow->value_count++};
+    g.flow->value_types.push_back(g.vt_int);
+    auto &body = g.flow->states[0].body.statements;
+    body.insert(body.begin(), CoreStmt{CoreLetStmt{container, lit}, std::nullopt});
+    body.insert(body.begin() + 1, CoreStmt{CoreLetStmt{len_result, len_expr}, std::nullopt});
+
+    const auto result = verify_core_program(p);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kCollectionOpInvalid));
+}

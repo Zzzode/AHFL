@@ -99,6 +99,7 @@ using ir::core::kP6AggregateInputBase;
 using ir::core::kP6AggregateInputCapacity;
 using ir::core::kP6AggregateScratchBase;
 using ir::core::kP6AggregateScratchCapacity;
+using ir::core::kP6CollectionBackingCapacity;
 using detail::ByteBuffer;
 
 constexpr std::uint8_t kI32 = 0x7f;
@@ -222,9 +223,9 @@ constexpr std::uint8_t kOpI64RemS = 0x81;
 // a `BoundedInt <: Int` widening whose bounded side is the i32 scalar repr.
 constexpr std::uint8_t kOpI64ExtendI32S = 0xac;
 // RFC 0026 P6-5: a WIDE element index is confined to the wasm32 address domain
-// by wrapping to i32. The P4-D container capacity is what proves this is lossless
-// (the bounds compare rejects any index outside `[0, capacity)`, and capacity is
-// a wasm32-representable count), so the wrap never discards a live index bit.
+// by wrapping to i32. The P4-D container CAPACITY is what proves this is lossless
+// (the plan proved `capacity` fits the i32 ladder, and the bounds compare rejects
+// any index outside `[0, capacity)` — so no live index bit is discarded).
 constexpr std::uint8_t kOpI32WrapI64 = 0xa7;
 
 constexpr std::uint32_t kGlobalCurrentState = 0;
@@ -2175,18 +2176,20 @@ class P6ComputationHandlerBuilder {
         const bool element_wide = place_kind_of_layout(element_slot) == P6ScalarKind::IntI64;
         const std::uint32_t element_offset =
             static_cast<std::uint32_t>(container->value_offset);
-        // The bounds test: index must be within `capacity`. It is emitted BEFORE
-        // the address arithmetic so a bad index cannot compute a wild address
-        // even transiently. `stride` / `value_offset` are the P4-D facts.
+        // The index must be a scalar Int. The bounds test itself is emitted
+        // BEFORE the address arithmetic so a bad index cannot compute a wild
+        // address even transiently; `stride` / `value_offset` are the P4-D facts.
         if (index_kind == std::nullopt ||
             (*index_kind != P6ScalarKind::IntI32 && *index_kind != P6ScalarKind::IntI64)) {
             return reject("collection element index is not a scalar Int", std::move(range));
         }
         const bool index_wide = *index_kind == P6ScalarKind::IntI64;
-        // [in-bounds?] : (index >= 0) && (index < capacity). A FALSE result
-        // TRAPS: the test is negated (`i32.eqz`) so `if` takes the `unreachable`
-        // arm exactly when the index is out of range (the same "negate the
-        // condition, trap in the then-arm" discipline the match arm chain uses).
+        // [in-bounds?] : (index >= 0) && (index < capacity) && (index < len).
+        // `len` (the header's live count) gives the native semantics; `capacity`
+        // (the layout count) is the region-safety net. A FALSE result TRAPS: the
+        // test is negated (`i32.eqz`) so `if` takes the `unreachable` arm exactly
+        // when the index is out of range (the same "negate the condition, trap in
+        // the then-arm" discipline the match arm chain uses).
         if (!emit_element_bounds(collection, container->capacity, range)) {
             return false;
         }
@@ -2258,11 +2261,31 @@ class P6ComputationHandlerBuilder {
         return emit_value_read(collection.base, std::move(range));
     }
 
-    // Emit the `index in [0, capacity)` test as a single i32 flag, leaving the
-    // `if` body to trap. The index width selects the comparison ladder. The
-    // plan pass already proved the index is a scalar Int and that the layout's
-    // capacity fits the ladder's immediate, so this reads the local and emits
-    // the compare — it never re-derives a backing fact.
+    // Emit the element-index bounds test as a single i32 flag, leaving the `if`
+    // body to trap. The predicate is
+    //
+    //     (index >= 0) && (index < capacity) && (index < len)
+    //
+    // where `len` is the container header's OWN logical-count word
+    // (`kP6CollectionHeaderLenOffset`), read at RUNTIME, and `capacity` is the
+    // P4-D layout count the plan already proved fits the reserved region.
+    //
+    //   * `index < len` gives the NATIVE semantics (`builtin_list_raw_get` /
+    //     `list_raw_set`: `idx >= items.size()` -> error; ABI doc "the current
+    //     logical element count (<= capacity)"). For a WELL-FORMED header
+    //     (`len <= capacity`, the documented invariant) it is the ONLY effective
+    //     bound, so a read of a slot in `[len, capacity)` traps exactly as it
+    //     fails natively.
+    //   * `index < capacity` is the SAFETY net the plan's region proof needs: the
+    //     TCB is the host-written frame, so a hostile `len > capacity` must not
+    //     let `index * stride` scale past the reserved region and wrap. Since the
+    //     plan proved `(capacity-1)*stride + element_size + value_offset` fits,
+    //     this bound guarantees every formed address is in-region.
+    //
+    // The index width selects the comparison ladder. The plan pass already proved
+    // the index is a scalar Int and the base is a bounded collection whose header
+    // exists, so this reads the locals and the header word and emits only the
+    // compares — it never re-derives a backing fact.
     [[nodiscard]] bool emit_element_bounds(const CoreCollectionExpr &collection,
                                            std::uint64_t capacity, ir::SourceRangeOpt range) {
         const auto index_kind = readable_kind(collection.index);
@@ -2282,15 +2305,43 @@ class P6ComputationHandlerBuilder {
             body_.byte(kOpI32LtS);
         }
         body_.byte(kOpI32Eqz);
-        // (index < capacity)
+        const auto compare_index_less_than = [&](std::uint64_t bound) -> bool {
+            if (!emit_value_read(collection.index, range)) {
+                return false;
+            }
+            if (wide) {
+                emit_const_i64(static_cast<std::int64_t>(bound));
+                body_.byte(kOpI64LtS);
+            } else {
+                emit_const_i32(static_cast<std::int32_t>(bound));
+                body_.byte(kOpI32LtS);
+            }
+            body_.byte(kOpI32And);
+            return true;
+        };
+        // (index < capacity): the region-safety bound.
+        if (!compare_index_less_than(capacity)) {
+            return false;
+        }
+        // (index < len): the native-semantics bound, read from the header at
+        // RUNTIME. The header word is an i32 by construction, so a wide index
+        // compares in i64 — the word is extended with the same signed form
+        // `emit_collection`'s Len result uses (a well-formed length is >= 0, so
+        // signed vs unsigned is indistinguishable, but the module keeps ONE
+        // extension opcode).
         if (!emit_value_read(collection.index, range)) {
             return false;
         }
+        if (!emit_value_read(collection.base, range)) {
+            return false;
+        }
+        body_.byte(kOpI32Load);
+        body_.u32(kAlignI32);
+        body_.u32(ir::core::kP6CollectionHeaderLenOffset);
         if (wide) {
-            emit_const_i64(static_cast<std::int64_t>(capacity));
+            body_.byte(kOpI64ExtendI32S);
             body_.byte(kOpI64LtS);
         } else {
-            emit_const_i32(static_cast<std::int32_t>(capacity));
             body_.byte(kOpI32LtS);
         }
         body_.byte(kOpI32And);
@@ -2334,19 +2385,67 @@ class P6ComputationHandlerBuilder {
             return true;
         }
         // The P4-D backing facts must be representable in the wasm32 address
-        // domain: `stride` and the Map `value_offset` become `i32.const`
-        // immediates in the address arithmetic, and the capacity is the index
-        // ladder's bound. A layout whose stride / offset / capacity exceeds `i32`
-        // (a hostile or hand-built table) fails closed HERE rather than letting a
-        // truncating `static_cast` in emit compute a wild address.
-        if (container->stride > static_cast<std::uint64_t>(INT32_MAX) ||
-            container->value_offset > static_cast<std::uint64_t>(INT32_MAX) ||
-            container->capacity > static_cast<std::uint64_t>(INT32_MAX)) {
+        // domain. The emit path forms THREE i32 addresses from them and every one
+        // must stay inside the reserved backing region
+        // [kP6CollectionBackingBase, + kP6CollectionBackingCapacity):
+        //
+        //   ptr + index * stride + value_offset     (the element address)
+        //   ptr + (capacity - 1) * stride + element_size + value_offset
+        //                                           (one past the last slot)
+        //
+        // A per-field `<= INT32_MAX` test is NOT sufficient: it bounds the
+        // factors, never the PRODUCTS. `index * stride` is emitted as `i32.mul`,
+        // so a `stride * capacity` that crosses 2^32 wraps and a logical index
+        // that passed the `[0, capacity)` compare — which compares the INDEX to
+        // capacity, not to a scaled byte offset — would resolve to an in-page
+        // address it has no right to. Compute both products with CHECKED 64-bit
+        // arithmetic and require the whole scaled region to fit the ONE region
+        // budget (a single SSOT constant, never a second copy of 65536). A
+        // zero-capacity container is empty and passes trivially.
+        const std::uint64_t element_size =
+            container->element.value < layouts_.layouts.size()
+                ? layouts_.layouts[container->element.value].size
+                : 0;
+        const std::uint64_t region = kP6CollectionBackingCapacity;
+        const std::uint64_t capacity = container->capacity;
+        const std::uint64_t stride = container->stride;
+        const std::uint64_t value_offset = container->value_offset;
+        if (stride > std::numeric_limits<std::uint32_t>::max() ||
+            value_offset > std::numeric_limits<std::uint32_t>::max()) {
             return reject("collection backing facts exceed the wasm32 address domain", range);
+        }
+        if (capacity != 0) {
+            // The largest address the emit path can form is the last slot's end:
+            // (capacity - 1) * stride + element_size + value_offset. Checked in
+            // uint64 so the product can never wrap before the region compare.
+            const std::uint64_t max_index = capacity - 1;
+            if (stride != 0 && max_index > std::numeric_limits<std::uint64_t>::max() / stride) {
+                return reject("collection backing stride * capacity overflows the wasm32 region",
+                              range);
+            }
+            const std::uint64_t scaled = max_index * stride;
+            if (scaled > std::numeric_limits<std::uint64_t>::max() - element_size ||
+                scaled + element_size >
+                    std::numeric_limits<std::uint64_t>::max() - value_offset) {
+                return reject("collection backing stride * capacity overflows the wasm32 region",
+                              range);
+            }
+            if (scaled + element_size + value_offset > region) {
+                return reject(
+                    "collection backing region exceeds the reserved linear-memory budget", range);
+            }
         }
         // An element slot must be ONE word the P6 memory model can load/store: a
         // scalar, a tag-only enum, or an address-shaped leaf (the element's own
-        // layout edge decides which, exactly like an aggregate field).
+        // layout edge decides which, exactly like an aggregate field). Without
+        // this the single-word `load` / `store` below would silently truncate a
+        // wider element (a PtrLen String / bytes / f64, a nested aggregate, or a
+        // collection handle). The typed entry point already gates the element's
+        // LOGICAL value type upstream, so for a lowered program this is the
+        // layout-edge restatement — but the POSITIVE forms it decides (an
+        // address-shaped aggregate element, whose result kind IS a defined P6
+        // value) are reached through it, so it stays the single place the
+        // one-word rule is enforced for the store path too.
         if (!place_is_p6_value(container->element)) {
             return reject("collection element is not a single-word P6 value", range);
         }

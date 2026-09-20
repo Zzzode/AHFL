@@ -108,6 +108,18 @@ def main(argv: list[str]) -> int:
             return fail(f"element value count != capacity: {layout}")
         if layout["len"] > layout["capacity"] or layout["len"] <= 0:
             return fail(f"reported length is out of range: {layout}")
+        # Every slot the host writes OUTSIDE the live length (index >= len) is
+        # poisoned ABOVE the threshold, so reading a slot that is not one of the
+        # live elements routes the branch to Low. The poison is chosen strictly
+        # greater than EVERY live element so a wrong stride that aliases a real
+        # slot can never look like the poison (and vice versa).
+        threshold = 50
+        if layout["elements"][0] <= threshold:
+            return fail(f"live element 0 no longer exceeds the threshold: {layout}")
+        if layout["elements"][1] > threshold:
+            return fail(f"live element 1 no longer sits below the threshold: {layout}")
+        layout["poison"] = max(layout["elements"]) + 1000
+        layout["threshold"] = threshold
 
         host = td_path / "p6_collection_host.mjs"
         host.write_text(
@@ -131,16 +143,21 @@ const view = new DataView(exports.memory.buffer);
 
 // 1) Materialize the element BACKING STORE at the reported base, one `stride`
 //    apart, at the reported element width. DataView writes the little-endian
-//    form the wasm memory model requires.
+//    form the wasm memory model requires. Every slot OUTSIDE the live length
+//    (index >= len, up to capacity) is POISONED with a value above the
+//    threshold, so a wrong stride / header offset / load width that lands on any
+//    slot other than the live element 1 routes the branch to Low. Without the
+//    poison a wrong stride could coincidentally read a correct-looking slot.
 const elementBytes = layout.element_wide ? 8 : 4;
-for (let i = 0; i < layout.elements.length; ++i) {
+if (layout.value_offset + elementBytes > layout.stride)
+  throw new Error("element slot does not fit one stride");
+for (let i = 0; i < layout.capacity; ++i) {
   const address = layout.backing_base + i * layout.stride + layout.value_offset;
-  if (layout.value_offset + elementBytes > layout.stride)
-    throw new Error("element slot does not fit one stride");
+  const value = i < layout.len ? layout.elements[i] : layout.poison;
   if (layout.element_wide) {
-    view.setBigInt64(address, BigInt(layout.elements[i]), true);
+    view.setBigInt64(address, BigInt(value), true);
   } else {
-    view.setInt32(address, layout.elements[i], true);
+    view.setInt32(address, value, true);
   }
 }
 
@@ -190,17 +207,23 @@ if (exports.transition_count.value !== transitions)
   throw new Error(`transition_count ${exports.transition_count.value} != ${transitions}`);
 
 // The fixture's threshold branch is reachable ONLY by reading element 0 (which
-// the host wrote ABOVE the threshold) through a correct stride and element
-// width: the wrong element (element 1) is BELOW it. Re-deriving the expected
-// branch from the reported element values makes the assertion self-checking
-// rather than a restatement of the native ids.
-const threshold = 50;
+// the host wrote ABOVE the threshold) AND element 1 (which the host wrote BELOW
+// it) through a correct stride and element width, and by reading the length word
+// (compared for equality against 2). A wrong stride / header offset / load width
+// lands on a POISONED slot (index >= len) and routes to Low; a wrong len word
+// offset breaks the equality. The expected branch is re-derived from the
+// reported values, so the assertion is self-checking rather than a restatement
+// of the native ids.
+const threshold = BigInt(layout.threshold);
+const poison = BigInt(layout.poison);
 const highId = 1;
 const lowId = 2;
 const first = BigInt(layout.elements[0]);
 const second = BigInt(layout.elements[1]);
-if (first <= BigInt(threshold) || second > BigInt(threshold))
+if (first <= threshold || second > threshold)
   throw new Error("fixture element values no longer straddle the threshold");
+if (poison <= threshold || poison === second)
+  throw new Error("OOB poison does not differ from the live low element");
 if (layout.len <= 0)
   throw new Error("host wrote a non-positive length");
 if (expected[0] !== highId || expected.includes(lowId))
