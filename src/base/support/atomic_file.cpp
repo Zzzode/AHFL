@@ -26,8 +26,11 @@ namespace {
 }
 
 // fsync a directory so a rename() into it is durable. Opening a directory
-// O_RDONLY is legal on POSIX; on a platform where the open fails this reports
-// failure rather than silently claiming durability.
+// O_RDONLY is legal on POSIX (Linux ext4/xfs/btrfs); on a platform/filesystem
+// where the open or the fsync is rejected this reports failure rather than
+// silently claiming durability. NOTE: because this runs AFTER the rename, its
+// failure means "published but the directory metadata may not be durable", not
+// "nothing was written" — see the AtomicReplaceOptions::durable contract.
 [[nodiscard]] bool fsync_directory(const std::filesystem::path &directory) {
     const int fd = ::open(directory.c_str(), O_RDONLY);
     if (fd < 0) {

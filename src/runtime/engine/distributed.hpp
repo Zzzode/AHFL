@@ -77,10 +77,12 @@ enum class SnapshotParseError {
 
 /// Why a local checkpoint could not be restored.
 enum class CheckpointRestoreError {
-    InvalidId,         // not a safe path component, or not shaped `<agent>_<16 hex>`
-    NotFound,          // no exact `<id>.snapshot` in the checkpoint directory
-    ReadFailed,        // the file exists but could not be read
-    MalformedSnapshot, // the file bytes failed the strict parse
+    InvalidId,                // not a safe path component, or not shaped `<agent>_<16 hex>`
+    NotFound,                 // no exact `<id>.snapshot` in the checkpoint directory
+    ReadFailed,               // the file exists but could not be read
+    MalformedSnapshot,        // the bytes failed the strict parse
+    WrongContent,             // bytes parse, but agent prefix / digest do not match the id
+    RemoteMalformedSnapshot,  // remote body failed the strict parse and no local file existed
 };
 
 [[nodiscard]] std::string_view describe(CheckpointRestoreError error) noexcept;
@@ -126,6 +128,12 @@ class DistributedScheduler {
     /// Deterministic wire spelling: keys are emitted in a fixed order and the
     /// context map is emitted sorted by key, so equal snapshots serialize to
     /// byte-identical strings (and therefore to one content-addressed id).
+    ///
+    /// Precondition: `snapshot.timestamp` is representable (non-negative and not
+    /// beyond the system_clock duration limit, i.e. well inside year 2262). This
+    /// is exactly the range the strict reader accepts, so a serialized snapshot
+    /// always round-trips; checkpoint() enforces the precondition and a direct
+    /// caller must too (an out-of-range time_point is not a valid snapshot).
     [[nodiscard]] std::string serialize_snapshot(const StateSnapshot &snapshot) const;
 
     /// Strict, fail-closed decode of a snapshot byte string. Accepts exactly the
@@ -140,12 +148,20 @@ class DistributedScheduler {
     /// Restore by EXACT checkpoint id. There is no partial/prefix resolution: a
     /// partial id never selects a checkpoint, so "a" can never restore "ab_...".
     /// Use list_checkpoints() to discover ids for an agent, then restore exactly.
+    ///
+    /// The id is BOUND TO THE CONTENT, not merely matched as a filename: the
+    /// restored snapshot's agent_id must equal the id's agent prefix and
+    /// sha256(serialized bytes) must equal the id's digest, so a checkpoint that
+    /// was copied/renamed to a foreign well-formed id restores nothing
+    /// (WrongContent) instead of returning another agent's state.
     [[nodiscard]] std::expected<StateSnapshot, CheckpointRestoreError>
     restore(const std::string &checkpoint_id) const;
 
     /// Local checkpoint ids stored for `agent_id`, sorted lexicographically (a
     /// deterministic order independent of filesystem iteration order). Only files
-    /// whose name is exactly `<agent_id>_<16 hex>.snapshot` are listed.
+    /// whose name is exactly `<agent_id>_<16 hex>.snapshot` AND whose parsed
+    /// payload names `agent_id` are listed, so a foreign checkpoint copied under a
+    /// this agent's name is not reported as this agent's.
     [[nodiscard]] std::vector<std::string> list_checkpoints(std::string_view agent_id) const;
 
     [[nodiscard]] size_t region_count() const;

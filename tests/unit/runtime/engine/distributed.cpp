@@ -35,6 +35,15 @@
 #include <unordered_map>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -88,6 +97,13 @@ class ScopedCheckpointDir {
 [[nodiscard]] std::string read_bytes(const fs::path &path) {
     std::ifstream input(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+}
+
+// Write raw bytes to `path`, ignoring the artifact content (used to plant foreign
+// or corrupt snapshots under a chosen id).
+void write_bytes(const fs::path &path, std::string_view bytes) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 }
 
 using ahfl::runtime::DistributedScheduler;
@@ -309,6 +325,8 @@ void test_describe_is_actionable() {
         ahfl::runtime::CheckpointRestoreError::NotFound,
         ahfl::runtime::CheckpointRestoreError::ReadFailed,
         ahfl::runtime::CheckpointRestoreError::MalformedSnapshot,
+        ahfl::runtime::CheckpointRestoreError::WrongContent,
+        ahfl::runtime::CheckpointRestoreError::RemoteMalformedSnapshot,
     };
     std::vector<std::string_view> restore_texts;
     for (const auto error : restore_errors) {
@@ -536,6 +554,290 @@ void test_restore_reports_malformed_file() {
     fs::remove_all(dir);
 }
 
+// The three defects the KR7.6 fix-forward closes: a non-regular file at an id
+// must not abort the process, a foreign-id file must not be restored/listed as
+// this agent's, and a pre-epoch timestamp must round-trip (or be refused).
+void test_restore_non_regular_file_is_not_thrown() {
+#if defined(__unix__) || defined(__APPLE__)
+    const auto dir = fresh_dir("non-regular");
+    ScopedCheckpointDir scoped(dir);
+    DistributedScheduler sched;
+
+    // Repro A: a DIRECTORY under a well-formed `<id>.snapshot`. The old
+    // istreambuf_iterator read threw std::__ios_failure out of restore().
+    {
+        const std::string id = "agent_0123456789abcdef";
+        std::error_code ec;
+        fs::create_directory(dir / (id + ".snapshot"), ec);
+        check(!ec, "nonregular.dir_created");
+        const auto restored = sched.restore(id);
+        check(!restored.has_value(), "nonregular.directory_not_restored");
+        check(!restored.has_value() &&
+                  restored.error() == ahfl::runtime::CheckpointRestoreError::ReadFailed,
+              "nonregular.directory_read_failed");
+    }
+
+    // Repro C: a SYMLINK to a directory under an id. O_NOFOLLOW refuses to follow
+    // it, so it too is ReadFailed (never a followed read, never a throw).
+    {
+        const std::string id = "agent_fedcba9876543210";
+        std::error_code ec;
+        fs::create_directory(dir / "target_dir", ec);
+        check(!ec, "nonregular.symlink_target_created");
+        fs::create_symlink(dir / "target_dir", dir / (id + ".snapshot"), ec);
+        check(!ec, "nonregular.symlink_created");
+        const auto restored = sched.restore(id);
+        check(!restored.has_value(), "nonregular.symlink_not_restored");
+        check(!restored.has_value() &&
+                  restored.error() == ahfl::runtime::CheckpointRestoreError::ReadFailed,
+              "nonregular.symlink_read_failed");
+    }
+
+    // Repro B: checkpoint() of a snapshot whose content-addressed id names an
+    // existing directory must fail closed, not abort. The id is derived from the
+    // bytes, so re-derive it here and plant the directory first.
+    {
+        const auto snapshot = fixed_snapshot("agent", "DirCollision", {{"k", "v"}});
+        const std::string serialized = sched.serialize_snapshot(snapshot);
+        const std::string id =
+            ahfl::runtime::content_addressed_checkpoint_id(snapshot.agent_id, serialized);
+        std::error_code ec;
+        fs::create_directory(dir / (id + ".snapshot"), ec);
+        check(!ec, "nonregular.checkpoint_dir_planted");
+        const auto result = sched.checkpoint(snapshot);
+        check(result.status == ahfl::runtime::CheckpointStatus::Failed,
+              "nonregular.checkpoint_failed");
+        check(!result.error.empty(), "nonregular.checkpoint_has_error");
+    }
+
+    fs::remove_all(dir);
+#endif
+}
+
+void test_restore_binds_id_to_content() {
+    const auto dir = fresh_dir("content-binding");
+    ScopedCheckpointDir scoped(dir);
+    DistributedScheduler sched;
+
+    // bob checkpoints; the bytes are copied to a FOREIGN well-formed id.
+    const auto bob = sched.checkpoint(fixed_snapshot("bob", "BOB_STATE", {{"k", "v"}}));
+    check(bob.status == ahfl::runtime::CheckpointStatus::Created, "bind.bob_created");
+    const std::string foreign_id = "alice_0123456789abcdef";
+    write_bytes(dir / (foreign_id + ".snapshot"), read_bytes(dir / (bob.checkpoint_id + ".snapshot")));
+
+    // The digest half of the id is not decoration: the foreign id must not resolve
+    // to bob's bytes.
+    const auto stolen = sched.restore(foreign_id);
+    check(!stolen.has_value(), "bind.foreign_id_not_restored");
+    check(!stolen.has_value() &&
+              stolen.error() == ahfl::runtime::CheckpointRestoreError::WrongContent,
+          "bind.foreign_id_wrong_content");
+
+    // Listing is scoped by the PAYLOAD's agent, not merely the filename prefix.
+    check(sched.list_checkpoints("alice").empty(), "bind.foreign_not_listed_for_alice");
+    check(sched.list_checkpoints("bob").size() == 1, "bind.bob_still_listed");
+
+    // A same-id file whose bytes were tampered with is a checksum mismatch.
+    const auto carol = sched.checkpoint(fixed_snapshot("carol", "CAROL_STATE", {}));
+    check(carol.status == ahfl::runtime::CheckpointStatus::Created, "bind.carol_created");
+    write_bytes(dir / (carol.checkpoint_id + ".snapshot"),
+                R"({"format":"AHFL_SNAPSHOT_V2","agent_id":"carol","current_state":"TAMPERED",)"
+                R"("timestamp_ms":1700000000123,"context":{}})");
+    const auto tampered = sched.restore(carol.checkpoint_id);
+    check(!tampered.has_value(), "bind.tampered_not_restored");
+    check(!tampered.has_value() &&
+              tampered.error() == ahfl::runtime::CheckpointRestoreError::WrongContent,
+          "bind.tampered_wrong_content");
+
+    // The honest id still restores exactly.
+    const auto honest = sched.restore(bob.checkpoint_id);
+    check(honest.has_value() && honest->current_state == "BOB_STATE", "bind.honest_restores");
+
+    fs::remove_all(dir);
+}
+
+void test_timestamp_write_read_reconciled() {
+    const auto dir = fresh_dir("timestamp");
+    ScopedCheckpointDir scoped(dir);
+    DistributedScheduler sched;
+
+    // A pre-epoch timestamp is out of the accepted range: checkpoint() must REFUSE
+    // it rather than write a file its own strict reader rejects.
+    StateSnapshot negative = fixed_snapshot("agent", "PreEpoch", {});
+    negative.timestamp = std::chrono::system_clock::time_point(std::chrono::milliseconds(-1));
+    const auto refused = sched.checkpoint(negative);
+    check(refused.status == ahfl::runtime::CheckpointStatus::Failed, "timestamp.negative_refused");
+    check(!refused.error.empty(), "timestamp.negative_has_error");
+
+    // A representable snapshot round-trips exactly, including a non-zero (but
+    // non-default) epoch.
+    StateSnapshot good = fixed_snapshot("agent", "Epoch", {});
+    good.timestamp = std::chrono::system_clock::time_point(std::chrono::milliseconds(0));
+    const auto good_result = sched.checkpoint(good);
+    check(good_result.status == ahfl::runtime::CheckpointStatus::Created, "timestamp.epoch_created");
+    const auto restored = sched.restore(good_result.checkpoint_id);
+    check(restored.has_value() && restored->timestamp == good.timestamp,
+          "timestamp.epoch_round_trips");
+
+    // The extreme accepted bound: representable (no UB) and stable.
+    DistributedScheduler plain;
+    const std::string at_max =
+        R"({"format":"AHFL_SNAPSHOT_V2","agent_id":"a","current_state":"S","timestamp_ms":9223372036854})";
+    const auto parsed_max = plain.deserialize_snapshot(at_max);
+    check(parsed_max.has_value(), "timestamp.max_accepted");
+    // One past it is rejected in both V2 and V1, so no conversion can overflow.
+    const std::string past_max =
+        R"({"format":"AHFL_SNAPSHOT_V2","agent_id":"a","current_state":"S","timestamp_ms":9223372036855})";
+    check(plain.deserialize_snapshot(past_max).error() ==
+              ahfl::runtime::SnapshotParseError::InvalidTimestamp,
+          "timestamp.past_max_rejected");
+    // INT64_MAX is the UB case the fix closes: previously accepted and overflowed.
+    const std::string int64_max =
+        R"({"format":"AHFL_SNAPSHOT_V2","agent_id":"a","current_state":"S","timestamp_ms":9223372036854775807})";
+    check(plain.deserialize_snapshot(int64_max).error() ==
+              ahfl::runtime::SnapshotParseError::InvalidTimestamp,
+          "timestamp.int64_max_rejected");
+    const std::string v1_int64_max =
+        "AHFL_SNAPSHOT_V1\nagent_id=a\ncurrent_state=S\ntimestamp=9223372036854775807\n";
+    check(plain.deserialize_snapshot(v1_int64_max).error() ==
+              ahfl::runtime::SnapshotParseError::InvalidTimestamp,
+          "timestamp.v1_int64_max_rejected");
+
+    fs::remove_all(dir);
+}
+
+// A minimal forked HTTP server answering every GET with a fixed body. Used to
+// exercise the remote path of restore() without a real region. POSIX-only.
+#if defined(__unix__) || defined(__APPLE__)
+struct RemoteServer {
+    pid_t pid = -1;
+    std::string endpoint;
+
+    static std::optional<RemoteServer> start(std::string_view body) {
+        const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (listener < 0) {
+            return std::nullopt;
+        }
+        const int one = 1;
+        ::setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        if (::bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) {
+            ::close(listener);
+            return std::nullopt;
+        }
+        socklen_t length = sizeof(address);
+        if (::getsockname(listener, reinterpret_cast<sockaddr *>(&address), &length) != 0 ||
+            ::listen(listener, 8) != 0) {
+            ::close(listener);
+            return std::nullopt;
+        }
+        const int port = ntohs(address.sin_port);
+        const pid_t pid = ::fork();
+        if (pid < 0) {
+            ::close(listener);
+            return std::nullopt;
+        }
+        if (pid == 0) {
+            // Child: serve one request at a time until killed by the parent.
+            while (true) {
+                const int connection = ::accept(listener, nullptr, nullptr);
+                if (connection < 0) {
+                    ::_exit(0);
+                }
+                char request[1024];
+                const ssize_t ignored = ::read(connection, request, sizeof(request));
+                (void)ignored;
+                const std::string response =
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                    std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + std::string(body);
+                ssize_t written = 0;
+                while (static_cast<std::size_t>(written) < response.size()) {
+                    const ssize_t n =
+                        ::write(connection, response.data() + written,
+                                response.size() - static_cast<std::size_t>(written));
+                    if (n <= 0) {
+                        break;
+                    }
+                    written += n;
+                }
+                ::close(connection);
+            }
+            ::_exit(0);
+        }
+        ::close(listener);
+        return RemoteServer{pid, "http://127.0.0.1:" + std::to_string(port)};
+    }
+
+    ~RemoteServer() {
+        if (pid > 0) {
+            ::kill(pid, SIGKILL);
+            ::waitpid(pid, nullptr, 0);
+        }
+    }
+    RemoteServer(const RemoteServer &) = delete;
+    RemoteServer &operator=(const RemoteServer &) = delete;
+    RemoteServer(RemoteServer &&other) noexcept : pid(other.pid), endpoint(std::move(other.endpoint)) {
+        other.pid = -1;
+    }
+    RemoteServer &operator=(RemoteServer &&other) noexcept {
+        if (this != &other) {
+            if (pid > 0) {
+                ::kill(pid, SIGKILL);
+                ::waitpid(pid, nullptr, 0);
+            }
+            pid = other.pid;
+            endpoint = std::move(other.endpoint);
+            other.pid = -1;
+        }
+        return *this;
+    }
+
+  private:
+    RemoteServer(pid_t p, std::string ep) : pid(p), endpoint(std::move(ep)) {}
+};
+#endif
+
+void test_remote_malformed_without_local_file() {
+#if defined(__unix__) || defined(__APPLE__)
+    const auto dir = fresh_dir("remote-malformed");
+    ScopedCheckpointDir scoped(dir);
+    DistributedScheduler sched;
+
+    // The region answers 200 with a body that is not a snapshot, and no local file
+    // exists. The error must name the REMOTE failure, not point the operator at a
+    // local file that does not exist.
+    auto server = RemoteServer::start(R"({"format":"NOT_A_SNAPSHOT"})");
+    if (!server.has_value()) {
+        std::printf("SKIP: remote-malformed (could not start local server)\n");
+        fs::remove_all(dir);
+        return;
+    }
+    ahfl::runtime::RegionConfig region;
+    region.region_id = "test";
+    region.nodes.push_back(ahfl::runtime::RemoteNodeSpec{
+        .node_id = "n1", .endpoint = server->endpoint, .region = "test", .priority = 1});
+    sched.add_region(std::move(region));
+
+    const auto restored = sched.restore("agent_0123456789abcdef");
+    check(!restored.has_value(), "remote.malformed_not_restored");
+    check(!restored.has_value() &&
+              restored.error() == ahfl::runtime::CheckpointRestoreError::RemoteMalformedSnapshot,
+          "remote.malformed_reported_as_remote");
+
+    // Conversely, with no region configured and no local file, the error is the
+    // accurate NotFound — never the "local bytes failed the parse" wording.
+    DistributedScheduler local_only;
+    check(local_only.restore("agent_0123456789abcdef").error() ==
+              ahfl::runtime::CheckpointRestoreError::NotFound,
+          "remote.no_region_not_found");
+
+    fs::remove_all(dir);
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // 4. fsync durability gate on the atomic replace
 // ---------------------------------------------------------------------------
@@ -606,6 +908,10 @@ int main() {
     test_v2_rejects_malformed();
     test_v1_strict_parsing();
     test_restore_reports_malformed_file();
+    test_restore_non_regular_file_is_not_thrown();
+    test_restore_binds_id_to_content();
+    test_timestamp_write_read_reconciled();
+    test_remote_malformed_without_local_file();
     test_durable_replace_survives_and_commits();
     test_checkpoint_file_is_durably_committed();
 

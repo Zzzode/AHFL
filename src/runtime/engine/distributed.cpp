@@ -14,9 +14,17 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <sstream>
 #include <string>
 #include <system_error>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace ahfl::runtime {
 
@@ -40,6 +48,25 @@ constexpr std::array<std::string_view, 5> kSnapshotV2Fields = {
 // chars = 64 bits, ample for the per-agent checkpoint cardinality here.
 constexpr std::size_t kCheckpointDigestChars = 16;
 
+// The largest `timestamp_ms` that converts to a system_clock::time_point without
+// overflowing the clock's duration rep. `system_clock::duration` (libstdc++) is
+// nanoseconds, so a naïve time_point(milliseconds(x)) overflows the rep for large
+// x — signed-integer UB, and reachable from untrusted remote bytes. Rejecting
+// outside [0, kMaxSnapshotTimestampMs] keeps the conversion total for every
+// accepted value.
+constexpr std::int64_t kMaxSnapshotTimestampMs =
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::duration::max())
+        .count();
+
+// The single timestamp representation shared by BOTH codecs and the serializer:
+// milliseconds since the epoch. Rejecting negative values here is what makes the
+// serializer's own output round-trip (see parse_snapshot_* / serialize_snapshot);
+// rejecting the high end is what keeps time_point construction total.
+[[nodiscard]] constexpr bool is_representable_timestamp_ms(std::int64_t milliseconds) noexcept {
+    return milliseconds >= 0 && milliseconds <= kMaxSnapshotTimestampMs;
+}
+
 [[nodiscard]] bool is_lower_hex_digit(char c) noexcept {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
 }
@@ -55,16 +82,87 @@ constexpr std::size_t kCheckpointDigestChars = 16;
     return dir / (std::string(checkpoint_id) + ".snapshot");
 }
 
+// Read a checkpoint file's bytes, fail-closed and never throwing.
+//
+// A plain std::ifstream copy is NOT safe here: opening a directory (or a symlink
+// to one) that was dropped under a well-formed `<id>.snapshot` name succeeds at
+// open() and then throws std::__ios_failure from basic_filebuf::underflow, which
+// is a stream EXCEPTION, not a stream state — so the old `input.good()` guard was
+// dead and the throw escaped a [[nodiscard]] fail-closed path. The tree's
+// payload_store read_artifact establishes the correct shape: open the fd with
+// O_NOFOLLOW (a symlink is not followed — a checkpoint file is written by us, so a
+// symlinked one is an attack or corruption, not a feature), require the SAME fd to
+// fstat as a regular file, then read exactly that many bytes and confirm EOF. The
+// read itself is wrapped too, so no iostream/locale state can turn a corrupt or
+// concurrently-mutated file into a process abort.
 [[nodiscard]] std::optional<std::string> read_file_bytes(const fs::path &path) {
+#if defined(__unix__) || defined(__APPLE__)
+    const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) {
+        return std::nullopt;
+    }
+    struct stat info{};
+    if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0) {
+        ::close(fd);
+        return std::nullopt;
+    }
+    std::string content;
+    try {
+        content.resize(static_cast<std::size_t>(info.st_size));
+    } catch (...) {
+        ::close(fd);
+        return std::nullopt;
+    }
+    std::size_t read_total = 0;
+    while (read_total < content.size()) {
+        const ssize_t n = ::read(fd, content.data() + read_total, content.size() - read_total);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            ::close(fd);
+            return std::nullopt;
+        }
+        if (n == 0) {
+            break; // truncated since fstat
+        }
+        read_total += static_cast<std::size_t>(n);
+    }
+    // A byte beyond the fstat size means the file grew concurrently: not the exact
+    // artifact the id names, so it is not readable as this checkpoint.
+    char extra = '\0';
+    while (read_total == content.size()) {
+        const ssize_t n = ::read(fd, &extra, 1);
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n > 0) {
+            ::close(fd);
+            return std::nullopt;
+        }
+        break;
+    }
+    ::close(fd);
+    if (read_total != content.size()) {
+        return std::nullopt;
+    }
+    return content;
+#else
     std::ifstream input(path, std::ios::binary);
     if (!input.is_open()) {
         return std::nullopt;
     }
-    std::string content((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-    if (!input.good() && !input.eof()) {
+    try {
+        std::string content((std::istreambuf_iterator<char>(input)),
+                            std::istreambuf_iterator<char>());
+        if (!input.good() && !input.eof()) {
+            return std::nullopt;
+        }
+        return content;
+    } catch (const std::ios_base::failure &) {
         return std::nullopt;
     }
-    return content;
+#endif
 }
 
 // Strip one trailing '\r' so a CRLF-checked-out snapshot still reads, then reject
@@ -130,7 +228,7 @@ parse_snapshot_v2(const JsonValue &root) {
         return std::unexpected(SnapshotParseError::MissingField);
     }
     const auto timestamp_value = timestamp->as_int();
-    if (!timestamp_value.has_value() || *timestamp_value < 0) {
+    if (!timestamp_value.has_value() || !is_representable_timestamp_ms(*timestamp_value)) {
         return std::unexpected(SnapshotParseError::InvalidTimestamp);
     }
 
@@ -214,8 +312,11 @@ parse_snapshot_v1(std::string_view data) {
             const auto *end = value.data() + value.size();
             const auto parsed = std::from_chars(begin, end, millis);
             // Full consumption: a trailing byte means the value is not a number
-            // (the old `std::stoll` swallowed exactly this).
-            if (parsed.ec != std::errc{} || parsed.ptr != end || millis < 0) {
+            // (the old `std::stoll` swallowed exactly this). The representable
+            // gate rejects the negative and out-of-range values the serializer can
+            // never emit and a time_point can never hold.
+            if (parsed.ec != std::errc{} || parsed.ptr != end ||
+                !is_representable_timestamp_ms(millis)) {
                 return std::unexpected(SnapshotParseError::InvalidTimestamp);
             }
             snapshot.timestamp =
@@ -353,6 +454,10 @@ std::string_view describe(CheckpointRestoreError error) noexcept {
         return "checkpoint file could not be read";
     case CheckpointRestoreError::MalformedSnapshot:
         return "checkpoint bytes failed the strict snapshot parse";
+    case CheckpointRestoreError::WrongContent:
+        return "checkpoint bytes do not match the id's agent / digest";
+    case CheckpointRestoreError::RemoteMalformedSnapshot:
+        return "remote checkpoint body failed the strict snapshot parse and no local file exists";
     }
     return "unknown checkpoint restore error";
 }
@@ -472,6 +577,18 @@ CheckpointResult DistributedScheduler::checkpoint(const StateSnapshot &snapshot)
         result.error = "invalid agent id: not usable as a path component";
         return result;
     }
+    // The write/read reconciliation for the timestamp: the strict reader accepts
+    // exactly [0, kMaxSnapshotTimestampMs] ms, so a snapshot outside that range
+    // could be written here and never read back — "restore your own checkpoint"
+    // would be false. Refuse it at the write boundary instead.
+    const auto epoch =
+        std::chrono::duration_cast<std::chrono::milliseconds>(snapshot.timestamp.time_since_epoch())
+            .count();
+    if (!is_representable_timestamp_ms(epoch)) {
+        result.status = CheckpointStatus::Failed;
+        result.error = "snapshot timestamp is out of the representable range";
+        return result;
+    }
     const std::string serialized = serialize_snapshot(snapshot);
     if (serialized.empty()) {
         result.status = CheckpointStatus::Failed;
@@ -569,6 +686,19 @@ DistributedScheduler::restore(const std::string &checkpoint_id) const {
         return std::unexpected(CheckpointRestoreError::InvalidId);
     }
 
+    // The id's agent prefix. Every accepted snapshot must name this agent, so an
+    // id cannot be repurposed for another agent's bytes (see the content binding
+    // below and in list_checkpoints).
+    const std::string id_agent = checkpoint_id.substr(0, checkpoint_id.rfind('_'));
+
+    // Identity is a pure function of (agent_id, bytes): an id is only honoured when
+    // the bytes hash to its digest AND the payload names the id's agent. Shape
+    // alone is decoration, not identity.
+    const auto id_matches_bytes = [&](std::string_view serialized, const StateSnapshot &snapshot) {
+        return snapshot.agent_id == id_agent &&
+               content_addressed_checkpoint_id(snapshot.agent_id, serialized) == checkpoint_id;
+    };
+
     std::optional<SnapshotParseError> remote_parse_error;
     // 1. Try remote restore via HTTP
     auto endpoints = get_sorted_endpoints(regions_);
@@ -580,6 +710,12 @@ DistributedScheduler::restore(const std::string &checkpoint_id) const {
         if (http_result.success && !http_result.body.empty()) {
             auto snapshot = deserialize_snapshot(http_result.body);
             if (snapshot.has_value()) {
+                // A remote body's agent prefix is free text, so this is the only
+                // check that the endpoint did not answer a different agent's
+                // checkpoint. A mismatch is a content error, not "malformed".
+                if (!id_matches_bytes(http_result.body, *snapshot)) {
+                    return std::unexpected(CheckpointRestoreError::WrongContent);
+                }
                 return *snapshot;
             }
             remote_parse_error = snapshot.error();
@@ -593,7 +729,10 @@ DistributedScheduler::restore(const std::string &checkpoint_id) const {
     std::error_code ec;
     if (!fs::exists(filepath, ec) || ec) {
         if (remote_parse_error.has_value()) {
-            return std::unexpected(CheckpointRestoreError::MalformedSnapshot);
+            // No local file was involved: say the REMOTE body failed the parse, not
+            // "checkpoint bytes failed the strict snapshot parse" (which points the
+            // operator at a local file that does not exist).
+            return std::unexpected(CheckpointRestoreError::RemoteMalformedSnapshot);
         }
         return std::unexpected(CheckpointRestoreError::NotFound);
     }
@@ -605,6 +744,13 @@ DistributedScheduler::restore(const std::string &checkpoint_id) const {
     auto snapshot = deserialize_snapshot(*content);
     if (!snapshot.has_value()) {
         return std::unexpected(CheckpointRestoreError::MalformedSnapshot);
+    }
+    // The bytes must BE the checkpoint the id names. Under a content-addressed
+    // scheme, a file whose bytes hash elsewhere is a foreign/renamed file (or a
+    // corrupted one), and returning it would resume an agent from a state it never
+    // checkpointed under this id.
+    if (!id_matches_bytes(*content, *snapshot)) {
+        return std::unexpected(CheckpointRestoreError::WrongContent);
     }
     return *snapshot;
 }
@@ -629,9 +775,20 @@ std::vector<std::string> DistributedScheduler::list_checkpoints(std::string_view
         }
         const std::string id =
             filename.substr(0, filename.size() - std::string(".snapshot").size());
-        if (is_checkpoint_id_for(id, agent_id)) {
-            ids.push_back(id);
+        if (!is_checkpoint_id_for(id, agent_id)) {
+            continue;
         }
+        // The filename is a claim; the payload is the fact. A foreign checkpoint
+        // copied under this agent's name must not be listed as this agent's.
+        const auto content = read_file_bytes(entry.path());
+        if (!content.has_value()) {
+            continue;
+        }
+        const auto snapshot = deserialize_snapshot(*content);
+        if (!snapshot.has_value() || snapshot->agent_id != agent_id) {
+            continue;
+        }
+        ids.push_back(id);
     }
     // Deterministic order, independent of filesystem iteration order.
     std::sort(ids.begin(), ids.end());
