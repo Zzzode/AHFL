@@ -695,6 +695,7 @@ ahfl_label_tests(
     LABELS mutation
     TESTS
         ahfl.mutation.config_report
+        ahfl.mutation.fallback_score
 )
 
 ahfl_label_tests(
@@ -718,6 +719,7 @@ ahfl_label_tests(
         ahflc.quality.smv_size_trend
         ahflc.quality.benchmark_trend
         ahfl.mutation.config_report
+        ahfl.mutation.fallback_score
 )
 
 # The fuzz *_check quality-gate members only exist when fuzzing is OFF; the

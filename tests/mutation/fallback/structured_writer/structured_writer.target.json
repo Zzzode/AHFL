@@ -1,0 +1,58 @@
+{
+  "schema": "ahfl.mutation.target.v1",
+  "target": "structured_writer",
+  "source": "structured_writer.cpp",
+  "test": "structured_writer_test.cpp",
+  "score_floor": 0.85,
+  "mutants": [
+    {
+      "id": "quote_escape",
+      "description": "escape removal for '\"' -> bare quote in escape()",
+      "match": "out += \"\\\\\\\"\";",
+      "replace": "out += \"\\\"\";",
+      "expect": "killed"
+    },
+    {
+      "id": "escape_pair",
+      "description": "backslash escape doubled -> single in escape() (untested; expected survivor)",
+      "match": "out += \"\\\\\\\\\";",
+      "replace": "out += \"\\\\\";",
+      "expect": "survived"
+    },
+    {
+      "id": "field_separator",
+      "description": "field separator comma -> semicolon in write_field()",
+      "match": "out += \", \";",
+      "replace": "out += \"; \";",
+      "expect": "killed"
+    },
+    {
+      "id": "kv_separator",
+      "description": "key/value separator \": \" -> \":\" in write_field()",
+      "match": "out += \"\\\": \\\"\";",
+      "replace": "out += \"\\\":\\\"\";",
+      "expect": "killed"
+    },
+    {
+      "id": "object_open_brace",
+      "description": "object open brace { -> [ in write_object()",
+      "match": "out = \"{\";",
+      "replace": "out = \"[\";",
+      "expect": "killed"
+    },
+    {
+      "id": "object_close_brace",
+      "description": "object close brace } -> ] in write_object()",
+      "match": "out += \"}\";",
+      "replace": "out += \"]\";",
+      "expect": "killed"
+    },
+    {
+      "id": "object_terminator",
+      "description": "record terminator newline removal in write_object()",
+      "match": "out += \"\\n\";",
+      "replace": "out += \"\";",
+      "expect": "killed"
+    }
+  ]
+}

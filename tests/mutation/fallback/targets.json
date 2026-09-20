@@ -1,0 +1,14 @@
+{
+  "schema": "ahfl.mutation.targets.v1",
+  "description": "Signed-off fallback-mutation target set (KR7.3). This file is the single source of truth for WHICH representative targets the release-blocking mutation gate runs and how many deterministic mutants each must carry. Per-mutant expectations and score floors live with each target in fallback/<target>/<target>.target.json. Adding a target, or removing one, is a reviewed edit here; silently dropping a target directory cannot shrink the gate.",
+  "targets": [
+    {
+      "target": "arithmetic",
+      "mutants": 9
+    },
+    {
+      "target": "structured_writer",
+      "mutants": 7
+    }
+  ]
+}

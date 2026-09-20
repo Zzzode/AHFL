@@ -1,10 +1,14 @@
-// Narrow test suite for the mutation target.
+// Narrow test suite for the arithmetic mutation target.
 //
 // Exit code 0 => all assertions hold (the "green" baseline). Any non-zero
 // exit means the suite caught a defect; the fallback runner interprets that
 // as "mutant killed". The suite intentionally does NOT test scaled(), so a
 // mutation there survives and the reported score is honest (< 100%).
-#include "target.hpp"
+//
+// The runner pins this suite's exact per-mutant outcome list in
+// target_mutants.json, so every deliberate behaviour here (including the
+// intentional survivor) is a reviewed, machine-checked baseline entry.
+#include "arithmetic.hpp"
 
 #include <cstdio>
 

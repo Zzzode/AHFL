@@ -1,0 +1,72 @@
+{
+  "schema": "ahfl.mutation.target.v1",
+  "target": "arithmetic",
+  "source": "arithmetic.cpp",
+  "test": "arithmetic_test.cpp",
+  "score_floor": 0.88,
+  "mutants": [
+    {
+      "id": "classify_rel",
+      "description": "relational operator <= -> < in classify()",
+      "match": "x <= 0",
+      "replace": "x < 0",
+      "expect": "killed"
+    },
+    {
+      "id": "add_arith",
+      "description": "arithmetic operator + -> - in add()",
+      "match": "return a + b;",
+      "replace": "return a - b;",
+      "expect": "killed"
+    },
+    {
+      "id": "is_valid_rel",
+      "description": "relational operator >= -> > in is_valid()",
+      "match": "return n >= 10;",
+      "replace": "return n > 10;",
+      "expect": "killed"
+    },
+    {
+      "id": "scaled_arith",
+      "description": "arithmetic operator * -> + in scaled() (untested; expected survivor)",
+      "match": "return v * 2;",
+      "replace": "return v + 2;",
+      "expect": "survived"
+    },
+    {
+      "id": "bool_connective",
+      "description": "boolean connective && -> || in in_range()",
+      "match": "x >= lo && x <= hi",
+      "replace": "x >= lo || x <= hi",
+      "expect": "killed"
+    },
+    {
+      "id": "unary_negation",
+      "description": "unary negation removal !a -> a in negate()",
+      "match": "return !a;",
+      "replace": "return a;",
+      "expect": "killed"
+    },
+    {
+      "id": "const_replace",
+      "description": "constant replacement return 0 -> return 1 in origin()",
+      "match": "return 0;",
+      "replace": "return 1;",
+      "expect": "killed"
+    },
+    {
+      "id": "eq_boundary",
+      "description": "comparison boundary == -> != in equals()",
+      "match": "return a == b;",
+      "replace": "return a != b;",
+      "expect": "killed"
+    },
+    {
+      "id": "loop_bound",
+      "description": "off-by-one loop bound < -> <= in count_to()",
+      "match": "for (int i = 0; i < n; ++i) {",
+      "replace": "for (int i = 0; i <= n; ++i) {",
+      "expect": "killed"
+    }
+  ]
+}

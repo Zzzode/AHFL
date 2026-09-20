@@ -40,7 +40,7 @@
 | Incremental compiler library / executable | `src/tooling/incremental/`、`src/tooling/incremental/main.cpp`、`tests/unit/tooling/incremental/incremental.cpp`、`tests/scripts/incremental_smoke.py` | dependency graph、IR cache、changed compile 与独立 `ahfl-incremental` 入口存在；project-aware invalidation 和持久 cache contract 仍待做 |
 | Telemetry / profiling libraries / CLI timing | `src/tooling/telemetry/`、`src/tooling/profiling/`、`src/tooling/cli/cli_driver.cpp` | trace/metrics/logging/pass timing/hotspot/memory tracker 基础存在；`--time-passes`、`--smv-size-report`、`--trace-export`、`--metrics-export`、`--structured-log` 与 `--memory-report` 已接入 CLI |
 | WASM / K8s / OpenAPI / Terraform target backend | `src/compiler/backends/infra/`、`CommandKind::EmitWasm`、`EmitK8sCrd`、`EmitOpenApi`、`EmitTerraform` | 基础 generation 和 CLI 注册存在；仍需产品级语义和验收 |
-| Fuzz / bench / mutation target | `tests/fuzz/`、`tests/bench/`、`tests/mutation/` | 目录和 target 已存在；CI 显式运行 `quality-gates`，覆盖 fuzz/property、真实 compile-time budget、memory proxy budget、bench smoke、mutation config report 与真实 `emit smv` size/spec budget；SMV-size 与 compile-time/memory-proxy 趋势化已闭合(committed baseline + 阻塞门)，真实 mutation score floor 仍未闭合 |
+| Fuzz / bench / mutation target | `tests/fuzz/`、`tests/bench/`、`tests/mutation/` | 目录和 target 已存在；CI 显式运行 `quality-gates`，覆盖 fuzz/property、真实 compile-time budget、memory proxy budget、bench smoke、mutation config report 与真实 `emit smv` size/spec budget；SMV-size 与 compile-time/memory-proxy 趋势化已闭合(committed baseline + 阻塞门)，真实 mutation score floor 亦已闭合(fallback runner target-agnostic 化 + 第二个代表目标 `structured_writer`，`ahfl.mutation.fallback_score` 逐 mutant 钉 `expect` 并阻塞 `score_floor`，schema `ahfl.mutation.fallback.v2`) |
 
 ---
 
@@ -196,6 +196,7 @@
 - [x] 为真实 `emit smv` 输出建立初始 size/spec budget CTest gate，覆盖 formal workflow、pass-productization fixture 和 refund audit example。
 - [ ] 将 compile time、memory proxy 与 SMV size budget 扩展为趋势报告、release-blocking 阈值和更多 state-space 代表样本。
 - [x] 将 mutation config/report plumbing 纳入 CTest 与 `quality-gates`，输出机器可读 config report。
+- [x] (KR7.3 续) 将真实 mutation score 升级为 release-blocking 信号：runner target-agnostic 化(每目标 `<name>.target.json` 自带 mutant 集/`expect`/`score_floor`)、已签署 `fallback/targets.json` 目标集、新增第二个代表目标 `structured_writer`；gate 逐 mutant 钉 outcome 并阻塞 score floor，仅接受 `environment: ` 前缀的 `tool_unavailable`。
 - [x] 将 mutation testing 从 config/report plumbing 升级为真实 runner job，输出 mutation score。（2026-08-24：`run_fallback_mutation.sh` 自包含 runner 对固定 mutant 集应用于 target 拷贝、重建窄测试并记录 killed/survived，输出真实 mutation score JSON；mutant 集已从 4 扩到 9（新增 boolean-connective、unary-negation、constant-replacement、comparison-boundary、off-by-one loop 五类,fixture 上 killed=8 survived=1 score=0.8889，`scaled_arith` 为刻意 expected survivor）；mull 不可用时 `run_mutation.sh` 输出 `status: tool_unavailable, score: null` 而非伪造分数；`ahfl.mutation.fallback_score` ctest 校验 report 结构与全部 mutant 已评估。）
 - [x] 为 fuzz crash corpus 和 minimized repro 建立保存位置。（2026-08-24：`tests/fuzz/crashes/<target>/` 目录约定 + README + `_TEMPLATE.repro.md`，`crash_replay.sh` 把每个 crash 输入回放给对应 libFuzzer 二进制作为 single-run 回归门（空目录时 no-op 通过，提交 crash 文件即成为回归守卫）；此前挡住端到端验证的 fuzzing-configure bug（`LabelTests.cmake` 无条件给 non-fuzzing 分支专属的 `ahfl.fuzz.*_check` 打 label）已修复——`AHFL_ENABLE_FUZZING=ON` 现可 configure，crash_replay ctest 可枚举。）
 
