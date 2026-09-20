@@ -1340,7 +1340,7 @@ class Verifier {
                     // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per CoreExprNode
                     // alternative, generated from core_expr_nodes.def. Only
                     // CoreUnaryExpr / CoreBinaryExpr carry intra-arena operand
-                    // edges, so every other node names CORE_EXPR_ACYCLIC_LEAF (an
+                    // edges, so every other node names CORE_EXPR_ACYCLIC_<Node> (an
                     // explicit, named no-op — the same behavior the unnamed
                     // catch-all had). With no generic catch-all, adding a
                     // CoreExprNode alternative is a COMPILE ERROR here until it is
@@ -1583,7 +1583,7 @@ class Verifier {
                     // CorePatternNode alternative, generated from
                     // core_pattern_nodes.def. Only CoreBindingPat / CoreVariantPat
                     // / CoreTuplePat / CoreOrPat carry sub-pattern edges, so
-                    // those route above; the rest name CORE_PATTERN_ACYCLIC_LEAF
+                    // those route above; the rest name CORE_PATTERN_ACYCLIC_<Node>
                     // (explicit, named no-op). No generic catch-all: a new
                     // pattern alternative is a COMPILE ERROR here until classified.
 #define CORE_PATTERN_ACYCLIC_CoreWildcardPat(Name) [](const Name &) {},
@@ -2962,7 +2962,7 @@ class Verifier {
             // alternative, generated from core_expr_nodes.def. Only CorePathExpr
             // yields a path and only CoreUnaryExpr / CoreBinaryExpr carry
             // intra-arena operand edges, so those route above; every other node
-            // names CORE_EXPR_PATHS_LEAF (explicit, named no-op — the same
+            // names CORE_EXPR_PATHS_<Node> (explicit, named no-op — the same
             // behavior the unnamed catch-all had). No generic catch-all: a new
             // expr alternative is a COMPILE ERROR here until it is classified.
 #define CORE_EXPR_PATHS_CorePathExpr(Name) [&](const Name &p) { fn(p, range); },

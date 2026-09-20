@@ -1161,40 +1161,54 @@ void lower_temporal_embedded_exprs(OptProgram &program,
         return;
     }
 
+    // RFC 0027 P6/P7/P8 (KR6.13-P7): one handler per TemporalExprNode
+    // alternative, generated from temporal_nodes.def — a new temporal node is a
+    // COMPILE ERROR here until it is routed rather than an implicitly-skipped
+    // case (the generic if-constexpr chain this replaces still silently ignored
+    // any node not named in it).
+#define TEMPORAL_EMBEDDED_SKIP(Name, kind)                                                         \
+    [&](const Name &) {                                                                            \
+        record_skipped_temporal_fragment(program, function_prefix, kind, temporal->source_range);  \
+    },
+#define TEMPORAL_EMBEDDED_EmbeddedTemporalExpr(Name, Wire)                                         \
+    [&](const Name &node) {                                                                        \
+        if (node.expr) {                                                                           \
+            program.functions.push_back(lower_expr_function(                                       \
+                function_prefix + "::embedded::" + std::to_string(embedded_index++),               \
+                node.expr, node.expr->source_range, clone_root_type_hints(root_type_hints)));      \
+        }                                                                                          \
+    },
+#define TEMPORAL_EMBEDDED_CalledTemporalExpr(Name, Wire) TEMPORAL_EMBEDDED_SKIP(Name, "called")
+#define TEMPORAL_EMBEDDED_InStateTemporalExpr(Name, Wire) TEMPORAL_EMBEDDED_SKIP(Name, "in_state")
+#define TEMPORAL_EMBEDDED_RunningTemporalExpr(Name, Wire) TEMPORAL_EMBEDDED_SKIP(Name, "running")
+#define TEMPORAL_EMBEDDED_CompletedTemporalExpr(Name, Wire) TEMPORAL_EMBEDDED_SKIP(Name, "completed")
+#define TEMPORAL_EMBEDDED_TemporalUnaryExpr(Name, Wire)                                            \
+    [&](const Name &node) {                                                                        \
+        lower_temporal_embedded_exprs(                                                             \
+            program, node.operand, function_prefix, root_type_hints, embedded_index);              \
+    },
+#define TEMPORAL_EMBEDDED_TemporalBinaryExpr(Name, Wire)                                           \
+    [&](const Name &node) {                                                                        \
+        lower_temporal_embedded_exprs(                                                             \
+            program, node.lhs, function_prefix, root_type_hints, embedded_index);                  \
+        lower_temporal_embedded_exprs(                                                             \
+            program, node.rhs, function_prefix, root_type_hints, embedded_index);                  \
+    },
+#define HANDLE_TEMPORAL_NODE(Name, Wire) TEMPORAL_EMBEDDED_##Name(Name, Wire)
     std::visit(
-        [&](const auto &node) {
-            using T = std::decay_t<decltype(node)>;
-            if constexpr (std::is_same_v<T, EmbeddedTemporalExpr>) {
-                if (node.expr) {
-                    program.functions.push_back(lower_expr_function(
-                        function_prefix + "::embedded::" + std::to_string(embedded_index++),
-                        node.expr,
-                        node.expr->source_range,
-                        clone_root_type_hints(root_type_hints)));
-                }
-            } else if constexpr (std::is_same_v<T, CalledTemporalExpr>) {
-                record_skipped_temporal_fragment(
-                    program, function_prefix, "called", temporal->source_range);
-            } else if constexpr (std::is_same_v<T, InStateTemporalExpr>) {
-                record_skipped_temporal_fragment(
-                    program, function_prefix, "in_state", temporal->source_range);
-            } else if constexpr (std::is_same_v<T, RunningTemporalExpr>) {
-                record_skipped_temporal_fragment(
-                    program, function_prefix, "running", temporal->source_range);
-            } else if constexpr (std::is_same_v<T, CompletedTemporalExpr>) {
-                record_skipped_temporal_fragment(
-                    program, function_prefix, "completed", temporal->source_range);
-            } else if constexpr (std::is_same_v<T, TemporalUnaryExpr>) {
-                lower_temporal_embedded_exprs(
-                    program, node.operand, function_prefix, root_type_hints, embedded_index);
-            } else if constexpr (std::is_same_v<T, TemporalBinaryExpr>) {
-                lower_temporal_embedded_exprs(
-                    program, node.lhs, function_prefix, root_type_hints, embedded_index);
-                lower_temporal_embedded_exprs(
-                    program, node.rhs, function_prefix, root_type_hints, embedded_index);
-            }
+        ahfl::Overloaded{
+#include "ahfl/compiler/ir/temporal_nodes.def"
         },
         temporal->node);
+#undef HANDLE_TEMPORAL_NODE
+#undef TEMPORAL_EMBEDDED_SKIP
+#undef TEMPORAL_EMBEDDED_EmbeddedTemporalExpr
+#undef TEMPORAL_EMBEDDED_CalledTemporalExpr
+#undef TEMPORAL_EMBEDDED_InStateTemporalExpr
+#undef TEMPORAL_EMBEDDED_RunningTemporalExpr
+#undef TEMPORAL_EMBEDDED_CompletedTemporalExpr
+#undef TEMPORAL_EMBEDDED_TemporalUnaryExpr
+#undef TEMPORAL_EMBEDDED_TemporalBinaryExpr
 }
 
 } // anonymous namespace

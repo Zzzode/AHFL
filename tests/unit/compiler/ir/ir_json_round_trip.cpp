@@ -543,6 +543,86 @@ TEST_CASE("IR JSON deserializer fails closed on an unknown expression kind") {
     CHECK_FALSE(ahfl::parse_program_ir_json(bad).has_value());
 }
 
+// RFC 0027 P6/P7 (KR6.13-P7): the same fail-closed property now holds for the
+// MatchPatternNode / TemporalExprNode / StatementNode / Decl families, whose
+// `"kind"` spellings the reader resolves through the SHARED wire-name tables
+// derived from pattern_nodes.def / temporal_nodes.def / stmt_nodes.def /
+// decl_nodes.def. A typo can no longer silently demote to a default node.
+TEST_CASE("IR JSON deserializer fails closed on unknown statement / decl kinds") {
+    using namespace ahfl::ir;
+
+    Program program;
+    StateHandler handler;
+    handler.state_name = "S";
+    auto stmt = std::make_unique<Statement>();
+    stmt->node = ExprStatement{program.expr_arena.make(BoolLiteralExpr{.value = true})};
+    handler.body.statements.push_back(std::move(stmt));
+    FlowDecl flow;
+    flow.target_ref.kind = SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    std::ostringstream out;
+    ahfl::print_program_ir_json(program, out);
+    const std::string base = out.str();
+    REQUIRE(ahfl::parse_program_ir_json(base).has_value());
+
+    // Statement kind: the ExprStatement's own `"kind": "expr"` is misspelled.
+    const auto bad_stmt = replace_first(base, "\"kind\": \"expr\"", "\"kind\": \"exprss\"");
+    CHECK_FALSE(ahfl::parse_program_ir_json(bad_stmt).has_value());
+
+    // Decl kind: the FlowDecl's `"kind": "flow"` is misspelled.
+    const auto bad_decl = replace_first(base, "\"kind\": \"flow\"", "\"kind\": \"floww\"");
+    CHECK_FALSE(ahfl::parse_program_ir_json(bad_decl).has_value());
+}
+
+TEST_CASE("IR JSON deserializer fails closed on unknown temporal and pattern kinds") {
+    using namespace ahfl::ir;
+
+    // A contract clause carrying an embedded temporal formula, plus an if-let
+    // statement carrying a literal match pattern: together they exercise the
+    // temporal_node and match_pattern_node wire tables.
+    Program program;
+    StateHandler handler;
+    handler.state_name = "S";
+    auto if_let = std::make_unique<Statement>();
+    IfLetStatement ifs;
+    ifs.pattern.node = LiteralPattern{.spelling = "0"};
+    ifs.scrutinee = program.expr_arena.make(IntegerLiteralExpr{.spelling = "0"});
+    ifs.then_block = ahfl::make_owned<Block>();
+    if_let->node = std::move(ifs);
+    handler.body.statements.push_back(std::move(if_let));
+    FlowDecl flow;
+    flow.target_ref.kind = SymbolRefKind::Agent;
+    flow.target_ref.canonical_name = "app::A";
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.emplace_back(std::move(flow));
+
+    // A contract clause with an embedded temporal formula.
+    ContractDecl contract;
+    ContractClause clause;
+    clause.kind = ContractClauseKind::Ensures;
+    clause.value = ahfl::make_owned<TemporalExpr>();
+    std::get<TemporalExprPtr>(clause.value)->node = EmbeddedTemporalExpr{
+        .expr = program.expr_arena.make(BoolLiteralExpr{.value = true})};
+    contract.clauses.push_back(std::move(clause));
+    program.declarations.emplace_back(std::move(contract));
+
+    std::ostringstream out;
+    ahfl::print_program_ir_json(program, out);
+    const std::string base = out.str();
+    REQUIRE(base.find("\"literal\"") != std::string::npos);
+    REQUIRE(base.find("\"embedded_expr\"") != std::string::npos);
+    REQUIRE(ahfl::parse_program_ir_json(base).has_value());
+
+    const auto bad_pattern = replace_first(base, "\"literal\"", "\"litteral\"");
+    CHECK_FALSE(ahfl::parse_program_ir_json(bad_pattern).has_value());
+
+    const auto bad_temporal = replace_first(base, "\"embedded_expr\"", "\"embedded_exprr\"");
+    CHECK_FALSE(ahfl::parse_program_ir_json(bad_temporal).has_value());
+}
+
 namespace {
 
 // A deliberately field-complete TypeRef: a bounded generic collection

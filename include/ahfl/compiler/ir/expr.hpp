@@ -424,17 +424,17 @@ struct QuantifierExpr {
 /// lowered to CallExpr via nominal stdlib constructors, Option variants via
 /// QualifiedValueExpr + CallExpr; KR5.5 added MethodCallExpr)
 ///
-/// RFC 0027 P6/P7 (KR6.13-E): the alternative list AND its JSON wire names are
-/// generated from the single X-macro node list in expr_nodes.def — one line per
-/// node, declaration order preserved. To add a node, edit ONLY that .def; the
-/// variant, the internal `ExprNodeIndex` enum, the wire-name table, and (via
-/// the negative compile-test) every exhaustive visitor stay in lockstep. The
-/// SWEEP CHECKLIST that used to live here covered the eight hand-written
-/// consumer sites for ExprNode; those sites still route through std::visit and
-/// are now enumerated by the .def + this generated variant, so a new node that
-/// misses one is a compile error rather than a silent data-loss bug. The
-/// remaining IR families (Statement / TemporalExpr / MatchPattern / Decl / …)
-/// keep their own checklists until later KR6.13 slices migrate them.
+/// RFC 0027 P6/P7 (KR6.13-E/P7): the alternative list, its JSON wire names, and
+/// its child-traversal edges are generated from the single X-macro node list in
+/// expr_nodes.def — one line per node, declaration order preserved. To add a
+/// node, edit ONLY that .def; the variant, the internal `ExprNodeIndex` enum,
+/// the wire-name table, the derived child walk, and (via the negative
+/// compile-test) every exhaustive visitor stay in lockstep — a new node that
+/// misses one is a compile error naming the type rather than a silent data-loss
+/// bug. There is no SWEEP CHECKLIST: KR6.13-P7 finished the rollout, so EVERY
+/// AHFL-IR node family (Expr / Statement / TemporalExpr / MatchPattern / Decl)
+/// and the Core-IR families (Core Expr / Pattern / Stmt / ValueType) now derive
+/// from their own .def list the same way.
 ///
 /// The tuple-tag indirection lives in node_tags.hpp (KR6.13-F), shared by every
 /// X-macro-generated IR variant.

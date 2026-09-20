@@ -80,6 +80,40 @@ FORBIDDEN_DEPENDENCIES = {
 TYPES_HEADER = INCLUDE / "ahfl" / "compiler" / "semantics" / "types.hpp"
 AST_HEADER = INCLUDE / "ahfl" / "compiler" / "frontend" / "ast.hpp"
 IR_EXPR_HEADER = INCLUDE / "ahfl" / "compiler" / "ir" / "expr.hpp"
+
+# RFC 0027 P6/P7/P8 IR SSOT (KR6.13): every IR node family's variant alternative
+# list and JSON wire-name table are generated from ONE X-macro `.def` list, never
+# hand-written as a literal `using X = std::variant<...>;` block. This gate makes
+# that a STRUCTURAL property of the tree rather than a convention: for each
+# (header, variant alias, .def file, macro) tuple it asserts the header derives
+# the alias through node_detail::variant_from_tags_t over the .def, and it
+# asserts the .def itself is non-empty with one entry per node. A family added to
+# this table is then checked without a second copy of the node list.
+IR_SSOT_FAMILIES = (
+    ("ahfl/compiler/ir/expr.hpp", "ExprNode", "expr_nodes.def", "HANDLE_EXPR_NODE"),
+    ("ahfl/compiler/ir/expr.hpp", "StatementNode", "stmt_nodes.def", "HANDLE_STMT_NODE"),
+    (
+        "ahfl/compiler/ir/expr.hpp",
+        "TemporalExprNode",
+        "temporal_nodes.def",
+        "HANDLE_TEMPORAL_NODE",
+    ),
+    (
+        "ahfl/compiler/ir/expr.hpp",
+        "MatchPatternNode",
+        "pattern_nodes.def",
+        "HANDLE_PATTERN_NODE",
+    ),
+    ("ahfl/compiler/ir/program.hpp", "Decl", "decl_nodes.def", "HANDLE_DECL_NODE"),
+    ("ahfl/compiler/ir/core_ir.hpp", "CoreExprNode", "core_expr_nodes.def", "HANDLE_CORE_EXPR_NODE"),
+    (
+        "ahfl/compiler/ir/core_ir.hpp",
+        "CorePatternNode",
+        "core_pattern_nodes.def",
+        "HANDLE_CORE_PATTERN_NODE",
+    ),
+    ("ahfl/compiler/ir/core_ir.hpp", "CoreStmtNode", "core_stmt_nodes.def", "HANDLE_CORE_STMT_NODE"),
+)
 TYPECHECK_INTERNAL_HEADER = SRC / "compiler" / "semantics" / "typecheck_internal.hpp"
 TYPECHECK_DECLS_SOURCE = SRC / "compiler" / "semantics" / "typecheck_decls.cpp"
 CONST_SEMA_HEADER = INCLUDE / "ahfl" / "compiler" / "semantics" / "const_sema.hpp"
@@ -333,6 +367,61 @@ def check_ast_declaration_shape(failures: list[str]) -> None:
             )
 
 
+def check_ir_node_ssot_shape(failures: list[str]) -> None:
+    """Require every IR node family to derive its variant from its X-macro .def.
+
+    RFC 0027 P6/P7/P8 (KR6.13) replaced the hand-written per-family variant
+    blocks and their parallel wire-name/consumer enumerations with ONE `.def`
+    list per family. This gate keeps that structural: the header must rebuild the
+    variant alias through `node_detail::variant_from_tags_t` over the `.def`, and
+    the `.def` must contain the family's macro invocation (so a family cannot
+    silently revert to a literal `using X = std::variant<...>;`).
+    """
+    for header_rel, alias, def_name, macro in IR_SSOT_FAMILIES:
+        header = INCLUDE / header_rel
+        def_file = header.parent / def_name
+        if not header.is_file():
+            failures.append(f"missing expected IR header: {header.relative_to(ROOT)}")
+            continue
+        if not def_file.is_file():
+            failures.append(
+                f"missing IR SSOT node list: {def_file.relative_to(ROOT)} "
+                f"(declared by {header_rel})"
+            )
+            continue
+
+        text = header.read_text()
+        # The alias must be reconstructed from a tag tuple via variant_from_tags_t.
+        # A literal `using <alias> = std::variant< ... >;` block is the regression
+        # this rejects.
+        derived = re.search(
+            rf"using\s+{re.escape(alias)}\s*=[^;]*variant_from_tags_t[^;]*;",
+            text,
+            flags=re.DOTALL,
+        )
+        if derived is None:
+            failures.append(
+                f"{header_rel}: IR node variant `{alias}` must be generated from its "
+                f"X-macro .def via node_detail::variant_from_tags_t (RFC 0027 P8 IR "
+                f"SSOT), not hand-written"
+            )
+        # The .def must be INCLUDED by the header (the tag tuple it builds the
+        # alias from is expanded from that include), so the SSOT list is the
+        # header's real dependency rather than a decorative file.
+        if not re.search(rf'#include\s+"[^"]*{re.escape(def_name)}"', text):
+            failures.append(
+                f"{header_rel}: IR node variant `{alias}` must include its {def_name} "
+                f"X-macro list (the tag tuple it derives from is expanded there)"
+            )
+
+        def_text = def_file.read_text()
+        if macro not in def_text:
+            failures.append(
+                f"{def_file.relative_to(ROOT)}: IR SSOT list must contain `{macro}` "
+                f"invocations (declared by {header_rel})"
+            )
+
+
 def check_ir_expression_effect_shape(failures: list[str]) -> None:
     """Require inferred ExprEffect to survive the Typed HIR -> IR boundary."""
     if not IR_EXPR_HEADER.is_file():
@@ -344,8 +433,7 @@ def check_ir_expression_effect_shape(failures: list[str]) -> None:
     if expr_match is None:
         failures.append(f"{IR_EXPR_HEADER.relative_to(ROOT)}: missing canonical IR Expr record")
         return
-    if re.search(r"\bExprEffect\s+effect\b", expr_match.group("body")) is None:
-        failures.append(
+    if re.search(r"\bExprEffect\s+effect\b", expr_match.group("body")) is None:        failures.append(
             f"{IR_EXPR_HEADER.relative_to(ROOT)}: IR Expr must retain Typed HIR ExprEffect; "
             "assurance and formal consumers may not rescan AST to recover expression effects"
         )
@@ -533,7 +621,9 @@ def main() -> int:
     check_payload_shape(failures)
     # (c) Top-level AST declaration representation (Phase 2 roadmap).
     check_ast_declaration_shape(failures)
-    # (d) Expression effects survive into the backend-facing IR.
+    # (d) IR node variants derive from their X-macro .def lists (RFC 0027 P8 SSOT).
+    check_ir_node_ssot_shape(failures)
+    # (e) Expression effects survive into the backend-facing IR.
     check_ir_expression_effect_shape(failures)
     # (e) Typecheck ownership follows the four Phase-2 Sema layers.
     check_sema_ownership_shape(failures)
