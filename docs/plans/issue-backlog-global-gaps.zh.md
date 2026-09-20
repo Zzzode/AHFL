@@ -40,7 +40,7 @@
 | Incremental compiler library / executable | `src/tooling/incremental/`、`src/tooling/incremental/main.cpp`、`tests/unit/tooling/incremental/incremental.cpp`、`tests/scripts/incremental_smoke.py` | dependency graph、IR cache、changed compile 与独立 `ahfl-incremental` 入口存在；project-aware invalidation 和持久 cache contract 仍待做 |
 | Telemetry / profiling libraries / CLI timing | `src/tooling/telemetry/`、`src/tooling/profiling/`、`src/tooling/cli/cli_driver.cpp` | trace/metrics/logging/pass timing/hotspot/memory tracker 基础存在；`--time-passes`、`--smv-size-report`、`--trace-export`、`--metrics-export`、`--structured-log` 与 `--memory-report` 已接入 CLI |
 | WASM / K8s / OpenAPI / Terraform target backend | `src/compiler/backends/infra/`、`CommandKind::EmitWasm`、`EmitK8sCrd`、`EmitOpenApi`、`EmitTerraform` | 基础 generation 和 CLI 注册存在；仍需产品级语义和验收 |
-| Fuzz / bench / mutation target | `tests/fuzz/`、`tests/bench/`、`tests/mutation/` | 目录和 target 已存在；CI 显式运行 `quality-gates`，覆盖 fuzz/property、真实 compile-time budget、memory proxy budget、bench smoke、mutation config report 与真实 `emit smv` size/spec budget；趋势化与真实 mutation score 仍未闭合 |
+| Fuzz / bench / mutation target | `tests/fuzz/`、`tests/bench/`、`tests/mutation/` | 目录和 target 已存在；CI 显式运行 `quality-gates`，覆盖 fuzz/property、真实 compile-time budget、memory proxy budget、bench smoke、mutation config report 与真实 `emit smv` size/spec budget；SMV-size 与 compile-time/memory-proxy 趋势化已闭合(committed baseline + 阻塞门)，真实 mutation score floor 仍未闭合 |
 
 ---
 

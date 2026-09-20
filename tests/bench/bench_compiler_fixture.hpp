@@ -6,6 +6,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 
+#include <cstddef>
 #include <filesystem>
 #include <sstream>
 #include <string>
@@ -93,6 +94,22 @@ inline CompileArtifacts compile_benchmark_source(std::size_t let_count, std::siz
         lower_program_ir(artifacts.graph, artifacts.resolve_result, artifacts.type_result);
 
     return artifacts;
+}
+
+// The single memory-proxy definition for the quality benches (KR7.3). The
+// compile-time bench's report row carries the same number as the memory bench,
+// so the two artifacts cannot disagree about what "proxy bytes" means. Weights
+// are per-store element estimates; the constant is deliberate (a coarse,
+// deterministic *proxy*, not a real allocator measurement) and any change to it
+// is a reviewed baseline change.
+inline std::size_t estimate_proxy_bytes(const CompileArtifacts &artifacts) {
+    const auto &typed = artifacts.type_result.typed_program;
+    const auto &ir_program = artifacts.ir_program;
+    return artifacts.source.size() + typed.declarations.size() * 256 +
+           typed.expressions.size() * 256 + typed.blocks.size() * 192 +
+           typed.statements.size() * 192 + typed.temporal_exprs.size() * 192 +
+           typed.symbols.size() * 160 + typed.references.size() * 160 +
+           ir_program.declarations.size() * 512 + ir_program.expr_arena.size() * 256;
 }
 
 } // namespace ahfl::bench
