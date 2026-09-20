@@ -626,10 +626,11 @@ endif()
 # Fuzzing labels track two distinct sets of ctest tests depending on the
 # AHFL_ENABLE_FUZZING build option (see tests/fuzz/CMakeLists.txt):
 #   - OFF (default): standalone *_check executables registered as
-#     ahfl.fuzz.parser_check / typecheck_check / smv_emitter_check.
+#     ahfl.fuzz.parser_check / typecheck_check / smv_emitter_check /
+#     query_edits_check.
 #   - ON: libFuzzer binaries with crash-replay regression tests registered as
 #     ahfl.fuzz.fuzz_parser.crash_replay / fuzz_typecheck.crash_replay /
-#     fuzz_smv_emitter.crash_replay.
+#     fuzz_smv_emitter.crash_replay / fuzz_query_edits.crash_replay.
 # Label only the tests that actually exist in the active configuration; the
 # ahfl_label_tests helper calls set_property(TEST ...) which errors on names
 # that were never registered.
@@ -640,6 +641,7 @@ if(AHFL_ENABLE_FUZZING)
             ahfl.fuzz.fuzz_parser.crash_replay
             ahfl.fuzz.fuzz_typecheck.crash_replay
             ahfl.fuzz.fuzz_smv_emitter.crash_replay
+            ahfl.fuzz.fuzz_query_edits.crash_replay
     )
 else()
     ahfl_label_tests(
@@ -648,6 +650,7 @@ else()
             ahfl.fuzz.parser_check
             ahfl.fuzz.typecheck_check
             ahfl.fuzz.smv_emitter_check
+            ahfl.fuzz.query_edits_check
     )
 endif()
 
@@ -725,5 +728,6 @@ if(NOT AHFL_ENABLE_FUZZING)
             ahfl.fuzz.parser_check
             ahfl.fuzz.typecheck_check
             ahfl.fuzz.smv_emitter_check
+            ahfl.fuzz.query_edits_check
     )
 endif()

@@ -32,6 +32,14 @@ tests/fuzz/
 | **Standalone smoke**（默认） | `AHFL_ENABLE_FUZZING=OFF` | 常规 CI（`ci.yml`）里确保 fuzz harness 本身能编、能跑、不 crash。 | `fuzz_*_check` 可执行文件（普通 main()，每个输入跑 5 条固定 smoke case） |
 | **libFuzzer** | `AHFL_ENABLE_FUZZING=ON` | 本地调试 / cron 归档真跑 fuzz。 | `fuzz_parser` / `fuzz_typecheck` / `fuzz_smv_emitter` / `fuzz_query_edits`（链接 `-fsanitize=fuzzer,address`，`LLVMFuzzerTestOneInput` 入口） |
 
+**cron 覆盖范围（诚实边界）**：`.github/workflows/fuzz-cron.yml` 当前只构建并跑前三个
+target（`fuzz_parser` / `fuzz_typecheck` / `fuzz_smv_emitter`，见其 `--target` 列表与
+`run-fuzz.strategy.matrix.target`）。`fuzz_query_edits` 的 `LLVMFuzzerTestOneInput` 入口
+**已存在**（`AHFL_ENABLE_FUZZING=ON` 下可本地/手动跑），但其连续模糊测试**尚未接入 cron
+matrix**，故该差分 property 的随机搜索目前不在任何自动化里跑——默认 CI 只跑它的
+standalone smoke（`ahfl.fuzz.query_edits_check`）。把它纳入 cron 需要同时改
+`fuzz-cron.yml` 的构建 target 列表、`targets` 输入默认值与 `run-fuzz` matrix。
+
 Standalone 模式是 CI 的默认配置——不要奇怪 `ctest --preset test-dev` 里看到 "`ahfl.fuzz.parser_check ... PASS`"。那不是真跑 fuzz，只是 smoke 验证 harness 没坏。
 
 ---
@@ -107,7 +115,8 @@ cp tests/fuzz/crashes/_TEMPLATE.repro.md \
 **回归门禁怎么消费**：`tests/fuzz/crash_replay.sh` 把 `crashes/<target>/` 下
 每个文件（跳过 `README.md`、`*.repro.md`、`.gitkeep`）作为单次输入喂给对应
 libFuzzer 二进制并断言 exit 0。只在 fuzzer-enabled 构建
-（`-DAHFL_ENABLE_FUZZING=ON`）里注册这三条 CTest（`ahfl.fuzz.<target>.crash_replay`），
+（`-DAHFL_ENABLE_FUZZING=ON`）里为每个 libFuzzer 二进制注册一条 CTest
+（`ahfl.fuzz.<target>.crash_replay`），
 因为只有 libFuzzer 二进制接受文件参数跑单次；普通 `dev` 构建里编的是 standalone
 smoke 二进制，不注册该 replay 测试。语料为空时测试为**通过的 no-op**；一旦提交
 crash 文件，它立刻变成实时回归守护——crash 被修好前该测试 fail，修好后转绿并保持绿。

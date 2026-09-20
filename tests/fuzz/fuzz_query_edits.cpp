@@ -19,9 +19,10 @@
 // A *violation* here is not a memory error: it is the invalidation invariant
 // breaking, which is exactly what the RFC wants the fuzzer pointed at.
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <vector>

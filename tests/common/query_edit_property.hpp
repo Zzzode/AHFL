@@ -297,10 +297,6 @@ struct SequenceOutcome {
     std::size_t nonempty_ir = 0;
     std::size_t recomputes = 0;
     std::string first_mismatch;
-
-    [[nodiscard]] bool ok() const noexcept {
-        return mismatches == 0 && steps > 0;
-    }
 };
 
 [[nodiscard]] inline std::string describe(const ParseProjection &projection) {

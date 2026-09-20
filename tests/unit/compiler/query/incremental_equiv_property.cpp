@@ -61,7 +61,10 @@ constexpr std::size_t kMaxSteps = 9;
 // a downstream pipeline) inside a practical unit-test budget; the count floor is
 // the RFC's "10+ corpus files". The floor is a *selection* invariant (how many
 // files this guard needs), not a corpus-size threshold that unrelated golden
-// cleanups would turn red — selection happens before the assertion.
+// cleanups would turn red. Selection spreads across subtrees (see
+// collect_seeds) rather than taking a lexicographic prefix, so churn confined to
+// one subtree cannot move the count across the floor: round-robin refills from
+// the other subtrees and the count only falls once the *whole* corpus does.
 constexpr std::size_t kMinSeedFiles = 10;
 constexpr std::size_t kMaxSeedFiles = 14;
 constexpr std::size_t kMaxSeedBytes = 1536;
@@ -112,8 +115,16 @@ constexpr std::string_view kMalformedSeed = "agent {";
 }
 
 // Deterministic small-file subset of the same corpus roots the S3 equivalence
-// guard walks (tests/golden/**, examples/**). Sorted walk + greedy size-capped
-// take ⇒ identical selection on every run and every machine.
+// guard walks (tests/golden/**, examples/**). The take is deterministic (sorted
+// walk, size-capped) but *spread across subtrees* rather than a prefix of the
+// lexicographic order: candidates are grouped by their directory relative to the
+// repo root, each group is sorted by (size, path), and groups are drained
+// round-robin — smallest first — until kMaxSeedFiles is reached. A prefix take
+// would make the count a function of whichever two early-sorted subtrees sort
+// first, so churn confined to them could drop the selection below the floor even
+// though the rest of the corpus is untouched; round-robin refills from the other
+// groups first and only hits the floor once the whole corpus drains. Selection is
+// still identical on every run and every machine (no RNG, no filesystem order).
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> collect_seeds() {
     std::vector<std::filesystem::path> candidates;
     const auto root = repo_root();
@@ -133,16 +144,56 @@ constexpr std::string_view kMalformedSeed = "agent {";
     }
     std::ranges::sort(candidates);
 
-    std::vector<std::pair<std::string, std::string>> seeds;
+    // One bucket per containing directory, keyed by the root-relative directory
+    // path so the grouping is stable across absolute checkout locations.
+    struct Eligible {
+        std::filesystem::path path;
+        std::string text;
+    };
+    struct Group {
+        std::string directory;
+        std::vector<Eligible> entries;
+    };
+    std::vector<Group> groups;
     for (const auto &path : candidates) {
-        if (seeds.size() >= kMaxSeedFiles) {
-            break;
-        }
         const std::string text = read_file(path);
         if (text.empty() || text.size() > kMaxSeedBytes) {
             continue;
         }
-        seeds.emplace_back(path.generic_string(), text);
+        std::error_code ec;
+        const std::string directory =
+            std::filesystem::relative(path.parent_path(), root, ec).generic_string();
+        auto group = std::ranges::find(groups, directory, &Group::directory);
+        if (group == groups.end()) {
+            groups.push_back(Group{directory, {}});
+            group = std::prev(groups.end());
+        }
+        group->entries.push_back(Eligible{path, text});
+    }
+    std::ranges::sort(groups, {}, &Group::directory);
+    for (auto &group : groups) {
+        std::ranges::sort(group.entries, {}, [](const Eligible &entry) {
+            return std::pair{entry.text.size(), entry.path.generic_string()};
+        });
+    }
+
+    std::vector<std::pair<std::string, std::string>> seeds;
+    for (std::size_t round = 0; seeds.size() < kMaxSeedFiles; ++round) {
+        bool drained = true;
+        for (auto &group : groups) {
+            if (round >= group.entries.size()) {
+                continue;
+            }
+            drained = false;
+            if (seeds.size() >= kMaxSeedFiles) {
+                break;
+            }
+            Eligible &entry = group.entries[round];
+            seeds.emplace_back(entry.path.generic_string(), std::move(entry.text));
+        }
+        if (drained) {
+            break;
+        }
     }
     return seeds;
 }
