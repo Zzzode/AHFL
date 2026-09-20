@@ -445,6 +445,51 @@ TEST_CASE("ExprCanonicalization: reaches expressions embedded inside temporal fo
     CHECK(std::holds_alternative<CallExpr>(expr1->node));
 }
 
+TEST_CASE("ExprCanonicalization: reaches expressions embedded in workflow safety and liveness "
+          "properties") {
+    Program program;
+    ExprArena &arena = program.expr_arena;
+
+    // Workflow `safety:` / `liveness:` properties are not contract clauses, so
+    // before the fix they were never visited at all: the same expression folded
+    // at clause level and leaked here. The assertions deliberately observe the
+    // *payload*, not the temporal operator shape — the operator shape is
+    // TemporalSimplificationPass's job, and `render_temporal` collapses an
+    // embed to `embedded(expr)` regardless of what it holds, so a shape-only
+    // check cannot tell a canonicalized embed from a leaked one and leaves this
+    // half of the pass unpinned.
+    auto wf = make_workflow("W", {{"run", {}}});
+    wf.safety.push_back(make_temporal_embedded(make_binary(
+        arena, ExprBinaryOp::And, make_bool(arena, true), make_call(arena, "pkg::ready"))));
+    wf.liveness.push_back(make_temporal_binary(
+        TemporalBinaryOp::Until,
+        make_temporal_called("pkg::Call"),
+        make_temporal_embedded(make_binary(
+            arena, ExprBinaryOp::Or, make_call(arena, "pkg::other"), make_bool(arena, false)))));
+    program.declarations.push_back(std::move(wf));
+
+    ExprCanonicalizationPass pass;
+    CHECK(pass.run(program));
+
+    auto *workflow = workflow_in(program);
+    REQUIRE(workflow != nullptr);
+    REQUIRE(workflow->safety.size() == 1);
+    REQUIRE(workflow->liveness.size() == 1);
+
+    // The `true &&` conjunct is gone: the embed is now the bare call, and NOT
+    // the pre-fix `true && ready(x)` BinaryExpr shape.
+    const auto safety = first_embedded_expr(*workflow->safety.at(0));
+    REQUIRE(safety);
+    CHECK(std::holds_alternative<CallExpr>(safety->node));
+    CHECK_FALSE(std::holds_alternative<BinaryExpr>(safety->node));
+
+    // The walk descends through a binary temporal operator too.
+    const auto liveness = first_embedded_expr(*workflow->liveness.at(0));
+    REQUIRE(liveness);
+    CHECK(std::holds_alternative<CallExpr>(liveness->node));
+    CHECK_FALSE(std::holds_alternative<BinaryExpr>(liveness->node));
+}
+
 TEST_CASE("ExprCanonicalization: idempotent, and a no-op on canonical input") {
     Program program;
     ExprArena &arena = program.expr_arena;
@@ -823,6 +868,16 @@ TEST_CASE("default pipeline: expr canonicalization reaches embedded temporal exp
     auto *workflow = workflow_in(program);
     REQUIRE(workflow != nullptr);
     REQUIRE(workflow->safety.size() == 1);
+
+    // The pin is on the *payload*: the embedded `true &&` conjunct folded. The
+    // rendered operator shape below is NOT the pin — `render_temporal` collapses
+    // any embed to `embedded(expr)`, so TemporalSimplificationPass alone
+    // produces that string even with the fold absent.
+    const auto safety = first_embedded_expr(*workflow->safety.at(0));
+    REQUIRE(safety);
+    CHECK(std::holds_alternative<CallExpr>(safety->node));
+    CHECK_FALSE(std::holds_alternative<BinaryExpr>(safety->node));
+
     // Both passes applied: the embedded conjunct folded, then the double
     // `always` collapsed.
     CHECK(render_temporal(*workflow->safety.at(0)) == "U0(embedded(expr))");
