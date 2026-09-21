@@ -5,7 +5,7 @@ status: "stabilized"
 area: ["formal", "compiler"]
 stability: "experimental"
 created: "2026-08-24"
-updated: "2026-08-24"
+updated: "2026-09-21"
 authors: ["zzzode"]
 shepherd: "project lead"
 owners:
@@ -25,8 +25,8 @@ decision_due: "2026-09-30"
 将 `src/verification/formal/bmc.{hpp,cpp}` 的有界模型检查（BMC / k-induction）从
 "状态图可达性"提升到"AHFL contract 语义级"验证。当前 `BmcStateMachine` 只携带
 `states` / `transitions` / `properties`（裸 LTL 字符串），`parse_properties` 只识别
-`never(X)` 形式，且没有 SAT/SMT 求解器后端（`run_cegar` 是 stub，遇到需要求解的场景
-返回 `Unknown`）。本 RFC 定义一个 SMT 编码层：把 AHFL contract 子句
+`never(X)` 形式，且没有 SAT/SMT 求解器后端（起草时 `run_cegar` 是恒返回 `Unknown`
+的 stub，已于 KR7.2-FAKE 删除）。本 RFC 定义一个 SMT 编码层：把 AHFL contract 子句
 （`requires` / `ensures` / `invariant` / `forbid`，见 `include/ahfl/compiler/ir/types.hpp:105`
 的 `ContractClauseKind`）中对 agent context / input / output 字段的**数据谓词**编码为
 SMT-LIB 约束，交给 SMT 求解器判定，从而回答"这个 `ensures` 后置条件在所有 ≤k 步执行下
@@ -49,11 +49,9 @@ invariant ...; }`，在 IR 中是 `ContractDecl` / `ContractClause`
    外部模型检查器。但它工作在**有限状态抽象**上，不解释数据域上的算术/关系谓词
    （`context.balance >= 0`、`output.total == input.qty * input.price`）。
 
-2. **内置 BMC**（`src/verification/formal/bmc.cpp`）只在 `BmcStateMachine` 的
-   `states`/`transitions` 图上做可达性；`parse_properties`（`bmc.cpp:33`）仅识别
-   `never(X)` 字符串；`run_cegar`（`bmc.cpp:264`）显式返回
-   `"CEGAR: requires SAT solver backend for sound verification"`。它**完全不消费
-   contract 的数据谓词**。
+2. **内置可达性检查**（`src/verification/formal/bmc.cpp`）只在 `BmcStateMachine` 的
+   `states`/`transitions` 图上做**有界可达性**（`run_bmc`）；`parse_properties`
+   仅识别 `never(X)` 字符串。它**完全不消费 contract 的数据谓词**。
 
 结果：一个写了 `ensures: output.total == input.qty * input.price;` 的 agent，其后置条件
 **没有任何验证路径**——SMV 抽象掉了数据，BMC 根本没读 contract。backlog
@@ -71,8 +69,9 @@ contract 的数据部分永远是"能写但不能证"的死语法。
 3. 定义 SMT-BMC 的 **状态展开语义**：在 agent 状态机迁移的每一步，前置断言 `requires`、
    在迁移后断言 `invariant`、在 `final` 状态断言 `ensures`，展开到 bound k，用 SMT
    求解器判定"是否存在违反的 ≤k 步执行"。
-4. 定义 **k-induction 的数据扩展**：把现有 `run_k_induction`（`bmc.cpp:198`）的归纳
-   从状态集扩展到"状态 + 数据不变式"，以获得无界证明。
+4. 定义 **k-induction 的数据扩展**：把归纳从"状态集封闭"扩展到"状态 + 数据不变式"，
+   以获得无界证明。（状态图上的 `run_k_induction` 是无效的 1 步邻居检查，已随本 RFC 的
+   落地删除；真 k-induction 只挂在 SMT-BMC 数据语义上。）
 5. 定义 **与 SMV/nuXmv 后端的分工与共存**：SMV 继续负责时序/状态属性
    （`safety`/`liveness`/`in_state`/`called`），SMT-BMC 负责数据谓词 contract；
    `verify` 报告统一呈现两者的结论与 skip reason。
@@ -92,8 +91,9 @@ contract 的数据部分永远是"能写但不能证"的死语法。
 4. **不替换 SMV/nuXmv 后端**。时序属性仍走 SMV；本 RFC 只新增数据谓词这条正交路径。
 5. **不改变 contract 的源语法或 IR 形状**。`ContractClause` / `ContractDecl` 结构不变；
    本 RFC 只新增一个消费它们的验证后端。
-6. **不做 CEGAR 抽象精化**。`run_cegar` 保持 stub 或独立演进；本 RFC 的 SMT-BMC 是直接
-   编码，不是抽象-精化循环。
+6. **不做 CEGAR 抽象精化**。本 RFC 的 SMT-BMC 是直接编码，不是抽象-精化循环；状态图上
+   的 `run_cegar` stub（永远返回 Unknown）已随本 RFC 的落地删除，CEGAR 若将来要做，
+   应作为独立 RFC 在 SMT 编码层之上设计。
 
 ## Design
 
@@ -196,9 +196,10 @@ stateDiagram-v2
 - 查询"是否存在 ≤k 步执行违反任一断言"：`UNSAT` → 该 bound 下 `Safe`；`SAT` → `Unsafe`，
   satisfying model 就是反例（具体 input/context 值 + 迁移序列）。
 
-`BmcOptions.max_bound`（`bmc.hpp:18`）继续控制 k；`use_k_induction` 时把归纳假设从
-"状态集封闭"扩展为"状态 + 数据不变式在迁移下保持"，用两次 SMT 查询（base case +
-inductive step）获得无界证明。
+`BmcOptions.max_bound`（`bmc.hpp`）继续控制 k；`use_k_induction`（SMT-BMC 侧
+`SmtBmcOptions`）时把归纳假设从"状态集封闭"扩展为"状态 + 数据不变式在迁移下保持"，
+用两次 SMT 查询（base case + inductive step）获得无界证明。状态图 `BmcOptions` 不再
+携带 `use_k_induction` / `enable_cegar` 字段——它们是无效开关，已删除。
 
 ### 反例的语义级映射
 
@@ -269,7 +270,7 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
 4. **SMT 求解器 seam**（`src/verification/formal/`）：Z3 进程后端（cvc5 后续），接入
    `checker.cpp` 工具能力矩阵，`missing_binary`/`solver_error`/正常三态。
 5. **SMT-BMC 引擎**（`src/verification/formal/bmc.cpp` 扩展）：状态展开 + requires/invariant/
-   ensures 断言 + bound-k 查询；替换 `run_cegar` stub 或新增 `run_smt_bmc`。
+   ensures 断言 + bound-k 查询；新增 `run_smt_bmc`（并行于状态图 `run_bmc`）。
 6. **k-induction 数据扩展**（`bmc.cpp`）：base case + inductive step 两次查询；inductive
    step 无法强化时回退到有界结论并标注 `bounded_safe`。
 7. **反例物化**（`bmc.cpp` + `counterexample.cpp`）：SMT model → `BmcCounterexample` +
@@ -445,3 +446,13 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   (distinct from the typecheck-time code of the same name). The scope-freeze
   baseline (`config/product-scope-freeze.json`) records the new `emit smt`
   surface.
+- 2026-09-21: Dead-code cleanup (KR7.2-FAKE). The state-graph `run_k_induction`
+  and `run_cegar` in `src/verification/formal/bmc.cpp` were production-dead
+  (zero non-test callers) and unsound — the "k-induction" was a mislabelled
+  one-step neighbour scan and `run_cegar` always returned `Unknown`. Both, their
+  `BmcOptions::use_k_induction` / `enable_cegar` toggles, and their fake-only
+  tests were deleted rather than deepened, per the project's delete-dead-code
+  principle. What remains is the real bounded-reachability `run_bmc` engine; the
+  RFC's k-induction goal is honoured by the SMT-BMC data extension
+  (`SmtBmcOptions::use_k_induction` / `BoundedSafe`), which is the only sound
+  k-induction surface. Real stateful k-induction stays tracked as KR7.2.

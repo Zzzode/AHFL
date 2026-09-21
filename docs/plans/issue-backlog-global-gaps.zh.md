@@ -23,7 +23,7 @@
 | Pass Manager 与核心 pass | `src/compiler/passes/pass_manager.cpp`、dead state、workflow simplification、expression canonicalization、temporal simplification、capability reachability、contract redundancy | 基础 pass pipeline 已存在；`ahflc.passes.semantic_backend_effect` 已证明 `-O` 会改变普通 IR/SMV backend 输出；后续重点是扩大收益指标和 target 验收 |
 | Opt IR | `src/compiler/ir/opt/` | 作为 compiler diagnostic artifact 存在；不应混入常规 LSP 主状态 |
 | Counterexample 解析与 JSON | `src/verification/formal/counterexample.cpp`、`counterexample_json.cpp`、formal golden | 反例基础链路存在；后续是更强源码映射和真实模型检查器矩阵 |
-| BMC / k-induction 基础 | `src/verification/formal/bmc.cpp`、`tests/unit/verification/formal/bmc.cpp` | 当前更接近状态图 reachability/k-induction 原型；不要再写成完全未实现 |
+| BMC 有界可达性基础 | `src/verification/formal/bmc.cpp`（`run_bmc`）、`tests/unit/verification/formal/bmc.cpp` | `run_bmc` 是状态图上的**有界可达性**检查（`never(X)` 在 `max_bound` 步内可达 ⇒ Unsafe，否则 Safe），证据充分；状态图上的伪 `run_k_induction`/`run_cegar` 已删除（KR7.2-FAKE，production-dead + unsound）。真 k-induction 只挂在 SMT-BMC 数据语义上（`smt_bmc.cpp`，`bounded_safe`），状态图侧不再有 k-induction 入口 |
 | nuXmv / SPIN / TLA+ backend 文件 | `src/verification/formal/nuxmv_backend.cpp`、`spin_backend.cpp`、`tlaplus_backend.cpp` | backend seam 与机器可读 capability/availability matrix 已存在；nuXmv/NuSMV 是当前 AHFL SMV 外部验证路径，SPIN/TLA+ 仍是 emit-only |
 | 外部进程 launcher | `src/verification/formal/process_launcher.cpp`、`base/support/process.*` | `popen()` 替换方向已落库；后续补跨平台和超时/错误矩阵 |
 | Runtime evaluator / executor / agent / workflow baseline | `src/runtime/evaluator/`、`src/runtime/engine/agent_runtime.cpp`、`workflow_runtime.cpp` | local deterministic runtime baseline 已存在 |
@@ -152,7 +152,7 @@
 
 待办：
 
-- [x] 将 BMC/k-induction 从简单状态图 reachability 推进到 AHFL contract/property semantics。（2026-08-24：RFC 0017 已 stabilized——SMT 编码层 + 可验证子集判定 + `emit smt` + Z3 求解器 seam + SMT-BMC 引擎 + k-induction `bounded_safe` 回退 + counterexample 物化 + `verify` 集成，全部落库并配单测/golden/真实-Z3 覆盖；规范见 `docs/spec/core-language.zh.md` §5.6。）
+- [x] 将 BMC/k-induction 从简单状态图 reachability 推进到 AHFL contract/property semantics。（2026-08-24：RFC 0017 已 stabilized——SMT 编码层 + 可验证子集判定 + `emit smt` + Z3 求解器 seam + SMT-BMC 引擎 + k-induction `bounded_safe` 回退 + counterexample 物化 + `verify` 集成，全部落库并配单测/golden/真实-Z3 覆盖；规范见 `docs/spec/core-language.zh.md` §5.6。2026-09-21 KR7.2-FAKE：状态图上 production-dead + unsound 的伪 `run_k_induction`/`run_cegar` 及其实验性开关/测试已删除，k-induction 只保留 SMT-BMC 数据语义这一条真实路径。）
 - [x] 为 nuXmv、SPIN、TLA+ backend 建立机器可读工具能力矩阵和 skip reason，明确 nuXmv/NuSMV 是当前 AHFL SMV 验证路径，SPIN/TLA+ 仍为 emit-only。
 - [x] 将工具能力矩阵接入 CLI/report，让 CI 能区分 `missing_binary`、`verification_unsupported` 和 `checker_error`。
 - [x] 增强 counterexample 到 source range、workflow node、capability call、contract clause 的映射。（2026-08-24：capability call 与 contract clause 映射已落地——SMV backend 为 `agent__*__called__*` 与 contract/workflow LTLSPEC 发射带 source range 的 AHFL_MAP，counterexample 投影新增 `ProjectedCapabilityCall` 与 `ViolatedContractInfo` source range，未映射符号回退空 range 不伪造；185/185 counterexample_parse 单测。）
