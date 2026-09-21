@@ -12,6 +12,7 @@
 
 #include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_json.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
@@ -47,6 +48,34 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                        "IR JSON format",
                                        [](const EmitContext &ctx) -> EmitResult {
                                            print_program_ir_json(ctx.program, ctx.out);
+                                           return {};
+                                       }});
+
+    // RFC 0026 P9 / KR6.9: the execution layer's layered JSON projection. The
+    // pipeline shape mirrors the WASM backend below — lower to Core-IR, then
+    // serialize the Core program — but stays layout-free: physical layout is a
+    // separate target-specific artifact (`core_layout.hpp`) and the JSON
+    // envelope carries logical identity only (design §0 non-goals).
+    registry.register_builtin_backend({BackendKind::CoreIrJson,
+                                       "core-ir-json",
+                                       "Core-IR layered JSON format",
+                                       [](const EmitContext &ctx) -> EmitResult {
+                                           auto core = ir::core::lower_ahfl_to_core(ctx.program);
+                                           if (!core.ok()) {
+                                               if (core.diagnostics.empty()) {
+                                                   return std::unexpected<std::string>(
+                                                       "core.INTERNAL_INVALID: lowering reported a "
+                                                       "non-executable program with no diagnostic");
+                                               }
+                                               const auto &diag = core.diagnostics.front();
+                                               return std::unexpected<std::string>(
+                                                   diag.code + ": " + diag.message);
+                                           }
+                                           std::string error;
+                                           ir::core::print_core_ir_json(core.program, ctx.out, &error);
+                                           if (!error.empty()) {
+                                               return std::unexpected<std::string>(error);
+                                           }
                                            return {};
                                        }});
 

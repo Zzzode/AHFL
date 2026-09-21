@@ -121,6 +121,14 @@ constexpr CommandSpec kCommandSpecs[] = {
         CommandKind::DumpLockfile, "dump-lockfile", ActionGroup::Dump, "lockfile", 115, 111, 115),
     emit_command(CommandKind::EmitIr, "emit-ir", "ir", "ir", 4, 3, 1, 47),
     emit_command(CommandKind::EmitIrJson, "emit-ir-json", "ir-json", "ir-json", 5, 4, 2, 48),
+    emit_command(CommandKind::EmitCoreIrJson,
+                 "emit-core-ir-json",
+                 "core-ir-json",
+                 "core-ir-json",
+                 126,
+                 122,
+                 126,
+                 55),
     emit_command(CommandKind::EmitOptIr, "emit-opt-ir", "opt-ir", "opt-ir", 112, 107, 112, 49),
     emit_command(CommandKind::EmitOptIrJson,
                  "emit-opt-ir-json",
@@ -396,6 +404,8 @@ core_backend_for_command(std::optional<CommandKind> command) {
         return ahfl::BackendKind::Ir;
     case CommandKind::EmitIrJson:
         return ahfl::BackendKind::IrJson;
+    case CommandKind::EmitCoreIrJson:
+        return ahfl::BackendKind::CoreIrJson;
     case CommandKind::EmitNativeJson:
         return ahfl::BackendKind::NativeJson;
     case CommandKind::EmitExecutionPlan:

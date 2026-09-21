@@ -26,6 +26,9 @@ enum class CommandKind {
     DumpLockfile,
     EmitIr,
     EmitIrJson,
+    // RFC 0026 P9 / KR6.9: the layered Core-IR projection
+    // (`ahfl.core.v1`, `ir::core::print_core_ir_json`).
+    EmitCoreIrJson,
     EmitOptIr,
     EmitOptIrJson,
     EmitNativeJson,

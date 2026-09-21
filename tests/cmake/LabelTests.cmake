@@ -33,6 +33,9 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_ir.workflow_value_flow
         ahflc.emit_ir_json.workflow_value_flow
+        ahflc.emit_core_ir_json.workflow_value_flow
+        ahflc.emit_core_ir_json.flow_workflow_semantics
+        ahflc.emit_core_ir_json.fail_unlowered_statement
         ahfl.check.project.ok_expression_type_isolated
         ahfl.handoff.package_compat.escape_control_characters
         ahfl.ir.ssot_compile_fail

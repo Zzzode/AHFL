@@ -24,6 +24,30 @@
 4. flow / workflow summary 是下游 consumer 的受限摘要，不替代完整 expression / statement tree。
 5. `formal_observations` 是 IR 与 formal backend 的共享 observation registry，不属于某个 backend 私有格式。
 6. Opt IR 是独立的优化诊断 artifact，通过 `ahflc emit opt-ir` 输出文本、通过 `ahflc emit opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON；它不是 Semantic JSON IR 的替代格式，也不是普通 backend contract。
+7. 单层 `ir-json`（`ahfl.ir.v2`）投影标记为 deprecated，由分层 Core-IR 投影 `ahflc emit core-ir-json`（`ahfl.core.v1`）取代；删除绑定 KR6.8，见「分层投影与弃用边界」。
+
+## 分层投影与弃用边界
+
+AHFL 有两层 IR，每层都有自己的 JSON 投影：
+
+| 层 | artifact id | 格式标识 | 状态 |
+|----|-------------|----------|------|
+| AHFL-IR（verification / orchestration，`ir::Program`） | `emit-ir-json` | `ahfl.ir.v2` | deprecated（mark-deprecated） |
+| AHFL-IR（文本） | `emit-ir` | `ahfl.ir.v2` | deprecated（mark-deprecated） |
+| Core-IR（execution，`CoreProgram`） | `emit-core-ir-json` | `ahfl.core.v1` | 当前推荐 |
+
+```bash
+./build/dev/src/tooling/cli/ahflc emit core-ir-json examples/refund/audit.ahfl
+```
+
+弃用边界（RFC 0026 Q5 / P9 §8）：
+
+1. 单层 `ir-json` / 文本 `ir` 投影只是 **mark-deprecated**，没有删除；其 writer、reader、CLI flag、artifact id 与既有 golden 全部逐字节保持不变。
+2. 删除绑定 KR6.8（evaluator 退役）**且**所有下游 consumer 迁移到分层投影（KR6.9 完成）之后；删除切片是唯一允许携带 `BREAKING CHANGE:` footer 的切片。
+3. 过渡期两套 round-trip golden 双守护：`ahfl.ir.json_round_trip`（单层）与 `ahfl.ir.core_json_round_trip`（分层）并行运行。
+4. 在 `ahfl.ir.v2` 仍是 AHFL-IR 层的投影（KR6.3 alias-first：`using AhflIr = Program`）期间删除它，等于删除一个仍在使用中的层的投影，因此不能提前删除。
+
+分层 Core-IR 投影的口径：单个 bundled envelope（`format_version` + 固定 `layer: "core"` 判别符 + `types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances`）、program-global `value_types` 是可交换的 hash-cons arena（按 arena 顺序序列化，reader 重新 interning 并断言 identity remap）、region/statement 递归嵌套并带 reader 深度上界。完整契约见设计文档 `docs/design/core-ir-p9-layered-json.zh.md`。
 
 ## 定位
 

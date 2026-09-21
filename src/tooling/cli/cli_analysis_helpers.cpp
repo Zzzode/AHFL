@@ -207,7 +207,13 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
         }
     }
 
-    const bool is_wasm = *backend == ahfl::BackendKind::InfraWasm;
+    // Some backends lower `ir::Program` into a different layer and surface a
+    // structured `code: message` diagnostic when the source is outside what that
+    // lowering supports yet (WASM profile/layout rejections, Core-IR
+    // `core.UNLOWERED_*`). Those are user-actionable conditions, not internal
+    // faults, so they are reported without the "internal error" prefix.
+    const bool reports_user_facing_lowering_diagnostic =
+        *backend == ahfl::BackendKind::InfraWasm || *backend == ahfl::BackendKind::CoreIrJson;
 
     const bool needs_smv_size_report =
         options.smv_size_report_requested && effective_command == CommandKind::EmitSmv;
@@ -215,8 +221,7 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
     if (!needs_smv_size_report) {
         auto result = ahfl::emit_backend(*backend, program, out, package_metadata, wasm_profile);
         if (!result.has_value()) {
-            // A WASM profile rejection is a user error, not an internal fault.
-            if (is_wasm) {
+            if (reports_user_facing_lowering_diagnostic) {
                 err << "error: " << result.error() << "\n";
             } else {
                 err << "internal error: core backend command ";

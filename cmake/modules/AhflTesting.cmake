@@ -35,11 +35,16 @@ function(ahfl_add_manifest_check_fail_test name manifest_file target_name expect
 endfunction()
 
 function(ahfl_add_command_fail_test name subcommand source_file expected_pattern)
+    # `subcommand` may be a multi-token action such as "emit core-ir-json"; split
+    # it on whitespace so AHFLC_ARGS holds one argument per token, exactly as the
+    # output-test helper does. A single-token `subcommand` is unaffected.
+    separate_arguments(subcommand_args UNIX_COMMAND "${subcommand}")
+    list(APPEND subcommand_args "${source_file}")
     add_test(NAME ${name}
         COMMAND ${CMAKE_COMMAND}
             -DAHFLC=$<TARGET_FILE:ahflc>
             -DINPUT_FILE=${source_file}
-            "-DAHFLC_ARGS=${subcommand};${source_file}"
+            "-DAHFLC_ARGS=${subcommand_args}"
             -DEXPECTED_REGEX=${expected_pattern}
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
     )

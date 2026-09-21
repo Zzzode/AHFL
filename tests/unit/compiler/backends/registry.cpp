@@ -37,6 +37,7 @@ int main() {
     constexpr ExpectedBackend expected_backends[] = {
         {ahfl::BackendKind::Ir, "ir"},
         {ahfl::BackendKind::IrJson, "ir-json"},
+        {ahfl::BackendKind::CoreIrJson, "core-ir-json"},
         {ahfl::BackendKind::NativeJson, "native-json"},
         {ahfl::BackendKind::ExecutionPlan, "execution-plan"},
         {ahfl::BackendKind::PackageReview, "package-review"},

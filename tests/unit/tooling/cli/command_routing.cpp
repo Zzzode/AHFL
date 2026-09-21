@@ -289,6 +289,17 @@ int main() {
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "ir-json") ==
               ahfl::cli::CommandKind::EmitIrJson,
           "resolve: emit ir-json");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "core-ir-json") ==
+              ahfl::cli::CommandKind::EmitCoreIrJson,
+          "resolve: emit core-ir-json");
+    check(maps_to_backend(ahfl::cli::CommandKind::EmitCoreIrJson,
+                          ahfl::BackendKind::CoreIrJson),
+          "emit-core-ir-json maps to the layered Core-IR JSON backend");
+    check(ahfl::cli::emitted_artifact_id(ahfl::cli::CommandKind::EmitCoreIrJson) ==
+              "core-ir-json",
+          "emit-core-ir-json advertises the core-ir-json artifact id");
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitCoreIrJson) == "core-ir-json",
+          "short_name: EmitCoreIrJson -> core-ir-json");
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "opt-ir") ==
               ahfl::cli::CommandKind::EmitOptIr,
           "resolve: emit opt-ir");

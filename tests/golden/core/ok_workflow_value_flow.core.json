@@ -1,0 +1,713 @@
+{
+  "format_version": "ahfl.core.v1",
+  "layer": "core",
+  "types": [
+    {
+      "kind": "struct",
+      "name": "ir::workflow_value_flow::Request",
+      "fields": [
+        "value"
+      ],
+      "field_nominal_types": [
+        null
+      ],
+      "field_has_default": [
+        false
+      ],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "concrete": 0
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
+      "type_param_count": 0,
+      "variances": [],
+      "role": "ordinary",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::workflow_value_flow::Request",
+        "local_name": "Request",
+        "module_name": "ir::workflow_value_flow",
+        "id": 0
+      },
+      "source_range": {
+        "begin_offset": 37,
+        "end_offset": 74
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "ir::workflow_value_flow::Context",
+      "fields": [
+        "value"
+      ],
+      "field_nominal_types": [
+        null
+      ],
+      "field_has_default": [
+        true
+      ],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "concrete": 0
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
+      "type_param_count": 0,
+      "variances": [],
+      "role": "ordinary",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::workflow_value_flow::Context",
+        "local_name": "Context",
+        "module_name": "ir::workflow_value_flow",
+        "id": 1
+      },
+      "source_range": {
+        "begin_offset": 80,
+        "end_offset": 126
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "ir::workflow_value_flow::Response",
+      "fields": [
+        "value"
+      ],
+      "field_nominal_types": [
+        null
+      ],
+      "field_has_default": [
+        false
+      ],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "concrete": 0
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
+      "type_param_count": 0,
+      "variances": [],
+      "role": "ordinary",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::workflow_value_flow::Response",
+        "local_name": "Response",
+        "module_name": "ir::workflow_value_flow",
+        "id": 2
+      },
+      "source_range": {
+        "begin_offset": 132,
+        "end_offset": 170
+      }
+    },
+    {
+      "kind": "enum",
+      "name": "std::option::Option",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [
+        "Some",
+        "None"
+      ],
+      "variant_payloads": [
+        {
+          "kind": "tuple",
+          "slot_type_template_roots": [
+            0
+          ],
+          "field_names": []
+        },
+        {
+          "kind": "unit",
+          "slot_type_template_roots": [],
+          "field_names": []
+        }
+      ],
+      "member_type_templates": [
+        {
+          "kind": "param",
+          "param_index": 0
+        }
+      ],
+      "field_type_template_roots": [],
+      "type_param_count": 1,
+      "variances": [
+        "covariant"
+      ],
+      "role": "option",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::option::Option"
+      }
+    },
+    {
+      "kind": "enum",
+      "name": "std::result::Result",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [
+        "Ok",
+        "Err"
+      ],
+      "variant_payloads": [
+        {
+          "kind": "tuple",
+          "slot_type_template_roots": [
+            0
+          ],
+          "field_names": []
+        },
+        {
+          "kind": "tuple",
+          "slot_type_template_roots": [
+            1
+          ],
+          "field_names": []
+        }
+      ],
+      "member_type_templates": [
+        {
+          "kind": "param",
+          "param_index": 0
+        },
+        {
+          "kind": "param",
+          "param_index": 1
+        }
+      ],
+      "field_type_template_roots": [],
+      "type_param_count": 2,
+      "variances": [
+        "covariant",
+        "covariant"
+      ],
+      "role": "result",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::result::Result"
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "std::collections::List",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [],
+      "field_type_template_roots": [],
+      "type_param_count": 1,
+      "variances": [
+        "covariant"
+      ],
+      "role": "list",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::collections::List"
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "std::collections::Set",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [],
+      "field_type_template_roots": [],
+      "type_param_count": 1,
+      "variances": [
+        "covariant"
+      ],
+      "role": "set",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::collections::Set"
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "std::collections::Map",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [],
+      "field_type_template_roots": [],
+      "type_param_count": 2,
+      "variances": [
+        "invariant",
+        "covariant"
+      ],
+      "role": "map",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::collections::Map"
+      }
+    }
+  ],
+  "value_types": [
+    {
+      "kind": "string"
+    },
+    {
+      "kind": "nominal",
+      "base": 0,
+      "args": []
+    },
+    {
+      "kind": "nominal",
+      "base": 2,
+      "args": []
+    },
+    {
+      "kind": "nominal",
+      "base": 1,
+      "args": []
+    }
+  ],
+  "capabilities": [],
+  "agents": [
+    {
+      "name": "ir::workflow_value_flow::EchoAgent",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::workflow_value_flow::EchoAgent",
+        "local_name": "EchoAgent",
+        "module_name": "ir::workflow_value_flow",
+        "id": 3
+      },
+      "states": [
+        "Init",
+        "Done"
+      ],
+      "initial": 0,
+      "finals": [
+        1
+      ],
+      "transitions": [
+        {
+          "from": 0,
+          "to": 1
+        }
+      ],
+      "input_type": 0,
+      "context_type": 1,
+      "output_type": 2,
+      "context_kind": "struct",
+      "capabilities": [],
+      "source_range": {
+        "begin_offset": 176,
+        "end_offset": 374
+      }
+    }
+  ],
+  "flows": [
+    {
+      "agent": 0,
+      "agent_name": "EchoAgent",
+      "target_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::workflow_value_flow::EchoAgent",
+        "local_name": "EchoAgent",
+        "module_name": "ir::workflow_value_flow",
+        "id": 3
+      },
+      "value_count": 2,
+      "exprs": [
+        {
+          "kind": "path",
+          "source_range": {
+            "begin_offset": 502,
+            "end_offset": 513
+          },
+          "result_type": 0,
+          "root": "input",
+          "root_name": "input",
+          "members": [
+            "value"
+          ],
+          "root_type": 0,
+          "projection": [
+            {
+              "owner_type": 0,
+              "field": 0,
+              "result_type": 4294967295
+            }
+          ],
+          "projection_resolved": true
+        },
+        {
+          "kind": "construct",
+          "source_range": {
+            "begin_offset": 472,
+            "end_offset": 524
+          },
+          "result_type": 2,
+          "type_name": "ir::workflow_value_flow::Response",
+          "variant_name": "",
+          "is_enum_variant": false,
+          "type_id": 2,
+          "variant": 4294967295,
+          "resolved": true,
+          "args": [
+            {
+              "field": 0,
+              "value": 0
+            }
+          ]
+        }
+      ],
+      "value_types": [
+        0,
+        2
+      ],
+      "coercion_plans": [],
+      "patterns": [],
+      "states": [
+        {
+          "state": 0,
+          "state_name": "Init",
+          "policy": {},
+          "body": {
+            "statements": [
+              {
+                "kind": "goto",
+                "source_range": {
+                  "begin_offset": 422,
+                  "end_offset": 432
+                },
+                "target": 1,
+                "target_name": "Done"
+              }
+            ]
+          }
+        },
+        {
+          "state": 1,
+          "state_name": "Done",
+          "policy": {},
+          "body": {
+            "statements": [
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 502,
+                  "end_offset": 513
+                },
+                "result": 0,
+                "expr": 0
+              },
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 472,
+                  "end_offset": 524
+                },
+                "result": 1,
+                "expr": 1
+              },
+              {
+                "kind": "return",
+                "source_range": {
+                  "begin_offset": 465,
+                  "end_offset": 525
+                },
+                "has_value": true,
+                "value": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "id": 0,
+      "name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "symbol_ref": {
+        "kind": "workflow",
+        "canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+        "local_name": "ValueFlowWorkflow",
+        "module_name": "ir::workflow_value_flow",
+        "id": 4
+      },
+      "input_type": 0,
+      "output_type": 2,
+      "value_count": 5,
+      "exprs": [
+        {
+          "kind": "path",
+          "source_range": {
+            "begin_offset": 637,
+            "end_offset": 642
+          },
+          "result_type": 1,
+          "root": "workflow_input",
+          "root_name": "input",
+          "members": [],
+          "root_type": 0,
+          "projection": [],
+          "projection_resolved": true
+        },
+        {
+          "kind": "path",
+          "source_range": {
+            "begin_offset": 689,
+            "end_offset": 700
+          },
+          "result_type": 0,
+          "root": "workflow_node_output",
+          "root_name": "first",
+          "members": [
+            "value"
+          ],
+          "root_type": 2,
+          "projection": [
+            {
+              "owner_type": 2,
+              "field": 0,
+              "result_type": 4294967295
+            }
+          ],
+          "projection_resolved": true,
+          "workflow_node": 0
+        },
+        {
+          "kind": "construct",
+          "source_range": {
+            "begin_offset": 672,
+            "end_offset": 702
+          },
+          "result_type": 1,
+          "type_name": "ir::workflow_value_flow::Request",
+          "variant_name": "",
+          "is_enum_variant": false,
+          "type_id": 0,
+          "variant": 4294967295,
+          "resolved": true,
+          "args": [
+            {
+              "field": 0,
+              "value": 1
+            }
+          ]
+        },
+        {
+          "kind": "path",
+          "source_range": {
+            "begin_offset": 750,
+            "end_offset": 762
+          },
+          "result_type": 0,
+          "root": "workflow_node_output",
+          "root_name": "second",
+          "members": [
+            "value"
+          ],
+          "root_type": 2,
+          "projection": [
+            {
+              "owner_type": 2,
+              "field": 0,
+              "result_type": 4294967295
+            }
+          ],
+          "projection_resolved": true,
+          "workflow_node": 1
+        },
+        {
+          "kind": "construct",
+          "source_range": {
+            "begin_offset": 732,
+            "end_offset": 764
+          },
+          "result_type": 2,
+          "type_name": "ir::workflow_value_flow::Response",
+          "variant_name": "",
+          "is_enum_variant": false,
+          "type_id": 2,
+          "variant": 4294967295,
+          "resolved": true,
+          "args": [
+            {
+              "field": 0,
+              "value": 3
+            }
+          ]
+        }
+      ],
+      "value_types": [
+        1,
+        0,
+        1,
+        0,
+        2
+      ],
+      "coercion_plans": [],
+      "patterns": [],
+      "nodes": [
+        {
+          "id": 0,
+          "target_instance": 0,
+          "node_name": "first",
+          "target_ref": {
+            "kind": "agent",
+            "canonical_name": "ir::workflow_value_flow::EchoAgent",
+            "local_name": "EchoAgent",
+            "module_name": "ir::workflow_value_flow",
+            "id": 3
+          },
+          "after": [],
+          "input_region": {
+            "statements": [
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 637,
+                  "end_offset": 642
+                },
+                "result": 0,
+                "expr": 0
+              },
+              {
+                "kind": "yield",
+                "source_range": {
+                  "begin_offset": 615,
+                  "end_offset": 644
+                },
+                "has_value": true,
+                "value": 0
+              }
+            ]
+          }
+        },
+        {
+          "id": 1,
+          "target_instance": 0,
+          "node_name": "second",
+          "target_ref": {
+            "kind": "agent",
+            "canonical_name": "ir::workflow_value_flow::EchoAgent",
+            "local_name": "EchoAgent",
+            "module_name": "ir::workflow_value_flow",
+            "id": 3
+          },
+          "after": [
+            0
+          ],
+          "input_region": {
+            "statements": [
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 689,
+                  "end_offset": 700
+                },
+                "result": 1,
+                "expr": 1
+              },
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 672,
+                  "end_offset": 702
+                },
+                "result": 2,
+                "expr": 2
+              },
+              {
+                "kind": "yield",
+                "source_range": {
+                  "begin_offset": 649,
+                  "end_offset": 718
+                },
+                "has_value": true,
+                "value": 2
+              }
+            ]
+          }
+        }
+      ],
+      "return_region": {
+        "statements": [
+          {
+            "kind": "let",
+            "source_range": {
+              "begin_offset": 750,
+              "end_offset": 762
+            },
+            "result": 3,
+            "expr": 3
+          },
+          {
+            "kind": "let",
+            "source_range": {
+              "begin_offset": 732,
+              "end_offset": 764
+            },
+            "result": 4,
+            "expr": 4
+          },
+          {
+            "kind": "yield",
+            "source_range": {
+              "begin_offset": 539,
+              "end_offset": 767
+            },
+            "has_value": true,
+            "value": 4
+          }
+        ]
+      }
+    }
+  ],
+  "instances": [
+    {
+      "id": 0,
+      "instance_key": "_inst_73ab6db432dbe745_ir_workflow_X5fvalue_X5fflow_EchoAgent_ir_workflow_X5fvalue_X5fflow_Request_ir_workflow_X5fvalue_X5fflow_Context_ir_workflow_X5fvalue_X5fflow_Response",
+      "origin": {
+        "kind": "agent",
+        "canonical_name": "ir::workflow_value_flow::EchoAgent",
+        "local_name": "EchoAgent",
+        "module_name": "ir::workflow_value_flow",
+        "id": 3
+      },
+      "dispatch_types": [
+        1,
+        3,
+        2
+      ],
+      "payload": {
+        "kind": "agent",
+        "base": 0,
+        "input_type": 0,
+        "context_kind": "struct",
+        "context_type": 1,
+        "output_type": 2
+      }
+    }
+  ]
+}

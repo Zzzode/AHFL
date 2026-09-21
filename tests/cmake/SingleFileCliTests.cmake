@@ -505,6 +505,18 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.json"
 )
 
+# RFC 0026 P9 / KR6.9-B4: a Core-IR lowering gap is a user-actionable
+# diagnostic, not an internal fault, so `emit core-ir-json` reports it with the
+# `error:` prefix (like the WASM profile rejections) rather than
+# `internal error:`. The expr_temporal fixture uses a statement kind the current
+# lowering slice does not accept yet, which pins the classification.
+ahfl_add_command_fail_test(
+    ahflc.emit_core_ir_json.fail_unlowered_statement
+    "emit core-ir-json"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
+    "error: core.UNLOWERED_STATEMENT:"
+)
+
 ahfl_add_output_test(
     ahflc.emit_opt_ir.expr_temporal
     "emit opt-ir"
@@ -827,6 +839,26 @@ ahfl_add_package_output_test(
     "emit ir-json"
     "ok_workflow_value_flow"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.json"
+    PACKAGE_ONLY
+)
+
+# RFC 0026 P9 / KR6.9-B4: the layered Core-IR JSON projection
+# (`ahfl.core.v1`), anchored on the same package fixtures as the single-layer
+# `emit ir-json` goldens so the two projections are diffed side by side during
+# the deprecation window (design §8 "round-trip golden 双守护").
+ahfl_add_package_output_test(
+    ahflc.emit_core_ir_json.flow_workflow_semantics
+    "emit core-ir-json"
+    "ok_flow_workflow_semantics"
+    "${AHFL_TESTS_DIR}/golden/core/ok_flow_workflow_semantics.core.json"
+    PACKAGE_ONLY
+)
+
+ahfl_add_package_output_test(
+    ahflc.emit_core_ir_json.workflow_value_flow
+    "emit core-ir-json"
+    "ok_workflow_value_flow"
+    "${AHFL_TESTS_DIR}/golden/core/ok_workflow_value_flow.core.json"
     PACKAGE_ONLY
 )
 

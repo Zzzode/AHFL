@@ -35,6 +35,8 @@ flowchart TD
     SemanticIR -. "emit opt-ir / opt-ir-json" .-> OptIR[Optimization IR: ir::opt::OptProgram]
     OptIR -. "-O" .-> OptPasses[Opt IR passes]
     OptPasses -. "text / JSON" .-> OptArtifact[Opt IR artifact]
+    SemanticIR -. "emit core-ir-json" .-> CoreIR[Core IR: CoreProgram]
+    CoreIR -. "ahfl.core.v1" .-> CoreArtifact[Core-IR layered JSON artifact]
 ```
 
 设计意图是：
@@ -43,7 +45,8 @@ flowchart TD
 2. Typed HIR 负责承载自包含的 typed semantic model。
 3. Semantic IR (`ir::Program`) 负责冻结稳定的后端消费边界。
 4. Opt IR 负责承载可诊断的 CFG/SSA 风格优化层；当前只作为显式 artifact 输出，不改变普通 backend contract。
-5. backend 负责把稳定 IR 渲染成文本或机器可消费输出。
+5. Core-IR (`CoreProgram`) 是 Semantic IR 下方的执行层；它当前也只作为显式 artifact 输出（`emit core-ir-json`，`ahfl.core.v1`），由 `lower_ahfl_to_core` + `print_core_ir_json` 驱动。
+6. backend 负责把稳定 IR 渲染成文本或机器可消费输出。
 
 因此：
 
@@ -77,6 +80,11 @@ flowchart TD
 - `collect_formal_observations(const ir::Program &)`
 - `print_program_ir(...)`
 - `print_program_ir_json(...)`
+- `parse_program_ir_json(...)`
+- `ir::core::lower_ahfl_to_core(const AhflIr &)`
+- `ir::core::verify_core_program(const CoreProgram &)`
+- `ir::core::print_core_ir_json(const CoreProgram &, std::ostream &, std::string *)`
+- `ir::core::parse_core_ir_json(std::string_view)`
 - `ir::opt::lower_to_opt(const ir::Program &)`
 - `ir::opt::print_opt_program(...)`
 - `ir::opt::print_opt_program_json(...)`
@@ -85,6 +93,8 @@ flowchart TD
 
 1. 稳定中间表示
 2. backend 共享的序列化/导出边界
+
+Core-IR 是 Semantic IR 下方的执行层，有自己的分层 JSON projection（`emit core-ir-json`，`ahfl.core.v1`），其契约固定在 `docs/design/core-ir-p9-layered-json.zh.md`。单层 `ir::Program` JSON projection（`ahfl.ir.v2`）标记为 deprecated，删除绑定 KR6.8（RFC 0026 Q5 / P9 §8）；两者过渡期并行，暂不删除任何一侧。
 
 Opt IR 则是 Semantic IR 下方的诊断/优化层。它通过 CLI `emit opt-ir` / `emit opt-ir-json` 可见，但不在当前 core backend registry 中作为普通 backend 消费合同。当前生产路径决策是 artifact-only：普通 backend 不消费 Opt IR，`--optimize` 不把 Opt IR 回降 Semantic IR，也不让 backend 隐式直连 Opt IR。
 

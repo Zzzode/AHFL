@@ -19,6 +19,7 @@
       "DumpLockfile",
       "EmitIr",
       "EmitIrJson",
+      "EmitCoreIrJson",
       "EmitOptIr",
       "EmitOptIrJson",
       "EmitNativeJson",
@@ -42,6 +43,7 @@
     "backend_kinds": [
       "Ir",
       "IrJson",
+      "CoreIrJson",
       "NativeJson",
       "ExecutionPlan",
       "PackageReview",
@@ -56,6 +58,7 @@
     "emitted_artifact_ids": [
       "ir",
       "ir-json",
+      "core-ir-json",
       "opt-ir",
       "opt-ir-json",
       "native-json",

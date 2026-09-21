@@ -40,6 +40,7 @@
 14. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
 15. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
 16. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
+17. 单层 `emit-ir` / `emit-ir-json`（`ahfl.ir.v2`）**mark-deprecated**，由分层 Core-IR 投影 `emit core-ir-json`（`ahfl.core.v1`）取代；删除绑定 KR6.8，当前不删除。
 
 ## 总览
 
@@ -71,6 +72,7 @@ ahflc dump package-graph --manifest <ahfl.toml>
 ahflc dump package-graph --workspace <ahfl.workspace.toml> --package <name>
 ahflc emit-ir <input-mode>
 ahflc emit-ir-json <input-mode>
+ahflc emit-core-ir-json <input-mode>
 ahflc emit-opt-ir <input-mode>
 ahflc emit-opt-ir-json <input-mode>
 ahflc emit-native-json --manifest <ahfl.toml> --target <handoff-target>
@@ -375,6 +377,21 @@ ahflc emit summary \
 5. `--structured-log` 输出 `ahflc command completed` 事件，包含 level、command、exit_code 和 duration_ms fields。
 6. `--memory-report` 输出 AHFL 内存报告格式 JSON，包含 source、TypedProgram、IR 规模和结构性 memory proxy；这不是 RSS / allocator 观测。
 7. Opt IR function-level optimization timing、pass-level trace schema 和平台可比 RSS / allocator memory report 仍是后续工作。
+
+## Core-IR 分层 JSON Artifact
+
+`emit core-ir-json` / `emit-core-ir-json` 是执行层 Core-IR 的机器可读入口，输出 `ahfl.core.v1` 分层 JSON projection。它在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 Semantic IR lowering 之后，把 `ir::Program` 降到 `CoreProgram`（`lower_ahfl_to_core`，自动跑 Core verifier），再序列化为单个 bundled envelope：`format_version`、固定 `layer: "core"` 判别符，以及 `types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances` 表。
+
+```bash
+ahflc emit core-ir-json tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
+```
+
+当前边界：
+
+1. 这是**新增**的投影，不改变任何既有 artifact；单层 `emit-ir` / `emit-ir-json` 输出逐字节不变。
+2. 它是 artifact-only，不回写 Semantic IR，也不改变任何普通 backend 的消费类型。
+3. JSON envelope 只携带逻辑身份，不携带 target data-layout fact（物理布局是独立的 target-specific artifact）。
+4. 完整 schema / 规范化 / round-trip 契约见设计文档 `docs/design/core-ir-p9-layered-json.zh.md`；既有单层投影的弃用边界见 [ir-format.zh.md](./ir-format.zh.md) 的「分层投影与弃用边界」。
 
 ## Optimization IR Artifact
 

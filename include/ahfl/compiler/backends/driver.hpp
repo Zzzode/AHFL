@@ -15,6 +15,10 @@ using EmitResult = std::expected<void, std::string>;
 enum class BackendKind {
     Ir,
     IrJson,
+    // RFC 0026 P9 / KR6.9: the execution layer's layered JSON projection
+    // (`ahfl.core.v1`), emitted from `ir::core::lower_ahfl_to_core` +
+    // `ir::core::print_core_ir_json`.
+    CoreIrJson,
     NativeJson,
     ExecutionPlan,
     PackageReview,
