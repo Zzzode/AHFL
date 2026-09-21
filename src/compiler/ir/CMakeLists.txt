@@ -1,6 +1,7 @@
 add_library(ahfl_compiler_ir STATIC
     analysis.cpp
     core_layout.cpp
+    core_json.cpp
     core_lower.cpp
     core_verify.cpp
     core_wire_migration.cpp

@@ -88,6 +88,23 @@ target_compile_definitions(ahfl_compiler_ir_json_round_trip_tests
 ahfl_apply_project_warnings(ahfl_compiler_ir_json_round_trip_tests)
 
 
+add_executable(ahfl_compiler_ir_core_json_round_trip_tests
+    unit/compiler/ir/core_json_round_trip.cpp
+)
+target_link_libraries(ahfl_compiler_ir_core_json_round_trip_tests
+    PRIVATE
+        ahfl_compiler_handoff
+        doctest
+)
+target_include_directories(ahfl_compiler_ir_core_json_round_trip_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_compiler_ir_core_json_round_trip_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+target_compile_definitions(ahfl_compiler_ir_core_json_round_trip_tests
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+ahfl_apply_project_warnings(ahfl_compiler_ir_core_json_round_trip_tests)
+
+
 add_executable(ahfl_compiler_ir_opt_tests
     unit/compiler/ir/opt_ir.cpp
 )

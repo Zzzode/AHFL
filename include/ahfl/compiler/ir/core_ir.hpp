@@ -45,6 +45,7 @@
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -1590,6 +1591,52 @@ struct CoreValueType {
     [[nodiscard]] friend bool operator==(const CoreValueType &, const CoreValueType &) noexcept =
         default;
 };
+
+/// Hash for the program-global value-type hash-cons map. Children are already
+/// interned to ids, so a node's hash mixes only its own scalar fields + child
+/// ids (never a pointer or a string). Exposed so the ONE interner below and the
+/// lowerer's arena share a single hash implementation (CLAUDE.md: no parallel
+/// SSOT copies). RFC 0027 Q1 (KR6.13-X) generates one handler per value-type
+/// node from core_value_types.def; there is no unnamed catch-all, so a 15th node
+/// without a routing macro fails to compile.
+struct CoreValueTypeNodeHash {
+    [[nodiscard]] std::size_t operator()(const CoreValueType &vt) const noexcept;
+};
+
+/// The program-global value-type HASH-CONS (RFC 0026 P9 §6). It owns no
+/// storage: it indexes a caller-supplied `std::vector<CoreValueType>` and maps a
+/// structural node to its interned `CoreValueTypeId`. This is the SINGLE
+/// interning decision point shared by the AHFL-IR lowerer (which fills
+/// `CoreProgram::value_types` while lowering) and the Core JSON reader (which
+/// REBUILDS the arena by interning rather than trusting serialized ids, §6.2).
+///
+/// Deterministic append-only storage plus structural dedup: two structurally
+/// identical nodes always yield the SAME id, and a node is appended at the next
+/// free index. The constructor re-indexes any pre-existing entries, so repeated
+/// construction over a partially-filled store keeps deduplicating against
+/// everything already interned and the arena stays canonical.
+class CoreValueTypeArena {
+  public:
+    explicit CoreValueTypeArena(std::vector<CoreValueType> &store) : store_(store) {
+        index_.reserve(store_.size());
+        for (std::uint32_t i = 0; i < store_.size(); ++i) {
+            index_.emplace(store_[i], CoreValueTypeId{i});
+        }
+    }
+
+    /// Intern a fully-built node whose children are ALREADY interned. Returns
+    /// the canonical id, or `nullopt` with `*error_reason` set when the arena
+    /// would exceed the 32-bit id space (fail-closed).
+    [[nodiscard]] std::optional<CoreValueTypeId> intern(CoreValueTypeNode node,
+                                                        std::string *error_reason);
+
+    [[nodiscard]] std::size_t size() const noexcept { return store_.size(); }
+
+  private:
+    std::vector<CoreValueType> &store_;
+    std::unordered_map<CoreValueType, CoreValueTypeId, CoreValueTypeNodeHash> index_;
+};
+
 
 /// One monomorphized instance consumed from an `ir::InstanceDecl`. `instance_key`
 /// is the byte-exact mangled name (execution dispatch label + global-uniqueness

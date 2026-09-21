@@ -1,0 +1,740 @@
+{
+  "format_version": "ahfl.core.v1",
+  "layer": "core",
+  "types": [
+    {
+      "kind": "struct",
+      "name": "app::main::Req",
+      "fields": [
+        "amount"
+      ],
+      "field_nominal_types": [
+        null
+      ],
+      "field_has_default": [
+        false
+      ],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "concrete": 0
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
+      "type_param_count": 0,
+      "variances": [],
+      "role": "ordinary",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "app::main::Req",
+        "local_name": "Req",
+        "module_name": "app::main",
+        "id": 0
+      },
+      "source_range": {
+        "begin_offset": 41,
+        "end_offset": 68
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "app::main::Ctx",
+      "fields": [
+        "slot"
+      ],
+      "field_nominal_types": [
+        3
+      ],
+      "field_has_default": [
+        true
+      ],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "concrete": 2
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
+      "type_param_count": 0,
+      "variances": [],
+      "role": "ordinary",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "app::main::Ctx",
+        "local_name": "Ctx",
+        "module_name": "app::main",
+        "id": 1
+      },
+      "source_range": {
+        "begin_offset": 69,
+        "end_offset": 144
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "app::main::Reply",
+      "fields": [
+        "ok"
+      ],
+      "field_nominal_types": [
+        null
+      ],
+      "field_has_default": [
+        true
+      ],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [
+        {
+          "kind": "concrete",
+          "concrete": 1
+        }
+      ],
+      "field_type_template_roots": [
+        0
+      ],
+      "type_param_count": 0,
+      "variances": [],
+      "role": "ordinary",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "app::main::Reply",
+        "local_name": "Reply",
+        "module_name": "app::main",
+        "id": 2
+      },
+      "source_range": {
+        "begin_offset": 145,
+        "end_offset": 179
+      }
+    },
+    {
+      "kind": "enum",
+      "name": "std::option::Option",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [
+        "Some",
+        "None"
+      ],
+      "variant_payloads": [
+        {
+          "kind": "tuple",
+          "slot_type_template_roots": [
+            0
+          ],
+          "field_names": []
+        },
+        {
+          "kind": "unit",
+          "slot_type_template_roots": [],
+          "field_names": []
+        }
+      ],
+      "member_type_templates": [
+        {
+          "kind": "param",
+          "param_index": 0
+        }
+      ],
+      "field_type_template_roots": [],
+      "type_param_count": 1,
+      "variances": [
+        "covariant"
+      ],
+      "role": "option",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::option::Option"
+      }
+    },
+    {
+      "kind": "enum",
+      "name": "std::result::Result",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [
+        "Ok",
+        "Err"
+      ],
+      "variant_payloads": [
+        {
+          "kind": "tuple",
+          "slot_type_template_roots": [
+            0
+          ],
+          "field_names": []
+        },
+        {
+          "kind": "tuple",
+          "slot_type_template_roots": [
+            1
+          ],
+          "field_names": []
+        }
+      ],
+      "member_type_templates": [
+        {
+          "kind": "param",
+          "param_index": 0
+        },
+        {
+          "kind": "param",
+          "param_index": 1
+        }
+      ],
+      "field_type_template_roots": [],
+      "type_param_count": 2,
+      "variances": [
+        "covariant",
+        "covariant"
+      ],
+      "role": "result",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::result::Result"
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "std::collections::List",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [],
+      "field_type_template_roots": [],
+      "type_param_count": 1,
+      "variances": [
+        "covariant"
+      ],
+      "role": "list",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::collections::List"
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "std::collections::Set",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [],
+      "field_type_template_roots": [],
+      "type_param_count": 1,
+      "variances": [
+        "covariant"
+      ],
+      "role": "set",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::collections::Set"
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "std::collections::Map",
+      "fields": [],
+      "field_nominal_types": [],
+      "field_has_default": [],
+      "variants": [],
+      "variant_payloads": [],
+      "member_type_templates": [],
+      "field_type_template_roots": [],
+      "type_param_count": 2,
+      "variances": [
+        "invariant",
+        "covariant"
+      ],
+      "role": "map",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "std::collections::Map"
+      }
+    }
+  ],
+  "value_types": [
+    {
+      "kind": "int"
+    },
+    {
+      "kind": "bool"
+    },
+    {
+      "kind": "nominal",
+      "base": 3,
+      "args": [
+        1
+      ]
+    },
+    {
+      "kind": "nominal",
+      "base": 0,
+      "args": []
+    },
+    {
+      "kind": "nominal",
+      "base": 2,
+      "args": []
+    },
+    {
+      "kind": "nominal",
+      "base": 1,
+      "args": []
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "app::main::Charge",
+      "symbol_ref": {
+        "kind": "capability",
+        "canonical_name": "app::main::Charge",
+        "local_name": "Charge",
+        "module_name": "app::main",
+        "id": 3
+      },
+      "effect_kind": "unknown",
+      "param_types": [
+        0
+      ],
+      "return_type": 1,
+      "source_range": {
+        "begin_offset": 181,
+        "end_offset": 220
+      }
+    }
+  ],
+  "agents": [
+    {
+      "name": "app::main::Payer",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "app::main::Payer",
+        "local_name": "Payer",
+        "module_name": "app::main",
+        "id": 4
+      },
+      "states": [
+        "Init",
+        "Done"
+      ],
+      "initial": 0,
+      "finals": [
+        1
+      ],
+      "transitions": [
+        {
+          "from": 0,
+          "to": 1
+        }
+      ],
+      "input_type": 0,
+      "context_type": 1,
+      "output_type": 2,
+      "context_kind": "struct",
+      "capabilities": [
+        0
+      ],
+      "source_range": {
+        "begin_offset": 222,
+        "end_offset": 412
+      }
+    }
+  ],
+  "flows": [
+    {
+      "agent": 0,
+      "agent_name": "Payer",
+      "target_ref": {
+        "kind": "agent",
+        "canonical_name": "app::main::Payer",
+        "local_name": "Payer",
+        "module_name": "app::main",
+        "id": 4
+      },
+      "value_count": 9,
+      "exprs": [
+        {
+          "kind": "path",
+          "source_range": {
+            "begin_offset": 459,
+            "end_offset": 471
+          },
+          "result_type": 0,
+          "root": "input",
+          "root_name": "input",
+          "members": [
+            "amount"
+          ],
+          "root_type": 0,
+          "projection": [
+            {
+              "owner_type": 0,
+              "field": 0,
+              "result_type": 4294967295
+            }
+          ],
+          "projection_resolved": true
+        },
+        {
+          "kind": "literal",
+          "source_range": {
+            "begin_offset": 474,
+            "end_offset": 475
+          },
+          "result_type": 0,
+          "literal_kind": "integer",
+          "spelling": "0"
+        },
+        {
+          "kind": "value_ref",
+          "source_range": {
+            "begin_offset": 459,
+            "end_offset": 471
+          },
+          "result_type": 0,
+          "value": 0
+        },
+        {
+          "kind": "value_ref",
+          "source_range": {
+            "begin_offset": 474,
+            "end_offset": 475
+          },
+          "result_type": 0,
+          "value": 1
+        },
+        {
+          "kind": "binary",
+          "source_range": {
+            "begin_offset": 459,
+            "end_offset": 475
+          },
+          "result_type": 1,
+          "op": "gt",
+          "lhs": 2,
+          "rhs": 3
+        },
+        {
+          "kind": "path",
+          "source_range": {
+            "begin_offset": 534,
+            "end_offset": 546
+          },
+          "result_type": 0,
+          "root": "input",
+          "root_name": "input",
+          "members": [
+            "amount"
+          ],
+          "root_type": 0,
+          "projection": [
+            {
+              "owner_type": 0,
+              "field": 0,
+              "result_type": 4294967295
+            }
+          ],
+          "projection_resolved": true
+        },
+        {
+          "kind": "construct",
+          "source_range": {
+            "begin_offset": 501,
+            "end_offset": 548
+          },
+          "result_type": 2,
+          "type_name": "std::option::Option",
+          "variant_name": "Some",
+          "is_enum_variant": true,
+          "type_id": 3,
+          "variant": 0,
+          "resolved": true,
+          "args": [
+            {
+              "field": 0,
+              "value": 3
+            }
+          ]
+        },
+        {
+          "kind": "qualified",
+          "source_range": {
+            "begin_offset": 590,
+            "end_offset": 615
+          },
+          "result_type": 2,
+          "name": "std::option::Option::None",
+          "type_id": 3,
+          "variant": 1,
+          "resolved": true
+        },
+        {
+          "kind": "literal",
+          "source_range": {
+            "begin_offset": 696,
+            "end_offset": 701
+          },
+          "result_type": 1,
+          "literal_kind": "bool",
+          "spelling": "false"
+        },
+        {
+          "kind": "construct",
+          "source_range": {
+            "begin_offset": 684,
+            "end_offset": 703
+          },
+          "result_type": 4,
+          "type_name": "app::main::Reply",
+          "variant_name": "",
+          "is_enum_variant": false,
+          "type_id": 2,
+          "variant": 4294967295,
+          "resolved": true,
+          "args": [
+            {
+              "field": 0,
+              "value": 7
+            }
+          ]
+        }
+      ],
+      "value_types": [
+        0,
+        0,
+        1,
+        1,
+        0,
+        2,
+        2,
+        1,
+        4
+      ],
+      "coercion_plans": [],
+      "patterns": [],
+      "states": [
+        {
+          "state": 0,
+          "state_name": "Init",
+          "policy": {},
+          "body": {
+            "statements": [
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 459,
+                  "end_offset": 471
+                },
+                "result": 0,
+                "expr": 0
+              },
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 474,
+                  "end_offset": 475
+                },
+                "result": 1,
+                "expr": 1
+              },
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 459,
+                  "end_offset": 475
+                },
+                "result": 2,
+                "expr": 4
+              },
+              {
+                "kind": "if",
+                "source_range": {
+                  "begin_offset": 456,
+                  "end_offset": 626
+                },
+                "condition": 2,
+                "then_region": {
+                  "statements": [
+                    {
+                      "kind": "let",
+                      "source_range": {
+                        "begin_offset": 534,
+                        "end_offset": 546
+                      },
+                      "result": 4,
+                      "expr": 5
+                    },
+                    {
+                      "kind": "capability_call",
+                      "source_range": {
+                        "begin_offset": 527,
+                        "end_offset": 547
+                      },
+                      "result": 3,
+                      "capability": 0,
+                      "callee_name": "app::main::Charge",
+                      "args": [
+                        4
+                      ]
+                    },
+                    {
+                      "kind": "let",
+                      "source_range": {
+                        "begin_offset": 501,
+                        "end_offset": 548
+                      },
+                      "result": 5,
+                      "expr": 6
+                    },
+                    {
+                      "kind": "store",
+                      "source_range": {
+                        "begin_offset": 490,
+                        "end_offset": 549
+                      },
+                      "place": {
+                        "root": "context",
+                        "root_name": "ctx",
+                        "members": [
+                          "slot"
+                        ],
+                        "root_type": 1,
+                        "projection": [
+                          {
+                            "owner_type": 1,
+                            "field": 0,
+                            "result_type": 3
+                          }
+                        ],
+                        "projection_resolved": true
+                      },
+                      "value": 5
+                    }
+                  ]
+                },
+                "else_region": {
+                  "statements": [
+                    {
+                      "kind": "let",
+                      "source_range": {
+                        "begin_offset": 590,
+                        "end_offset": 615
+                      },
+                      "result": 6,
+                      "expr": 7
+                    },
+                    {
+                      "kind": "store",
+                      "source_range": {
+                        "begin_offset": 579,
+                        "end_offset": 616
+                      },
+                      "place": {
+                        "root": "context",
+                        "root_name": "ctx",
+                        "members": [
+                          "slot"
+                        ],
+                        "root_type": 1,
+                        "projection": [
+                          {
+                            "owner_type": 1,
+                            "field": 0,
+                            "result_type": 3
+                          }
+                        ],
+                        "projection_resolved": true
+                      },
+                      "value": 6
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "goto",
+                "source_range": {
+                  "begin_offset": 635,
+                  "end_offset": 645
+                },
+                "target": 1,
+                "target_name": "Done"
+              }
+            ]
+          }
+        },
+        {
+          "state": 1,
+          "state_name": "Done",
+          "policy": {},
+          "body": {
+            "statements": [
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 696,
+                  "end_offset": 701
+                },
+                "result": 7,
+                "expr": 8
+              },
+              {
+                "kind": "let",
+                "source_range": {
+                  "begin_offset": 684,
+                  "end_offset": 703
+                },
+                "result": 8,
+                "expr": 9
+              },
+              {
+                "kind": "return",
+                "source_range": {
+                  "begin_offset": 677,
+                  "end_offset": 704
+                },
+                "has_value": true,
+                "value": 8
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "workflows": [],
+  "instances": [
+    {
+      "id": 0,
+      "instance_key": "_inst_255ad0a67976080f_app_main_Charge_Int",
+      "origin": {
+        "kind": "capability",
+        "canonical_name": "app::main::Charge",
+        "local_name": "Charge",
+        "module_name": "app::main",
+        "id": 3
+      },
+      "dispatch_types": [
+        0
+      ],
+      "payload": {
+        "kind": "capability",
+        "base": 0
+      }
+    }
+  ]
+}

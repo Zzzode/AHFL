@@ -31,6 +31,119 @@
 
 namespace ahfl::ir::core {
 
+// ---------------------------------------------------------------------------
+// Shared program-global value-type hash-cons (RFC 0026 P9 §6). Declared in
+// core_ir.hpp so the AHFL-IR lowerer and the Core JSON reader share ONE
+// structural-interning implementation — the reader must rebuild the arena by
+// interning (never trust serialized ids), and a second interner would be a
+// second notion of structural equality (CLAUDE.md: no parallel SSOT copies).
+// ---------------------------------------------------------------------------
+std::size_t CoreValueTypeNodeHash::operator()(const CoreValueType &vt) const noexcept {
+    std::size_t h = vt.node.index();
+    const auto mix = [&h](std::size_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); };
+    const auto hh_int = [&](const CoreVtInt &n) {
+        if (n.bounds) {
+            mix(static_cast<std::size_t>(n.bounds->first));
+            mix(static_cast<std::size_t>(n.bounds->second));
+        }
+    };
+    const auto hh_string = [&](const CoreVtString &n) {
+        if (n.length_bounds) {
+            mix(static_cast<std::size_t>(n.length_bounds->first));
+            mix(static_cast<std::size_t>(n.length_bounds->second));
+        }
+    };
+    const auto hh_decimal = [&](const CoreVtDecimal &n) { mix(static_cast<std::size_t>(n.scale)); };
+    const auto hh_nominal = [&](const CoreVtNominal &n) {
+        mix(n.base.value);
+        for (const auto &a : n.args) {
+            mix(a.value);
+        }
+        if (n.capacity) {
+            mix(static_cast<std::size_t>(*n.capacity));
+        }
+    };
+    const auto hh_tuple = [&](const CoreVtTuple &n) {
+        for (const auto &e : n.elements) {
+            mix(e.value);
+        }
+    };
+    const auto hh_fn = [&](const CoreVtFn &n) {
+        for (const auto &p : n.params) {
+            mix(p.value);
+        }
+        mix(n.ret.value);
+    };
+    const auto hh_closure = [&](const CoreVtClosure &n) {
+        mix(n.signature.value);
+        for (const auto &c : n.captures) {
+            mix(c.value_type.value);
+            mix(static_cast<std::size_t>(c.mode));
+        }
+    };
+    // RFC 0027 Q1 (KR6.13-X): one handler per value-type node, generated from
+    // core_value_types.def. Leaf scalars with no identity payload share
+    // LOWER_HASH_LEAF (a distinct typed no-op lambda per node); structural nodes
+    // route to the explicit payload lambdas above. There is NO unnamed
+    // catch-all, so a 15th node without a routing macro fails to compile.
+#define LOWER_HASH_LEAF(Name, Wire) [](const CoreVt##Name &) {},
+#define LOWER_HASH_Unit(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Never(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Bool(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Int(Name, Wire) hh_int,
+#define LOWER_HASH_Float(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_String(Name, Wire) hh_string,
+#define LOWER_HASH_Decimal(Name, Wire) hh_decimal,
+#define LOWER_HASH_Duration(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Timestamp(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Uuid(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Nominal(Name, Wire) hh_nominal,
+#define LOWER_HASH_Tuple(Name, Wire) hh_tuple,
+#define LOWER_HASH_Fn(Name, Wire) hh_fn,
+#define LOWER_HASH_Closure(Name, Wire) hh_closure,
+#define HANDLE_CORE_VT(Name, Wire) LOWER_HASH_##Name(Name, Wire)
+    std::visit(
+        Overloaded{
+#include "ahfl/compiler/ir/core_value_types.def"
+        },
+        vt.node);
+#undef HANDLE_CORE_VT
+#undef LOWER_HASH_Unit
+#undef LOWER_HASH_Never
+#undef LOWER_HASH_Bool
+#undef LOWER_HASH_Int
+#undef LOWER_HASH_Float
+#undef LOWER_HASH_String
+#undef LOWER_HASH_Decimal
+#undef LOWER_HASH_Duration
+#undef LOWER_HASH_Timestamp
+#undef LOWER_HASH_Uuid
+#undef LOWER_HASH_Nominal
+#undef LOWER_HASH_Tuple
+#undef LOWER_HASH_Fn
+#undef LOWER_HASH_Closure
+#undef LOWER_HASH_LEAF
+    return h;
+}
+
+std::optional<CoreValueTypeId> CoreValueTypeArena::intern(CoreValueTypeNode node,
+                                                          std::string *error_reason) {
+    CoreValueType vt{std::move(node)};
+    if (const auto it = index_.find(vt); it != index_.end()) {
+        return it->second;
+    }
+    if (store_.size() >= CoreValueTypeId::kInvalid) {
+        if (error_reason != nullptr && error_reason->empty()) {
+            *error_reason = "value-type arena exceeded its 32-bit id space";
+        }
+        return std::nullopt;
+    }
+    const auto id = CoreValueTypeId{static_cast<std::uint32_t>(store_.size())};
+    index_.emplace(vt, id);
+    store_.push_back(std::move(vt));
+    return id;
+}
+
 // Out-of-line structural equality for the recursive body types (used by tests).
 bool operator==(const CoreIfStmt &a, const CoreIfStmt &b) noexcept {
     if (!(a.condition == b.condition)) {
@@ -689,14 +802,7 @@ class ValueTypeArena {
 
     ValueTypeArena(std::vector<CoreValueType> &store, const std::vector<CoreTypeDecl> &types,
                    NominalResolver resolve)
-        : store_(store), types_(types), resolve_(std::move(resolve)) {
-        // Rebuild the hash-cons index from any pre-existing arena entries so
-        // repeated lowerings (e.g. one per dispatch type) keep deduplicating
-        // against everything already interned — the arena stays canonical.
-        for (std::uint32_t i = 0; i < store_.size(); ++i) {
-            index_.emplace(store_[i], CoreValueTypeId{i});
-        }
-    }
+        : store_(store), types_(types), resolve_(std::move(resolve)), interner_(store) {}
 
     // Lower an ir::TypeRef into an interned CoreValueTypeId. Returns nullopt (a
     // fail-closed error) on any non-materializable input: Unresolved/Any/Never
@@ -837,120 +943,14 @@ class ValueTypeArena {
             return valid_materialized_id(id, error_reason);
         });
     }
-    // Hash for the hash-cons map. Children are already interned to ids, so a
-    // node's hash mixes only its own scalar fields + child ids.
-    struct NodeHash {
-        [[nodiscard]] std::size_t operator()(const CoreValueType &vt) const noexcept {
-            std::size_t h = vt.node.index();
-            const auto mix = [&h](std::size_t v) {
-                h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-            };
-            const auto hh_int = [&](const CoreVtInt &n) {
-                if (n.bounds) {
-                    mix(static_cast<std::size_t>(n.bounds->first));
-                    mix(static_cast<std::size_t>(n.bounds->second));
-                }
-            };
-            const auto hh_string = [&](const CoreVtString &n) {
-                if (n.length_bounds) {
-                    mix(static_cast<std::size_t>(n.length_bounds->first));
-                    mix(static_cast<std::size_t>(n.length_bounds->second));
-                }
-            };
-            const auto hh_decimal = [&](const CoreVtDecimal &n) {
-                mix(static_cast<std::size_t>(n.scale));
-            };
-            const auto hh_nominal = [&](const CoreVtNominal &n) {
-                mix(n.base.value);
-                for (const auto &a : n.args) {
-                    mix(a.value);
-                }
-                if (n.capacity) {
-                    mix(static_cast<std::size_t>(*n.capacity));
-                }
-            };
-            const auto hh_tuple = [&](const CoreVtTuple &n) {
-                for (const auto &e : n.elements) {
-                    mix(e.value);
-                }
-            };
-            const auto hh_fn = [&](const CoreVtFn &n) {
-                for (const auto &p : n.params) {
-                    mix(p.value);
-                }
-                mix(n.ret.value);
-            };
-            const auto hh_closure = [&](const CoreVtClosure &n) {
-                mix(n.signature.value);
-                for (const auto &c : n.captures) {
-                    mix(c.value_type.value);
-                    mix(static_cast<std::size_t>(c.mode));
-                }
-            };
-            // RFC 0027 Q1 (KR6.13-X): one handler per value-type node,
-            // generated from core_value_types.def. Leaf scalars with no
-            // identity payload share LOWER_HASH_LEAF (which expands to a
-            // distinct typed no-op lambda per node); structural nodes route to
-            // the explicit payload lambdas above. There is NO unnamed catch-all,
-            // so a 15th node without a LOWER_HASH_* routing macro fails to
-            // compile.
-#define LOWER_HASH_LEAF(Name, Wire) [](const CoreVt##Name &) {},
-#define LOWER_HASH_Unit(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
-#define LOWER_HASH_Never(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
-#define LOWER_HASH_Bool(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
-#define LOWER_HASH_Int(Name, Wire) hh_int,
-#define LOWER_HASH_Float(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
-#define LOWER_HASH_String(Name, Wire) hh_string,
-#define LOWER_HASH_Decimal(Name, Wire) hh_decimal,
-#define LOWER_HASH_Duration(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
-#define LOWER_HASH_Timestamp(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
-#define LOWER_HASH_Uuid(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
-#define LOWER_HASH_Nominal(Name, Wire) hh_nominal,
-#define LOWER_HASH_Tuple(Name, Wire) hh_tuple,
-#define LOWER_HASH_Fn(Name, Wire) hh_fn,
-#define LOWER_HASH_Closure(Name, Wire) hh_closure,
-#define HANDLE_CORE_VT(Name, Wire) LOWER_HASH_##Name(Name, Wire)
-            std::visit(
-                Overloaded{
-#include "ahfl/compiler/ir/core_value_types.def"
-                },
-                vt.node);
-#undef HANDLE_CORE_VT
-#undef LOWER_HASH_Unit
-#undef LOWER_HASH_Never
-#undef LOWER_HASH_Bool
-#undef LOWER_HASH_Int
-#undef LOWER_HASH_Float
-#undef LOWER_HASH_String
-#undef LOWER_HASH_Decimal
-#undef LOWER_HASH_Duration
-#undef LOWER_HASH_Timestamp
-#undef LOWER_HASH_Uuid
-#undef LOWER_HASH_Nominal
-#undef LOWER_HASH_Tuple
-#undef LOWER_HASH_Fn
-#undef LOWER_HASH_Closure
-#undef LOWER_HASH_LEAF
-            return h;
-        }
-    };
-
-    // Intern a fully-built node (children already interned). Deterministic
-    // append-only storage + hash-cons dedup (Principle 3, Codex invariant 4).
-    // Fails closed if the arena would exceed the CoreValueTypeId (uint32) space.
+    // Intern a fully-built node (children already interned) through the SHARED
+    // program-global hash-cons (CoreValueTypeArena, declared in core_ir.hpp).
+    // Deterministic append-only storage + structural dedup (Principle 3); the
+    // ONE interning decision point shared with the Core JSON reader (RFC 0026 P9
+    // §6.2). Fails closed if the arena would exceed the CoreValueTypeId space.
     [[nodiscard]] std::optional<CoreValueTypeId> intern(CoreValueTypeNode node,
                                                         std::string *error_reason) {
-        CoreValueType vt{std::move(node)};
-        if (const auto it = index_.find(vt); it != index_.end()) {
-            return it->second;
-        }
-        if (store_.size() >= CoreValueTypeId::kInvalid) {
-            return set_reason(error_reason, "value-type arena exceeded its 32-bit id space");
-        }
-        const auto id = CoreValueTypeId{static_cast<std::uint32_t>(store_.size())};
-        index_.emplace(vt, id);
-        store_.push_back(std::move(vt));
-        return id;
+        return interner_.intern(std::move(node), error_reason);
     }
 
     [[nodiscard]] static bool has_children(const TypeRef &type) {
@@ -1163,7 +1163,7 @@ class ValueTypeArena {
     std::vector<CoreValueType> &store_;
     const std::vector<CoreTypeDecl> &types_;
     NominalResolver resolve_;
-    std::unordered_map<CoreValueType, CoreValueTypeId, NodeHash> index_;
+    CoreValueTypeArena interner_;
 };
 
 void TypeEnv::finalize_member_templates(ValueTypeArena &arena) {
