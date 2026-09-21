@@ -220,6 +220,29 @@ class Parser {
   private:
     std::string_view input_;
     std::size_t pos_;
+    /// Current `[` / `{` nesting depth of the recursive descent. Bounded by
+    /// `kMaxJsonNestingDepth` so a whitespace-cheap document of deeply nested
+    /// brackets fails closed instead of overflowing the native stack.
+    std::size_t depth_{0};
+
+    /// One bracket level of recursion. Fails closed past `kMaxJsonNestingDepth`.
+    class DepthGuard {
+      public:
+        explicit DepthGuard(std::size_t &depth)
+            : depth_(depth), entered_(++depth <= kMaxJsonNestingDepth) {}
+        [[nodiscard]] bool ok() const {
+            return entered_;
+        }
+        ~DepthGuard() {
+            --depth_;
+        }
+        DepthGuard(const DepthGuard &) = delete;
+        DepthGuard &operator=(const DepthGuard &) = delete;
+
+      private:
+        std::size_t &depth_;
+        bool entered_;
+    };
 
     [[nodiscard]] bool at_end() const {
         return pos_ >= input_.size();
@@ -551,6 +574,10 @@ class Parser {
         if (!consume('[')) {
             return std::nullopt;
         }
+        DepthGuard guard(depth_);
+        if (!guard.ok()) {
+            return std::nullopt; // nesting past kMaxJsonNestingDepth
+        }
         auto arr = JsonValue::make_array();
         skip_whitespace();
         if (consume(']')) {
@@ -580,6 +607,10 @@ class Parser {
         const auto start = pos_;
         if (!consume('{')) {
             return std::nullopt;
+        }
+        DepthGuard guard(depth_);
+        if (!guard.ok()) {
+            return std::nullopt; // nesting past kMaxJsonNestingDepth
         }
         auto obj = JsonValue::make_object();
         skip_whitespace();

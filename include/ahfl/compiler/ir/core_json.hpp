@@ -53,12 +53,13 @@ namespace ahfl::ir::core {
 ///
 /// The writer is a fail-closed artifact boundary: a REQUIRED-valid id left
 /// `kInvalid` (a lowering-ERROR / pre-verify state that a verifier-clean program
-/// never carries) is a writer error, reported through `error` when non-null and
-/// suppressing the rest of the document rather than emitting the `kInvalid`
-/// sentinel. The ONE legal serialized `kInvalid` is the sparse, navigation-only
-/// `CoreTypeDecl::field_nominal_types` slot, encoded as JSON `null` (§4).
-/// Callers that must not publish a malformed artifact pass an `error` pointer
-/// and check it.
+/// never carries) is a writer error. The whole document is **suppressed** — the
+/// stream receives NOTHING, not a truncated or syntactically invalid prefix —
+/// and the reason is reported through `error` when non-null. The ONE legal
+/// serialized `kInvalid` is the sparse, navigation-only
+/// `CoreTypeDecl::field_nominal_types` slot, encoded as JSON `null` (§4). A
+/// corrupt program therefore never yields a readable-but-wrong artifact, whether
+/// or not the caller inspects `error`.
 void print_core_ir_json(const CoreProgram &program, std::ostream &out,
                         std::string *error = nullptr);
 

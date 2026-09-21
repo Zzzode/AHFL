@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -114,7 +115,23 @@ struct JsonValue {
 
 // ---------- Parse / Serialize ----------
 
-/// Parse a JSON string into a JsonValue tree. Returns nullopt on parse error.
+/// The maximum `[` / `{` nesting depth `parse_json` will descend to. The parser
+/// is recursive descent, so this is an untrusted-input admission bound: without
+/// it a whitespace-cheap document of ~10^5 nested brackets overflows the native
+/// stack before any consumer runs (e.g. the Core-IR reader's own region depth
+/// bound, which only sees the tree AFTER the parse).
+///
+/// This is a STACK-SAFETY bound and is deliberately looser than the semantic
+/// bounds a consumer applies to the parsed tree. In particular the Core-IR
+/// reader's `kMaxRegionNestingDepth` counts *region* nesting, and one region
+/// level in the wire shape costs ~3 bracket levels, so this constant must stay
+/// above `3 * kMaxRegionNestingDepth` for that reader's own diagnostic to remain
+/// reachable on region-shaped input. It is still far below the depth at which
+/// the parse+read walk overflows an 8 MiB stack.
+inline constexpr std::size_t kMaxJsonNestingDepth = 4096;
+
+/// Parse a JSON string into a JsonValue tree. Returns nullopt on parse error,
+/// including a document nested deeper than `kMaxJsonNestingDepth`.
 [[nodiscard]] std::optional<std::unique_ptr<JsonValue>> parse_json(std::string_view input);
 
 /// Serialize a JsonValue tree to a compact JSON string.

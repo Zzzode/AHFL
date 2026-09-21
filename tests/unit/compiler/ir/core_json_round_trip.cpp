@@ -9,13 +9,17 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "base/json/json_value.hpp" // ahfl::json::kMaxJsonNestingDepth
 #include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -378,6 +382,205 @@ TEST_CASE("Core-IR JSON round-trips the real-sysroot std-nominal corpus") {
     }
 }
 
+// ---------------------------------------------------------------------------
+// §7 "Corpus" — the DESIGN-MANDATED directory-discovered corpus.
+//
+// RFC 0026 P9 §7 requires round-trip over "every in-tree fixture that lowers to
+// a verifier-clean Core program, ... so a new fixture cannot silently escape
+// round-trip". The KR6.7 conformance classifier's method — directory discovery
+// with an asserted pinned set — is mirrored here: the test scans tests/golden,
+// lowers everything, and asserts the discovered set EQUALS the pinned list. A new
+// fixture (or one that stops lowering) changes the discovered set and FAILS the
+// equality check, so the list can never lag the tree silently. This closes the
+// node-set holes the hand-picked `corpus()` left: p6_match_* (pattern/match
+// arms), p6_collection (bounded-collection ops), p6_coerce* (coercion plans),
+// the temporal fixtures, and the workflow/flow fixtures.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+#ifdef AHFL_SOURCE_DIR
+constexpr std::string_view kGoldenRoot = AHFL_SOURCE_DIR "/tests/golden";
+#else
+constexpr std::string_view kGoldenRoot = "tests/golden";
+#endif
+
+/// Lower one golden fixture through the real frontend. Returns nullopt unless it
+/// reaches a verifier-clean Core program.
+[[nodiscard]] std::optional<ir::core::CoreProgram>
+lower_golden_file(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    auto program = lower_source(path.stem().string(), buffer.str());
+    if (!program.has_value()) {
+        return std::nullopt;
+    }
+    if (!ir::core::verify_core_program(*program).ok()) {
+        return std::nullopt;
+    }
+    return program;
+}
+
+/// Every `*.ahfl` under tests/golden (relative, sorted) that lowers to a
+/// verifier-clean Core program.
+[[nodiscard]] std::vector<std::string> discover_core_corpus() {
+    const auto root = std::filesystem::path{kGoldenRoot};
+    std::vector<std::string> discovered;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
+         it.increment(ec)) {
+        if (ec || !it->is_regular_file(ec)) {
+            continue;
+        }
+        const auto &path = it->path();
+        if (path.extension() != ".ahfl") {
+            continue;
+        }
+        if (lower_golden_file(path).has_value()) {
+            discovered.push_back(std::filesystem::relative(path, root, ec).generic_string());
+        }
+    }
+    REQUIRE_FALSE(ec);
+    std::sort(discovered.begin(), discovered.end());
+    return discovered;
+}
+
+/// The pinned set, asserted to equal what directory discovery finds right now.
+[[nodiscard]] std::vector<std::string> pinned_core_corpus() {
+    return {
+        "formal/fail_bounded_data_semantics.ahfl",
+        "formal/fail_real_smv_control.ahfl",
+        "formal/fail_smt_bmc_refuted.ahfl",
+        "formal/ok_bounded_data_semantics.ahfl",
+        "formal/ok_flow_workflow_semantics.ahfl",
+        "formal/ok_real_smv_control.ahfl",
+        "formal/ok_smt_encoding.ahfl",
+        "formal/warn_not_in_verified_subset.ahfl",
+        "formatter/formatted_struct_2spaces.ahfl",
+        "formatter/formatted_struct_4spaces.ahfl",
+        "formatter/unformatted_struct.ahfl",
+        "infra/multi_agent.ahfl",
+        "infra/palette.ahfl",
+        "infra/service_mesh.ahfl",
+        "infra/stateless.ahfl",
+        "ir/ok_dead_state_elimination.ahfl",
+        "ir/ok_pass_productization.ahfl",
+        "ir/ok_runtime_plan_effect.ahfl",
+        "ir/ok_workflow_simplification.ahfl",
+        "ir/ok_workflow_value_flow.ahfl",
+        "runtime/e2e_multi_agent.ahfl",
+        "runtime/enum_variant_e2e.ahfl",
+        "runtime/float_output_e2e.ahfl",
+        "runtime/if_let_e2e.ahfl",
+        "typecheck/agent_duplicate_final_state.ahfl",
+        "typecheck/agent_duplicate_state.ahfl",
+        "typecheck/agent_final_state_not_declared.ahfl",
+        "typecheck/agent_final_state_outgoing_transition.ahfl",
+        "typecheck/agent_initial_state_not_declared.ahfl",
+        "typecheck/agent_transition_source_not_declared.ahfl",
+        "typecheck/agent_transition_target_not_declared.ahfl",
+        "typecheck/agent_unreachable_state.ahfl",
+        "typecheck/contract_invariant_running_not_allowed.ahfl",
+        "typecheck/contract_invariant_unknown_state.ahfl",
+        "typecheck/flow_duplicate_handler.ahfl",
+        "typecheck/flow_final_handler_must_return.ahfl",
+        "typecheck/flow_illegal_goto.ahfl",
+        "typecheck/flow_missing_final_state_handler.ahfl",
+        "typecheck/flow_missing_handler.ahfl",
+        "typecheck/flow_non_final_handler_must_goto.ahfl",
+        "typecheck/flow_return_in_non_final.ahfl",
+        "typecheck/ok_agent_schema_alias.ahfl",
+        "typecheck/temporal_called_in_workflow.ahfl",
+        "typecheck/temporal_completed_in_agent_contract.ahfl",
+        "typecheck/temporal_in_state_in_workflow.ahfl",
+        "typecheck/temporal_unknown_workflow_node.ahfl",
+        "typecheck/workflow_completed_invalid_state.ahfl",
+        "wasm/e1_identity_agent.ahfl",
+        "wasm/e2_capability_agent.ahfl",
+        "wasm/e3_capability_workflow.ahfl",
+        "wasm/e3_capability_workflow_resume.ahfl",
+        "wasm/e3_identity_workflow.ahfl",
+        "wasm/p6_aggregate.ahfl",
+        "wasm/p6_cascade.ahfl",
+        "wasm/p6_cascade_high.ahfl",
+        "wasm/p6_coerce.ahfl",
+        "wasm/p6_coerce_bounds.ahfl",
+        "wasm/p6_collection.ahfl",
+        "wasm/p6_elseless_fallthrough.ahfl",
+        "wasm/p6_elseless_taken.ahfl",
+        "wasm/p6_match_arm_trap.ahfl",
+        "wasm/p6_match_binding_payload.ahfl",
+        "wasm/p6_match_enum.ahfl",
+        "wasm/p6_match_expr.ahfl",
+        "wasm/p6_match_fallthrough.ahfl",
+        "wasm/p6_match_guard.ahfl",
+        "wasm/p6_match_or.ahfl",
+        "wasm/p6_match_result_i64.ahfl",
+        "wasm/p6_neg_compare.ahfl",
+        "wasm/p6_nested_depth3.ahfl",
+        "wasm/p6_nested_depth3_taken.ahfl",
+        "wasm/p6_nested_elseless.ahfl",
+        "wasm/p6_nested_elseless_taken.ahfl",
+        "wasm/p6_nested_fallthrough.ahfl",
+        "wasm/p6_nested_projection.ahfl",
+        "wasm/p6_nested_taken_high.ahfl",
+        "wasm/p6_scalar_cond.ahfl",
+        "wasm/p6_scalar_trap.ahfl",
+    };
+}
+
+} // namespace
+
+TEST_CASE("the discovered Core-IR corpus equals the pinned set (a fixture cannot escape)") {
+    const auto discovered = discover_core_corpus();
+    const auto pinned = pinned_core_corpus();
+
+    // Both directions: a newly-committed fixture that lowers (missing from the
+    // pin) AND a pinned fixture that stopped lowering (a stale entry) fail.
+    std::vector<std::string> missing; // discovered but not pinned
+    std::set_difference(discovered.begin(), discovered.end(), pinned.begin(), pinned.end(),
+                        std::back_inserter(missing));
+    std::vector<std::string> stale; // pinned but not discovered
+    std::set_difference(pinned.begin(), pinned.end(), discovered.begin(), discovered.end(),
+                        std::back_inserter(stale));
+    for (const auto &path : missing) {
+        INFO("newly discovered fixture not in the pinned set: " << path);
+    }
+    for (const auto &path : stale) {
+        INFO("pinned fixture no longer lowers to a verifier-clean Core program: " << path);
+    }
+    CHECK(missing.empty());
+    CHECK(stale.empty());
+    CHECK(discovered == pinned);
+}
+
+TEST_CASE("Core-IR JSON round-trips every discovered fixture (R1 byte-exact, R2 structural)") {
+    const auto root = std::filesystem::path{kGoldenRoot};
+    const auto discovered = discover_core_corpus();
+    REQUIRE_FALSE(discovered.empty());
+    for (const auto &relative : discovered) {
+        CAPTURE(relative);
+        const auto program = lower_golden_file(root / relative);
+        REQUIRE(program.has_value());
+
+        const std::string first = print(*program);
+        REQUIRE_FALSE(first.empty());
+
+        // R1 — print ∘ parse ∘ print == print, as bytes.
+        const auto parsed = ir::core::parse_core_ir_json(first);
+        for (const auto &diagnostic : parsed.diagnostics) {
+            INFO("diagnostic: " << diagnostic.code << " — " << diagnostic.message);
+        }
+        REQUIRE(parsed.ok());
+        CHECK(parsed.diagnostics.empty());
+        CHECK(print(*parsed.program) == first);
+
+        // R2 — structural identity over EVERY table and body component-wise.
+        CHECK(ir::core::core_program_equal(*program, *parsed.program));
+    }
+}
+
 TEST_CASE("a parsed Core program is verifier-clean") {
     const auto program = lower_source("flow_branch", corpus().at("flow_branch"));
     REQUIRE(program.has_value());
@@ -669,6 +872,52 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         require_rejected_with(doc, "core.json.UNKNOWN_FIELD");
     }
 
+    SUBCASE("extra field inside a NESTED object (symbol_ref / source_range / bounds)") {
+        // §7 applies the unknown-field gate at EVERY object, not only one level
+        // up. A hand-editable symbol_ref with a stray member (a `canonical` typo
+        // for `canonical_name`) must be rejected, not silently admitted — the
+        // writer-by-construction argument does not cover symbol_ref / source_range
+        // / bounds, which are hand-constructible.
+        const auto program = lower_source("flow_branch", corpus().at("flow_branch"));
+        REQUIRE(program.has_value());
+        const std::string valid = print(*program);
+
+        // Inject a stray member right after an opening brace so the result stays
+        // syntactically valid JSON: the rejection must come from the reader's
+        // per-object unknown-field gate, not from a parse error.
+        const auto inject_after_brace = [&](std::string_view anchor) {
+            std::string edited = valid;
+            const auto begin = edited.find(anchor);
+            REQUIRE(begin != std::string::npos);
+            const auto brace = edited.find('{', begin);
+            REQUIRE(brace != std::string::npos);
+            edited.insert(brace + 1, "\n\"BOGUS\": 1,");
+            return edited;
+        };
+        require_rejected_with(inject_after_brace("\"symbol_ref\": {"),
+                              "core.json.UNKNOWN_FIELD");
+        require_rejected_with(inject_after_brace("\"source_range\": {"),
+                              "core.json.UNKNOWN_FIELD");
+    }
+
+    SUBCASE("extra field inside a bounds object") {
+        // A scalar refinement `{"minimum","maximum"}` is likewise hand-editable.
+        const std::string doc = R"({
+  "format_version": "ahfl.core.v1",
+  "layer": "core",
+  "types": [],
+  "value_types": [
+    {"kind": "int", "bounds": {"minimum": 0, "maximum": 10, "BOGUS": 1}}
+  ],
+  "capabilities": [],
+  "agents": [],
+  "flows": [],
+  "workflows": [],
+  "instances": []
+})";
+        require_rejected_with(doc, "core.json.UNKNOWN_FIELD");
+    }
+
     SUBCASE("self-referential expression (arena cycle)") {
         // A unary expr whose operand is ITSELF: the expr arena must be acyclic.
         // The reader admits the shape, and the final verify pass rejects it.
@@ -722,6 +971,31 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         require_rejected_with(doc + flow + tail + states, "core.json.REGION_TOO_DEEP");
     }
 
+    SUBCASE("bracket-only nesting is rejected by the shared parser's depth bound") {
+        // REGION-shaped input (above) only reaches the reader's region bound
+        // because the reader walks one `statements` level per region. The SHARED
+        // JSON parser recurses once per `[`/`{`, so a bracket-only document — no
+        // `layer`, no tables — reaches native stack overflow before `read_region`
+        // ever runs. The parser itself must fail closed on nesting past
+        // `ahfl::json::kMaxJsonNestingDepth`, so this case (which the old
+        // region-shaped pin could NOT catch) also stays green. A ~20 KB document
+        // of pure `[` used to segfault the process.
+        const std::string brackets(50000, '[');
+        require_rejected_with(brackets, "core.json.NOT_JSON");
+
+        // One level UNDER the bound still parses (as a plain JSON value), proving
+        // the bound is a nesting limit and not a blanket bracket reject.
+        const std::string just_under(ahfl::json::kMaxJsonNestingDepth, '[');
+        const std::string closed = just_under + std::string(ahfl::json::kMaxJsonNestingDepth, ']');
+        // Not a Core document (`layer` missing), but it must be rejected as a
+        // BAD_ENVELOPE rather than NOT_JSON: the parse itself succeeded.
+        require_rejected_with(closed, "core.json.BAD_ENVELOPE");
+
+        // One level OVER the bound fails at the parse.
+        const std::string over(ahfl::json::kMaxJsonNestingDepth + 1, '[');
+        require_rejected_with(over, "core.json.NOT_JSON");
+    }
+
     SUBCASE("value_count disagrees with the value_types table length") {
         // §5 — the per-body value_types table is dense (size == value_count).
         const auto program = lower_source("flow_branch", corpus().at("flow_branch"));
@@ -768,15 +1042,153 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
     }
 }
 
-TEST_CASE("the writer fails closed on a kInvalid required id") {
-    auto program = lower_source("flow_branch", corpus().at("flow_branch"));
-    REQUIRE(program.has_value());
-    // Corrupt a required-valid id: a capability return_type left kInvalid must
-    // be a writer error, never an emitted 4294967295.
-    REQUIRE_FALSE(program->capabilities.empty());
-    program->capabilities[0].return_type = ir::core::CoreValueTypeId{};
-    std::ostringstream out;
-    std::string error;
-    ir::core::print_core_ir_json(*program, out, &error);
-    CHECK_FALSE(error.empty());
+TEST_CASE("the writer fails closed on a kInvalid required id: NO artifact is published") {
+    // Every REQUIRED-valid id position (§2): a `kInvalid` there is a writer error,
+    // and the contract is a SUPPRESSED document — not a truncated one and not one
+    // carrying the `4294967295` sentinel. Each case corrupts one position and
+    // asserts (a) `error` is set and (b) the caller's stream received ZERO bytes,
+    // so a consumer that ignores `error` cannot read a malformed/wrong artifact.
+    const auto base = lower_source("flow_branch", corpus().at("flow_branch"));
+    REQUIRE(base.has_value());
+
+    // `CoreProgram` owns `unique_ptr` regions and is not copyable, so the seed is
+    // produced fresh per case by a factory and then corrupted in place.
+    const auto require_program_suppressed = [&](const std::string &what, const auto &make_seed,
+                                                auto &&corrupt) {
+        CAPTURE(what);
+        auto seed = make_seed();
+        REQUIRE(seed.has_value());
+        corrupt(*seed);
+        std::ostringstream out;
+        std::string error;
+        ir::core::print_core_ir_json(*seed, out, &error);
+        CHECK_FALSE(error.empty());
+        INFO("error: " << error);
+        CHECK(out.str().empty());
+    };
+    const auto require_suppressed = [&](const std::string &what, auto &&corrupt) {
+        require_program_suppressed(
+            what, [&]() { return lower_source("flow_branch", corpus().at("flow_branch")); },
+            corrupt);
+    };
+
+    // Audited positions.
+    require_suppressed("flow.agent (un-audited before this fix; emitted `\"agent\": ,`)",
+                       [](auto &p) { p.flows[0].target = ir::core::CoreAgentId{}; });
+    require_suppressed("agent.input",
+                       [](auto &p) { p.agents[0].input_type = ir::core::CoreTypeId{}; });
+    require_suppressed("capability.param_types (un-audited before this fix)", [](auto &p) {
+        p.capabilities[0].param_types[0] = ir::core::CoreValueTypeId{};
+    });
+    require_suppressed("capability.return_type",
+                       [](auto &p) { p.capabilities[0].return_type = ir::core::CoreValueTypeId{}; });
+
+    // Audited positions covering the workflow / type-template tables. The
+    // workflow-bearing source is the DAG fixture so workflow.id / node.target /
+    // input / output are all reachable.
+    const auto require_wf_suppressed = [&](const std::string &what, auto &&corrupt) {
+        require_program_suppressed(
+            what, [&]() { return lower_source("workflow_pipe", corpus().at("workflow_pipe")); },
+            corrupt);
+    };
+    require_wf_suppressed("workflow.id",
+                          [](auto &p) { p.workflows[0].id = ir::core::CoreWorkflowId{}; });
+    require_wf_suppressed("workflow.input",
+                          [](auto &p) { p.workflows[0].input_type = ir::core::CoreTypeId{}; });
+    require_wf_suppressed("workflow.output",
+                          [](auto &p) { p.workflows[0].output_type = ir::core::CoreTypeId{}; });
+    require_wf_suppressed("workflow_node.target_instance", [](auto &p) {
+        p.workflows[0].nodes[0].target_instance = ir::core::CoreInstanceId{};
+    });
+
+    // A member-type-template root left kInvalid must also suppress the document.
+    // The real-frontend sysroot fixture carries a generic struct member template
+    // (`Ctx::slot : Option<Bool>`), so its `field_type_template_roots` is
+    // non-empty — the un-audited-before-this-fix position the brief names.
+    const auto opt = lower_sysroot_source("writer_template_root", source_text());
+    REQUIRE(opt.has_value());
+    std::size_t template_root_type = opt->types.size();
+    for (std::size_t i = 0; i < opt->types.size(); ++i) {
+        if (!opt->types[i].field_type_template_roots.empty()) {
+            template_root_type = i;
+            break;
+        }
+    }
+    REQUIRE(template_root_type != opt->types.size());
+    require_program_suppressed(
+        "type.field_type_template_roots (un-audited before this fix)",
+        [&]() { return lower_sysroot_source("writer_template_root", source_text()); },
+        [&](auto &p) {
+            p.types[template_root_type].field_type_template_roots[0] =
+                ir::core::CoreMemberTypeTemplateNodeId{};
+        });
+
+    // A clean program still emits a parseable artifact (the suppression is not a
+    // blanket "never publish").
+    std::ostringstream clean_out;
+    ir::core::print_core_ir_json(*base, clean_out);
+    CHECK_FALSE(clean_out.str().empty());
+    CHECK(ir::core::parse_core_ir_json(clean_out.str()).ok());
+}
+
+// ---------------------------------------------------------------------------
+// R1/R2 over the NUMERIC domain, which the fixture corpus never reaches: every
+// `id` / `capacity` / `bounds` / `scale` in the corpus is tiny, so the shared
+// parser's SignedInteger / UnsignedInteger classification of a large magnitude is
+// never exercised. The projection emits indices as bare 64-bit-capable integers,
+// so a change to that classification (or to `write_u64` / `req_u64`) could break
+// R1 for a large capacity/bound with no test noticing. This locks INT64_MIN /
+// INT64_MAX bounds, a UINT64_MAX capacity, and an INT64_MIN decimal scale.
+// ---------------------------------------------------------------------------
+TEST_CASE("Core-IR JSON round-trips the full 64-bit numeric domain (R1/R2)") {
+    // A minimal program carrying one value type per wide-numeric position, built
+    // by hand since no fixture lowers to these magnitudes. `value_types` must be
+    // a canonical postordered hash-cons, so the wide leaves come first. The base
+    // of the wide-capacity nominal is a synthesized `std::collections::List`
+    // declared type, which the verifier checks against the builtin descriptor.
+    ir::core::CoreProgram program;
+    program.value_types.push_back(ir::core::CoreValueType{
+        ir::core::CoreVtInt{std::pair<std::int64_t, std::int64_t>{INT64_MIN, INT64_MAX}}});
+    program.value_types.push_back(ir::core::CoreValueType{ir::core::CoreVtDecimal{INT64_MIN}});
+
+    ir::core::CoreTypeDecl list;
+    list.kind = ir::core::CoreTypeDecl::Kind::Struct;
+    list.name = "std::collections::List";
+    list.type_param_count = 1;
+    list.variances = {ir::core::CoreVariance::Covariant};
+    list.role = ir::core::CoreNominalRole::List;
+    list.symbol_ref.kind = ahfl::ir::SymbolRefKind::Type;
+    list.symbol_ref.canonical_name = "std::collections::List";
+    program.types.push_back(std::move(list));
+    program.value_types.push_back(ir::core::CoreValueType{
+        ir::core::CoreVtNominal{ir::core::CoreTypeId{0}, {ir::core::CoreValueTypeId{0}}, UINT64_MAX}});
+
+    const std::string first = print(program);
+    REQUIRE_FALSE(first.empty());
+    // The wide values really did serialize as bare 64-bit-capable integers.
+    CHECK(first.find(std::to_string(UINT64_MAX)) != std::string::npos);
+    CHECK(first.find(std::to_string(INT64_MIN)) != std::string::npos);
+    CHECK(first.find(std::to_string(INT64_MAX)) != std::string::npos);
+
+    const auto parsed = ir::core::parse_core_ir_json(first);
+    for (const auto &diagnostic : parsed.diagnostics) {
+        INFO("diagnostic: " << diagnostic.code << " — " << diagnostic.message);
+    }
+    REQUIRE(parsed.ok());
+
+    // R1 — byte-exact re-emit.
+    CHECK(print(*parsed.program) == first);
+    // R2 — structural identity, including the exact magnitude of every wide field.
+    CHECK(ir::core::core_program_equal(program, *parsed.program));
+    REQUIRE(parsed.program->value_types.size() == program.value_types.size());
+    const auto &nominal =
+        std::get<ir::core::CoreVtNominal>(parsed.program->value_types.back().node);
+    REQUIRE(nominal.capacity.has_value());
+    CHECK(*nominal.capacity == UINT64_MAX);
+    const auto &decimal = std::get<ir::core::CoreVtDecimal>(parsed.program->value_types[1].node);
+    CHECK(decimal.scale == INT64_MIN);
+    const auto &int_leaf = std::get<ir::core::CoreVtInt>(parsed.program->value_types[0].node);
+    REQUIRE(int_leaf.bounds.has_value());
+    CHECK(int_leaf.bounds->first == INT64_MIN);
+    CHECK(int_leaf.bounds->second == INT64_MAX);
 }

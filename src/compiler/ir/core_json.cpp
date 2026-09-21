@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -626,6 +627,10 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
     explicit CoreJsonPrinter(std::ostream &out, std::string *error)
         : PrettyJsonWriter(out), error_(error) {}
 
+    /// Render the document into the bound stream. A REQUIRED-valid id left
+    /// kInvalid (§2) latches `failed()`; the caller must NOT publish the stream
+    /// in that case (see `print_core_ir_json`, which renders into a scratch
+    /// buffer and suppresses the whole artifact).
     void print(const CoreProgram &program) {
         // Fail-closed audit BEFORE emitting anything: a REQUIRED-valid id left
         // kInvalid (§2) is a writer error, so the document is suppressed rather
@@ -646,20 +651,35 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
         out() << '\n';
     }
 
+    /// True once a REQUIRED-valid id was found kInvalid anywhere in the walk
+    /// (the up-front audit or a per-field writer). The rendered bytes are then
+    /// not a valid artifact and must not be published.
+    [[nodiscard]] bool failed() const noexcept {
+        return failed_;
+    }
+
   private:
     // --- write helpers (PrettyJsonWriter supplies print_object/print_array and
     // its indent / newline / write_string members). ---
 
     void fail(std::string message) {
+        failed_ = true;
         if (error_ != nullptr && error_->empty()) {
             *error_ = std::move(message);
         }
     }
 
-    /// Walk every REQUIRED-valid id slot and report the first `kInvalid`. This
-    /// is the writer's fail-closed gate: the per-field writers also check, but
-    /// doing it up front means a document is never partially emitted for a
-    /// corrupt program.
+    /// Walk EVERY REQUIRED-valid id slot and report the first `kInvalid`. This is
+    /// the writer's fail-closed gate: doing it up front means the error message
+    /// names the field and the whole document is suppressed before any byte is
+    /// published. It is not the ONLY gate — every `write_required_*` writer also
+    /// latches, so a slot added later without an audit entry still fails closed
+    /// (as `null`, never as a `"key": ,` fragment or the `4294967295` sentinel).
+    ///
+    /// NOT audited (kInvalid is LEGAL there, §4): the `field_nominal_types`
+    /// elements, a projection step's trailing `result_type`, a struct-literal
+    /// `CoreConstructExpr::variant`, an unresolved `CorePathExpr::root_type`, and
+    /// every optional/kind-masked field the writer omits by presence.
     void audit_required_ids(const CoreProgram &program) {
         const auto require_type = [&](CoreTypeId id, const char *what) {
             if (id.value == CoreTypeId::kInvalid) {
@@ -671,6 +691,49 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                 fail(std::string("required value-type id '") + what + "' is kInvalid");
             }
         };
+        const auto require_template_node = [&](CoreMemberTypeTemplateNodeId id, const char *what) {
+            if (id.value == CoreMemberTypeTemplateNodeId::kInvalid) {
+                fail(std::string("required member-template id '") + what + "' is kInvalid");
+            }
+        };
+        for (const auto &type : program.types) {
+            for (const auto &root : type.field_type_template_roots) {
+                require_template_node(root, "type.field_type_template_roots");
+            }
+            for (const auto &payload : type.variant_payloads) {
+                for (const auto &root : payload.slot_type_template_roots) {
+                    require_template_node(root, "variant_payload.slot_type_template_roots");
+                }
+            }
+            for (const auto &node : type.member_type_templates) {
+                using K = CoreMemberTypeTemplateKind;
+                switch (node.kind) {
+                case K::Concrete:
+                    require_value_type(node.concrete, "member_template.concrete");
+                    break;
+                case K::Param:
+                    break;
+                case K::Nominal:
+                    require_type(node.nominal, "member_template.nominal");
+                    for (const auto &child : node.children) {
+                        require_template_node(child, "member_template.children");
+                    }
+                    break;
+                case K::Fn:
+                    require_template_node(node.fn_return, "member_template.fn_return");
+                    for (const auto &child : node.children) {
+                        require_template_node(child, "member_template.children");
+                    }
+                    break;
+                }
+            }
+        }
+        for (const auto &cap : program.capabilities) {
+            for (const auto &param : cap.param_types) {
+                require_value_type(param, "capability.param_types");
+            }
+            require_value_type(cap.return_type, "capability.return_type");
+        }
         for (const auto &agent : program.agents) {
             require_type(agent.input_type, "agent.input");
             require_type(agent.output_type, "agent.output");
@@ -678,10 +741,50 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                 require_type(agent.context_type, "agent.context");
             }
         }
-        for (const auto &cap : program.capabilities) {
-            require_value_type(cap.return_type, "capability.return_type");
+        for (const auto &flow : program.flows) {
+            if (flow.target.value == CoreAgentId::kInvalid) {
+                fail("required id 'flow.agent' is kInvalid");
+            }
+        }
+        for (const auto &vt : program.value_types) {
+            // The program-global arena's OWN required child ids (§6.1): a
+            // kInvalid child would otherwise serialize as the `4294967295`
+            // sentinel. `CoreVtInt::bounds` / `CoreVtString::length_bounds` /
+            // `CoreVtDecimal::scale` are plain scalars and carry no id.
+            std::visit(
+                Overloaded{
+                    [&](const CoreVtNominal &n) {
+                        require_type(n.base, "value_type.nominal.base");
+                        for (const auto &arg : n.args) {
+                            require_value_type(arg, "value_type.nominal.args");
+                        }
+                    },
+                    [&](const CoreVtTuple &n) {
+                        for (const auto &el : n.elements) {
+                            require_value_type(el, "value_type.tuple.elements");
+                        }
+                    },
+                    [&](const CoreVtFn &n) {
+                        for (const auto &param : n.params) {
+                            require_value_type(param, "value_type.fn.params");
+                        }
+                        require_value_type(n.ret, "value_type.fn.ret");
+                    },
+                    [&](const CoreVtClosure &n) {
+                        require_value_type(n.signature, "value_type.closure.signature");
+                        for (const auto &capture : n.captures) {
+                            require_value_type(capture.value_type,
+                                               "value_type.closure.captures");
+                        }
+                    },
+                    [](const auto &) {},
+                },
+                vt.node);
         }
         for (const auto &workflow : program.workflows) {
+            if (workflow.id.value == CoreWorkflowId::kInvalid) {
+                fail("required id 'workflow.id' is kInvalid");
+            }
             require_type(workflow.input_type, "workflow.input");
             require_type(workflow.output_type, "workflow.output");
             for (const auto &node : workflow.nodes) {
@@ -694,6 +797,34 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
             for (const auto &dispatch : instance.dispatch_types) {
                 require_value_type(dispatch, "instance.dispatch_types");
             }
+            std::visit(
+                Overloaded{
+                    [&](const CoreCapabilityInstance &p) {
+                        if (p.base.value == CoreCapabilityId::kInvalid) {
+                            fail("required id 'instance.payload.base' is kInvalid");
+                        }
+                    },
+                    [&](const CorePredicateInstance &) {},
+                    [&](const CoreAgentInstance &p) {
+                        if (p.base.value == CoreAgentId::kInvalid) {
+                            fail("required id 'instance.payload.base' is kInvalid");
+                        }
+                        require_type(p.input_type, "instance.payload.input_type");
+                        if (p.context_kind == CoreAgentDecl::ContextKind::Struct) {
+                            require_type(p.context_type, "instance.payload.context_type");
+                        }
+                        require_type(p.output_type, "instance.payload.output_type");
+                    },
+                    [&](const CoreWorkflowInstance &p) {
+                        if (p.base.value == CoreWorkflowId::kInvalid) {
+                            fail("required id 'instance.payload.base' is kInvalid");
+                        }
+                        require_type(p.input_type, "instance.payload.input_type");
+                        require_type(p.output_type, "instance.payload.output_type");
+                    },
+                    [&](const CoreFnInstance &) {},
+                },
+                instance.payload);
         }
     }
 
@@ -707,11 +838,13 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
     /// Write a REQUIRED-valid typed id (a `CoreXxxId`) as a bare integer. A
     /// `kInvalid` value is never emitted here (§2): it is a lowering-ERROR /
     /// pre-verify state that a verifier-clean program never carries, so it is a
-    /// writer error and the document is suppressed.
+    /// writer error. `null` (not an empty fragment) keeps the scratch buffer
+    /// syntactically well formed even though the caller suppresses it.
     template <typename Id> void write_required_id(Id id, const char *what) {
         if (id.value == Id::kInvalid) {
             fail(std::string("required id '") + what +
                  "' is kInvalid; a verifier-clean program never carries one");
+            write_null();
             return;
         }
         write_index(id.value);
@@ -828,6 +961,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
     void write_required_template_root(CoreMemberTypeTemplateNodeId id) {
         if (id.value == CoreMemberTypeTemplateNodeId::kInvalid) {
             fail("member template root is kInvalid");
+            write_null();
             return;
         }
         write_index(id.value);
@@ -863,18 +997,20 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
         print_object(indent_level, [&](const auto &field) {
             field("kind", [&]() { write_string(member_template_kind_name(node.kind)); });
             if (node.kind == K::Concrete) {
-                field("concrete", [&]() { write_index(node.concrete.value); });
+                field("concrete",
+                      [&]() { write_required_value_type_id(node.concrete, "concrete"); });
             } else if (node.kind == K::Param) {
                 field("param_index", [&]() { write_u32(node.param_index); });
             } else if (node.kind == K::Nominal) {
-                field("nominal", [&]() { write_index(node.nominal.value); });
+                field("nominal",
+                      [&]() { write_required_type_id(node.nominal, "member_template.nominal"); });
                 if (node.capacity.has_value()) {
                     field("capacity", [&]() { write_u64(*node.capacity); });
                 }
                 field("children", [&]() {
                     print_array(indent_level + 1, [&](const auto &child_item) {
                         for (const auto &child : node.children) {
-                            child_item([&]() { write_index(child.value); });
+                            child_item([&]() { write_required_template_root(child); });
                         }
                     });
                 });
@@ -882,11 +1018,11 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                 field("children", [&]() {
                     print_array(indent_level + 1, [&](const auto &child_item) {
                         for (const auto &child : node.children) {
-                            child_item([&]() { write_index(child.value); });
+                            child_item([&]() { write_required_template_root(child); });
                         }
                     });
                 });
-                field("fn_return", [&]() { write_index(node.fn_return.value); });
+                field("fn_return", [&]() { write_required_template_root(node.fn_return); });
             }
         });
     }
@@ -1003,11 +1139,14 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
             field("param_types", [&]() {
                 print_array(indent_level + 1, [&](const auto &param_item) {
                     for (const auto &param : cap.param_types) {
-                        param_item([&]() { write_index(param.value); });
+                        param_item([
+                            &]() { write_required_value_type_id(param, "capability.param_types"); });
                     }
                 });
             });
-            field("return_type", [&]() { write_index(cap.return_type.value); });
+            field("return_type", [&]() {
+                write_required_value_type_id(cap.return_type, "capability.return_type");
+            });
             write_source_range_field(field, cap.source_range, indent_level + 1);
         });
     }
@@ -1069,6 +1208,16 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
     void write_required_type_id(CoreTypeId id, const char *what) {
         if (id.value == CoreTypeId::kInvalid) {
             fail(std::string("required type id '") + what + "' is kInvalid");
+            write_null();
+            return;
+        }
+        write_index(id.value);
+    }
+
+    void write_required_value_type_id(CoreValueTypeId id, const char *what) {
+        if (id.value == CoreValueTypeId::kInvalid) {
+            fail(std::string("required value-type id '") + what + "' is kInvalid");
+            write_null();
             return;
         }
         write_index(id.value);
@@ -1145,7 +1294,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
 
     void print_workflow(const CoreWorkflowDecl &workflow, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("id", [&]() { write_index(workflow.id.value); });
+            field("id", [&]() { write_required_id(workflow.id, "workflow.id"); });
             field("name", [&]() { write_string(workflow.name); });
             field("symbol_ref", [&]() { write_symbol_ref(workflow.symbol_ref, indent_level + 1); });
             field("input_type",
@@ -1586,7 +1735,8 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
             field("dispatch_types", [&]() {
                 print_array(indent_level + 1, [&](const auto &dt_item) {
                     for (const auto &dt : instance.dispatch_types) {
-                        dt_item([&]() { write_index(dt.value); });
+                        dt_item([
+                            &]() { write_required_value_type_id(dt, "instance.dispatch_types"); });
                     }
                 });
             });
@@ -1599,25 +1749,45 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                     std::visit(
                         Overloaded{
                             [&](const CoreCapabilityInstance &p) {
-                                p_field("base", [&]() { write_index(p.base.value); });
+                                p_field("base", [&]() {
+                                    write_required_id(p.base, "instance.payload.base");
+                                });
                             },
                             [&](const CorePredicateInstance &) {},
                             [&](const CoreAgentInstance &p) {
-                                p_field("base", [&]() { write_index(p.base.value); });
-                                p_field("input_type", [&]() { write_index(p.input_type.value); });
+                                p_field("base", [&]() {
+                                    write_required_id(p.base, "instance.payload.base");
+                                });
+                                p_field("input_type", [&]() {
+                                    write_required_type_id(p.input_type,
+                                                           "instance.payload.input_type");
+                                });
                                 p_field("context_kind", [&]() {
                                     write_string(context_kind_name(p.context_kind));
                                 });
                                 if (p.context_kind == CoreAgentDecl::ContextKind::Struct) {
-                                    p_field("context_type",
-                                            [&]() { write_index(p.context_type.value); });
+                                    p_field("context_type", [&]() {
+                                        write_required_type_id(p.context_type,
+                                                               "instance.payload.context_type");
+                                    });
                                 }
-                                p_field("output_type", [&]() { write_index(p.output_type.value); });
+                                p_field("output_type", [&]() {
+                                    write_required_type_id(p.output_type,
+                                                           "instance.payload.output_type");
+                                });
                             },
                             [&](const CoreWorkflowInstance &p) {
-                                p_field("base", [&]() { write_index(p.base.value); });
-                                p_field("input_type", [&]() { write_index(p.input_type.value); });
-                                p_field("output_type", [&]() { write_index(p.output_type.value); });
+                                p_field("base", [&]() {
+                                    write_required_id(p.base, "instance.payload.base");
+                                });
+                                p_field("input_type", [&]() {
+                                    write_required_type_id(p.input_type,
+                                                           "instance.payload.input_type");
+                                });
+                                p_field("output_type", [&]() {
+                                    write_required_type_id(p.output_type,
+                                                           "instance.payload.output_type");
+                                });
                             },
                             [&](const CoreFnInstance &) {},
                         },
@@ -1632,6 +1802,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
     [[nodiscard]] std::ostream &out() { return out_; }
 
     std::string *error_{nullptr};
+    bool failed_{false};
 };
 
 // ===========================================================================
@@ -1858,6 +2029,9 @@ class CoreJsonReader final {
                   "field '" + std::string(key) + "' must be an object", node_range(*f));
             return std::nullopt;
         }
+        if (!check_fields(*f, {"begin_offset", "end_offset"}, "source range")) {
+            return std::nullopt;
+        }
         const auto begin = req_u64(*f, "begin_offset");
         const auto end = req_u64(*f, "end_offset");
         if (!begin.has_value() || !end.has_value()) {
@@ -1939,6 +2113,14 @@ class CoreJsonReader final {
     [[nodiscard]] std::optional<ir::SymbolRef> read_symbol_ref(const JsonValue &obj) {
         if (!obj.is_object()) {
             error(std::string(kWrongType), "symbol_ref must be an object", node_range(obj));
+            return std::nullopt;
+        }
+        // The unknown-field gate applies INSIDE a symbol_ref too (§7 "no
+        // missing/extra per-kind field"): a hand-editable symbol_ref with a
+        // stray member (e.g. a `canonical` typo for `canonical_name`) must be
+        // rejected, not silently admitted.
+        if (!check_fields(obj, {"kind", "canonical_name", "local_name", "module_name", "id"},
+                          "symbol_ref")) {
             return std::nullopt;
         }
         ir::SymbolRef ref;
@@ -2658,6 +2840,9 @@ bool CoreJsonReader::read_value_type(const JsonValue &obj, CoreValueTypeNode &ou
                 error(std::string(kWrongType), "'bounds' must be an object", node_range(*bounds));
                 return false;
             }
+            if (!check_fields(*bounds, {"minimum", "maximum"}, "int bounds")) {
+                return false;
+            }
             const auto min = req_i64(*bounds, "minimum");
             const auto max = req_i64(*bounds, "maximum");
             if (!min.has_value() || !max.has_value()) {
@@ -2683,6 +2868,9 @@ bool CoreJsonReader::read_value_type(const JsonValue &obj, CoreValueTypeNode &ou
             if (!bounds->is_object()) {
                 error(std::string(kWrongType), "'length_bounds' must be an object",
                       node_range(*bounds));
+                return false;
+            }
+            if (!check_fields(*bounds, {"minimum", "maximum"}, "string length bounds")) {
                 return false;
             }
             const auto min = req_i64(*bounds, "minimum");
@@ -4415,8 +4603,18 @@ bool CoreJsonReader::read_match_arm(const JsonValue &obj, CoreMatchArm &out, std
 // ===========================================================================
 
 void print_core_ir_json(const CoreProgram &program, std::ostream &out, std::string *error) {
-    CoreJsonPrinter printer(out, error);
+    // Render into a private scratch buffer and publish ONLY on success. A
+    // REQUIRED-valid id left kInvalid (§2) is a writer error, and the contract is
+    // that the caller receives NO artifact — not a truncated or malformed one. A
+    // mid-document failure would otherwise leave a syntactically invalid prefix
+    // in the caller's stream for any consumer that does not check `error`.
+    std::ostringstream scratch;
+    CoreJsonPrinter printer(scratch, error);
     printer.print(program);
+    if (printer.failed()) {
+        return; // suppress the whole document; `error` (if given) names the field
+    }
+    out << scratch.str();
 }
 
 CoreJsonParseResult parse_core_ir_json(std::string_view json) {

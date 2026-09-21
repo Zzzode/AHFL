@@ -322,6 +322,37 @@ bool test_nested_structures() {
     return true;
 }
 
+// The parser is recursive descent, so it is an untrusted-input admission
+// boundary: a whitespace-cheap document of deeply nested brackets must fail
+// closed rather than overflow the native stack. `kMaxJsonNestingDepth` bounds the
+// descent. One level UNDER the bound parses; one level OVER is a parse error.
+bool test_nesting_depth_bound() {
+    const std::string at_bound(kMaxJsonNestingDepth, '[');
+    const std::string closed = at_bound + std::string(kMaxJsonNestingDepth, ']');
+    auto ok = parse_json(closed);
+    if (!ok)
+        return false;
+
+    const std::string over(kMaxJsonNestingDepth + 1, '[');
+    auto rejected = parse_json(over);
+    if (rejected)
+        return false;
+
+    // The historical crash shape: a large bracket-only document (used to
+    // segfault the process) is now a clean parse error.
+    const std::string huge(100000, '[');
+    if (parse_json(huge))
+        return false;
+
+    // An OBJECT-nested document is bounded the same way.
+    const std::string nested_objects = std::string(kMaxJsonNestingDepth + 1, '{') +
+                                       std::string(kMaxJsonNestingDepth + 1, '}');
+    if (parse_json(nested_objects))
+        return false;
+
+    return true;
+}
+
 // RFC 0026 C2b P0-10: numeric provenance classification, accessor behavior,
 // serializer round-trip, and invalid-combination fail-closed.
 bool test_provenance_classification() {
@@ -519,6 +550,7 @@ int main() {
     run(test_as_bool, "test_as_bool");
     run(test_unicode_escape, "test_unicode_escape");
     run(test_nested_structures, "test_nested_structures");
+    run(test_nesting_depth_bound, "test_nesting_depth_bound");
     run(test_provenance_classification, "test_provenance_classification");
     run(test_provenance_accessors, "test_provenance_accessors");
     run(test_high_uint_roundtrip, "test_high_uint_roundtrip");
