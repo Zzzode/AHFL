@@ -695,6 +695,33 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         REQUIRE_FALSE(result.diagnostics.empty());
     }
 
+    SUBCASE("over-deep region nesting is rejected by the depth bound") {
+        // The reader is an untrusted-input admission boundary: an arbitrarily
+        // deep region tree must fail closed rather than recurse the native
+        // stack (RFC 0026 P9 §5). Build a program whose body nests `if` regions
+        // past the bound.
+        const auto nest = [](auto &&self, std::size_t depth,
+                             std::size_t limit) -> std::string {
+            if (depth >= limit) {
+                return R"({"statements": []})";
+            }
+            return std::string(R"({"statements": [{"kind": "if", "condition": 0, )") +
+                   R"("then_region": )" + self(self, depth + 1, limit) + "}]}";
+        };
+        const std::string body = nest(nest, 0, 1100);
+        const std::string doc =
+            std::string(R"({"format_version":"ahfl.core.v1","layer":"core","types":[],)") +
+            R"("value_types":[{"kind":"bool"}],"capabilities":[],"agents":[],"flows":[)";
+        const std::string flow =
+            R"({"agent":0,"agent_name":"A","target_ref":{"kind":"agent","canonical_name":"A"},)";
+        const std::string tail =
+            R"("value_count":1,"exprs":[],"value_types":[0],"coercion_plans":[],"patterns":[],)";
+        const std::string states =
+            R"("states":[{"state":0,"state_name":"S","policy":{},"body":)" + body + "}]}]" +
+            R"(,"workflows":[],"instances":[]})";
+        require_rejected_with(doc + flow + tail + states, "core.json.REGION_TOO_DEEP");
+    }
+
     SUBCASE("value_count disagrees with the value_types table length") {
         // §5 — the per-body value_types table is dense (size == value_count).
         const auto program = lower_source("flow_branch", corpus().at("flow_branch"));
