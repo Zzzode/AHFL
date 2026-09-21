@@ -187,6 +187,25 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
       typecheck_(engine_.register_derived<TypecheckSnapshot>(
           [this](QueryContext &ctx, DerivedId key) -> TypecheckSnapshot {
               const FileId file{key.index()};
+              // The typechecker reads BOTH the resolve result and the AST (it
+              // consumes `captured_names_by_expr`, node ids and every source
+              // range), so this slot must depend on BOTH memos. `ctx.read` is
+              // what records a dependency edge; the body otherwise borrows the
+              // AST through `this->program(file)`, a raw `this` read the engine
+              // cannot observe. Without the read below, an edit whose parse
+              // snapshot differs but whose *resolve* snapshot is byte-identical —
+              // a default literal, an operator, a struct field order, a capture
+              // list, or any edit that only shifts source offsets — leaves the
+              // resolve memo green, so typecheck is green-proven and the previous
+              // AST's TypeCheckResult is served for the new AST. The parse
+              // snapshot's outline is span-sensitive precisely so that this read
+              // (and the resolve one) invalidates on any such edit.
+              //
+              // The snapshot's value is not needed here — `this->program` below
+              // reads the same slot's AST — but the read itself is: it is the
+              // dependency edge that keeps this slot honest.
+              static_cast<void>(ctx.read(parse_, key));
+
               // The resolve *snapshot* carries both facts the short-circuit
               // needs: whether the stage ran and whether it errored. (The
               // borrow accessor deliberately refuses to hand out an errored
@@ -212,8 +231,9 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
               const ResolveResult *resolve = this->resolve_result(ModuleId{key.index()});
               const ast::Program *program = this->program(file);
               if (resolve == nullptr || program == nullptr) {
-                  // Unreachable when the snapshot above says resolve ran clean at
-                  // the current revision; guard anyway rather than dereference.
+                  // Unreachable when the snapshots above say parse and resolve ran
+                  // clean at the current revision; guard anyway rather than
+                  // dereference.
                   record.result = TypeCheckResult{};
                   record.ran = false;
                   ++record.computes;

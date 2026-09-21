@@ -68,6 +68,14 @@ struct SourceText {
 // equivalence guard compares, so the "what counts as the same parse" question
 // has one answer shared by the engine and the guard.
 //
+// The outline is deliberately *content- and span-sensitive*, not shape-only: it
+// projects each node's source span as well as its structure (see AstPrinter's
+// span sink). This matters because the resolve and typecheck stages consume
+// source ranges and node ids, so "same shape, different offsets" (e.g. a comment
+// inserted mid-body, or two same-length literals) is a different parse and must
+// not share a memo. Because of that, the parse outline is the AST-sensitive edge
+// the typecheck slot relies on (see dump_resolve_outline's scope note).
+//
 // The owned AST itself (ParseResult::program) is not stored here: it is not
 // copyable or equality-comparable, so it cannot live in the engine's type-erased
 // memo. It lives in the FrontendQueries-owned parse-result store instead, and
@@ -130,14 +138,24 @@ struct TypecheckSnapshot {
 [[nodiscard]] TypecheckSnapshot snapshot_typecheck_result(const TypeCheckResult &result, bool ran);
 
 // Canonical textual projection of a ResolveResult: symbols, references, imports,
-// public aliases and reachability, each in its store's order. This is the
-// resolve stage's identity, and it must cover the symbol table — not just the
-// diagnostics. Two resolve runs of *different* ASTs can produce identical
-// diagnostics while carrying different symbols; keying the memo on the
-// diagnostics alone would then let a downstream typecheck reuse a stale typed
-// program. Serializing the whole result makes the memo identity the stage
-// result, exactly as the parse snapshot's outline makes the memo identity the
-// AST.
+// public aliases and reachability, each in its store's order.
+//
+// SCOPE — read this before trusting the outline as an identity. The outline is a
+// *lossy* fold of the AST-indexed parts of a resolution: it covers the symbol
+// table and the reference/import/alias side tables, but NOT the resolution's
+// per-expression annotations (`captured_names_by_expr`) nor anything about
+// declaration *bodies* (operators, literals, field order) that does not change a
+// symbol's name, kind, declaration range or reachability. Two different ASTs can
+// therefore produce a byte-identical resolve outline.
+//
+// The invariant that keeps the memo sound despite this is stated where it is
+// enforced: the typecheck slot must take an explicit dependency on the *parse*
+// memo (whose outline IS span- and content-sensitive) as well as on this resolve
+// memo. Under that edge, "the resolve outline is unchanged" implies "the AST is
+// unchanged", because a changed AST always moves a node span and therefore the
+// parse outline. The resolve outline's own job is the narrower one — to make the
+// resolve memo a *value* the engine can compare and to short-circuit a resolve
+// recompute when only unrelated bytes changed — not to re-establish the AST.
 void dump_resolve_outline(const ResolveResult &result, std::ostream &out);
 
 // Derived view of one expression's type. `found` is false when the typed program

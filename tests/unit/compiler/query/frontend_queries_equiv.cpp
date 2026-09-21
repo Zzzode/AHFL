@@ -232,6 +232,24 @@ TEST_CASE("type_of returns the direct typed program's per-expression type") {
     }
     CHECK(checked_nodes == expressions.size());
 
+    // The `source_id` half of the (module, node_id, source_id) key is a real
+    // discriminant, not decoration: a single-file parse gives every expression a
+    // null SourceId, so a lookup that supplies Some(id) must NOT match those
+    // None-keyed records. This exercises TypedProgram::find_expr's has_source_id
+    // branch, which the enumerated lookups above (all pass expr.source_id ==
+    // nullopt) never reach. Any id works for the negative direction; use two
+    // distinct ones so a fix that merely ignores the field cannot pass.
+    for (const auto &expr : expressions) {
+        REQUIRE_FALSE(expr.source_id.has_value());
+        for (const std::size_t candidate : {std::size_t{0}, std::size_t{7}}) {
+            const auto mismatched = queries.type_of(module, expr.node_id, ahfl::SourceId{candidate});
+            REQUIRE(mismatched.has_value());
+            INFO("node_id=" << expr.node_id << " source_id=" << candidate);
+            CHECK_FALSE(mismatched->found);
+            CHECK(mismatched->type == nullptr);
+        }
+    }
+
     // An unknown node id is reported as "not found", never as a fabricated type.
     const auto missing = queries.type_of(module, /*node_id=*/0xFFFFFFFFULL, std::nullopt);
     REQUIRE(missing.has_value());
@@ -376,6 +394,138 @@ TEST_CASE("increment equals cold recomputation across an AST-changing edit") {
     const auto direct = project_directly(*parsed.program);
     CHECK(*warm_resolve == direct.resolve);
     CHECK(*warm_typecheck == direct.typecheck);
+}
+
+TEST_CASE("an AST-only edit that leaves the resolve outline identical still re-typechecks") {
+    // Regression for KR6.11-S4: the resolve snapshot is a LOSSY fold of the AST
+    // (it carries the symbol table and the reference/import/alias side tables,
+    // but not the resolution's per-expression annotations nor body-level facts
+    // such as operators and literals). The typecheck slot consumes the AST as
+    // well as the resolve result, so it must take an explicit dependency on the
+    // *parse* memo. Without that edge, an edit whose parse snapshot differs but
+    // whose resolve snapshot is byte-identical (the three edits below) leaves
+    // typecheck green-proven and serves the PREVIOUS AST's TypeCheckResult.
+    //
+    // Each edit is same-length, introduces no diagnostic, and — crucially — moves
+    // no symbol: at one point every one of these produced resolve_snapshot A == B
+    // and typecheck_computes == 1, so the engine-fed IR reproduced the OLD source.
+    struct Case {
+        const char *name;
+        std::string_view before;
+        std::string_view after;
+    };
+    const Case cases[] = {
+        // (a) struct field default literal, same length.
+        {"default-literal",
+         "module a;\nstruct S { v: Int = 1; }\n",
+         "module a;\nstruct S { v: Int = 2; }\n"},
+        // (b) struct field reorder, same length, no symbols lost or gained.
+        {"field-order",
+         "module a;\nstruct S { a: Int; b: Int; }\n",
+         "module a;\nstruct S { b: Int; a: Int; }\n"},
+        // (c) lambda capture list `\[a]` -> `\[b]`: only
+        //     ResolveResult::captured_names_by_expr changes, which the resolve
+        //     outline does not cover.
+        {"capture-list",
+         "module a;\nfn g() -> Int effect Pure decreases 0 {\n  let a: Int = 1;\n"
+         "  let b: Int = 2;\n  let f = \\[a] (y: Int) -> a + y;\n  return f(1);\n}\n",
+         "module a;\nfn g() -> Int effect Pure decreases 0 {\n  let a: Int = 1;\n"
+         "  let b: Int = 2;\n  let f = \\[b] (y: Int) -> a + y;\n  return f(1);\n}\n"},
+        // (d) a mid-body comment shifts every following node's offsets without
+        //     changing the AST shape at all.
+        {"offset-shift",
+         "module a;\nfn h() -> Int effect Pure decreases 0 {\n  let p: Int = 1;\n"
+         "  return p;\n}\n",
+         "module a;\nfn h() -> Int effect Pure decreases 0 {\n  // c\n  let p: Int = 1;\n"
+         "  return p;\n}\n"},
+    };
+
+    for (const auto &test : cases) {
+        INFO("case " << test.name);
+        REQUIRE(test.before != test.after);
+
+        FrontendQueries queries;
+        const FileId file{0};
+        const ModuleId module{0};
+        queries.set_source_text(file, "edit.ahfl", std::string{test.before});
+        REQUIRE(queries.parse(file).has_value());
+        REQUIRE(queries.resolve(module).has_value());
+        REQUIRE(queries.typecheck(module).has_value());
+        REQUIRE(queries.typecheck_computes(module) == 1);
+
+        // Apply the edit and re-drive the chain.
+        queries.set_source_text(file, "edit.ahfl", std::string{test.after});
+        REQUIRE(queries.parse(file).has_value());
+        REQUIRE(queries.resolve(module).has_value());
+        const auto edited_typecheck = queries.typecheck(module);
+        REQUIRE(edited_typecheck.has_value());
+
+        // The typecheck must have recomputed (the AST changed), and what it
+        // serves must be the edit's typed program — not the pre-edit one.
+        CHECK(queries.typecheck_computes(module) == 2);
+        const ahfl::TypeCheckResult *borrowed = queries.typecheck_result(module);
+        REQUIRE(borrowed != nullptr);
+        CHECK(ahfl::serialize_typed_program_json(borrowed->typed_program) ==
+              edited_typecheck->typed_program_json);
+
+        const ahfl::Frontend frontend;
+        auto direct_before = frontend.parse_text("edit.ahfl", std::string{test.before});
+        auto direct_after = frontend.parse_text("edit.ahfl", std::string{test.after});
+        REQUIRE(direct_before.program != nullptr);
+        REQUIRE(direct_after.program != nullptr);
+        const auto before_projection = project_directly(*direct_before.program);
+        const auto after_projection = project_directly(*direct_after.program);
+
+        // The edit must be observable downstream (otherwise the case is vacuous)…
+        REQUIRE(before_projection.typecheck.typed_program_json !=
+                after_projection.typecheck.typed_program_json);
+        // …and the engine must serve the AFTER projection, byte for byte.
+        CHECK(*edited_typecheck == after_projection.typecheck);
+
+        // The engine-held AST and the borrowed stage results lower to the same IR
+        // the direct pipeline produces for the edited text — the artifact a user
+        // actually sees.
+        if (!after_projection.ir_json.empty()) {
+            const ahfl::ast::Program *query_program = queries.program(file);
+            const ahfl::ResolveResult *resolved = queries.resolve_result(module);
+            const ahfl::TypeCheckResult *typed = queries.typecheck_result(module);
+            REQUIRE(query_program != nullptr);
+            REQUIRE(resolved != nullptr);
+            REQUIRE(typed != nullptr);
+            std::ostringstream ir;
+            ahfl::print_program_ir_json(
+                ahfl::lower_program_ir(*query_program, *resolved, *typed), ir);
+            CHECK(ir.str() == after_projection.ir_json);
+        }
+    }
+}
+
+TEST_CASE("a comment-only edit that moves no node keeps the semantic stages green") {
+    // The complement of the case above: a trailing comment changes the text but
+    // moves no node, so the parse outline is unchanged and the semantic stages
+    // must stay green. This pins the invalidation-precision half — the parse
+    // outline must be span-sensitive for the nodes but must NOT include the
+    // Program's file-extent range (which covers trailing trivia) or every
+    // comment would needlessly re-run resolve and typecheck.
+    FrontendQueries queries;
+    const FileId file{0};
+    const ModuleId module{0};
+    const std::string source{kHandWrittenSource};
+    queries.set_source_text(file, "green.ahfl", source);
+    REQUIRE(queries.parse(file).has_value());
+    REQUIRE(queries.resolve(module).has_value());
+    REQUIRE(queries.typecheck(module).has_value());
+    REQUIRE(queries.resolve_computes(module) == 1);
+    REQUIRE(queries.typecheck_computes(module) == 1);
+
+    queries.set_source_text(file, "green.ahfl", source + "\n// trailing comment only\n");
+    REQUIRE(queries.parse(file).has_value());
+    REQUIRE(queries.resolve(module).has_value());
+    REQUIRE(queries.typecheck(module).has_value());
+
+    CHECK(queries.parse_computes(file) == 2);              // parse reran: its input changed
+    CHECK(queries.resolve_computes(module) == 1);          // green: the AST is unchanged
+    CHECK(queries.typecheck_computes(module) == 1);        // green: nothing it reads changed
 }
 
 TEST_CASE("a semantic erroring source yields borrowable results but no IR") {

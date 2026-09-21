@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>

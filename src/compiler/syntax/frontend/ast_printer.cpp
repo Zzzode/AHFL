@@ -124,6 +124,12 @@ class AstPrinter final {
     }
 
     void visit(const ast::Program &node) {
+        // The Program node's own line is deliberately spanless: its range is the
+        // whole file, so it extends over trailing trivia (comments, whitespace)
+        // that no downstream stage observes. Arming it would make a trailing
+        // comment invalidate the semantic stages for no reason — exactly the
+        // over-invalidation the memo exists to avoid. Every inner node's span IS
+        // projected, so any edit that moves a node still invalidates.
         line(0, "program " + node.source_name);
 
         for (const auto &declaration : node.declarations) {
@@ -132,24 +138,29 @@ class AstPrinter final {
     }
 
     void visit(const ast::ModuleDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
     }
 
     void visit(const ast::ImportDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
     }
 
     void visit(const ast::UseDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
     }
 
     void visit(const ast::ConstDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
         print_type_field("type", node.type.get(), 2);
         print_expr_field("value", node.value.get(), 2);
     }
 
     void visit(const ast::TypeAliasDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
         if (!node.type_params.empty()) {
             line(2, "type_params");
@@ -174,6 +185,7 @@ class AstPrinter final {
     }
 
     void visit(const ast::StructDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         if (!node.type_params.empty()) {
@@ -197,6 +209,7 @@ class AstPrinter final {
         }
 
         for (const auto &field : node.fields) {
+            span_sink_ = &field->range;
             line(2, "field " + field->name);
             print_type_field("type", field->type.get(), 3);
             if (field->default_value) {
@@ -206,6 +219,7 @@ class AstPrinter final {
     }
 
     void visit(const ast::EnumDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         if (!node.type_params.empty()) {
@@ -253,11 +267,13 @@ class AstPrinter final {
                 }
                 label += " }";
             }
+            span_sink_ = &variant->range;
             line(2, label);
         }
     }
 
     void visit(const ast::CapabilityDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         for (const auto &param : node.params) {
@@ -293,6 +309,7 @@ class AstPrinter final {
     }
 
     void visit(const ast::PredicateDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         for (const auto &param : node.params) {
@@ -302,6 +319,7 @@ class AstPrinter final {
     }
 
     void visit(const ast::AgentDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
         print_type_field("input", node.input_type.get(), 2);
         print_type_field("context", node.context_type.get(), 2);
@@ -326,14 +344,17 @@ class AstPrinter final {
         }
 
         for (const auto &transition : node.transitions) {
+            span_sink_ = &transition->range;
             line(2, "transition " + transition->from_state + " -> " + transition->to_state);
         }
     }
 
     void visit(const ast::ContractDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         for (const auto &clause : node.clauses) {
+            span_sink_ = &clause->range;
             line(2, std::string(to_string(clause->kind)));
             if (clause->expr) {
                 print_expr(*clause->expr, 3);
@@ -346,9 +367,11 @@ class AstPrinter final {
     }
 
     void visit(const ast::FlowDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         for (const auto &handler : node.state_handlers) {
+            span_sink_ = &handler->range;
             line(2, "state " + handler->state_name);
 
             if (handler->policy) {
@@ -376,11 +399,13 @@ class AstPrinter final {
     }
 
     void visit(const ast::WorkflowDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
         print_type_field("input", node.input_type.get(), 2);
         print_type_field("output", node.output_type.get(), 2);
 
         for (const auto &workflow_node : node.nodes) {
+            span_sink_ = &workflow_node->range;
             line(2, "node " + workflow_node->name + " -> " + workflow_node->target->spelling());
             print_expr_field("input", workflow_node->input.get(), 3);
             if (!workflow_node->after.empty()) {
@@ -389,11 +414,13 @@ class AstPrinter final {
         }
 
         for (const auto &formula : node.safety) {
+            span_sink_ = &formula->range;
             line(2, "safety");
             print_temporal_expr(*formula, 3);
         }
 
         for (const auto &formula : node.liveness) {
+            span_sink_ = &formula->range;
             line(2, "liveness");
             print_temporal_expr(*formula, 3);
         }
@@ -402,6 +429,7 @@ class AstPrinter final {
     }
 
     void visit(const ast::FnDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         if (node.builtin_name.has_value()) {
@@ -451,6 +479,7 @@ class AstPrinter final {
     }
 
     void visit(const ast::TraitDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         if (!node.type_params.empty()) {
@@ -526,6 +555,7 @@ class AstPrinter final {
     }
 
     void visit(const ast::ImplDecl &node) {
+        span_sink_ = &node.range;
         line(1, "- " + node.headline());
 
         if (!node.type_params.empty()) {
@@ -640,14 +670,40 @@ class AstPrinter final {
   private:
     std::ostream &out_;
     int base_indent_{0};
+    // One-shot span sink, armed by a dispatcher (print_expr / print_type / ...)
+    // immediately before it visits, then consumed by the node's first line().
+    // It is what lets the Node-dispatch arms above stay unchanged: they call the
+    // plain line(), and the span is threaded in through the sink rather than as
+    // a new argument at every one of the ~50 call sites. Members of a
+    // *collection* (struct fields, enum variants, transitions, clauses, ...) arm
+    // it explicitly on their element range.
+    const ahfl::SourceRange *span_sink_ = nullptr;
 
     void visit_declaration(const ast::Decl &declaration) {
         std::visit([&](const auto &payload) { visit(payload); }, declaration);
     }
 
     void line(int indent_level, const std::string &text) {
+        // The first line a node dispatcher emits describes the node itself, so
+        // it carries that node's span; every later line in the same dispatch is
+        // a structural label or count that owns no span. Consuming the sink on
+        // the first call (and clearing it) therefore stamps the span onto
+        // exactly the node line. Each dispatcher re-arms the sink before it
+        // visits, so a node that emits no line cannot leak the sink onto a
+        // sibling.
+        const ahfl::SourceRange *span = span_sink_;
+        span_sink_ = nullptr;
+        line_with_span(indent_level, text, span);
+    }
+
+    void line_with_span(int indent_level, const std::string &text,
+                        const ahfl::SourceRange *range) {
         const auto effective_indent = std::max(0, base_indent_ + indent_level);
-        out_ << std::string(static_cast<std::size_t>(effective_indent) * 2, ' ') << text << '\n';
+        out_ << std::string(static_cast<std::size_t>(effective_indent) * 2, ' ') << text;
+        if (range != nullptr) {
+            out_ << " @" << range->begin_offset << '-' << range->end_offset;
+        }
+        out_ << '\n';
     }
 
     void print_string_list(std::string_view label,
@@ -683,6 +739,7 @@ class AstPrinter final {
     }
 
     void print_type(const ast::TypeSyntax &type, int indent_level) {
+        span_sink_ = &type.range;
         std::visit(
             Overloaded{
                 [&](const ast::UnitType &) { line(indent_level, "primitive ()"); },
@@ -760,6 +817,7 @@ class AstPrinter final {
     }
 
     void print_expr(const ast::ExprSyntax &expr, int indent_level) {
+        span_sink_ = &expr.range;
         std::visit(
             Overloaded{
                 [&](const ast::BoolLiteralExpr &e) {
@@ -905,6 +963,7 @@ class AstPrinter final {
     }
 
     void print_pattern(const ast::PatternSyntax &pattern, int indent_level) {
+        span_sink_ = &pattern.range;
         std::visit(
             Overloaded{
                 [&](const ast::LiteralPattern &p) {
@@ -962,6 +1021,7 @@ class AstPrinter final {
     }
 
     void print_block(const ast::BlockSyntax &block, int indent_level) {
+        span_sink_ = &block.range;
         line(indent_level, "block");
         for (const auto &statement : block.statements) {
             print_statement(*statement, indent_level + 1);
@@ -969,6 +1029,7 @@ class AstPrinter final {
     }
 
     void print_statement(const ast::StatementSyntax &statement, int indent_level) {
+        span_sink_ = &statement.range;
         switch (statement.kind) {
         case ast::StatementSyntaxKind::Let:
             line(indent_level, "let " + statement.let_stmt->name);
@@ -1054,6 +1115,7 @@ class AstPrinter final {
     }
 
     void print_temporal_expr(const ast::TemporalExprSyntax &expr, int indent_level) {
+        span_sink_ = &expr.range;
         std::visit(
             Overloaded{
                 [&](const ast::EmbeddedTemporalExpr &e) {
