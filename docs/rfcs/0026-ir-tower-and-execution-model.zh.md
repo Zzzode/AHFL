@@ -897,3 +897,55 @@ Implementation Plan 对应分片承载。
   这一设计门及 `97ca6b31`/`e9314a07`/`d278e770` 等已落地片),只有 Decision History 在更新;补齐该列表是
   独立 chore,本片不假装完成。**无生产代码变**;`kCoreFormatVersion` 仍无 writer/reader/CLI 消费者;
   **P9/KR6.9 未完成**,B1-B4 未开始。
+- 2026-09-22: **KR6.6 fn-body / 闭包值 lowering 设计门(docs only,CORE-FNBODY-DESIGN)**。
+  新增 `docs/design/core-ir-fn-body-lowering.zh.md`(DRAFT rev 1),把"完整 KR6.6"剩余的
+  最大一块——函数体与闭包值——从开放问题变为全部定死的决策;**无生产代码**。当前事实锚点
+  (HEAD `11e57d32`):`LambdaExpr` 经 generic 兜底落
+  `CoreUnsupportedExpr{"LambdaExpr"}`(`src/compiler/ir/core_lower.cpp:1927-1931`),一般
+  `CallExpr` 仅解析 capability / collection hook / enum variant 三类,其余
+  unsupported(`core_lower.cpp:2757-2836`),`MethodCallExpr` 在 Core value lowering 无臂;
+  `CoreFnInstance` 是空壳(`include/ahfl/compiler/ir/core_ir.hpp:1297-1303`),Fn 实例由
+  typed-HIR `typed_hir_lower.cpp:4462` 产出、Pass 6 透传(`core_lower.cpp:4004-4006`)。
+  关键决策:(1) **数据模型**——新增 `CoreFnId` + 程序级 flat store `CoreProgram::fns`
+  (`CoreFnDecl`),按**单态化实例 1:1** 建表(非泛型有体 fn 亦强制一实例一 decl),与
+  instance 注册表分工(代码生成单位 vs 单态化注册单位);把 lowerer 内部
+  `CoreBodyStorageRef`(`core_lower.cpp:1673-1682`)的**拥有形** `CoreBodyStorage`(expr
+  arena + dense value_types + pattern arena + coercion plans)提升进 `core_ir.hpp`,flow /
+  workflow / fn 三处体内聚,fn 体以第三个 `RootPolicy` 复用同一 `ExprLowerer`,不新增第二套
+  ANF 模型;fn SSA 域独立,参数为预绑定 SSA 值,fn 体禁 Input/Context/Workflow root 与 goto。
+  (2) **闭包值**——选**专用 `CoreClosureExpr`** 而非扩展 `CoreConstructExpr`(后者是
+  nominal + 字段身份模型,闭包是无 CoreTypeId 的 `CoreVtClosure` + 位置有序 env 槽,复用只能
+  在每个消费者加 "if closure" 特判,违反 CLAUDE.md Principle 1/4);零捕获 fn 值同形
+  `(func_index, env_ptr=0)`,直接消费 P6-8a 已定的八字形 + P4-D indirect env 边
+  (`core_layout.hpp:59-78`)。捕获**仅 ByValue**——固化当前 evaluator 深快照语义
+  (`evaluator.cpp:249-257` 整 EvalContext 深拷贝、`eval_context.cpp:32-44` clone_value),
+  显式 capture list 按源码序(`resolver.cpp:3307-3309` 已持久化),隐式捕获由**新增确定性
+  first-use DFS** 产生(今日无 free-variable 分析,typecheck 只复制 bindings map,
+  `typecheck_expr.cpp:2040-2047`);**无 partial application**(evaluator 严格定元,
+  `evaluator.cpp:265-268`/`:2046-2050`)。(3) **调用**——纯静态直调 `CoreCallExpr`(expr,
+  wasm `call` 0x10,opcode 已在 `core_wasm_codegen.cpp:163`),闭包值调用
+  `CoreCallClosureExpr`(expr,`call_indirect` 0x11,新 opcode),capability 调用继续是
+  ordered `CoreCapabilityCallStmt`;纯闭包有类型系统保证(typecheck PureOnly,
+  `typecheck_expr.cpp:2020-2045`);含效果 callee 推迟到 FB-4 的 `CoreCallStmt`(绑定
+  P6-7/B2 帧决策),Nondet 值调用 fail-closed。(4) **WASM**——函数索引空间在现有
+  PROJECT 规则(import→固定 0-6→P6-2 handler base 7)后**追加** outlined fn 体,E1-E3/P6
+  字节不变;Table(4)/Element(9)段编码器当前**不存在**(`core_wasm_codegen.cpp:114-121`),
+  定为 FB-3 引入(恰好一个 funcref table,零闭包模块不发射),闭包 func_index 字是稠密
+  **table 下标**而非 wasm funcidx;统一 env 首参约定,跨 fn 边界限单词 P6 值(多字随
+  P6-7 帧解除);语法无循环(`grammar/AHFL.g4:438-450`),迭代是 state goto,递归是唯一重复
+  机制,用原生 `call`(不用 return_call),FB-1 无环、FB-2 起 verifier 从 bounded capacity 推
+  静态深度预算(不信任已擦除的 decreases)。(5) **验证/擦除/阶梯**——新增 fn↔instance
+  1:1、fn 体 SSA/终止、直调 arity/效果、capture 槽序/类型、call_indirect dispatch 类型、
+  有界调用图等 verifier 不变式 + `core.UNRESOLVED_FN_CALL`/`core.FN_EFFECTFUL_CALLEE`/
+  `core.NONDET_FN_VALUE`/`core.CLOSURE_CAPTURE_*`/`core.FN_CROSS_BOUNDARY_TYPE` 诊断;
+  effect clause / decreases / 泛型参数在 Core 擦除;实现阶梯 **FB-1 直调 fn 体 → FB-2 有界
+  原生递归 → FB-3 闭包值+Table/Element/call_indirect → FB-4 含效果 callee → FB-5
+  conformance 扩面**。(6) **KR6.8/合格率(诚实)**:今日 18 例 conformance = 15
+  orchestration / 3 computation,3 个阻塞例(if_let_e2e、enum_variant_e2e、e2e_multi_agent)
+  的闸门是 `wasm.UNSUPPORTED_*_FRAME`(frame/packaging),仓内 conformance lambda 用例为 0,
+  故本设计**不直接**改变 15/18;它解锁的是扩面——`tests/integration`+`examples` 107 个
+  .ahfl 中 23 个 fn 体 / 9 个 lambda / 9 个方法调用程序与 stdlib 泛型体
+  (`std/collections.ahfl:98-130`)进入 WASM 差分 conformance,并逐一对位 evaluator 今日四面
+  函数语义(顶层直调 `evaluator.cpp:2037-2097`、本地 callable 分派 `:1776-1799`、lambda
+  `:249-275`、方法 receiver-first `:1930-1948`),是 KR6.7 全绿与 KR6.8 原子删除
+  `src/runtime/evaluator/` 的必要前置。**状态仍 implementing;KR6.6 未完成**,FB-1 未开始。
