@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <optional>
 #include <sstream>
@@ -248,17 +249,27 @@ find_module_root(std::string_view module_name,
     return module_name == "std" || module_name.starts_with("std::");
 }
 
-[[nodiscard]] bool should_inject_prelude(const ProjectInput &input, std::string_view module_name) {
-    return input.inject_prelude && !is_std_module(module_name);
+[[nodiscard]] bool should_inject_prelude(bool inject_prelude, std::string_view module_name) {
+    return inject_prelude && !is_std_module(module_name);
 }
 
 [[nodiscard]] std::optional<std::filesystem::path>
 resolve_import_path(std::string_view module_name,
                     const std::vector<std::filesystem::path> &search_roots,
                     const std::vector<ProjectInput::ModuleRoot> &module_roots,
+                    const std::unordered_map<std::string, const ProjectSource *> &sources,
                     DiagnosticBag &diagnostics,
                     MaybeCRef<SourceFile> source = std::nullopt,
                     std::optional<SourceRange> range = std::nullopt) {
+    // The parser's own existence gate, replayed against the frozen snapshot: a
+    // path is a candidate exactly when `std::filesystem::exists` would have said
+    // so at resolve time. An overlay / cached text whose path is not on disk
+    // never satisfies it, matching the direct pipeline.
+    const auto exists_on_disk = [&](const std::filesystem::path &path) {
+        const auto found = sources.find(path.string());
+        return found != sources.end() && found->second->exists_on_disk;
+    };
+
     std::vector<std::filesystem::path> candidates;
     if (!module_roots.empty()) {
         for (const auto &root : module_roots) {
@@ -266,9 +277,8 @@ resolve_import_path(std::string_view module_name,
                 continue;
             }
             const auto relative = module_relative_path_after_prefix(module_name, root.prefix);
-            std::error_code error;
             const auto candidate = normalize_path(root.root / relative);
-            if (std::filesystem::exists(candidate, error) && !error) {
+            if (exists_on_disk(candidate)) {
                 if (std::find(candidates.begin(), candidates.end(), candidate) ==
                     candidates.end()) {
                     candidates.push_back(candidate);
@@ -277,7 +287,7 @@ resolve_import_path(std::string_view module_name,
             }
             const auto dir_candidate =
                 normalize_path(root.root / relative.parent_path() / relative.stem() / "mod.ahfl");
-            if (std::filesystem::exists(dir_candidate, error) && !error) {
+            if (exists_on_disk(dir_candidate)) {
                 if (std::find(candidates.begin(), candidates.end(), dir_candidate) ==
                     candidates.end()) {
                     candidates.push_back(dir_candidate);
@@ -287,10 +297,9 @@ resolve_import_path(std::string_view module_name,
     } else {
         const auto relative = module_relative_path(module_name);
         for (const auto &root : search_roots) {
-            std::error_code error;
             // Try single-file layout: root/path/to/module.ahfl
             const auto candidate = normalize_path(root / relative);
-            if (std::filesystem::exists(candidate, error) && !error) {
+            if (exists_on_disk(candidate)) {
                 if (std::find(candidates.begin(), candidates.end(), candidate) ==
                     candidates.end()) {
                     candidates.push_back(candidate);
@@ -301,7 +310,7 @@ resolve_import_path(std::string_view module_name,
             // (Rust-style: directory with mod.ahfl as the entry point)
             const auto dir_candidate =
                 normalize_path(root / relative.parent_path() / relative.stem() / "mod.ahfl");
-            if (std::filesystem::exists(dir_candidate, error) && !error) {
+            if (exists_on_disk(dir_candidate)) {
                 if (std::find(candidates.begin(), candidates.end(), dir_candidate) ==
                     candidates.end()) {
                     candidates.push_back(dir_candidate);
@@ -344,25 +353,182 @@ resolve_import_path(std::string_view module_name,
     return std::nullopt;
 }
 
+// Read a whole file as text. Read-only, no diagnostics: the parser renders its
+// own "failed to open source file" diagnostic when a requested path is absent
+// from the model, so a read failure here simply leaves the path out of the
+// model — the parser's error path is the single one.
+[[nodiscard]] std::optional<std::string> read_source_text(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return std::nullopt;
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return buffer.str();
+}
+
+void append_model_source(std::vector<ProjectSource> &sources,
+                         std::filesystem::path path,
+                         std::optional<std::string> text,
+                         bool exists_on_disk) {
+    sources.push_back(
+        ProjectSource{.path = std::move(path), .text = std::move(text), .exists_on_disk = exists_on_disk});
+}
+
+// Collect every `.ahfl` path under a root and freeze what the parser's
+// filesystem probes would have seen: regular files contribute their text, and
+// directories whose name ends in `.ahfl` contribute existence only (the direct
+// pipeline's `std::filesystem::exists` candidate gate accepts them; loading one
+// then reads zero bytes and produces a parse error, which the model reproduces
+// by leaving the text absent). Root does not exist / is not a directory:
+// nothing to add.
+void append_ahfl_sources_under(std::vector<ProjectSource> &sources,
+                               const std::filesystem::path &root) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(root, error) || error) {
+        return;
+    }
+
+    std::vector<std::filesystem::path> files;
+    std::vector<std::filesystem::path> directories;
+    for (const auto &entry : std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied, error)) {
+        if (error) {
+            break;
+        }
+        if (entry.path().extension() != ".ahfl") {
+            continue;
+        }
+        if (entry.is_regular_file(error) && !error) {
+            files.push_back(normalize_path(entry.path()));
+        } else if (entry.is_directory(error) && !error) {
+            directories.push_back(normalize_path(entry.path()));
+            // A directory named `*.ahfl` is still descended into (its own
+            // `.ahfl` children are real sources); only its own existence flag
+            // is recorded.
+            error.clear();
+        }
+        error.clear();
+    }
+
+    const auto append_sorted = [&sources](std::vector<std::filesystem::path> &paths, bool is_file) {
+        std::sort(paths.begin(), paths.end());
+        paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+        for (const auto &path : paths) {
+            append_model_source(sources,
+                                path,
+                                is_file ? read_source_text(path) : std::nullopt,
+                                /*exists_on_disk=*/true);
+        }
+    };
+    append_sorted(directories, /*is_file=*/false);
+    append_sorted(files, /*is_file=*/true);
+}
+
 } // namespace
 
-ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &input) {
+ProjectInputModel resolve_project_input(const ProjectInput &input) {
+    ProjectInputModel model;
+    // The model's roots are the *effective* ones: the parser normalizes them
+    // again, and the normalization is idempotent, so freezing the resolved form
+    // keeps the model byte-equal to what the parser computes.
+    model.entry_files = input.entry_files;
+    model.search_roots = effective_search_roots(input);
+    model.module_roots = effective_module_roots(input);
+    model.inject_prelude = input.inject_prelude;
+    model.enforce_package_dependencies = input.enforce_package_dependencies;
+
+    // Explicit texts (overlays and cached sources) come first: the parser
+    // prefers them over disk. Their key is stored verbatim (not re-normalized):
+    // the parser looks them up by the *already normalized* path string of the
+    // source it is loading, so preserving the caller's exact key string keeps
+    // the original hit/miss behavior — re-normalizing could make a key that
+    // never matched start matching.
+    //
+    // `exists_on_disk` is left false for these: the direct pipeline only ever
+    // substitutes an overlay / cached text *after* the parser has decided the
+    // path is a candidate via `std::filesystem::exists`, and for a path that is
+    // on disk the disk entry below still supplies the flag. A cached text for a
+    // path not on disk therefore behaves exactly as it did before — substituted
+    // on load, but never able to satisfy import resolution on its own.
+    for (const auto &[path_key, text] : input.source_overlays) {
+        append_model_source(
+            model.sources, std::filesystem::path{path_key}, text, /*exists_on_disk=*/false);
+    }
+    for (const auto &[path_key, text] : input.source_cache) {
+        append_model_source(
+            model.sources, std::filesystem::path{path_key}, text, /*exists_on_disk=*/false);
+    }
+
+    // Disk snapshot: entry files plus every `.ahfl` file under the effective
+    // roots. Over-inclusive on purpose — the parser resolves imports lazily, so
+    // a later import may load a file that no entry reaches syntactically.
+    for (const auto &entry_file : model.entry_files) {
+        const auto entry = normalize_path(entry_file);
+        append_ahfl_sources_under(model.sources, entry.parent_path());
+        append_model_source(model.sources, entry, read_source_text(entry), /*exists_on_disk=*/true);
+    }
+    for (const auto &root : model.search_roots) {
+        append_ahfl_sources_under(model.sources, root);
+    }
+    for (const auto &root : model.module_roots) {
+        append_ahfl_sources_under(model.sources, root.root);
+    }
+
+    // Deduplicate by path, merging the two facts each occurrence contributes:
+    // the text (an explicit overlay / cache wins over disk, so the first
+    // non-null text is kept) and `exists_on_disk` (true if ANY occurrence saw
+    // the path on disk — a disk file with no overlay is still a real path, and
+    // an overlay for a path that IS on disk must not erase that fact). The final
+    // order is a pure function of the path set, which is what lets two equal
+    // models compare equal regardless of discovery order.
+    std::stable_sort(model.sources.begin(),
+                     model.sources.end(),
+                     [](const ProjectSource &lhs, const ProjectSource &rhs) {
+                         return lhs.path.native() < rhs.path.native();
+                     });
+    std::vector<ProjectSource> deduped;
+    deduped.reserve(model.sources.size());
+    for (auto &source : model.sources) {
+        if (!deduped.empty() && deduped.back().path == source.path) {
+            auto &merged = deduped.back();
+            if (!merged.text.has_value()) {
+                merged.text = std::move(source.text);
+            }
+            merged.exists_on_disk = merged.exists_on_disk || source.exists_on_disk;
+            continue;
+        }
+        deduped.push_back(std::move(source));
+    }
+    model.sources = std::move(deduped);
+    return model;
+}
+
+ProjectParseResult parse_project(const Frontend &frontend, const ProjectInputModel &model) {
     ProjectParseResult result;
 
-    if (input.entry_files.empty()) {
+    if (model.entry_files.empty()) {
         result.diagnostics.error()
             .message("project input must contain at least one entry file")
             .emit();
         return result;
     }
 
-    const auto search_roots = effective_search_roots(input);
-    const auto module_roots = effective_module_roots(input);
-    if (search_roots.empty() && module_roots.empty()) {
+    if (model.search_roots.empty() && model.module_roots.empty()) {
         result.diagnostics.error()
             .message("project input did not yield any module or search roots")
             .emit();
         return result;
+    }
+
+    // The model is the complete text universe: every path the parser can reach
+    // is either here (parse the frozen text) or absent (a source-load failure,
+    // rendered exactly as `parse_file` would render a missing file). No
+    // filesystem probe happens below this line.
+    std::unordered_map<std::string, const ProjectSource *> sources;
+    sources.reserve(model.sources.size());
+    for (const auto &source : model.sources) {
+        sources.emplace(source.path.string(), &source);
     }
 
     std::unordered_map<std::string, SourceId> path_to_source;
@@ -406,15 +572,20 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
 
         in_progress_paths.insert(path_key);
         auto parse_result = [&]() {
-            if (const auto overlay = input.source_overlays.find(path_key);
-                overlay != input.source_overlays.end()) {
-                return frontend.parse_text(display_path(path), overlay->second);
+            const auto found = sources.find(path_key);
+            if (found == sources.end()) {
+                // Not in the frozen snapshot at all: treat as a missing file so
+                // the Frontend's own file reader renders the diagnostic. (The
+                // direct pipeline reaches this only if the path was deleted
+                // between resolution and load.)
+                return frontend.parse_file(path);
             }
-            if (const auto cached = input.source_cache.find(path_key);
-                cached != input.source_cache.end()) {
-                return frontend.parse_text(display_path(path), cached->second);
+            if (!found->second->text.has_value()) {
+                // The path was on disk but its text could not be read: the same
+                // "failed to open source file" diagnostic `parse_file` renders.
+                return frontend.parse_file(path);
             }
-            return frontend.parse_file(path);
+            return frontend.parse_text(display_path(path), *found->second->text);
         }();
         result.diagnostics.append_from_source(parse_result.diagnostics, parse_result.source);
 
@@ -472,7 +643,7 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                     }
                 } else {
                     const auto source_id = SourceId{next_source_id++};
-                    const auto *module_root = find_module_root(module_name, module_roots);
+                    const auto *module_root = find_module_root(module_name, model.module_roots);
                     path_to_source.emplace(path_key, source_id);
                     result.graph.module_to_source.emplace(module_name, source_id);
                     result.graph.sources.push_back(SourceUnit{
@@ -505,7 +676,7 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                     const bool file_opts_out =
                         source_unit.program != nullptr && source_unit.program->suppress_prelude;
                     if (!file_opts_out &&
-                        should_inject_prelude(input, source_unit.module_name)) {
+                        should_inject_prelude(model.inject_prelude, source_unit.module_name)) {
                         source_unit.imports.push_back(ImportRequest{
                             .module_name = std::string(kStdPreludeModule),
                             .alias = "",
@@ -532,16 +703,17 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                         if (!enforce_import_visibility(
                                 importer_module,
                                 import_request,
-                                module_roots,
-                                input.enforce_package_dependencies,
+                                model.module_roots,
+                                model.enforce_package_dependencies,
                                 result.diagnostics,
                                 result.graph.sources[source_id.value].source)) {
                             continue;
                         }
                         const auto imported_path =
                             resolve_import_path(import_request.module_name,
-                                                search_roots,
-                                                module_roots,
+                                                model.search_roots,
+                                                model.module_roots,
+                                                sources,
                                                 result.diagnostics,
                                                 std::cref(result.graph.sources[source_id.value].source),
                                                 import_request.range);
@@ -587,7 +759,7 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
         return loaded_id;
     };
 
-    for (const auto &entry_file : input.entry_files) {
+    for (const auto &entry_file : model.entry_files) {
         const auto entry_id = load_source(entry_file, std::nullopt, std::nullopt, std::nullopt);
         if (entry_id.has_value()) {
             result.graph.entry_sources.push_back(*entry_id);
@@ -595,6 +767,14 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
     }
 
     return result;
+}
+
+ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &input) {
+    // The direct route: freeze the input into a model (the one filesystem read
+    // boundary) and parse it. Both routes share this single body, so they cannot
+    // drift; `resolve_project_input` is pure with respect to the input value, so
+    // an already-built model would parse identically.
+    return parse_project(frontend, resolve_project_input(input));
 }
 
 } // namespace ahfl
