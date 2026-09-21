@@ -5,7 +5,7 @@
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_CORE_PATTERN_NODE(Name) macro. The expansion is one
+// HANDLE_CORE_PATTERN_NODE(Name, Wire) macro. The expansion is one
 // HANDLE_CORE_PATTERN_NODE invocation per node, IN DECLARATION ORDER. That
 // order is simultaneously:
 //   * the CorePatternNode std::variant alternative order (generated in
@@ -14,6 +14,12 @@
 //     sites (core_verify / core_lower / wasm codegen).
 // Reordering an entry changes std::variant::index() values and is therefore a
 // breaking change; append new nodes at the END.
+//
+// The second macro argument is the JSON wire spelling the Core-IR JSON printer
+// emits in the `"kind"` field and the reader accepts (RFC 0026 P9 §3): both
+// sides resolve the mapping from THIS one table, so a wire-name typo is a single
+// edit both sides observe. A consumer that does not want the column (the
+// variant / name table / visitors) simply ignores the second parameter.
 //
 // Every exhaustive consumer routes through one explicit per-node handler macro
 // (`<prefix>_##Name`), so adding a node here WITHOUT adding every per-node
@@ -25,22 +31,22 @@
 // tests/unit/compiler/ir/node_variant_coverage.cpp.
 //
 // Usage:
-//   #define HANDLE_CORE_PATTERN_NODE(Name) /* ... Name ... */
+//   #define HANDLE_CORE_PATTERN_NODE(Name, Wire) /* ... Name ... Wire ... */
 //   #include "ahfl/compiler/ir/core_pattern_nodes.def"
 //
 // The file #undefs HANDLE_CORE_PATTERN_NODE at the end so the driver macro
 // never leaks past a consumer.
 
 #ifndef HANDLE_CORE_PATTERN_NODE
-#error "core_pattern_nodes.def: #define HANDLE_CORE_PATTERN_NODE(Name) before #include-ing this node list"
+#error "core_pattern_nodes.def: #define HANDLE_CORE_PATTERN_NODE(Name, Wire) before #include-ing this node list"
 #endif
 
-HANDLE_CORE_PATTERN_NODE(CoreWildcardPat)
-HANDLE_CORE_PATTERN_NODE(CoreLiteralPat)
-HANDLE_CORE_PATTERN_NODE(CoreIntRangePat)
-HANDLE_CORE_PATTERN_NODE(CoreBindingPat)
-HANDLE_CORE_PATTERN_NODE(CoreVariantPat)
-HANDLE_CORE_PATTERN_NODE(CoreTuplePat)
-HANDLE_CORE_PATTERN_NODE(CoreOrPat)
+HANDLE_CORE_PATTERN_NODE(CoreWildcardPat, "wildcard")
+HANDLE_CORE_PATTERN_NODE(CoreLiteralPat, "literal")
+HANDLE_CORE_PATTERN_NODE(CoreIntRangePat, "int_range")
+HANDLE_CORE_PATTERN_NODE(CoreBindingPat, "binding")
+HANDLE_CORE_PATTERN_NODE(CoreVariantPat, "variant")
+HANDLE_CORE_PATTERN_NODE(CoreTuplePat, "tuple")
+HANDLE_CORE_PATTERN_NODE(CoreOrPat, "or")
 
 #undef HANDLE_CORE_PATTERN_NODE

@@ -5,7 +5,7 @@
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_CORE_EXPR_NODE(Name) macro. The expansion is one
+// HANDLE_CORE_EXPR_NODE(Name, Wire) macro. The expansion is one
 // HANDLE_CORE_EXPR_NODE invocation per node, IN DECLARATION ORDER. That order
 // is simultaneously:
 //   * the CoreExprNode std::variant alternative order (generated in
@@ -14,6 +14,12 @@
 //     sites (core_verify / core_lower / ir_json).
 // Reordering an entry changes std::variant::index() values and is therefore a
 // breaking change; append new nodes at the END.
+//
+// The second macro argument is the JSON wire spelling the Core-IR JSON printer
+// emits in the `"kind"` field and the reader accepts (RFC 0026 P9 §3): both
+// sides resolve the mapping from THIS one table, so a wire-name typo is a single
+// edit both sides observe. A consumer that does not want the column (the
+// variant / name table / visitors) simply ignores the second parameter.
 //
 // Every exhaustive consumer routes through one explicit per-node handler macro
 // (`<prefix>_##Name`), so adding a node here WITHOUT adding every per-node
@@ -30,7 +36,7 @@
 // X-list and NOT a re-expansion of expr_nodes.def.
 //
 // Usage:
-//   #define HANDLE_CORE_EXPR_NODE(Name) /* ... Name ... */
+//   #define HANDLE_CORE_EXPR_NODE(Name, Wire) /* ... Name ... Wire ... */
 //   #include "ahfl/compiler/ir/core_expr_nodes.def"
 //
 // The file #undefs HANDLE_CORE_EXPR_NODE at the end so the driver macro never
@@ -38,18 +44,18 @@
 // consumer's own responsibility to #undef.
 
 #ifndef HANDLE_CORE_EXPR_NODE
-#error "core_expr_nodes.def: #define HANDLE_CORE_EXPR_NODE(Name) before #include-ing this node list"
+#error "core_expr_nodes.def: #define HANDLE_CORE_EXPR_NODE(Name, Wire) before #include-ing this node list"
 #endif
 
-HANDLE_CORE_EXPR_NODE(CoreLiteralExpr)
-HANDLE_CORE_EXPR_NODE(CoreValueRefExpr)
-HANDLE_CORE_EXPR_NODE(CorePathExpr)
-HANDLE_CORE_EXPR_NODE(CoreQualifiedExpr)
-HANDLE_CORE_EXPR_NODE(CoreUnaryExpr)
-HANDLE_CORE_EXPR_NODE(CoreBinaryExpr)
-HANDLE_CORE_EXPR_NODE(CoreConstructExpr)
-HANDLE_CORE_EXPR_NODE(CoreCoerceExpr)
-HANDLE_CORE_EXPR_NODE(CoreCollectionExpr)
-HANDLE_CORE_EXPR_NODE(CoreUnsupportedExpr)
+HANDLE_CORE_EXPR_NODE(CoreLiteralExpr, "literal")
+HANDLE_CORE_EXPR_NODE(CoreValueRefExpr, "value_ref")
+HANDLE_CORE_EXPR_NODE(CorePathExpr, "path")
+HANDLE_CORE_EXPR_NODE(CoreQualifiedExpr, "qualified")
+HANDLE_CORE_EXPR_NODE(CoreUnaryExpr, "unary")
+HANDLE_CORE_EXPR_NODE(CoreBinaryExpr, "binary")
+HANDLE_CORE_EXPR_NODE(CoreConstructExpr, "construct")
+HANDLE_CORE_EXPR_NODE(CoreCoerceExpr, "coerce")
+HANDLE_CORE_EXPR_NODE(CoreCollectionExpr, "collection")
+HANDLE_CORE_EXPR_NODE(CoreUnsupportedExpr, "unsupported")
 
 #undef HANDLE_CORE_EXPR_NODE

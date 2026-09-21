@@ -4,7 +4,7 @@
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_CORE_STMT_NODE(Name) macro. The expansion is one
+// HANDLE_CORE_STMT_NODE(Name, Wire) macro. The expansion is one
 // HANDLE_CORE_STMT_NODE invocation per node, IN DECLARATION ORDER. That order
 // is simultaneously:
 //   * the CoreStmtNode std::variant alternative order (generated in
@@ -13,6 +13,12 @@
 //     sites (core_verify / core_lower / wasm codegen / region-exit walk).
 // Reordering an entry changes std::variant::index() values and is therefore a
 // breaking change; append new nodes at the END.
+//
+// The second macro argument is the JSON wire spelling the Core-IR JSON printer
+// emits in the `"kind"` field and the reader accepts (RFC 0026 P9 §3): both
+// sides resolve the mapping from THIS one table, so a wire-name typo is a single
+// edit both sides observe. A consumer that does not want the column (the
+// variant / name table / visitors) simply ignores the second parameter.
 //
 // Every exhaustive consumer routes through one explicit per-node handler macro
 // (`<prefix>_##Name`), so adding a node here WITHOUT adding every per-node
@@ -24,24 +30,24 @@
 // tests/unit/compiler/ir/node_variant_coverage.cpp.
 //
 // Usage:
-//   #define HANDLE_CORE_STMT_NODE(Name) /* ... Name ... */
+//   #define HANDLE_CORE_STMT_NODE(Name, Wire) /* ... Name ... Wire ... */
 //   #include "ahfl/compiler/ir/core_stmt_nodes.def"
 //
 // The file #undefs HANDLE_CORE_STMT_NODE at the end so the driver macro never
 // leaks past a consumer.
 
 #ifndef HANDLE_CORE_STMT_NODE
-#error "core_stmt_nodes.def: #define HANDLE_CORE_STMT_NODE(Name) before #include-ing this node list"
+#error "core_stmt_nodes.def: #define HANDLE_CORE_STMT_NODE(Name, Wire) before #include-ing this node list"
 #endif
 
-HANDLE_CORE_STMT_NODE(CoreLetStmt)
-HANDLE_CORE_STMT_NODE(CoreCapabilityCallStmt)
-HANDLE_CORE_STMT_NODE(CoreStoreStmt)
-HANDLE_CORE_STMT_NODE(CoreIfStmt)
-HANDLE_CORE_STMT_NODE(CoreGotoStmt)
-HANDLE_CORE_STMT_NODE(CoreReturnStmt)
-HANDLE_CORE_STMT_NODE(CoreYieldStmt)
-HANDLE_CORE_STMT_NODE(CoreTrapStmt)
-HANDLE_CORE_STMT_NODE(CoreMatchStmt)
+HANDLE_CORE_STMT_NODE(CoreLetStmt, "let")
+HANDLE_CORE_STMT_NODE(CoreCapabilityCallStmt, "capability_call")
+HANDLE_CORE_STMT_NODE(CoreStoreStmt, "store")
+HANDLE_CORE_STMT_NODE(CoreIfStmt, "if")
+HANDLE_CORE_STMT_NODE(CoreGotoStmt, "goto")
+HANDLE_CORE_STMT_NODE(CoreReturnStmt, "return")
+HANDLE_CORE_STMT_NODE(CoreYieldStmt, "yield")
+HANDLE_CORE_STMT_NODE(CoreTrapStmt, "trap")
+HANDLE_CORE_STMT_NODE(CoreMatchStmt, "match")
 
 #undef HANDLE_CORE_STMT_NODE

@@ -1,0 +1,36 @@
+// X-macro node list for ahfl::ir::core::CoreInstancePayload (RFC 0026 P9,
+// KR6.9-B1/B2): the SINGLE source of truth for the monomorphized-instance
+// payload kind set AND for its JSON `kind` wire spelling.
+//
+// This file intentionally has NO include guard. It is a text fragment that is
+// re-included once per consumer; every consumer must first define the
+// HANDLE_CORE_INSTANCE_PAYLOAD(Name, Wire) macro. The expansion is one
+// HANDLE_CORE_INSTANCE_PAYLOAD invocation per node, IN DECLARATION ORDER. That
+// order is the CoreInstancePayload std::variant alternative order AND the
+// kCoreInstancePayloadWireNames table order.
+// Reordering an entry changes std::variant::index() values and is therefore a
+// breaking change; append new nodes at the END.
+//
+// The second macro argument is the JSON wire spelling the Core-IR JSON printer
+// emits in the instance `payload.kind` field and the reader accepts, so both
+// sides resolve the mapping from THIS one table instead of two hand-maintained
+// copies (RFC 0026 P9 §3).
+//
+// Usage:
+//   #define HANDLE_CORE_INSTANCE_PAYLOAD(Name, Wire) /* ... Core##Name ... Wire ... */
+//   #include "ahfl/compiler/ir/core_instance_payload.def"
+//
+// The file #undefs HANDLE_CORE_INSTANCE_PAYLOAD at the end so the driver macro
+// never leaks past a consumer.
+
+#ifndef HANDLE_CORE_INSTANCE_PAYLOAD
+#error "core_instance_payload.def: #define HANDLE_CORE_INSTANCE_PAYLOAD(Name, Wire) before #include-ing this node list"
+#endif
+
+HANDLE_CORE_INSTANCE_PAYLOAD(CapabilityInstance, "capability")
+HANDLE_CORE_INSTANCE_PAYLOAD(PredicateInstance, "predicate")
+HANDLE_CORE_INSTANCE_PAYLOAD(AgentInstance, "agent")
+HANDLE_CORE_INSTANCE_PAYLOAD(WorkflowInstance, "workflow")
+HANDLE_CORE_INSTANCE_PAYLOAD(FnInstance, "fn")
+
+#undef HANDLE_CORE_INSTANCE_PAYLOAD

@@ -1345,22 +1345,22 @@ class Verifier {
                     // catch-all had). With no generic catch-all, adding a
                     // CoreExprNode alternative is a COMPILE ERROR here until it is
                     // classified (CLAUDE.md Principle 5).
-#define CORE_EXPR_ACYCLIC_CoreLiteralExpr(Name) [](const Name &) {},
-#define CORE_EXPR_ACYCLIC_CoreValueRefExpr(Name) [](const Name &) {},
-#define CORE_EXPR_ACYCLIC_CorePathExpr(Name) [](const Name &) {},
-#define CORE_EXPR_ACYCLIC_CoreQualifiedExpr(Name) [](const Name &) {},
-#define CORE_EXPR_ACYCLIC_CoreConstructExpr(Name) [](const Name &) {},
-#define CORE_EXPR_ACYCLIC_CoreCoerceExpr(Name) [](const Name &) {},
-#define CORE_EXPR_ACYCLIC_CoreCollectionExpr(Name) [](const Name &) {},
-#define CORE_EXPR_ACYCLIC_CoreUnsupportedExpr(Name) [](const Name &) {},
-#define CORE_EXPR_ACYCLIC_CoreUnaryExpr(Name)                                                       \
+#define CORE_EXPR_ACYCLIC_CoreLiteralExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreValueRefExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CorePathExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreQualifiedExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreConstructExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreCoerceExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreCollectionExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreUnsupportedExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreUnaryExpr(Name, Wire)                                                       \
     [&](const Name &u) { push_edge(u.operand); },
-#define CORE_EXPR_ACYCLIC_CoreBinaryExpr(Name)                                                      \
+#define CORE_EXPR_ACYCLIC_CoreBinaryExpr(Name, Wire)                                                      \
     [&](const Name &b) {                                                                            \
         push_edge(b.lhs);                                                                           \
         push_edge(b.rhs);                                                                           \
     },
-#define HANDLE_CORE_EXPR_NODE(Name) CORE_EXPR_ACYCLIC_##Name(Name)
+#define HANDLE_CORE_EXPR_NODE(Name, Wire) CORE_EXPR_ACYCLIC_##Name(Name, Wire)
                     std::visit(
                         Overloaded{
 #include "ahfl/compiler/ir/core_expr_nodes.def"
@@ -1412,10 +1412,10 @@ class Verifier {
             // literal patterns carry no shape rule (CORE_PATTERN_SHAPE_LEAF);
             // the rest route to a real per-node handler. No generic catch-all: a
             // new pattern alternative is a COMPILE ERROR here until classified.
-#define CORE_PATTERN_SHAPE_LEAF(Name) [](const Name &) {},
-#define CORE_PATTERN_SHAPE_CoreWildcardPat(Name) CORE_PATTERN_SHAPE_LEAF(Name)
-#define CORE_PATTERN_SHAPE_CoreLiteralPat(Name) CORE_PATTERN_SHAPE_LEAF(Name)
-#define CORE_PATTERN_SHAPE_CoreIntRangePat(Name)                                                   \
+#define CORE_PATTERN_SHAPE_LEAF(Name, Wire) [](const Name &) {},
+#define CORE_PATTERN_SHAPE_CoreWildcardPat(Name, Wire) CORE_PATTERN_SHAPE_LEAF(Name, Wire)
+#define CORE_PATTERN_SHAPE_CoreLiteralPat(Name, Wire) CORE_PATTERN_SHAPE_LEAF(Name, Wire)
+#define CORE_PATTERN_SHAPE_CoreIntRangePat(Name, Wire)                                                   \
     [&](const Name &r) {                                                                           \
         /* AHFL `..` is a closed interval [start, end]; a reverse range is empty and never */      \
         /* authored. Sema rejects it, but the standalone verifier guards the JSON / backend */     \
@@ -1427,21 +1427,21 @@ class Verifier {
                   pat.source_range);                                                               \
         }                                                                                          \
     },
-#define CORE_PATTERN_SHAPE_CoreBindingPat(Name)                                                    \
+#define CORE_PATTERN_SHAPE_CoreBindingPat(Name, Wire)                                                    \
     [&](const Name &b) {                                                                           \
         if (b.has_nested) {                                                                        \
             check_id(b.nested, pat.source_range);                                                  \
         }                                                                                          \
     },
-#define CORE_PATTERN_SHAPE_CoreVariantPat(Name)                                                    \
+#define CORE_PATTERN_SHAPE_CoreVariantPat(Name, Wire)                                                    \
     [&](const Name &v) { verify_variant_pattern(v, pat_count, pat.source_range); },
-#define CORE_PATTERN_SHAPE_CoreTuplePat(Name)                                                      \
+#define CORE_PATTERN_SHAPE_CoreTuplePat(Name, Wire)                                                      \
     [&](const Name &t) {                                                                           \
         for (const CorePatternId e : t.elements) {                                                 \
             check_id(e, pat.source_range);                                                         \
         }                                                                                          \
     },
-#define CORE_PATTERN_SHAPE_CoreOrPat(Name)                                                         \
+#define CORE_PATTERN_SHAPE_CoreOrPat(Name, Wire)                                                         \
     [&](const Name &o) {                                                                           \
         if (o.alternatives.size() < 2) {                                                           \
             error(verify::kPatternShapeInvalid,                                                    \
@@ -1451,7 +1451,7 @@ class Verifier {
             check_id(alt, pat.source_range);                                                       \
         }                                                                                          \
     },
-#define HANDLE_CORE_PATTERN_NODE(Name) CORE_PATTERN_SHAPE_##Name(Name)
+#define HANDLE_CORE_PATTERN_NODE(Name, Wire) CORE_PATTERN_SHAPE_##Name(Name, Wire)
             std::visit(
                 Overloaded{
 #include "ahfl/compiler/ir/core_pattern_nodes.def"
@@ -1586,16 +1586,16 @@ class Verifier {
                     // those route above; the rest name CORE_PATTERN_ACYCLIC_<Node>
                     // (explicit, named no-op). No generic catch-all: a new
                     // pattern alternative is a COMPILE ERROR here until classified.
-#define CORE_PATTERN_ACYCLIC_CoreWildcardPat(Name) [](const Name &) {},
-#define CORE_PATTERN_ACYCLIC_CoreLiteralPat(Name) [](const Name &) {},
-#define CORE_PATTERN_ACYCLIC_CoreIntRangePat(Name) [](const Name &) {},
-#define CORE_PATTERN_ACYCLIC_CoreBindingPat(Name)                                                  \
+#define CORE_PATTERN_ACYCLIC_CoreWildcardPat(Name, Wire) [](const Name &) {},
+#define CORE_PATTERN_ACYCLIC_CoreLiteralPat(Name, Wire) [](const Name &) {},
+#define CORE_PATTERN_ACYCLIC_CoreIntRangePat(Name, Wire) [](const Name &) {},
+#define CORE_PATTERN_ACYCLIC_CoreBindingPat(Name, Wire)                                                  \
     [&](const Name &b) {                                                                           \
         if (b.has_nested) {                                                                        \
             push(b.nested);                                                                        \
         }                                                                                          \
     },
-#define CORE_PATTERN_ACYCLIC_CoreVariantPat(Name)                                                  \
+#define CORE_PATTERN_ACYCLIC_CoreVariantPat(Name, Wire)                                                  \
     [&](const Name &v) {                                                                           \
         for (const CorePatternId s : v.tuple_subpatterns) {                                        \
             push(s);                                                                               \
@@ -1604,19 +1604,19 @@ class Verifier {
             push(f.pattern);                                                                       \
         }                                                                                          \
     },
-#define CORE_PATTERN_ACYCLIC_CoreTuplePat(Name)                                                    \
+#define CORE_PATTERN_ACYCLIC_CoreTuplePat(Name, Wire)                                                    \
     [&](const Name &t) {                                                                           \
         for (const CorePatternId e : t.elements) {                                                 \
             push(e);                                                                               \
         }                                                                                          \
     },
-#define CORE_PATTERN_ACYCLIC_CoreOrPat(Name)                                                       \
+#define CORE_PATTERN_ACYCLIC_CoreOrPat(Name, Wire)                                                       \
     [&](const Name &o) {                                                                           \
         for (const CorePatternId a : o.alternatives) {                                             \
             push(a);                                                                               \
         }                                                                                          \
     },
-#define HANDLE_CORE_PATTERN_NODE(Name) CORE_PATTERN_ACYCLIC_##Name(Name)
+#define HANDLE_CORE_PATTERN_NODE(Name, Wire) CORE_PATTERN_ACYCLIC_##Name(Name, Wire)
                     std::visit(
                         Overloaded{
 #include "ahfl/compiler/ir/core_pattern_nodes.def"
@@ -2319,16 +2319,16 @@ class Verifier {
         // macros below bind each alternative to its lambda. The .def order IS the
         // dispatch order, and a new alternative is a COMPILE ERROR here until it
         // is routed (CLAUDE.md Principle 5).
-#define STMT_WALK_CoreLetStmt(Name) walk_let
-#define STMT_WALK_CoreCapabilityCallStmt(Name) walk_capabilityCall
-#define STMT_WALK_CoreStoreStmt(Name) walk_store
-#define STMT_WALK_CoreIfStmt(Name) walk_if
-#define STMT_WALK_CoreGotoStmt(Name) walk_goto
-#define STMT_WALK_CoreReturnStmt(Name) walk_return
-#define STMT_WALK_CoreYieldStmt(Name) walk_yield
-#define STMT_WALK_CoreTrapStmt(Name) walk_trap
-#define STMT_WALK_CoreMatchStmt(Name) walk_match
-#define HANDLE_CORE_STMT_NODE(Name) STMT_WALK_##Name(Name),
+#define STMT_WALK_CoreLetStmt(Name, Wire) walk_let
+#define STMT_WALK_CoreCapabilityCallStmt(Name, Wire) walk_capabilityCall
+#define STMT_WALK_CoreStoreStmt(Name, Wire) walk_store
+#define STMT_WALK_CoreIfStmt(Name, Wire) walk_if
+#define STMT_WALK_CoreGotoStmt(Name, Wire) walk_goto
+#define STMT_WALK_CoreReturnStmt(Name, Wire) walk_return
+#define STMT_WALK_CoreYieldStmt(Name, Wire) walk_yield
+#define STMT_WALK_CoreTrapStmt(Name, Wire) walk_trap
+#define STMT_WALK_CoreMatchStmt(Name, Wire) walk_match
+#define HANDLE_CORE_STMT_NODE(Name, Wire) STMT_WALK_##Name(Name, Wire),
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/core_stmt_nodes.def"
@@ -2879,10 +2879,10 @@ class Verifier {
             // expr) and the two nested-region statements walk sub-regions; the
             // rest are leaves. No generic catch-all: a new statement alternative is
             // a COMPILE ERROR here until classified.
-#define CORE_REGION_PATHS_LEAF(Name) [](const Name &) {},
-#define CORE_REGION_PATHS_CoreLetStmt(Name)                                                        \
+#define CORE_REGION_PATHS_LEAF(Name, Wire) [](const Name &) {},
+#define CORE_REGION_PATHS_CoreLetStmt(Name, Wire)                                                        \
     [&](const Name &s) { visit_expr_paths(wf, s.expr, stmt.source_range, fn); },
-#define CORE_REGION_PATHS_CoreIfStmt(Name)                                                         \
+#define CORE_REGION_PATHS_CoreIfStmt(Name, Wire)                                                         \
     [&](const Name &s) {                                                                           \
         if (s.then_region) {                                                                       \
             for_each_region_path_expr(wf, *s.then_region, fn);                                     \
@@ -2891,7 +2891,7 @@ class Verifier {
             for_each_region_path_expr(wf, *s.else_region, fn);                                     \
         }                                                                                          \
     },
-#define CORE_REGION_PATHS_CoreMatchStmt(Name)                                                      \
+#define CORE_REGION_PATHS_CoreMatchStmt(Name, Wire)                                                      \
     [&](const Name &s) {                                                                           \
         for (const CoreMatchArm &arm : s.arms) {                                                   \
             if (arm.guard_region) {                                                                \
@@ -2905,13 +2905,13 @@ class Verifier {
             for_each_region_path_expr(wf, *s.fallback_region, fn);                                 \
         }                                                                                          \
     },
-#define CORE_REGION_PATHS_CoreCapabilityCallStmt(Name) CORE_REGION_PATHS_LEAF(Name)
-#define CORE_REGION_PATHS_CoreStoreStmt(Name) CORE_REGION_PATHS_LEAF(Name)
-#define CORE_REGION_PATHS_CoreYieldStmt(Name) CORE_REGION_PATHS_LEAF(Name)
-#define CORE_REGION_PATHS_CoreReturnStmt(Name) CORE_REGION_PATHS_LEAF(Name)
-#define CORE_REGION_PATHS_CoreGotoStmt(Name) CORE_REGION_PATHS_LEAF(Name)
-#define CORE_REGION_PATHS_CoreTrapStmt(Name) CORE_REGION_PATHS_LEAF(Name)
-#define HANDLE_CORE_STMT_NODE(Name) CORE_REGION_PATHS_##Name(Name)
+#define CORE_REGION_PATHS_CoreCapabilityCallStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
+#define CORE_REGION_PATHS_CoreStoreStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
+#define CORE_REGION_PATHS_CoreYieldStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
+#define CORE_REGION_PATHS_CoreReturnStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
+#define CORE_REGION_PATHS_CoreGotoStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
+#define CORE_REGION_PATHS_CoreTrapStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
+#define HANDLE_CORE_STMT_NODE(Name, Wire) CORE_REGION_PATHS_##Name(Name, Wire)
             std::visit(
                 Overloaded{
 #include "ahfl/compiler/ir/core_stmt_nodes.def"
@@ -2965,21 +2965,21 @@ class Verifier {
             // names CORE_EXPR_PATHS_<Node> (explicit, named no-op — the same
             // behavior the unnamed catch-all had). No generic catch-all: a new
             // expr alternative is a COMPILE ERROR here until it is classified.
-#define CORE_EXPR_PATHS_CorePathExpr(Name) [&](const Name &p) { fn(p, range); },
-#define CORE_EXPR_PATHS_CoreUnaryExpr(Name) [&](const Name &u) { push(u.operand); },
-#define CORE_EXPR_PATHS_CoreBinaryExpr(Name)                                                       \
+#define CORE_EXPR_PATHS_CorePathExpr(Name, Wire) [&](const Name &p) { fn(p, range); },
+#define CORE_EXPR_PATHS_CoreUnaryExpr(Name, Wire) [&](const Name &u) { push(u.operand); },
+#define CORE_EXPR_PATHS_CoreBinaryExpr(Name, Wire)                                                       \
     [&](const Name &b) {                                                                           \
         push(b.lhs);                                                                               \
         push(b.rhs);                                                                               \
     },
-#define CORE_EXPR_PATHS_CoreLiteralExpr(Name) [](const Name &) {},
-#define CORE_EXPR_PATHS_CoreValueRefExpr(Name) [](const Name &) {},
-#define CORE_EXPR_PATHS_CoreQualifiedExpr(Name) [](const Name &) {},
-#define CORE_EXPR_PATHS_CoreConstructExpr(Name) [](const Name &) {},
-#define CORE_EXPR_PATHS_CoreCoerceExpr(Name) [](const Name &) {},
-#define CORE_EXPR_PATHS_CoreCollectionExpr(Name) [](const Name &) {},
-#define CORE_EXPR_PATHS_CoreUnsupportedExpr(Name) [](const Name &) {},
-#define HANDLE_CORE_EXPR_NODE(Name) CORE_EXPR_PATHS_##Name(Name)
+#define CORE_EXPR_PATHS_CoreLiteralExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreValueRefExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreQualifiedExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreConstructExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreCoerceExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreCollectionExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreUnsupportedExpr(Name, Wire) [](const Name &) {},
+#define HANDLE_CORE_EXPR_NODE(Name, Wire) CORE_EXPR_PATHS_##Name(Name, Wire)
             std::visit(
                 Overloaded{
 #include "ahfl/compiler/ir/core_expr_nodes.def"
@@ -3049,22 +3049,22 @@ class Verifier {
             // (a distinct typed no-op lambda per node); the four structural nodes
             // route to the payload lambdas above. No unnamed catch-all: a 15th
             // node without a VERIFY_CHILD_* routing macro fails to compile.
-#define VERIFY_CHILD_LEAF(Name) [](const CoreVt##Name &) {},
-#define VERIFY_CHILD_Unit(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Never(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Bool(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Int(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Float(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_String(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Decimal(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Duration(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Timestamp(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Uuid(Name) VERIFY_CHILD_LEAF(Name)
-#define VERIFY_CHILD_Nominal(Name) co_nominal,
-#define VERIFY_CHILD_Tuple(Name) co_tuple,
-#define VERIFY_CHILD_Fn(Name) co_fn,
-#define VERIFY_CHILD_Closure(Name) co_closure,
-#define HANDLE_CORE_VT(Name) VERIFY_CHILD_##Name(Name)
+#define VERIFY_CHILD_LEAF(Name, Wire) [](const CoreVt##Name &) {},
+#define VERIFY_CHILD_Unit(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Never(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Bool(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Int(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Float(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_String(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Decimal(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Duration(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Timestamp(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Uuid(Name, Wire) VERIFY_CHILD_LEAF(Name, Wire)
+#define VERIFY_CHILD_Nominal(Name, Wire) co_nominal,
+#define VERIFY_CHILD_Tuple(Name, Wire) co_tuple,
+#define VERIFY_CHILD_Fn(Name, Wire) co_fn,
+#define VERIFY_CHILD_Closure(Name, Wire) co_closure,
+#define HANDLE_CORE_VT(Name, Wire) VERIFY_CHILD_##Name(Name, Wire)
             std::visit(
                 Overloaded{
 #include "ahfl/compiler/ir/core_value_types.def"
@@ -3184,22 +3184,22 @@ class Verifier {
         // VERIFY_NODE_LEAF (a distinct typed no-op lambda per node); the five
         // checked nodes route to the payload lambdas above. No unnamed catch-all:
         // a 15th node without a VERIFY_NODE_* routing macro fails to compile.
-#define VERIFY_NODE_LEAF(Name) [](const CoreVt##Name &) {},
-#define VERIFY_NODE_Unit(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_Never(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_Bool(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_Int(Name) vn_int,
-#define VERIFY_NODE_Float(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_String(Name) vn_string,
-#define VERIFY_NODE_Decimal(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_Duration(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_Timestamp(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_Uuid(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_Nominal(Name) vn_nominal,
-#define VERIFY_NODE_Tuple(Name) VERIFY_NODE_LEAF(Name)
-#define VERIFY_NODE_Fn(Name) vn_fn,
-#define VERIFY_NODE_Closure(Name) vn_closure,
-#define HANDLE_CORE_VT(Name) VERIFY_NODE_##Name(Name)
+#define VERIFY_NODE_LEAF(Name, Wire) [](const CoreVt##Name &) {},
+#define VERIFY_NODE_Unit(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_Never(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_Bool(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_Int(Name, Wire) vn_int,
+#define VERIFY_NODE_Float(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_String(Name, Wire) vn_string,
+#define VERIFY_NODE_Decimal(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_Duration(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_Timestamp(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_Uuid(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_Nominal(Name, Wire) vn_nominal,
+#define VERIFY_NODE_Tuple(Name, Wire) VERIFY_NODE_LEAF(Name, Wire)
+#define VERIFY_NODE_Fn(Name, Wire) vn_fn,
+#define VERIFY_NODE_Closure(Name, Wire) vn_closure,
+#define HANDLE_CORE_VT(Name, Wire) VERIFY_NODE_##Name(Name, Wire)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/core_value_types.def"
@@ -3330,22 +3330,22 @@ class Verifier {
         // VERIFY_HASH_LEAF (a distinct typed no-op lambda per node); nominal /
         // tuple / fn route to the payload lambdas above. No unnamed catch-all: a
         // 15th node without a VERIFY_HASH_* routing macro fails to compile.
-#define VERIFY_HASH_LEAF(Name) [](const CoreVt##Name &) noexcept {},
-#define VERIFY_HASH_Unit(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Never(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Bool(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Int(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Float(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_String(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Decimal(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Duration(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Timestamp(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Uuid(Name) VERIFY_HASH_LEAF(Name)
-#define VERIFY_HASH_Nominal(Name) vh_nominal,
-#define VERIFY_HASH_Tuple(Name) vh_tuple,
-#define VERIFY_HASH_Fn(Name) vh_fn,
-#define VERIFY_HASH_Closure(Name) VERIFY_HASH_LEAF(Name)
-#define HANDLE_CORE_VT(Name) VERIFY_HASH_##Name(Name)
+#define VERIFY_HASH_LEAF(Name, Wire) [](const CoreVt##Name &) noexcept {},
+#define VERIFY_HASH_Unit(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Never(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Bool(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Int(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Float(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_String(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Decimal(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Duration(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Timestamp(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Uuid(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define VERIFY_HASH_Nominal(Name, Wire) vh_nominal,
+#define VERIFY_HASH_Tuple(Name, Wire) vh_tuple,
+#define VERIFY_HASH_Fn(Name, Wire) vh_fn,
+#define VERIFY_HASH_Closure(Name, Wire) VERIFY_HASH_LEAF(Name, Wire)
+#define HANDLE_CORE_VT(Name, Wire) VERIFY_HASH_##Name(Name, Wire)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/core_value_types.def"

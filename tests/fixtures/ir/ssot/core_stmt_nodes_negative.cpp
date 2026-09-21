@@ -37,7 +37,7 @@ template <typename T> struct core_stmt_tag {
     using type = T;
 };
 
-#define HANDLE_CORE_STMT_NODE(Name) core_stmt_tag<ahfl::ir::core::Name>{},
+#define HANDLE_CORE_STMT_NODE(Name, Wire) core_stmt_tag<ahfl::ir::core::Name>{},
 
 constexpr auto kCoreStmtTags = std::tuple{
 #include "ahfl/compiler/ir/core_stmt_nodes.def"
@@ -69,7 +69,7 @@ template <typename... Handlers> struct core_stmt_overloaded : Handlers... {
 // A non-template function body forces std::visit to instantiate the
 // exhaustiveness check at compile time.
 [[maybe_unused]] void force_exhaustive_core_stmt_visit(FixtureCoreStmtNode &node) {
-#define HANDLE_CORE_STMT_NODE(Name) [](const ahfl::ir::core::Name &) {},
+#define HANDLE_CORE_STMT_NODE(Name, Wire) [](const ahfl::ir::core::Name &) {},
     core_stmt_overloaded visitor{
 #include "ahfl/compiler/ir/core_stmt_nodes.def"
     };

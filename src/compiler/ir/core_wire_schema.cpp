@@ -245,7 +245,7 @@ class SchemaBuilder {
                  std::move(range));
             return std::nullopt;
         };
-#define HANDLE_CORE_VT(Name) ws_##Name,
+#define HANDLE_CORE_VT(Name, Wire) ws_##Name,
         return std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/core_value_types.def"

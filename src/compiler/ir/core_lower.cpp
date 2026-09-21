@@ -894,22 +894,22 @@ class ValueTypeArena {
             // the explicit payload lambdas above. There is NO unnamed catch-all,
             // so a 15th node without a LOWER_HASH_* routing macro fails to
             // compile.
-#define LOWER_HASH_LEAF(Name) [](const CoreVt##Name &) {},
-#define LOWER_HASH_Unit(Name) LOWER_HASH_LEAF(Name)
-#define LOWER_HASH_Never(Name) LOWER_HASH_LEAF(Name)
-#define LOWER_HASH_Bool(Name) LOWER_HASH_LEAF(Name)
-#define LOWER_HASH_Int(Name) hh_int,
-#define LOWER_HASH_Float(Name) LOWER_HASH_LEAF(Name)
-#define LOWER_HASH_String(Name) hh_string,
-#define LOWER_HASH_Decimal(Name) hh_decimal,
-#define LOWER_HASH_Duration(Name) LOWER_HASH_LEAF(Name)
-#define LOWER_HASH_Timestamp(Name) LOWER_HASH_LEAF(Name)
-#define LOWER_HASH_Uuid(Name) LOWER_HASH_LEAF(Name)
-#define LOWER_HASH_Nominal(Name) hh_nominal,
-#define LOWER_HASH_Tuple(Name) hh_tuple,
-#define LOWER_HASH_Fn(Name) hh_fn,
-#define LOWER_HASH_Closure(Name) hh_closure,
-#define HANDLE_CORE_VT(Name) LOWER_HASH_##Name(Name)
+#define LOWER_HASH_LEAF(Name, Wire) [](const CoreVt##Name &) {},
+#define LOWER_HASH_Unit(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Never(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Bool(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Int(Name, Wire) hh_int,
+#define LOWER_HASH_Float(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_String(Name, Wire) hh_string,
+#define LOWER_HASH_Decimal(Name, Wire) hh_decimal,
+#define LOWER_HASH_Duration(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Timestamp(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Uuid(Name, Wire) LOWER_HASH_LEAF(Name, Wire)
+#define LOWER_HASH_Nominal(Name, Wire) hh_nominal,
+#define LOWER_HASH_Tuple(Name, Wire) hh_tuple,
+#define LOWER_HASH_Fn(Name, Wire) hh_fn,
+#define LOWER_HASH_Closure(Name, Wire) hh_closure,
+#define HANDLE_CORE_VT(Name, Wire) LOWER_HASH_##Name(Name, Wire)
             std::visit(
                 Overloaded{
 #include "ahfl/compiler/ir/core_value_types.def"

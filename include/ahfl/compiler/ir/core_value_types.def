@@ -1,15 +1,23 @@
 // X-macro node list for ahfl::ir::core::CoreValueTypeNode (RFC 0027 Q1,
-// KR6.13-X): the SINGLE source of truth for the Core value-type node set.
+// KR6.13-X): the SINGLE source of truth for the Core value-type node set AND for
+// its JSON `kind` wire spelling (RFC 0026 P9, KR6.9).
 //
 // This file intentionally has NO include guard. It is a text fragment that is
 // re-included once per consumer; every consumer must first define the
-// HANDLE_CORE_VT(Name) macro. The expansion is one HANDLE_CORE_VT invocation
-// per node, IN DECLARATION ORDER. That order is simultaneously:
+// HANDLE_CORE_VT(Name, Wire) macro. The expansion is one HANDLE_CORE_VT
+// invocation per node, IN DECLARATION ORDER. That order is simultaneously:
 //   * the CoreValueTypeNode std::variant alternative order (generated in
 //     core_ir.hpp through core_value_type_tag), and
-//   * the core_value_type_name() table order.
+//   * the core_value_type_name() table order, and
+//   * the kCoreValueTypeWireNames table order (index == variant index).
 // Reordering an entry changes std::variant::index() values and is therefore a
 // breaking change; append new nodes at the END.
+//
+// The second macro argument is the JSON wire spelling the Core-IR JSON printer
+// emits in the `"kind"` field and the reader accepts (RFC 0026 P9 §3): both
+// sides resolve the mapping from THIS one table, so a wire-name typo is a single
+// edit both sides observe. A consumer that does not want the column (the
+// variant / name table / visitors) simply ignores the second parameter.
 //
 // Every exhaustive visitor (core_layout / core_wire_schema / core_lower /
 // core_verify) consumes this list with one explicit per-node handler macro,
@@ -20,7 +28,7 @@
 // tests/scripts/ir_ssot_compile_fail.py under ctest ahfl.ir.ssot_compile_fail).
 //
 // Usage:
-//   #define HANDLE_CORE_VT(Name) /* ... CoreVt##Name ... */
+//   #define HANDLE_CORE_VT(Name, Wire) /* ... CoreVt##Name ... Wire ... */
 //   #include "ahfl/compiler/ir/core_value_types.def"
 //
 // The file #undefs HANDLE_CORE_VT at the end so the driver macro never leaks
@@ -28,22 +36,22 @@
 // own responsibility to #undef.
 
 #ifndef HANDLE_CORE_VT
-#error "core_value_types.def: #define HANDLE_CORE_VT(Name) before #include-ing this node list"
+#error "core_value_types.def: #define HANDLE_CORE_VT(Name, Wire) before #include-ing this node list"
 #endif
 
-HANDLE_CORE_VT(Unit)
-HANDLE_CORE_VT(Never)
-HANDLE_CORE_VT(Bool)
-HANDLE_CORE_VT(Int)
-HANDLE_CORE_VT(Float)
-HANDLE_CORE_VT(String)
-HANDLE_CORE_VT(Decimal)
-HANDLE_CORE_VT(Duration)
-HANDLE_CORE_VT(Timestamp)
-HANDLE_CORE_VT(Uuid)
-HANDLE_CORE_VT(Nominal)
-HANDLE_CORE_VT(Tuple)
-HANDLE_CORE_VT(Fn)
-HANDLE_CORE_VT(Closure)
+HANDLE_CORE_VT(Unit, "unit")
+HANDLE_CORE_VT(Never, "never")
+HANDLE_CORE_VT(Bool, "bool")
+HANDLE_CORE_VT(Int, "int")
+HANDLE_CORE_VT(Float, "float")
+HANDLE_CORE_VT(String, "string")
+HANDLE_CORE_VT(Decimal, "decimal")
+HANDLE_CORE_VT(Duration, "duration")
+HANDLE_CORE_VT(Timestamp, "timestamp")
+HANDLE_CORE_VT(Uuid, "uuid")
+HANDLE_CORE_VT(Nominal, "nominal")
+HANDLE_CORE_VT(Tuple, "tuple")
+HANDLE_CORE_VT(Fn, "fn")
+HANDLE_CORE_VT(Closure, "closure")
 
 #undef HANDLE_CORE_VT

@@ -37,7 +37,7 @@ template <typename T> struct core_vt_tag {
     using type = T;
 };
 
-#define HANDLE_CORE_VT(Name) core_vt_tag<ahfl::ir::core::CoreVt##Name>{},
+#define HANDLE_CORE_VT(Name, Wire) core_vt_tag<ahfl::ir::core::CoreVt##Name>{},
 
 // Trailing commas are legal in braced-init lists (unlike template argument
 // lists), which lets the X-macro emit comma-suffixed entries uniformly.
@@ -73,7 +73,7 @@ template <typename... Handlers> struct core_vt_overloaded : Handlers... {
 // A non-template function body forces std::visit to instantiate the
 // exhaustiveness check at compile time.
 [[maybe_unused]] void force_exhaustive_core_vt_visit(FixtureCoreValueTypeNode &node) {
-#define HANDLE_CORE_VT(Name) [](const ahfl::ir::core::CoreVt##Name &) {},
+#define HANDLE_CORE_VT(Name, Wire) [](const ahfl::ir::core::CoreVt##Name &) {},
     core_vt_overloaded visitor{
 #include "ahfl/compiler/ir/core_value_types.def"
     };

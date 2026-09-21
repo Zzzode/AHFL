@@ -1196,7 +1196,7 @@ p6_coercion_effect(const CoreProgram &program, const ir::core::CoreLayoutTable &
 #define P6_REGION_DIVERGE_CoreStoreStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreReturnStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreYieldStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
-#define HANDLE_CORE_STMT_NODE(Name) P6_REGION_DIVERGE_##Name(Name)
+#define HANDLE_CORE_STMT_NODE(Name, Wire) P6_REGION_DIVERGE_##Name(Name)
     return std::visit(
         Overloaded{
 #include "ahfl/compiler/ir/core_stmt_nodes.def"

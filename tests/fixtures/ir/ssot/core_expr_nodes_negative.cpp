@@ -37,7 +37,7 @@ template <typename T> struct core_expr_tag {
     using type = T;
 };
 
-#define HANDLE_CORE_EXPR_NODE(Name) core_expr_tag<ahfl::ir::core::Name>{},
+#define HANDLE_CORE_EXPR_NODE(Name, Wire) core_expr_tag<ahfl::ir::core::Name>{},
 
 constexpr auto kCoreExprTags = std::tuple{
 #include "ahfl/compiler/ir/core_expr_nodes.def"
@@ -69,7 +69,7 @@ template <typename... Handlers> struct core_expr_overloaded : Handlers... {
 // A non-template function body forces std::visit to instantiate the
 // exhaustiveness check at compile time.
 [[maybe_unused]] void force_exhaustive_core_expr_visit(FixtureCoreExprNode &node) {
-#define HANDLE_CORE_EXPR_NODE(Name) [](const ahfl::ir::core::Name &) {},
+#define HANDLE_CORE_EXPR_NODE(Name, Wire) [](const ahfl::ir::core::Name &) {},
     core_expr_overloaded visitor{
 #include "ahfl/compiler/ir/core_expr_nodes.def"
     };

@@ -37,7 +37,7 @@ template <typename T> struct core_pattern_tag {
     using type = T;
 };
 
-#define HANDLE_CORE_PATTERN_NODE(Name) core_pattern_tag<ahfl::ir::core::Name>{},
+#define HANDLE_CORE_PATTERN_NODE(Name, Wire) core_pattern_tag<ahfl::ir::core::Name>{},
 
 constexpr auto kCorePatternTags = std::tuple{
 #include "ahfl/compiler/ir/core_pattern_nodes.def"
@@ -70,7 +70,7 @@ template <typename... Handlers> struct core_pattern_overloaded : Handlers... {
 // A non-template function body forces std::visit to instantiate the
 // exhaustiveness check at compile time.
 [[maybe_unused]] void force_exhaustive_core_pattern_visit(FixtureCorePatternNode &node) {
-#define HANDLE_CORE_PATTERN_NODE(Name) [](const ahfl::ir::core::Name &) {},
+#define HANDLE_CORE_PATTERN_NODE(Name, Wire) [](const ahfl::ir::core::Name &) {},
     core_pattern_overloaded visitor{
 #include "ahfl/compiler/ir/core_pattern_nodes.def"
     };

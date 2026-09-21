@@ -282,7 +282,7 @@ class LayoutBuilder {
             }
             return CoreLayout{8, 4, false, std::move(shape)};
         };
-#define HANDLE_CORE_VT(Name) vt_##Name,
+#define HANDLE_CORE_VT(Name, Wire) vt_##Name,
         return std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/core_value_types.def"

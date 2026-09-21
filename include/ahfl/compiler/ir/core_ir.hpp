@@ -590,11 +590,21 @@ namespace core_node_detail {
 // expanded from its .def list; the variant is reconstructed from the element
 // types, so declaration order in the .def IS alternative order. Each tag tuple
 // is defined adjacent to the node structs it names.
-#define HANDLE_CORE_EXPR_NODE(Name) ::ahfl::ir::node_detail::node_tag<Name>{},
+#define HANDLE_CORE_EXPR_NODE(Name, Wire) ::ahfl::ir::node_detail::node_tag<Name>{},
 inline constexpr auto kCoreExprTags = std::tuple{
 #include "ahfl/compiler/ir/core_expr_nodes.def"
 };
 #undef HANDLE_CORE_EXPR_NODE
+
+/// JSON wire name of each CoreExprNode alternative, indexed by
+/// `CoreExprNode::index()` (RFC 0026 P9 §3). The ONE table the Core JSON writer
+/// and reader resolve the `"kind"` spelling from.
+inline constexpr std::array<
+    std::string_view, std::tuple_size_v<std::remove_cvref_t<decltype(kCoreExprTags)>>>
+    kCoreExprWireNames = {
+#define HANDLE_CORE_EXPR_NODE(Name, Wire) Wire,
+#include "ahfl/compiler/ir/core_expr_nodes.def"
+};
 
 } // namespace core_node_detail
 
@@ -606,6 +616,12 @@ inline constexpr auto kCoreExprTags = std::tuple{
 // naming the type rather than a silently skipped case.
 using CoreExprNode = ::ahfl::ir::node_detail::variant_from_tags_t<
     std::remove_cvref_t<decltype(core_node_detail::kCoreExprTags)>>;
+
+// RFC 0026 P9 §3: the JSON `kind` wire name of a CoreExprNode alternative.
+[[nodiscard]] inline constexpr std::string_view
+core_expr_node_wire_name(std::size_t variant_index) noexcept {
+    return core_node_detail::kCoreExprWireNames[variant_index];
+}
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
 // count itself now derives from core_expr_nodes.def; this pin turns "a node was
@@ -726,17 +742,32 @@ struct CoreTuplePat {
 
 namespace core_node_detail {
 
-#define HANDLE_CORE_PATTERN_NODE(Name) ::ahfl::ir::node_detail::node_tag<Name>{},
+#define HANDLE_CORE_PATTERN_NODE(Name, Wire) ::ahfl::ir::node_detail::node_tag<Name>{},
 inline constexpr auto kCorePatternTags = std::tuple{
 #include "ahfl/compiler/ir/core_pattern_nodes.def"
 };
 #undef HANDLE_CORE_PATTERN_NODE
+
+/// JSON wire name of each CorePatternNode alternative, indexed by
+/// `CorePatternNode::index()` (RFC 0026 P9 §3).
+inline constexpr std::array<
+    std::string_view, std::tuple_size_v<std::remove_cvref_t<decltype(kCorePatternTags)>>>
+    kCorePatternWireNames = {
+#define HANDLE_CORE_PATTERN_NODE(Name, Wire) Wire,
+#include "ahfl/compiler/ir/core_pattern_nodes.def"
+};
 
 } // namespace core_node_detail
 
 // RFC 0027 P6/P7/P8 (KR6.13-P7): generated from core_pattern_nodes.def.
 using CorePatternNode = ::ahfl::ir::node_detail::variant_from_tags_t<
     std::remove_cvref_t<decltype(core_node_detail::kCorePatternTags)>>;
+
+// RFC 0026 P9 §3: the JSON `kind` wire name of a CorePatternNode alternative.
+[[nodiscard]] inline constexpr std::string_view
+core_pattern_node_wire_name(std::size_t variant_index) noexcept {
+    return core_node_detail::kCorePatternWireNames[variant_index];
+}
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
 // count derives from core_pattern_nodes.def.
@@ -890,17 +921,32 @@ struct CoreMatchStmt {
 
 namespace core_node_detail {
 
-#define HANDLE_CORE_STMT_NODE(Name) ::ahfl::ir::node_detail::node_tag<Name>{},
+#define HANDLE_CORE_STMT_NODE(Name, Wire) ::ahfl::ir::node_detail::node_tag<Name>{},
 inline constexpr auto kCoreStmtTags = std::tuple{
 #include "ahfl/compiler/ir/core_stmt_nodes.def"
 };
 #undef HANDLE_CORE_STMT_NODE
+
+/// JSON wire name of each CoreStmtNode alternative, indexed by
+/// `CoreStmtNode::index()` (RFC 0026 P9 §3).
+inline constexpr std::array<
+    std::string_view, std::tuple_size_v<std::remove_cvref_t<decltype(kCoreStmtTags)>>>
+    kCoreStmtWireNames = {
+#define HANDLE_CORE_STMT_NODE(Name, Wire) Wire,
+#include "ahfl/compiler/ir/core_stmt_nodes.def"
+};
 
 } // namespace core_node_detail
 
 // RFC 0027 P6/P7/P8 (KR6.13-P7): generated from core_stmt_nodes.def.
 using CoreStmtNode = ::ahfl::ir::node_detail::variant_from_tags_t<
     std::remove_cvref_t<decltype(core_node_detail::kCoreStmtTags)>>;
+
+// RFC 0026 P9 §3: the JSON `kind` wire name of a CoreStmtNode alternative.
+[[nodiscard]] inline constexpr std::string_view
+core_stmt_node_wire_name(std::size_t variant_index) noexcept {
+    return core_node_detail::kCoreStmtWireNames[variant_index];
+}
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
 // count derives from core_stmt_nodes.def.
@@ -991,18 +1037,18 @@ inline CoreRegionExit core_region_exit(const CoreRegion &region) noexcept {
         // each get a real handler. With no generic catch-all, a new
         // CoreStmtNode alternative is a COMPILE ERROR here until it is
         // classified (CLAUDE.md Principle 5).
-#define CORE_REGION_EXIT_CONTINUE(Name) [](const Name &) {},
-#define CORE_REGION_EXIT_DIVERGE(Name)                                                             \
+#define CORE_REGION_EXIT_CONTINUE(Name, Wire) [](const Name &) {},
+#define CORE_REGION_EXIT_DIVERGE(Name, Wire)                                                             \
     [&](const Name &) {                                                                            \
         exit.diverges = true;                                                                      \
         live = false;                                                                              \
     },
-#define CORE_REGION_EXIT_YIELD(Name)                                                               \
+#define CORE_REGION_EXIT_YIELD(Name, Wire)                                                               \
     [&](const Name &) {                                                                            \
         exit.yields = true;                                                                        \
         live = false;                                                                              \
     },
-#define CORE_REGION_EXIT_CoreIfStmt(Name)                                                              \
+#define CORE_REGION_EXIT_CoreIfStmt(Name, Wire)                                                              \
     [&](const Name &node) {                                                                        \
         CoreRegionExit then_exit;                                                                  \
         if (node.then_region) {                                                                    \
@@ -1022,7 +1068,7 @@ inline CoreRegionExit core_region_exit(const CoreRegion &region) noexcept {
         /* Control continues past the `if` iff EITHER branch can. */                               \
         live = then_exit.fallthrough || else_exit.fallthrough;                                     \
     },
-#define CORE_REGION_EXIT_CoreMatchStmt(Name)                                                           \
+#define CORE_REGION_EXIT_CoreMatchStmt(Name, Wire)                                                           \
     [&](const Name &node) {                                                                        \
         bool any_completes = false;                                                                \
         bool any_diverges = false;                                                                 \
@@ -1050,14 +1096,14 @@ inline CoreRegionExit core_region_exit(const CoreRegion &region) noexcept {
         live = any_completes;                                                                      \
     },
 
-#define CORE_REGION_EXIT_CoreLetStmt(Name) CORE_REGION_EXIT_CONTINUE(Name)
-#define CORE_REGION_EXIT_CoreCapabilityCallStmt(Name) CORE_REGION_EXIT_CONTINUE(Name)
-#define CORE_REGION_EXIT_CoreStoreStmt(Name) CORE_REGION_EXIT_CONTINUE(Name)
-#define CORE_REGION_EXIT_CoreGotoStmt(Name) CORE_REGION_EXIT_DIVERGE(Name)
-#define CORE_REGION_EXIT_CoreReturnStmt(Name) CORE_REGION_EXIT_DIVERGE(Name)
-#define CORE_REGION_EXIT_CoreTrapStmt(Name) CORE_REGION_EXIT_DIVERGE(Name)
-#define CORE_REGION_EXIT_CoreYieldStmt(Name) CORE_REGION_EXIT_YIELD(Name)
-#define HANDLE_CORE_STMT_NODE(Name) CORE_REGION_EXIT_##Name(Name)
+#define CORE_REGION_EXIT_CoreLetStmt(Name, Wire) CORE_REGION_EXIT_CONTINUE(Name, Wire)
+#define CORE_REGION_EXIT_CoreCapabilityCallStmt(Name, Wire) CORE_REGION_EXIT_CONTINUE(Name, Wire)
+#define CORE_REGION_EXIT_CoreStoreStmt(Name, Wire) CORE_REGION_EXIT_CONTINUE(Name, Wire)
+#define CORE_REGION_EXIT_CoreGotoStmt(Name, Wire) CORE_REGION_EXIT_DIVERGE(Name, Wire)
+#define CORE_REGION_EXIT_CoreReturnStmt(Name, Wire) CORE_REGION_EXIT_DIVERGE(Name, Wire)
+#define CORE_REGION_EXIT_CoreTrapStmt(Name, Wire) CORE_REGION_EXIT_DIVERGE(Name, Wire)
+#define CORE_REGION_EXIT_CoreYieldStmt(Name, Wire) CORE_REGION_EXIT_YIELD(Name, Wire)
+#define HANDLE_CORE_STMT_NODE(Name, Wire) CORE_REGION_EXIT_##Name(Name, Wire)
         std::visit(
             Overloaded{
 #include "ahfl/compiler/ir/core_stmt_nodes.def"
@@ -1255,15 +1301,45 @@ struct CoreFnInstance {
                                          const CoreFnInstance &) noexcept = default;
 };
 
-using CoreInstancePayload =
-    std::variant<CoreCapabilityInstance, CorePredicateInstance, CoreAgentInstance,
-                 CoreWorkflowInstance, CoreFnInstance>;
+namespace core_node_detail {
 
-// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl).
+// RFC 0026 P9 (KR6.9-B1): the instance-payload variant is generated from the
+// core_instance_payload.def X-list, so the JSON `payload.kind` discriminator and
+// the variant share ONE table (RFC 0026 P9 §3 rule 2).
+#define HANDLE_CORE_INSTANCE_PAYLOAD(Name, Wire) ::ahfl::ir::node_detail::node_tag<Core##Name>{},
+inline constexpr auto kCoreInstancePayloadTags = std::tuple{
+#include "ahfl/compiler/ir/core_instance_payload.def"
+};
+#undef HANDLE_CORE_INSTANCE_PAYLOAD
+
+/// JSON wire name of each CoreInstancePayload alternative, indexed by
+/// `CoreInstancePayload::index()`. The ONE table the Core JSON writer and reader
+/// resolve the `"kind"` spelling from.
+inline constexpr std::array<
+    std::string_view, std::tuple_size_v<std::remove_cvref_t<decltype(kCoreInstancePayloadTags)>>>
+    kCoreInstancePayloadWireNames = {
+#define HANDLE_CORE_INSTANCE_PAYLOAD(Name, Wire) Wire,
+#include "ahfl/compiler/ir/core_instance_payload.def"
+};
+
+} // namespace core_node_detail
+
+using CoreInstancePayload = ::ahfl::ir::node_detail::variant_from_tags_t<
+    std::remove_cvref_t<decltype(core_node_detail::kCoreInstancePayloadTags)>>;
+
+// RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The
+// alternative count derives from core_instance_payload.def.
 static_assert(std::variant_size_v<CoreInstancePayload> == 5,
               "ahfl::ir::core::CoreInstancePayload cardinality drift (RFC "
-              "0027 P8 IR SSOT): update every exhaustive visitor and this "
-              "pin together with the alternative list.");
+              "0027 P8 IR SSOT): update every exhaustive visitor, this pin, and "
+              "core_instance_payload.def together.");
+
+/// JSON wire name of a CoreInstancePayload alternative (e.g. `"capability"`),
+/// indexed by `CoreInstancePayload::index()`.
+[[nodiscard]] inline constexpr std::string_view
+core_instance_payload_wire_name(std::size_t variant_index) noexcept {
+    return core_node_detail::kCoreInstancePayloadWireNames[variant_index];
+}
 
 // ----------------------------------------------------------------------------
 // Logical value types (RFC 0026 P4). A program-global, hash-consed arena of
@@ -1443,7 +1519,7 @@ struct CoreVtClosure {
 // X-macro-generated IR variant.
 namespace core_value_type_detail {
 
-#define HANDLE_CORE_VT(Name) ::ahfl::ir::node_detail::node_tag<CoreVt##Name>{},
+#define HANDLE_CORE_VT(Name, Wire) ::ahfl::ir::node_detail::node_tag<CoreVt##Name>{},
 inline constexpr auto kCoreValueTypeTags = std::tuple{
 #include "ahfl/compiler/ir/core_value_types.def"
 };
@@ -1454,7 +1530,17 @@ inline constexpr auto kCoreValueTypeTags = std::tuple{
 inline constexpr std::array<
     std::string_view, std::tuple_size_v<std::remove_cvref_t<decltype(kCoreValueTypeTags)>>>
     kCoreValueTypeNames = {
-#define HANDLE_CORE_VT(Name) "CoreVt" #Name,
+#define HANDLE_CORE_VT(Name, Wire) "CoreVt" #Name,
+#include "ahfl/compiler/ir/core_value_types.def"
+};
+
+/// JSON `kind` wire name of each CoreValueTypeNode alternative, indexed by
+/// `CoreValueTypeNode::index()` (RFC 0026 P9 §3). The ONE table the Core JSON
+/// writer and reader resolve the `"kind"` spelling from.
+inline constexpr std::array<
+    std::string_view, std::tuple_size_v<std::remove_cvref_t<decltype(kCoreValueTypeTags)>>>
+    kCoreValueTypeWireNames = {
+#define HANDLE_CORE_VT(Name, Wire) Wire,
 #include "ahfl/compiler/ir/core_value_types.def"
 };
 
@@ -1485,6 +1571,14 @@ core_value_type_name(std::size_t variant_index) noexcept {
 [[nodiscard]] inline std::string_view
 core_value_type_name(const CoreValueTypeNode &node) noexcept {
     return core_value_type_name(node.index());
+}
+
+/// JSON `kind` wire name of the value-type alternative at `variant_index`
+/// (e.g. `"nominal"`); the SSP for the Core JSON writer and reader (RFC 0026 P9
+/// §3).
+[[nodiscard]] inline constexpr std::string_view
+core_value_type_wire_name(std::size_t variant_index) noexcept {
+    return core_value_type_detail::kCoreValueTypeWireNames[variant_index];
 }
 
 /// An interned logical value type (`CoreProgram::value_types`). Structural

@@ -281,19 +281,19 @@ template <typename... Ts> struct tags_variant_of<std::tuple<type_tag<Ts>...>> {
     using type = std::variant<Ts...>;
 };
 
-#define HANDLE_CORE_EXPR_NODE(Name) type_tag<ahfl::ir::core::Name>{},
+#define HANDLE_CORE_EXPR_NODE(Name, Wire) type_tag<ahfl::ir::core::Name>{},
 constexpr auto kProdCoreExprTags = std::tuple{
 #include "ahfl/compiler/ir/core_expr_nodes.def"
 };
 #undef HANDLE_CORE_EXPR_NODE
 
-#define HANDLE_CORE_PATTERN_NODE(Name) type_tag<ahfl::ir::core::Name>{},
+#define HANDLE_CORE_PATTERN_NODE(Name, Wire) type_tag<ahfl::ir::core::Name>{},
 constexpr auto kProdCorePatternTags = std::tuple{
 #include "ahfl/compiler/ir/core_pattern_nodes.def"
 };
 #undef HANDLE_CORE_PATTERN_NODE
 
-#define HANDLE_CORE_STMT_NODE(Name) type_tag<ahfl::ir::core::Name>{},
+#define HANDLE_CORE_STMT_NODE(Name, Wire) type_tag<ahfl::ir::core::Name>{},
 constexpr auto kProdCoreStmtTags = std::tuple{
 #include "ahfl/compiler/ir/core_stmt_nodes.def"
 };
