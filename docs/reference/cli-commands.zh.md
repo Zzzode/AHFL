@@ -383,7 +383,7 @@ ahflc emit summary \
 `emit core-ir-json` / `emit-core-ir-json` 是执行层 Core-IR 的机器可读入口，输出 `ahfl.core.v1` 分层 JSON projection。它在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 Semantic IR lowering 之后，把 `ir::Program` 降到 `CoreProgram`（`lower_ahfl_to_core`，自动跑 Core verifier），再序列化为单个 bundled envelope：`format_version`、固定 `layer: "core"` 判别符，以及 `types` / `value_types` / `capabilities` / `agents` / `flows` / `workflows` / `instances` 表。
 
 ```bash
-ahflc emit core-ir-json tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
+ahflc emit core-ir-json examples/refund/audit.ahfl
 ```
 
 当前边界：

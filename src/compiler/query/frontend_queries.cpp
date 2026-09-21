@@ -340,12 +340,15 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
           })),
       project_parse_(engine_.register_derived<ProjectParseSnapshot>(
           [this](QueryContext &ctx, DerivedId key) -> ProjectParseSnapshot {
-              // The whole project parse is a pure function of the model (the
-              // resolved config plus the frozen text of every reachable source).
-              // `parse_project` over the model probes no filesystem at all, so the
-              // filesystem-magic half of the old parse_project (prelude injection,
-              // module-root discovery, import-edge resolution) is now deterministic
-              // and lives behind this one input.
+              // The project parse is a pure function of the model for every
+              // source the freeze walk could enumerate: the resolved config
+              // plus the frozen text of every reachable source. Prelude
+              // injection, module-root discovery and import-edge resolution are
+              // deterministic and live behind this one input. The only disk
+              // access left is a snapshot miss — a candidate the walk could not
+              // enumerate (e.g. beneath a non-listable directory) — where both
+              // the existence gate and the source reader consult the candidate
+              // path directly, exactly as the pre-model direct pipeline did.
               const ProjectInputModel &model = ctx.get(project_input_, InputId{key.index()});
               // Qualified: the member `FrontendQueries::parse_project(ProjectId)` would
               // otherwise hide the free function of the same name.

@@ -17,7 +17,8 @@
 **Core（IR 与分析产物）**
 
 - `emit-ir` — 人读型结构化 IR
-- `emit-ir-json` — 机器消费型结构化 IR
+- `emit-ir-json` — 机器消费型结构化 IR（单层投影，已标记 deprecated，删除绑定 KR6.8）
+- `emit-core-ir-json` — 执行层分层 JSON projection（`ahfl.core.v1`），把 Semantic IR 之下的执行层 `ir::Program` 降到 `CoreProgram`；artifact-only，无物理 layout，是单层投影的推荐替代
 - `emit-opt-ir` / `emit-opt-ir-json` — 诊断式 Opt IR 及其 JSON 形式
 - `emit-native-json` — 面向 runtime consumer 的 handoff package JSON
 - `emit-summary` — 参考 backend，capability-oriented summary，也是新增 backend 的最小扩展路径

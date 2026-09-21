@@ -69,6 +69,18 @@ add_test(NAME ahfl.frontend.project.std_package_dependency_gates_imports
             "${CMAKE_BINARY_DIR}/std_package_dependency_gates_imports"
 )
 
+add_test(NAME ahfl.frontend.project.symlinked_directory_import
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            symlinked-directory-import
+            "${CMAKE_BINARY_DIR}/symlinked_directory_import"
+)
+
+add_test(NAME ahfl.frontend.project.unlistable_directory_import
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            unlistable-directory-import
+            "${CMAKE_BINARY_DIR}/unlistable_directory_import"
+)
+
 add_test(NAME ahfl.frontend.project.std_import_requires_explicit_module_root
     COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}"
             $<TARGET_FILE:ahfl_project_parse_tests>

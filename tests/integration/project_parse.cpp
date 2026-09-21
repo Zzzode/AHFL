@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -441,6 +442,186 @@ int run_std_package_dependency_gates_imports(const std::filesystem::path &worksp
     return 0;
 }
 
+// KR6.9-B4 fix-forward: a source reachable only through a SYMLINKED DIRECTORY
+// must parse. The freeze walk must follow directory symlinks (guarded against
+// cycles), exactly as the direct pipeline's `exists(candidate)` gate did.
+// Asserts byte-identical parse shape against a real-directory control tree.
+int run_symlinked_directory_import(const std::filesystem::path &workspace_root) {
+    std::error_code error;
+    std::filesystem::remove_all(workspace_root, error);
+
+    // The symlink target lives OUTSIDE every search root: otherwise the freeze
+    // walk would enumerate the target directly and the fixture would not pin
+    // symlink-directory descent. Only `app/lib` (a symlink) reaches it.
+    const auto external_lib = workspace_root / "external_lib";
+    std::filesystem::create_directories(external_lib, error);
+    if (error || !write_text_file(external_lib / "helper.ahfl", "module app::lib::helper;\n")) {
+        std::cerr << "failed to create external symlink target fixture\n";
+        return 1;
+    }
+
+    const auto symlink_tree = workspace_root / "symlinked";
+    std::filesystem::create_directories(symlink_tree / "app", error);
+    const auto real_tree = workspace_root / "real";
+    std::filesystem::create_directories(real_tree / "app" / "lib", error);
+    if (error ||
+        !write_text_file(symlink_tree / "app" / "main.ahfl",
+                         "module app::main;\n"
+                         "import app::lib::helper;\n") ||
+        !write_text_file(real_tree / "app" / "main.ahfl",
+                         "module app::main;\n"
+                         "import app::lib::helper;\n") ||
+        !write_text_file(real_tree / "app" / "lib" / "helper.ahfl", "module app::lib::helper;\n")) {
+        std::cerr << "failed to create symlinked-directory fixture\n";
+        return 1;
+    }
+
+    std::filesystem::create_directory_symlink(external_lib, symlink_tree / "app" / "lib", error);
+    if (error) {
+        // Filesystem cannot create directory symlinks here: the regression is
+        // untestable in this environment, not a product failure.
+        std::printf("SKIP: symlinked-directory import (no symlink support)\n");
+        std::filesystem::remove_all(workspace_root, error);
+        return 0;
+    }
+
+    // Each tree is its own sole search root, so the external target is reached
+    // only through the symlinked directory.
+    const auto parse_tree = [](const std::filesystem::path &tree) {
+        ahfl::ProjectInput input;
+        input.entry_files.push_back(tree / "app" / "main.ahfl");
+        input.search_roots.push_back(tree);
+        input.inject_prelude = false;
+        const ahfl::Frontend frontend;
+        return std::pair{ahfl::resolve_project_input(input), ahfl::parse_project(frontend, input)};
+    };
+
+    auto [symlink_model, symlink_result] = parse_tree(symlink_tree);
+    auto [real_model_unused, real_result] = parse_tree(real_tree);
+    static_cast<void>(real_model_unused);
+
+    // The freeze walk must collect the source through the symlinked directory
+    // (its canonical path), so resolution needs no disk fallback here.
+    bool model_sees_symlinked_helper = false;
+    for (const auto &source : symlink_model.sources) {
+        if (source.exists_on_disk && source.path.filename() == "helper.ahfl") {
+            model_sees_symlinked_helper = true;
+            break;
+        }
+    }
+
+    const bool ok = model_sees_symlinked_helper && !symlink_result.has_errors() &&
+                    !real_result.has_errors() &&
+                    symlink_result.graph.module_to_source.contains("app::main") &&
+                    symlink_result.graph.module_to_source.contains("app::lib::helper") &&
+                    real_result.graph.module_to_source.contains("app::main") &&
+                    real_result.graph.module_to_source.contains("app::lib::helper") &&
+                    symlink_result.graph.sources.size() == real_result.graph.sources.size();
+
+    std::filesystem::remove_all(workspace_root, error);
+
+    if (!ok) {
+        std::cerr << "symlinked-directory import diverged from the real-directory control\n";
+        if (!model_sees_symlinked_helper) {
+            std::cerr << "model did not collect helper.ahfl through the symlinked directory\n";
+        }
+        print_diagnostics(symlink_result.diagnostics);
+        print_diagnostics(real_result.diagnostics);
+        return 1;
+    }
+
+    return 0;
+}
+
+// KR6.9-B4 fix-forward: an import target beneath a directory the process can
+// traverse but not LIST (mode 0111) must still resolve. A tree walk cannot
+// enumerate its names, so absence from the frozen snapshot must not be read as
+// non-existence; the resolver replays the candidate's own `exists()` probe.
+int run_unlistable_directory_import(const std::filesystem::path &workspace_root) {
+    if (::geteuid() == 0) {
+        // Root bypasses directory permissions, so the fixture would not exercise
+        // the fallback.
+        std::printf("SKIP: unlistable-directory import (running as root)\n");
+        return 0;
+    }
+
+    std::error_code error;
+    std::filesystem::remove_all(workspace_root, error);
+    std::filesystem::create_directories(workspace_root / "app" / "lib", error);
+    if (error) {
+        std::cerr << "failed to create unlistable directory fixture\n";
+        return 1;
+    }
+
+    const auto main_path = workspace_root / "app" / "main.ahfl";
+    const auto helper_path = workspace_root / "app" / "lib" / "helper.ahfl";
+    if (!write_text_file(main_path,
+                         "module app::main;\n"
+                         "import app::lib::helper;\n") ||
+        !write_text_file(helper_path, "module app::lib::helper;\n")) {
+        std::cerr << "failed to write unlistable directory fixture\n";
+        return 1;
+    }
+
+    // Traversable (execute) but not listable (no read): a direct `exists()` /
+    // open on the child still works, while a directory walk skips the parent.
+    std::filesystem::permissions(workspace_root / "app" / "lib",
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::group_exec |
+                                     std::filesystem::perms::others_exec,
+                                 std::filesystem::perm_options::replace,
+                                 error);
+    if (error) {
+        std::printf("SKIP: unlistable-directory import (cannot restrict permissions)\n");
+        std::filesystem::permissions(workspace_root / "app" / "lib",
+                                     std::filesystem::perms::owner_all,
+                                     std::filesystem::perm_options::replace,
+                                     error);
+        std::filesystem::remove_all(workspace_root, error);
+        return 0;
+    }
+
+    ahfl::ProjectInput input;
+    input.entry_files.push_back(main_path);
+    input.search_roots.push_back(workspace_root);
+    input.inject_prelude = false;
+
+    const auto model = ahfl::resolve_project_input(input);
+    // Validate the premise: the non-listable directory's child is absent from
+    // the frozen snapshot (a walk cannot enumerate it)...
+    bool model_misses_helper = true;
+    for (const auto &source : model.sources) {
+        if (source.path.filename() == "helper.ahfl") {
+            model_misses_helper = false;
+            break;
+        }
+    }
+
+    const ahfl::Frontend frontend;
+    const auto result = ahfl::parse_project(frontend, model);
+
+    // Restore permissions before any cleanup / diagnostic rendering.
+    std::filesystem::permissions(workspace_root / "app" / "lib",
+                                 std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::replace,
+                                 error);
+    std::filesystem::remove_all(workspace_root, error);
+
+    // ...yet the import must resolve exactly as the direct pipeline resolved it.
+    if (!model_misses_helper || result.has_errors() ||
+        !result.graph.module_to_source.contains("app::main") ||
+        !result.graph.module_to_source.contains("app::lib::helper")) {
+        std::cerr << "import beneath a non-listable directory did not resolve\n";
+        if (!model_misses_helper) {
+            std::cerr << "fixture premise failed: helper.ahfl was enumerable\n";
+        }
+        print_diagnostics(result.diagnostics);
+        return 1;
+    }
+
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -484,6 +665,14 @@ int main(int argc, char **argv) {
 
     if (test_case == "std-package-dependency-gates-imports") {
         return run_std_package_dependency_gates_imports(entry);
+    }
+
+    if (test_case == "symlinked-directory-import") {
+        return run_symlinked_directory_import(entry);
+    }
+
+    if (test_case == "unlistable-directory-import") {
+        return run_unlistable_directory_import(entry);
     }
 
     if (test_case == "diagnostics-support-metadata-smoke") {

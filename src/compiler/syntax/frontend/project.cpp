@@ -1,6 +1,7 @@
 #include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -12,6 +13,8 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include <sys/stat.h>
 
 namespace ahfl {
 
@@ -262,12 +265,36 @@ resolve_import_path(std::string_view module_name,
                     MaybeCRef<SourceFile> source = std::nullopt,
                     std::optional<SourceRange> range = std::nullopt) {
     // The parser's own existence gate, replayed against the frozen snapshot: a
-    // path is a candidate exactly when `std::filesystem::exists` would have said
-    // so at resolve time. An overlay / cached text whose path is not on disk
-    // never satisfies it, matching the direct pipeline.
+    // path recorded on disk is a candidate exactly when
+    // `std::filesystem::exists` would have said so at freeze time. An overlay /
+    // cached text whose path is not on disk never satisfies it, matching the
+    // direct pipeline.
+    //
+    // Snapshot-miss fallback: the freeze boundary enumerates roots with a
+    // directory walk, and a walk cannot learn the names beneath a directory the
+    // process cannot list (execute-only / unreadable parent); it also sees no
+    // path under a root it failed to traverse. Such a candidate is *absent* from
+    // the snapshot rather than known-not-to-exist, so treating absence as
+    // non-existence would reject an import the direct pipeline resolved (its
+    // gate probed the candidate path directly and only needed traverse
+    // permission). Replay that exact probe here. `load_source` likewise reads
+    // an absent path straight from disk, so existence and text stay consistent.
     const auto exists_on_disk = [&](const std::filesystem::path &path) {
         const auto found = sources.find(path.string());
-        return found != sources.end() && found->second->exists_on_disk;
+        if (found != sources.end() && found->second->exists_on_disk) {
+            // Enumerated by the freeze walk: the answer is frozen in the value,
+            // no probe needed (the query path stays pure for every tree the
+            // walk could see completely).
+            return true;
+        }
+        // Flag false (overlay/cache text, or a path the walk never reached) or
+        // absent from the snapshot: replay the direct pipeline's own
+        // `std::filesystem::exists(candidate, error) && !error` gate. The walk
+        // cannot enumerate names beneath a directory the process cannot list,
+        // so only the candidate's own path can answer — and an overlay/cached
+        // text whose path is genuinely absent still fails, exactly as before.
+        std::error_code error;
+        return std::filesystem::exists(path, error) && !error;
     };
 
     std::vector<std::filesystem::path> candidates;
@@ -375,6 +402,93 @@ void append_model_source(std::vector<ProjectSource> &sources,
         ProjectSource{.path = std::move(path), .text = std::move(text), .exists_on_disk = exists_on_disk});
 }
 
+// Identity of a physical directory, used to stop recursive traversal at
+// symlink cycles and alias loops (two symlinks into the same real directory
+// must not make its sources enter the snapshot twice).
+struct DirectoryIdentity {
+    std::uint64_t device;
+    std::uint64_t inode;
+
+    [[nodiscard]] friend bool operator==(const DirectoryIdentity &,
+                                         const DirectoryIdentity &) noexcept = default;
+};
+
+struct DirectoryIdentityHash {
+    [[nodiscard]] std::size_t operator()(const DirectoryIdentity &identity) const noexcept {
+        const std::size_t device_hash = std::hash<std::uint64_t>{}(identity.device);
+        const std::size_t inode_hash = std::hash<std::uint64_t>{}(identity.inode);
+        return device_hash ^
+               (inode_hash + 0x9e3779b97f4a7c15ULL + (device_hash << 6) + (device_hash >> 2));
+    }
+};
+
+// Physical (device, inode) identity of `path`, following symlinks. Nullopt
+// when the path cannot be stat'd (a dangling or looping symlink, a missing
+// execute permission on a parent, ...) or is not a directory.
+[[nodiscard]] std::optional<DirectoryIdentity>
+directory_identity(const std::filesystem::path &path) {
+    struct ::stat status {};
+    if (::stat(path.string().c_str(), &status) != 0 || !S_ISDIR(status.st_mode)) {
+        return std::nullopt;
+    }
+    return DirectoryIdentity{.device = static_cast<std::uint64_t>(status.st_dev),
+                             .inode = static_cast<std::uint64_t>(status.st_ino)};
+}
+
+// Walk `root` recursively, following symlinked directories (a source reachable
+// only through one is a real source — the direct pipeline's
+// `std::filesystem::exists(candidate)` gate followed symlinks too), guarded by
+// a visited (device, inode) set so cycles and aliases cannot loop or
+// duplicate. Directories whose name ends in `.ahfl` are recorded for existence
+// and still descended into. A directory the process cannot list is simply not
+// traversed: tree walking can never enumerate names beneath it, so that case
+// is covered by the per-candidate existence probe in `resolve_import_path`.
+void collect_ahfl_paths(const std::filesystem::path &root,
+                        std::unordered_set<DirectoryIdentity, DirectoryIdentityHash> &visited,
+                        std::vector<std::filesystem::path> &files,
+                        std::vector<std::filesystem::path> &directories) {
+    const auto identity = directory_identity(root);
+    if (!identity.has_value() || !visited.insert(*identity).second) {
+        return;
+    }
+
+    std::error_code error;
+    auto iterator = std::filesystem::directory_iterator(
+        root, std::filesystem::directory_options::skip_permission_denied, error);
+    if (error) {
+        return;
+    }
+    const auto end = std::filesystem::directory_iterator{};
+    for (; iterator != end; iterator.increment(error)) {
+        if (error) {
+            // skip_permission_denied already absorbs the benign unreadable-entry
+            // case; any other error makes the iterator's position unspecified,
+            // so stop this subtree rather than risk a stuck walk.
+            break;
+        }
+        const auto &entry = *iterator;
+        const auto &path = entry.path();
+
+        // directory_entry's status queries follow symlinks, so a symlinked
+        // directory descends like a real one.
+        const bool is_directory = entry.is_directory(error);
+        error.clear();
+        if (is_directory) {
+            if (path.extension() == ".ahfl") {
+                directories.push_back(normalize_path(path));
+            }
+            collect_ahfl_paths(path, visited, files, directories);
+            continue;
+        }
+
+        const bool is_regular = entry.is_regular_file(error);
+        error.clear();
+        if (is_regular && path.extension() == ".ahfl") {
+            files.push_back(normalize_path(path));
+        }
+    }
+}
+
 // Collect every `.ahfl` path under a root and freeze what the parser's
 // filesystem probes would have seen: regular files contribute their text, and
 // directories whose name ends in `.ahfl` contribute existence only (the direct
@@ -389,27 +503,10 @@ void append_ahfl_sources_under(std::vector<ProjectSource> &sources,
         return;
     }
 
+    std::unordered_set<DirectoryIdentity, DirectoryIdentityHash> visited;
     std::vector<std::filesystem::path> files;
     std::vector<std::filesystem::path> directories;
-    for (const auto &entry : std::filesystem::recursive_directory_iterator(
-             root, std::filesystem::directory_options::skip_permission_denied, error)) {
-        if (error) {
-            break;
-        }
-        if (entry.path().extension() != ".ahfl") {
-            continue;
-        }
-        if (entry.is_regular_file(error) && !error) {
-            files.push_back(normalize_path(entry.path()));
-        } else if (entry.is_directory(error) && !error) {
-            directories.push_back(normalize_path(entry.path()));
-            // A directory named `*.ahfl` is still descended into (its own
-            // `.ahfl` children are real sources); only its own existence flag
-            // is recorded.
-            error.clear();
-        }
-        error.clear();
-    }
+    collect_ahfl_paths(root, visited, files, directories);
 
     const auto append_sorted = [&sources](std::vector<std::filesystem::path> &paths, bool is_file) {
         std::sort(paths.begin(), paths.end());

@@ -402,6 +402,7 @@ recompute_derived_analyses(program_ir, ProgramPhase::Analyzed)
 
 - `BackendKind::Ir`
 - `BackendKind::IrJson`
+- `BackendKind::CoreIrJson`
 - `BackendKind::NativeJson`
 - `BackendKind::ExecutionPlan`
 - `BackendKind::PackageReview`
