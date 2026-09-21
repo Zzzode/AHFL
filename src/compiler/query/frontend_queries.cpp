@@ -366,8 +366,10 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
       project_resolve_(engine_.register_derived<ResolveSnapshot>(
           [this](QueryContext &ctx, DerivedId key) -> ResolveSnapshot {
               // Bring the project parse slot up to date; the resolver reads the
-              // graph's units and import edges.
-              static_cast<void>(ctx.read(project_parse_, key));
+              // graph's units and import edges. The snapshot carries whether the
+              // parse errored, which is the CLI's short-circuit condition: the
+              // pipeline stops before resolving a failed project parse.
+              const ProjectParseSnapshot parse_snapshot = ctx.read(project_parse_, key);
 
               const std::size_t slot = key.index();
               if (project_resolve_slots_.size() <= slot) {
@@ -376,10 +378,9 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
               auto &record = project_resolve_slots_[slot];
 
               const SourceGraph *graph = this->project_graph(ProjectId{key.index()});
-              if (graph == nullptr) {
-                  // No graph at the current revision (the slot is dirty) or the
-                  // parse failed outright: mirror the CLI, which never resolves a
-                  // failed parse.
+              if (parse_snapshot.has_errors || graph == nullptr) {
+                  // Parse errored (stage skipped, as in the CLI) or no graph at
+                  // the current revision (the slot is dirty): never resolve.
                   record.result = ResolveResult{};
                   record.ran = false;
                   ++record.computes;
