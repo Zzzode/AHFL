@@ -1322,17 +1322,18 @@ add_test(NAME ahfl.query.frontend_equiv_all
     COMMAND $<TARGET_FILE:ahfl_compiler_frontend_queries_tests>
 )
 
-# RFC 0027 P3 (KR6.11-S4): the CLI query-engine route is byte-equivalent to the
-# direct pipeline. Runs `ahflc check` twice per bare-file corpus source (direct
-# vs AHFL_QUERY_ENGINE=1) and asserts identical exit code / stdout / stderr; the
-# route trace makes the gate non-vacuous (it fails if the engine route silently
-# falls back to the direct pipeline).
-add_test(NAME ahfl.query.cli_engine_equiv
+# RFC 0027 P3 (KR6.11-S4C): the query engine is the DEFAULT CLI route. Runs
+# `ahflc check` twice per bare-file corpus source and `check` / `emit ir-json`
+# per package fixture (default environment vs AHFL_QUERY_LEGACY_PIPELINE=1) and
+# asserts identical exit code / stdout / stderr; the route trace makes the gate
+# non-vacuous (the default run must report the engine route, the legacy-forced
+# run the direct pipeline).
+add_test(NAME ahfl.query.cli_default_engine_route
     COMMAND ${Python3_EXECUTABLE}
             "${AHFL_TESTS_DIR}/scripts/query_engine_cli_equiv.py"
             $<TARGET_FILE:ahflc>
             "${PROJECT_SOURCE_DIR}"
-            "${CMAKE_CURRENT_BINARY_DIR}/runtime/query-engine-cli-equiv"
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/query-engine-default-route"
 )
 
 # RFC 0027 P2 (KR6.11-S5): differential property guard — under seeded random edit

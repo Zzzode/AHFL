@@ -85,8 +85,8 @@ class CliDriver final {
     // project input into a model, parse it (this direct parse renders the
     // project-level parse diagnostics and stops on error, byte-identically to
     // before the model existed), then run the analysis, handing the model to
-    // run_analysis so the opt-in query-engine route can re-parse it through the
-    // engine. One definition instead of three identical copies.
+    // run_analysis so the query-engine route re-parses it through the engine.
+    // One definition instead of three identical copies.
     [[nodiscard]] ExitCode run_project_analysis(ahfl::ProjectInput input);
 
     [[nodiscard]] ExitCode format_source_file();

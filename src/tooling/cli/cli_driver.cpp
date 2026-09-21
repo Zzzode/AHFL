@@ -3401,7 +3401,7 @@ ExitCode CliDriver::run_project_analysis(ahfl::ProjectInput input) {
     // Freeze the live input into the value-semantics model (the one filesystem
     // read of the project route), parse it directly to render the project-level
     // parse diagnostics exactly as before, and then run the analysis with the
-    // model attached so the opt-in query-engine route can re-parse it through the
+    // model attached so the query-engine route can re-parse it through the
     // engine. `model` outlives the run_analysis call it is passed to, and the two
     // parses are proven byte-equal by ahfl.query.frontend_equiv_all.
     const auto model = ahfl::resolve_project_input(input);
@@ -3684,15 +3684,21 @@ ExitCode CliDriver::format_source_file() {
     return ExitCode::Success;
 }
 
-// RFC 0027 P3 (KR6.11-S4): the opt-in CLI route through the query engine.
+// RFC 0027 P3 (KR6.11-S4/S4B/S4C): the CLI route through the query engine.
+//
+// KR6.11-S4C made the engine the DEFAULT analysis route: both
+// `run_analysis<InputT>` instantiations evaluate parse -> resolve -> typecheck
+// through FrontendQueries, and the analysis tail consumes the engine-owned AST /
+// SourceGraph. The migration criterion ("the query result is the same result")
+// is pinned by ahfl.query.frontend_equiv_all in-process and by the whole CLI
+// golden fleet byte-for-byte.
 //
 // The driver's `run_analysis<InputT>` is a single template instantiated for two
 // input shapes, `ast::Program` (single-file / CWD-discovered) and `SourceGraph`
-// (package / workspace). *Both* instantiations route through the engine under the
-// same flag, so one CLI command cannot behave differently depending on whether it
-// arrived via the file path or the package path — the half-cutover the design doc
-// forbids. The two shapes need different inputs, which is why they are separate
-// branches below:
+// (package / workspace). Both instantiations route through the engine by
+// default, so one CLI command cannot behave differently depending on whether it
+// arrived via the file path or the package path. The two shapes need different
+// inputs, which is why they are separate branches below:
 //
 //   * file:    `source_text(FileId)` — the file's display name and bytes;
 //   * project: `ProjectInputModel` — the resolved project configuration plus the
@@ -3706,13 +3712,21 @@ ExitCode CliDriver::format_source_file() {
 // owned `SourceGraph` / `ast::Program` is what the borrowed stage results were
 // computed against, so the IR lowering, validation and summary must see the same
 // objects or the route would be half-switched under the hood.
-[[nodiscard]] bool query_engine_route_requested() {
-    const char *flag = std::getenv("AHFL_QUERY_ENGINE");
+//
+// TEMPORARY escape hatch. `AHFL_QUERY_LEGACY_PIPELINE=1` forces the pre-S4C
+// direct pipeline. It exists only to bisect a field report against the cutover
+// and must be removed once the direct tail inside run_analysis is deleted; that
+// removal is tracked as the follow-up to KR6.11-S4C in
+// docs/design/query-frontend-p3-migration.zh.md §3.3 (RFC 0027 P5 / KR6.12
+// cleanup). Do not grow new callers.
+[[nodiscard]] bool legacy_pipeline_forced() {
+    const char *flag = std::getenv("AHFL_QUERY_LEGACY_PIPELINE");
     return flag != nullptr && flag[0] != '\0' && std::string_view{flag} != "0";
 }
 
-// Whether to emit the non-vacuity trace the CLI equivalence gate reads. Kept
-// separate from the route flag so a normal engine-route run stays quiet.
+// Whether to emit the route trace the CLI default-route gate reads. Kept
+// separate from the legacy escape hatch so a normal engine-route run stays
+// quiet.
 [[nodiscard]] bool query_engine_trace_requested() {
     const char *flag = std::getenv("AHFL_QUERY_ENGINE_TRACE");
     return flag != nullptr && flag[0] != '\0' && std::string_view{flag} != "0";
@@ -3840,7 +3854,11 @@ ExitCode CliDriver::run_analysis(const InputT &input,
     // copies: the two input types are not copyable and the tail only reads.
     const InputT *analysis_input = &input;
 
-    if (query_engine_route_requested()) {
+    // The engine is the default route since KR6.11-S4C. The legacy direct
+    // pipeline is reachable only through the temporary AHFL_QUERY_LEGACY_PIPELINE
+    // escape hatch (see the comment on legacy_pipeline_forced); a failed engine
+    // serve still falls back to the direct tail below.
+    if (!legacy_pipeline_forced()) {
         if constexpr (std::is_same_v<InputT, ahfl::ast::Program>) {
             if (source_file.has_value()) {
                 engine_holder.emplace();
@@ -3877,15 +3895,13 @@ ExitCode CliDriver::run_analysis(const InputT &input,
         }
     }
 
-    // Non-vacuity trace for the CLI equivalence gate: exactly one route line per
-    // analysis, emitted only when this function was reached at all (a parse error
-    // returns before here, so the absence of any line is itself the signal that
-    // analysis never ran). stderr only — stdout (the golden artifact) is untouched.
-    // Non-vacuity trace for the CLI equivalence gate: exactly one route line per
-    // analysis, emitted only when this function was reached at all (a parse error
-    // returns before here on both the file and the project path, so the absence of
-    // any line is itself the signal that analysis never ran). stderr only — stdout
-    // (the golden artifact) is untouched.
+    // Non-vacuity trace for the CLI default-route gate: exactly one route line
+    // per analysis, emitted only when this function was reached at all (a parse
+    // error returns before here on both the file and the project path, so the
+    // absence of any line is itself the signal that analysis never ran). stderr
+    // only — stdout (the golden artifact) is untouched. Since S4C the default
+    // route is the engine; the line reads "direct" only under the temporary
+    // legacy escape hatch or after an engine-serve fallback.
     if (query_engine_trace_requested()) {
         std::cerr << "query-engine-route: " << (resolve_ptr != nullptr ? "engine" : "direct")
                   << '\n';

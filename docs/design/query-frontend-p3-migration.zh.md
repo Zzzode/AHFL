@@ -1,6 +1,6 @@
 # RFC 0027 P3: 前端 resolve/typecheck 查询化与 CLI 切分边界 -- 设计
 
-> Status: **IMPLEMENTED (P3 / KR6.11-S4 + S4B)**。本文记录 RFC 0027 P3 切片
+> Status: **IMPLEMENTED (P3 / KR6.11-S4 + S4B + S4C)**。本文记录 RFC 0027 P3 切片
 > (`resolve(module)` / `typecheck(module)` / `type_of(expr)` 查询化,以及 CLI 经
 > QueryEngine 求值的**切分边界**)的受追踪设计决定。RFC 0027 把前端逐级搬上 query
 > 图,每一级都必须证明"与直接流水线逐位等价"
@@ -12,6 +12,11 @@
 > (SourceGraph 不可比较、SourceUnit 的 AST 不是其文本的函数)由新的 **`ProjectInputModel`
 > 值语义输入 + `parse_project` 纯函数化**消除,故 CLI 的**两个** `run_analysis` 实例现
 > 在都经引擎求值。§3 保留原判定的记录,并给出撤销它所需的确切重构。
+>
+> **修订 (S4C)**:默认路由已**翻转** —— 引擎现在是两个 `run_analysis` 实例的默认且唯一
+> 正常路径,opt-in 开关 `AHFL_QUERY_ENGINE` 已删除;全 golden 舰队在同一提交内逐字节证
+> 明(§3.3 S4C 小节、§3.4)。仅保留一个**临时**逃生舱 `AHFL_QUERY_LEGACY_PIPELINE=1`
+> (强制旧直接流水线,仅供 bisection,删除点已追踪)。
 >
 > 本文只记录 P3 的**新**决定。KR6.9-B0 的分层 Core-IR JSON 投影契约是
 > `docs/design/core-ir-p9-layered-json.zh.md`(已由 `fef7c322` 落地),与本文无关,
@@ -29,9 +34,9 @@ query 化;以及 CLI driver 经 QueryEngine 的切换边界。
 **非目标:**
 
 - **不改语言语义**,不改 IR 塔分层(那是 RFC 0026)。
-- **不翻转默认路由。** S4B 把 `parse_project` / `SourceGraph` 搬上了 query 图(§3.1
-  —3.3),故 package 路径**可** query 化、且 opt-in 路径**已**覆盖它;但默认路径仍走
-  直接流水线(§3.3),翻转默认是独立可后置的一步。
+- **~~不翻转默认路由~~ (S4C 已完成)。** S4/S4B 阶段默认路径走直接流水线;S4C
+  已翻转默认 —— 引擎恒为默认,opt-in 开关删除,全 golden 在同一提交内证明
+  (§3.3 S4C 小节)。
 - **不删手工 incremental 子系统**(`src/tooling/incremental/`,RFC 0027 P5 / KR6.12)。
 - **不做 LSP 切换**(P4)。
 
@@ -176,9 +181,10 @@ intrinsics allow / `module_range` / imports、其 AST(经 `dump_program_outline`
 文件级一致:项目 parse 错 → resolve 不跑;resolve 错 → typecheck 不跑,由 snapshot 的
 `ran` 位记录。
 
-### 3.3 driver 的切换:同一开关,两个实例
+### 3.3 driver 的切换:同一开关,两个实例;S4C 翻转默认
 
-`run_analysis<InputT>` 现在对**两个**实例在 `AHFL_QUERY_ENGINE` 下都尝试引擎路径:
+`run_analysis<InputT>` 对**两个**实例都经引擎求值(S4B 时由 opt-in 开关
+`AHFL_QUERY_ENGINE` 门控,S4C 删除该开关、引擎成为默认):
 
 - 文件实例:`source_text(FileId)` = (display_name, bytes)。
 - 项目实例:`set_project_input(ProjectId, model)`;model 由
@@ -189,32 +195,41 @@ intrinsics allow / `module_range` / imports、其 AST(经 `dump_program_outline`
 SourceGraph(`analysis_input` 指针),而不是直接流水线的产物 —— 否则借用到的 stage 结果
 与 IR lowering 会指向两份不同的 AST,即"表层切换、底下半切换"。
 
-**默认路径不动是对 golden 的诚实:** 本次切片**不**翻转默认,故 `tests/golden/ir` 与
-`ahflc.*` 全舰队按构造不变;opt-in 路径由穷尽等价门禁守护。翻转默认(令引擎恒为默认)是
-**独立的、可后置**的一步,需要在同一提交内重录/证明全 golden;S4B 的交付是"**两个**
-实例都已在同一开关下经引擎求值且逐位等价",即切分边界的**结构障碍已清除**,而非把默认
-翻掉。
+**S4C:默认翻转(2026-09-22)。** S4B 留下的"纯工程步骤"在 S4C 完成:
 
-### 3.4 交付的两条(不变)
+- `AHFL_QUERY_ENGINE` opt-in 开关**删除**;`run_analysis` 默认构造 `FrontendQueries`
+  并经引擎求值两个实例。引擎无法 serve(cycle 等)时仍回退到函数体内的直接 tail ——
+  回退路径此刻不能删,因为它还是正确性兜底。
+- **临时逃生舱**:`AHFL_QUERY_LEGACY_PIPELINE=1` 强制旧直接流水线。它**仅**用于线上
+  bisection("把新路径关掉是否复现"),不是产品开关。**删除点已追踪**:RFC 0027 P5 /
+  KR6.12 删 `src/tooling/incremental/` 的同一收口阶段,应删除该环境变量、
+  `legacy_pipeline_forced()`、`run_analysis` 内的直接 resolve/typecheck tail 以及
+  `tests/scripts/query_engine_cli_equiv.py` 的 legacy 一半(届时该脚本退化为
+  纯默认路由的非空转门禁)。在此之前不得为它增长新调用方。
+- route 迹(`AHFL_QUERY_ENGINE_TRACE=1`,**两个**实例都打)语义随翻转更新:默认运行报
+  `engine`,只有逃生舱或引擎回退才报 `direct`。
 
-- **默认路径逐字节不变。** 所有既有 golden(`ahflc.emit_ir*` 舰队、`tests/golden/ir`)
-  按构造不变:它们走直接流水线。
-- **opt-in 的引擎路径,由穷尽等价 ctest 守护。**
-  `ahfl.query.cli_engine_equiv`(`tests/scripts/query_engine_cli_equiv.py`)对**两个**
-  corpus 逐条跑两次(直接 vs `AHFL_QUERY_ENGINE=1`),断言 exit code / stdout / stderr
-  逐字节相同:
+### 3.4 交付的两条(S4C 更新)
+
+- **S4C:引擎是默认路径,全 golden 舰队逐字节不变。** 翻转默认的同一提交内,完整
+  `ctest --preset test-dev` 全绿(除 3 个与本次无关的既有 env gate 与 4 个 wasmtime
+  skip):`ahflc.emit_ir*` 舰队、`tests/golden/ir` 以及项目 corpus 现在**默认**就走引擎,
+  且无任何 golden 重录 —— 输出被证明与旧直接流水线相同,而不是靠改 golden 变绿。
+- **默认 vs 逃生舱的差分门禁。** ctest `ahfl.query.cli_default_engine_route`
+  (`tests/scripts/query_engine_cli_equiv.py`)对**两个** corpus 逐条跑两次(默认环境 vs
+  `AHFL_QUERY_LEGACY_PIPELINE=1`),断言 exit code / stdout / stderr 逐字节相同:
   - 裸文件 corpus(`tests/golden` + `examples` 中无 package 祖先的 `.ahfl`),命令 `check`;
   - **项目 corpus**(`tests/integration/package_golden/**/ahfl.toml` 中声明 workflow
     target 的 fixture),命令 `check` **与** `emit ir-json`。`emit ir-json` 之所以纳入,
     是因为它把分析输入一路驱动到 IR lowering + printing —— 这是"用户实际看到的产物"层面
     最强的等价陈述。
 
-**非真空性(vacuity)门禁。** 一个"每条输入都静默回退到直接流水线"的等价门禁会
-平凡通过。故 driver 在**进入 `run_analysis` 时**在 stderr 打一行 route 迹
+**非真空性(vacuity)门禁。** 一个"每条输入都静默走直接流水线"的门禁令平凡通过。故
+driver 在**进入 `run_analysis` 时**在 stderr 打一行 route 迹
 (`query-engine-route: engine|direct`,仅 `AHFL_QUERY_ENGINE_TRACE=1` 时;**两个实例都
-打**,含项目路径);门禁断言:凡"到达分析"的运行,引擎运行必须报 `engine`,直接运行必须
-报 `direct`,且 parse 失败(未到达分析)则两侧都无该行。把 route 开关人为关掉后门禁必须
-**失败**——这是该门禁的自证(见 §5)。
+打**,含项目路径);门禁断言:凡"到达分析"的运行,**默认**运行必须报 `engine`,
+**legacy-forced** 运行必须报 `direct`,且 parse 失败(未到达分析)则两侧都无该行。把引擎
+默认路由人为关掉后门禁必须**失败**——这是该门禁的自证(见 §5)。
 
 ## 4. 等价守护:单元 vs 进程两级
 
@@ -233,43 +248,43 @@ P3 的等价证据分两级,互补:
   graph + 借用 stage 结果驱动的 IR JSON),并断言"改**非 entry** 模块的文本"会让整链
   重算一次(project parse compute 1→2、typecheck 1→2)——这是"修改依赖的文本是可观测
   的"这一性质,也是内容盲的 input model 会藏住的失败模式。
-- **进程级 CLI 级**(§3 的 `ahfl.query.cli_engine_equiv`):同一条命令两条路径字节
-  比对,**覆盖 file 与 project 两种到达**。这是"整个 CLI golden 舰队"的等价回归在
-  opt-in 路径上的对应物。
+- **进程级 CLI 级**(§3 的 `ahfl.query.cli_default_engine_route`):同一条命令在默认
+  (引擎)与 legacy-forced(直接)两环境下字节比对,**覆盖 file 与 project 两种到达**。
+  S4C 翻转默认后,它同时是"整个 CLI golden 舰队 == 引擎求值"的差分回归锚点。
 
 增量一致性也被守护:`ahfl.query.incremental_equiv_all`(S5)+
 `frontend_queries_equiv.cpp` 的"增量 == 冷缓存"用例(注释-only 编辑不改 AST →
 下游 stage 走 green 命中不重算;改 AST 的编辑 → 全链各重算一次)。
 
-**引擎路径下的全舰队核验(S4B 实测,非门禁):** `AHFL_QUERY_ENGINE=1 ctest -R
-'ahflc\.'` 的 261 项全绿 —— 即在不改默认路径的前提下,整支 CLI golden 舰队在引擎路由
-下也逐位通过。
+**S4C 全舰队核验(默认路径,非 opt-in):** 翻转默认后完整 `ctest --preset test-dev`
+全绿(仅 3 个既有 env gate 失败:pnpm/VSIX 证据门,与本次无关;4 个 wasmtime skip=77)。
+S4B 阶段"opt-in 下 `ahflc.` 261 项全绿"的核验被 S4C 取代:同一舰队现在**默认**经引擎。
 
 ## 5. 门禁自证(negative control)
 
-`ahfl.query.cli_engine_equiv` 在**关闭路由开关**后必须失败(报
-"reached analysis but did not engage the engine route" 并最终报
-"vacuous gate")。此性质在落地时手工验证过:改 `query_engine_route_requested` 恒假、
-重建 `ahflc`、跑门禁 → 失败;还原 → 通过。S4B 再次验证:恒假后,**file 与 project
-两侧都**报 "fell back to the direct route" 且最终报 "vacuous gate"。这不是可选的美化,
-而是防止门禁随代码演进退化为"两条路径其实是同一路径"。
+`ahfl.query.cli_default_engine_route` 在引擎默认路由被人为关掉后必须失败(默认运行报
+`direct`,gate 报 "default run did not engage the engine route")。此性质在 S4 落地时手工
+验证过:改路由判定恒"不走引擎"、重建 `ahflc`、跑门禁 → 失败;还原 → 通过;S4B 对 file
+与 project 两侧复验。S4C 翻转后自证目标不变但方向反转:逃生舱必须真的把运行送回直接流
+水线(legacy-forced 运行必须报 `direct`),否则差分门禁失去对照侧 —— 脚本对两侧路由名
+各做断言。这不是可选的美化,而是防止门禁随代码演进退化为"两条路径其实是同一路径"。
 
 ## 6. 与后续切片的关系
 
 - **P4(LSP 切 query)**:LSP 的 `hover`/`completion`/`signatureHelp` 可经
   `type_of(module, node_id, source_id)` 读类型——正是 P3 暴露的视图。LSP 有真实的
   单文件/多文件编辑序列,可用同一 QueryEngine。
-- **翻转默认路由(令引擎恒为默认)**:S4B 已清除结构障碍(§3),故剩下的是纯工程步骤:
-  删 `AHFL_QUERY_ENGINE` 开关、让引擎恒为默认、在同一提交内重录/证明全 golden。这是
-  S4B 明确留出的下一步,不是遗漏。
-- **P5 / KR6.12**:删 `src/tooling/incremental/` 时,P3 的 stage 缓存是其能力来源。
+- **~~翻转默认路由(令引擎恒为默认)~~**:S4C 已完成(§3.3、§3.4);唯一遗留是临时
+  逃生舱 `AHFL_QUERY_LEGACY_PIPELINE` 及其直接 tail,删除点见 §3.3(P5 / KR6.12 收口)。
+- **P5 / KR6.12**:删 `src/tooling/incremental/` 时,P3 的 stage 缓存是其能力来源;同一
+  收口阶段删除逃生舱与差分门禁的 legacy 一侧。
 
 ## 7. 被否决的备选
 
 | 备选 | 否决原因 |
 |---|---|
 | ~~CLI 整体切换(两个 `run_analysis` 实例都经引擎)~~ | **原否决,已被 S4B 撤销**:原理由是"`SourceGraph` 不可作 input;伪造为单文件输入会改变语义"。S4B 没有伪造输入,而是引入 `ProjectInputModel` 值语义输入并让 `parse_project` 成为其纯函数,于是两个实例可在**同一开关**下都经引擎且逐位等价(§3.1–3.3)。原判定的**精神**仍成立:不允许"程序化地把 package 路径伪造为单文件输入"。 |
-| 只切 `run_analysis<ast::Program>` 且**无** opt-in 开关 | 即在默认路径上改变行为,golden 必须在同一切片内重录/证明;且单一实例切换会让同一命令随到达路径行为不同(半切分)。opt-in + 穷尽等价 ctest 既拿到"driver 经 QueryEngine 求值"的交付,又让 golden 按构造不变 |
+| 只切 `run_analysis<ast::Program>` 且**无** opt-in 开关 | 即在默认路径上改变行为,golden 必须在同一切片内重录/证明;且单一实例切换会让同一命令随到达路径行为不同(半切分)。opt-in + 穷尽等价 ctest 既拿到"driver 经 QueryEngine 求值"的交付,又让 golden 按构造不变。**S4C 补记**:在 S4B 让两个实例同源之后,"同一切片内证明全 golden"已完成(无重录、0 divergence),故该备选的后半顾虑(半切分)随两实例一起翻转而消失;前半顾虑(golden 证明)正是 S4C 交付物。 |
 | 在 `SourceGraph` 上贴一个比较器(而非引入 model) | 会**深比较 AST**——把一个阶段的输出当作下一阶段的输入身份,且 `Owned<ast::Program>` 让拷贝都不可能;正确做法是把**输入**(文本 + 已解析配置)提成值,不是把**产物**提成值(§3.1) |
 | `type_of` 注册 `(module, node_id)` 独立 family | 需要一套只为读 typecheck memo 已持有表的 key 注册表;纯开销,且不带来"逐表达式重算"能力(不承诺) |
 | resolve 的身份只用诊断 JSON | 不同 AST 可产出相同诊断而携带不同符号 → 下游类型检查复用过期 typed program(§2.1) |
