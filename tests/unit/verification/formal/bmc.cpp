@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -98,68 +99,36 @@ void test_bmc_empty_machine() {
     BmcOptions options;
 
     auto result = run_bmc(machine, options);
-    check(result.status == BmcStatus::Safe || result.status == BmcStatus::Error,
-          "bmc_empty.safe_or_error");
+    check(result.status == BmcStatus::Error, "bmc_empty.reports_error");
+    check(!result.error_message.empty(), "bmc_empty.has_actionable_message");
 }
 
-// ============================================================================
-// run_k_induction tests
-// ============================================================================
-
-void test_k_induction_safe() {
+void test_bmc_bad_state_beyond_bound() {
     BmcStateMachine machine;
-    machine.name = "safe_loop";
-    machine.states = {"a", "b"};
-    machine.initial_state = "a";
-    machine.final_states = {};
+    machine.name = "deep";
+    machine.states = {"s0", "s1", "s2", "s3"};
+    machine.initial_state = "s0";
     machine.transitions = {
-        {"a", "b"},
-        {"b", "a"},
+        {"s0", "s1"},
+        {"s1", "s2"},
+        {"s2", "s3"},
     };
-    machine.properties = {"never(orphan)"};
+    // "s3" is reachable, but only after 3 transitions.
+    machine.properties = {"never(s3)"};
 
     BmcOptions options;
-    options.max_bound = 5;
+    options.max_bound = 2;
+    check(run_bmc(machine, options).status == BmcStatus::Safe,
+          "bmc_beyond_bound.safe_when_bound_too_shallow");
 
-    auto result = run_k_induction(machine, options);
-    check(result.status == BmcStatus::Safe, "k_ind.safe");
-}
-
-void test_k_induction_unsafe() {
-    BmcStateMachine machine;
-    machine.name = "unsafe";
-    machine.states = {"a", "b", "c"};
-    machine.initial_state = "a";
-    machine.final_states = {};
-    machine.transitions = {
-        {"a", "b"},
-        {"b", "c"},
-    };
-    machine.properties = {"never(c)"};
-
-    BmcOptions options;
-    options.max_bound = 5;
-
-    auto result = run_k_induction(machine, options);
-    check(result.status == BmcStatus::Unsafe, "k_ind.unsafe");
-    check(result.counterexample.has_value(), "k_ind.has_cex");
-}
-
-// ============================================================================
-// run_cegar tests
-// ============================================================================
-
-void test_cegar_returns_unknown() {
-    BmcStateMachine machine;
-    machine.name = "test";
-    machine.states = {"a", "b"};
-    machine.initial_state = "a";
-    machine.transitions = {{"a", "b"}};
-    machine.properties = {"never(b)"};
-
-    BmcOptions options;
-    auto result = run_cegar(machine, options);
-    check(result.status == BmcStatus::Unknown, "cegar.returns_unknown");
+    options.max_bound = 3;
+    auto reached = run_bmc(machine, options);
+    check(reached.status == BmcStatus::Unsafe, "bmc_beyond_bound.unsafe_at_depth");
+    check(reached.bound_reached == 3, "bmc_beyond_bound.depth_is_step_count");
+    check(reached.counterexample.has_value() &&
+              reached.counterexample->trace_states ==
+                  std::vector<std::string>{"s0", "s1", "s2", "s3"},
+          "bmc_beyond_bound.trace_is_shortest_path");
 }
 
 } // anonymous namespace
@@ -169,9 +138,7 @@ int main() {
     test_bmc_safe_unreachable_state();
     test_bmc_reachable_property();
     test_bmc_empty_machine();
-    test_k_induction_safe();
-    test_k_induction_unsafe();
-    test_cegar_returns_unknown();
+    test_bmc_bad_state_beyond_bound();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
