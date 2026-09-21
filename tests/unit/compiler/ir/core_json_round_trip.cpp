@@ -147,14 +147,14 @@ flow for Payer {
 
 [[nodiscard]] std::string print(const ir::core::CoreProgram &program) {
     std::ostringstream out;
-    ahfl::ir::core::print_core_program_json(program, out);
+    ahfl::ir::core::print_core_ir_json(program, out);
     return out.str();
 }
 
 /// Every rejection must carry a typed diagnostic (not just !ok()), so a silent
 /// default can never masquerade as a rejection.
 void require_rejected_with(std::string_view json, std::string_view expected_code) {
-    const auto result = ir::core::parse_core_program_json(json);
+    const auto result = ir::core::parse_core_ir_json(json);
     REQUIRE_FALSE(result.ok());
     REQUIRE_FALSE(result.diagnostics.empty());
     bool found = false;
@@ -316,7 +316,7 @@ TEST_CASE("Core-IR JSON round-trips byte-identically (R1) and is structurally eq
         // R1 — print ∘ parse ∘ print == print, as bytes. The input to the second
         // print is a freshly interned arena (§6.2), so byte equality proves the
         // rebuild preserved canonical arena order.
-        const auto parsed = ir::core::parse_core_program_json(first);
+        const auto parsed = ir::core::parse_core_ir_json(first);
         for (const auto &diagnostic : parsed.diagnostics) {
             INFO("diagnostic: " << diagnostic.code << " — " << diagnostic.message);
         }
@@ -349,7 +349,7 @@ TEST_CASE("the committed Core-IR JSON golden round-trips byte-identically") {
     REQUIRE_FALSE(golden.empty());
 
     // R1 — parse then re-print must reproduce the committed bytes exactly.
-    const auto parsed = ir::core::parse_core_program_json(golden);
+    const auto parsed = ir::core::parse_core_ir_json(golden);
     for (const auto &diagnostic : parsed.diagnostics) {
         INFO("diagnostic: " << diagnostic.code << " — " << diagnostic.message);
     }
@@ -371,7 +371,7 @@ TEST_CASE("Core-IR JSON round-trips the real-sysroot std-nominal corpus") {
         REQUIRE(program.has_value());
 
         const std::string first = print(*program);
-        const auto parsed = ir::core::parse_core_program_json(first);
+        const auto parsed = ir::core::parse_core_ir_json(first);
         REQUIRE(parsed.ok());
         CHECK(print(*parsed.program) == first);
         CHECK(ir::core::core_program_equal(*program, *parsed.program));
@@ -381,7 +381,7 @@ TEST_CASE("Core-IR JSON round-trips the real-sysroot std-nominal corpus") {
 TEST_CASE("a parsed Core program is verifier-clean") {
     const auto program = lower_source("flow_branch", corpus().at("flow_branch"));
     REQUIRE(program.has_value());
-    const auto parsed = ir::core::parse_core_program_json(print(*program));
+    const auto parsed = ir::core::parse_core_ir_json(print(*program));
     REQUIRE(parsed.ok());
     const auto verified = ir::core::verify_core_program(*parsed.program);
     if (!verified.ok()) {
@@ -477,7 +477,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
             const auto line_end = edited.find(']', begin);
             edited.replace(begin, (line_end + 1) - begin, "\"param_types\": [4294967290]");
         }
-        const auto result = ir::core::parse_core_program_json(edited);
+        const auto result = ir::core::parse_core_ir_json(edited);
         REQUIRE_FALSE(result.ok());
         REQUIRE_FALSE(result.diagnostics.empty());
     }
@@ -568,7 +568,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         // is not a canonical hash-cons (a child id must precede its parent, and
         // slot 0 references a nonexistent earlier entry) — rejected either as a
         // forward reference or by the final verifier.
-        const auto result = ir::core::parse_core_program_json(swapped);
+        const auto result = ir::core::parse_core_ir_json(swapped);
         REQUIRE_FALSE(result.ok());
 
         // A genuinely non-canonical doc: the same node twice. The second slot
@@ -688,7 +688,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         // Insert as slot 0, shifting existing exprs; this makes slot 0's operand
         // reference slot 0 (itself) only if the injected node lands first.
         edited.insert(begin + from.size(), inject);
-        const auto result = ir::core::parse_core_program_json(edited);
+        const auto result = ir::core::parse_core_ir_json(edited);
         // Either the reader's own shape checks or the final verifier rejects it;
         // a self-referential arena is never silently accepted.
         REQUIRE_FALSE(result.ok());
@@ -723,7 +723,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
         const auto begin = edited.find(from);
         REQUIRE(begin != std::string::npos);
         edited.replace(begin, from.size(), "\"initial\": 77,");
-        const auto result = ir::core::parse_core_program_json(edited);
+        const auto result = ir::core::parse_core_ir_json(edited);
         REQUIRE_FALSE(result.ok());
         REQUIRE_FALSE(result.diagnostics.empty());
         bool verify_code = false;
@@ -750,6 +750,6 @@ TEST_CASE("the writer fails closed on a kInvalid required id") {
     program->capabilities[0].return_type = ir::core::CoreValueTypeId{};
     std::ostringstream out;
     std::string error;
-    ir::core::print_core_program_json(*program, out, &error);
+    ir::core::print_core_ir_json(*program, out, &error);
     CHECK_FALSE(error.empty());
 }

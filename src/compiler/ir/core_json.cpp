@@ -4414,12 +4414,12 @@ bool CoreJsonReader::read_match_arm(const JsonValue &obj, CoreMatchArm &out, std
 // Public entry points.
 // ===========================================================================
 
-void print_core_program_json(const CoreProgram &program, std::ostream &out, std::string *error) {
+void print_core_ir_json(const CoreProgram &program, std::ostream &out, std::string *error) {
     CoreJsonPrinter printer(out, error);
     printer.print(program);
 }
 
-CoreJsonParseResult parse_core_program_json(std::string_view json) {
+CoreJsonParseResult parse_core_ir_json(std::string_view json) {
     CoreJsonParseResult result;
     auto parsed = ahfl::json::parse_json(json);
     if (!parsed.has_value() || *parsed == nullptr) {

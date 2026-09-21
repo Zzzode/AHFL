@@ -59,8 +59,8 @@ namespace ahfl::ir::core {
 /// `CoreTypeDecl::field_nominal_types` slot, encoded as JSON `null` (§4).
 /// Callers that must not publish a malformed artifact pass an `error` pointer
 /// and check it.
-void print_core_program_json(const CoreProgram &program, std::ostream &out,
-                             std::string *error = nullptr);
+void print_core_ir_json(const CoreProgram &program, std::ostream &out,
+                        std::string *error = nullptr);
 
 /// A typed parse failure (RFC 0026 P9 §7): a stable code, a human-readable
 /// actionable message, and the document's source range where it supplies one.
@@ -87,7 +87,7 @@ struct CoreJsonParseResult {
     [[nodiscard]] bool ok() const noexcept { return program.has_value(); }
 };
 
-/// Parse a Core-IR JSON document (as produced by `print_core_program_json`) into
+/// Parse a Core-IR JSON document (as produced by `print_core_ir_json`) into
 /// a `CoreProgram`. A hard admission boundary (§9): a document is accepted only
 /// if it passes the envelope checks, has no unknown `kind` and no missing /
 /// extra per-kind field, rebuilds the program-global value-type arena to the
@@ -97,7 +97,7 @@ struct CoreJsonParseResult {
 /// The reader never trusts a serialized `CoreValueTypeId`: it re-interns the
 /// arena and rewrites every reference through the remap, so a hand-edited or
 /// reordered document cannot point at the wrong slot.
-[[nodiscard]] CoreJsonParseResult parse_core_program_json(std::string_view json);
+[[nodiscard]] CoreJsonParseResult parse_core_ir_json(std::string_view json);
 
 /// Canonical program-level structural equality (RFC 0026 P9 §7 R2). `CoreProgram`
 /// has no `operator==` of its own; this is the ONE comparison the R2 round-trip
