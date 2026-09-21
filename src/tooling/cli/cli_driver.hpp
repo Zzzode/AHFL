@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
+#include "ahfl/compiler/query/frontend_queries.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "tooling/cli/command_catalog.hpp"
 #include "tooling/cli/diagnostic_consumer.hpp"
@@ -80,10 +81,20 @@ class CliDriver final {
     run_source_sysroot_check(const ahfl::package_graph::PackageGraph &graph,
                              const ahfl::package_graph::PackageNode &package);
 
+    // The package/workspace path's single analysis entry point: freeze the
+    // project input into a model, parse it (this direct parse renders the
+    // project-level parse diagnostics and stops on error, byte-identically to
+    // before the model existed), then run the analysis, handing the model to
+    // run_analysis so the opt-in query-engine route can re-parse it through the
+    // engine. One definition instead of three identical copies.
+    [[nodiscard]] ExitCode run_project_analysis(ahfl::ProjectInput input);
+
     [[nodiscard]] ExitCode format_source_file();
 
     template <typename InputT>
-    [[nodiscard]] ExitCode run_analysis(const InputT &input, MaybeSourceFile source_file);
+    [[nodiscard]] ExitCode run_analysis(const InputT &input,
+                                        MaybeSourceFile source_file,
+                                        const ahfl::ProjectInputModel *project_model = nullptr);
 
     CommandLineOptions options_;
     std::string default_manifest_path_;

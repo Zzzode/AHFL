@@ -1,5 +1,7 @@
 #include "ahfl/compiler/query/frontend_queries.hpp"
 
+#include "compiler/syntax/frontend/project.hpp"
+
 #include <sstream>
 #include <utility>
 
@@ -134,9 +136,99 @@ TypecheckSnapshot snapshot_typecheck_result(const TypeCheckResult &result, bool 
     return snapshot;
 }
 
+void dump_project_graph_outline(const SourceGraph &graph, std::ostream &out) {
+    // Deterministic by construction: entries and sources are projected in their
+    // own store order (the parser's deterministic load order), so the outline is
+    // a stable function of the parse result.
+    out << "entries " << graph.entry_sources.size() << '\n';
+    for (const auto entry : graph.entry_sources) {
+        out << "  entry " << entry.value << '\n';
+    }
+
+    out << "sources " << graph.sources.size() << '\n';
+    for (const auto &source : graph.sources) {
+        out << "  source " << source.id.value << ' ' << source.module_name << " prefix "
+            << source.package_prefix << " exported " << (source.module_exported ? 1 : 0) << '\n';
+        out << "    artifacts " << source.artifact_exports.size();
+        for (const auto &artifact : source.artifact_exports) {
+            out << ' ' << artifact;
+        }
+        out << '\n';
+        out << "    dependencies " << source.dependency_prefixes.size();
+        for (const auto &dependency : source.dependency_prefixes) {
+            out << ' ' << dependency;
+        }
+        out << '\n';
+        out << "    intrinsics "
+            << (source.compiler_intrinsics_allow.has_value()
+                    ? std::to_string(source.compiler_intrinsics_allow->size())
+                    : std::string{"-"});
+        if (source.compiler_intrinsics_allow.has_value()) {
+            for (const auto &entry : *source.compiler_intrinsics_allow) {
+                out << ' ' << entry;
+            }
+        }
+        out << '\n';
+        out << "    module_range ";
+        append_range(out, source.module_range);
+        out << '\n';
+        out << "    imports " << source.imports.size() << '\n';
+        for (const auto &import : source.imports) {
+            out << "      import " << import.module_name << ' ' << import.alias << ' ';
+            append_range(out, import.range);
+            out << '\n';
+        }
+        // The AST outline is the span- and content-sensitive half: it is what
+        // makes "same modules, different bodies" a different project parse, and
+        // it is exactly the projection the semantic stages consume.
+        out << "    ast\n";
+        if (source.program != nullptr) {
+            dump_program_outline(*source.program, out);
+        }
+    }
+
+    // module_to_source is a hash map; project it in a canonical (sorted) order so
+    // the outline is stable regardless of bucket layout.
+    std::vector<std::pair<std::string, std::size_t>> module_owners;
+    module_owners.reserve(graph.module_to_source.size());
+    for (const auto &[module_name, source_id] : graph.module_to_source) {
+        module_owners.emplace_back(module_name, source_id.value);
+    }
+    std::sort(module_owners.begin(), module_owners.end());
+    out << "module_owners " << module_owners.size() << '\n';
+    for (const auto &[module_name, source_id] : module_owners) {
+        out << "  owner " << module_name << ' ' << source_id << '\n';
+    }
+
+    out << "import_edges " << graph.import_edges.size() << '\n';
+    for (const auto &edge : graph.import_edges) {
+        out << "  edge " << edge.importer.value << " -> " << edge.imported.value << ' '
+            << edge.request.module_name << ' ' << edge.request.alias << ' ';
+        append_range(out, edge.request.range);
+        out << '\n';
+    }
+}
+
+ProjectParseSnapshot snapshot_project_parse_result(const ProjectParseResult &result) {
+    ProjectParseSnapshot snapshot;
+    snapshot.has_errors = result.has_errors();
+
+    // A failed project parse still yields a graph (partial sources may exist);
+    // projecting it keeps "which units made it in" part of the identity, exactly
+    // as the parse snapshot keeps a null program distinct from a real one.
+    std::ostringstream outline;
+    dump_project_graph_outline(result.graph, outline);
+    snapshot.graph_outline = outline.str();
+
+    snapshot.diagnostics_json =
+        serialize_diagnostic_report_json(DiagnosticReport::from_bag(result.diagnostics));
+    return snapshot;
+}
+
 FrontendQueries::FrontendQueries(FrontendOptions options)
     : frontend_(options), engine_(CyclePolicy::Error),
       source_text_(engine_.register_input<SourceText>()),
+      project_input_(engine_.register_input<ProjectInputModel>()),
       parse_(engine_.register_derived<ParseSnapshot>(
           [this](QueryContext &ctx, DerivedId key) -> ParseSnapshot {
               const SourceText &source = ctx.get(source_text_, InputId{key.index()});
@@ -245,11 +337,112 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
               record.ran = true;
               ++record.computes;
               return snapshot_typecheck_result(record.result, /*ran=*/true);
+          })),
+      project_parse_(engine_.register_derived<ProjectParseSnapshot>(
+          [this](QueryContext &ctx, DerivedId key) -> ProjectParseSnapshot {
+              // The whole project parse is a pure function of the model (the
+              // resolved config plus the frozen text of every reachable source).
+              // `parse_project` over the model probes no filesystem at all, so the
+              // filesystem-magic half of the old parse_project (prelude injection,
+              // module-root discovery, import-edge resolution) is now deterministic
+              // and lives behind this one input.
+              const ProjectInputModel &model = ctx.get(project_input_, InputId{key.index()});
+              // Qualified: the member `FrontendQueries::parse_project(ProjectId)` would
+              // otherwise hide the free function of the same name.
+              ProjectParseResult result = ahfl::parse_project(frontend_, model);
+              ProjectParseSnapshot snapshot = snapshot_project_parse_result(result);
+
+              const std::size_t slot = key.index();
+              if (project_slots_.size() <= slot) {
+                  project_slots_.resize(slot + 1);
+              }
+              // Replacing the whole graph drops the previous units' ASTs at exactly
+              // the point the memo is replaced — graph and snapshot never disagree
+              // about which model they came from.
+              project_slots_[slot].graph = std::move(result.graph);
+              ++project_slots_[slot].computes;
+              return snapshot;
+          })),
+      project_resolve_(engine_.register_derived<ResolveSnapshot>(
+          [this](QueryContext &ctx, DerivedId key) -> ResolveSnapshot {
+              // Bring the project parse slot up to date; the resolver reads the
+              // graph's units and import edges.
+              static_cast<void>(ctx.read(project_parse_, key));
+
+              const std::size_t slot = key.index();
+              if (project_resolve_slots_.size() <= slot) {
+                  project_resolve_slots_.resize(slot + 1);
+              }
+              auto &record = project_resolve_slots_[slot];
+
+              const SourceGraph *graph = this->project_graph(ProjectId{key.index()});
+              if (graph == nullptr) {
+                  // No graph at the current revision (the slot is dirty) or the
+                  // parse failed outright: mirror the CLI, which never resolves a
+                  // failed parse.
+                  record.result = ResolveResult{};
+                  record.ran = false;
+                  ++record.computes;
+                  return snapshot_resolve_result(record.result, /*ran=*/false);
+              }
+
+              const Resolver resolver;
+              record.result = resolver.resolve(*graph);
+              record.ran = true;
+              ++record.computes;
+              return snapshot_resolve_result(record.result, /*ran=*/true);
+          })),
+      project_typecheck_(engine_.register_derived<TypecheckSnapshot>(
+          [this](QueryContext &ctx, DerivedId key) -> TypecheckSnapshot {
+              // Both the resolve result AND the graph are consumed by the type
+              // checker, and the graph outline is the span- and content-sensitive
+              // edge; take an explicit dependency on the project parse memo so an
+              // AST-only edit cannot leave this slot green-proven.
+              static_cast<void>(ctx.read(project_parse_, key));
+              const ResolveSnapshot resolve_snapshot = ctx.read(project_resolve_, key);
+
+              const std::size_t slot = key.index();
+              if (project_typecheck_slots_.size() <= slot) {
+                  project_typecheck_slots_.resize(slot + 1);
+              }
+              auto &record = project_typecheck_slots_[slot];
+
+              // Mirror the CLI pipeline: a project parse error skips resolve, and a
+              // resolve error skips typecheck.
+              if (!resolve_snapshot.ran || resolve_snapshot.has_errors) {
+                  record.result = TypeCheckResult{};
+                  record.ran = false;
+                  ++record.computes;
+                  return snapshot_typecheck_result(record.result, /*ran=*/false);
+              }
+
+              const ResolveResult *resolve = this->project_resolve_result(ProjectId{key.index()});
+              const SourceGraph *graph = this->project_graph(ProjectId{key.index()});
+              if (resolve == nullptr || graph == nullptr) {
+                  record.result = TypeCheckResult{};
+                  record.ran = false;
+                  ++record.computes;
+                  return snapshot_typecheck_result(record.result, /*ran=*/false);
+              }
+
+              const TypeChecker type_checker;
+              record.result = type_checker.check(*graph, *resolve);
+              record.ran = true;
+              ++record.computes;
+              return snapshot_typecheck_result(record.result, /*ran=*/true);
           })) {}
 
 void FrontendQueries::set_source_text(FileId file, std::string display_name, std::string text) {
     engine_.set_input(
         source_text_, InputId{file.index()}, SourceText{std::move(display_name), std::move(text)});
+}
+
+void FrontendQueries::set_project_input(ProjectId project, ProjectInputModel model) {
+    engine_.set_input(project_input_, InputId{project.index()}, std::move(model));
+}
+
+void FrontendQueries::set_project_input(ProjectId project, const ProjectInput &input) {
+    set_project_input(project, resolve_project_input(input));
 }
 
 std::expected<ParseSnapshot, CycleError> FrontendQueries::parse(FileId file) {
@@ -262,6 +455,21 @@ std::expected<ResolveSnapshot, CycleError> FrontendQueries::resolve(ModuleId mod
 
 std::expected<TypecheckSnapshot, CycleError> FrontendQueries::typecheck(ModuleId module) {
     return engine_.eval(typecheck_, DerivedId{module.index()});
+}
+
+std::expected<ProjectParseSnapshot, CycleError>
+FrontendQueries::parse_project(ProjectId project) {
+    return engine_.eval(project_parse_, DerivedId{project.index()});
+}
+
+std::expected<ResolveSnapshot, CycleError>
+FrontendQueries::project_resolve(ProjectId project) {
+    return engine_.eval(project_resolve_, DerivedId{project.index()});
+}
+
+std::expected<TypecheckSnapshot, CycleError>
+FrontendQueries::project_typecheck(ProjectId project) {
+    return engine_.eval(project_typecheck_, DerivedId{project.index()});
 }
 
 std::expected<TypeOfResult, CycleError>
@@ -285,6 +493,47 @@ FrontendQueries::type_of(ModuleId module, std::uint64_t node_id, std::optional<S
         result.found = true;
     }
     return result;
+}
+
+const SourceGraph *FrontendQueries::project_graph(ProjectId project) const {
+    const std::size_t slot = project.index();
+    if (project_slots_.size() <= slot) {
+        return nullptr; // never computed
+    }
+    // The same Clean/Verified revision contract as program(): a model edit marks
+    // the slot Dirty eagerly, so a superseded model's graph is never handed out.
+    const SlotInfo info = engine_.inspect_slot(project_parse_.family(), slot);
+    if (!info.has_value ||
+        (info.state != SlotState::Clean && info.state != SlotState::Verified)) {
+        return nullptr;
+    }
+    return &project_slots_[slot].graph;
+}
+
+const ResolveResult *FrontendQueries::project_resolve_result(ProjectId project) const {
+    const std::size_t slot = project.index();
+    if (project_resolve_slots_.size() <= slot) {
+        return nullptr;
+    }
+    const SlotInfo info = engine_.inspect_slot(project_resolve_.family(), slot);
+    if (!info.has_value || (info.state != SlotState::Clean && info.state != SlotState::Verified) ||
+        !project_resolve_slots_[slot].ran) {
+        return nullptr;
+    }
+    return &project_resolve_slots_[slot].result;
+}
+
+const TypeCheckResult *FrontendQueries::project_typecheck_result(ProjectId project) const {
+    const std::size_t slot = project.index();
+    if (project_typecheck_slots_.size() <= slot) {
+        return nullptr;
+    }
+    const SlotInfo info = engine_.inspect_slot(project_typecheck_.family(), slot);
+    if (!info.has_value || (info.state != SlotState::Clean && info.state != SlotState::Verified) ||
+        !project_typecheck_slots_[slot].ran) {
+        return nullptr;
+    }
+    return &project_typecheck_slots_[slot].result;
 }
 
 const ast::Program *FrontendQueries::program(FileId file) const {
@@ -360,6 +609,30 @@ std::size_t FrontendQueries::typecheck_computes(ModuleId module) const {
         return 0;
     }
     return typecheck_slots_[slot].computes;
+}
+
+std::size_t FrontendQueries::project_parse_computes(ProjectId project) const {
+    const std::size_t slot = project.index();
+    if (project_slots_.size() <= slot) {
+        return 0;
+    }
+    return project_slots_[slot].computes;
+}
+
+std::size_t FrontendQueries::project_resolve_computes(ProjectId project) const {
+    const std::size_t slot = project.index();
+    if (project_resolve_slots_.size() <= slot) {
+        return 0;
+    }
+    return project_resolve_slots_[slot].computes;
+}
+
+std::size_t FrontendQueries::project_typecheck_computes(ProjectId project) const {
+    const std::size_t slot = project.index();
+    if (project_typecheck_slots_.size() <= slot) {
+        return 0;
+    }
+    return project_typecheck_slots_[slot].computes;
 }
 
 Revision FrontendQueries::revision() const noexcept {

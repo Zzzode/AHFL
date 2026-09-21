@@ -13,6 +13,17 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
+// The project input model and parse result live in the compiler's internal
+// `src/` tree (they own an AST-bearing SourceGraph and a ProjectInput). Only
+// *references* to them cross this header's boundary, so forward declarations
+// keep the public include layer free of a src-relative include (which would not
+// survive installation). The .cpp includes the real header.
+namespace ahfl {
+struct ProjectInput;
+struct ProjectInputModel;
+struct ProjectParseResult;
+} // namespace ahfl
+
 // RFC 0027 P2/P3 (KR6.11): the frontend as a query graph over the QueryEngine.
 //
 // P2 moved `parse(file)` onto the graph — the safest stage (file-scoped, const,
@@ -52,6 +63,12 @@ using FileId = QueryKey<FileTag>;
 // module index is expected.
 struct ModuleTag {};
 using ModuleId = QueryKey<ModuleTag>;
+
+// Phantom tag for the project (multi-file `SourceGraph`) granularity. A project
+// is one analysis unit whose input is a whole ProjectInputModel, so its slots
+// are indexed by ProjectId and never confused with the file-scoped ones.
+struct ProjectTag {};
+using ProjectId = QueryKey<ProjectTag>;
 
 // Atomic editor/driver fact: the text of one file plus its display name.
 // Equality is what makes an equal-text write a no-op (no revision bump).
@@ -179,21 +196,68 @@ struct TypeOfResult {
                                          const TypeOfResult &) noexcept = default;
 };
 
+// Value identity of a project parse: the two byte-comparable projections of a
+// `ProjectParseResult` — the *graph* outline (per-source AST structure plus the
+// module/entry/import-edge facts the downstream stages read) and the canonical
+// diagnostic JSON — plus the error flag. This is deliberately NOT a comparison
+// of the parsed `SourceGraph` itself: a `SourceUnit` owns an `Owned<ast::Program>`
+// and is neither copyable nor comparable, so the graph cannot be an engine value.
+// The outline is the projection that makes "the same project parse" a value.
+struct ProjectParseSnapshot {
+    std::string graph_outline;
+    std::string diagnostics_json;
+    bool has_errors = false;
+
+    [[nodiscard]] friend bool operator==(const ProjectParseSnapshot &,
+                                         const ProjectParseSnapshot &) noexcept = default;
+};
+
+// Canonical snapshot of a ProjectParseResult: the single *production* definition
+// of project-parse equivalence. The query body routes through it (and only it);
+// the equivalence guard re-derives the same projections independently so a
+// regression inside this definition is caught rather than reproduced — do not
+// "de-duplicate" the guard by routing it through here.
+[[nodiscard]] ProjectParseSnapshot snapshot_project_parse_result(const ProjectParseResult &result);
+
+// Canonical outline of a parsed `SourceGraph`: the graph-level facts the downstream
+// stages consume — entry sources, each source's id / module / package prefix /
+// exported + artifact-export + dependency lists / compiler-intrinsics allow and
+// its AST (via the existing `dump_program_ast_outline` projection, which is
+// span- and content-sensitive), plus every import edge. Two project parses are
+// the same parse exactly when this outline and the diagnostic JSON match.
+//
+// The graph's `path` members are deliberately NOT included: a path is a display
+// artifact, and the parse of a source is a function of its text and module
+// identity, not of where it sits on disk — omitting it keeps two logically
+// identical parses (e.g. a fixture copied to a temp dir) equal. `SourceUnit::id`
+// IS included, because it is the index every reference in the graph resolves
+// through and the downstream stages key symbols by it.
+void dump_project_graph_outline(const SourceGraph &graph, std::ostream &out);
+
 // The frontend query graph. Owns the QueryEngine, the frontend, and the stage
 // results (parse results including each Owned<ast::Program>, plus the resolve
 // and typecheck results). Single-threaded, mirroring QueryEngine's contract:
 // register/set before evaluating, and do not call set_source_text from inside a
 // compute function.
 //
-// Analysis-unit shape. `parse` is file-level and `resolve` / `typecheck` are
-// module-level, matching the RFC's graded granularity. This graph models the
-// single-analysis-unit shape the CLI's file path uses (`run_analysis<ast::Program>`):
-// one unit, one file, so ModuleId slot i names the same unit as FileId slot i.
-// The CLI's package path resolves a whole `SourceGraph` whose units are produced
-// by `parse_project` (prelude injection, module-root discovery, overlays, and
-// filesystem import-edge resolution) — that input shape is a different graph
-// input and is deliberately not synthesized here; see
-// docs/design/query-frontend-p3-migration.zh.md (§3).
+// Two analysis-unit shapes live on this graph:
+//
+//  * File-scoped: `parse(FileId)` -> `resolve(ModuleId)` -> `typecheck(ModuleId)`,
+//    the CLI's file path (`run_analysis<ast::Program>`). One unit, one file, so
+//    ModuleId slot i names the same unit as FileId slot i — the two tags are
+//    distinct precisely so the RFC's graded granularities (file-level parse,
+//    module-level resolve) cannot be confused at a call site.
+//
+//  * Project-scoped: `parse_project(ProjectId)`, the CLI's package/workspace path
+//    (`run_analysis<SourceGraph>`). Its input is a whole `ProjectInputModel` — the
+//    resolved project configuration plus the frozen text of every source the
+//    parser can reach — so `parse_project` is a *pure function of that input*:
+//    prelude injection, module-root discovery and import-edge resolution happen
+//    inside the compute body over the model, not by probing the filesystem. The
+//    input is `std::equality_comparable` (see ProjectInputModel), which is what
+//    lets the project parse be memoized. The owned `SourceGraph` (and its ASTs)
+//    cannot live in the engine's type-erased memo, so it lives in a deque-backed
+//    store here and is borrowed by the resolve/typecheck project stages.
 class FrontendQueries {
   public:
     explicit FrontendQueries(FrontendOptions options = {});
@@ -206,6 +270,16 @@ class FrontendQueries {
     // Set (or replace) one file's text. Replacing with equal text is a no-op:
     // no revision bump, no invalidation.
     void set_source_text(FileId file, std::string display_name, std::string text);
+
+    // Set (or replace) the project model for a project slot. Equal models are a
+    // no-op, so re-resolving an unchanged project does not invalidate the parse.
+    void set_project_input(ProjectId project, ProjectInputModel model);
+
+    // Freeze a live `ProjectInput` (reading the filesystem) and set it as the
+    // project model. The one impure boundary of the project route: call it once
+    // per project, then evaluate; a re-set with an equal resolved model is a
+    // no-op, so a caller that re-resolves an unchanged tree pays no reparse.
+    void set_project_input(ProjectId project, const ProjectInput &input);
 
     // Evaluate parse(file): recomputes only when the file's text changed (or a
     // transitive input changed), otherwise served from the memo.
@@ -271,6 +345,39 @@ class FrontendQueries {
     [[nodiscard]] std::size_t resolve_computes(ModuleId module) const;
     [[nodiscard]] std::size_t typecheck_computes(ModuleId module) const;
 
+    // Evaluate parse_project(project): parses the frozen model (prelude
+    // injection, module-root discovery and import-edge resolution included) and
+    // caches the owned `SourceGraph`. Recomputes only when the model changed;
+    // otherwise served from the memo.
+    [[nodiscard]] std::expected<ProjectParseSnapshot, CycleError> parse_project(ProjectId project);
+
+    // Borrow the parsed `SourceGraph` of a project whose parse slot is currently
+    // valid (Clean/Verified) at the current engine revision. Null when the slot
+    // is unset/dirty/visiting or was never computed — a model edit marks the slot
+    // Dirty eagerly, so a stale graph is never handed out. The pointer is owned
+    // by this object (deque-backed store) and is meaningful only for the revision
+    // it was checked at.
+    [[nodiscard]] const SourceGraph *project_graph(ProjectId project) const;
+
+    // Evaluate resolve_project(project) / typecheck_project(project): run the
+    // graph-wide resolver / type checker over the memoized project graph, caching
+    // the results. Short-circuit exactly as the CLI pipeline does — a project
+    // parse error means resolve never runs, a resolve error means typecheck never
+    // runs — recorded in the snapshot's `ran` flag.
+    [[nodiscard]] std::expected<ResolveSnapshot, CycleError> project_resolve(ProjectId project);
+    [[nodiscard]] std::expected<TypecheckSnapshot, CycleError> project_typecheck(ProjectId project);
+
+    // Borrow the cached project resolve / typecheck result of a slot that is
+    // currently valid (Clean/Verified) and actually ran. Same contract as
+    // resolve_result / typecheck_result.
+    [[nodiscard]] const ResolveResult *project_resolve_result(ProjectId project) const;
+    [[nodiscard]] const TypeCheckResult *project_typecheck_result(ProjectId project) const;
+
+    // How many times parse_project(project) actually ran its compute function.
+    [[nodiscard]] std::size_t project_parse_computes(ProjectId project) const;
+    [[nodiscard]] std::size_t project_resolve_computes(ProjectId project) const;
+    [[nodiscard]] std::size_t project_typecheck_computes(ProjectId project) const;
+
     [[nodiscard]] Revision revision() const noexcept;
     [[nodiscard]] QueryStats stats() const;
 
@@ -297,19 +404,47 @@ class FrontendQueries {
         std::size_t computes = 0;
     };
 
+    // Per-ProjectId slot record: the parsed graph (owning every unit's AST) plus
+    // the compute counter, the same one-store-one-index shape as SlotRecord.
+    struct ProjectSlotRecord {
+        SourceGraph graph;
+        std::size_t computes = 0;
+    };
+
+    // Per-ProjectId semantic-stage records, mirroring ResolveSlotRecord /
+    // TypecheckSlotRecord (a short-circuited stage stores a default-constructed
+    // result and `ran` distinguishes "skipped" from "ran clean").
+    struct ProjectResolveSlotRecord {
+        ResolveResult result;
+        bool ran = false;
+        std::size_t computes = 0;
+    };
+    struct ProjectTypecheckSlotRecord {
+        TypeCheckResult result;
+        bool ran = false;
+        std::size_t computes = 0;
+    };
+
     Frontend frontend_;
     QueryEngine engine_;
     InputQueryT<SourceText> source_text_;
+    InputQueryT<ProjectInputModel> project_input_;
     DerivedQueryT<ParseSnapshot> parse_;
     DerivedQueryT<ResolveSnapshot> resolve_;
     DerivedQueryT<TypecheckSnapshot> typecheck_;
-    // Slot records indexed by FileId / ModuleId slot. Deques so that adding a
-    // unit never moves an existing record (and thus never invalidates a borrowed
-    // ast::Program / ResolveResult / TypeCheckResult), mirroring QueryEngine's
-    // own slot storage choice.
+    DerivedQueryT<ProjectParseSnapshot> project_parse_;
+    DerivedQueryT<ResolveSnapshot> project_resolve_;
+    DerivedQueryT<TypecheckSnapshot> project_typecheck_;
+    // Slot records indexed by FileId / ModuleId / ProjectId slot. Deques so that
+    // adding a unit never moves an existing record (and thus never invalidates a
+    // borrowed ast::Program / ResolveResult / TypeCheckResult / SourceGraph),
+    // mirroring QueryEngine's own slot storage choice.
     std::deque<SlotRecord> slots_;
     std::deque<ResolveSlotRecord> resolve_slots_;
     std::deque<TypecheckSlotRecord> typecheck_slots_;
+    std::deque<ProjectSlotRecord> project_slots_;
+    std::deque<ProjectResolveSlotRecord> project_resolve_slots_;
+    std::deque<ProjectTypecheckSlotRecord> project_typecheck_slots_;
 };
 
 } // namespace ahfl::query

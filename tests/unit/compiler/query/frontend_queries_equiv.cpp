@@ -39,6 +39,12 @@
 #include "ahfl/base/support/diagnostic_serialization.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
+#include "common/project_input_support.hpp"
+#include "compiler/syntax/frontend/project.hpp"
+
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
 
 using ahfl::query::FileId;
 using ahfl::query::FrontendQueries;
@@ -638,4 +644,214 @@ TEST_CASE("resolve/typecheck queries are byte-identical to the pipeline over the
     MESSAGE("stage equivalence: "
             << checked << " files, " << typechecked << " reached typecheck, " << ir_compared
             << " compared IR JSON");
+}
+
+// ---------------------------------------------------------------------------
+// Project (multi-file + std) equivalence. The file-scoped cases above prove the
+// single-analysis-unit shape; these prove the same migration criterion for the
+// package/workspace shape whose input is a whole ProjectInputModel. They are the
+// unit-level counterpart of the CLI gate's project half.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using ahfl::query::ProjectId;
+
+// The direct pipeline's project projection, re-derived independently (mirrors
+// project_directly): resolve / typecheck diagnostics, the typed-program JSON, and
+// the IR JSON, over the *directly parsed* graph. The short-circuit structure is
+// reproduced so a divergence in *when* a stage is skipped is caught too.
+[[nodiscard]] DirectProjection project_graph_directly(const ahfl::SourceGraph &graph) {
+    DirectProjection projection;
+
+    const ahfl::Resolver resolver;
+    const ahfl::ResolveResult resolved = resolver.resolve(graph);
+    projection.resolve.has_errors = resolved.has_errors();
+    projection.resolve.ran = true;
+    {
+        std::ostringstream outline;
+        ahfl::query::dump_resolve_outline(resolved, outline);
+        projection.resolve.symbols_outline = outline.str();
+    }
+    projection.resolve.diagnostics_json =
+        ahfl::serialize_diagnostic_report_json(ahfl::DiagnosticReport::from_bag(resolved.diagnostics));
+
+    if (resolved.has_errors()) {
+        projection.typecheck = TypecheckSnapshot{};
+        return projection;
+    }
+
+    const ahfl::TypeChecker checker;
+    const ahfl::TypeCheckResult checked = checker.check(graph, resolved);
+    projection.typecheck.has_errors = checked.has_errors();
+    projection.typecheck.ran = true;
+    projection.typecheck.typed_program_json = ahfl::serialize_typed_program_json(checked.typed_program);
+    projection.typecheck.diagnostics_json = ahfl::serialize_diagnostic_report_json(
+        ahfl::DiagnosticReport::from_bag(checked.diagnostics));
+
+    if (checked.has_errors()) {
+        return projection;
+    }
+
+    std::ostringstream ir;
+    ahfl::print_program_ir_json(ahfl::lower_program_ir(graph, resolved, checked), ir);
+    projection.ir_json = ir.str();
+    return projection;
+}
+
+} // namespace
+
+TEST_CASE("project parse/resolve/typecheck equal the direct pipeline over a multi-module package") {
+    const auto root = repo_root();
+    const auto workspace_manifest = root / "tests/integration/check_ok/ahfl.workspace.toml";
+    const auto entry = root / "tests/integration/check_ok/app/main.ahfl";
+    REQUIRE(std::filesystem::exists(workspace_manifest));
+    REQUIRE(std::filesystem::exists(entry));
+
+    // The CLI's workspace path builds a package graph from the workspace and
+    // takes the app package's target entry file.
+    auto graph_result = ahfl::package_graph::build_package_graph_from_workspace(
+        ahfl::package_graph::WorkspaceBuildInput{
+            .workspace_manifest_path = workspace_manifest,
+            .package_name = "check-ok-app",
+            .sysroot_manifest_path = root / "std/ahfl.toml",
+        });
+    REQUIRE_FALSE(graph_result.has_errors());
+    REQUIRE(graph_result.graph.has_value());
+    auto input = ahfl::test_support::project_input_from_package_graph(*graph_result.graph, entry);
+    REQUIRE_FALSE(input.entry_files.empty());
+
+    // Direct route: freeze + parse with the free function.
+    const ahfl::Frontend frontend;
+    const auto model = ahfl::resolve_project_input(input);
+    auto direct_result = ahfl::parse_project(frontend, model);
+
+    // Query route: the same model through the engine.
+    FrontendQueries queries;
+    const ProjectId project{0};
+    queries.set_project_input(project, model);
+
+    const auto queried_parse = queries.parse_project(project);
+    REQUIRE(queried_parse.has_value());
+    const auto queried_resolve = queries.project_resolve(project);
+    REQUIRE(queried_resolve.has_value());
+    const auto queried_typecheck = queries.project_typecheck(project);
+    REQUIRE(queried_typecheck.has_value());
+
+    // The parse snapshot is the production identity; the guard re-derives the
+    // same projections independently so a regression inside the definition is
+    // caught rather than reproduced.
+    CHECK(*queried_parse == ahfl::query::snapshot_project_parse_result(direct_result));
+
+    const auto direct = project_graph_directly(direct_result.graph);
+    CHECK(*queried_resolve == direct.resolve);
+    CHECK(*queried_typecheck == direct.typecheck);
+
+    // The borrowed graph is the memoized one, and it carries the multi-file shape:
+    // more than one source unit, with the app module among them.
+    const ahfl::SourceGraph *borrowed = queries.project_graph(project);
+    REQUIRE(borrowed != nullptr);
+    CHECK(borrowed->sources.size() > 1);
+
+    // The ASTs and stage results the engine holds lower to the same IR the direct
+    // pipeline produces — the artifact a user actually sees.
+    const ahfl::ResolveResult *resolved = queries.project_resolve_result(project);
+    const ahfl::TypeCheckResult *typed = queries.project_typecheck_result(project);
+    REQUIRE(resolved != nullptr);
+    REQUIRE(typed != nullptr);
+    if (!direct.ir_json.empty()) {
+        std::ostringstream ir;
+        ahfl::print_program_ir_json(ahfl::lower_program_ir(*borrowed, *resolved, *typed), ir);
+        CHECK(ir.str() == direct.ir_json);
+    }
+}
+
+TEST_CASE("project stages recompute exactly once per model change and memoize otherwise") {
+    // A project built entirely in memory (a temp root plus `source_cache`), so the
+    // test exercises the model's value semantics — including that an equal-model
+    // re-set is a no-op — without depending on a package graph.
+    const auto root = std::filesystem::temp_directory_path() / "ahfl_project_query_memo";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "app", ec);
+    REQUIRE_FALSE(ec);
+
+    const auto write_source = [&](const std::filesystem::path &path, std::string_view text) {
+        std::filesystem::create_directories(path.parent_path(), ec);
+        std::ofstream out(path, std::ios::binary);
+        out << text;
+    };
+    // A real two-module project: `app::main` imports `app::lib::types`, and both
+    // live under the single search root exactly as their module paths demand, so
+    // the import edge is actually resolved (and the graph really has two units).
+    const std::filesystem::path main_path = root / "app" / "main.ahfl";
+    const std::filesystem::path lib_path = root / "app" / "lib" / "types.ahfl";
+    constexpr std::string_view kMain = "module app::main;\nimport app::lib::types;\n";
+    constexpr std::string_view kLib = "module app::lib::types;\nstruct Ctx { count: Int = 0; }\n";
+    write_source(main_path, kMain);
+    write_source(lib_path, kLib);
+
+    const ahfl::ProjectInput input{
+        .entry_files = {main_path},
+        .search_roots = {root},
+        .inject_prelude = false,
+    };
+
+    FrontendQueries queries;
+    const ProjectId project{0};
+    const auto model = ahfl::resolve_project_input(input);
+    queries.set_project_input(project, model);
+
+    REQUIRE(queries.parse_project(project).has_value());
+    REQUIRE(queries.project_resolve(project).has_value());
+    REQUIRE(queries.project_typecheck(project).has_value());
+    CHECK(queries.project_parse_computes(project) == 1);
+    CHECK(queries.project_resolve_computes(project) == 1);
+    CHECK(queries.project_typecheck_computes(project) == 1);
+
+    // The import really resolved: the graph carries both units (otherwise the
+    // "edit a non-entry module" case below would be vacuous).
+    const ahfl::SourceGraph *graph = queries.project_graph(project);
+    REQUIRE(graph != nullptr);
+    REQUIRE(graph->sources.size() == 2);
+    REQUIRE(graph->import_edges.size() == 1);
+    REQUIRE(graph->import_edges.front().imported.value == 1); // the imported unit
+
+    // Repeated evaluation is served from the memo at every stage.
+    REQUIRE(queries.parse_project(project).has_value());
+    REQUIRE(queries.project_typecheck(project).has_value());
+    CHECK(queries.project_parse_computes(project) == 1);
+    CHECK(queries.project_typecheck_computes(project) == 1);
+
+    // An equal model re-set (the same tree re-resolved) is a no-op: the model's
+    // equality is what makes that true, and it is the whole reason a project can
+    // be an engine input.
+    queries.set_project_input(project, ahfl::resolve_project_input(input));
+    REQUIRE(queries.parse_project(project).has_value());
+    REQUIRE(queries.project_typecheck(project).has_value());
+    CHECK(queries.project_parse_computes(project) == 1);
+    CHECK(queries.project_typecheck_computes(project) == 1);
+
+    // A real text change in a NON-entry module invalidates the whole chain: the
+    // model differs, so the project parse recomputes, its graph outline changes,
+    // and every downstream stage follows. This pins that "changing a dependency's
+    // text is observable" — the failure mode a content-blind input model would
+    // hide, and the reason the model carries every reachable source's text.
+    const std::string edited_lib =
+        "module app::lib::types;\nstruct Ctx { count: Int = 0; }\nstruct Extra { z: Int; }\n";
+    write_source(lib_path, edited_lib);
+    queries.set_project_input(project, ahfl::resolve_project_input(input));
+    const auto edited_parse = queries.parse_project(project);
+    REQUIRE(edited_parse.has_value());
+    REQUIRE(queries.project_resolve(project).has_value());
+    REQUIRE(queries.project_typecheck(project).has_value());
+    CHECK(queries.project_parse_computes(project) == 2);
+    CHECK(queries.project_typecheck_computes(project) == 2);
+
+    // The edited model's graph and the direct pipeline agree on the new ARRIVAL.
+    const ahfl::Frontend frontend;
+    auto direct_result = ahfl::parse_project(frontend, ahfl::resolve_project_input(input));
+    CHECK(*edited_parse == ahfl::query::snapshot_project_parse_result(direct_result));
+
+    std::filesystem::remove_all(root, ec);
 }

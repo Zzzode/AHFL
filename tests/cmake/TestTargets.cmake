@@ -713,6 +713,8 @@ ahfl_apply_project_warnings(ahfl_compiler_query_tests)
 # the CLI's golden fleet feeds from. ahfl_compiler_query publicly links
 # ahfl_compiler_semantics (the result types), and ahfl_compiler_ir supplies
 # lower_program_ir / print_program_ir_json for the byte-comparison half.
+# ahfl_compiler_package_graph supplies the workspace→project-input path the
+# project equivalence case drives the CLI's package arrival through.
 add_executable(ahfl_compiler_frontend_queries_tests
     unit/compiler/query/frontend_queries_equiv.cpp
 )
@@ -720,12 +722,17 @@ target_link_libraries(ahfl_compiler_frontend_queries_tests
     PRIVATE
         ahfl_compiler_query
         ahfl_compiler_ir
+        ahfl_compiler_package_graph
         ahfl_base_support
         doctest
 )
 target_compile_definitions(ahfl_compiler_frontend_queries_tests
     PRIVATE
         AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+target_include_directories(ahfl_compiler_frontend_queries_tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/tests
 )
 ahfl_apply_project_warnings(ahfl_compiler_frontend_queries_tests)
 

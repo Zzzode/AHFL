@@ -3394,13 +3394,24 @@ ExitCode CliDriver::run_source_sysroot_check(const ahfl::package_graph::PackageG
     }
 
     auto input = project_input_from_package_graph(graph, std::move(entry_files));
-    auto project_result = ahfl::parse_project(frontend_, input);
+    return run_project_analysis(std::move(input));
+}
+
+ExitCode CliDriver::run_project_analysis(ahfl::ProjectInput input) {
+    // Freeze the live input into the value-semantics model (the one filesystem
+    // read of the project route), parse it directly to render the project-level
+    // parse diagnostics exactly as before, and then run the analysis with the
+    // model attached so the opt-in query-engine route can re-parse it through the
+    // engine. `model` outlives the run_analysis call it is passed to, and the two
+    // parses are proven byte-equal by ahfl.query.frontend_equiv_all.
+    const auto model = ahfl::resolve_project_input(input);
+    auto project_result = ahfl::parse_project(frontend_, model);
     render_diagnostics(*diag_consumer_, project_result, std::nullopt);
     if (project_result.has_errors()) {
         return ExitCode::CompileError;
     }
 
-    return run_analysis(project_result.graph, std::nullopt);
+    return run_analysis(project_result.graph, std::nullopt, &model);
 }
 
 ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::PackageGraph &graph) {
@@ -3424,14 +3435,8 @@ ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::Package
         }
 
         public_api_package_context_ = public_api_context_from_package(*package);
-        auto input = project_input_from_package_graph(graph, std::move(entry_files));
-        auto project_result = ahfl::parse_project(frontend_, input);
-        render_diagnostics(*diag_consumer_, project_result, std::nullopt);
-        if (project_result.has_errors()) {
-            return ExitCode::CompileError;
-        }
-
-        return run_analysis(project_result.graph, std::nullopt);
+        return run_project_analysis(
+            project_input_from_package_graph(graph, std::move(entry_files)));
     }
 
     const auto *target = select_target(*package, options_, std::cerr);
@@ -3453,14 +3458,7 @@ ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::Package
         return ExitCode::CompileError;
     }
 
-    auto input = project_input_from_package_graph(graph, *entry_file);
-    auto project_result = ahfl::parse_project(frontend_, input);
-    render_diagnostics(*diag_consumer_, project_result, std::nullopt);
-    if (project_result.has_errors()) {
-        return ExitCode::CompileError;
-    }
-
-    return run_analysis(project_result.graph, std::nullopt);
+    return run_project_analysis(project_input_from_package_graph(graph, *entry_file));
 }
 
 ExitCode CliDriver::dump_package_graph() {
@@ -3690,19 +3688,24 @@ ExitCode CliDriver::format_source_file() {
 //
 // The driver's `run_analysis<InputT>` is a single template instantiated for two
 // input shapes, `ast::Program` (single-file / CWD-discovered) and `SourceGraph`
-// (package / workspace). The query engine can only carry the single-file shape:
-// a `SourceGraph` is not `equality_comparable` (its `SourceUnit` holds an
-// `Owned<ast::Program>`), so it cannot be an engine input, and a SourceUnit's AST
-// is deliberately NOT a function of its text alone (`parse_project` injects the
-// std prelude as a post-parse import, resolves module roots, applies overlays and
-// resolves filesystem import edges). Routing only the Program instantiation would
-// make one CLI command behave differently depending on whether it arrived via the
-// file path or the package path — a half-cutover. Until `parse_project` is itself
-// expressed as a query graph (a later slice), the engine route is therefore
-// OPT-IN and single-file only: it is exercised exhaustively by
-// ahfl.query.cli_engine_equiv, while the default path (and every golden in the
-// fleet) stays on the direct pipeline, so their bytes are unchanged by
-// construction.
+// (package / workspace). *Both* instantiations route through the engine under the
+// same flag, so one CLI command cannot behave differently depending on whether it
+// arrived via the file path or the package path — the half-cutover the design doc
+// forbids. The two shapes need different inputs, which is why they are separate
+// branches below:
+//
+//   * file:    `source_text(FileId)` — the file's display name and bytes;
+//   * project: `ProjectInputModel` — the resolved project configuration plus the
+//              frozen text of every source the parser can reach. `parse_project`
+//              over the model is a pure function (prelude injection, module-root
+//              discovery and import-edge resolution all happen inside the compute
+//              body), so a SourceGraph is no longer a barrier to querying.
+//
+// Routing rebinds the analysis input to the object the engine produced rather
+// than letting the tail consume the direct pipeline's graph/AST: the engine's
+// owned `SourceGraph` / `ast::Program` is what the borrowed stage results were
+// computed against, so the IR lowering, validation and summary must see the same
+// objects or the route would be half-switched under the hood.
 [[nodiscard]] bool query_engine_route_requested() {
     const char *flag = std::getenv("AHFL_QUERY_ENGINE");
     return flag != nullptr && flag[0] != '\0' && std::string_view{flag} != "0";
@@ -3763,32 +3766,113 @@ run_query_engine_stages(ahfl::query::FrontendQueries &queries, const ahfl::Sourc
     return QueryEngineStages{resolve_ptr, typecheck_ptr};
 }
 
+// Project counterpart: evaluate parse_project -> resolve -> typecheck over a
+// project model. `graph_out` receives the engine-owned `SourceGraph`, which the
+// analysis tail must consume instead of the direct pipeline's graph so the IR it
+// lowers is the one these borrowed stage results describe. Returns nullopt when
+// the engine cannot serve the input (a cycle), so the caller falls back.
+[[nodiscard]] std::optional<QueryEngineStages>
+run_query_engine_project_stages(ahfl::query::FrontendQueries &queries,
+                                const ahfl::ProjectInputModel &model,
+                                const ahfl::SourceGraph *&graph_out) {
+    const ahfl::query::ProjectId project{0};
+    queries.set_project_input(project, model);
+
+    const auto parsed = queries.parse_project(project);
+    if (!parsed.has_value()) {
+        return std::nullopt;
+    }
+    // A project parse error is not a fallback: the driver renders it and stops,
+    // like the direct pipeline. But the engine route can only render it through
+    // the borrowed stage results, and an errored parse has none — so hand the
+    // graph back and let the direct-shaped tail reach the same stop. The graph is
+    // still the engine's, and its diagnostics are already in the memoized
+    // snapshot the trace below reports.
+    const ahfl::SourceGraph *graph = queries.project_graph(project);
+    if (graph == nullptr) {
+        return std::nullopt;
+    }
+    graph_out = graph;
+
+    const auto resolved = queries.project_resolve(project);
+    if (!resolved.has_value()) {
+        return std::nullopt;
+    }
+    const ahfl::ResolveResult *resolve_ptr = queries.project_resolve_result(project);
+    if (resolve_ptr == nullptr) {
+        return std::nullopt;
+    }
+    if (resolve_ptr->has_errors()) {
+        return QueryEngineStages{resolve_ptr, nullptr};
+    }
+    const auto checked = queries.project_typecheck(project);
+    if (!checked.has_value()) {
+        return std::nullopt;
+    }
+    const ahfl::TypeCheckResult *typecheck_ptr = queries.project_typecheck_result(project);
+    if (typecheck_ptr == nullptr) {
+        return std::nullopt;
+    }
+    return QueryEngineStages{resolve_ptr, typecheck_ptr};
+}
+
 template <typename InputT>
-ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_file) {
+ExitCode CliDriver::run_analysis(const InputT &input,
+                                 MaybeSourceFile source_file,
+                                 const ahfl::ProjectInputModel *project_model) {
     const auto *package_metadata_ptr =
         package_metadata_.has_value() ? &*package_metadata_ : nullptr;
     const auto *capability_mock_set_ptr =
         capability_mock_set_.has_value() ? &*capability_mock_set_ : nullptr;
 
-    // The engine route borrows its stage results from a FrontendQueries that must
-    // outlive every use below; the direct route owns them outright. Exactly one
-    // of the two is populated, and the tail of this function is identical either
-    // way (the two references bound after the stage checks).
+    // The engine route borrows its stage results — and, for the project shape,
+    // its analyzed input — from a FrontendQueries that must outlive every use
+    // below; the direct route owns them outright. Exactly one of the two is
+    // populated, and the tail of this function is identical either way.
     std::optional<ahfl::query::FrontendQueries> engine_holder;
     ahfl::ResolveResult owned_resolve;
     ahfl::TypeCheckResult owned_typecheck;
     const ahfl::ResolveResult *resolve_ptr = nullptr;
     const ahfl::TypeCheckResult *typecheck_ptr = nullptr;
+    // The analysis input the tail below consumes. For the direct route it is the
+    // caller's `input`; for the engine route it is the object the borrowed stage
+    // results were computed against (the engine's AST / graph). Pointers, not
+    // copies: the two input types are not copyable and the tail only reads.
+    const InputT *analysis_input = &input;
 
-    if constexpr (std::is_same_v<InputT, ahfl::ast::Program>) {
-        if (query_engine_route_requested() && source_file.has_value()) {
-            engine_holder.emplace();
-            if (const auto stages = run_query_engine_stages(*engine_holder, source_file->get());
-                stages.has_value()) {
-                resolve_ptr = stages->resolve;
-                typecheck_ptr = stages->typecheck;
-            } else {
-                engine_holder.reset(); // engine could not serve: use the direct pipeline
+    if (query_engine_route_requested()) {
+        if constexpr (std::is_same_v<InputT, ahfl::ast::Program>) {
+            if (source_file.has_value()) {
+                engine_holder.emplace();
+                if (const auto stages = run_query_engine_stages(*engine_holder, source_file->get());
+                    stages.has_value()) {
+                    resolve_ptr = stages->resolve;
+                    typecheck_ptr = stages->typecheck;
+                    // The AST the engine parsed (from the same display name and
+                    // bytes) is the input the tail must lower. It is owned by
+                    // `engine_holder`, which outlives the tail.
+                    if (const ahfl::ast::Program *program =
+                            engine_holder->program(ahfl::query::FileId{0});
+                        program != nullptr) {
+                        analysis_input = program;
+                    }
+                } else {
+                    engine_holder.reset(); // engine could not serve: use the direct pipeline
+                }
+            }
+        } else if constexpr (std::is_same_v<InputT, ahfl::SourceGraph>) {
+            if (project_model != nullptr) {
+                engine_holder.emplace();
+                const ahfl::SourceGraph *graph = nullptr;
+                if (const auto stages =
+                        run_query_engine_project_stages(*engine_holder, *project_model, graph);
+                    stages.has_value()) {
+                    resolve_ptr = stages->resolve;
+                    typecheck_ptr = stages->typecheck;
+                    analysis_input = graph;
+                } else {
+                    engine_holder.reset();
+                }
             }
         }
     }
@@ -3797,14 +3881,19 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
     // analysis, emitted only when this function was reached at all (a parse error
     // returns before here, so the absence of any line is itself the signal that
     // analysis never ran). stderr only — stdout (the golden artifact) is untouched.
-    if (query_engine_trace_requested() && source_file.has_value()) {
+    // Non-vacuity trace for the CLI equivalence gate: exactly one route line per
+    // analysis, emitted only when this function was reached at all (a parse error
+    // returns before here on both the file and the project path, so the absence of
+    // any line is itself the signal that analysis never ran). stderr only — stdout
+    // (the golden artifact) is untouched.
+    if (query_engine_trace_requested()) {
         std::cerr << "query-engine-route: " << (resolve_ptr != nullptr ? "engine" : "direct")
                   << '\n';
     }
 
     if (resolve_ptr == nullptr) {
         const ahfl::Resolver resolver;
-        owned_resolve = resolver.resolve(input);
+        owned_resolve = resolver.resolve(*analysis_input);
         resolve_ptr = &owned_resolve;
     }
     render_diagnostics(*diag_consumer_, *resolve_ptr, source_file);
@@ -3814,7 +3903,7 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
 
     if (typecheck_ptr == nullptr) {
         const ahfl::TypeChecker type_checker;
-        owned_typecheck = type_checker.check(input, *resolve_ptr);
+        owned_typecheck = type_checker.check(*analysis_input, *resolve_ptr);
         typecheck_ptr = &owned_typecheck;
     }
     render_diagnostics(*diag_consumer_, *typecheck_ptr, source_file);
@@ -3835,7 +3924,8 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
     const ahfl::TypeCheckResult &type_check_result = *typecheck_ptr;
 
     const ahfl::Validator validator;
-    auto validation_result = validator.validate(input, resolve_result, type_check_result);
+    auto validation_result =
+        validator.validate(*analysis_input, resolve_result, type_check_result);
     render_diagnostics(*diag_consumer_, validation_result, source_file);
     if (validation_result.has_errors()) {
         return ExitCode::CompileError;
@@ -3848,13 +3938,13 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
                 return ExitCode::CompileError;
             }
             const auto status = effective_command_ == CommandKind::EmitPublicApi
-                                    ? emit_public_api_snapshot(input,
+                                    ? emit_public_api_snapshot(*analysis_input,
                                                                resolve_result,
                                                                type_check_result,
                                                                *public_api_package_context_,
                                                                std::cout,
                                                                std::cerr)
-                                    : emit_public_api_docs(input,
+                                    : emit_public_api_docs(*analysis_input,
                                                            resolve_result,
                                                            type_check_result,
                                                            *public_api_package_context_,
@@ -3869,13 +3959,13 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
     }
 
     auto verified_ir =
-        lower_verified_ir_or_report(input, resolve_result, type_check_result, std::cerr);
+        lower_verified_ir_or_report(*analysis_input, resolve_result, type_check_result, std::cerr);
     if (!verified_ir.has_value()) {
         return ExitCode::CompileError;
     }
     auto ir_program = std::move(*verified_ir);
     memory_report_ =
-        build_memory_report_snapshot(input, source_file, type_check_result, ir_program);
+        build_memory_report_snapshot(*analysis_input, source_file, type_check_result, ir_program);
 
     if (effective_command_ == CommandKind::RunWorkflow) {
         auto run_options = options_;
@@ -4000,16 +4090,20 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
     }
 
     if (!is_action_enabled(options_, CommandKind::DumpTypes)) {
-        print_success_summary(input, resolve_result, type_check_result, std::cout);
+        print_success_summary(*analysis_input, resolve_result, type_check_result, std::cout);
     }
 
     return ExitCode::Success;
 }
 
 // Explicit template instantiations for the two input types used.
-template ExitCode CliDriver::run_analysis<ahfl::ast::Program>(const ahfl::ast::Program &,
-                                                              MaybeSourceFile);
-template ExitCode CliDriver::run_analysis<ahfl::SourceGraph>(const ahfl::SourceGraph &,
-                                                             MaybeSourceFile);
+template ExitCode
+CliDriver::run_analysis<ahfl::ast::Program>(const ahfl::ast::Program &,
+                                            MaybeSourceFile,
+                                            const ahfl::ProjectInputModel *);
+template ExitCode
+CliDriver::run_analysis<ahfl::SourceGraph>(const ahfl::SourceGraph &,
+                                           MaybeSourceFile,
+                                           const ahfl::ProjectInputModel *);
 
 } // namespace ahfl::cli
