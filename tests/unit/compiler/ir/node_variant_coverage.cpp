@@ -192,7 +192,7 @@ static_assert(std::variant_size_v<ahfl::ir::TemporalExprNode> == 7);
 static_assert(std::variant_size_v<ahfl::ir::StatementNode> == 11);
 static_assert(std::variant_size_v<ahfl::ir::Decl> == 16);
 static_assert(std::variant_size_v<ahfl::ir::core::CoreDecl> == 2);
-static_assert(std::variant_size_v<ahfl::ir::core::CoreExprNode> == 10);
+static_assert(std::variant_size_v<ahfl::ir::core::CoreExprNode> == 11);
 static_assert(std::variant_size_v<ahfl::ir::core::CorePatternNode> == 7);
 static_assert(std::variant_size_v<ahfl::ir::core::CoreStmtNode> == 9);
 static_assert(std::variant_size_v<ahfl::ir::core::CoreInstancePayload> == 5);
@@ -234,6 +234,8 @@ static_assert(alternative_at_index<ahfl::ir::core::CoreExprNode, 8,
                                    ahfl::ir::core::CoreCollectionExpr>());
 static_assert(alternative_at_index<ahfl::ir::core::CoreExprNode, 9,
                                    ahfl::ir::core::CoreUnsupportedExpr>());
+static_assert(alternative_at_index<ahfl::ir::core::CoreExprNode, 10,
+                                   ahfl::ir::core::CoreCallExpr>());
 static_assert(alternative_at_index<ahfl::ir::core::CorePatternNode, 0,
                                    ahfl::ir::core::CoreWildcardPat>());
 static_assert(alternative_at_index<ahfl::ir::core::CorePatternNode, 6,
@@ -321,7 +323,7 @@ TEST_CASE("ir node variants: pinned cardinalities") {
     CHECK(std::variant_size_v<ahfl::ir::StatementNode> == 11);
     CHECK(std::variant_size_v<ahfl::ir::Decl> == 16);
     CHECK(std::variant_size_v<ahfl::ir::core::CoreDecl> == 2);
-    CHECK(std::variant_size_v<ahfl::ir::core::CoreExprNode> == 10);
+    CHECK(std::variant_size_v<ahfl::ir::core::CoreExprNode> == 11);
     CHECK(std::variant_size_v<ahfl::ir::core::CorePatternNode> == 7);
     CHECK(std::variant_size_v<ahfl::ir::core::CoreStmtNode> == 9);
     CHECK(std::variant_size_v<ahfl::ir::core::CoreInstancePayload> == 5);

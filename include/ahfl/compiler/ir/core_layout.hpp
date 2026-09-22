@@ -52,6 +52,14 @@ struct CoreLayoutPtrLen {
     [[nodiscard]] friend bool operator==(const CoreLayoutPtrLen &,
                                          const CoreLayoutPtrLen &) noexcept = default;
 };
+// RFC 0026 FB-1 D-FNREP (CORE-FNBODY-DESIGN §3.1.1): the former standalone
+// four-byte FnRef layout was DELETED. Every first-class callable VALUE now has
+// ONE physical representation — the eight-byte `CoreLayoutClosure` shape
+// `(func_index:i32, env_ptr:i32)`. `CoreVtFn` survives only as a logical
+// SIGNATURE type (it no longer owns a layout); a bare static-fn reference is a
+// zero-capture closure `(table_slot, env_ptr=0)`. This variant alternative is
+// kept in the layout-shape X-set (so wire/reader indices do not shift) but is
+// now UNREACHABLE from a well-formed finalized table.
 struct CoreLayoutFnRef {
     [[nodiscard]] friend bool operator==(const CoreLayoutFnRef &,
                                          const CoreLayoutFnRef &) noexcept = default;

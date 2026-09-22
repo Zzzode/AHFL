@@ -256,8 +256,16 @@ class LayoutBuilder {
         const auto vt_Tuple = [&](const CoreVtTuple &node) -> std::optional<CoreLayout> {
             return build_aggregate(node.elements, type_range(type));
         };
+        // RFC 0026 FB-1 D-FNREP (CORE-FNBODY-DESIGN §3.1.1): a callable
+        // SIGNATURE (`CoreVtFn`) no longer owns its own four-byte layout.
+        // Every first-class callable VALUE physically IS the eight-byte
+        // closure word pair — including a bare static-fn reference, which is
+        // the zero-capture case. Returning the closure layout here unifies the
+        // representation at the single projection point, so a `CoreVtFn`
+        // parameter slot has the same bytes as the `CoreVtClosure` value passed
+        // into it (no adapter, no FnRef/Closure layout-equivalence edge).
         const auto vt_Fn = [&](const CoreVtFn &) -> std::optional<CoreLayout> {
-            return CoreLayout{4, 4, false, CoreLayoutFnRef{}};
+            return CoreLayout{8, 4, false, CoreLayoutClosure{}};
         };
         const auto vt_Closure = [&](const CoreVtClosure &node) -> std::optional<CoreLayout> {
             // RFC 0026 P6-8a (P4-D D2). A closure's representation is ALWAYS the

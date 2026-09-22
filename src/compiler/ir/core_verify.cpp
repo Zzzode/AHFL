@@ -1085,6 +1085,29 @@ class Verifier {
     // statement reaches, so an unused-but-malformed expr cannot slip past a
     // consumption-boundary re-verify. Value-use ORDER is checked separately in
     // the per-state statement walk.
+    // RFC 0026 FB-1 (CORE-FNBODY-DESIGN §8.1 #3/#6): bounds on a direct fn call
+    // embedded in a flow/workflow arena — the full callee-resolution / arity /
+    // pure-callee / acyclic-graph rules run in verify_fns over the program's fn
+    // table and call graph (they need instance/fn context this body-local walk
+    // does not have).
+    void verify_call_expr(const ArenaView &body, const CoreCallExpr &c, const CoreExpr &expr) {
+        if (c.callee.value == CoreInstanceId::kInvalid ||
+            c.callee.value >= program_.instances.size()) {
+            error(verify::kFnCallCalleeInvalid,
+                  "direct call references an out-of-range fn instance id in body '" + body.label +
+                      "'",
+                  expr.source_range);
+        }
+        for (const CoreValueId arg : c.args) {
+            if (arg.value >= body.value_count) {
+                error(verify::kValueIdOutOfRange,
+                      "direct call argument value id " + std::to_string(arg.value) +
+                          " is out of range in body '" + body.label + "'",
+                      expr.source_range);
+            }
+        }
+    }
+
     void verify_expr_arena(const ArenaView &flow) {
         const auto expr_count = static_cast<std::uint32_t>(flow.exprs.size());
         const auto check_expr_id = [&](CoreExprId e, SourceRangeOpt range) {
@@ -1257,6 +1280,7 @@ class Verifier {
                                          "' expression",
                                      u.source_range);
                            },
+                           [&](const CoreCallExpr &c) { verify_call_expr(flow, c, expr); },
                        },
                        expr.node);
         }
@@ -1353,6 +1377,7 @@ class Verifier {
 #define CORE_EXPR_ACYCLIC_CoreCoerceExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_ACYCLIC_CoreCollectionExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_ACYCLIC_CoreUnsupportedExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreCallExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_ACYCLIC_CoreUnaryExpr(Name, Wire)                                                       \
     [&](const Name &u) { push_edge(u.operand); },
 #define CORE_EXPR_ACYCLIC_CoreBinaryExpr(Name, Wire)                                                      \
@@ -1375,6 +1400,7 @@ class Verifier {
 #undef CORE_EXPR_ACYCLIC_CoreCoerceExpr
 #undef CORE_EXPR_ACYCLIC_CoreCollectionExpr
 #undef CORE_EXPR_ACYCLIC_CoreUnsupportedExpr
+#undef CORE_EXPR_ACYCLIC_CoreCallExpr
 #undef CORE_EXPR_ACYCLIC_CoreUnaryExpr
 #undef CORE_EXPR_ACYCLIC_CoreBinaryExpr
                 } else {
@@ -1890,9 +1916,9 @@ class Verifier {
 
     // --- flow wiring + per-state statement discipline ---
     void verify_flow(const CoreFlowDecl &flow) {
-        ArenaView av{flow.exprs, flow.value_count, flow.patterns, flow.agent_name};
-        av.value_types = &flow.value_types;
-        av.coercion_plans = &flow.coercion_plans;
+        ArenaView av{flow.storage.exprs, flow.storage.value_count, flow.storage.patterns, flow.agent_name};
+        av.value_types = &flow.storage.value_types;
+        av.coercion_plans = &flow.storage.coercion_plans;
         verify_body_value_types(av);
         verify_coercion_plans(av);
         verify_expr_arena(av);
@@ -1991,6 +2017,11 @@ class Verifier {
                                }
                            },
                            [&](const CoreUnsupportedExpr &) {},
+                           [&](const CoreCallExpr &c) {
+                               for (const CoreValueId arg : c.args) {
+                                   out.push_back(arg);
+                               }
+                           },
                        },
                        flow.exprs[cur].node);
         }
@@ -2770,16 +2801,16 @@ class Verifier {
         }
 
         // The shared arena (expr + pattern) + workflow-global SSA. Value ids are
-        // allocated once from wf.value_count across ALL node regions + the return
+        // allocated once from wf.storage.value_count across ALL node regions + the return
         // region, so a single `all_definitions` set catches any redefinition. The
         // arena pass runs in the Workflow domain, so it rejects flow-only roots,
         // an unresolved identifier, and (over EVERY expr) a bad node-id / mistyped
         // workflow root.
         const auto make_view = [&](std::string lbl) {
-            ArenaView av{wf.exprs,           wf.value_count,     wf.patterns, std::move(lbl),
+            ArenaView av{wf.storage.exprs,           wf.storage.value_count,     wf.storage.patterns, std::move(lbl),
                          OwnerKind::Workflow, &node_output_types, wf.input_type};
-            av.value_types = &wf.value_types;
-            av.coercion_plans = &wf.coercion_plans;
+            av.value_types = &wf.storage.value_types;
+            av.coercion_plans = &wf.storage.coercion_plans;
             return av;
         };
         verify_body_value_types(make_view(wf.name));
@@ -2941,7 +2972,7 @@ class Verifier {
     template <class Fn>
     void visit_expr_paths(const CoreWorkflowDecl &wf, CoreExprId root, SourceRangeOpt range,
                           Fn &&fn) {
-        const auto expr_count = static_cast<std::uint32_t>(wf.exprs.size());
+        const auto expr_count = static_cast<std::uint32_t>(wf.storage.exprs.size());
         std::vector<std::uint32_t> stack;
         std::unordered_set<std::uint32_t> visited;
         if (root.value < expr_count) {
@@ -2979,12 +3010,13 @@ class Verifier {
 #define CORE_EXPR_PATHS_CoreCoerceExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_PATHS_CoreCollectionExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_PATHS_CoreUnsupportedExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreCallExpr(Name, Wire) [](const Name &) {},
 #define HANDLE_CORE_EXPR_NODE(Name, Wire) CORE_EXPR_PATHS_##Name(Name, Wire)
             std::visit(
                 Overloaded{
 #include "ahfl/compiler/ir/core_expr_nodes.def"
                 },
-                wf.exprs[id].node);
+                wf.storage.exprs[id].node);
 #undef HANDLE_CORE_EXPR_NODE
 #undef CORE_EXPR_PATHS_CorePathExpr
 #undef CORE_EXPR_PATHS_CoreUnaryExpr
@@ -2996,6 +3028,7 @@ class Verifier {
 #undef CORE_EXPR_PATHS_CoreCoerceExpr
 #undef CORE_EXPR_PATHS_CoreCollectionExpr
 #undef CORE_EXPR_PATHS_CoreUnsupportedExpr
+#undef CORE_EXPR_PATHS_CoreCallExpr
         }
     }
 

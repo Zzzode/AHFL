@@ -222,7 +222,7 @@ flow for Payer {
     bool saw_none = false;
     bool saw_verdict_approve = false;
     bool saw_user_present = false;
-    for (const auto &expr : flow->exprs) {
+    for (const auto &expr : flow->storage.exprs) {
         if (const auto *ctor = std::get_if<ir::core::CoreConstructExpr>(&expr.node)) {
             if (ctor->is_enum_variant && ctor->variant_name == "Some") {
                 saw_some = true;
@@ -348,7 +348,7 @@ flow for A {
     // exactly once, order-independent.
     bool saw_core_open = false;
     for (const auto &flow : result.program.flows) {
-        for (const auto &expr : flow.exprs) {
+        for (const auto &expr : flow.storage.exprs) {
             const auto *c = std::get_if<ir::core::CoreConstructExpr>(&expr.node);
             if (c == nullptr || !c->is_enum_variant || c->variant_name != "Open") {
                 continue;
@@ -443,7 +443,7 @@ flow for Decider {
     REQUIRE(m->arms.size() == 2);
 
     // Arm 0 (`none`) is now a VARIANT pattern (Option::None), NOT a literal.
-    const auto &pats = owner_flow->patterns;
+    const auto &pats = owner_flow->storage.patterns;
     REQUIRE(m->arms[0].pattern.value < pats.size());
     const auto *none_pat =
         std::get_if<ir::core::CoreVariantPat>(&pats[m->arms[0].pattern.value].node);
@@ -539,7 +539,7 @@ flow for Decider {
     // projection) and require at least two (one per match).
     int resolved_binding_projections = 0;
     for (const auto &flow : result.program.flows) {
-        for (const auto &expr : flow.exprs) {
+        for (const auto &expr : flow.storage.exprs) {
             if (const auto *path = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
                 if (path->root == ir::core::CorePathRoot::Local && !path->projection.empty()) {
                     CHECK(path->projection_resolved);

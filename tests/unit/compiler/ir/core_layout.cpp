@@ -155,7 +155,7 @@ TEST_CASE("P4-D wasm32 scalar layouts are deterministic side artifacts") {
     CHECK(table.layouts[table.value_layouts[8].value].size == 16);
     CHECK(table.layouts[table.value_layouts[8].value].align == 1);
     CHECK(table.layouts[table.value_layouts[9].value].size == 8);
-    CHECK(table.layouts[table.value_layouts[10].value].size == 4);
+    CHECK(table.layouts[table.value_layouts[10].value].size == 8);
     CHECK(std::get<CoreLayoutScalar>(table.layouts[table.value_layouts[1].value].shape).repr ==
           CoreScalarRepr::I32);
     CHECK(std::get<CoreLayoutScalar>(table.layouts[table.value_layouts[2].value].shape).repr ==
@@ -166,7 +166,10 @@ TEST_CASE("P4-D wasm32 scalar layouts are deterministic side artifacts") {
           CoreScalarRepr::F64);
     CHECK(std::holds_alternative<CoreLayoutPtrLen>(
         table.layouts[table.value_layouts[9].value].shape));
-    CHECK(std::holds_alternative<CoreLayoutFnRef>(
+    // RFC 0026 FB-1 D-FNREP: a CoreVtFn no longer owns a 4-byte FnRef layout;
+    // every callable value physically IS the 8-byte closure word pair
+    // (a bare static-fn reference is the zero-capture case).
+    CHECK(std::holds_alternative<CoreLayoutClosure>(
         table.layouts[table.value_layouts[10].value].shape));
     CHECK(std::holds_alternative<CoreLayoutUninhabited>(
         table.layouts[table.value_layouts[11].value].shape));

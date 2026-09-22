@@ -163,7 +163,7 @@ int_ref(std::optional<std::pair<std::int64_t, std::int64_t>> bounds = std::nullo
 [[nodiscard]] std::vector<const ir::core::CoreCoerceExpr *>
 collect_core_coercions(const ir::core::CoreFlowDecl &flow) {
     std::vector<const ir::core::CoreCoerceExpr *> out;
-    for (const auto &expr : flow.exprs) {
+    for (const auto &expr : flow.storage.exprs) {
         if (const auto *coerce = std::get_if<ir::core::CoreCoerceExpr>(&expr.node)) {
             out.push_back(coerce);
         }
@@ -377,10 +377,10 @@ TEST_CASE("F3 Core lowering consumes real scalar and user-variance adjustment pl
     // the same nominal Core value type, so it leaves neither an expression nor
     // an orphan plan node.
     REQUIRE(coercions.size() == 3);
-    REQUIRE(flow.coercion_plans.size() == 5);
+    REQUIRE(flow.storage.coercion_plans.size() == 5);
     std::size_t int_widen_nodes = 0;
     std::size_t type_arg_nodes = 0;
-    for (const auto &node : flow.coercion_plans) {
+    for (const auto &node : flow.storage.coercion_plans) {
         REQUIRE_FALSE(node.ops.empty());
         if (node.ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden) {
             ++int_widen_nodes;
@@ -393,21 +393,21 @@ TEST_CASE("F3 Core lowering consumes real scalar and user-variance adjustment pl
     CHECK(type_arg_nodes == 2);
 
     for (const auto *coerce : coercions) {
-        REQUIRE(coerce->plan.value < flow.coercion_plans.size());
-        const auto &root = flow.coercion_plans[coerce->plan.value];
-        REQUIRE(coerce->operand.value < flow.value_types.size());
-        CHECK(flow.value_types[coerce->operand.value] == root.source);
+        REQUIRE(coerce->plan.value < flow.storage.coercion_plans.size());
+        const auto &root = flow.storage.coercion_plans[coerce->plan.value];
+        REQUIRE(coerce->operand.value < flow.storage.value_types.size());
+        CHECK(flow.storage.value_types[coerce->operand.value] == root.source);
 
         bool found_fresh_result = false;
         for (const auto &state : flow.states) {
             for (const auto &statement : state.body.statements) {
                 if (const auto *let = std::get_if<ir::core::CoreLetStmt>(&statement.node);
-                    let != nullptr && let->expr.value < flow.exprs.size() &&
-                    std::get_if<ir::core::CoreCoerceExpr>(&flow.exprs[let->expr.value].node) ==
+                    let != nullptr && let->expr.value < flow.storage.exprs.size() &&
+                    std::get_if<ir::core::CoreCoerceExpr>(&flow.storage.exprs[let->expr.value].node) ==
                         coerce) {
                     CHECK(let->result.value != coerce->operand.value);
-                    REQUIRE(let->result.value < flow.value_types.size());
-                    CHECK(flow.value_types[let->result.value] == root.result);
+                    REQUIRE(let->result.value < flow.storage.value_types.size());
+                    CHECK(flow.storage.value_types[let->result.value] == root.result);
                     found_fresh_result = true;
                 }
             }
@@ -457,14 +457,14 @@ TEST_CASE("F3 Core lowering preserves a composite capacity and element witness")
     REQUIRE(coercions.size() == 3);
 
     bool found_composite = false;
-    for (const auto &node : flow.coercion_plans) {
+    for (const auto &node : flow.storage.coercion_plans) {
         if (node.ops.size() != 2) {
             continue;
         }
         CHECK(node.ops[0].kind == ir::core::CoreCoercionOpKind::CapacityWiden);
         CHECK(node.ops[1].kind == ir::core::CoreCoercionOpKind::TypeArg);
-        REQUIRE(node.ops[1].child.value < flow.coercion_plans.size());
-        const auto &element = flow.coercion_plans[node.ops[1].child.value];
+        REQUIRE(node.ops[1].child.value < flow.storage.coercion_plans.size());
+        const auto &element = flow.storage.coercion_plans[node.ops[1].child.value];
         REQUIRE(element.ops.size() == 1);
         CHECK(element.ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
         found_composite = true;
@@ -515,13 +515,13 @@ TEST_CASE("F3 Core lowering preserves function parameter and return variance dir
     REQUIRE(lowered.program.flows.size() == 1);
     const auto &flow = lowered.program.flows[0];
     bool found_fn = false;
-    for (const auto &node : flow.coercion_plans) {
+    for (const auto &node : flow.storage.coercion_plans) {
         if (node.ops.size() == 2 && node.ops[0].kind == ir::core::CoreCoercionOpKind::FnParam &&
             node.ops[1].kind == ir::core::CoreCoercionOpKind::FnReturn) {
-            REQUIRE(node.ops[0].child.value < flow.coercion_plans.size());
-            REQUIRE(node.ops[1].child.value < flow.coercion_plans.size());
-            const auto &param_child = flow.coercion_plans[node.ops[0].child.value];
-            const auto &return_child = flow.coercion_plans[node.ops[1].child.value];
+            REQUIRE(node.ops[0].child.value < flow.storage.coercion_plans.size());
+            REQUIRE(node.ops[1].child.value < flow.storage.coercion_plans.size());
+            const auto &param_child = flow.storage.coercion_plans[node.ops[0].child.value];
+            const auto &return_child = flow.storage.coercion_plans[node.ops[1].child.value];
             CHECK(param_child.ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
             CHECK(return_child.ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
             found_fn = true;

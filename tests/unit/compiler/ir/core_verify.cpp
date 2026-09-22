@@ -178,8 +178,8 @@ struct GoodProgram {
 
     // expr arena. Every CoreExpr carries a valid result_type (P4-B).
     // %lit1 spelling "1"
-    const CoreExprId e_lit1{static_cast<std::uint32_t>(flow.exprs.size())};
-    flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt, vt_int});
+    const CoreExprId e_lit1{static_cast<std::uint32_t>(flow.storage.exprs.size())};
+    flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt, vt_int});
     // path ctx.nested.n  (root Context, projection [Ctx.nested -> Inner, Inner.n -> prim])
     CorePathExpr nested_path;
     nested_path.root = CorePathRoot::Context;
@@ -191,18 +191,18 @@ struct GoodProgram {
         CoreProjectionStep{inner_ty, CoreFieldId{0}, CoreTypeId{}}, // Inner.n -> primitive (last)
     };
     nested_path.projection_resolved = true;
-    const CoreExprId e_nested{static_cast<std::uint32_t>(flow.exprs.size())};
-    flow.exprs.push_back(CoreExpr{std::move(nested_path), std::nullopt, vt_int});
+    const CoreExprId e_nested{static_cast<std::uint32_t>(flow.storage.exprs.size())};
+    flow.storage.exprs.push_back(CoreExpr{std::move(nested_path), std::nullopt, vt_int});
     // %lit2 spelling "2"
-    const CoreExprId e_lit2{static_cast<std::uint32_t>(flow.exprs.size())};
-    flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "2"}, std::nullopt, vt_int});
+    const CoreExprId e_lit2{static_cast<std::uint32_t>(flow.storage.exprs.size())};
+    flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "2"}, std::nullopt, vt_int});
 
     // values: %0 = lit1, %1 = Charge(%0), %2 = nested path, %3 = lit2
-    flow.value_count = 4;
+    flow.storage.value_count = 4;
     // Dense value_types table (P4-B): size == value_count, each a valid slot; the
     // Let-bound values (%0, %2, %3) match their expr result_type (all vt_int).
     // %1 is the capability (Charge) result used as the if-condition, so Bool.
-    flow.value_types = {vt_int, vt_bool, vt_int, vt_int};
+    flow.storage.value_types = {vt_int, vt_bool, vt_int, vt_int};
     const CoreValueId v0{0};
     const CoreValueId v1{1};
     const CoreValueId v2{2};
@@ -271,21 +271,21 @@ struct GoodProgram {
     const CoreValueTypeId bounded{static_cast<std::uint32_t>(g.program.value_types.size())};
     g.program.value_types.push_back(
         CoreValueType{CoreVtInt{std::pair<std::int64_t, std::int64_t>{0, 0}}});
-    g.flow->exprs[0].result_type = bounded;
-    g.flow->value_types[0] = bounded;
+    g.flow->storage.exprs[0].result_type = bounded;
+    g.flow->storage.value_types[0] = bounded;
     g.program.capabilities[0].param_types[0] = bounded;
 
     CoreCoercionPlanNode plan;
     plan.source = bounded;
     plan.result = g.vt_int;
     plan.ops.push_back(CoreCoercionOp{.kind = CoreCoercionOpKind::IntWiden});
-    g.flow->coercion_plans.push_back(std::move(plan));
+    g.flow->storage.coercion_plans.push_back(std::move(plan));
 
-    const CoreExprId expr{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    const CoreExprId expr{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreCoerceExpr{CoreValueId{0}, CoreCoercionPlanId{0}}, std::nullopt, g.vt_int});
-    const CoreValueId result{g.flow->value_count++};
-    g.flow->value_types.push_back(g.vt_int);
+    const CoreValueId result{g.flow->storage.value_count++};
+    g.flow->storage.value_types.push_back(g.vt_int);
     auto &body = g.flow->states[0].body.statements;
     body.insert(body.begin() + 1, CoreStmt{CoreLetStmt{result, expr}, std::nullopt});
     return expr;
@@ -296,7 +296,7 @@ struct GoodProgram {
 // both the legal covariant direction and the invariant/contravariant rejects.
 void replace_with_type_arg_coercion(GoodProgram &g, CoreVariance variance) {
     static_cast<void>(add_good_int_coercion(g));
-    const CoreValueTypeId bounded = g.flow->coercion_plans[0].source;
+    const CoreValueTypeId bounded = g.flow->storage.coercion_plans[0].source;
 
     CoreTypeDecl box;
     box.kind = CoreTypeDecl::Kind::Struct;
@@ -311,21 +311,21 @@ void replace_with_type_arg_coercion(GoodProgram &g, CoreVariance variance) {
     const CoreValueTypeId result{static_cast<std::uint32_t>(g.program.value_types.size())};
     g.program.value_types.push_back(CoreValueType{CoreVtNominal{box_id, {g.vt_int}, std::nullopt}});
 
-    g.flow->exprs[0].result_type = source;
-    g.flow->value_types[0] = source;
+    g.flow->storage.exprs[0].result_type = source;
+    g.flow->storage.value_types[0] = source;
     g.program.capabilities[0].param_types[0] = source;
-    g.flow->exprs.back().result_type = result;
-    g.flow->value_types.back() = result;
-    g.flow->coercion_plans[0].source = bounded;
-    g.flow->coercion_plans[0].result = g.vt_int;
+    g.flow->storage.exprs.back().result_type = result;
+    g.flow->storage.value_types.back() = result;
+    g.flow->storage.coercion_plans[0].source = bounded;
+    g.flow->storage.coercion_plans[0].result = g.vt_int;
 
     CoreCoercionPlanNode root;
     root.source = source;
     root.result = result;
     root.ops.push_back(CoreCoercionOp{
         .kind = CoreCoercionOpKind::TypeArg, .arg_index = 0, .child = CoreCoercionPlanId{0}});
-    g.flow->coercion_plans.push_back(std::move(root));
-    std::get<CoreCoerceExpr>(g.flow->exprs.back().node).plan = CoreCoercionPlanId{1};
+    g.flow->storage.coercion_plans.push_back(std::move(root));
+    std::get<CoreCoerceExpr>(g.flow->storage.exprs.back().node).plan = CoreCoercionPlanId{1};
 }
 
 // --------------------------------------------------------------------------
@@ -402,7 +402,7 @@ struct GoodWorkflow {
 
     // Shared arena. value ids: %0 node0-input(WorkflowInput read), %1 node1-input
     // (node0 output read), %2 return (node1 output read).
-    wf.value_count = 3;
+    wf.storage.value_count = 3;
     // RFC 0026 P4-B: one interned scalar value type for every hand-built value /
     // expr result (the specific type is irrelevant to these structural checks).
     const CoreValueTypeId wvt{static_cast<std::uint32_t>(p.value_types.size())};
@@ -420,7 +420,7 @@ struct GoodWorkflow {
         in_path.root = CorePathRoot::WorkflowInput;
         in_path.root_name = "input";
         in_path.root_type = win_ty;
-        wf.exprs.push_back(CoreExpr{std::move(in_path), std::nullopt, wvt});
+        wf.storage.exprs.push_back(CoreExpr{std::move(in_path), std::nullopt, wvt});
     }
     // expr[1]: node0 output read (`first`), typed WMid (First's output).
     {
@@ -429,7 +429,7 @@ struct GoodWorkflow {
         n0.root_name = "first";
         n0.root_type = wmid_ty;
         n0.workflow_node = CoreWorkflowNodeId{0};
-        wf.exprs.push_back(CoreExpr{std::move(n0), std::nullopt, wvt});
+        wf.storage.exprs.push_back(CoreExpr{std::move(n0), std::nullopt, wvt});
     }
     // expr[2]: node1 output read (`second`), typed WOut (Second's output).
     {
@@ -438,11 +438,11 @@ struct GoodWorkflow {
         n1.root_name = "second";
         n1.root_type = wout_ty;
         n1.workflow_node = CoreWorkflowNodeId{1};
-        wf.exprs.push_back(CoreExpr{std::move(n1), std::nullopt, wvt});
+        wf.storage.exprs.push_back(CoreExpr{std::move(n1), std::nullopt, wvt});
     }
     // Dense value_types (P4-B): size == value_count; each Let-bound value matches
     // its expr's result_type (all wvt).
-    wf.value_types = {wvt, wvt, wvt};
+    wf.storage.value_types = {wvt, wvt, wvt};
     const auto region_yielding = [](CoreExprId expr, CoreValueId result) {
         auto r = std::make_unique<CoreRegion>();
         r->statements.push_back(CoreStmt{CoreLetStmt{result, expr}, std::nullopt});
@@ -542,8 +542,8 @@ void add_workflow_capability_call(GoodWorkflow &g, CoreValueTypeId param_type,
     cap.return_type = return_type;
     g.program.capabilities.push_back(std::move(cap));
 
-    const CoreValueId result_id{g.wf->value_count++};
-    g.wf->value_types.push_back(g.wf->value_types[0]);
+    const CoreValueId result_id{g.wf->storage.value_count++};
+    g.wf->storage.value_types.push_back(g.wf->storage.value_types[0]);
     CoreCapabilityCallStmt call;
     call.result = result_id;
     call.capability = CoreCapabilityId{0};
@@ -600,11 +600,11 @@ TEST_CASE("coercion operand participates in use-before-def and branch-scope anal
         REQUIRE(if_stmt != nullptr);
         REQUIRE(if_stmt->else_region != nullptr);
         auto &coerce_expr = std::get<CoreCoerceExpr>(
-            g.flow->exprs[std::get<CoreLetStmt>(coerce.node).expr.value].node);
+            g.flow->storage.exprs[std::get<CoreLetStmt>(coerce.node).expr.value].node);
         // %3 is defined only in the then branch. Reading it from the else branch
         // must fail even though its dense type slot is valid.
         coerce_expr.operand = CoreValueId{3};
-        g.flow->coercion_plans[0].source = g.flow->value_types[3];
+        g.flow->storage.coercion_plans[0].source = g.flow->storage.value_types[3];
         if_stmt->else_region->statements.insert(if_stmt->else_region->statements.begin(),
                                                 std::move(coerce));
         const auto result = verify_core_program(g.program);
@@ -645,8 +645,8 @@ TEST_CASE("coercion verifier rejects identity, cyclic, orphan, and unknown plans
     SUBCASE("identity node") {
         GoodProgram g = make_good_program();
         static_cast<void>(add_good_int_coercion(g));
-        g.flow->coercion_plans[0].ops.clear();
-        g.flow->coercion_plans[0].source = g.vt_int;
+        g.flow->storage.coercion_plans[0].ops.clear();
+        g.flow->storage.coercion_plans[0].source = g.vt_int;
         const auto result = verify_core_program(g.program);
         CHECK_FALSE(result.ok());
         CHECK(has_code(result, verify::kCoercionIdentity));
@@ -655,7 +655,7 @@ TEST_CASE("coercion verifier rejects identity, cyclic, orphan, and unknown plans
     SUBCASE("cycle") {
         GoodProgram g = make_good_program();
         replace_with_type_arg_coercion(g, CoreVariance::Covariant);
-        g.flow->coercion_plans[1].ops[0].child = CoreCoercionPlanId{1};
+        g.flow->storage.coercion_plans[1].ops[0].child = CoreCoercionPlanId{1};
         const auto result = verify_core_program(g.program);
         CHECK_FALSE(result.ok());
         CHECK(has_code(result, verify::kCoercionInvalid));
@@ -664,7 +664,7 @@ TEST_CASE("coercion verifier rejects identity, cyclic, orphan, and unknown plans
     SUBCASE("orphan") {
         GoodProgram g = make_good_program();
         static_cast<void>(add_good_int_coercion(g));
-        g.flow->coercion_plans.push_back(g.flow->coercion_plans[0]);
+        g.flow->storage.coercion_plans.push_back(g.flow->storage.coercion_plans[0]);
         const auto result = verify_core_program(g.program);
         CHECK_FALSE(result.ok());
         CHECK(has_code(result, verify::kCoercionInvalid));
@@ -673,7 +673,7 @@ TEST_CASE("coercion verifier rejects identity, cyclic, orphan, and unknown plans
     SUBCASE("unknown operation enum") {
         GoodProgram g = make_good_program();
         static_cast<void>(add_good_int_coercion(g));
-        g.flow->coercion_plans[0].ops[0].kind = static_cast<CoreCoercionOpKind>(255);
+        g.flow->storage.coercion_plans[0].ops[0].kind = static_cast<CoreCoercionOpKind>(255);
         const auto result = verify_core_program(g.program);
         CHECK_FALSE(result.ok());
         CHECK(has_code(result, verify::kCoercionKindMismatch));
@@ -716,8 +716,8 @@ TEST_CASE("verifier fails closed on a use-before-def value") {
 
 TEST_CASE("verifier fails closed on a value id out of range") {
     GoodProgram g = make_good_program();
-    g.flow->value_count = 2; // %2 and %3 now out of range
-    g.flow->value_types.resize(2); // keep value_types dense so the targeted
+    g.flow->storage.value_count = 2; // %2 and %3 now out of range
+    g.flow->storage.value_types.resize(2); // keep value_types dense so the targeted
                                    // kValueIdOutOfRange (not the size check) fires
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
@@ -884,7 +884,7 @@ TEST_CASE("verifier checks agent capability whitelist structure and authorizatio
 TEST_CASE("verifier fails closed on a broken projection step chain (discontinuity)") {
     GoodProgram g = make_good_program();
     // Corrupt the ctx.nested.n read: make step 1's owner NOT the previous result.
-    for (auto &expr : g.flow->exprs) {
+    for (auto &expr : g.flow->storage.exprs) {
         if (auto *path = std::get_if<CorePathExpr>(&expr.node)) {
             if (path->projection.size() == 2) {
                 path->projection[1].owner_type = CoreTypeId{1}; // Ctx, not Inner
@@ -898,7 +898,7 @@ TEST_CASE("verifier fails closed on a broken projection step chain (discontinuit
 
 TEST_CASE("verifier fails closed on a projection field id out of range") {
     GoodProgram g = make_good_program();
-    for (auto &expr : g.flow->exprs) {
+    for (auto &expr : g.flow->storage.exprs) {
         if (auto *path = std::get_if<CorePathExpr>(&expr.node)) {
             if (!path->projection.empty()) {
                 path->projection[0].field = CoreFieldId{9}; // Ctx has 2 fields
@@ -914,7 +914,7 @@ TEST_CASE("verifier fails closed on a non-terminal primitive projection step") {
     GoodProgram g = make_good_program();
     // Make the FIRST step of ctx.nested.n a primitive (result kInvalid) while a
     // second step still follows — invariant 3 violation.
-    for (auto &expr : g.flow->exprs) {
+    for (auto &expr : g.flow->storage.exprs) {
         if (auto *path = std::get_if<CorePathExpr>(&expr.node)) {
             if (path->projection.size() == 2) {
                 path->projection[0].result_type = CoreTypeId{}; // now primitive, but not last
@@ -940,7 +940,7 @@ TEST_CASE("verifier fails closed on a construct with a duplicated field id") {
     ctor.resolved = true;
     ctor.args = {CoreConstructArg{CoreFieldId{0}, CoreValueId{0}},
                  CoreConstructArg{CoreFieldId{0}, CoreValueId{1}}};
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kConstructFieldDuplicated));
@@ -958,7 +958,7 @@ TEST_CASE("verifier fails closed on a struct literal missing a required field") 
     ctor.type_id = CoreTypeId{4}; // Reply
     ctor.resolved = true;
     ctor.args = {}; // assigns nothing
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kConstructFieldMissing));
@@ -973,7 +973,7 @@ TEST_CASE("verifier accepts a struct literal that omits only DEFAULTED fields") 
     ctor.type_id = CoreTypeId{1}; // Ctx
     ctor.resolved = true;
     ctor.args = {}; // omits both defaulted fields — legal
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt, g.vt_int});
+    g.flow->storage.exprs.push_back(CoreExpr{std::move(ctor), std::nullopt, g.vt_int});
     const auto result = verify_core_program(g.program);
     for (const auto &d : result.diagnostics) {
         INFO("unexpected diagnostic: " << d.code << " — " << d.message);
@@ -993,7 +993,7 @@ TEST_CASE("verifier fails closed on an enum-variant construct with the wrong pay
     ctor.variant = CoreVariantId{0}; // On
     ctor.resolved = true;
     ctor.args = {CoreConstructArg{CoreFieldId{0}, CoreValueId{0}}}; // 1 slot, expected 0
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kConstructPayloadArity));
@@ -1010,7 +1010,7 @@ TEST_CASE("verifier fails closed on an enum constructed as a plain struct litera
     ctor.type_id = CoreTypeId{2}; // Flag (an enum)
     ctor.resolved = true;
     ctor.args = {};
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kConstructTypeInvalid));
@@ -1027,7 +1027,7 @@ TEST_CASE("verifier fails closed on a struct constructed as an enum variant (kin
     ctor.variant = CoreVariantId{0};
     ctor.resolved = true;
     ctor.args = {};
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kConstructTypeInvalid));
@@ -1035,7 +1035,7 @@ TEST_CASE("verifier fails closed on a struct constructed as an enum variant (kin
 
 TEST_CASE("verifier fails closed on an unlowered expression in an executable program") {
     GoodProgram g = make_good_program();
-    g.flow->exprs.push_back(CoreExpr{CoreUnsupportedExpr{"MatchExpr", std::nullopt}, std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{CoreUnsupportedExpr{"MatchExpr", std::nullopt}, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kUnsupportedExpr));
@@ -1155,8 +1155,8 @@ TEST_CASE("verifier fails closed when the same value id is defined in two states
 TEST_CASE("verifier fails closed on a self-referential expression (P0-2)") {
     GoodProgram g = make_good_program();
     // Append a unary expr that references ITSELF: expr#N = Not(expr#N).
-    const auto self = CoreExprId{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, self}, std::nullopt});
+    const auto self = CoreExprId{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, self}, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kExprCycle));
@@ -1164,10 +1164,10 @@ TEST_CASE("verifier fails closed on a self-referential expression (P0-2)") {
 
 TEST_CASE("verifier fails closed on a two-node expression cycle (P0-2)") {
     GoodProgram g = make_good_program();
-    const auto a = CoreExprId{static_cast<std::uint32_t>(g.flow->exprs.size())};
+    const auto a = CoreExprId{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
     const auto b = CoreExprId{a.value + 1};
-    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, b}, std::nullopt}); // a -> b
-    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, a}, std::nullopt}); // b -> a
+    g.flow->storage.exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, b}, std::nullopt}); // a -> b
+    g.flow->storage.exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, a}, std::nullopt}); // b -> a
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kExprCycle));
@@ -1176,7 +1176,7 @@ TEST_CASE("verifier fails closed on a two-node expression cycle (P0-2)") {
 TEST_CASE("verifier checks EVERY arena expr, even one no statement references (P0-2)") {
     GoodProgram g = make_good_program();
     // An unlowered expr that no statement binds must still be rejected.
-    g.flow->exprs.push_back(CoreExpr{CoreUnsupportedExpr{"LambdaExpr", std::nullopt}, std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{CoreUnsupportedExpr{"LambdaExpr", std::nullopt}, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kUnsupportedExpr));
@@ -1186,8 +1186,8 @@ TEST_CASE("verifier accepts a shared DAG expr node (revisit is not a cycle)") {
     GoodProgram g = make_good_program();
     // expr %lit1 (id 0) is referenced by two different unary exprs — a shared
     // DAG node, NOT a cycle. Both must pass.
-    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{0}}, std::nullopt, g.vt_int});
-    g.flow->exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Neg, CoreExprId{0}}, std::nullopt, g.vt_int});
+    g.flow->storage.exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{0}}, std::nullopt, g.vt_int});
+    g.flow->storage.exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Neg, CoreExprId{0}}, std::nullopt, g.vt_int});
     const auto result = verify_core_program(g.program);
     CHECK(result.ok());
 }
@@ -1196,7 +1196,7 @@ TEST_CASE("verifier fails closed on an out-of-range value embedded in an UNUSED 
     GoodProgram g = make_good_program();
     // A CoreValueRefExpr that no statement references still embeds a value id;
     // the static arena pass must bounds-check it (value_count is 4).
-    g.flow->exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{999}}, std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{999}}, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kValueIdOutOfRange));
@@ -1210,7 +1210,7 @@ TEST_CASE("verifier fails closed on an out-of-range value in an UNUSED construct
     ctor.type_id = CoreTypeId{4}; // Reply
     ctor.resolved = true;
     ctor.args = {CoreConstructArg{CoreFieldId{0}, CoreValueId{777}}}; // bad value id
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kValueIdOutOfRange));
@@ -1222,7 +1222,7 @@ TEST_CASE("verifier fails closed on an out-of-range result type in an UNUSED are
     // literal whose result_type points past the value-type pool must fail closed
     // at the static arena pass, not slip past because no statement reads it.
     const auto oor = CoreValueTypeId{static_cast<std::uint32_t>(g.program.value_types.size()) + 5};
-    g.flow->exprs.push_back(
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "9"}, std::nullopt, oor});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
@@ -1235,7 +1235,7 @@ TEST_CASE("verifier fails closed on a Never result type in an UNUSED arena expr 
     // unreferenced expr whose result_type resolves to CoreVtNever must fail closed.
     const auto never_id = CoreValueTypeId{static_cast<std::uint32_t>(g.program.value_types.size())};
     g.program.value_types.push_back(CoreValueType{CoreVtNever{}});
-    g.flow->exprs.push_back(
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "9"}, std::nullopt, never_id});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
@@ -1247,7 +1247,7 @@ TEST_CASE("verifier fails closed on a kInvalid result type in an UNUSED arena ex
     // The default kInvalid result_type is only legal on a lowering-ERROR partial
     // artifact (the verifier is not run on those); a supposedly clean program
     // carrying it must fail closed.
-    g.flow->exprs.push_back(
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "9"}, std::nullopt, CoreValueTypeId{}});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
@@ -1438,7 +1438,7 @@ TEST_CASE("verifier fails closed on an enum-variant construct whose variant has 
     ctor.variant = CoreVariantId{0};
     ctor.resolved = true;
     ctor.args = {}; // arity unknown must NOT be a free pass
-    g.flow->exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
+    g.flow->storage.exprs.push_back(CoreExpr{std::move(ctor), std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kTypeTableShapeInvalid));
@@ -1453,14 +1453,14 @@ TEST_CASE("verifier fails closed on an enum-variant construct whose variant has 
 TEST_CASE("verifier accepts a well-formed pattern arena") {
     GoodProgram g = make_good_program();
     // patterns: [0] wildcard, [1] Flag::On (unit variant), [2] (On | wildcard)
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
     CoreVariantPat on;
     on.owner_enum = CoreTypeId{2}; // Flag
     on.variant = CoreVariantId{0}; // On (unit, arity 0)
-    g.flow->patterns.push_back(CorePattern{on, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{on, std::nullopt});
     CoreOrPat orp;
     orp.alternatives = {CorePatternId{1}, CorePatternId{0}};
-    g.flow->patterns.push_back(CorePattern{orp, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{orp, std::nullopt});
     const auto result = verify_core_program(g.program);
     for (const auto &d : result.diagnostics) {
         INFO("unexpected diagnostic: " << d.code << " — " << d.message);
@@ -1473,8 +1473,8 @@ TEST_CASE("verifier fails closed on an out-of-range pattern id") {
     GoodProgram g = make_good_program();
     CoreOrPat orp;
     orp.alternatives = {CorePatternId{0}, CorePatternId{99}}; // 99 out of range
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
-    g.flow->patterns.push_back(CorePattern{orp, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{orp, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternIdOutOfRange));
@@ -1486,7 +1486,7 @@ TEST_CASE("verifier fails closed on a self-referential pattern (cycle)") {
     CoreBindingPat b;
     b.has_nested = true;
     b.nested = CorePatternId{0};
-    g.flow->patterns.push_back(CorePattern{b, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{b, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternCycle));
@@ -1497,7 +1497,7 @@ TEST_CASE("verifier fails closed on a variant pattern whose owner is not an enum
     CoreVariantPat v;
     v.owner_enum = CoreTypeId{1}; // Ctx is a struct, not an enum
     v.variant = CoreVariantId{0};
-    g.flow->patterns.push_back(CorePattern{v, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{v, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternVariantInvalid));
@@ -1508,7 +1508,7 @@ TEST_CASE("verifier fails closed on a variant pattern with an out-of-range varia
     CoreVariantPat v;
     v.owner_enum = CoreTypeId{2}; // Flag
     v.variant = CoreVariantId{7}; // Flag has 2 variants
-    g.flow->patterns.push_back(CorePattern{v, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{v, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternVariantInvalid));
@@ -1516,12 +1516,12 @@ TEST_CASE("verifier fails closed on a variant pattern with an out-of-range varia
 
 TEST_CASE("verifier fails closed on a unit variant pattern given tuple subpatterns (arity)") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     CoreVariantPat v;
     v.owner_enum = CoreTypeId{2};   // Flag
     v.variant = CoreVariantId{0};   // On (arity 0)
     v.tuple_subpatterns = {CorePatternId{0}}; // 1 subpattern vs arity 0
-    g.flow->patterns.push_back(CorePattern{v, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{v, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternPayloadArity));
@@ -1529,10 +1529,10 @@ TEST_CASE("verifier fails closed on a unit variant pattern given tuple subpatter
 
 TEST_CASE("verifier fails closed on an or-pattern with fewer than two alternatives") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     CoreOrPat orp;
     orp.alternatives = {CorePatternId{0}}; // only one
-    g.flow->patterns.push_back(CorePattern{orp, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{orp, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternShapeInvalid));
@@ -1543,11 +1543,11 @@ TEST_CASE("verifier fails closed on an or-pattern with fewer than two alternativ
 TEST_CASE("verifier accepts a well-formed IntRange + Tuple pattern arena") {
     GoodProgram g = make_good_program();
     // #0 int-range 1..10, #1 wildcard, #2 tuple (int-range, wildcard)
-    g.flow->patterns.push_back(CorePattern{CoreIntRangePat{1, 10}, std::nullopt});
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{CoreIntRangePat{1, 10}, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
     CoreTuplePat t;
     t.elements = {CorePatternId{0}, CorePatternId{1}};
-    g.flow->patterns.push_back(CorePattern{t, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{t, std::nullopt});
     const auto result = verify_core_program(g.program);
     for (const auto &d : result.diagnostics) {
         INFO("unexpected diagnostic: " << d.code << " — " << d.message);
@@ -1558,7 +1558,7 @@ TEST_CASE("verifier accepts a well-formed IntRange + Tuple pattern arena") {
 
 TEST_CASE("verifier fails closed on a reverse int-range pattern (start > end)") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreIntRangePat{10, 1}, std::nullopt}); // reverse
+    g.flow->storage.patterns.push_back(CorePattern{CoreIntRangePat{10, 1}, std::nullopt}); // reverse
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternShapeInvalid));
@@ -1568,8 +1568,8 @@ TEST_CASE("verifier fails closed on a tuple pattern with an out-of-range element
     GoodProgram g = make_good_program();
     CoreTuplePat t;
     t.elements = {CorePatternId{0}, CorePatternId{99}}; // 99 out of range
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    g.flow->patterns.push_back(CorePattern{t, std::nullopt});                 // #1
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    g.flow->storage.patterns.push_back(CorePattern{t, std::nullopt});                 // #1
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternIdOutOfRange));
@@ -1580,7 +1580,7 @@ TEST_CASE("verifier fails closed on a self-referential tuple pattern (cycle)") {
     // pattern #0 = tuple whose only element is itself.
     CoreTuplePat t;
     t.elements = {CorePatternId{0}};
-    g.flow->patterns.push_back(CorePattern{t, std::nullopt});
+    g.flow->storage.patterns.push_back(CorePattern{t, std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kPatternCycle));
@@ -1619,10 +1619,10 @@ CoreMatchStmt make_wildcard_match(std::uint32_t scrutinee, bool trap_fallback) {
 
 TEST_CASE("verifier accepts a well-formed statement match") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    const std::uint32_t sid = g.flow->value_count; // fresh scrutinee id
-    g.flow->value_count += 1;
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->storage.value_count; // fresh scrutinee id
+    g.flow->storage.value_count += 1;
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto &done = g.flow->states[1].body;
     done.statements.clear();
     done.statements.push_back(
@@ -1649,10 +1649,10 @@ TEST_CASE("verifier fails closed on a yield in an ordinary flow region") {
 
 TEST_CASE("verifier fails closed on a match without a fallback region") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    const std::uint32_t sid = g.flow->value_count;
-    g.flow->value_count += 1;
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->storage.value_count;
+    g.flow->storage.value_count += 1;
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto match = make_wildcard_match(sid, /*trap_fallback=*/false);
     match.fallback_region.reset(); // remove fallback
     auto &done = g.flow->states[1].body;
@@ -1667,10 +1667,10 @@ TEST_CASE("verifier fails closed on a match without a fallback region") {
 
 TEST_CASE("verifier fails closed on a statement match arm that falls through (no yield)") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    const std::uint32_t sid = g.flow->value_count;
-    g.flow->value_count += 1;
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->storage.value_count;
+    g.flow->storage.value_count += 1;
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
     match.arms[0].body->statements.clear(); // arm body no longer yields -> fallthrough
     auto &done = g.flow->states[1].body;
@@ -1685,10 +1685,10 @@ TEST_CASE("verifier fails closed on a statement match arm that falls through (no
 
 TEST_CASE("verifier fails closed on a statement match arm that yields a value") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    const std::uint32_t sid = g.flow->value_count;
-    g.flow->value_count += 1;
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->storage.value_count;
+    g.flow->storage.value_count += 1;
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
     // statement match arm yields a VALUE (sid) — illegal for a unit arm.
     match.arms[0].body->statements.clear();
@@ -1706,15 +1706,15 @@ TEST_CASE("verifier fails closed on a statement match arm that yields a value") 
 
 TEST_CASE("verifier accepts an if-both-branches-yield arm body (per-path yield)") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    const std::uint32_t sid = g.flow->value_count;
-    g.flow->value_count += 1;
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->storage.value_count;
+    g.flow->storage.value_count += 1;
     // P4-B (P1): this value doubles as the if-condition below, so it must be Bool.
-    g.flow->value_types.push_back(g.vt_bool);
+    g.flow->storage.value_types.push_back(g.vt_bool);
     // A Bool-typed expr to bind %sid from (its result_type must match %sid's Bool
     // recorded type — the Let-consistency check).
-    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, g.vt_bool});
     auto match = make_wildcard_match(sid, /*trap_fallback=*/true);
     // arm body: if %sid { yield } else { yield } — both paths yield unit.
@@ -1743,7 +1743,7 @@ TEST_CASE("verifier fails closed on a non-Bool if condition (P4-B P1)") {
     GoodProgram g = make_good_program();
     // %1 is the if-condition (see make_good_program). Retype it to Int: the
     // condition type-check must fail closed.
-    g.flow->value_types[1] = g.vt_int;
+    g.flow->storage.value_types[1] = g.vt_int;
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kValueTypeMismatch));
@@ -1751,15 +1751,15 @@ TEST_CASE("verifier fails closed on a non-Bool if condition (P4-B P1)") {
 
 TEST_CASE("verifier fails closed on a guard that yields a non-Bool value (P4-B P1)") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     // scrutinee value (Int) + a guard result value that we deliberately type Int.
-    const std::uint32_t sid = g.flow->value_count;
+    const std::uint32_t sid = g.flow->storage.value_count;
     const std::uint32_t guard_v = sid + 1;
-    g.flow->value_count += 2;
-    g.flow->value_types.push_back(g.vt_int); // scrutinee
-    g.flow->value_types.push_back(g.vt_int); // guard result — WRONG (must be Bool)
-    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    g.flow->storage.value_count += 2;
+    g.flow->storage.value_types.push_back(g.vt_int); // scrutinee
+    g.flow->storage.value_types.push_back(g.vt_int); // guard result — WRONG (must be Bool)
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
     // An expression match with a guard region that yields the Int guard value.
     CoreMatchStmt match;
@@ -1790,17 +1790,17 @@ TEST_CASE("verifier fails closed on a guard that yields a non-Bool value (P4-B P
 
 TEST_CASE("verifier fails closed on an expression arm yielding the wrong value type (P4-B P1)") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    const std::uint32_t sid = g.flow->value_count;    // scrutinee/result (Int)
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->storage.value_count;    // scrutinee/result (Int)
     const std::uint32_t arm_v = sid + 1;              // arm-yielded value (Bool — WRONG)
-    g.flow->value_count += 2;
-    g.flow->value_types.push_back(g.vt_int);  // result: Int
-    g.flow->value_types.push_back(g.vt_bool); // arm yields Bool — mismatches Int result
-    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    g.flow->storage.value_count += 2;
+    g.flow->storage.value_types.push_back(g.vt_int);  // result: Int
+    g.flow->storage.value_types.push_back(g.vt_bool); // arm yields Bool — mismatches Int result
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
-    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, g.vt_bool});
     CoreMatchStmt match;
     match.scrutinee = CoreValueId{sid};
@@ -1831,17 +1831,17 @@ TEST_CASE("verifier fails closed on a guard whose NESTED if yields non-Bool (P4-
     // `if c { yield Int } else { yield Int }` inside a guard must fail even though
     // both paths yield (the type is wrong).
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    const std::uint32_t sid = g.flow->value_count;   // scrutinee (Bool, doubles as if-cond)
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->storage.value_count;   // scrutinee (Bool, doubles as if-cond)
     const std::uint32_t gi = sid + 1;                // guard-yielded Int value
-    g.flow->value_count += 2;
-    g.flow->value_types.push_back(g.vt_bool);
-    g.flow->value_types.push_back(g.vt_int);
-    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    g.flow->storage.value_count += 2;
+    g.flow->storage.value_types.push_back(g.vt_bool);
+    g.flow->storage.value_types.push_back(g.vt_int);
+    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, g.vt_bool});
-    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
     CoreMatchStmt match;
     match.scrutinee = CoreValueId{sid};
@@ -1882,17 +1882,17 @@ TEST_CASE("verifier fails closed on an expression arm whose NESTED if yields the
     // The Exact(result type) constraint must thread through a nested `if` in an
     // expression arm body: result is Int, both branches yield Bool.
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
-    const std::uint32_t sid = g.flow->value_count;   // scrutinee/result (Int)
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    const std::uint32_t sid = g.flow->storage.value_count;   // scrutinee/result (Int)
     const std::uint32_t bv = sid + 1;                // Bool value the arm yields
-    g.flow->value_count += 2;
-    g.flow->value_types.push_back(g.vt_int);
-    g.flow->value_types.push_back(g.vt_bool);
-    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    g.flow->storage.value_count += 2;
+    g.flow->storage.value_types.push_back(g.vt_int);
+    g.flow->storage.value_types.push_back(g.vt_bool);
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
-    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    const CoreExprId e_bool{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, g.vt_bool});
     CoreMatchStmt match;
     match.scrutinee = CoreValueId{sid};
@@ -1931,15 +1931,15 @@ TEST_CASE("verifier fails closed on a guard yielding non-Bool even when the pool
     // The Bool expectation must not be silently disabled when the value-type pool
     // lacks a Bool node: a guard yielding Int still fails closed.
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0
     // Deliberately do NOT use g.vt_bool anywhere; keep only Int-typed values.
-    const std::uint32_t sid = g.flow->value_count;   // scrutinee (Int)
+    const std::uint32_t sid = g.flow->storage.value_count;   // scrutinee (Int)
     const std::uint32_t gi = sid + 1;                // guard-yielded Int value
-    g.flow->value_count += 2;
-    g.flow->value_types.push_back(g.vt_int);
-    g.flow->value_types.push_back(g.vt_int);
-    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->exprs.size())};
-    g.flow->exprs.push_back(
+    g.flow->storage.value_count += 2;
+    g.flow->storage.value_types.push_back(g.vt_int);
+    g.flow->storage.value_types.push_back(g.vt_int);
+    const CoreExprId e_int{static_cast<std::uint32_t>(g.flow->storage.exprs.size())};
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, g.vt_int});
     CoreMatchStmt match;
     match.scrutinee = CoreValueId{sid};
@@ -1971,12 +1971,12 @@ TEST_CASE("verifier fails closed on a match arm binding defined more than once (
     // pattern #0 = binding pattern naming arm binding 0.
     CoreBindingPat bp;
     bp.binding = CorePatternBindingId{0};
-    g.flow->patterns.push_back(CorePattern{bp, std::nullopt});
-    const std::uint32_t sid = g.flow->value_count;
+    g.flow->storage.patterns.push_back(CorePattern{bp, std::nullopt});
+    const std::uint32_t sid = g.flow->storage.value_count;
     const std::uint32_t bind_v = sid + 1;
-    g.flow->value_count += 2;
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.value_count += 2;
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     CoreMatchStmt m;
     m.scrutinee = CoreValueId{sid};
     m.has_result = false;
@@ -2006,12 +2006,12 @@ TEST_CASE("verifier fails closed on a match arm binding defined more than once (
 
 TEST_CASE("verifier fails closed on an arm that declares a binding the pattern never binds") {
     GoodProgram g = make_good_program();
-    g.flow->patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0 wildcard binds nothing
-    const std::uint32_t sid = g.flow->value_count;
+    g.flow->storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt}); // #0 wildcard binds nothing
+    const std::uint32_t sid = g.flow->storage.value_count;
     const std::uint32_t bind_v = sid + 1;
-    g.flow->value_count += 2;
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.value_count += 2;
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     CoreMatchStmt m;
     m.scrutinee = CoreValueId{sid};
     CoreMatchArm arm;
@@ -2057,21 +2057,21 @@ TEST_CASE("verifier fails closed on two tuple slots reusing one arm binding id")
     // patterns: #0,#1 binding patterns both naming arm binding 0; #2 = Both(#0,#1)
     CoreBindingPat b0;
     b0.binding = CorePatternBindingId{0};
-    g.flow->patterns.push_back(CorePattern{b0, std::nullopt}); // #0
+    g.flow->storage.patterns.push_back(CorePattern{b0, std::nullopt}); // #0
     CoreBindingPat b1;
     b1.binding = CorePatternBindingId{0}; // SAME binding id -> ambiguous
-    g.flow->patterns.push_back(CorePattern{b1, std::nullopt}); // #1
+    g.flow->storage.patterns.push_back(CorePattern{b1, std::nullopt}); // #1
     CoreVariantPat both;
     both.owner_enum = CoreTypeId{pair_ty};
     both.variant = CoreVariantId{0};
     both.tuple_subpatterns = {CorePatternId{0}, CorePatternId{1}};
-    g.flow->patterns.push_back(CorePattern{both, std::nullopt}); // #2
+    g.flow->storage.patterns.push_back(CorePattern{both, std::nullopt}); // #2
 
-    const std::uint32_t sid = g.flow->value_count;
+    const std::uint32_t sid = g.flow->storage.value_count;
     const std::uint32_t bind_v = sid + 1;
-    g.flow->value_count += 2;
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
-    g.flow->value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.value_count += 2;
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
+    g.flow->storage.value_types.push_back(ir::core::CoreValueTypeId{0}); // P4-B: keep value_types dense (pool[0]=Int in GoodProgram)
     CoreMatchStmt m;
     m.scrutinee = CoreValueId{sid};
     CoreMatchArm arm;
@@ -2274,7 +2274,7 @@ TEST_CASE("verifier accepts a well-formed workflow") {
 TEST_CASE("workflow verifier rejects capability calls outside the Flow-only boundary") {
     SUBCASE("a signature-correct call reports only the region violation") {
         GoodWorkflow g = make_good_workflow();
-        const CoreValueTypeId type = g.wf->value_types[0];
+        const CoreValueTypeId type = g.wf->storage.value_types[0];
         add_workflow_capability_call(g, type, type);
 
         const auto verified = verify_core_program(g.program);
@@ -2290,7 +2290,7 @@ TEST_CASE("workflow verifier rejects capability calls outside the Flow-only boun
         const CoreValueTypeId bool_type{
             static_cast<std::uint32_t>(g.program.value_types.size())};
         g.program.value_types.push_back(CoreValueType{CoreVtBool{}});
-        add_workflow_capability_call(g, bool_type, g.wf->value_types[0]);
+        add_workflow_capability_call(g, bool_type, g.wf->storage.value_types[0]);
 
         const auto verified = verify_core_program(g.program);
         CHECK_FALSE(verified.ok());
@@ -2303,7 +2303,7 @@ TEST_CASE("workflow verifier rejects capability calls outside the Flow-only boun
         const CoreValueTypeId bool_type{
             static_cast<std::uint32_t>(g.program.value_types.size())};
         g.program.value_types.push_back(CoreValueType{CoreVtBool{}});
-        add_workflow_capability_call(g, g.wf->value_types[0], bool_type);
+        add_workflow_capability_call(g, g.wf->storage.value_types[0], bool_type);
 
         const auto verified = verify_core_program(g.program);
         CHECK_FALSE(verified.ok());
@@ -2358,7 +2358,7 @@ TEST_CASE("workflow verifier: a node reading a NON-dependency node is fail-close
 TEST_CASE("workflow verifier: an out-of-range node-output reference is fail-closed") {
     GoodWorkflow g = make_good_workflow();
     // Point node1's input read at a non-existent node id.
-    std::get<CorePathExpr>(g.wf->exprs[1].node).workflow_node = CoreWorkflowNodeId{9};
+    std::get<CorePathExpr>(g.wf->storage.exprs[1].node).workflow_node = CoreWorkflowNodeId{9};
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kWorkflowNodeRefInvalid));
@@ -2391,7 +2391,7 @@ TEST_CASE("workflow verifier: a node id not equal to its index is fail-closed") 
 TEST_CASE("workflow verifier: a WorkflowInput root type mismatch is fail-closed") {
     GoodWorkflow g = make_good_workflow();
     // node0 reads `input` typed as WIn (id 0); corrupt it to WOut (id 2).
-    std::get<CorePathExpr>(g.wf->exprs[0].node).root_type = CoreTypeId{2};
+    std::get<CorePathExpr>(g.wf->storage.exprs[0].node).root_type = CoreTypeId{2};
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kWorkflowPathRootInvalid));
@@ -2400,7 +2400,7 @@ TEST_CASE("workflow verifier: a WorkflowInput root type mismatch is fail-closed"
 TEST_CASE("workflow verifier: a NodeOutput root type not equal to the producer output is fail-closed") {
     GoodWorkflow g = make_good_workflow();
     // node1 reads node0 output typed WMid (id 1); corrupt it to WIn (id 0).
-    std::get<CorePathExpr>(g.wf->exprs[1].node).root_type = CoreTypeId{0};
+    std::get<CorePathExpr>(g.wf->storage.exprs[1].node).root_type = CoreTypeId{0};
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kWorkflowPathRootInvalid));
@@ -2409,7 +2409,7 @@ TEST_CASE("workflow verifier: a NodeOutput root type not equal to the producer o
 TEST_CASE("workflow verifier: a stray node id on a non-NodeOutput root is fail-closed") {
     GoodWorkflow g = make_good_workflow();
     // WorkflowInput path must carry a kInvalid workflow_node.
-    std::get<CorePathExpr>(g.wf->exprs[0].node).workflow_node = CoreWorkflowNodeId{0};
+    std::get<CorePathExpr>(g.wf->storage.exprs[0].node).workflow_node = CoreWorkflowNodeId{0};
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kWorkflowPathRootInvalid));
@@ -2434,7 +2434,7 @@ TEST_CASE("workflow verifier P0-1: a reachable cyclic expr does NOT crash and re
     // self-referential unary: expr[0] = Not(expr[0]). The path walk MUST stay
     // total (no SIGSEGV / no native-stack blow-up) and the acyclic checker must
     // report EXPR_CYCLE — the verifier still RETURNS a result.
-    g.wf->exprs[0].node = CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{0}};
+    g.wf->storage.exprs[0].node = CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{0}};
     const auto result = verify_core_program(g.program); // must not crash
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kExprCycle));
@@ -2445,16 +2445,16 @@ TEST_CASE("workflow verifier P0-1: a deep operand chain does not blow the native
     // Build a long acyclic unary chain expr[k] = Not(expr[k+1]) ... and point
     // node0's input at its head. A recursive walk would overflow; the iterative
     // walk must handle it and verify (the chain is acyclic + well-formed).
-    const std::uint32_t base = static_cast<std::uint32_t>(g.wf->exprs.size());
+    const std::uint32_t base = static_cast<std::uint32_t>(g.wf->storage.exprs.size());
     const int depth = 20000;
     for (int k = 0; k < depth; ++k) {
-        g.wf->exprs.push_back(
+        g.wf->storage.exprs.push_back(
             CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{base + static_cast<std::uint32_t>(k) + 1}},
                      std::nullopt});
     }
     // Tail references the original WorkflowInput path expr[0] so the chain is a
     // valid Bool-ish computation rooted at the workflow input.
-    g.wf->exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt});
+    g.wf->storage.exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt});
     // Rebind node0's input let to the chain head, still yielding value 0.
     auto r = std::make_unique<CoreRegion>();
     r->statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{base}}, std::nullopt});
@@ -2469,7 +2469,7 @@ TEST_CASE("workflow verifier P0-2: a flow carrying a workflow-only path root is 
     GoodProgram g = make_good_program();
     // Corrupt the flow's nested-path expr (expr[1]) to a WorkflowNodeOutput root
     // (a workflow-only root has no place in a flow body).
-    auto &pe = std::get<CorePathExpr>(g.flow->exprs[1].node);
+    auto &pe = std::get<CorePathExpr>(g.flow->storage.exprs[1].node);
     pe.root = CorePathRoot::WorkflowNodeOutput;
     pe.workflow_node = CoreWorkflowNodeId{0};
     const auto result = verify_core_program(g.program);
@@ -2482,7 +2482,7 @@ TEST_CASE("workflow verifier P0-2: a workflow carrying an unresolved Identifier 
     // node0's input reads a WorkflowInput path (expr[0]); corrupt it to a bare
     // unresolved Identifier root (kInvalid type/node). In a workflow body the 4th
     // path is unresolved -> fail-closed, NOT a legal free variable.
-    auto &pe = std::get<CorePathExpr>(g.wf->exprs[0].node);
+    auto &pe = std::get<CorePathExpr>(g.wf->storage.exprs[0].node);
     pe.root = CorePathRoot::Identifier;
     pe.root_name = "ghost";
     pe.root_type = CoreTypeId{};
@@ -2501,7 +2501,7 @@ TEST_CASE("workflow verifier P1: an UNREFERENCED bad WorkflowNodeOutput is still
     ghost.root = CorePathRoot::WorkflowNodeOutput;
     ghost.root_type = CoreTypeId{1}; // some valid type
     ghost.workflow_node = CoreWorkflowNodeId{99};
-    g.wf->exprs.push_back(CoreExpr{std::move(ghost), std::nullopt});
+    g.wf->storage.exprs.push_back(CoreExpr{std::move(ghost), std::nullopt});
     const auto result = verify_core_program(g.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kWorkflowNodeRefInvalid));
@@ -2678,16 +2678,16 @@ TEST_CASE("P6-5 verifier: a bounded List nominal with empty args is fail-closed"
     const auto list_vt =
         intern_program_vt(p, CoreValueType{CoreVtNominal{list_type, {}, std::uint64_t{4}}});
     // Bind the malformed container to a fresh SSA value the Len op reads.
-    const CoreValueId container{g.flow->value_count++};
-    g.flow->value_types.push_back(list_vt);
-    const CoreExprId lit = static_cast<CoreExprId>(g.flow->exprs.size());
-    g.flow->exprs.push_back(
+    const CoreValueId container{g.flow->storage.value_count++};
+    g.flow->storage.value_types.push_back(list_vt);
+    const CoreExprId lit = static_cast<CoreExprId>(g.flow->storage.exprs.size());
+    g.flow->storage.exprs.push_back(
         CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt, g.vt_int});
-    const CoreExprId len_expr = static_cast<CoreExprId>(g.flow->exprs.size());
-    g.flow->exprs.push_back(CoreExpr{
+    const CoreExprId len_expr = static_cast<CoreExprId>(g.flow->storage.exprs.size());
+    g.flow->storage.exprs.push_back(CoreExpr{
         CoreCollectionExpr{CoreCollectionOpKind::Len, container, {}, {}}, std::nullopt, g.vt_int});
-    const CoreValueId len_result{g.flow->value_count++};
-    g.flow->value_types.push_back(g.vt_int);
+    const CoreValueId len_result{g.flow->storage.value_count++};
+    g.flow->storage.value_types.push_back(g.vt_int);
     auto &body = g.flow->states[0].body.statements;
     body.insert(body.begin(), CoreStmt{CoreLetStmt{container, lit}, std::nullopt});
     body.insert(body.begin() + 1, CoreStmt{CoreLetStmt{len_result, len_expr}, std::nullopt});

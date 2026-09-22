@@ -1238,19 +1238,19 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
             field("agent", [&]() { write_required_id(flow.target, "flow.agent"); });
             field("agent_name", [&]() { write_string(flow.agent_name); });
             field("target_ref", [&]() { write_symbol_ref(flow.target_ref, indent_level + 1); });
-            field("value_count", [&]() { write_u32(flow.value_count); });
-            field("exprs", [&]() { print_exprs(flow.exprs, indent_level + 1); });
+            field("value_count", [&]() { write_u32(flow.storage.value_count); });
+            field("exprs", [&]() { print_exprs(flow.storage.exprs, indent_level + 1); });
             field("value_types", [&]() {
                 print_array(indent_level + 1, [&](const auto &vt_item) {
-                    for (const auto &vt : flow.value_types) {
+                    for (const auto &vt : flow.storage.value_types) {
                         vt_item([&]() { write_index(vt.value); });
                     }
                 });
             });
             field("coercion_plans", [&]() {
-                print_coercion_plans(flow.coercion_plans, indent_level + 1);
+                print_coercion_plans(flow.storage.coercion_plans, indent_level + 1);
             });
-            field("patterns", [&]() { print_patterns(flow.patterns, indent_level + 1); });
+            field("patterns", [&]() { print_patterns(flow.storage.patterns, indent_level + 1); });
             field("states", [&]() {
                 print_array(indent_level + 1, [&](const auto &state_item) {
                     for (const auto &state : flow.states) {
@@ -1301,19 +1301,19 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                   [&]() { write_required_type_id(workflow.input_type, "workflow.input"); });
             field("output_type",
                   [&]() { write_required_type_id(workflow.output_type, "workflow.output"); });
-            field("value_count", [&]() { write_u32(workflow.value_count); });
-            field("exprs", [&]() { print_exprs(workflow.exprs, indent_level + 1); });
+            field("value_count", [&]() { write_u32(workflow.storage.value_count); });
+            field("exprs", [&]() { print_exprs(workflow.storage.exprs, indent_level + 1); });
             field("value_types", [&]() {
                 print_array(indent_level + 1, [&](const auto &vt_item) {
-                    for (const auto &vt : workflow.value_types) {
+                    for (const auto &vt : workflow.storage.value_types) {
                         vt_item([&]() { write_index(vt.value); });
                     }
                 });
             });
             field("coercion_plans", [&]() {
-                print_coercion_plans(workflow.coercion_plans, indent_level + 1);
+                print_coercion_plans(workflow.storage.coercion_plans, indent_level + 1);
             });
-            field("patterns", [&]() { print_patterns(workflow.patterns, indent_level + 1); });
+            field("patterns", [&]() { print_patterns(workflow.storage.patterns, indent_level + 1); });
             field("nodes", [&]() {
                 print_array(indent_level + 1, [&](const auto &node_item) {
                     for (const auto &node : workflow.nodes) {
@@ -1425,6 +1425,16 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                         // `source_range`; a second one would be a duplicate JSON
                         // key. The reader restores it from the wrapper.
                         field("source_kind", [&]() { write_string(n.source_kind); });
+                    },
+                    [&](const CoreCallExpr &n) {
+                        field("callee", [&]() { write_index(n.callee.value); });
+                        field("args", [&]() {
+                            print_array(indent_level + 1, [&](const auto &arg_item) {
+                                for (const CoreValueId arg : n.args) {
+                                    arg_item([&]() { write_index(arg.value); });
+                                }
+                            });
+                        });
                     },
                 },
                 expr.node);
@@ -3251,25 +3261,25 @@ bool CoreJsonReader::read_flows(const JsonValue &array, CoreProgram &program) {
         if (!value_count.has_value()) {
             return false;
         }
-        decl.value_count = *value_count;
+        decl.storage.value_count = *value_count;
         const auto *exprs = item->get("exprs");
         if (exprs == nullptr || !exprs->is_array()) {
             error(std::string(kMissingField), "flow needs an array 'exprs'", node_range(*item));
             return false;
         }
-        if (!read_exprs(*exprs, decl.exprs)) {
+        if (!read_exprs(*exprs, decl.storage.exprs)) {
             return false;
         }
         const auto value_types = map_value_type_id_array(*item, "value_types");
         if (!value_types.has_value()) {
             return false;
         }
-        decl.value_types = *value_types;
+        decl.storage.value_types = *value_types;
         // §5 — the per-body value_types table is DENSE (size == value_count).
-        if (decl.value_types.size() != decl.value_count) {
+        if (decl.storage.value_types.size() != decl.storage.value_count) {
             error(std::string(kValueCountMismatch),
-                  "flow value_types size " + std::to_string(decl.value_types.size()) +
-                      " disagrees with value_count " + std::to_string(decl.value_count),
+                  "flow value_types size " + std::to_string(decl.storage.value_types.size()) +
+                      " disagrees with value_count " + std::to_string(decl.storage.value_count),
                   node_range(*item));
             return false;
         }
@@ -3279,7 +3289,7 @@ bool CoreJsonReader::read_flows(const JsonValue &array, CoreProgram &program) {
                   node_range(*item));
             return false;
         }
-        if (!read_coercion_plans(*plans, decl.coercion_plans)) {
+        if (!read_coercion_plans(*plans, decl.storage.coercion_plans)) {
             return false;
         }
         const auto *patterns = item->get("patterns");
@@ -3287,7 +3297,7 @@ bool CoreJsonReader::read_flows(const JsonValue &array, CoreProgram &program) {
             error(std::string(kMissingField), "flow needs an array 'patterns'", node_range(*item));
             return false;
         }
-        if (!read_patterns(*patterns, decl.patterns)) {
+        if (!read_patterns(*patterns, decl.storage.patterns)) {
             return false;
         }
         const auto *states = item->get("states");
@@ -3406,25 +3416,25 @@ bool CoreJsonReader::read_workflows(const JsonValue &array, CoreProgram &program
         if (!value_count.has_value()) {
             return false;
         }
-        decl.value_count = *value_count;
+        decl.storage.value_count = *value_count;
         const auto *exprs = item->get("exprs");
         if (exprs == nullptr || !exprs->is_array()) {
             error(std::string(kMissingField), "workflow needs an array 'exprs'",
                   node_range(*item));
             return false;
         }
-        if (!read_exprs(*exprs, decl.exprs)) {
+        if (!read_exprs(*exprs, decl.storage.exprs)) {
             return false;
         }
         const auto value_types = map_value_type_id_array(*item, "value_types");
         if (!value_types.has_value()) {
             return false;
         }
-        decl.value_types = *value_types;
-        if (decl.value_types.size() != decl.value_count) {
+        decl.storage.value_types = *value_types;
+        if (decl.storage.value_types.size() != decl.storage.value_count) {
             error(std::string(kValueCountMismatch),
-                  "workflow value_types size " + std::to_string(decl.value_types.size()) +
-                      " disagrees with value_count " + std::to_string(decl.value_count),
+                  "workflow value_types size " + std::to_string(decl.storage.value_types.size()) +
+                      " disagrees with value_count " + std::to_string(decl.storage.value_count),
                   node_range(*item));
             return false;
         }
@@ -3434,7 +3444,7 @@ bool CoreJsonReader::read_workflows(const JsonValue &array, CoreProgram &program
                   node_range(*item));
             return false;
         }
-        if (!read_coercion_plans(*plans, decl.coercion_plans)) {
+        if (!read_coercion_plans(*plans, decl.storage.coercion_plans)) {
             return false;
         }
         const auto *patterns = item->get("patterns");
@@ -3443,7 +3453,7 @@ bool CoreJsonReader::read_workflows(const JsonValue &array, CoreProgram &program
                   node_range(*item));
             return false;
         }
-        if (!read_patterns(*patterns, decl.patterns)) {
+        if (!read_patterns(*patterns, decl.storage.patterns)) {
             return false;
         }
         const auto *nodes = item->get("nodes");
@@ -3996,6 +4006,28 @@ bool CoreJsonReader::read_expr(const JsonValue &obj, CoreExpr &out) {
         // The node's own range is restored from the wrapper (the writer emits a
         // single `source_range`; a second would be a duplicate JSON key).
         out.node = CoreUnsupportedExpr{*source_kind, out.source_range};
+        break;
+    }
+    case 10: { // CoreCallExpr
+        if (!check_fields(obj, {"kind", "source_range", "result_type", "callee", "args"},
+                          "direct call expression")) {
+            return false;
+        }
+        CoreCallExpr node;
+        const auto callee = req_u32(obj, "callee");
+        if (!callee.has_value()) {
+            return false;
+        }
+        node.callee = CoreInstanceId{*callee};
+        const auto args = req_u32_array(obj, "args");
+        if (!args.has_value()) {
+            return false;
+        }
+        node.args.reserve(args->size());
+        for (const std::uint32_t arg : *args) {
+            node.args.push_back(CoreValueId{arg});
+        }
+        out.node = std::move(node);
         break;
     }
     default:

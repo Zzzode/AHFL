@@ -54,7 +54,7 @@ static ahfl::ir::core::CoreProgram make_e1_core_program() {
     CoreFlowDecl flow;
     flow.target = CoreAgentId{0};
     flow.agent_name = "Runner";
-    flow.exprs.push_back(CoreExpr{CorePathExpr{CorePathRoot::Input,
+    flow.storage.exprs.push_back(CoreExpr{CorePathExpr{CorePathRoot::Input,
                                                "input",
                                                {},
                                                CoreTypeId{0},
@@ -65,8 +65,8 @@ static ahfl::ir::core::CoreProgram make_e1_core_program() {
                                                {}},
                                   std::nullopt,
                                   CoreValueTypeId{0}});
-    flow.value_count = 1;
-    flow.value_types = {CoreValueTypeId{0}};
+    flow.storage.value_count = 1;
+    flow.storage.value_types = {CoreValueTypeId{0}};
     CoreFlowState done;
     done.state = CoreStateId{0};
     done.state_name = "Done";
@@ -138,7 +138,7 @@ static ahfl::ir::core::CoreProgram make_e2_core_program() {
     CoreFlowDecl flow;
     flow.target = CoreAgentId{0};
     flow.agent_name = "Runner";
-    flow.exprs.push_back(CoreExpr{CorePathExpr{CorePathRoot::Input,
+    flow.storage.exprs.push_back(CoreExpr{CorePathExpr{CorePathRoot::Input,
                                                "input",
                                                {},
                                                CoreTypeId{0},
@@ -149,8 +149,8 @@ static ahfl::ir::core::CoreProgram make_e2_core_program() {
                                                {}},
                                   std::nullopt,
                                   CoreValueTypeId{0}});
-    flow.value_count = 2;
-    flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+    flow.storage.value_count = 2;
+    flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
     CoreFlowState done;
     done.state = CoreStateId{0};
     done.state_name = "Done";
@@ -216,9 +216,9 @@ static ahfl::ir::core::CoreProgram make_e3_workflow_program() {
         input.root = CorePathRoot::Input;
         input.root_name = "input";
         input.root_type = CoreTypeId{0};
-        flow.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
-        flow.value_count = 1;
-        flow.value_types = {frame_value};
+        flow.storage.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
+        flow.storage.value_count = 1;
+        flow.storage.value_types = {frame_value};
         CoreFlowState done;
         done.state = CoreStateId{0};
         done.state_name = "Done";
@@ -260,27 +260,27 @@ static ahfl::ir::core::CoreProgram make_e3_workflow_program() {
                            203};
     workflow.input_type = CoreTypeId{0};
     workflow.output_type = CoreTypeId{0};
-    workflow.value_count = 3;
-    workflow.value_types = {frame_value, frame_value, frame_value};
+    workflow.storage.value_count = 3;
+    workflow.storage.value_types = {frame_value, frame_value, frame_value};
 
     CorePathExpr input;
     input.root = CorePathRoot::WorkflowInput;
     input.root_name = "input";
     input.root_type = CoreTypeId{0};
-    workflow.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
+    workflow.storage.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
     CorePathExpr first_output;
     first_output.root = CorePathRoot::WorkflowNodeOutput;
     first_output.root_name = "first";
     first_output.root_type = CoreTypeId{0};
     first_output.workflow_node = CoreWorkflowNodeId{0};
-    workflow.exprs.push_back(
+    workflow.storage.exprs.push_back(
         CoreExpr{std::move(first_output), std::nullopt, frame_value});
     CorePathExpr second_output;
     second_output.root = CorePathRoot::WorkflowNodeOutput;
     second_output.root_name = "second";
     second_output.root_type = CoreTypeId{0};
     second_output.workflow_node = CoreWorkflowNodeId{1};
-    workflow.exprs.push_back(
+    workflow.storage.exprs.push_back(
         CoreExpr{std::move(second_output), std::nullopt, frame_value});
 
     const auto yielding_region = [](CoreExprId expr, CoreValueId value) {
@@ -330,8 +330,8 @@ static ahfl::ir::core::CoreProgram make_n_node_capability_workflow(std::uint32_t
     program.capabilities.push_back(std::move(cap));
     program.agents[0].capabilities = {CoreCapabilityId{0}};
     auto &cap_flow = program.flows[0];
-    cap_flow.value_count = 2;
-    cap_flow.value_types = {frame_value, frame_value};
+    cap_flow.storage.value_count = 2;
+    cap_flow.storage.value_types = {frame_value, frame_value};
     auto &cap_statements = cap_flow.states[0].body.statements;
     cap_statements.clear();
     cap_statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{0}, CoreExprId{0}}, std::nullopt});
@@ -348,21 +348,21 @@ static ahfl::ir::core::CoreProgram make_n_node_capability_workflow(std::uint32_t
                            "IdentityPipeline", "app", 203};
     workflow.input_type = CoreTypeId{0};
     workflow.output_type = CoreTypeId{0};
-    workflow.value_count = node_count + 1u;
-    workflow.value_types.assign(node_count + 1u, frame_value);
+    workflow.storage.value_count = node_count + 1u;
+    workflow.storage.value_types.assign(node_count + 1u, frame_value);
 
     CorePathExpr input;
     input.root = CorePathRoot::WorkflowInput;
     input.root_name = "input";
     input.root_type = CoreTypeId{0};
-    workflow.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
+    workflow.storage.exprs.push_back(CoreExpr{std::move(input), std::nullopt, frame_value});
     for (std::uint32_t i = 1; i <= node_count; ++i) {
         CorePathExpr out;
         out.root = CorePathRoot::WorkflowNodeOutput;
         out.root_name = "n" + std::to_string(i - 1);
         out.root_type = CoreTypeId{0};
         out.workflow_node = CoreWorkflowNodeId{i - 1};
-        workflow.exprs.push_back(CoreExpr{std::move(out), std::nullopt, frame_value});
+        workflow.storage.exprs.push_back(CoreExpr{std::move(out), std::nullopt, frame_value});
     }
 
     const auto yielding_region = [](CoreExprId expr, CoreValueId value) {
@@ -983,22 +983,22 @@ int main() {
         nested_template.concrete = CoreValueTypeId{1};
         frame.member_type_templates = {nested_template};
         frame.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
-        auto &member_expr = member_projection.flows[0].exprs[0];
+        auto &member_expr = member_projection.flows[0].storage.exprs[0];
         auto &member_path = std::get<CorePathExpr>(member_expr.node);
         member_path.members = {"nested"};
         member_path.projection = {
             CoreProjectionStep{CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{1}}};
         member_expr.result_type = CoreValueTypeId{1};
-        member_projection.flows[0].value_types[0] = CoreValueTypeId{1};
+        member_projection.flows[0].storage.value_types[0] = CoreValueTypeId{1};
         check(rejects_as_unsupported(member_projection),
               "E1 rejects a real member projection with no artifact");
 
         auto literal = make_e1_core_program();
         literal.value_types.push_back(
             CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(1, 1)}});
-        literal.flows[0].exprs[0].node = CoreLiteralExpr{CoreLiteralKind::Integer, "1"};
-        literal.flows[0].exprs[0].result_type = CoreValueTypeId{1};
-        literal.flows[0].value_types[0] = CoreValueTypeId{1};
+        literal.flows[0].storage.exprs[0].node = CoreLiteralExpr{CoreLiteralKind::Integer, "1"};
+        literal.flows[0].storage.exprs[0].result_type = CoreValueTypeId{1};
+        literal.flows[0].storage.value_types[0] = CoreValueTypeId{1};
         check(rejects_as_unsupported(literal),
               "E1 rejects a literal return with no artifact");
 
@@ -1007,7 +1007,7 @@ int main() {
         construction.type_name = "app::Input";
         construction.type_id = CoreTypeId{0};
         construction.resolved = true;
-        construct.flows[0].exprs[0].node = std::move(construction);
+        construct.flows[0].storage.exprs[0].node = std::move(construction);
         check(rejects_as_unsupported(construct),
               "E1 rejects a constructed return with no artifact");
 
@@ -1025,18 +1025,18 @@ int main() {
             std::make_pair<std::int64_t, std::int64_t>(0, 0)}});
         coercion.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}});
         auto &coercion_flow = coercion.flows[0];
-        coercion_flow.exprs[0].node = CoreLiteralExpr{CoreLiteralKind::Integer, "0"};
-        coercion_flow.exprs[0].result_type = CoreValueTypeId{1};
-        coercion_flow.exprs.push_back(
+        coercion_flow.storage.exprs[0].node = CoreLiteralExpr{CoreLiteralKind::Integer, "0"};
+        coercion_flow.storage.exprs[0].result_type = CoreValueTypeId{1};
+        coercion_flow.storage.exprs.push_back(
             CoreExpr{CoreCoerceExpr{CoreValueId{0}, CoreCoercionPlanId{0}},
                      std::nullopt,
                      CoreValueTypeId{2}});
-        coercion_flow.value_count = 2;
-        coercion_flow.value_types = {CoreValueTypeId{1}, CoreValueTypeId{2}};
+        coercion_flow.storage.value_count = 2;
+        coercion_flow.storage.value_types = {CoreValueTypeId{1}, CoreValueTypeId{2}};
         CoreCoercionOp widen;
         widen.kind = CoreCoercionOpKind::IntWiden;
         widen.child = CoreCoercionPlanId{CoreCoercionPlanId::kInvalid};
-        coercion_flow.coercion_plans = {
+        coercion_flow.storage.coercion_plans = {
             CoreCoercionPlanNode{CoreValueTypeId{1}, CoreValueTypeId{2}, {widen}}};
         auto &final_statements = coercion_flow.states[0].body.statements;
         final_statements.clear();
@@ -1132,9 +1132,9 @@ int main() {
             least_privilege.agents[0].states.push_back("Unused");
             least_privilege.agents[0].finals.push_back(CoreStateId{2});
             auto &least_flow = least_privilege.flows[0];
-            least_flow.exprs.push_back(least_flow.exprs[0]);
-            least_flow.value_count = 4;
-            least_flow.value_types.insert(least_flow.value_types.end(),
+            least_flow.storage.exprs.push_back(least_flow.storage.exprs[0]);
+            least_flow.storage.value_count = 4;
+            least_flow.storage.value_types.insert(least_flow.storage.value_types.end(),
                                           {CoreValueTypeId{0}, CoreValueTypeId{1}});
             CoreFlowState unused;
             unused.state = CoreStateId{2};
@@ -1331,7 +1331,7 @@ int main() {
               "E2 rejects a SymbolId outside the uint32 import ABI domain");
 
         auto hidden_expr = make_e2_core_program();
-        hidden_expr.flows[0].exprs.push_back(hidden_expr.flows[0].exprs[0]);
+        hidden_expr.flows[0].storage.exprs.push_back(hidden_expr.flows[0].storage.exprs[0]);
         const auto hidden_layout = compute_core_layouts(hidden_expr);
         const auto hidden = hidden_layout.table.has_value()
                                 ? ahfl::backends::emit_core_wasm(
@@ -1350,17 +1350,17 @@ int main() {
         construct_input.type_name = "app::Input";
         construct_input.type_id = CoreTypeId{0};
         construct_input.resolved = true;
-        construction.flows[0].exprs[0].node = std::move(construct_input);
+        construction.flows[0].storage.exprs[0].node = std::move(construct_input);
         check(rejects_capability_frame(construction),
               "E2 rejects a constructed capability argument with no artifact");
 
         auto literal = make_e2_core_program();
         literal.value_types.push_back(CoreValueType{CoreVtInt{
             std::make_pair<std::int64_t, std::int64_t>(1, 1)}});
-        literal.flows[0].exprs[0].node =
+        literal.flows[0].storage.exprs[0].node =
             CoreLiteralExpr{CoreLiteralKind::Integer, "1"};
-        literal.flows[0].exprs[0].result_type = CoreValueTypeId{2};
-        literal.flows[0].value_types[0] = CoreValueTypeId{2};
+        literal.flows[0].storage.exprs[0].result_type = CoreValueTypeId{2};
+        literal.flows[0].storage.value_types[0] = CoreValueTypeId{2};
         literal.capabilities[0].param_types[0] = CoreValueTypeId{2};
         check(rejects_capability_frame(literal),
               "E2 rejects a literal capability argument with no artifact");
@@ -1381,13 +1381,13 @@ int main() {
         nested_template.concrete = CoreValueTypeId{2};
         projection_input.member_type_templates = {nested_template};
         projection_input.field_type_template_roots = {CoreMemberTypeTemplateNodeId{0}};
-        auto &projection_expr = projection.flows[0].exprs[0];
+        auto &projection_expr = projection.flows[0].storage.exprs[0];
         auto &projection_path = std::get<CorePathExpr>(projection_expr.node);
         projection_path.members = {"nested"};
         projection_path.projection = {
             CoreProjectionStep{CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{2}}};
         projection_expr.result_type = CoreValueTypeId{2};
-        projection.flows[0].value_types[0] = CoreValueTypeId{2};
+        projection.flows[0].storage.value_types[0] = CoreValueTypeId{2};
         projection.capabilities[0].param_types[0] = CoreValueTypeId{2};
         check(rejects_capability_frame(projection),
               "E2 rejects a projected capability argument with no artifact");
@@ -1397,19 +1397,19 @@ int main() {
             std::make_pair<std::int64_t, std::int64_t>(0, 0)}});
         coercion.value_types.push_back(CoreValueType{CoreVtInt{std::nullopt}});
         auto &coercion_flow = coercion.flows[0];
-        coercion_flow.exprs[0].node = CoreLiteralExpr{CoreLiteralKind::Integer, "0"};
-        coercion_flow.exprs[0].result_type = CoreValueTypeId{2};
-        coercion_flow.exprs.push_back(
+        coercion_flow.storage.exprs[0].node = CoreLiteralExpr{CoreLiteralKind::Integer, "0"};
+        coercion_flow.storage.exprs[0].result_type = CoreValueTypeId{2};
+        coercion_flow.storage.exprs.push_back(
             CoreExpr{CoreCoerceExpr{CoreValueId{0}, CoreCoercionPlanId{0}},
                      std::nullopt,
                      CoreValueTypeId{3}});
-        coercion_flow.value_count = 3;
-        coercion_flow.value_types = {
+        coercion_flow.storage.value_count = 3;
+        coercion_flow.storage.value_types = {
             CoreValueTypeId{2}, CoreValueTypeId{3}, CoreValueTypeId{1}};
         CoreCoercionOp widen;
         widen.kind = CoreCoercionOpKind::IntWiden;
         widen.child = CoreCoercionPlanId{CoreCoercionPlanId::kInvalid};
-        coercion_flow.coercion_plans = {
+        coercion_flow.storage.coercion_plans = {
             CoreCoercionPlanNode{CoreValueTypeId{2}, CoreValueTypeId{3}, {widen}}};
         coercion.capabilities[0].param_types[0] = CoreValueTypeId{3};
         auto &coercion_statements = coercion_flow.states[0].body.statements;
@@ -1432,12 +1432,12 @@ int main() {
         auto nested_if = make_e2_core_program();
         nested_if.value_types.push_back(CoreValueType{CoreVtBool{}});
         auto &nested_flow = nested_if.flows[0];
-        nested_flow.exprs.push_back(
+        nested_flow.storage.exprs.push_back(
             CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
                      std::nullopt,
                      CoreValueTypeId{2}});
-        nested_flow.value_count = 4;
-        nested_flow.value_types = {CoreValueTypeId{0},
+        nested_flow.storage.value_count = 4;
+        nested_flow.storage.value_types = {CoreValueTypeId{0},
                                    CoreValueTypeId{1},
                                    CoreValueTypeId{2},
                                    CoreValueTypeId{1}};
@@ -1747,7 +1747,7 @@ int main() {
 
         auto branch_join = make_e3_workflow_program();
         auto &branch_workflow = branch_join.workflows[0];
-        auto &parallel_input = std::get<CorePathExpr>(branch_workflow.exprs[1].node);
+        auto &parallel_input = std::get<CorePathExpr>(branch_workflow.storage.exprs[1].node);
         parallel_input.root = CorePathRoot::WorkflowInput;
         parallel_input.root_name = "input";
         parallel_input.workflow_node = CoreWorkflowNodeId{};
@@ -1757,10 +1757,10 @@ int main() {
         join_input.root_name = "first";
         join_input.root_type = CoreTypeId{0};
         join_input.workflow_node = CoreWorkflowNodeId{0};
-        branch_workflow.exprs.push_back(
+        branch_workflow.storage.exprs.push_back(
             CoreExpr{std::move(join_input), std::nullopt, CoreValueTypeId{0}});
-        const CoreValueId join_value{branch_workflow.value_count++};
-        branch_workflow.value_types.push_back(CoreValueTypeId{0});
+        const CoreValueId join_value{branch_workflow.storage.value_count++};
+        branch_workflow.storage.value_types.push_back(CoreValueTypeId{0});
         CoreWorkflowNode join;
         join.id = CoreWorkflowNodeId{2};
         join.node_name = "join";
@@ -1798,9 +1798,9 @@ int main() {
             std::get<CoreAgentInstance>(wrong_type.instances[1].payload);
         second_instance.input_type = CoreTypeId{1};
         wrong_type.instances[1].dispatch_types[0] = other_value;
-        wrong_type.flows[1].exprs[0].result_type = other_value;
-        wrong_type.flows[1].value_types[0] = other_value;
-        auto &agent_input = std::get<CorePathExpr>(wrong_type.flows[1].exprs[0].node);
+        wrong_type.flows[1].storage.exprs[0].result_type = other_value;
+        wrong_type.flows[1].storage.value_types[0] = other_value;
+        auto &agent_input = std::get<CorePathExpr>(wrong_type.flows[1].storage.exprs[0].node);
         agent_input.root_type = CoreTypeId{1};
         const auto wrong_type_result = emit_workflow(wrong_type);
         check(verify_core_program(wrong_type).ok() &&
@@ -1827,8 +1827,8 @@ int main() {
         capability_agent.capabilities.push_back(std::move(cap));
         capability_agent.agents[0].capabilities = {CoreCapabilityId{0}};
         auto &cap_flow = capability_agent.flows[0];
-        cap_flow.value_count = 2;
-        cap_flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{0}};
+        cap_flow.storage.value_count = 2;
+        cap_flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{0}};
         auto &cap_statements = cap_flow.states[0].body.statements;
         cap_statements.clear();
         cap_statements.push_back(
@@ -1969,8 +1969,8 @@ int main() {
         workflow_capability.capabilities.push_back(std::move(workflow_cap));
         auto &workflow_cap_region = *workflow_capability.workflows[0].nodes[0].input_region;
         const CoreValueId workflow_cap_value{
-            workflow_capability.workflows[0].value_count++};
-        workflow_capability.workflows[0].value_types.push_back(CoreValueTypeId{0});
+            workflow_capability.workflows[0].storage.value_count++};
+        workflow_capability.workflows[0].storage.value_types.push_back(CoreValueTypeId{0});
         workflow_cap_region.statements.insert(
             workflow_cap_region.statements.begin() + 1,
             CoreStmt{CoreCapabilityCallStmt{workflow_cap_value,
@@ -2108,32 +2108,32 @@ int main() {
                                  {CoreStateId{2}, CoreStateId{0}}};
             auto &flow = program.flows[0];
             // expr0 is the existing Done identity path (vt0).
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "10"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "10"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr1 -> v3
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "20"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "20"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr2 -> v4
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{3}}, std::nullopt, CoreValueTypeId{1}}); // expr3
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{1}}); // expr4
-            flow.exprs.push_back(CoreExpr{CoreBinaryExpr{arith, CoreExprId{3}, CoreExprId{4}},
+            flow.storage.exprs.push_back(CoreExpr{CoreBinaryExpr{arith, CoreExprId{3}, CoreExprId{4}},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr5 add/div v1
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{1}}, std::nullopt, CoreValueTypeId{1}}); // expr6
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "25"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "25"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr7 -> const v5
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{5}}, std::nullopt, CoreValueTypeId{1}}); // expr8
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreBinaryExpr{CoreBinaryOp::Lt, CoreExprId{6}, CoreExprId{8}},
                          std::nullopt,
                          CoreValueTypeId{2}}); // expr9 lt -> v2
-            flow.value_count = 6;
-            flow.value_types = {CoreValueTypeId{0},
+            flow.storage.value_count = 6;
+            flow.storage.value_types = {CoreValueTypeId{0},
                                 CoreValueTypeId{1},
                                 CoreValueTypeId{2},
                                 CoreValueTypeId{1},
@@ -2246,7 +2246,7 @@ int main() {
         {
             auto program = make_computed_goto_program(false, CoreBinaryOp::Div);
             // Force the divisor literal to zero so the runtime trap path exists.
-            program.flows[0].exprs[2] = CoreExpr{
+            program.flows[0].storage.exprs[2] = CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt, CoreValueTypeId{1}};
             check(verify_core_program(program).ok(),
                   "P6-2 literal-divide-by-zero is a verifier-clean (runtime trap) "
@@ -2271,16 +2271,16 @@ int main() {
                                  {CoreStateId{1}, CoreStateId{2}},
                                  {CoreStateId{2}, CoreStateId{0}}};
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr1 -> v1
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{1}}, std::nullopt, CoreValueTypeId{1}}); // expr2
-            flow.exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{2}},
+            flow.storage.exprs.push_back(CoreExpr{CoreUnaryExpr{CoreUnaryOp::Not, CoreExprId{2}},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr3 -> v2
-            flow.value_count = 3;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1}};
+            flow.storage.value_count = 3;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1}};
             auto &start = flow.states[1].body;
             start.statements.clear();
             start.statements.push_back(
@@ -2318,7 +2318,7 @@ int main() {
         // i32 scalar range must fail closed (never silently truncate).
         {
             auto program = make_computed_goto_program(false, CoreBinaryOp::Add);
-            program.flows[0].exprs[7] =
+            program.flows[0].storage.exprs[7] =
                 CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "9999999999"},
                          std::nullopt,
                          CoreValueTypeId{1}};
@@ -2365,11 +2365,11 @@ int main() {
             auto program = make_e1_core_program();
             program.value_types.push_back(CoreValueType{CoreVtBool{}});
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{1}});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
-            flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
             auto &start = flow.states[1].body;
             start.statements.clear();
             start.statements.push_back(
@@ -2442,15 +2442,15 @@ int main() {
                                            CoreMemberTypeTemplateNodeId{}});
             program.types.push_back(std::move(level));
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreQualifiedExpr{"app::Level::Low", CoreTypeId{1}, CoreVariantId{0}, true},
                 std::nullopt,
                 CoreValueTypeId{2}});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{2}};
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{2}};
             // Pattern 0: Low (unit). Pattern 1: High(<one payload>).
-            flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
-            flow.patterns.push_back(CorePattern{
+            flow.storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+            flow.storage.patterns.push_back(CorePattern{
                 CoreVariantPat{CoreTypeId{1}, CoreVariantId{1}, {CorePatternId{0}}, {}, false},
                 std::nullopt});
             auto &start = flow.states[1].body;
@@ -2528,12 +2528,12 @@ int main() {
                                            CoreMemberTypeTemplateNodeId{}});
             program.types.push_back(std::move(pair));
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "9"}, std::nullopt, CoreValueTypeId{2}});
             // A struct literal written b-then-a proves field IDENTITY wins.
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreConstructExpr{"app::Pair",
                                   "",
                                   false,
@@ -2544,10 +2544,10 @@ int main() {
                                    CoreConstructArg{CoreFieldId{0}, CoreValueId{1}}}},
                 std::nullopt,
                 CoreValueTypeId{3}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{4}});
-            flow.value_count = 5;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2},
+            flow.storage.value_count = 5;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2},
                                 CoreValueTypeId{3}, CoreValueTypeId{4}};
             program.value_types.push_back(CoreValueType{CoreVtBool{}}); // vt4
             auto &agent = program.agents[0];
@@ -2647,14 +2647,14 @@ int main() {
                                  {CoreStateId{1}, CoreStateId{2}},
                                  {CoreStateId{2}, CoreStateId{0}}};
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "5"}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "5"}, std::nullopt, CoreValueTypeId{2}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{4}});
-            flow.value_count = 4;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2},
+            flow.storage.value_count = 4;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2},
                                 CoreValueTypeId{4}};
             program.value_types.push_back(CoreValueType{CoreVtBool{}}); // vt4
             auto &start = flow.states[1].body;
@@ -2754,11 +2754,11 @@ int main() {
                                                 {CoreTypeId{}, CoreTypeId{1}}));
             auto &flow = program.flows[0];
             // v1/v2: Inner{p:1,q:2}; v3/v6: Outer{inner:v2, z:7}; v7: 0; v8: Bool.
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "2"}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreConstructExpr{"app::Inner",
                                   "",
                                   false,
@@ -2769,9 +2769,9 @@ int main() {
                                    CoreConstructArg{CoreFieldId{0}, CoreValueId{1}}}},
                 std::nullopt,
                 CoreValueTypeId{2}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "7"}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreConstructExpr{"app::Outer",
                                   "",
                                   false,
@@ -2784,7 +2784,7 @@ int main() {
                 CoreValueTypeId{3}});
             // A two-step chain through the nested struct field (Outer.inner is
             // field id 1, and Inner.p is field id 0).
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CorePathExpr{CorePathRoot::Local,
                              "o",
                              {"inner", "p"},
@@ -2797,14 +2797,14 @@ int main() {
                              {}},
                 std::nullopt,
                 CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreBinaryExpr{CoreBinaryOp::Eq, CoreExprId{6}, CoreExprId{7}},
                 std::nullopt,
                 CoreValueTypeId{4}});
-            flow.value_count = 9;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1},
+            flow.storage.value_count = 9;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1},
                                 CoreValueTypeId{2}, CoreValueTypeId{1}, CoreValueTypeId{3},
                                 CoreValueTypeId{1}, CoreValueTypeId{1}, CoreValueTypeId{4}};
             auto &agent = program.agents[0];
@@ -2919,11 +2919,11 @@ int main() {
                                  {CoreStateId{1}, CoreStateId{2}},
                                  {CoreStateId{2}, CoreStateId{0}}};
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "2"}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreConstructExpr{"app::Inner",
                                   "",
                                   false,
@@ -2934,10 +2934,10 @@ int main() {
                                    CoreConstructArg{CoreFieldId{1}, CoreValueId{2}}}},
                 std::nullopt,
                 CoreValueTypeId{2}});
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{4}});
-            flow.value_count = 5;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1},
+            flow.storage.value_count = 5;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{1},
                                 CoreValueTypeId{2}, CoreValueTypeId{4}};
             auto &start = flow.states[1].body;
             start.statements.clear();
@@ -3045,7 +3045,7 @@ int main() {
                                            CoreMemberTypeTemplateNodeId{}});
             program.value_types.push_back(CoreValueType{CoreVtString{}});
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CorePathExpr{CorePathRoot::Input,
                              "input",
                              {"value"},
@@ -3057,8 +3057,8 @@ int main() {
                              {}},
                 std::nullopt,
                 CoreValueTypeId{1}});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
             auto &start = flow.states[1].body;
             start.statements.clear();
             start.statements.push_back(
@@ -3081,12 +3081,12 @@ int main() {
             auto program = make_e1_core_program();
             program.value_types.push_back(CoreValueType{CoreVtBool{}});
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{1}});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
-            flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
-            flow.patterns.push_back(
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+            flow.storage.patterns.push_back(
                 CorePattern{CoreTuplePat{{CorePatternId{0}}}, std::nullopt});
             auto &start = flow.states[1].body;
             start.statements.clear();
@@ -3126,11 +3126,11 @@ int main() {
             program.value_types.push_back(
                 CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 1000)}});
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "5"}, std::nullopt, CoreValueTypeId{1}});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
-            flow.patterns.push_back(
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.storage.patterns.push_back(
                 CorePattern{CoreIntRangePat{3, 7}, std::nullopt});
             auto &start = flow.states[1].body;
             start.statements.clear();
@@ -3175,11 +3175,11 @@ int main() {
             program.value_types.push_back(
                 CoreValueType{CoreVtInt{std::make_pair<std::int64_t, std::int64_t>(0, 1000)}});
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Integer, "5"}, std::nullopt, CoreValueTypeId{1}});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
-            flow.patterns.push_back(
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.storage.patterns.push_back(
                 CorePattern{CoreIntRangePat{0, 5'000'000'000LL}, std::nullopt});
             auto &start = flow.states[1].body;
             start.statements.clear();
@@ -3216,12 +3216,12 @@ int main() {
             auto program = make_e1_core_program();
             program.value_types.push_back(CoreValueType{CoreVtBool{}});
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreLiteralExpr{CoreLiteralKind::Bool, "true"}, std::nullopt, CoreValueTypeId{1}});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}};
             // `false` pattern: the arm never matches, so the trap fallback runs.
-            flow.patterns.push_back(
+            flow.storage.patterns.push_back(
                 CorePattern{CoreLiteralPat{CoreLiteralKind::Bool, "false"}, std::nullopt});
             auto &start = flow.states[1].body;
             start.statements.clear();
@@ -3310,29 +3310,29 @@ int main() {
                                  {CoreStateId{1}, CoreStateId{2}},
                                  {CoreStateId{2}, CoreStateId{0}}};
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreQualifiedExpr{"app::Level::High", CoreTypeId{1}, CoreVariantId{1}, true},
                 std::nullopt,
                 CoreValueTypeId{4}}); // expr1 -> v1 (Level::High, SSA i32)
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Bool, "true"},
                                           std::nullopt,
                                           CoreValueTypeId{2}}); // expr2 -> v2 (arm value)
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"},
                                           std::nullopt,
                                           CoreValueTypeId{3}}); // expr3 -> v4 (i64 let)
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "3"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "3"},
                                           std::nullopt,
                                           CoreValueTypeId{3}}); // expr4 -> v5 (i64 const)
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{3}}); // expr5
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{5}}, std::nullopt, CoreValueTypeId{3}}); // expr6
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{5}, CoreExprId{6}},
                          std::nullopt,
                          CoreValueTypeId{2}}); // expr7 -> v6 (Bool condition)
-            flow.value_count = 7;
-            flow.value_types = {CoreValueTypeId{0}, // v0 input nominal
+            flow.storage.value_count = 7;
+            flow.storage.value_types = {CoreValueTypeId{0}, // v0 input nominal
                                 CoreValueTypeId{4}, // v1 Level    -> SSA i32
                                 CoreValueTypeId{2}, // v2 Bool     -> SSA i32
                                 CoreValueTypeId{2}, // v3 Bool     -> SCRATCH i32
@@ -3340,7 +3340,7 @@ int main() {
                                 CoreValueTypeId{3}, // v5 i64      -> SSA i64
                                 CoreValueTypeId{2}}; // v6 Bool    -> SSA i32
             // Pattern 0: a tag-only variant pattern (High) with no payload.
-            flow.patterns.push_back(
+            flow.storage.patterns.push_back(
                 CorePattern{CoreVariantPat{CoreTypeId{1}, CoreVariantId{1}, {}, {}, false},
                             std::nullopt});
             auto &start = flow.states[1].body;
@@ -3540,10 +3540,10 @@ int main() {
             //   v4 = the match RESULT (i64)
             //   v5 = the fallback literal 7
             //   v6 = the 0 constant, v7 = the Bool condition
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr1 -> v1
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreConstructExpr{"app::Level",
                                   "",
                                   true,
@@ -3553,20 +3553,20 @@ int main() {
                                   {CoreConstructArg{CoreFieldId{0}, CoreValueId{1}}}},
                 std::nullopt,
                 CoreValueTypeId{2}}); // expr2 -> v2 (Level)
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "7"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr3 -> v5
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{1}});
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr5 -> v6
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{4}, CoreExprId{5}},
                          std::nullopt,
                          CoreValueTypeId{3}}); // expr6 -> v7 (Bool)
-            flow.value_count = 8;
-            flow.value_types = {CoreValueTypeId{0}, // v0 input
+            flow.storage.value_count = 8;
+            flow.storage.value_types = {CoreValueTypeId{0}, // v0 input
                                 CoreValueTypeId{1}, // v1 the payload literal (i64)
                                 CoreValueTypeId{2}, // v2 the scrutinee (addressed enum)
                                 CoreValueTypeId{1}, // v3 the arm BINDING (i64)
@@ -3575,9 +3575,9 @@ int main() {
                                 CoreValueTypeId{1}, // v6 the 0 constant (i64)
                                 CoreValueTypeId{3}}; // v7 the Bool condition
             // Pattern 0: High(v) — a binding over one tuple payload slot.
-            flow.patterns.push_back(CorePattern{
+            flow.storage.patterns.push_back(CorePattern{
                 CoreBindingPat{CorePatternBindingId{0}, CorePatternId{}, false}, std::nullopt});
-            flow.patterns.push_back(CorePattern{
+            flow.storage.patterns.push_back(CorePattern{
                 CoreVariantPat{CoreTypeId{1},
                                CoreVariantId{1},
                                {CorePatternId{0}},
@@ -3675,34 +3675,34 @@ int main() {
                                  {CoreStateId{2}, CoreStateId{0}}};
             auto &flow = program.flows[0];
             // expr0 is the existing Done identity path (vt0).
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr1 -> v3 (1)
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{3}}, std::nullopt, CoreValueTypeId{1}}); // expr2
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr3 (0)
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{1}}, std::nullopt, CoreValueTypeId{1}}); // expr4
             // 0 - 1 == -1 (wasm wrap), a scalar value strictly below zero.
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreBinaryExpr{CoreBinaryOp::Sub, CoreExprId{4}, CoreExprId{2}},
                          std::nullopt,
                          CoreValueTypeId{1}}); // expr5 -> v4
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{1}}); // expr6
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr7 -> v5
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{5}}, std::nullopt, CoreValueTypeId{1}}); // expr8
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreBinaryExpr{op, CoreExprId{6}, CoreExprId{8}},
                          std::nullopt,
                          CoreValueTypeId{2}}); // expr9 cmp(-1, 0) -> v2
-            flow.value_count = 6;
-            flow.value_types = {CoreValueTypeId{0},
+            flow.storage.value_count = 6;
+            flow.storage.value_types = {CoreValueTypeId{0},
                                 CoreValueTypeId{1},
                                 CoreValueTypeId{2},
                                 CoreValueTypeId{1},
@@ -3996,7 +3996,7 @@ int main() {
             auto &e2_flow = program.flows[0];
             // A second unprojected input-path expr for the Start handler;
             // verifier scopes are per-handler, so Done's v0 is not visible.
-            e2_flow.exprs.push_back(
+            e2_flow.storage.exprs.push_back(
                 CoreExpr{CorePathExpr{CorePathRoot::Input,
                                     "input",
                                     {},
@@ -4008,8 +4008,8 @@ int main() {
                                     {}},
                          std::nullopt,
                          CoreValueTypeId{0}});
-            e2_flow.value_count = 4;
-            e2_flow.value_types = {CoreValueTypeId{0},
+            e2_flow.storage.value_count = 4;
+            e2_flow.storage.value_types = {CoreValueTypeId{0},
                                    CoreValueTypeId{1},
                                    CoreValueTypeId{1},
                                    CoreValueTypeId{0}};
@@ -4068,33 +4068,33 @@ int main() {
             auto &flow = program.flows[0];
             // SSA values: v0 is the Done handler's own; v1..v6 are this handler's,
             // each defined exactly once (the orphan check forbids a gap).
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "5"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "5"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr1 -> v1 (0..10)
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreCoerceExpr{CoreValueId{1}, CoreCoercionPlanId{0}},
                          std::nullopt,
                          CoreValueTypeId{2}}); // expr2 -> v2 (0..100, same repr)
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{2}}, std::nullopt, CoreValueTypeId{2}}); // expr3
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "3"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "3"},
                                           std::nullopt,
                                           CoreValueTypeId{2}}); // expr4 -> v4
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreValueRefExpr{CoreValueId{4}}, std::nullopt, CoreValueTypeId{2}}); // expr5
-            flow.exprs.push_back(CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{3},
+            flow.storage.exprs.push_back(CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{3},
                                                          CoreExprId{5}},
                                           std::nullopt,
                                           CoreValueTypeId{3}}); // expr6 -> v6
-            flow.value_count = 7;
-            flow.value_types = {CoreValueTypeId{0},
+            flow.storage.value_count = 7;
+            flow.storage.value_types = {CoreValueTypeId{0},
                                 CoreValueTypeId{1},
                                 CoreValueTypeId{2},
                                 CoreValueTypeId{2},
                                 CoreValueTypeId{2},
                                 CoreValueTypeId{2},
                                 CoreValueTypeId{3}};
-            flow.coercion_plans = {CoreCoercionPlanNode{
+            flow.storage.coercion_plans = {CoreCoercionPlanNode{
                 CoreValueTypeId{1},
                 CoreValueTypeId{2},
                 {CoreCoercionOp{.kind = CoreCoercionOpKind::IntWiden}}}};
@@ -4165,7 +4165,7 @@ int main() {
             program.value_types[2] = CoreValueType{CoreVtInt{std::nullopt}};
             // The comparison must then be an i64 compare.
             auto &flow = program.flows[0];
-            flow.exprs[4].result_type = CoreValueTypeId{2};
+            flow.storage.exprs[4].result_type = CoreValueTypeId{2};
             check(verify_core_program(program).ok() && compute_core_layouts(program).ok(),
                   "P6-6 i32 -> i64 coercion fixture is verified Core with a layout");
             const auto layout = compute_core_layouts(program);
@@ -4204,16 +4204,16 @@ int main() {
             agent.finals = {CoreStateId{0}};
             agent.transitions = {{CoreStateId{1}, CoreStateId{0}}};
             auto &flow = program.flows[0];
-            flow.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::String, "abc"},
+            flow.storage.exprs.push_back(CoreExpr{CoreLiteralExpr{CoreLiteralKind::String, "abc"},
                                           std::nullopt,
                                           CoreValueTypeId{1}}); // expr1 -> v1
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreCoerceExpr{CoreValueId{1}, CoreCoercionPlanId{0}},
                          std::nullopt,
                          CoreValueTypeId{2}}); // expr2 -> v2
-            flow.value_count = 3;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2}};
-            flow.coercion_plans = {CoreCoercionPlanNode{
+            flow.storage.value_count = 3;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{1}, CoreValueTypeId{2}};
+            flow.storage.coercion_plans = {CoreCoercionPlanNode{
                 CoreValueTypeId{1},
                 CoreValueTypeId{2},
                 {CoreCoercionOp{.kind = CoreCoercionOpKind::StringWiden}}}};
@@ -4335,43 +4335,43 @@ int main() {
                 step.result_type = list_type; // the field's declared nominal base
                 path.projection = {step};
                 path.projection_resolved = true;
-                flow.exprs.push_back(
+                flow.storage.exprs.push_back(
                     CoreExpr{std::move(path), std::nullopt, list_vt}); // -> v1
             }
-            flow.exprs.push_back(CoreExpr{
+            flow.storage.exprs.push_back(CoreExpr{
                 CoreCollectionExpr{CoreCollectionOpKind::Len, CoreValueId{1}, {}, {}},
                 std::nullopt,
                 int_vt}); // -> v2 (len)
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt,
                          int_vt}); // -> v3 (index)
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreCollectionExpr{CoreCollectionOpKind::ElementGet, CoreValueId{1},
                                             CoreValueId{3}, {}},
                          std::nullopt,
                          element_vt}); // -> v4 (element 0)
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt,
                          int_vt}); // -> v5 (index 1)
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreCollectionExpr{CoreCollectionOpKind::ElementSet, CoreValueId{1},
                                             CoreValueId{5}, CoreValueId{4}},
                          std::nullopt,
                          list_vt}); // -> v6 (the container handle)
-            flow.exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{2}}, std::nullopt,
+            flow.storage.exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{2}}, std::nullopt,
                                           int_vt}); // -> v7 (len again)
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "1"}, std::nullopt,
                          int_vt}); // -> v8
             // len > 1: BOTH operands are Ints (the length and the constant). The
             // scale/capacity facts under test are proven by the element ops
             // above; this comparison only routes the branch.
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{CoreBinaryExpr{CoreBinaryOp::Gt, CoreExprId{7}, CoreExprId{8}},
                          std::nullopt,
                          bool_vt}); // -> v9 (len > 1)
-            flow.value_count = 10;
-            flow.value_types = {CoreValueTypeId{0}, list_vt, int_vt,  int_vt, element_vt,
+            flow.storage.value_count = 10;
+            flow.storage.value_types = {CoreValueTypeId{0}, list_vt, int_vt,  int_vt, element_vt,
                                 int_vt,          list_vt, int_vt,  int_vt, bool_vt};
             auto &start = flow.states[1].body;
             start.statements.clear();
@@ -4563,10 +4563,10 @@ int main() {
             closure_path.projection = {
                 CoreProjectionStep{CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{0}}};
             closure_path.projection_resolved = true;
-            flow.exprs.push_back(
+            flow.storage.exprs.push_back(
                 CoreExpr{std::move(closure_path), std::nullopt, CoreValueTypeId{3}});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, CoreValueTypeId{3}};
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{3}};
             auto &start = flow.states[1].body;
             start.statements.clear();
             start.statements.push_back(
@@ -4666,14 +4666,14 @@ int main() {
             lvl_path.projection = {
                 CoreProjectionStep{CoreTypeId{0}, CoreFieldId{0}, CoreTypeId{1}}};
             lvl_path.projection_resolved = true;
-            flow.exprs.push_back(CoreExpr{std::move(lvl_path), std::nullopt, enum_vt});
-            flow.value_count = 2;
-            flow.value_types = {CoreValueTypeId{0}, enum_vt};
+            flow.storage.exprs.push_back(CoreExpr{std::move(lvl_path), std::nullopt, enum_vt});
+            flow.storage.value_count = 2;
+            flow.storage.value_types = {CoreValueTypeId{0}, enum_vt};
             // Pattern 0 = a WILDCARD; pattern 1 = `High(_)` over one tuple
             // payload slot. No arm binding is involved, so the only gate that can
             // reject is the pattern-site one under test.
-            flow.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
-            flow.patterns.push_back(CorePattern{
+            flow.storage.patterns.push_back(CorePattern{CoreWildcardPat{}, std::nullopt});
+            flow.storage.patterns.push_back(CorePattern{
                 CoreVariantPat{CoreTypeId{1}, CoreVariantId{1}, {CorePatternId{0}}, {}, false},
                 std::nullopt});
             auto &start = flow.states[1].body;

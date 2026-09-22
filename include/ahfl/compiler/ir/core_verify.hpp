@@ -137,6 +137,19 @@ inline constexpr std::string_view kCapabilityArgumentTypeMismatch =
 inline constexpr std::string_view kCapabilityResultTypeMismatch =
     "core.verify.CAPABILITY_RESULT_TYPE_MISMATCH";
 inline constexpr std::string_view kUnsupportedExpr = "core.verify.UNSUPPORTED_EXPR";
+// RFC 0026 FB-1 (CORE-FNBODY-DESIGN §8.1): direct fn-call structural rules.
+inline constexpr std::string_view kFnInstanceLinkInvalid =
+    "core.verify.FN_INSTANCE_LINK_INVALID";
+inline constexpr std::string_view kFnSignatureArity = "core.verify.FN_SIGNATURE_ARITY";
+inline constexpr std::string_view kFnCallCalleeInvalid = "core.verify.FN_CALL_CALLEE_INVALID";
+inline constexpr std::string_view kFnCallArityMismatch = "core.verify.FN_CALL_ARITY_MISMATCH";
+inline constexpr std::string_view kFnCallArgumentTypeMismatch =
+    "core.verify.FN_CALL_ARGUMENT_TYPE_MISMATCH";
+inline constexpr std::string_view kFnCallResultTypeMismatch =
+    "core.verify.FN_CALL_RESULT_TYPE_MISMATCH";
+inline constexpr std::string_view kFnCallEffectfulCallee = "core.verify.FN_CALL_EFFECTFUL_CALLEE";
+inline constexpr std::string_view kFnRecursion = "core.verify.FN_RECURSION";
+inline constexpr std::string_view kFnBodyTermination = "core.verify.FN_BODY_TERMINATION";
 inline constexpr std::string_view kStmtAfterTerminator = "core.verify.STMT_AFTER_TERMINATOR";
 inline constexpr std::string_view kTypedShellInvalid = "core.verify.TYPED_SHELL_INVALID";
 inline constexpr std::string_view kPatternIdOutOfRange = "core.verify.PATTERN_ID_OUT_OF_RANGE";

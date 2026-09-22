@@ -57,5 +57,6 @@ HANDLE_CORE_EXPR_NODE(CoreConstructExpr, "construct")
 HANDLE_CORE_EXPR_NODE(CoreCoerceExpr, "coerce")
 HANDLE_CORE_EXPR_NODE(CoreCollectionExpr, "collection")
 HANDLE_CORE_EXPR_NODE(CoreUnsupportedExpr, "unsupported")
+HANDLE_CORE_EXPR_NODE(CoreCallExpr, "call")
 
 #undef HANDLE_CORE_EXPR_NODE

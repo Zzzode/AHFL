@@ -155,6 +155,18 @@ struct CoreWorkflowNodeId {
     [[nodiscard]] friend bool operator==(CoreWorkflowNodeId, CoreWorkflowNodeId) noexcept = default;
 };
 
+/// Canonical identity of a monomorphized fn BODY within `CoreProgram::fns`
+/// (CORE-FNBODY-DESIGN §1/§2.1, Principle 2): the index into that flat
+/// per-program store. The fn table is 1:1 with the Fn-kind instance registry
+/// entries that own a body (codegen unit vs monomorphization registration);
+/// `CoreFnInstance::body` is the reverse link. The mangled instance key stays
+/// a dispatch label, never the identity.
+struct CoreFnId {
+    static constexpr std::uint32_t kInvalid = UINT32_MAX;
+    std::uint32_t value{kInvalid};
+    [[nodiscard]] friend bool operator==(CoreFnId, CoreFnId) noexcept = default;
+};
+
 /// Canonical identity of a monomorphized INSTANCE within `CoreProgram::instances`
 /// (Principle 2): the index into that flat store. A workflow node's invocation
 /// target and (later) a fn call resolve to a `CoreInstanceId`, never a mangled
@@ -572,6 +584,23 @@ struct CoreCollectionExpr {
                                          const CoreCollectionExpr &) noexcept = default;
 };
 
+/// A direct, statically-resolved PURE call to one monomorphized fn /
+/// body-bearing method instance (CORE-FNBODY-DESIGN §5.1, RFC 0026 FB-1).
+/// Lowers to a plain wasm `call <funcidx>`; there is no indirect dispatch.
+/// `callee` MUST be a `CoreInstanceDecl` holding a `CoreFnInstance` with a
+/// valid body, `args` are ANF operands left-to-right, and a method call passes
+/// its receiver as argument 0. The callee body contains no
+/// `CoreCapabilityCallStmt` (effectful callees stay fail-closed until FB-4).
+/// Arity / argument / result types are checked against the callee's concrete
+/// signature materialized per design §2.1 (never read from the dispatch
+/// type-argument vector).
+struct CoreCallExpr {
+    CoreInstanceId callee{};
+    std::vector<CoreValueId> args;
+    [[nodiscard]] friend bool operator==(const CoreCallExpr &,
+                                         const CoreCallExpr &) noexcept = default;
+};
+
 /// A structurally-preserved but not-yet-lowered PURE expression (e.g. match,
 /// lambda, member-access forms deferred to a later sub-slice). It carries
 /// the source expr kind + range so the Core-IR verifier can reject it if a
@@ -628,7 +657,7 @@ core_expr_node_wire_name(std::size_t variant_index) noexcept {
 // count itself now derives from core_expr_nodes.def; this pin turns "a node was
 // added to the .def" into a deliberate review event across every exhaustive
 // visitor (verify / lower / json).
-static_assert(std::variant_size_v<CoreExprNode> == 10,
+static_assert(std::variant_size_v<CoreExprNode> == 11,
               "ahfl::ir::core::CoreExprNode cardinality drift (RFC 0027 P8 "
               "IR SSOT): update every exhaustive visitor, this pin, and "
               "core_expr_nodes.def together.");
@@ -1130,6 +1159,27 @@ inline CoreRegionExit core_region_exit(const CoreRegion &region) noexcept {
     return exit;
 }
 
+// --- shared body storage: one owner per ANF arena (CORE-FNBODY-DESIGN §2.2) --
+
+/// The five ANF assets a lowered executable body owns — the pure-expression
+/// arena, the SSA value counter, the dense per-value logical-type table, the
+/// normalized coercion-plan arena, and the match-pattern arena. Flow handlers,
+/// workflow regions, and (RFC 0026 FB-1) outlined fn bodies each own exactly one
+/// of these, so the lowerer's non-owning `CoreBodyStorageRef` view and the
+/// `ExprLowerer<RootPolicy>` template are reused across all three body kinds —
+/// no second expr/stmt model (Principle 3, Principle 1: single SSOT).
+struct CoreBodyStorage {
+    std::vector<CoreExpr> exprs;              // pure-expression arena (CoreExprId)
+    std::uint32_t value_count{0};             // number of CoreValueIds allocated
+    /// RFC 0026 P4-B: logical type per CoreValueId (index == value); DENSE:
+    /// value_types.size() == value_count in a lowering-clean body.
+    std::vector<CoreValueTypeId> value_types;
+    std::vector<CoreCoercionPlanNode> coercion_plans; // normalized proof arena
+    std::vector<CorePattern> patterns;        // match-pattern arena (Principle 3)
+    [[nodiscard]] friend bool operator==(const CoreBodyStorage &,
+                                         const CoreBodyStorage &) noexcept = default;
+};
+
 // --- flow (state handlers with executable bodies) ---
 
 /// Execution policy carried onto a state handler (retry / retry_on / timeout).
@@ -1151,23 +1201,15 @@ struct CoreFlowState {
     friend bool operator==(const CoreFlowState &, const CoreFlowState &) noexcept;
 };
 
-/// The execution-layer projection of an `ir::FlowDecl`. Owns the per-flow pure
-/// expression arena (`exprs`, addressed by `CoreExprId`) and the value counter.
+/// The execution-layer projection of an `ir::FlowDecl`. Owns its executable
+/// body's ANF assets (expr arena, value counter, value-type table, coercion
+/// plans, patterns) in one `CoreBodyStorage` — shared with workflow regions
+/// and outlined fn bodies (CORE-FNBODY-DESIGN §2.2).
 struct CoreFlowDecl {
     CoreAgentId target{};               // typed target-agent identity (Principle 2)
     std::string agent_name;             // display / provenance only
     ir::SymbolRef target_ref;           // provenance / display only
-    std::vector<CoreExpr> exprs;        // pure-expression arena (Principle 3)
-    std::uint32_t value_count{0};       // number of CoreValueIds allocated
-    /// RFC 0026 P4-B: the logical value type of each CoreValueId (index ==
-    /// CoreValueId). DENSE: `value_types.size() == value_count` in a
-    /// lowering-clean flow, and every entry is a valid, in-range, non-Never
-    /// CoreValueTypeId (a lowering-ERROR partial artifact may hold kInvalid to
-    /// keep the parallel length, but the verifier only runs on error-free
-    /// candidates). Allocated atomically with each value id.
-    std::vector<CoreValueTypeId> value_types;
-    std::vector<CoreCoercionPlanNode> coercion_plans; // normalized proof arena
-    std::vector<CorePattern> patterns;  // match-pattern arena (Principle 3)
+    CoreBodyStorage storage;            // the handler bodies' shared ANF arenas
     std::vector<CoreFlowState> states;
     friend bool operator==(const CoreFlowDecl &, const CoreFlowDecl &) noexcept;
 };
@@ -1216,17 +1258,43 @@ struct CoreWorkflowDecl {
     ir::SymbolRef symbol_ref;                 // provenance / display only
     CoreTypeId input_type{};                  // workflow input struct
     CoreTypeId output_type{};                 // workflow output struct
-    std::vector<CoreExpr> exprs;              // per-workflow pure-expression arena
-    std::uint32_t value_count{0};             // number of CoreValueIds allocated
-    /// RFC 0026 P4-B: logical value type per CoreValueId (index == CoreValueId);
-    /// dense (`size == value_count`) in a lowering-clean workflow. Same contract
-    /// as CoreFlowDecl::value_types.
-    std::vector<CoreValueTypeId> value_types;
-    std::vector<CoreCoercionPlanNode> coercion_plans; // normalized proof arena
-    std::vector<CorePattern> patterns;        // per-workflow pattern arena (match in a node/return region)
+    CoreBodyStorage storage;                  // shared node/return ANF arenas
     std::vector<CoreWorkflowNode> nodes;      // DAG nodes; index == CoreWorkflowNodeId
     std::unique_ptr<CoreRegion> return_region; // ANF; ends in Yield(output value)
     friend bool operator==(const CoreWorkflowDecl &, const CoreWorkflowDecl &) noexcept;
+};
+
+// ----------------------------------------------------------------------------
+// Outlined fn bodies (CORE-FNBODY-DESIGN §2) — RFC 0026 FB-1 (KR6.6)
+// ----------------------------------------------------------------------------
+//
+// A `CoreFnDecl` owns one monomorphized, pure top-level fn / impl-method body.
+// The flat `CoreProgram::fns` store is 1:1 with the Fn-kind `CoreInstanceDecl`s
+// that carry a body (a codegen unit: "does this id have a wasm body?"); the
+// instance registry remains the monomorphization-registration unit (Capability
+// imports and bodyless prototypes have an instance but never a fn decl). The
+// fn's concrete (params, ret) signature is NOT stored twice: it is materialized
+// by substituting the instance dispatch_types (the concrete type ARGUMENTS)
+// into the base `FnTypeInfo` generic signature and interning the result into
+// the body's pre-bound params / program value-type pool (design §2.1). Effect
+// grade / decreases / temporal / contract are ERASED at this layer.
+
+/// The execution-layer projection of one monomorphized `ir::FnDecl` body.
+struct CoreFnDecl {
+    CoreFnId id{};
+    /// 1:1 link to the Fn-kind `CoreProgram::instances` entry this body
+    /// instantiates. The instance's dispatch_types are the concrete type
+    /// arguments (e.g. `map<Int,Int>` = [Int,Int]), NOT the fn signature.
+    CoreInstanceId instance{};
+    ir::SymbolRef origin;                 // provenance / display only
+    /// Pre-bound body SSA values for the parameters in declaration order. Their
+    /// concrete logical types live in `storage.value_types[param]`.
+    std::vector<CoreValueId> params;
+    CoreBodyStorage storage;              // the fn body's private SSA domain
+    CoreRegion body;                      // single-entry region, completes via return
+    std::string name;                     // display only (mangled instance name)
+    SourceRangeOpt source_range;
+    friend bool operator==(const CoreFnDecl &, const CoreFnDecl &) noexcept;
 };
 
 // ----------------------------------------------------------------------------
@@ -1294,10 +1362,13 @@ struct CoreWorkflowInstance {
                                          const CoreWorkflowInstance &) noexcept = default;
 };
 
-/// A top-level `fn` instantiated at concrete type args. The base fn table + body
-/// lowering are a later monomorphization slice; only the origin (on the enclosing
-/// decl) is carried for now.
+/// A top-level `fn` instantiated at concrete type args. When this instance
+/// owns a body, `body` is the 1:1 reverse link into `CoreProgram::fns`
+/// (CORE-FNBODY-DESIGN §2.1). A bodyless `@builtin` facade / prototype keeps
+/// `body == kInvalid`; such an instance never gets a `CoreFnDecl` and stays on
+/// the typed-builtin / fail-closed path.
 struct CoreFnInstance {
+    CoreFnId body{};
     [[nodiscard]] friend bool operator==(const CoreFnInstance &,
                                          const CoreFnInstance &) noexcept = default;
 };
@@ -1748,6 +1819,10 @@ struct CoreProgram {
     std::vector<CoreFlowDecl> flows;
     std::vector<CoreWorkflowDecl> workflows;      // index == CoreWorkflowId
     std::vector<CoreInstanceDecl> instances;      // index == CoreInstanceId
+    /// RFC 0026 FB-1 (CORE-FNBODY-DESIGN §2.1): outlined monomorphized fn
+    /// bodies; index == CoreFnId. 1:1 with the Fn-kind `instances` that own a
+    /// body (`CoreFnInstance::body` back-links each entry).
+    std::vector<CoreFnDecl> fns;
 };
 
 // ----------------------------------------------------------------------------
@@ -1791,6 +1866,22 @@ inline constexpr std::string_view kUnresolvedWorkflowInvocation = "core.UNRESOLV
 inline constexpr std::string_view kMissingAdjustment = "core.MISSING_ADJUSTMENT";
 inline constexpr std::string_view kInvalidCoercion = "core.INVALID_COERCION";
 inline constexpr std::string_view kInvalidMemberTemplate = "core.INVALID_MEMBER_TEMPLATE";
+// RFC 0026 FB-1 (CORE-FNBODY-DESIGN §8.2): a fn / method call could not be
+// resolved by identity to a body-bearing monomorphized Fn instance (bodyless
+// prototype, unresolved symbol, or a shape this slice does not lower).
+inline constexpr std::string_view kUnresolvedFnCall = "core.UNRESOLVED_FN_CALL";
+// A fn body contains a statement / expression this slice does not yet lower
+// (fail-closed: never an Unknown node).
+inline constexpr std::string_view kFnBodyUnlowered = "core.FN_BODY_UNLOWERED";
+// The resolved callee fn body carries a capability effect; effectful callees
+// stay fail-closed until FB-4's ordered CoreCallStmt.
+inline constexpr std::string_view kFnEffectfulCallee = "core.FN_EFFECTFUL_CALLEE";
+// A Nondet fn value call in the pure computation lane (no value-level
+// nondeterminism semantics on the wasm lane yet).
+inline constexpr std::string_view kNondetFnValue = "core.NONDET_FN_VALUE";
+// A parameter / return crosses the fn boundary as a multi-word value
+// (PtrLen String / bytes / f64) before the P6-7 frame decision.
+inline constexpr std::string_view kFnCrossBoundaryType = "core.FN_CROSS_BOUNDARY_TYPE";
 // RFC 0026 P4 (coercion): a real (non-synthetic) declaration of a well-known
 // stdlib generic (Option/Result/List/Set/Map) whose arity or per-parameter
 // variance metadata disagrees with the builtin descriptor SSOT. Fail-closed:

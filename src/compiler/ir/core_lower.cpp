@@ -209,9 +209,7 @@ namespace {
 
 bool operator==(const CoreFlowDecl &a, const CoreFlowDecl &b) noexcept {
     return a.target == b.target && a.agent_name == b.agent_name &&
-           symbol_ref_equal(a.target_ref, b.target_ref) && a.exprs == b.exprs &&
-           a.value_count == b.value_count && a.value_types == b.value_types &&
-           a.coercion_plans == b.coercion_plans && a.patterns == b.patterns &&
+           symbol_ref_equal(a.target_ref, b.target_ref) && a.storage == b.storage &&
            a.states == b.states;
 }
 
@@ -233,11 +231,15 @@ bool operator==(const CoreWorkflowNode &a, const CoreWorkflowNode &b) noexcept {
 
 bool operator==(const CoreWorkflowDecl &a, const CoreWorkflowDecl &b) noexcept {
     return a.id == b.id && a.name == b.name && symbol_ref_equal(a.symbol_ref, b.symbol_ref) &&
-           a.input_type == b.input_type && a.output_type == b.output_type && a.exprs == b.exprs &&
-           a.value_count == b.value_count && a.value_types == b.value_types &&
-           a.coercion_plans == b.coercion_plans &&
-           a.patterns == b.patterns && a.nodes == b.nodes &&
+           a.input_type == b.input_type && a.output_type == b.output_type &&
+           a.storage == b.storage && a.nodes == b.nodes &&
            region_ptr_eq(a.return_region, b.return_region);
+}
+
+bool operator==(const CoreFnDecl &a, const CoreFnDecl &b) noexcept {
+    return a.id == b.id && a.instance == b.instance &&
+           symbol_ref_equal(a.origin, b.origin) && a.params == b.params &&
+           a.storage == b.storage && a.body == b.body && a.name == b.name;
 }
 
 bool operator==(const CoreInstanceDecl &a, const CoreInstanceDecl &b) noexcept {
@@ -1670,7 +1672,10 @@ struct ResolvedExternalRoot {
 using ValueTypeInterner =
     std::function<std::optional<CoreValueTypeId>(const TypeRef &, std::string *)>;
 
-// Non-owning refs to the arenas a lowered body owns (CoreFlowDecl OR CoreWorkflowDecl).
+// Non-owning refs to the five ANF assets one body owner holds
+// (CoreBodyStorage — shared by CoreFlowDecl / CoreWorkflowDecl / CoreFnDecl,
+// CORE-FNBODY-DESIGN §2.2). Aggregate-binding from a `CoreBodyStorage&` is the
+// single construction form; field-by-field construction still works for tests.
 struct CoreBodyStorageRef {
     std::vector<CoreExpr> &exprs;
     std::uint32_t &value_count;
@@ -1679,6 +1684,14 @@ struct CoreBodyStorageRef {
     // Grown ATOMICALLY with `value_count` by `fresh_value`, so it stays dense.
     std::vector<CoreValueTypeId> &value_types;
     std::vector<CoreCoercionPlanNode> &coercion_plans;
+
+    CoreBodyStorageRef(std::vector<CoreExpr> &e, std::uint32_t &vc, std::vector<CorePattern> &p,
+                       std::vector<CoreValueTypeId> &vt,
+                       std::vector<CoreCoercionPlanNode> &cp)
+        : exprs(e), value_count(vc), patterns(p), value_types(vt), coercion_plans(cp) {}
+    explicit CoreBodyStorageRef(CoreBodyStorage &s)
+        : exprs(s.exprs), value_count(s.value_count), patterns(s.patterns),
+          value_types(s.value_types), coercion_plans(s.coercion_plans) {}
 };
 
 // Flow policy: input/ctx -> agent input/context struct types; others are identifier-like.
@@ -3282,8 +3295,7 @@ class FlowLowerer {
                 const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
                 const ValueTypeInterner &interner, const std::vector<CoreValueType> &value_type_pool,
                 std::vector<CoreLowerDiagnostic> &diags)
-        : ex_(CoreBodyStorageRef{flow.exprs, flow.value_count, flow.patterns, flow.value_types,
-                                 flow.coercion_plans},
+        : ex_(CoreBodyStorageRef{flow.storage},
               caps, types, FlowRootPolicy{input_type, context_type}, interner, value_type_pool,
               diags),
           flow_(flow), states_(states) {}
@@ -3643,8 +3655,7 @@ class WorkflowLowerer {
     /// ExprLowerer<WorkflowRootPolicy> over the workflow's shared arenas.
     void lower_value_region(const ExprRef &expr, CoreRegion &region, SourceRangeOpt range) {
         ExprLowerer<WorkflowRootPolicy> ex(
-            CoreBodyStorageRef{wf_.exprs, wf_.value_count, wf_.patterns, wf_.value_types,
-                               wf_.coercion_plans}, caps_,
+            CoreBodyStorageRef{wf_.storage}, caps_,
             types_, WorkflowRootPolicy{wf_.input_type, &node_index_}, interner_, value_type_pool_,
             diags_);
         const CoreValueId value = ex.lower_value(expr, region);

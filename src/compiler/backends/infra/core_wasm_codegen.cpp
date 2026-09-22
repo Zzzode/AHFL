@@ -31,6 +31,7 @@ using ir::core::CoreAgentId;
 using ir::core::CoreAgentInstance;
 using ir::core::CoreBinaryExpr;
 using ir::core::CoreBinaryOp;
+using ir::core::CoreCallExpr;
 using ir::core::CoreBindingPat;
 using ir::core::CoreCapabilityCallStmt;
 using ir::core::CoreCapabilityId;
@@ -537,8 +538,8 @@ validate_canonical_input_let(const CoreProgram &program,
                              std::string_view unsupported_code,
                              CoreWasmCodegenResult &result) {
     const auto *let = std::get_if<CoreLetStmt>(&statement.node);
-    if (let == nullptr || let->expr.value >= flow.exprs.size() ||
-        let->result.value >= flow.value_types.size() || let->result.value >= used_values.size()) {
+    if (let == nullptr || let->expr.value >= flow.storage.exprs.size() ||
+        let->result.value >= flow.storage.value_types.size() || let->result.value >= used_values.size()) {
         add_diag(result,
                  unsupported_code,
                  "KR6.5 E2 requires a canonical input let as the first final statement",
@@ -553,7 +554,7 @@ validate_canonical_input_let(const CoreProgram &program,
         return std::nullopt;
     }
 
-    const auto &expr = flow.exprs[let->expr.value];
+    const auto &expr = flow.storage.exprs[let->expr.value];
     const auto *path = std::get_if<CorePathExpr>(&expr.node);
     if (path == nullptr || path->root != ir::core::CorePathRoot::Input ||
         path->root_type != agent.input_type || !path->members.empty() ||
@@ -565,7 +566,7 @@ validate_canonical_input_let(const CoreProgram &program,
         return std::nullopt;
     }
     if (expr.result_type.value >= program.value_types.size() ||
-        flow.value_types[let->result.value] != expr.result_type) {
+        flow.storage.value_types[let->result.value] != expr.result_type) {
         add_diag(result,
                  core_wasm_diag::kInvalidCore,
                  "canonical input expression and SSA value types disagree",
@@ -618,7 +619,7 @@ validate_canonical_input_let(const CoreProgram &program,
                  statements[1].source_range);
         return false;
     }
-    const auto type = flow.value_types[input->value];
+    const auto type = flow.storage.value_types[input->value];
     if (!has_finalized_layout(layouts, type)) {
         add_diag(result,
                  core_wasm_diag::kInvalidLayout,
@@ -668,7 +669,7 @@ validate_capability_final(const CoreProgram &program,
         return std::nullopt;
     }
     if (call->capability.value >= program.capabilities.size() ||
-        call->result.value >= flow.value_types.size() || call->result.value >= used_values.size() ||
+        call->result.value >= flow.storage.value_types.size() || call->result.value >= used_values.size() ||
         used_values[call->result.value]) {
         add_diag(result,
                  core_wasm_diag::kInvalidCore,
@@ -686,8 +687,8 @@ validate_capability_final(const CoreProgram &program,
     }
 
     const auto &capability = program.capabilities[call->capability.value];
-    const auto input_type = flow.value_types[input->value];
-    const auto result_type = flow.value_types[call->result.value];
+    const auto input_type = flow.storage.value_types[input->value];
+    const auto result_type = flow.storage.value_types[call->result.value];
     if (capability.param_types.size() != 1 || capability.param_types[0] != input_type ||
         capability.return_type != result_type) {
         add_diag(result,
@@ -1266,11 +1267,11 @@ class P6ComputationHandlerBuilder {
                                 CoreWasmCodegenResult &result)
         : program_(program), layouts_(layouts), flow_(flow), handler_(handler),
           unsupported_code_(unsupported_code), used_exprs_(used_exprs), used_values_(used_values),
-          result_(result), locals_(flow.value_count, LocalInfo{}),
-          binding_locals_(flow.value_count, LocalInfo{}),
-          binding_sites_(flow.value_count, std::nullopt),
-          match_result_locals_(flow.value_count, LocalInfo{}),
-          construct_addrs_(flow.exprs.size(), std::nullopt) {}
+          result_(result), locals_(flow.storage.value_count, LocalInfo{}),
+          binding_locals_(flow.storage.value_count, LocalInfo{}),
+          binding_sites_(flow.storage.value_count, std::nullopt),
+          match_result_locals_(flow.storage.value_count, LocalInfo{}),
+          construct_addrs_(flow.storage.exprs.size(), std::nullopt) {}
 
     // Validate the handler is in the scalar subset and assign every bound SSA
     // value a per-repr pool slot (i32 group first, then i64 — a real function
@@ -1872,11 +1873,11 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool plan_expr(const CoreExprId id) {
-        if (id.value >= flow_.exprs.size()) {
+        if (id.value >= flow_.storage.exprs.size()) {
             return reject("expression id is out of range for this flow", ir::SourceRangeOpt{});
         }
         used_exprs_[id.value] = true;
-        const CoreExpr &expr = flow_.exprs[id.value];
+        const CoreExpr &expr = flow_.storage.exprs[id.value];
         if (scalar_kind(expr.result_type) == std::nullopt) {
             return reject("scalar expression has a non-scalar or f64 result type",
                           expr.source_range);
@@ -1907,6 +1908,11 @@ class P6ComputationHandlerBuilder {
                 },
                 [&](const CoreUnsupportedExpr &) {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
+                },
+                [&](const CoreCallExpr &) {
+                    return reject("direct fn call is lowered to its own outlined function in a "
+                                  "later step of this slice",
+                                  expr.source_range);
                 },
             },
             expr.node);
@@ -2016,7 +2022,7 @@ class P6ComputationHandlerBuilder {
         if (!construct.resolved) {
             return reject("constructor is unresolved in an executable program", range);
         }
-        const auto result_kind = scalar_kind(flow_.exprs[id.value].result_type);
+        const auto result_kind = scalar_kind(flow_.storage.exprs[id.value].result_type);
         if (result_kind != P6ScalarKind::Ptr) {
             return reject("constructor result is not an aggregate type", range);
         }
@@ -2097,10 +2103,10 @@ class P6ComputationHandlerBuilder {
     // an inline tag-only enum the P6 model cannot address) fails closed.
     [[nodiscard]] bool
     plan_construct_operand(CoreValueId value, CoreLayoutId slot, ir::SourceRangeOpt range) {
-        if (value.value >= flow_.value_types.size()) {
+        if (value.value >= flow_.storage.value_types.size()) {
             return reject("constructor operand value id is out of range", range);
         }
-        const auto kind = scalar_kind(flow_.value_types[value.value]);
+        const auto kind = scalar_kind(flow_.storage.value_types[value.value]);
         if (kind == std::nullopt) {
             return reject("constructor operand has a non-aggregate, non-scalar type", range);
         }
@@ -2146,17 +2152,17 @@ class P6ComputationHandlerBuilder {
     // repr-growing widening lands in an i64 local.
     [[nodiscard]] bool
     plan_coerce(CoreExprId id, const CoreCoerceExpr &coerce, ir::SourceRangeOpt range) {
-        if (id.value >= flow_.exprs.size()) {
+        if (id.value >= flow_.storage.exprs.size()) {
             return reject("coercion expression id is out of range for this flow", range);
         }
-        if (coerce.operand.value >= flow_.value_types.size()) {
+        if (coerce.operand.value >= flow_.storage.value_types.size()) {
             return reject("coercion operand value id is out of range", range);
         }
-        if (coerce.plan.value >= flow_.coercion_plans.size()) {
+        if (coerce.plan.value >= flow_.storage.coercion_plans.size()) {
             return reject("coercion plan id is out of range for this flow", range);
         }
-        const CoreCoercionPlanNode &root = flow_.coercion_plans[coerce.plan.value];
-        if (flow_.value_types[coerce.operand.value] != root.source) {
+        const CoreCoercionPlanNode &root = flow_.storage.coercion_plans[coerce.plan.value];
+        if (flow_.storage.value_types[coerce.operand.value] != root.source) {
             return reject("coercion operand type does not equal its plan root source", range);
         }
         // Every op must name a physical action the P6 value model can perform.
@@ -2174,11 +2180,11 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool emit_coerce(const CoreCoerceExpr &coerce, ir::SourceRangeOpt range) {
-        if (coerce.operand.value >= flow_.value_types.size() ||
-            coerce.plan.value >= flow_.coercion_plans.size()) {
+        if (coerce.operand.value >= flow_.storage.value_types.size() ||
+            coerce.plan.value >= flow_.storage.coercion_plans.size()) {
             return reject("coercion expression references an out-of-range id", std::move(range));
         }
-        const CoreCoercionPlanNode &root = flow_.coercion_plans[coerce.plan.value];
+        const CoreCoercionPlanNode &root = flow_.storage.coercion_plans[coerce.plan.value];
         const auto source_kind = readable_kind(coerce.operand);
         if (source_kind == std::nullopt) {
             return reject("coercion operand is not a readable local in this handler",
@@ -2233,7 +2239,7 @@ class P6ComputationHandlerBuilder {
             return reject("collection operation base is not a bounded collection value",
                           std::move(range));
         }
-        const CoreValueTypeId base_type = flow_.value_types[collection.base.value];
+        const CoreValueTypeId base_type = flow_.storage.value_types[collection.base.value];
         const ir::core::CoreLayoutContainer *container =
             p6_container_layout(program_, layouts_, base_type);
         if (container == nullptr) {
@@ -2252,7 +2258,7 @@ class P6ComputationHandlerBuilder {
             // i32_s` is correct for a length (always >= 0 in a well-formed
             // container, so signed vs unsigned is indistinguishable, but the
             // signed form keeps ONE extension opcode in the module).
-            const auto result_kind = scalar_kind(flow_.exprs[id.value].result_type);
+            const auto result_kind = scalar_kind(flow_.storage.exprs[id.value].result_type);
             if (result_kind == P6ScalarKind::IntI64) {
                 body_.byte(kOpI64ExtendI32S);
             }
@@ -2454,14 +2460,14 @@ class P6ComputationHandlerBuilder {
     // i32 by construction).
     [[nodiscard]] bool
     plan_collection(CoreExprId id, const CoreCollectionExpr &collection, ir::SourceRangeOpt range) {
-        if (id.value >= flow_.exprs.size()) {
+        if (id.value >= flow_.storage.exprs.size()) {
             return reject("collection expression id is out of range for this flow", range);
         }
         const auto base_kind = readable_kind(collection.base);
         if (base_kind != P6ScalarKind::Collection) {
             return reject("collection operation base is not a bounded collection value", range);
         }
-        const CoreValueTypeId base_type = flow_.value_types[collection.base.value];
+        const CoreValueTypeId base_type = flow_.storage.value_types[collection.base.value];
         const ir::core::CoreLayoutContainer *container =
             p6_container_layout(program_, layouts_, base_type);
         if (container == nullptr) {
@@ -2618,10 +2624,10 @@ class P6ComputationHandlerBuilder {
             q.variant.value >= program_.types[q.type_id.value].variants.size()) {
             return reject("qualified variant identity is out of range", range);
         }
-        if (p6_is_tag_only_enum(program_, layouts_, flow_.exprs[id.value].result_type)) {
+        if (p6_is_tag_only_enum(program_, layouts_, flow_.storage.exprs[id.value].result_type)) {
             return true; // a plain i32 discriminant constant
         }
-        if (!p6_is_aggregate(program_, layouts_, flow_.exprs[id.value].result_type)) {
+        if (!p6_is_aggregate(program_, layouts_, flow_.storage.exprs[id.value].result_type)) {
             return reject("qualified variant requires an enum type", range);
         }
         const int kind = enum_payload_kind(q.type_id, q.variant);
@@ -2665,7 +2671,7 @@ class P6ComputationHandlerBuilder {
                 match_result_locals_[match.result.value].bound) {
                 return reject("match result is bound more than once", range);
             }
-            const auto result_kind = scalar_kind(flow_.value_types[match.result.value]);
+            const auto result_kind = scalar_kind(flow_.storage.value_types[match.result.value]);
             if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Index) {
                 return reject("expression match result must have a scalar or aggregate type",
                               range);
@@ -2682,10 +2688,10 @@ class P6ComputationHandlerBuilder {
 
         for (const CoreMatchArm &arm : match.arms) {
             for (const CorePatternBinding &binding : arm.bindings) {
-                if (binding.value.value >= flow_.value_types.size()) {
+                if (binding.value.value >= flow_.storage.value_types.size()) {
                     return reject("match arm binding value id is out of range", range);
                 }
-                const auto binding_kind = scalar_kind(flow_.value_types[binding.value.value]);
+                const auto binding_kind = scalar_kind(flow_.storage.value_types[binding.value.value]);
                 if (binding_kind == std::nullopt || *binding_kind == P6ScalarKind::Index) {
                     return reject("match arm binding has a non-scalar or f64 type", range);
                 }
@@ -2772,10 +2778,10 @@ class P6ComputationHandlerBuilder {
                                         const std::vector<CorePatternBinding> &bindings,
                                         bool allow_payload_bindings,
                                         ir::SourceRangeOpt range) {
-        if (id.value >= flow_.patterns.size()) {
+        if (id.value >= flow_.storage.patterns.size()) {
             return reject("pattern id is out of range for this flow", range);
         }
-        const CorePattern &pattern = flow_.patterns[id.value];
+        const CorePattern &pattern = flow_.storage.patterns[id.value];
         return std::visit(
             Overloaded{
                 [&](const CoreWildcardPat &) { return true; },
@@ -2937,11 +2943,11 @@ class P6ComputationHandlerBuilder {
         return std::visit(
             Overloaded{
                 [&](const CoreLetStmt &s) {
-                    if (s.expr.value >= flow_.exprs.size()) {
+                    if (s.expr.value >= flow_.storage.exprs.size()) {
                         return reject("let references an out-of-range expression",
                                       statement.source_range);
                     }
-                    const CoreExpr &bound = flow_.exprs[s.expr.value];
+                    const CoreExpr &bound = flow_.storage.exprs[s.expr.value];
                     const auto kind = scalar_kind(bound.result_type);
                     if (kind == std::nullopt) {
                         return reject("let value has a non-scalar or f64 type",
@@ -3083,10 +3089,10 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool emit_expr(const CoreExprId id) {
-        if (id.value >= flow_.exprs.size()) {
+        if (id.value >= flow_.storage.exprs.size()) {
             return reject("expression id is out of range for this flow", ir::SourceRangeOpt{});
         }
-        const CoreExpr &expr = flow_.exprs[id.value];
+        const CoreExpr &expr = flow_.storage.exprs[id.value];
         const auto result_kind = scalar_kind(expr.result_type);
         if (result_kind == std::nullopt) {
             return reject("scalar expression has a non-scalar or f64 result type",
@@ -3117,6 +3123,11 @@ class P6ComputationHandlerBuilder {
                 },
                 [&](const CoreUnsupportedExpr &) {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
+                },
+                [&](const CoreCallExpr &) {
+                    return reject("direct fn call is lowered to its own outlined function in a "
+                                  "later step of this slice",
+                                  expr.source_range);
                 },
             },
             expr.node);
@@ -3195,7 +3206,7 @@ class P6ComputationHandlerBuilder {
     // (a unit variant of a payload enum has all-unit slots in P6).
     [[nodiscard]] bool
     emit_qualified(CoreExprId id, const CoreQualifiedExpr &q, ir::SourceRangeOpt range) {
-        if (p6_is_tag_only_enum(program_, layouts_, flow_.exprs[id.value].result_type)) {
+        if (p6_is_tag_only_enum(program_, layouts_, flow_.storage.exprs[id.value].result_type)) {
             emit_const_i32(static_cast<std::int32_t>(q.variant.value));
             return true;
         }
@@ -3408,10 +3419,10 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool emit_unary(const CoreUnaryExpr &u, ir::SourceRangeOpt range) {
-        if (u.operand.value >= flow_.exprs.size()) {
+        if (u.operand.value >= flow_.storage.exprs.size()) {
             return reject("unary operand id is out of range for this flow", std::move(range));
         }
-        const auto operand_kind = scalar_kind(flow_.exprs[u.operand.value].result_type);
+        const auto operand_kind = scalar_kind(flow_.storage.exprs[u.operand.value].result_type);
         if (operand_kind == std::nullopt) {
             return reject("unary operand has a non-scalar or f64 result type", std::move(range));
         }
@@ -3446,11 +3457,11 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool emit_binary(const CoreBinaryExpr &b, ir::SourceRangeOpt range) {
-        if (b.lhs.value >= flow_.exprs.size() || b.rhs.value >= flow_.exprs.size()) {
+        if (b.lhs.value >= flow_.storage.exprs.size() || b.rhs.value >= flow_.storage.exprs.size()) {
             return reject("binary operand id is out of range for this flow", std::move(range));
         }
-        const auto lhs_kind = scalar_kind(flow_.exprs[b.lhs.value].result_type);
-        const auto rhs_kind = scalar_kind(flow_.exprs[b.rhs.value].result_type);
+        const auto lhs_kind = scalar_kind(flow_.storage.exprs[b.lhs.value].result_type);
+        const auto rhs_kind = scalar_kind(flow_.storage.exprs[b.rhs.value].result_type);
         if (lhs_kind == std::nullopt || rhs_kind == std::nullopt || *lhs_kind != *rhs_kind) {
             return reject("binary operands must share one scalar type", std::move(range));
         }
@@ -3575,10 +3586,10 @@ class P6ComputationHandlerBuilder {
                                          std::uint32_t scrutinee_local,
                                          P6PatternSite site,
                                          ir::SourceRangeOpt range) {
-        if (id.value >= flow_.patterns.size()) {
+        if (id.value >= flow_.storage.patterns.size()) {
             return reject("pattern id is out of range for this flow", std::move(range));
         }
-        const CorePattern &pattern = flow_.patterns[id.value];
+        const CorePattern &pattern = flow_.storage.patterns[id.value];
         return std::visit(
             Overloaded{
                 // `_` and `x`: irrefutable — a constant true, so the enclosing
@@ -4084,7 +4095,7 @@ class P6ComputationHandlerBuilder {
     // artifacts keep the exact legacy rejection. The admitted flow still fails
     // closed per-handler below for any pattern kind or expression node outside
     // the landed subset.
-    if (!flow->patterns.empty() &&
+    if (!flow->storage.patterns.empty() &&
         !std::any_of(
             flow->states.begin(), flow->states.end(), [](const ir::core::CoreFlowState &state) {
                 return region_contains_match(state.body) && is_p6_computation_region(state.body);
@@ -4141,8 +4152,8 @@ class P6ComputationHandlerBuilder {
     plan.agent = target;
     plan.initial = agent.initial;
     plan.actions.resize(agent.states.size(), IdentityAction{});
-    std::vector<bool> used_exprs(flow->exprs.size(), false);
-    std::vector<bool> used_values(flow->value_count, false);
+    std::vector<bool> used_exprs(flow->storage.exprs.size(), false);
+    std::vector<bool> used_values(flow->storage.value_count, false);
 
     // RFC 0026 P6-2: a computed-goto handler compiles to its OWN `() -> i32`
     // function, so its locals are private and every handler can be emitted
@@ -4475,8 +4486,8 @@ validate_workflow_frame_region(const CoreProgram &program,
     const auto *let = std::get_if<CoreLetStmt>(&let_statement.node);
     const auto *yield = std::get_if<CoreYieldStmt>(&yield_statement.node);
     if (let == nullptr || yield == nullptr || !yield->has_value || yield->value != let->result ||
-        let->expr.value >= workflow.exprs.size() ||
-        let->result.value >= workflow.value_types.size() ||
+        let->expr.value >= workflow.storage.exprs.size() ||
+        let->result.value >= workflow.storage.value_types.size() ||
         let->result.value >= used_values.size()) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
@@ -4492,12 +4503,12 @@ validate_workflow_frame_region(const CoreProgram &program,
         return std::nullopt;
     }
 
-    const auto &expr = workflow.exprs[let->expr.value];
+    const auto &expr = workflow.storage.exprs[let->expr.value];
     const auto *path = std::get_if<CorePathExpr>(&expr.node);
     if (path == nullptr || !path->members.empty() || !path->projection.empty() ||
         !path->projection_resolved || path->has_local ||
         expr.result_type.value >= program.value_types.size() ||
-        workflow.value_types[let->result.value] != expr.result_type ||
+        workflow.storage.value_types[let->result.value] != expr.result_type ||
         expr.result_type != expected_type) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
@@ -4586,7 +4597,7 @@ build_workflow_plan(const CoreProgram &program,
         return std::nullopt;
     }
     const auto &workflow = program.workflows[target.value];
-    if (!workflow.patterns.empty() || !workflow.coercion_plans.empty()) {
+    if (!workflow.storage.patterns.empty() || !workflow.storage.coercion_plans.empty()) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
                  "KR6.5 E3 rejects hidden workflow pattern or coercion arenas");
@@ -4697,8 +4708,8 @@ build_workflow_plan(const CoreProgram &program,
         plan.agent_plans.push_back(std::move(*agent_plan));
     }
 
-    std::vector<bool> used_exprs(workflow.exprs.size(), false);
-    std::vector<bool> used_values(workflow.value_count, false);
+    std::vector<bool> used_exprs(workflow.storage.exprs.size(), false);
+    std::vector<bool> used_values(workflow.storage.value_count, false);
     for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
         const auto &node = workflow.nodes[id];
         const auto *instance = agent_instance(program, node.target_instance);
@@ -4789,13 +4800,13 @@ build_workflow_plan(const CoreProgram &program,
     }
     const auto *return_let =
         std::get_if<CoreLetStmt>(&workflow.return_region->statements.front().node);
-    if (return_let == nullptr || return_let->expr.value >= workflow.exprs.size()) {
+    if (return_let == nullptr || return_let->expr.value >= workflow.storage.exprs.size()) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
                  "workflow return is not a canonical path let");
         return std::nullopt;
     }
-    const auto output_type = workflow.exprs[return_let->expr.value].result_type;
+    const auto output_type = workflow.storage.exprs[return_let->expr.value].result_type;
     if (output_type.value >= program.value_types.size()) {
         add_diag(result, core_wasm_diag::kInvalidCore, "workflow return type is out of range");
         return std::nullopt;

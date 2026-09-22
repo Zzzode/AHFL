@@ -529,10 +529,10 @@ TEST_CASE("flow lowering: capability call inside a branch is preserved (P0-2 mut
                 const auto &signature = result.program.capabilities[call.capability.value];
                 REQUIRE(call.args.size() == signature.param_types.size());
                 REQUIRE(call.args.size() == 1);
-                REQUIRE(call.args[0].value < flow.value_types.size());
-                REQUIRE(call.result.value < flow.value_types.size());
-                CHECK(flow.value_types[call.args[0].value] == signature.param_types[0]);
-                CHECK(flow.value_types[call.result.value] == signature.return_type);
+                REQUIRE(call.args[0].value < flow.storage.value_types.size());
+                REQUIRE(call.result.value < flow.storage.value_types.size());
+                CHECK(flow.storage.value_types[call.args[0].value] == signature.param_types[0]);
+                CHECK(flow.storage.value_types[call.result.value] == signature.return_type);
                 REQUIRE(flow.target.value < result.program.agents.size());
                 const auto &whitelist = result.program.agents[flow.target.value].capabilities;
                 CHECK(std::ranges::find(whitelist, call.capability) != whitelist.end());
@@ -665,7 +665,7 @@ TEST_CASE("flow lowering: nested capability call inside a constructor is not dro
     const ir::core::CoreValueId charge_result = calls[0]->result;
 
     bool result_consumed_by_construct = false;
-    for (const auto &expr : flow.exprs) {
+    for (const auto &expr : flow.storage.exprs) {
         if (std::holds_alternative<ir::core::CoreConstructExpr>(expr.node)) {
             const auto &ctor = std::get<ir::core::CoreConstructExpr>(expr.node);
             for (const auto &arg : ctor.args) {
@@ -969,7 +969,7 @@ TEST_CASE("builtin enum variant resolves via the builtin path by symbol identity
     const auto &flow_out = result.program.flows[0];
 
     bool found_some = false;
-    for (const auto &expr : flow_out.exprs) {
+    for (const auto &expr : flow_out.storage.exprs) {
         if (std::holds_alternative<ir::core::CoreConstructExpr>(expr.node)) {
             const auto &ctor = std::get<ir::core::CoreConstructExpr>(expr.node);
             if (ctor.is_enum_variant && ctor.variant_name == "Some") {
@@ -1287,7 +1287,7 @@ TEST_CASE("a branch shadow with a DIFFERENT nominal type does not corrupt the ou
     REQUIRE(atype_id.has_value());
 
     bool saw_x_a = false;
-    for (const auto &expr : result.program.flows[0].exprs) {
+    for (const auto &expr : result.program.flows[0].storage.exprs) {
         if (const auto *p = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
             if (p->root == ir::core::CorePathRoot::Local && p->members.size() == 1 &&
                 p->members[0] == "a") {
@@ -1430,7 +1430,7 @@ flow for A {
 
     // Find the Pair construct and the literal each arg's value came from.
     const ir::core::CoreConstructExpr *pair = nullptr;
-    for (const auto &expr : flow.exprs) {
+    for (const auto &expr : flow.storage.exprs) {
         if (std::holds_alternative<ir::core::CoreConstructExpr>(expr.node)) {
             const auto &c = std::get<ir::core::CoreConstructExpr>(expr.node);
             if (c.type_name.find("Pair") != std::string::npos && !c.is_enum_variant) {
@@ -1448,8 +1448,8 @@ flow for A {
         for (const auto &state : flow.states) {
             for (const auto &stmt : state.body.statements) {
                 if (const auto *let = std::get_if<ir::core::CoreLetStmt>(&stmt.node)) {
-                    if (let->result == v && let->expr.value < flow.exprs.size()) {
-                        const auto &e = flow.exprs[let->expr.value].node;
+                    if (let->result == v && let->expr.value < flow.storage.exprs.size()) {
+                        const auto &e = flow.storage.exprs[let->expr.value].node;
                         if (const auto *lit = std::get_if<ir::core::CoreLiteralExpr>(&e)) {
                             return lit->spelling;
                         }
@@ -1535,7 +1535,7 @@ TEST_CASE("member projection resolves reads and stores to typed CoreFieldId (fai
     // Reads live in the expr arena; stores are statements.
     bool saw_input_top_read = false;   // input.top -> field 0 of Req
     bool saw_input_inner_n_read = false; // input.inner.n -> [1, 0]
-    for (const auto &expr : flow.exprs) {
+    for (const auto &expr : flow.storage.exprs) {
         if (const auto *p = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
             if (p->root == ir::core::CorePathRoot::Input && p->members.size() == 1 &&
                 p->members[0] == "top") {
@@ -1949,11 +1949,11 @@ TEST_CASE("P4-B P0-3: a let whose declared type is a SUPERTYPE of the initialize
     REQUIRE(result.ok());
     REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
-    REQUIRE(flow.coercion_plans.size() == 1);
-    REQUIRE(flow.coercion_plans[0].ops.size() == 1);
-    CHECK(flow.coercion_plans[0].ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
-    REQUIRE(flow.exprs.size() == 2);
-    const auto *coerce = std::get_if<ir::core::CoreCoerceExpr>(&flow.exprs[1].node);
+    REQUIRE(flow.storage.coercion_plans.size() == 1);
+    REQUIRE(flow.storage.coercion_plans[0].ops.size() == 1);
+    CHECK(flow.storage.coercion_plans[0].ops[0].kind == ir::core::CoreCoercionOpKind::IntWiden);
+    REQUIRE(flow.storage.exprs.size() == 2);
+    const auto *coerce = std::get_if<ir::core::CoreCoerceExpr>(&flow.storage.exprs[1].node);
     REQUIRE(coerce != nullptr);
     CHECK(coerce->operand.value == 0);
     REQUIRE(flow.states.size() == 1);
@@ -2639,7 +2639,7 @@ flow for A {
 
     // Arm 0: Some(x) - a variant pattern with one tuple sub-pattern binding, one
     // arm binding (x). Arm 1: None - a unit variant, no bindings.
-    const auto &pats = result.program.flows[0].patterns;
+    const auto &pats = result.program.flows[0].storage.patterns;
     const auto &arm0 = m->arms[0];
     REQUIRE(arm0.pattern.value < pats.size());
     const auto *v0 = std::get_if<ir::core::CoreVariantPat>(&pats[arm0.pattern.value].node);
@@ -2858,8 +2858,8 @@ flow for A {
     REQUIRE(result.program.flows.size() == 1);
     const auto &flow = result.program.flows[0];
     const auto bind_value = m->arms[0].bindings[0].value.value;
-    REQUIRE(bind_value < flow.value_types.size());
-    const auto vt = flow.value_types[bind_value];
+    REQUIRE(bind_value < flow.storage.value_types.size());
+    const auto vt = flow.storage.value_types[bind_value];
     REQUIRE(vt.value < result.program.value_types.size());
     CHECK(std::holds_alternative<ir::core::CoreVtNominal>(
         result.program.value_types[vt.value].node));
@@ -2910,12 +2910,12 @@ flow for A {
 
     // Density: one recorded logical type per allocated value id (the exact
     // invariant core.verify.VALUE_TYPES_SIZE_MISMATCH guards).
-    CHECK(flow.value_types.size() == flow.value_count);
-    REQUIRE(flow.value_count > 0);
+    CHECK(flow.storage.value_types.size() == flow.storage.value_count);
+    REQUIRE(flow.storage.value_count > 0);
 
     // Every slot is a valid, in-range, non-Never interned value type.
     bool saw_int = false;
-    for (const auto id : flow.value_types) {
+    for (const auto id : flow.storage.value_types) {
         REQUIRE(id.value != ir::core::CoreValueTypeId::kInvalid);
         REQUIRE(id.value < result.program.value_types.size());
         const auto &node = result.program.value_types[id.value].node;
@@ -3141,7 +3141,7 @@ TEST_CASE("KR6.4 workflow: a multi-node DAG lowers into a CoreWorkflowDecl and v
     // (with a resolved `.total` projection); `return: second` reads node 1 (bare).
     bool saw_first_total = false;
     bool saw_return_second = false;
-    for (const auto &expr : wf->exprs) {
+    for (const auto &expr : wf->storage.exprs) {
         if (const auto *p = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
             if (p->root != ir::core::CorePathRoot::WorkflowNodeOutput) {
                 continue;
@@ -3734,7 +3734,7 @@ flow for A {
 // the given stable source kind.
 bool flow_has_unsupported(const ir::core::CoreProgram &program, std::string_view kind) {
     for (const auto &flow : program.flows) {
-        for (const auto &expr : flow.exprs) {
+        for (const auto &expr : flow.storage.exprs) {
             if (const auto *unsupported =
                     std::get_if<ir::core::CoreUnsupportedExpr>(&expr.node)) {
                 if (unsupported->source_kind == kind) {
@@ -4441,7 +4441,7 @@ flow for A {
     bool saw_len = false;
     bool saw_element_get = false;
     for (const auto &flow : result.program.flows) {
-        for (const auto &expr : flow.exprs) {
+        for (const auto &expr : flow.storage.exprs) {
             const auto *collection = std::get_if<ir::core::CoreCollectionExpr>(&expr.node);
             if (collection == nullptr) {
                 continue;
@@ -4449,7 +4449,7 @@ flow for A {
             if (collection->op == ir::core::CoreCollectionOpKind::Len) {
                 saw_len = true;
                 // The base's logical value type is the BOUNDED container nominal.
-                const auto base_ty = flow.value_types[collection->base.value];
+                const auto base_ty = flow.storage.value_types[collection->base.value];
                 const auto *nominal = std::get_if<ir::core::CoreVtNominal>(
                     &result.program.value_types[base_ty.value].node);
                 REQUIRE(nominal != nullptr);
@@ -4507,7 +4507,7 @@ flow for A {
     // projection, and NO collection op was fabricated for it.
     bool saw_length_path = false;
     for (const auto &flow : result.program.flows) {
-        for (const auto &expr : flow.exprs) {
+        for (const auto &expr : flow.storage.exprs) {
             CHECK_FALSE(std::holds_alternative<ir::core::CoreCollectionExpr>(expr.node));
             if (const auto *path = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
                 if (path->members.size() == 1 && path->members.front() == "length") {
