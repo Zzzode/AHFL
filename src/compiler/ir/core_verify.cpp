@@ -7,6 +7,7 @@
 // becomes an ERROR diagnostic with a stable `core.verify.*` code and (where a
 // node carries one) a source range.
 
+#include "ahfl/compiler/ir/core_recursion.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
@@ -17,6 +18,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
@@ -3669,53 +3671,83 @@ class Verifier {
             }
         }
 
-        // Static call graph acyclicity (FB-1 #6: no recursion until FB-2).
-        std::vector<std::vector<std::uint32_t>> edges(program_.fns.size());
-        std::vector<bool> has_edge(program_.fns.size(), false);
-        for (const CoreFnDecl &fn : program_.fns) {
-            for (const CoreExpr &expr : fn.storage.exprs) {
-                const auto *call = std::get_if<CoreCallExpr>(&expr.node);
-                if (call == nullptr || call->callee.value >= program_.instances.size()) {
-                    continue;
-                }
-                const auto *payload =
-                    std::get_if<CoreFnInstance>(&program_.instances[call->callee.value].payload);
-                if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
-                    payload->body.value >= program_.fns.size()) {
-                    continue;
-                }
-                edges[fn.id.value].push_back(payload->body.value);
-                has_edge[fn.id.value] = true;
-            }
+        // RFC 0026 FB-2 (design §8.1 rule 6): the fn direct-call graph is no
+        // longer required ACYCLIC. Recursion is admitted exactly when the
+        // compile-time depth lattice seals every recursion group (SCC) with a
+        // finite structural bound: one Int rank parameter that progresses by a
+        // positive constant on every internal edge, a divergent base-case
+        // guard against a bounded expression, and statically bounded rank
+        // values on every entry edge. `decreases` is never read (erased before
+        // Core). Anything else fails closed — never a silent unbounded call.
+        const FnRecursionAnalysis recursion = analyze_fn_recursion(program_);
+        for (const FnRecursionIssue &issue : recursion.unbounded_issues) {
+            error(verify::kFnRecursionUnbounded,
+                  recursion_issue_message(issue), issue.range);
         }
-        enum class Color : std::uint8_t { White, Gray, Black };
-        std::vector<Color> color(program_.fns.size(), Color::White);
-        for (std::uint32_t root = 0; root < program_.fns.size(); ++root) {
-            std::vector<std::uint32_t> stack{root};
-            while (!stack.empty()) {
-                const std::uint32_t v = stack.back();
-                if (color[v] == Color::White) {
-                    color[v] = Color::Gray;
-                    for (const std::uint32_t to : edges[v]) {
-                        if (color[to] == Color::Gray) {
-                            error(verify::kFnRecursion,
-                                  "fn call graph contains recursion (a direct/self call); "
-                                  "recursive fn bodies are rejected until the bounded-recursion "
-                                  "slice (FB-2)",
-                                  program_.fns[to].source_range);
-                        } else if (color[to] == Color::White) {
-                            stack.push_back(to);
-                        }
-                    }
-                } else {
-                    if (color[v] == Color::Gray) {
-                        color[v] = Color::Black;
-                    }
-                    stack.pop_back();
-                }
+        for (const FnRecursionScc &scc : recursion.overflow_sccs) {
+            std::ostringstream msg;
+            msg << "recursive fn group (members [";
+            for (std::size_t i = 0; i < scc.members.size(); ++i) {
+                msg << (i == 0 ? "" : ", ")
+                    << program_.fns[scc.members[i]].name;
             }
+            msg << "]) has a structural depth bound " << scc.depth_bound
+                << " that exceeds the Core-layer recursion ceiling "
+                << kFnRecursionDepthCeiling
+                << "; the bounded collection driving the recursion is too large "
+                   "for the fixed wasm32 resource plan";
+            error(verify::kFnRecursionDepth, msg.str(),
+                  program_.fns[scc.members.front()].source_range);
         }
         static_cast<void>(fn_instances);
+    }
+
+    // The human-readable message for one FB-2 unbounded-recursion finding.
+    [[nodiscard]] std::string
+    recursion_issue_message(const FnRecursionIssue &issue) const {
+        const auto name_of = [&](std::uint32_t id) -> std::string {
+            if (id == CoreFnId::kInvalid || id >= program_.fns.size()) {
+                return "<fn>";
+            }
+            return program_.fns[id].name;
+        };
+        std::ostringstream msg;
+        switch (issue.kind) {
+        case FnRecursionIssueKind::RankNotInteger:
+            msg << "recursive fn '" << name_of(issue.edge_from)
+                << "' has no integer rank parameter; FB-2 bounds recursion by an "
+                   "Int argument that decreases/increases by a compile-time "
+                   "constant on every recursive call";
+            break;
+        case FnRecursionIssueKind::NoRankProgression:
+            msg << "recursive call from '" << name_of(issue.edge_from) << "' to '"
+                << name_of(issue.edge_to)
+                << "' does not pass a rank parameter progressed by a positive "
+                   "constant (rank +/- literal); recursion whose depth is not "
+                   "statically countable is rejected";
+            break;
+        case FnRecursionIssueKind::NoBaseGuard:
+            msg << "recursive fn '" << name_of(issue.edge_from)
+                << "' has no base-case comparison of its rank parameter against a "
+                   "bounded value (a literal or the length of a bounded "
+                   "collection); the recursion cannot be proven to terminate "
+                   "structurally";
+            break;
+        case FnRecursionIssueKind::BoundNotStatic:
+            msg << "the base-case bound of recursive fn '"
+                << name_of(issue.edge_from)
+                << "' is not statically derivable; it must be a compile-time "
+                   "integer, a bounded-collection length, or an invariant "
+                   "parameter bounded by one at every entry call";
+            break;
+        case FnRecursionIssueKind::EntryRankNotStatic:
+            msg << "an entry call to recursive fn '" << name_of(issue.edge_to)
+                << "' binds the rank parameter to a value without a static bound "
+                   "(not a literal and not a bounded-collection length); the "
+                   "initial recursion depth is unknown";
+            break;
+        }
+        return msg.str();
     }
 
     // Whether a region contains a CoreCapabilityCallStmt (any depth). Used to

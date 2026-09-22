@@ -1,6 +1,7 @@
 #include <doctest.h>
 
 #include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_recursion.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program.hpp"
@@ -4527,4 +4528,195 @@ flow for A {
         }
     }
     CHECK(saw_length_path);
+}
+
+// ===========================================================================
+// RFC 0026 FB-2 (CORE-FNBODY-DESIGN §8): end-to-end recursion lattice through
+// the REAL front end. These fixtures parse/resolve/typecheck/lower a bounded
+// recursive fn (the `decreases` measure is required at the AHFL layer but
+// deliberately UNREAD by the Core lattice) and assert the verifier seals /
+// rejects them with the FB-2 codes.
+// ===========================================================================
+namespace {
+
+const std::string kFb2BoundedRecursionSource = R"AHFL(
+module std::collections;
+
+pub struct List<T> { }
+
+@builtin("list_raw_get")
+fn list_raw_get<T>(xs: List<T>, i: Int) -> T effect Pure;
+
+@builtin("list_raw_length")
+fn list_raw_length<T>(xs: List<T>) -> Int effect Pure;
+
+fn sum_into(xs: List<Int>(4), i: Int, acc: Int) -> Int effect Pure
+    decreases list_raw_length<Int>(xs) - i {
+    if i >= list_raw_length<Int>(xs) {
+        return acc;
+    }
+    return sum_into(xs, i + 1, acc + list_raw_get<Int>(xs, i));
+}
+
+struct Frame { items: List<Int>(4); }
+
+agent RecAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for RecAgent {
+    state Init {
+        let total: Int = sum_into(input.items, 0, 0);
+        goto Done;
+    }
+    state Done {
+        return input;
+    }
+}
+)AHFL";
+
+// A self-recursive fn with NO rank evidence (the recursive call does not
+// progress an integer parameter) and a base guard that can never fire.
+const std::string kFb2UnboundedRecursionSource = R"AHFL(
+module er;
+
+fn loop_forever(n: Int) -> Int effect Pure decreases n {
+    return loop_forever(n);
+}
+
+struct Frame { v: Int; }
+
+agent LoopAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for LoopAgent {
+    state Init {
+        let x: Int = loop_forever(input.v);
+        goto Done;
+    }
+    state Done {
+        return input;
+    }
+}
+)AHFL";
+
+// Self recursion that DOES progress the rank (i+1) but guards against a
+// RUNTIME parameter n rather than a bounded value, so the initial depth is not
+// statically derivable at the entry.
+const std::string kFb2UnboundedMutualSource = R"AHFL(
+module er;
+
+fn climb(n: Int, i: Int) -> Int effect Pure decreases n - i {
+    if i >= n {
+        return i;
+    }
+    return climb(n, i + 1);
+}
+
+struct Frame { v: Int; }
+
+agent ClimbAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for ClimbAgent {
+    state Init {
+        let x: Int = climb(input.v, 0);
+        goto Done;
+    }
+    state Done {
+        return input;
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-2 e2e: bounded list recursion lowers clean and the lattice seals its depth") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("fb2_bounded", kFb2BoundedRecursionSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    REQUIRE(result.is_executable);
+
+    // Exactly one fn body (the non-generic sum_into); it is self-recursive and
+    // the lattice sealed it from the capacity-4 bounded list.
+    REQUIRE(result.program.fns.size() == 1);
+    const auto analysis = ir::core::analyze_fn_recursion(result.program);
+    CHECK(analysis.unbounded_issues.empty());
+    CHECK(analysis.overflow_sccs.empty());
+    REQUIRE(analysis.sccs.size() == 1);
+    CHECK(analysis.sccs[0].members == std::vector<std::uint32_t>{0});
+    // entry i=0, guard i >= len with len in [0,4]: at most len+1 frames = 5.
+    CHECK(analysis.sccs[0].depth_bound == 5);
+
+    // The self call survived lowering as a CoreCallExpr to the same instance.
+    const ir::core::CoreFnDecl &fn = result.program.fns[0];
+    bool self_call = false;
+    for (const ir::core::CoreExpr &expr : fn.storage.exprs) {
+        if (const auto *call = std::get_if<ir::core::CoreCallExpr>(&expr.node)) {
+            if (call->callee == fn.instance) {
+                self_call = true;
+            }
+        }
+    }
+    CHECK(self_call);
+}
+
+TEST_CASE("FB-2 e2e: self recursion without rank evidence is fail-closed") {
+    const auto ahfl_ir =
+        lower_source_to_ahfl_ir("fb2_unbounded", kFb2UnboundedRecursionSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    CHECK(has_verify_prefixed_diagnostic(result));
+    bool has_code = false;
+    for (const auto &d : result.diagnostics) {
+        if (d.code == "core.verify.FN_RECURSION_UNBOUNDED") {
+            has_code = true;
+        }
+    }
+    CHECK(has_code);
+}
+
+TEST_CASE("FB-2 e2e: recursion bounded by a runtime parameter is fail-closed") {
+    const auto ahfl_ir =
+        lower_source_to_ahfl_ir("fb2_climb", kFb2UnboundedMutualSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    CHECK_FALSE(result.ok());
+    bool has_code = false;
+    for (const auto &d : result.diagnostics) {
+        if (d.code == "core.verify.FN_RECURSION_UNBOUNDED") {
+            has_code = true;
+        }
+    }
+    CHECK(has_code);
 }

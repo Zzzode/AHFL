@@ -149,6 +149,14 @@ inline constexpr std::string_view kFnCallResultTypeMismatch =
     "core.verify.FN_CALL_RESULT_TYPE_MISMATCH";
 inline constexpr std::string_view kFnCallEffectfulCallee = "core.verify.FN_CALL_EFFECTFUL_CALLEE";
 inline constexpr std::string_view kFnRecursion = "core.verify.FN_RECURSION";
+// RFC 0026 FB-2 (design §8.1 rule 6): bounded recursion. The FB-1 blanket
+// `FN_RECURSION` rejection is replaced by the structural depth lattice; these
+// two codes are its fail-closed outcomes (no finite rank bound / bound beyond
+// the Core-layer ceiling). `FN_RECURSION` stays defined for diagnostic-reader
+// compatibility but is no longer emitted.
+inline constexpr std::string_view kFnRecursionUnbounded =
+    "core.verify.FN_RECURSION_UNBOUNDED";
+inline constexpr std::string_view kFnRecursionDepth = "core.verify.FN_RECURSION_DEPTH";
 inline constexpr std::string_view kFnBodyTermination = "core.verify.FN_BODY_TERMINATION";
 inline constexpr std::string_view kStmtAfterTerminator = "core.verify.STMT_AFTER_TERMINATOR";
 inline constexpr std::string_view kTypedShellInvalid = "core.verify.TYPED_SHELL_INVALID";

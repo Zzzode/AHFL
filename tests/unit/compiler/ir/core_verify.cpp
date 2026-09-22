@@ -1,8 +1,10 @@
 #include <doctest.h>
 
 #include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_recursion.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -2910,19 +2912,21 @@ TEST_CASE("FB-1 verifier: direct-call result type mismatch fails") {
     CHECK(has_code(result, verify::kFnCallResultTypeMismatch));
 }
 
-TEST_CASE("FB-1 verifier: a self call (recursion) is rejected until FB-2") {
+TEST_CASE("FB-2 verifier: a self call with no rank progression fails closed") {
     FnProgram f = make_good_fn_program();
+    // The call passes the Int parameter VERBATIM (c = 0), so the lattice can
+    // prove no constant-step rank progression: FN_RECURSION_UNBOUNDED.
     append_orphan_call(f.program.fns[0], CoreInstanceId{0},
                        {CoreValueId{0}}, f.vt_int);
     const auto result = verify_core_program(f.program);
     CHECK_FALSE(result.ok());
-    CHECK(has_code(result, verify::kFnRecursion));
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
 }
 
-TEST_CASE("FB-1 verifier: a mutual recursion cycle is rejected") {
+TEST_CASE("FB-2 verifier: a mutual recursion cycle without rank evidence fails closed") {
     FnProgram f = make_good_fn_program();
     // g0 (fn 0 / instance 0) gains a call to the g1 instance added below; g1
-    // calls g0 -> cycle.
+    // calls g0 -> cycle. Neither edge progresses an integer rank.
     CoreInstanceDecl inst1;
     inst1.id = CoreInstanceId{1};
     inst1.instance_key = "_inst_g1";
@@ -2941,7 +2945,7 @@ TEST_CASE("FB-1 verifier: a mutual recursion cycle is rejected") {
 
     const auto result = verify_core_program(f.program);
     CHECK_FALSE(result.ok());
-    CHECK(has_code(result, verify::kFnRecursion));
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
 }
 
 TEST_CASE("FB-1 verifier: a direct call to an effectful callee fails") {
@@ -2987,4 +2991,477 @@ TEST_CASE("FB-1 verifier: a direct call to an effectful callee fails") {
     const auto result = verify_core_program(f.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kFnCallEffectfulCallee));
+}
+
+// ===========================================================================
+// RFC 0026 FB-2 (CORE-FNBODY-DESIGN §8.1 rule 6): the compile-time recursion
+// depth lattice. These fixtures build Core fn bodies directly in ANF and drive
+// BOTH the pure lattice analysis (`analyze_fn_recursion`, for exact sealed
+// bounds) and the structural verifier (for the fail-closed codes). The shapes
+// mirror the stdlib recursion helpers:
+//   * ascending rank i guarded by a literal or a bounded-container length;
+//   * descending rank i guarded against a literal, entry = container length;
+//   * invariant bound parameter threaded verbatim (list_copy_range shape);
+//   * every non-derivable shape fails closed with FN_RECURSION_UNBOUNDED.
+// ===========================================================================
+
+namespace {
+
+struct RecProgram {
+    CoreProgram program;
+    CoreValueTypeId vt_int{};
+    CoreValueTypeId vt_bool{};
+    CoreValueTypeId vt_list4{}; // List<Int>(4)
+};
+
+// One ANF-building helper: push an expr and return its arena id.
+struct RecBody {
+    CoreFnDecl *fn{nullptr};
+    CoreValueTypeId vt_int{};
+    CoreValueTypeId vt_bool{};
+
+    [[nodiscard]] CoreExprId lit(std::int64_t value) {
+        const auto id = CoreExprId{static_cast<std::uint32_t>(fn->storage.exprs.size())};
+        fn->storage.exprs.push_back(
+            CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, std::to_string(value)},
+                     std::nullopt, vt_int});
+        return id;
+    }
+    [[nodiscard]] CoreExprId vref(CoreValueId v, CoreValueTypeId ty) {
+        const auto id = CoreExprId{static_cast<std::uint32_t>(fn->storage.exprs.size())};
+        fn->storage.exprs.push_back(
+            CoreExpr{CoreValueRefExpr{v}, std::nullopt, ty});
+        return id;
+    }
+    [[nodiscard]] CoreExprId binary(CoreBinaryOp op, CoreExprId lhs, CoreExprId rhs,
+                                    CoreValueTypeId ty) {
+        const auto id = CoreExprId{static_cast<std::uint32_t>(fn->storage.exprs.size())};
+        fn->storage.exprs.push_back(
+            CoreExpr{CoreBinaryExpr{op, lhs, rhs}, std::nullopt, ty});
+        return id;
+    }
+    [[nodiscard]] CoreExprId len(CoreValueId base) {
+        const auto id = CoreExprId{static_cast<std::uint32_t>(fn->storage.exprs.size())};
+        fn->storage.exprs.push_back(
+            CoreExpr{CoreCollectionExpr{CoreCollectionOpKind::Len, base, {}, {}},
+                     std::nullopt, vt_int});
+        return id;
+    }
+    [[nodiscard]] CoreExprId call(CoreInstanceId callee, std::vector<CoreValueId> args) {
+        const auto id = CoreExprId{static_cast<std::uint32_t>(fn->storage.exprs.size())};
+        fn->storage.exprs.push_back(
+            CoreExpr{CoreCallExpr{callee, std::move(args)}, std::nullopt, vt_int});
+        return id;
+    }
+    [[nodiscard]] CoreValueId bind(CoreExprId expr, CoreValueTypeId ty) {
+        const auto v = CoreValueId{fn->storage.value_count++};
+        fn->storage.value_types.push_back(ty);
+        fn->body.statements.push_back(CoreStmt{CoreLetStmt{v, expr}, std::nullopt});
+        return v;
+    }
+    void ret(CoreValueId v) {
+        fn->body.statements.push_back(CoreStmt{CoreReturnStmt{true, v}, std::nullopt});
+    }
+    // `if (cond) return retv;` with an empty else (falls through).
+    void base_if(CoreValueId cond, CoreValueId retv) {
+        auto then_region = std::make_unique<CoreRegion>();
+        then_region->statements.push_back(
+            CoreStmt{CoreReturnStmt{true, retv}, std::nullopt});
+        fn->body.statements.push_back(
+            CoreStmt{CoreIfStmt{cond, std::move(then_region), nullptr}, std::nullopt});
+    }
+};
+
+[[nodiscard]] RecProgram make_rec_program() {
+    RecProgram r;
+    CoreProgram &p = r.program;
+
+    CoreTypeDecl list;
+    list.kind = CoreTypeDecl::Kind::Struct;
+    list.name = "std::collections::List";
+    list.role = CoreNominalRole::List;
+    list.type_param_count = 1;
+    list.variances = {CoreVariance::Covariant};
+    p.types.push_back(std::move(list));
+
+    r.vt_int = intern_program_vt(p, CoreValueType{CoreVtInt{}});
+    r.vt_bool = intern_program_vt(p, CoreValueType{CoreVtBool{}});
+    r.vt_list4 = intern_program_vt(
+        p, CoreValueType{CoreVtNominal{CoreTypeId{0}, {r.vt_int}, 4}});
+    return r;
+}
+
+// Create an Fn instance + CoreFnDecl with the given parameter value TYPES; the
+// pre-bound params occupy SSA values [0, params). Returns the fn table index.
+[[nodiscard]] std::uint32_t add_rec_fn(RecProgram &r, std::string name,
+                                       std::vector<CoreValueTypeId> param_tys) {
+    CoreProgram &p = r.program;
+    const std::uint32_t instance_n =
+        static_cast<std::uint32_t>(p.instances.size());
+    const std::uint32_t fn_n = static_cast<std::uint32_t>(p.fns.size());
+
+    CoreInstanceDecl inst;
+    inst.id = CoreInstanceId{instance_n};
+    inst.instance_key = "_inst_" + name;
+    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, name, name, "", 700 + fn_n};
+    inst.payload = CoreFnInstance{CoreFnId{fn_n}};
+    p.instances.push_back(std::move(inst));
+
+    CoreFnDecl fn;
+    fn.id = CoreFnId{fn_n};
+    fn.instance = CoreInstanceId{instance_n};
+    fn.origin = ir::SymbolRef{ir::SymbolRefKind::Function, name, name, "", 700 + fn_n};
+    fn.name = "_inst_" + std::move(name);
+    fn.storage.value_count = static_cast<std::uint32_t>(param_tys.size());
+    fn.storage.value_types = std::move(param_tys);
+    for (std::uint32_t i = 0; i < fn.storage.value_count; ++i) {
+        fn.params.push_back(CoreValueId{i});
+    }
+    p.fns.push_back(std::move(fn));
+    return fn_n;
+}
+
+[[nodiscard]] RecBody rec_body(RecProgram &r, std::uint32_t fn_n) {
+    return RecBody{&r.program.fns[fn_n], r.vt_int, r.vt_bool};
+}
+
+// Ascending self recursion guarded by a LITERAL (rank i, bound 4):
+//   fn up_lit(xs: List<Int>(4), i: Int) -> Int {
+//       if i >= 4 { return i; }
+//       return up_lit(xs, i + 1);
+//   }
+// An outside fn `start_lit(xs)` enters at i = 0.
+void build_literal_ascending(RecProgram &r) {
+    const std::uint32_t loop = add_rec_fn(r, "up_lit", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        const CoreExprId four = b.lit(4);
+        const CoreValueId v4 = b.bind(four, r.vt_int);
+        const CoreExprId iref = b.vref(i, r.vt_int);
+        const CoreExprId fourref = b.vref(v4, r.vt_int);
+        const CoreValueId cond = b.bind(b.binary(CoreBinaryOp::Ge, iref, fourref, r.vt_bool),
+                                        r.vt_bool);
+        b.base_if(cond, i);
+        const CoreExprId one = b.lit(1);
+        const CoreValueId onev = b.bind(one, r.vt_int);
+        const CoreExprId iref2 = b.vref(i, r.vt_int);
+        const CoreExprId oneref = b.vref(onev, r.vt_int);
+        const CoreValueId i1 = b.bind(b.binary(CoreBinaryOp::Add, iref2, oneref, r.vt_int),
+                                      r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i1}), r.vt_int);
+        b.ret(rv);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_lit", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, zero}), r.vt_int);
+        b.ret(rv);
+    }
+}
+
+// Ascending self recursion guarded by the BOUNDED-CONTAINER LENGTH (rank i):
+//   fn up_len(xs: List<Int>(4), i: Int) -> Int {
+//       if i >= xs.length { return i; }
+//       return up_len(xs, i + 1);
+//   }
+// `start_len(xs)` enters at i = 0. The capacity (4) is the inductive edge.
+void build_length_ascending(RecProgram &r) {
+    const std::uint32_t loop = add_rec_fn(r, "up_len", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        const CoreValueId n = b.bind(b.len(xs), r.vt_int);
+        const CoreExprId iref = b.vref(i, r.vt_int);
+        const CoreExprId nref = b.vref(n, r.vt_int);
+        const CoreValueId cond = b.bind(b.binary(CoreBinaryOp::Ge, iref, nref, r.vt_bool),
+                                        r.vt_bool);
+        b.base_if(cond, i);
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i1}), r.vt_int);
+        b.ret(rv);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_len", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, zero}), r.vt_int);
+        b.ret(rv);
+    }
+}
+
+// Descending self recursion:
+//   fn down(xs: List<Int>(4), i: Int) -> Int {
+//       if i < 0 { return i; }
+//       return down(xs, i - 1);
+//   }
+// `start_down(xs)` enters at i = xs.length (<= capacity 4).
+void build_descending(RecProgram &r) {
+    const std::uint32_t loop = add_rec_fn(r, "down", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Lt, b.vref(i, r.vt_int), b.vref(zero, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        b.base_if(cond, i);
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Sub, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i1}), r.vt_int);
+        b.ret(rv);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_down", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0};
+        const CoreValueId n = b.bind(b.len(xs), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, n}), r.vt_int);
+        b.ret(rv);
+    }
+}
+
+} // namespace
+
+TEST_CASE("FB-2 lattice: ascending literal-bounded self recursion seals the exact depth") {
+    RecProgram r = make_rec_program();
+    build_literal_ascending(r);
+    const auto result = verify_core_program(r.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    CHECK(a.overflow_sccs.empty());
+    REQUIRE(a.sccs.size() == 1);
+    REQUIRE(a.sccs[0].members.size() == 1);
+    CHECK(a.sccs[0].members[0] == 0);
+    // activations i = 0,1,2,3,4 (the i=4 frame is the base case): 5 frames.
+    CHECK(a.sccs[0].depth_bound == 5);
+    CHECK(a.fn_depth_bound[0] == 5);
+    CHECK(a.fn_depth_bound[1] == -1); // the non-recursive starter
+}
+
+TEST_CASE("FB-2 lattice: ascending container-length-bounded recursion seals to capacity+1") {
+    RecProgram r = make_rec_program();
+    build_length_ascending(r);
+    REQUIRE(verify_core_program(r.program).ok());
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    REQUIRE(a.sccs.size() == 1);
+    CHECK(a.sccs[0].depth_bound == 5); // capacity 4 + base frame
+}
+
+TEST_CASE("FB-2 lattice: descending recursion from a container length seals correctly") {
+    RecProgram r = make_rec_program();
+    build_descending(r);
+    REQUIRE(verify_core_program(r.program).ok());
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    REQUIRE(a.sccs.size() == 1);
+    // entry i in [0,4], guard i < 0: frames i = 4,3,2,1,0,-1 -> 6 frames.
+    CHECK(a.sccs[0].depth_bound == 6);
+}
+
+TEST_CASE("FB-2 lattice: analysis is deterministic (bounds are reproducible)") {
+    RecProgram r1 = make_rec_program();
+    build_length_ascending(r1);
+    RecProgram r2 = make_rec_program();
+    build_length_ascending(r2);
+    const FnRecursionAnalysis a1 = analyze_fn_recursion(r1.program);
+    const FnRecursionAnalysis a2 = analyze_fn_recursion(r2.program);
+    REQUIRE(a1.sccs.size() == a2.sccs.size());
+    for (std::size_t i = 0; i < a1.sccs.size(); ++i) {
+        CHECK(a1.sccs[i].members == a2.sccs[i].members);
+        CHECK(a1.sccs[i].depth_bound == a2.sccs[i].depth_bound);
+    }
+    CHECK(a1.fn_depth_bound == a2.fn_depth_bound);
+    CHECK(a1.unbounded_issues.size() == a2.unbounded_issues.size());
+}
+
+TEST_CASE("FB-2 lattice: no integer rank parameter fails closed") {
+    RecProgram r = make_rec_program();
+    // fn no_rank(xs: List<Int>(4)) -> Int { return no_rank(xs); }
+    const std::uint32_t loop = add_rec_fn(r, "no_rank", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0};
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs}), r.vt_int);
+        b.ret(rv);
+    }
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::RankNotInteger);
+}
+
+TEST_CASE("FB-2 lattice: a rank not progressed (c=0) fails closed") {
+    RecProgram r = make_rec_program();
+    // fn stuck(xs, i) { if i >= 4 return i; return stuck(xs, i); }
+    const std::uint32_t loop = add_rec_fn(r, "stuck", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        const CoreValueId four = b.bind(b.lit(4), r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Ge, b.vref(i, r.vt_int), b.vref(four, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        b.base_if(cond, i);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i}), r.vt_int);
+        b.ret(rv);
+    }
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::NoRankProgression);
+}
+
+TEST_CASE("FB-2 lattice: progression without a base guard fails closed") {
+    RecProgram r = make_rec_program();
+    // fn noloop(xs, i) { return noloop(xs, i+1); }  -- never returns statically
+    const std::uint32_t loop = add_rec_fn(r, "noloop", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i1}), r.vt_int);
+        b.ret(rv);
+    }
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::NoBaseGuard);
+}
+
+TEST_CASE("FB-2 lattice: an entry rank with no static interval fails closed") {
+    RecProgram r = make_rec_program();
+    build_literal_ascending(r);
+    // Replace the starter's rank argument (literal 0) with a bare runtime Int
+    // parameter: the initial rank is unknown.
+    const std::uint32_t start = 1;
+    CoreFnDecl &starter = r.program.fns[start];
+    starter.storage.value_count = 2;
+    starter.storage.value_types = {r.vt_list4, r.vt_int};
+    starter.params = {CoreValueId{0}, CoreValueId{1}};
+    starter.body = CoreRegion{};
+    RecBody b = rec_body(r, start);
+    const CoreValueId xs{0}, n{1};
+    const CoreValueId rv = b.bind(b.call(CoreInstanceId{0}, {xs, n}), r.vt_int);
+    b.ret(rv);
+
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::EntryRankNotStatic);
+}
+
+TEST_CASE("FB-2 lattice: a guard bound on a runtime (non-invariant) parameter fails closed") {
+    RecProgram r = make_rec_program();
+    // fn inv(xs, i, n) { if i >= n return i; return inv(xs, i+1, n); }
+    const std::uint32_t loop = add_rec_fn(r, "inv", {r.vt_list4, r.vt_int, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1}, n{2};
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Ge, b.vref(i, r.vt_int), b.vref(n, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        b.base_if(cond, i);
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        // n is threaded verbatim, so it IS invariant; the failure must surface
+        // only at the entry, which supplies no static value for it.
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i1, n}), r.vt_int);
+        b.ret(rv);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_inv", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0}, n{1};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv =
+            b.bind(b.call(CoreInstanceId{loop}, {xs, zero, n}), r.vt_int);
+        b.ret(rv);
+    }
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::BoundNotStatic);
+}
+
+TEST_CASE("FB-2 lattice: unbounded mutual recursion fails closed") {
+    RecProgram r = make_rec_program();
+    // mutual(xs, i) { if i >= 4 return i; return other(xs, i+1); }
+    const std::uint32_t mutual = add_rec_fn(r, "mutual", {r.vt_list4, r.vt_int});
+    const std::uint32_t other = add_rec_fn(r, "other", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, mutual);
+        const CoreValueId xs{0}, i{1};
+        const CoreValueId four = b.bind(b.lit(4), r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Ge, b.vref(i, r.vt_int), b.vref(four, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        b.base_if(cond, i);
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{other}, {xs, i1}), r.vt_int);
+        b.ret(rv);
+    }
+    {
+        // other passes the rank VERBATIM back to mutual (no progression).
+        RecBody b = rec_body(r, other);
+        const CoreValueId xs{0}, i{1};
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{mutual}, {xs, i}), r.vt_int);
+        b.ret(rv);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_mutual", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{mutual}, {xs, zero}), r.vt_int);
+        b.ret(rv);
+    }
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::NoRankProgression);
 }

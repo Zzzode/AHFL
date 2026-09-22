@@ -845,10 +845,21 @@ KR6.6 各 typed 节点 / 宿主能力面另行退役)。
   MethodCallExpr receiver-first 解析;`OwnerKind::Fn` 验证 +
   §8.1-1/2/3/5(签名部分)/7 + 无环调用图(§8.1-6 的 FB-1 形态)。
   LambdaExpr 与可调用**值**调用仍 unsupported。
-- **FB-2 有界原生递归**:verifier 秩参数/上界/SCC 深度预算(§8.1-6
-  a-d),`list_copy_into`(collections:128-139)式容量有界递归在 wasm
-  原生 `call` 下可跑;深度 × 帧大小并入 §6.3 单页 RESOURCE
-  fail-closed。注意 `list_map_into` 体内的 `f(...)` 是值调用,须等
+- **FB-2 有界原生递归**(已落地):纯分析 `analyze_fn_recursion`
+  (`include/ahfl/compiler/ir/core_recursion.hpp`)对 Core-ANF 做 SCC
+  划分 + 秩参数/上界/深度推导(§8.1-6 a-d);verifier 以
+  `FN_RECURSION_UNBOUNDED`(无法导出有限秩上界)/ `FN_RECURSION_DEPTH`
+  (超过 Core 层上限)fail-closed,取代 FB-1 的 blanket `FN_RECURSION`
+  (该常量保留给读端兼容,不再发射)。`decreases` 在 Core 已擦除、
+  分析绝不读取;归纳证据只来自编译期整数、bounded 容器
+  (`CoreVtNominal.capacity`,List/Set/Map)的长度字、以及沿每条递归边
+  原样透传且在每个入口边静态有界的不变量形参。wasm 后端用同一份分析
+  (`max_native_fn_call_depth` 对 SCC 缩点 DAG 取最大加权路径)把原生
+  `call` 栈深门控在 `kFnRecursionNativeStackDepthMax`(RESOURCE
+  fail-closed,§6.3 单页预算的原生栈腿;env/heap 记账随 FB-3)。
+  Node v22 真实引擎证据 `tests/golden/wasm/fb2_bounded_recursion.ahfl`
+  + `tests/scripts/wasm_fb2_recursion_node_host.py`(容量 4 的有界列表
+  递归求和)。注意 `list_map_into` 体内的 `f(...)` 是值调用,须等
   FB-3,FB-2 的递归验收集先取不含 FnT 形参的 helper(copy/copy_range/
   concat/map_values 等的非 f 递归路径)。
 - **FB-3 闭包值 + 间接调用 + lambda-lift**:`CoreClosureExpr`/
