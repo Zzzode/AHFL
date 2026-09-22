@@ -1213,6 +1213,8 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         PASS_REGULAR_EXPRESSION "Node embedded-engine evidence, NOT wasmtime evidence"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;node"
+        # Shares AHFL_CONFORMANCE_WASM_SCRATCH_DIR with the mutation test.
+        RUN_SERIAL TRUE
     )
 
     # Mutation gate: the comparator must FAIL on a deliberately mutated Node
@@ -1231,6 +1233,8 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         PASS_REGULAR_EXPRESSION "comparator detected mutated expectation"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;execution;node"
+        # Shares AHFL_CONFORMANCE_WASM_SCRATCH_DIR with the differential test.
+        RUN_SERIAL TRUE
     )
 endif()
 

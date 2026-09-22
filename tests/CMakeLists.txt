@@ -96,8 +96,9 @@ if(AHFL_ENABLE_BACKEND_INFRA)
 
     # KR6.7 (RFC 0026 P7): the bespoke per-probe embedded-host lane was retired
     # in favor of ONE manifest-driven Node embedded host. The E2 OK result-frame
-    # ownership, ERROR/PENDING/unknown normalization and pending-latch contracts
-    # are now produced from the e2 conformance case by
+    # ownership (host-allocated OK frame decoded then released via dealloc),
+    # ERROR/PENDING/unknown normalization and pending-latch contracts are now
+    # produced from the e2 conformance case by
     # ahfl.conformance.wasm_node_differential (node_embedded_host.mjs ABI matrix);
     # the structural producer probe below still guards the module bytes.
 

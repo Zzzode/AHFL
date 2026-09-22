@@ -59,6 +59,7 @@
     "evaluator": true,
     "wasm": {
       "eligible": "computation",
+      "node_observation_skip": "blocked_kr66",
       "reason": "enum-equality state branching, capability result projection, and a three-node capability chain need in-wasm expression evaluation (KR6.6 computation lane); P5 orchestration subset skips it"
     }
   }

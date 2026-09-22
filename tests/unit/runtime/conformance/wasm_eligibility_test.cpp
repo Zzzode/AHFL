@@ -45,6 +45,7 @@ using ahfl::conformance::WasmEligibilityClassification;
 using ahfl::conformance::WasmEligibilityVerdict;
 using ahfl::conformance::wasm_eligibility_divergence;
 using ahfl::conformance::wasm_eligibility_verdict_name;
+using ahfl::backends::CoreWasmFrameContract;
 
 int g_failures = 0;
 
@@ -162,6 +163,11 @@ struct CaseVerdict {
     WasmEligibilityVerdict verdict;
     std::string_view code; // empty for runnable
     std::string_view reason_substring;
+    // The exact frame contract the emitted descriptor must carry. Pins the
+    // p6-7 skip SET independently of the Node runner: only the raw P4-D frame
+    // handlers (aggregate/collection) may be RawP6Frame; every other runnable
+    // case must be WireJson.
+    CoreWasmFrameContract frame_contract{CoreWasmFrameContract::WireJson};
 };
 
 void test_committed_catalogue(const std::filesystem::path &repo_root) {
@@ -188,8 +194,13 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         // Raw P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly; their canonical OUTPUT observation is the separate P6-7
         // output-frame gate, which the Node differential enforces as a skip.
-        {"p6_aggregate.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        {"p6_collection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // Their descriptor MUST carry RawP6Frame -- this exact-set pin means a
+        // codegen change that drops (or adds) the raw-frame projection is caught
+        // here even without Node installed.
+        {"p6_aggregate.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
+         CoreWasmFrameContract::RawP6Frame},
+        {"p6_collection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
+         CoreWasmFrameContract::RawP6Frame},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);
@@ -202,6 +213,9 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
                   std::string{expectation.sidecar});
         check(!classification.reason.empty(),
               std::string{"runnable carries a reason: "} + std::string{expectation.sidecar});
+        check(classification.frame_contract == expectation.frame_contract,
+              std::string{"runnable frame_contract pin (WireJson vs RawP6Frame): "} +
+                  std::string{expectation.sidecar});
     }
 
     // These three are genuinely blocked TODAY, each at a distinct construct.

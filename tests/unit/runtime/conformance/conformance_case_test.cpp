@@ -42,6 +42,7 @@ using ahfl::conformance::ExpectedRunStatus;
 using ahfl::conformance::load_conformance_case;
 using ahfl::conformance::parse_conformance_case_json;
 using ahfl::conformance::WasmEligibility;
+using ahfl::conformance::WasmNodeObservationSkip;
 using ahfl::conformance::detail::is_conformance_case_sidecar;
 
 int g_failures = 0;
@@ -79,6 +80,9 @@ struct ExpectedCase {
     // lane but its inline raw input frame cannot be materialized from canonical
     // wire JSON by the evaluator adapter, so it runs the wasm/Node lane only.
     bool evaluator{true};
+    // Pinned Node-observation skip: None for compared cases; the two raw-frame
+    // cases and the KR6.6-blocked cases declare their exact skip reason.
+    WasmNodeObservationSkip node_observation_skip{WasmNodeObservationSkip::None};
 };
 
 void test_committed_cases(const std::filesystem::path &repo_root) {
@@ -127,6 +131,8 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0,
             1,
             WasmEligibility::Computation,
+            /*evaluator=*/true,
+            WasmNodeObservationSkip::BlockedOnKr66,
         },
         {
             "if_let_e2e.case.json",
@@ -136,6 +142,8 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0,
             2,
             WasmEligibility::Computation,
+            /*evaluator=*/true,
+            WasmNodeObservationSkip::BlockedOnKr66,
         },
         {
             "e2e_multi_agent.case.json",
@@ -145,6 +153,8 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             4,
             2,
             WasmEligibility::Computation,
+            /*evaluator=*/true,
+            WasmNodeObservationSkip::BlockedOnKr66,
         },
         {
             "float_output_e2e.case.json",
@@ -227,6 +237,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Agent,
             "wasm::p6_aggregate::AggregateAgent",
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::RawP6FrameAwaitsP67,
         },
         {
             "p6_collection.case.json",
@@ -234,6 +245,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Agent,
             "std::collections::CollectionAgent",
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::RawP6FrameAwaitsP67,
         },
     };
 
@@ -306,6 +318,9 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
               "wasm eligibility: " + file_name);
         check(!manifest.engines.wasm.reason.empty(),
               "wasm skip reason present: " + file_name);
+        check(manifest.engines.wasm.node_observation_skip ==
+                  expectation->node_observation_skip,
+              "wasm node_observation_skip pin: " + file_name);
 
         for (const auto &scenario : manifest.scenarios) {
             check(!scenario.name.empty(), "scenario carries a name: " + file_name);
@@ -636,6 +651,60 @@ void test_malformed_manifests() {
   "engines": {"evaluator": true, "wasm": {"eligible": "none"}}
 })",
                     "engines.wasm.reason' is required");
+
+    expect_rejected("bad node_observation_skip enum",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "x",
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "r",
+                       "node_observation_skip": "bogus"}}
+})",
+                    "engines.wasm.node_observation_skip' must be 'none'");
+
+    expect_rejected("raw p6 skip on a non-orchestration lane",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "x",
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "computation", "reason": "r",
+                       "node_observation_skip": "raw_p6_frame_awaits_p67"}}
+})",
+                    "engines.wasm.eligible 'orchestration'");
+
+    expect_rejected("blocked kr66 skip on an orchestration lane",
+                    R"({
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
+  "kind": "agent",
+  "entry": "x",
+  "scenarios": [
+    {"name": "s", "input": {},
+     "expect": {"run_status": "completed", "state_sequence": ["Start"],
+                "capability_sequence": []}}
+  ],
+  "capabilities": [],
+  "engines": {"evaluator": true,
+              "wasm": {"eligible": "orchestration", "reason": "r",
+                       "node_observation_skip": "blocked_kr66"}}
+})",
+                    "engines.wasm.eligible 'computation'");
 
     expect_rejected("pending capability carries result",
                     R"({

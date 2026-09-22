@@ -45,6 +45,7 @@
 #include <string>
 #include <string_view>
 
+#include "compiler/backends/infra/core_wasm_codegen.hpp"
 #include "conformance/conformance_case.hpp"
 
 namespace ahfl::conformance {
@@ -84,6 +85,13 @@ struct WasmEligibilityClassification {
     /// Size of the emitted module. Non-zero iff `RunnableOrchestration`; the
     /// classifier really did run the emit path rather than infer the verdict.
     std::size_t artifact_bytes{0};
+    /// The emitted descriptor's frame contract. Populated (defaults to
+    /// WireJson) for every case the emit path produced a descriptor for: it
+    /// pins, independently of the Node runner, EXACTLY which runnable cases
+    /// project a raw P6 frame (the p6-7 skip set). Defaults to WireJson for a
+    /// blocked case (no descriptor exists).
+    ahfl::backends::CoreWasmFrameContract frame_contract{
+        ahfl::backends::CoreWasmFrameContract::WireJson};
 };
 
 namespace wasm_eligibility_diag {

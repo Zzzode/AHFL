@@ -6,17 +6,8 @@
 // no frame encoding. The probe prints the native state-entry id sequence and
 // final state so the Node embedded host can drive step() and assert the same
 // ids and transition_count (real Node-engine evidence, NOT wasmtime).
-//
-// RFC 0026 P7 (KR6.7): `--workflow <entry>` selects the WORKFLOW lane instead.
-// The entry is resolved through `resolve_core_wasm_entry` with the SAME typed
-// PackageMetadata the wasm eligibility classifier builds from a manifest, so the
-// artifact this probe writes is by construction the artifact the classifier
-// certified (never a same-program look-alike selected by declaration position).
-// The classifier pinned `float_output_e2e` as a WORKFLOW-lane promotion, and the
-// Node execution witness must run THAT module, not an agent-lane sibling.
 
 #include "ahfl/compiler/frontend/frontend.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
@@ -26,7 +17,6 @@
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
 #include "runtime/engine/agent_runtime.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/evaluator/value.hpp"
 
 #include <algorithm>
@@ -141,181 +131,15 @@ nominal_value_type(const ir::core::CoreProgram &program, ir::core::CoreTypeId ty
     return std::nullopt;
 }
 
-// The workflow lane's native observation: run the manifest entry through the
-// native WorkflowRuntime and report the completion / transition counters the
-// emitted workflow module mirrors in its globals. Node names are display-only;
-// the counters are the index identity the wasm module carries.
-struct WorkflowObservation {
-    std::size_t completed_nodes{0};
-    std::int64_t transition_count{0};
-    std::string status;
-};
-
-// The declared input struct for the workflow entry, materialized field by field
-// in DECLARATION order (index identity, never a name-keyed lookup). The workflow
-// lane's native observation only needs a well-typed frame to run; the identity
-// passthrough's counters do not depend on the field values.
-[[nodiscard]] std::optional<evaluator::Value>
-workflow_input_fixture(const ir::WorkflowDecl &workflow, const ir::Program &program) {
-    const ir::StructDecl *input_struct = nullptr;
-    for (const auto &decl : program.declarations) {
-        if (const auto *candidate = std::get_if<ir::StructDecl>(&decl);
-            candidate != nullptr &&
-            candidate->name == workflow.input_type_ref.canonical_name) {
-            input_struct = candidate;
-        }
-    }
-    if (input_struct == nullptr) {
-        std::cerr << "workflow entry input type is not a declared struct\n";
-        return std::nullopt;
-    }
-    evaluator::FieldMap fields;
-    for (const auto &field : input_struct->fields) {
-        switch (field.type_ref.kind) {
-        case ir::TypeRefKind::Float:
-            fields.set(field.name,
-                       std::make_unique<evaluator::Value>(evaluator::make_float(0.0)));
-            break;
-        case ir::TypeRefKind::Int:
-        case ir::TypeRefKind::BoundedInt:
-            fields.set(field.name, std::make_unique<evaluator::Value>(evaluator::make_int(0)));
-            break;
-        case ir::TypeRefKind::Bool:
-            fields.set(field.name,
-                       std::make_unique<evaluator::Value>(evaluator::make_bool(false)));
-            break;
-        case ir::TypeRefKind::String:
-        case ir::TypeRefKind::BoundedString:
-            fields.set(field.name,
-                       std::make_unique<evaluator::Value>(evaluator::make_string("")));
-            break;
-        default:
-            std::cerr << "workflow input field '" << field.name
-                      << "' has a type the probe cannot materialize\n";
-            return std::nullopt;
-        }
-    }
-    return evaluator::Value{
-        evaluator::StructValue{input_struct->name, std::move(fields)}};
-}
-
-[[nodiscard]] std::optional<WorkflowObservation>
-observe_workflow_native(const ir::Program &program, std::string_view entry) {
-    const ir::WorkflowDecl *workflow = nullptr;
-    for (const auto &decl : program.declarations) {
-        if (const auto *candidate = std::get_if<ir::WorkflowDecl>(&decl);
-            candidate != nullptr && candidate->symbol_ref.canonical_name == entry) {
-            workflow = candidate;
-        }
-    }
-    if (workflow == nullptr) {
-        std::cerr << "entry workflow '" << entry << "' is not declared\n";
-        return std::nullopt;
-    }
-    auto input = workflow_input_fixture(*workflow, program);
-    if (!input.has_value()) {
-        return std::nullopt;
-    }
-    std::size_t completed_nodes = 0;
-    std::int64_t state_entries = 0;
-    runtime::WorkflowRuntimeConfig config;
-    config.node_completed_hook =
-        [&](runtime::AgentId, std::string_view, const runtime::Value &) { ++completed_nodes; };
-    config.state_entered_hook =
-        [&](runtime::AgentId, std::string_view, std::string_view, std::string_view) {
-            ++state_entries;
-        };
-    runtime::WorkflowRuntime native(program, std::move(config));
-    const auto result = native.run(std::string{entry}, std::move(*input));
-    switch (result.status()) {
-    case runtime::WorkflowStatus::Completed:
-        break;
-    default:
-        std::cerr << "native workflow run did not complete\n";
-        return std::nullopt;
-    }
-    WorkflowObservation observation;
-    observation.status = "completed";
-    observation.completed_nodes = completed_nodes;
-    observation.transition_count = state_entries - static_cast<std::int64_t>(completed_nodes);
-    return observation;
-}
-
-// Emit the WORKFLOW lane's module for one manifest entry and print the native
-// counters the module's globals mirror. The entry is resolved through
-// `resolve_core_wasm_entry` with the typed PackageMetadata the eligibility
-// classifier builds from the manifest's `kind` + `entry`, so the module written
-// here IS the module the classifier certified.
-[[nodiscard]] int run_workflow_lane(const ir::Program &program,
-                                    const std::string &entry,
-                                    const char *output_path) {
-    const auto observation = observe_workflow_native(program, entry);
-    if (!observation.has_value()) {
-        return 1;
-    }
-    const auto core = ir::core::lower_ahfl_to_core(program);
-    if (!core.ok()) {
-        std::cerr << core.diagnostics.front().code << ": " << core.diagnostics.front().message
-                  << "\n";
-        return 1;
-    }
-    const auto layouts = ir::core::compute_core_layouts(core.program);
-    if (!layouts.ok() || !layouts.table.has_value()) {
-        if (!layouts.diagnostics.empty()) {
-            std::cerr << layouts.diagnostics.front().code << ": "
-                      << layouts.diagnostics.front().message << "\n";
-        }
-        return 1;
-    }
-    handoff::PackageMetadata package_metadata;
-    package_metadata.entry_target =
-        handoff::ExecutableRef{handoff::ExecutableKind::Workflow, entry};
-    const auto resolved = backends::resolve_core_wasm_entry(core.program, &package_metadata);
-    if (!resolved.has_value()) {
-        std::cerr << resolved.error().code << ": " << resolved.error().message << "\n";
-        return 1;
-    }
-    const auto emitted =
-        backends::emit_core_wasm(core.program,
-                                 *layouts.table,
-                                 {*resolved, backends::WasmProfileKind::Wasi});
-    if (!emitted.ok()) {
-        std::cerr << emitted.diagnostics.front().code << ": "
-                  << emitted.diagnostics.front().message << "\n";
-        return 1;
-    }
-    std::ofstream out(output_path, std::ios::binary | std::ios::trunc);
-    const auto &bytes = emitted.artifact->bytes;
-    out.write(reinterpret_cast<const char *>(bytes.data()),
-              static_cast<std::streamsize>(bytes.size()));
-    if (!out) {
-        std::cerr << "failed to write complete wasm artifact\n";
-        return 1;
-    }
-    std::cout << "workflow_status=" << observation->status
-              << " completed_nodes=" << observation->completed_nodes
-              << " transition_count=" << observation->transition_count
-              << " entry=" << entry << "\n";
-    return 0;
-}
-
 } // namespace
 
 int main(int argc, char **argv) {
-    // RFC 0026 P7 (KR6.7): `--workflow <entry>` emits the WORKFLOW lane's module
-    // for the manifest entry, resolved through the SAME typed seam the classifier
-    // uses. Every other invocation keeps the legacy agent-lane ABI.
-    std::string workflow_entry;
-    if (argc == 5 && std::string_view{argv[1]} == "--workflow") {
-        workflow_entry = argv[2];
-    } else if (argc != 3) {
-        std::cerr << "usage: ahfl_core_wasm_p6_probe <source.ahfl> <output.wasm>\n"
-                     "       ahfl_core_wasm_p6_probe --workflow <entry> <source.ahfl> "
-                     "<output.wasm>\n";
+    if (argc != 3) {
+        std::cerr << "usage: ahfl_core_wasm_p6_probe <source.ahfl> <output.wasm>\n";
         return 2;
     }
-    const char *source_path = workflow_entry.empty() ? argv[1] : argv[3];
-    const char *output_path = workflow_entry.empty() ? argv[2] : argv[4];
+    const char *source_path = argv[1];
+    const char *output_path = argv[2];
 
     auto program = compile_fixture(source_path);
     if (!program.has_value()) {
@@ -338,9 +162,6 @@ int main(int argc, char **argv) {
             }
             flow = candidate;
         }
-    }
-    if (!workflow_entry.empty()) {
-        return run_workflow_lane(*program, workflow_entry, output_path);
     }
     if (agent == nullptr || flow == nullptr) {
         std::cerr << "fixture does not contain one agent and flow\n";
@@ -435,7 +256,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    std::ofstream out(argv[2], std::ios::binary | std::ios::trunc);
+    std::ofstream out(output_path, std::ios::binary | std::ios::trunc);
     const auto &bytes = emitted.artifact->bytes;
     out.write(reinterpret_cast<const char *>(bytes.data()),
               static_cast<std::streamsize>(bytes.size()));

@@ -70,6 +70,75 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const inputBytes = encoder.encode(scenario.input_wire);
 
+// RFC 0026 E4-B2-D1a-3 common KAT: the CONTRACT-DERIVED 88-byte node-event
+// golden (memory[log_base : log_base+88]) for the committed two-node
+// capability-workflow fixture (node0 capability Echo/source_symbol 1, node1
+// identity). It is byte-for-byte identical to the hex the C++ decoder test
+// pins (tests/unit/runtime/engine/core_wasm_node_events.cpp kGoldenHex), so a
+// successful comparison here is a cross-engine common-KAT link, not merely a
+// field-by-field equivalence.
+const kNodeEventGoldenHex =
+  "02000000000000000100000000000000000000000000000001000000000000000000000000000000" +
+  "00000000000000000000000001000000010000000000000000000000000000000000000000000000" +
+  "0000000000000000";
+
+function regionHex(memory, base, length) {
+  const view = new Uint8Array(memory.buffer, base, length);
+  let hex = "";
+  for (const b of view) hex += b.toString(16).padStart(2, "0");
+  return hex;
+}
+
+// True iff the descriptor names exactly the fixture the contract-derived KAT
+// was derived from: two scheduled nodes, node0 a capability (ordinal 0, source
+// SymbolId 1), node1 an identity.
+function descriptorMatchesCommonKat(lane, nodeCount) {
+  if (nodeCount !== 2 || lane.nodes.length !== 2) return false;
+  const bySchedule = [...lane.nodes].sort((a, b) => a.schedule_pos - b.schedule_pos);
+  const [first, second] = bySchedule;
+  return first.schedule_pos === 0 && first.has_capability &&
+         first.capability_ordinal === 0 && first.source_symbol === 1 &&
+         second.schedule_pos === 1 && !second.has_capability;
+}
+
+// Exact transition expectation for one workflow execution: every scheduled
+// node executes its packaged runner's full walk, which performs exactly
+// (walk length - 1) gotos. Derived from descriptor facts only.
+function expectedWorkflowTransitions() {
+  const lane = descriptor.workflow_lane;
+  return lane.nodes.reduce((sum, node) => {
+    const walk = lane.agents[node.runner]?.walk;
+    if (walk === undefined) fail(`node ${node.node_id} has no runner ${node.runner}`);
+    return sum + (walk.length - 1);
+  }, 0);
+}
+
+// Negative evidence: a rejected run must leave node-event state untouched.
+// `includeHeader` covers the normalization/pending modes (event_count stays 0);
+// the corrupt-count mode host-injects event_count itself, so it asserts only
+// that every record body slot stayed zero-filled.
+function assertEventRegionZero(exports, label, includeHeader) {
+  const buffer = descriptor.event_buffer;
+  if (includeHeader) {
+    const view = new Uint8Array(exports.memory.buffer, buffer.log_base,
+                                buffer.header_bytes +
+                                descriptor.workflow_node_count * buffer.record_bytes);
+    for (let i = 0; i < view.length; ++i) {
+      if (view[i] !== 0) {
+        fail(`${label}: node-event header/record region byte ${i} is nonzero on a rejected run`);
+      }
+    }
+    return;
+  }
+  const recordView = new Uint8Array(exports.memory.buffer, buffer.records_base,
+                                    descriptor.workflow_node_count * buffer.record_bytes);
+  for (let i = 0; i < recordView.length; ++i) {
+    if (recordView[i] !== 0) {
+      fail(`${label}: node-event record byte ${i} was written despite the rejected run`);
+    }
+  }
+}
+
 // ---- instance factory --------------------------------------------------------
 //
 // mode "scenario" replays the scenario's ordered manifest mocks; every other
@@ -198,6 +267,7 @@ async function runAgent(compiled) {
   const walked = [lane.states[lane.initial_state]];
   let previous = lane.initial_state;
   let guard = lane.states.length + 2;
+  let stabilized = false;
   while (guard-- > 0) {
     const before = e.transition_count.value;
     const next = e.step();
@@ -210,8 +280,13 @@ async function runAgent(compiled) {
       previous = next;
     } else {
       if (e.current_state() !== next) fail("final state is not stable");
+      stabilized = true;
       break;
     }
+  }
+  if (!stabilized) {
+    fail(`step() bounded walk guard (${lane.states.length + 2}) expired without a stable ` +
+         `final state for ${lane.agent}; last state ${previous}`);
   }
 
   // run2 resets and performs the terminal identity/capability action.
@@ -220,6 +295,11 @@ async function runAgent(compiled) {
   let outputRaw = null;
   if (tuple[0] === 0) {
     outputRaw = decoder.decode(new Uint8Array(e.memory.buffer, tuple[1], tuple[2]));
+    // Release the host-allocated result frame after decoding it. For an
+    // identity final this is the borrowed input frame (dealloc is a no-op
+    // either way); for a capability final tuple[1..2] names the frame the
+    // ahfl_cap import allocated, which the host owns once run2 returns it.
+    e.dealloc(tuple[1], tuple[2]);
   }
   e.dealloc(ptr, len);
 
@@ -326,6 +406,13 @@ async function runWorkflow(compiled) {
     }
   }
 
+  // Deterministic transition expectation: each scheduled node executes its
+  // runner agent's full walk, which performs exactly (walk length - 1) gotos.
+  // Summed over nodes (two nodes may share one packaged runner instance), this
+  // is the module's exact transition_count, derived from descriptor facts --
+  // never a weak non-zero check.
+  const expectedTransitions = expectedWorkflowTransitions();
+
   const [ptr, len] = probe.writeInput();
   const tuple = e.run2(ptr, len);
   const status = normalizeStatus(tuple[0]);
@@ -337,10 +424,42 @@ async function runWorkflow(compiled) {
     if (e.workflow_completed_count.value !== nodeCount) {
       fail(`completed_count ${e.workflow_completed_count.value} != ${nodeCount}`);
     }
+    if (e.transition_count.value !== expectedTransitions) {
+      fail(`transition_count ${e.transition_count.value} != ${expectedTransitions} ` +
+           "(sum of runner walk gotos)");
+    }
     const records = readEventRecords(lane, nodeCount, e);
     states = records.map((record) => recordStates(lane, record)).flat();
+    // Common-KAT bridge: for the committed two-node cap/identity fixture the
+    // executed node-event region must equal the contract-derived golden hex,
+    // byte for byte -- the same value the C++ decoder KAT pins.
+    if (descriptor.imports.length > 0 && descriptorMatchesCommonKat(lane, nodeCount)) {
+      const regionLength = descriptor.event_buffer.header_bytes +
+                           nodeCount * descriptor.event_buffer.record_bytes;
+      const actualHex = regionHex(e.memory, descriptor.event_buffer.log_base, regionLength);
+      if (actualHex !== kNodeEventGoldenHex) {
+        fail(`node-event region != contract-derived common KAT golden: ${actualHex}`);
+      }
+    }
+    // Identity workflow: run2 is idempotent on a persistent instance; the
+    // replay reaches the exact same counters (the retired bespoke host pinned
+    // this, not just non-zero).
+    if (descriptor.imports.length === 0) {
+      const replay = e.run2(ptr, len);
+      if (replay[0] !== tuple[0] || replay[1] !== tuple[1] || replay[2] !== tuple[2] ||
+          e.workflow_completed_count.value !== nodeCount ||
+          e.transition_count.value !== expectedTransitions) {
+        fail(`identity workflow replay counters/tuple mismatch: ${replay}`);
+      }
+      // The replayed OK tuple still names a host-readable frame; release it.
+      e.dealloc(replay[1], replay[2]);
+    }
+    // Release the host-allocated OK result frame (the capability-returned
+    // tuple, or the borrowed input frame of an identity final) after decoding.
+    e.dealloc(tuple[1], tuple[2]);
   } else {
     if (e.workflow_completed_count.value !== 0) fail("non-OK run published completion events");
+    if (e.transition_count.value !== 0) fail("non-OK run advanced the transition counter");
   }
   e.dealloc(ptr, len);
 
@@ -432,26 +551,32 @@ async function runAbiProbes(compiled) {
     // node count, and a second run2 replays the full schedule idempotently.
     const p = await makeInstance(compiled, "ok");
     const input = p.writeInput();
+    const expectedTransitions = expectedWorkflowTransitions();
     const a = p.exports.run2(...input);
     if (a[0] !== 0 || a[1] !== input[0] || a[2] !== input[1]) {
       fail("identity workflow run2 tuple mismatch");
     }
     if (p.exports.workflow_completed_count.value !== descriptor.workflow_node_count ||
-        p.exports.transition_count.value === 0) {
-      fail("identity workflow counters mismatch");
+        p.exports.transition_count.value !== expectedTransitions) {
+      fail(`identity workflow counters mismatch (completed=${p.exports.workflow_completed_count.value}, ` +
+           `transitions=${p.exports.transition_count.value}, expected=${expectedTransitions})`);
     }
     const b = p.exports.run2(...input);
     if (b[0] !== 0 || b[1] !== input[0] || b[2] !== input[1] ||
-        p.exports.workflow_completed_count.value !== descriptor.workflow_node_count) {
-      fail("identity workflow second run2 did not replay identically");
+        p.exports.workflow_completed_count.value !== descriptor.workflow_node_count ||
+        p.exports.transition_count.value !== expectedTransitions) {
+      fail(`identity workflow second run2 did not replay identically (transitions=` +
+           `${p.exports.transition_count.value}, expected=${expectedTransitions})`);
     }
+    p.exports.dealloc(a[1], a[2]);
     if (p.exports.run(input[0], input[1]) !== input[0]) {
       fail("identity workflow legacy run() did not return the borrowed frame");
     }
     return;
   }
 
-  // Capability workflow non-OK normalization: no event, no completion.
+  // Capability workflow non-OK normalization: no event, no completion, and the
+  // node-event header + record region stays byte-for-byte zero.
   for (const mode of ["ok-null", "ok-zero-len", "error", "unknown"]) {
     const p = await makeInstance(compiled, mode);
     const result = p.exports.run2(...p.writeInput());
@@ -461,6 +586,7 @@ async function runAbiProbes(compiled) {
     if (p.exports.workflow_completed_count.value !== 0) {
       fail(`workflow ${mode} published a completion event`);
     }
+    assertEventRegionZero(p.exports, `workflow ${mode}`, /*includeHeader=*/true);
   }
   // PENDING-nonnull normalizes to ERROR and does not latch.
   {
@@ -469,10 +595,12 @@ async function runAbiProbes(compiled) {
     if (first[0] !== 1 || p.calls !== 1) {
       fail("workflow pending-nonnull did not normalize to ERROR with one call");
     }
+    assertEventRegionZero(p.exports, "workflow pending-nonnull first", /*includeHeader=*/true);
     let trapped = false;
     try { p.exports.run2(...p.writeInput()); }
     catch (error) { trapped = error instanceof WebAssembly.RuntimeError; }
     if (trapped || p.calls !== 2) fail("workflow pending-nonnull incorrectly latched");
+    assertEventRegionZero(p.exports, "workflow pending-nonnull replay", /*includeHeader=*/true);
   }
   // PENDING latches the instance.
   {
@@ -482,12 +610,17 @@ async function runAbiProbes(compiled) {
         p.exports.workflow_completed_count.value !== 0) {
       fail("workflow pending did not suspend with no event");
     }
+    assertEventRegionZero(p.exports, "workflow pending first", /*includeHeader=*/true);
     expectTraps(() => p.exports.run2(...p.writeInput()),
                 "second workflow run2 after PENDING (latch)");
     if (p.calls !== 1) fail("workflow latch re-invoked the capability");
+    assertEventRegionZero(p.exports, "workflow pending after latch trap",
+                          /*includeHeader=*/true);
   }
   // Corrupt-count defensive coordinate gate: a host-injected event_count before
-  // the OK frame returns makes the scheduler reject (ERROR) with no record.
+  // the OK frame returns makes the scheduler reject (ERROR) with no record. The
+  // scheduler must NOT overwrite the host-injected count, and every record-body
+  // slot must remain zero-filled.
   {
     const p = await makeInstance(compiled, "corrupt-count");
     const result = p.exports.run2(...p.writeInput());
@@ -498,6 +631,7 @@ async function runAbiProbes(compiled) {
           descriptor.event_buffer.log_base, true) !== 99) {
       fail("workflow corrupt-count published despite coordinate mismatch");
     }
+    assertEventRegionZero(p.exports, "workflow corrupt-count", /*includeHeader=*/false);
   }
   // Legacy pointer-only run() traps before any effect.
   {

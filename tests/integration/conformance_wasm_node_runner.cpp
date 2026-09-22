@@ -29,6 +29,8 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <sys/select.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <unordered_set>
@@ -48,9 +50,17 @@ using ahfl::conformance::load_conformance_case;
 using ahfl::conformance::LoadedConformanceCase;
 using ahfl::conformance::produce_conformance_wasm;
 using ahfl::conformance::run_evaluator_scenario;
+using ahfl::conformance::WasmNodeObservationSkip;
 using ahfl::conformance::WasmProduceResult;
 using ahfl::conformance::WasmProduceSkip;
 using ahfl::conformance::detail::is_conformance_case_sidecar;
+
+// Pinned census of the committed catalogue's Node-observation outcomes. The
+// skip set is manifest-declared per case AND counted here, so neither a
+// codegen flag flip nor a manifest-only drift can silently move a case between
+// the compared and skipped sets while ctest stays green.
+constexpr int kExpectedAgreed = 13;
+constexpr int kExpectedSkipped = 7;
 
 int g_failures = 0;
 int g_compared = 0;
@@ -110,8 +120,8 @@ struct NodeRun {
 };
 
 // Runs `node <host.mjs> --descriptor ... --module ... --scenario ... --output
-// ...` with stdout captured. exit 77 means the Node WebAssembly embedding is
-// unavailable (environment skip).
+// ...` with stdout AND stderr captured. exit 77 means the Node WebAssembly
+// embedding is unavailable (environment skip).
 [[nodiscard]] NodeRun run_node_host(const std::string &node,
                                     const fs::path &host_script,
                                     const fs::path &descriptor,
@@ -119,24 +129,30 @@ struct NodeRun {
                                     const std::string &scenario,
                                     const fs::path &observation) {
     NodeRun summary;
-    int pipefd[2];
-    if (pipe(pipefd) != 0) {
+    int out_pipe[2];
+    int err_pipe[2];
+    if (pipe(out_pipe) != 0 || pipe(err_pipe) != 0) {
         summary.stderr_text = "pipe() failed";
         return summary;
     }
 
     const pid_t pid = fork();
     if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
+        close(out_pipe[0]);
+        close(out_pipe[1]);
+        close(err_pipe[0]);
+        close(err_pipe[1]);
         summary.stderr_text = "fork() failed";
         return summary;
     }
 
     if (pid == 0) {
-        close(pipefd[0]);
-        dup2(pipefd[1], STDOUT_FILENO);
-        close(pipefd[1]);
+        close(out_pipe[0]);
+        close(err_pipe[0]);
+        dup2(out_pipe[1], STDOUT_FILENO);
+        dup2(err_pipe[1], STDERR_FILENO);
+        close(out_pipe[1]);
+        close(err_pipe[1]);
         const std::string descriptor_arg = descriptor.string();
         const std::string module_arg = module.string();
         const std::string observation_arg = observation.string();
@@ -154,40 +170,98 @@ struct NodeRun {
                observation_arg.c_str(),
                static_cast<char *>(nullptr));
         const char *message = "AHFL_NODE_LAUNCH_FAILED\n";
-        [[maybe_unused]] ssize_t written = write(STDOUT_FILENO, message, 24);
+        [[maybe_unused]] ssize_t written = write(STDERR_FILENO, message, 24);
         _exit(127);
     }
 
-    close(pipefd[1]);
-    std::string captured;
+    close(out_pipe[1]);
+    close(err_pipe[1]);
+
+    // Drain both streams concurrently so a verbose child can never block on a
+    // full pipe while we read the other one exclusively.
+    std::string captured_out;
+    std::string captured_err;
+    bool out_open = true;
+    bool err_open = true;
     char buffer[4096];
-    while (true) {
-        const ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
-        if (n > 0) {
-            captured.append(buffer, static_cast<std::size_t>(n));
-        } else if (n == 0) {
-            break;
-        } else if (errno != EINTR) {
+    while (out_open || err_open) {
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        if (out_open) {
+            FD_SET(out_pipe[0], &readfds);
+        }
+        if (err_open) {
+            FD_SET(err_pipe[0], &readfds);
+        }
+        const int max_fd = std::max(out_pipe[0], err_pipe[0]);
+        int ready = select(max_fd + 1, &readfds, nullptr, nullptr, nullptr);
+        if (ready < 0 && errno == EINTR) {
+            continue;
+        }
+        if (ready <= 0) {
             break;
         }
+        if (out_open && FD_ISSET(out_pipe[0], &readfds)) {
+            const ssize_t n = read(out_pipe[0], buffer, sizeof(buffer));
+            if (n > 0) {
+                captured_out.append(buffer, static_cast<std::size_t>(n));
+            } else {
+                out_open = false;
+            }
+        }
+        if (err_open && FD_ISSET(err_pipe[0], &readfds)) {
+            const ssize_t n = read(err_pipe[0], buffer, sizeof(buffer));
+            if (n > 0) {
+                captured_err.append(buffer, static_cast<std::size_t>(n));
+            } else {
+                err_open = false;
+            }
+        }
     }
-    close(pipefd[0]);
+    close(out_pipe[0]);
+    close(err_pipe[0]);
 
     int status = 0;
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
     }
     summary.launched = true;
-    summary.stdout_text = std::move(captured);
+    summary.stdout_text = std::move(captured_out);
+    summary.stderr_text = std::move(captured_err);
     if (WIFEXITED(status)) {
         summary.exit_status = WEXITSTATUS(status);
     } else {
         summary.exit_status = -1;
     }
     if (summary.exit_status == 127 &&
-        summary.stdout_text.find("AHFL_NODE_LAUNCH_FAILED") != std::string::npos) {
+        (summary.stdout_text.find("AHFL_NODE_LAUNCH_FAILED") != std::string::npos ||
+         summary.stderr_text.find("AHFL_NODE_LAUNCH_FAILED") != std::string::npos)) {
         summary.launched = false;
     }
     return summary;
+}
+
+// Extracts and validates the case stem from a sidecar filename. The stem is a
+// directory-entry NAME (untrusted filesystem data, not a manifest field), and
+// it is later concatenated into scratch paths, so it must satisfy the same
+// path-safe charset as a manifest scenario name: rejects empty, overlong,
+// path-separator, and "."/".." traversal stems.
+constexpr std::size_t kMaxCaseStemLength = 128;
+
+[[nodiscard]] bool is_path_safe_stem(std::string_view stem) noexcept {
+    if (stem.empty() || stem.size() > kMaxCaseStemLength) {
+        return false;
+    }
+    if (stem == "." || stem == "..") {
+        return false;
+    }
+    for (const char ch : stem) {
+        const bool safe = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                          (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+        if (!safe) {
+            return false;
+        }
+    }
+    return true;
 }
 
 [[nodiscard]] std::string case_stem(const fs::path &sidecar) {
@@ -219,6 +293,13 @@ struct CaseEntry {
     std::vector<CaseEntry> cases;
     for (const auto &sidecar : sidecars) {
         const std::string stem = case_stem(sidecar);
+        if (!is_path_safe_stem(stem)) {
+            std::cerr << "ERROR: conformance case sidecar stem is not a path-safe "
+                         "[A-Za-z0-9_-]+ name: "
+                      << sidecar.filename() << "\n";
+            ++g_failures;
+            continue;
+        }
         if (!stems.empty() && !stems.contains(stem)) {
             continue;
         }
@@ -247,12 +328,21 @@ int run_one(const CaseEntry &entry,
     const auto &manifest = entry.loaded.manifest;
     const std::string stem = case_stem(entry.sidecar);
     const std::string label = stem + "/" + scenario.name;
+    const WasmNodeObservationSkip declared_skip = manifest.engines.wasm.node_observation_skip;
 
     // Produce first: a raw P4-D frame (P6-7 output-frame gate) has no canonical
     // wire output to diff, so it skips before any engine reference is needed.
     WasmProduceResult produced = produce_conformance_wasm(entry.loaded, scenario);
     if (!produced.ok) {
         if (produced.skip == WasmProduceSkip::RawP6FrameAwaitsP67) {
+            if (declared_skip != WasmNodeObservationSkip::RawP6FrameAwaitsP67) {
+                std::cerr << "FAIL: " << label
+                          << " projects a raw P6-FRAME (p6-7 skip) but its manifest does not "
+                             "declare engines.wasm.node_observation_skip="
+                             "'raw_p6_frame_awaits_p67'; an unpinned skip is forbidden\n";
+                ++g_failures;
+                return 1;
+            }
             ++g_skipped;
             std::cout << "SKIP[77] " << label << ": " << produced.code << " -- " << produced.reason
                       << "\n";
@@ -263,6 +353,15 @@ int run_one(const CaseEntry &entry,
         // when the manifest itself declares a non-orchestration lane.
         if (manifest.engines.wasm.eligibility !=
             ahfl::conformance::WasmEligibility::Orchestration) {
+            if (declared_skip != WasmNodeObservationSkip::BlockedOnKr66) {
+                std::cerr << "FAIL: " << label
+                          << " does not emit on the orchestration lane (" << produced.code
+                          << ") but its manifest does not declare "
+                             "engines.wasm.node_observation_skip='blocked_kr66'; "
+                             "an unpinned skip is forbidden\n";
+                ++g_failures;
+                return 1;
+            }
             ++g_skipped;
             std::cout << "SKIP[77] " << label << ": kr6.6 (" << produced.code << ") -- "
                       << produced.reason << "\n";
@@ -270,6 +369,18 @@ int run_one(const CaseEntry &entry,
         }
         std::cerr << "FAIL: orchestration-declared case did not emit for " << label << ": "
                   << produced.code << ": " << produced.reason << "\n";
+        ++g_failures;
+        return 1;
+    }
+
+    // The module emitted. A manifest that declares a Node-observation skip for a
+    // case that actually produces a comparable module is a stale skip claim --
+    // fail before running the Node host so neither outcome can mask it.
+    if (declared_skip != WasmNodeObservationSkip::None) {
+        std::cerr << "FAIL: " << label
+                  << " emits a comparable module but its manifest declares a "
+                     "engines.wasm.node_observation_skip expectation; the skip did not "
+                     "occur (stale declaration)\n";
         ++g_failures;
         return 1;
     }
@@ -308,10 +419,17 @@ int run_one(const CaseEntry &entry,
     }
     if (node_run.exit_status != 0) {
         std::cerr << "FAIL: Node embedded host exited " << node_run.exit_status << " for " << label
-                  << "\n"
-                  << node_run.stdout_text << "\n";
+                  << "\n--- stdout ---\n"
+                  << node_run.stdout_text << "\n--- stderr ---\n"
+                  << node_run.stderr_text << "\n";
         ++g_failures;
         return 1;
+    }
+    if (!node_run.stderr_text.empty()) {
+        // A successful host is silent on stderr (its evidence goes to the
+        // observation file); surface unexpected diagnostics before the diff.
+        std::cerr << "NOTE: Node embedded host wrote to stderr for " << label << ":\n"
+                  << node_run.stderr_text << "\n";
     }
 
     const auto node_observation = read_file(observation_path);
@@ -327,7 +445,11 @@ int run_one(const CaseEntry &entry,
         std::cerr << "FAIL: evaluator-vs-Node differential for " << label << ":\n  " << *divergence
                   << "\n--- evaluator ---\n"
                   << evaluator.observation_json << "\n--- node ---\n"
-                  << *node_observation << "\n";
+                  << *node_observation;
+        if (!node_run.stderr_text.empty()) {
+            std::cerr << "\n--- node stderr ---\n" << node_run.stderr_text;
+        }
+        std::cerr << "\n";
         ++g_failures;
         return 1;
     }
@@ -379,6 +501,22 @@ int mode_verify(const fs::path &repo_root,
         std::cout << "SKIP: no orchestration-eligible scenario was available\n";
         return 77;
     }
+    // Exact-set census: the pin must move deliberately whenever the catalogue
+    // changes. This catches the dangerous direction (a compared case silently
+    // starts skipping) that the 0-compare tripwire alone misses. Enforced only
+    // on a full-catalogue run; an explicit stem filter runs a requested subset.
+    if (stems.empty()) {
+        if (g_compared != kExpectedAgreed) {
+            std::cerr << "FAIL: agreed count " << g_compared << " != pinned " << kExpectedAgreed
+                      << " (a case moved between the compared and skipped sets?)\n";
+            ++g_failures;
+        }
+        if (g_skipped != kExpectedSkipped) {
+            std::cerr << "FAIL: skipped count " << g_skipped << " != pinned " << kExpectedSkipped
+                      << " (a case moved between the compared and skipped sets?)\n";
+            ++g_failures;
+        }
+    }
     return g_failures == 0 ? 0 : 1;
 }
 
@@ -416,28 +554,60 @@ int mode_mutation(const fs::path &repo_root,
         return 1;
     }
 
-    // Flip the terminal status; the comparator must detect the divergence.
-    auto dom = ahfl::json::parse_json(*node_observation);
-    check(dom.has_value() && *dom && (*dom)->is_object(), "node observation parses");
-    auto *status = (*dom)->get_mut("status");
-    check(status != nullptr, "node observation carries a status");
-    if (status == nullptr) {
-        return 1;
-    }
-    status->string_val = status->string_val == "failed" ? "completed" : "failed";
-    const std::string mutated = ahfl::json::serialize_json(**dom);
-
+    // Mutation matrix on the pristine observation: each dimension the
+    // comparator is responsible for must independently fail closed.
     const auto evaluator = run_evaluator_scenario(entry.loaded, scenario);
     check(evaluator.ok, "evaluator reference re-runs for the mutation lane");
     if (!evaluator.ok) {
         return 1;
     }
-    const auto divergence =
-        ahfl::conformance::observations_agree(evaluator.observation_json, mutated);
-    check(divergence.has_value(), "comparator FAILS on the deliberately mutated status");
-    if (divergence.has_value()) {
-        std::cout << "OK: comparator detected mutated expectation: " << *divergence << "\n";
+
+    // (1) Flip the terminal status.
+    {
+        auto dom = ahfl::json::parse_json(*node_observation);
+        check(dom.has_value() && *dom && (*dom)->is_object(), "node observation parses");
+        auto *status = (*dom)->get_mut("status");
+        check(status != nullptr, "node observation carries a status");
+        if (status == nullptr) {
+            return 1;
+        }
+        status->string_val = status->string_val == "failed" ? "completed" : "failed";
+        const std::string mutated = ahfl::json::serialize_json(**dom);
+        const auto divergence =
+            ahfl::conformance::observations_agree(evaluator.observation_json, mutated);
+        check(divergence.has_value(), "comparator FAILS on the deliberately mutated status");
+        if (divergence.has_value()) {
+            std::cout << "OK: comparator detected mutated expectation: " << *divergence << "\n";
+        }
     }
+
+    // (2) Corrupt a state_sequence element (a dimension other than status).
+    {
+        auto dom = ahfl::json::parse_json(*node_observation);
+        check(dom.has_value() && *dom && (*dom)->is_object(), "node observation re-parses");
+        auto *states = (*dom)->get_mut("state_sequence");
+        check(states != nullptr && states->is_array() && !states->array_items.empty(),
+              "node observation carries a non-empty state_sequence");
+        if (states == nullptr || !states->is_array() || states->array_items.empty()) {
+            return 1;
+        }
+        auto *entry0 = states->array_items.front()->get_mut("state");
+        check(entry0 != nullptr && entry0->as_string().has_value(),
+              "state_sequence[0] carries a state name");
+        if (entry0 == nullptr || !entry0->as_string().has_value()) {
+            return 1;
+        }
+        entry0->string_val = "mutated-unexpected-state";
+        const std::string mutated = ahfl::json::serialize_json(**dom);
+        const auto divergence =
+            ahfl::conformance::observations_agree(evaluator.observation_json, mutated);
+        check(divergence.has_value(),
+              "comparator FAILS on a deliberately mutated state_sequence element");
+        if (divergence.has_value()) {
+            std::cout << "OK: comparator detected mutated expectation: " << *divergence << "\n";
+        }
+    }
+
     return g_failures == 0 ? 0 : 1;
 }
 

@@ -5238,7 +5238,11 @@ encode_module(const CoreProgram &program,
     append_global(globals, true, plan.initial.value);
     append_global(globals, true, 0);
     append_global(globals, false, 1);
-    append_global(globals, true, 1024);
+    // The agent lane's bump heap starts at the SAME region origin as the
+    // identity-workflow node-event log base (and the descriptor's
+    // `heap_base`); an agent emits no event records, so its first bump
+    // allocation begins exactly there.
+    append_global(globals, true, kNodeEventLogBase);
     append_global(globals, true, 0);
     if (!append_section(module, kSectionGlobal, globals)) {
         return std::nullopt;
