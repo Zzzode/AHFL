@@ -160,4 +160,23 @@ static_assert(kNodeEventRecordsBase == 1032,
               "node-event records start at byte 1032 (1024 + 8-byte header)");
 static_assert(kNodeEventRecordBytes == 40, "one node-event record is 40 bytes");
 
+// ----------------------------------------------------------------------------
+// RFC 0026 FB-2: outlined-fn native recursion stack budget
+// ----------------------------------------------------------------------------
+//
+// FB-2 replaces the FB-1 "no recursion" rule with a compile-time depth
+// lattice (see core_recursion.hpp): every recursive fn group carries a sealed
+// static depth derived from bounded-container capacities / literals, never from
+// the erased `decreases` measure. Recursion runs as ordinary wasm `call`s (no
+// tail-call proposal), so the outlined functions consume real native engine
+// stack. This is the engine-safe MAXIMUM total direct-fn call depth the
+// backend accepts on top of the fixed ABI handler frame; a program whose sealed
+// worst-case depth exceeds it is RESOURCE-fail-closed at codegen. The number is
+// deliberately conservative: the lowest mainstream wasm engine call-depth
+// floors are well above it, and every bounded-container capacity inside the
+// fixed 64 KiB page plus the handler frame stays under it. FB-3 extends the
+// same gate with the closure-env heap accounting (design §6.3); this constant
+// is the native-stack leg of the ONE page/resource budget.
+inline constexpr std::uint32_t kFnRecursionNativeStackDepthMax = 1024;
+
 } // namespace ahfl::ir::core

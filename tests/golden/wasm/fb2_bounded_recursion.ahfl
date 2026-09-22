@@ -1,0 +1,72 @@
+// RFC 0026 FB-2 (CORE-FNBODY-DESIGN §8): bounded NATIVE recursion under Node.
+//
+// The non-final handler calls a non-generic pure fn `sum_into` that recurses
+// over a BOUNDED list with a compile-time rank parameter:
+//
+//   fn sum_into(xs: List<Int>(4), i: Int, acc: Int) -> Int {
+//       if i >= list_raw_length<Int>(xs) { return acc; }
+//       return sum_into(xs, i + 1, acc + list_raw_get<Int>(xs, i));
+//   }
+//
+// The FB-2 depth lattice seals this structurally (rank i ascends by 1 on every
+// self edge; the base guard compares i with the bounded-container length word;
+// the handler enters at i = 0), so recursion lowers to ordinary wasm `call`s
+// (no tail-call proposal). The host materializes a two-element live list in
+// the bounded backing store; the fn sums exactly the live elements (the guard
+// reads the length word, not the capacity), so a wrong rank progression, a
+// wrong base guard, a wrong self-call target, or an argument that does not
+// thread the container/accumulator changes the total and routes the computed
+// goto to Fail instead of Done. Observable purely through state ids.
+//
+// Like the FB-1 probe, the native evaluator does not yet execute user-defined
+// direct fn calls; the Node wasm path is the authoritative engine evidence.
+module std::collections;
+
+pub struct List<T> { }
+
+pub struct Frame {
+    items: List<Int>(4);
+}
+
+@builtin("list_raw_get")
+fn list_raw_get<T>(xs: List<T>, i: Int) -> T effect Pure;
+
+@builtin("list_raw_length")
+fn list_raw_length<T>(xs: List<T>) -> Int effect Pure;
+
+fn sum_into(xs: List<Int>(4), i: Int, acc: Int) -> Int effect Pure
+    decreases list_raw_length<Int>(xs) - i {
+    if i >= list_raw_length<Int>(xs) {
+        return acc;
+    }
+    return sum_into(xs, i + 1, acc + list_raw_get<Int>(xs, i));
+}
+
+pub agent RecursionAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for RecursionAgent {
+    state Init {
+        let total: Int = sum_into(input.items, 0, 0);
+        if total == 91 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

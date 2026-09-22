@@ -151,6 +151,25 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 FB-2 (CORE-FNBODY-DESIGN §8): bounded NATIVE recursion. A pure fn
+    # recurses over a bounded List<Int>(4) with a compile-time rank parameter
+    # (rank ascends by 1, base guard against the bounded length word, entry at
+    # i=0); the depth lattice seals it structurally and the recursion lowers to
+    # ordinary wasm `call`s. The Node host materializes a two-element live list
+    # and asserts the recursive sum drives the computed goto to Done — a wrong
+    # rank progression, base guard, or self-call target changes the total.
+    add_test(NAME ahfl.wasm.fb2_bounded_recursion_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb2_recursion_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.fb2_bounded_recursion_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-2 bounded native recursion Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 P6-1 (KR6.6): nested control flow. A fully-diverging if nested
     # inside a void/fall-through branch used to be typed i32 from divergence
     # alone, producing a module WebAssembly.compile rejects. These fixtures

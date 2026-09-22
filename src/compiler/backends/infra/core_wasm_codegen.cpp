@@ -1,6 +1,7 @@
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/ir/core_recursion.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
@@ -4498,6 +4499,37 @@ fn_return_termination(const CoreProgram &program,
     });
     if (reachable.empty()) {
         return true;
+    }
+
+    // RFC 0026 FB-2 (design §8.1-6c / §5.4): the recursion depth lattice sealed
+    // the static call depth of every recursive fn group from bounded-container
+    // capacities / literals. Recursion runs as ordinary native `call`s, so the
+    // reachable direct-fn graph's worst-case call depth must fit the engine-safe
+    // native stack budget; an over-deep plan is RESOURCE-fail-closed here rather
+    // than overflowing the engine stack at runtime. This consumes the SAME
+    // analysis the verifier ran (never a second derivation). The FB-3 slice
+    // extends this budget with the closure-env linear-memory accounting.
+    {
+        const ir::core::FnRecursionAnalysis recursion =
+            ir::core::analyze_fn_recursion(program);
+        if (!recursion.unbounded_issues.empty() || !recursion.overflow_sccs.empty()) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "an outlined fn recursion group reached by this module is not structurally "
+                     "bounded; the Core verifier must seal the depth lattice before codegen");
+            return false;
+        }
+        const std::uint64_t native_depth =
+            ir::core::max_native_fn_call_depth(program, recursion, &seen_fn);
+        if (native_depth > ir::core::kFnRecursionNativeStackDepthMax) {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "the bounded-recursion plan reaches a native call depth of " +
+                         std::to_string(native_depth) + " which exceeds the engine-safe limit of " +
+                         std::to_string(ir::core::kFnRecursionNativeStackDepthMax) +
+                         "; use a smaller bounded collection capacity");
+            return false;
+        }
     }
 
     // callee CoreInstanceId -> fn ordinal (CoreFnId order), for the builder's
