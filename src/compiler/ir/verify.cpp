@@ -1893,22 +1893,34 @@ class ProgramVerifier {
                               std::string(symbol_ref_kind_name(*expected_kind)));
             }
             if (!declaration_name.empty()) {
-                if (symbol.local_name.empty()) {
-                    add_error(path, "declaration symbol reference is missing local name");
-                } else if (symbol.local_name != declaration_name &&
-                           (symbol.canonical_name.empty() ||
-                            !canonical_matches_decl_name(symbol.canonical_name,
-                                                         declaration_name))) {
-                    add_error(path,
-                              "declaration name '" + std::string(declaration_name) +
-                                  "' drifts from symbol local name '" + symbol.local_name + "'");
-                }
-                if (!symbol.canonical_name.empty() &&
-                    !canonical_matches_decl_name(symbol.canonical_name, declaration_name)) {
-                    add_error(path,
-                              "declaration name '" + std::string(declaration_name) +
-                                  "' drifts from symbol canonical name '" + symbol.canonical_name +
-                                  "'");
+                // RFC 0026 P2d / CORE-FNBODY-DESIGN: a monomorphized fn
+                // instantiation is an FnDecl whose NAME is the mangled instance
+                // key (`_inst_…`) while its symbol_ref keeps the ORIGINAL fn
+                // symbol (identity). The name is then intentionally distinct
+                // from the source local/canonical name, so the drift check is
+                // skipped for that documented shape; the symbol-id identity is
+                // still checked below.
+                const bool is_mangled_instance =
+                    declaration_name.rfind("_inst_", 0) == 0;
+                if (!is_mangled_instance) {
+                    if (symbol.local_name.empty()) {
+                        add_error(path, "declaration symbol reference is missing local name");
+                    } else if (symbol.local_name != declaration_name &&
+                               (symbol.canonical_name.empty() ||
+                                !canonical_matches_decl_name(symbol.canonical_name,
+                                                             declaration_name))) {
+                        add_error(path,
+                                  "declaration name '" + std::string(declaration_name) +
+                                      "' drifts from symbol local name '" + symbol.local_name +
+                                      "'");
+                    }
+                    if (!symbol.canonical_name.empty() &&
+                        !canonical_matches_decl_name(symbol.canonical_name, declaration_name)) {
+                        add_error(path,
+                                  "declaration name '" + std::string(declaration_name) +
+                                      "' drifts from symbol canonical name '" +
+                                      symbol.canonical_name + "'");
+                    }
                 }
             }
         }

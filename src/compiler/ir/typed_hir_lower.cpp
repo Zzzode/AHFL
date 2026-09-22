@@ -6,6 +6,8 @@
 #include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/mangling.hpp"
+#include "ahfl/compiler/semantics/monomorphization.hpp"
+#include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
@@ -51,6 +53,57 @@ namespace {
 
 [[nodiscard]] bool is_std_module_name(std::string_view module_name) noexcept {
     return module_name == "std" || module_name.starts_with("std::");
+}
+
+// True iff `type` still contains a (any-scope) TypeVar. A P2d instance whose
+// selected type arguments are TypeVars is a generic-on-generic instantiation
+// (e.g. std Option's internal `option_filter_value<T>` called from the generic
+// `filter` body): its body is NOT concrete and must never be emitted as a
+// monomorphized Core fn — only a fully concrete instantiation is FB-1-callable.
+[[nodiscard]] bool type_contains_type_var(const TypePtr type) {
+    if (type == nullptr) {
+        return false;
+    }
+    return type->visit(types::Overloads{
+        [](const types::TypeVarT &) { return true; },
+        [](const types::FnT &fn) {
+            for (const TypePtr param : fn.params) {
+                if (type_contains_type_var(param)) {
+                    return true;
+                }
+            }
+            return type_contains_type_var(fn.return_type);
+        },
+        [](const types::StructT &s) {
+            for (const Type *arg : s.type_args) {
+                if (type_contains_type_var(arg)) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        [](const types::EnumT &e) {
+            for (const Type *arg : e.type_args) {
+                if (type_contains_type_var(arg)) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        [](const types::EnumVariantT &v) {
+            for (const Type *arg : v.type_args) {
+                if (type_contains_type_var(arg)) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        [](const auto &) { return false; },
+    });
+}
+
+[[nodiscard]] bool type_args_are_concrete(const std::vector<TypePtr> &type_args) {
+    return std::ranges::none_of(type_args, type_contains_type_var);
 }
 
 [[nodiscard]] ir::TypeRef make_type_ref_value(ir::TypeRefKind kind, std::string display_name) {
@@ -270,9 +323,10 @@ class TypedIrLowerer final {
     explicit TypedIrLowerer(const TypedProgram &typed_program,
                             const ast::Program *ast_program = nullptr,
                             const SourceGraph *source_graph = nullptr,
-                            bool include_stdlib = false)
+                            bool include_stdlib = false,
+                            const MonomorphizationResult *mono = nullptr)
         : typed_program_(&typed_program), ast_program_(ast_program), source_graph_(source_graph),
-          include_stdlib_(include_stdlib) {}
+          include_stdlib_(include_stdlib), mono_(mono) {}
 
     [[nodiscard]] ir::Program lower() const {
         ir::Program program_ir;
@@ -312,6 +366,13 @@ class TypedIrLowerer final {
                 continue;
             program_ir.declarations.push_back(lower_typed_declaration(*typed_decl));
         }
+        // RFC 0026 P2d (CORE-FNBODY-DESIGN §2.1): for every monomorphized fn
+        // instance whose generic body was cloned + type-substituted, emit one
+        // CONCRETE body-bearing FnDecl the Core lowerer's fn guarantee picks up.
+        // The instance's FnDecl carries the substituted parameter / return types
+        // and the instantiated block; the instance_key on the matching
+        // InstanceDecl is the identity the call resolves to.
+        emit_instantiated_fn_bodies(program_ir);
         current_source_id_.reset();
         current_module_name_.clear();
         emit_instantiated_declarations(program_ir);
@@ -323,6 +384,11 @@ class TypedIrLowerer final {
     const ast::Program *ast_program_{nullptr};
     const SourceGraph *source_graph_{nullptr};
     bool include_stdlib_{false};
+    // P2d: when present, the per-(fn,type_args) monomorphization result. Each
+    // entry with an instantiated body block drives one concrete per-instance
+    // FnDecl (CORE-FNBODY-DESIGN §2.1 "typed side body clone is provided by
+    // P2d"); the entry's block is lowered instead of the generic original.
+    const MonomorphizationResult *mono_{nullptr};
     mutable std::optional<SourceId> current_source_id_;
     mutable std::string current_module_name_;
     mutable ir::ExprArena *arena_{nullptr};
@@ -3929,6 +3995,156 @@ class TypedIrLowerer final {
         return lowered;
     }
 
+    // RFC 0026 P2d (CORE-FNBODY-DESIGN §2.1): emit one concrete body-bearing
+    // ir::FnDecl per monomorphized generic fn instance. Each emitted FnDecl:
+    //   * carries the SUBSTITUTED parameter / return types (read from the
+    //     monomorphized body block's cloned typed nodes + the call site's type
+    //     args — never the generic TypeVar signature),
+    //   * lowers the instantiated body block (`instance.body_block_index`),
+    //   * is named with the SAME mangled instance key the corresponding
+    //     InstanceDecl already carries (so the Core lowerer's identity resolver
+    //     links the call to this exact body),
+    //   * is marked type_param_names=[] (it is a concrete instantiation, not a
+    //     generic declaration).
+    // Non-generic instances reuse the original body and are already emitted as
+    // the ordinary generic FnDecl by lower_typed_fn (the Core guarantee pass
+    // synthesizes their empty-args instance), so only instances with a CLONED
+    // block index distinct from the generic declaration's block are emitted.
+    void emit_instantiated_fn_bodies(ir::Program &program_ir) const {
+        if (mono_ == nullptr) {
+            return;
+        }
+        // Two structurally different P2c cache keys can mangle to the same
+        // instance key (e.g. a TypeVar from two generic scopes), so dedup on the
+        // mangled identity, not on type_args_canonical.
+        std::unordered_set<std::string> emitted_instance_keys;
+        for (const MonomorphizationInstance &inst : mono_->instances) {
+            if (inst.body_block_index == UINT32_MAX ||
+                inst.body_block_index >= typed_program_->blocks.size()) {
+                continue;
+            }
+            const auto symbol = typed_program_->find_symbol(inst.fn_symbol);
+            if (!symbol.has_value()) {
+                continue;
+            }
+            // Mirror emit_instantiated_declarations: a std fn body is sourced
+            // from the facade stdlib runtime unless this compilation explicitly
+            // inlines the sysroot; otherwise a detached user program drags every
+            // reachable generic std helper into its AHFL-IR.
+            if (!include_stdlib_ &&
+                symbol->get().canonical_name.starts_with("std::")) {
+                continue;
+            }
+            const TypedDecl *decl = nullptr;
+            for (const auto &candidate : typed_program_->declarations) {
+                if (candidate.symbol == inst.fn_symbol &&
+                    candidate.kind == ast::NodeKind::FnDecl) {
+                    decl = &candidate;
+                    break;
+                }
+            }
+            if (decl == nullptr) {
+                continue;
+            }
+            const auto *fn_info = std::get_if<FnTypeInfo>(&decl->payload);
+            if (fn_info == nullptr) {
+                continue;
+            }
+            if (fn_info->type_param_names.empty()) {
+                continue;
+            }
+            // Recover the concrete TypePtr type arguments from the call site
+            // matching this instance (P2d used the same recovery).
+            const std::vector<TypePtr> *type_args = nullptr;
+            for (const auto &site : typed_program_->fn_call_sites) {
+                if (site.fn_symbol == inst.fn_symbol &&
+                    canonical_type_args(site.type_args) == inst.type_args_canonical) {
+                    type_args = &site.type_args;
+                    break;
+                }
+            }
+            if (type_args == nullptr ||
+                type_args->size() != fn_info->type_param_names.size()) {
+                continue;
+            }
+            // A generic-on-generic instantiation (the call site selected
+            // TypeVars) has no concrete body: skip it. The verifier's concrete
+            // pre-bound-param gate would reject an emitted body like this.
+            if (!type_args_are_concrete(*type_args)) {
+                continue;
+            }
+            // The concrete FnDecl's name is the SAME mangled instance key the
+            // matching InstanceDecl carries (mangle_instance, never the human
+            // render_instance_name) — that is the identity a Core direct call
+            // resolves against.
+            const mangle::SymbolCanonicalNameFn resolver =
+                [this](SymbolId id) -> std::optional<std::string> {
+                const auto sym = typed_program_->find_symbol(id);
+                return sym.has_value() ? std::optional{sym->get().canonical_name} : std::nullopt;
+            };
+            const std::string instance_key = mangle::mangle_instance(
+                inst.fn_symbol, std::span<const TypePtr>(*type_args), resolver);
+            if (!emitted_instance_keys.insert(instance_key).second) {
+                continue; // another generic-scope instance mangled to this key
+            }
+            ir::FnDecl lowered = with_provenance(
+                ir::FnDecl{
+                    .provenance = {},
+                    .name = instance_key,
+                    .params = {},
+                    .return_type_ref = {},
+                    .has_return_type = fn_info->return_type != nullptr,
+                    .effect = lower_fn_effect(fn_info->effect),
+                    .type_param_names = {}, // concrete instantiation
+                    .has_body = true,
+                    .body = nullptr,
+                    .symbol_ref = ir::SymbolRef{
+                        .kind = ir::SymbolRefKind::Function,
+                        .canonical_name = fn_info->canonical_name,
+                        .local_name = fn_info->local_name,
+                        .module_name = symbol->get().module_name,
+                        .id = inst.fn_symbol.value,
+                    },
+                },
+                fn_info->declaration_range);
+            // Substitute the SIGNATURE types via the same P2d index Substs,
+            // using the fn's own TypeVar scope. The substituted TypePtrs are
+            // converted to ir::TypeRef through the standard bridge.
+            TypeSubstitutionMap subst;
+            subst.reserve(type_args->size());
+            for (const TypePtr arg : *type_args) {
+                subst.push_back(arg);
+            }
+            // A throwaway TypeContext is enough: substitute_type only needs the
+            // intern pool for freshly-built types; the substituted types are
+            // structurally concrete and re-intern identically downstream.
+            TypeContext local_types;
+            for (const ParamTypeInfo &param : fn_info->params) {
+                ir::ParamDecl p;
+                p.name = param.name;
+                const TypePtr concrete = substitute_type(param.type, subst,
+                                                         fn_info->type_param_scope_id,
+                                                         local_types);
+                if (concrete != nullptr) {
+                    p.type_ref = type_ref_from_optional_type(
+                        concrete, param.declaration_range, "fn instantiation parameter");
+                }
+                p.source_range = param.declaration_range;
+                lowered.params.push_back(std::move(p));
+            }
+            if (fn_info->return_type != nullptr) {
+                const TypePtr concrete =
+                    substitute_type(fn_info->return_type, subst,
+                                    fn_info->type_param_scope_id, local_types);
+                lowered.return_type_ref = type_ref_from_optional_type(
+                    concrete, fn_info->return_type_range, "fn instantiation return type");
+            }
+            lowered.body = make_owned<ir::Block>(
+                lower_typed_block(typed_program_->blocks[inst.body_block_index]));
+            program_ir.declarations.push_back(std::move(lowered));
+        }
+    }
+
     // P2c/P2d: lower a top-level `fn` declaration from its FnTypeInfo payload.
     // The IR keeps the resolved signature surface and, when FnSema recorded a
     // body block, lowers that block through the same typed-statement machinery
@@ -4708,7 +4924,28 @@ ir::Program lower_typed_program_impl(const TypedProgram &program,
                                      const ast::Program *ast_program = nullptr,
                                      const SourceGraph *source_graph = nullptr,
                                      bool include_stdlib = false) {
-    auto program_ir = TypedIrLowerer(program, ast_program, source_graph, include_stdlib).lower();
+    // RFC 0026 P2d / CORE-FNBODY-DESIGN §2.1: instantiate every generic fn body
+    // for the concrete type arguments its call sites selected BEFORE lowering to
+    // AHFL-IR. The monomorphization deep-clones the typed body block and applies
+    // the index-based Substs (Rust-Substs pattern), appending the concrete
+    // instantiated blocks to a MUTABLE copy of the typed program. The
+    // TypedIrLowerer then lowers each FnTypeInfo instance body through the block
+    // the instantiation recorded (a non-generic fn reuses its original concrete
+    // block). Without this, a generic fn body would reach IR with TypeVar
+    // (`Any`) types and fail the Core boundary. The private TypeContext is a
+    // fresh intern pool for the cloned types (they are structurally identical to
+    // existing ones and re-intern identically at every later boundary).
+    TypedProgram instantiated = program;
+    MonomorphizationResult mono;
+    // The monomorphization's TypeContext owns every freshly interned Type that
+    // the cloned body blocks' TypePtrs point at (TypeContext interns into its
+    // own unique_ptr pool). It MUST outlive the TypedIrLowerer run, which walks
+    // those cloned blocks and visits their types — destroying it earlier leaves
+    // dangling TypePtrs that surface as a valueless std::variant.
+    TypeContext mono_types;
+    mono = run_monomorphization(instantiated, mono_types, MonomorphizationOptions{});
+    auto program_ir =
+        TypedIrLowerer(instantiated, ast_program, source_graph, include_stdlib, &mono).lower();
     ir::recompute_derived_analyses(program_ir, ir::ProgramPhase::Analyzed);
     return program_ir;
 }

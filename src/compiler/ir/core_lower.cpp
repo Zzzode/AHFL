@@ -17,9 +17,11 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
+#include "ahfl/compiler/ir/mangling.hpp" // mangle_instance (fn-instance guarantee)
 
 #include <cctype>
 #include <algorithm>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <string>
@@ -1504,6 +1506,77 @@ class StateIndex {
 };
 
 // ---------------------------------------------------------------------------
+// Fn-call resolution (CORE-FNBODY-DESIGN §4): identity-first lookup from a
+// static callee symbol + the call's concrete type arguments to the unique
+// body-bearing Fn CoreInstanceId. Built from the fn-guarantee pass once the
+// Core instance table exists; shared by flow, workflow and fn lowerers.
+// ---------------------------------------------------------------------------
+struct FnCallResolution {
+    CoreInstanceId instance{};
+    bool has_body{false}; // false: bodyless prototype / @builtin facade
+    // FnEffectKind::Pure == 0; a Nondet / Capability callee stays fail-closed.
+    ir::FnEffectKind effect{ir::FnEffectKind::Pure};
+};
+
+class FnCallResolver {
+  public:
+    struct Entry {
+        FnCallResolution resolution;
+    };
+
+    // Register one body-bearing (or known bodyless) Fn instance. `key` is the
+    // instance's mangled instance_key (verbatim, never re-derived) — the
+    // identifier a generic call's IR callee string carries; `symbol_id` /
+    // `canonical` are the origin symbol a non-generic call resolves by.
+    void add(std::string key, std::optional<std::size_t> symbol_id,
+             std::string canonical, Entry entry) {
+        entries_.push_back(std::move(entry));
+        const Entry *stored = &entries_.back();
+        by_key_.emplace(std::move(key), stored);
+        if (symbol_id.has_value()) {
+            by_id_.emplace(*symbol_id, stored);
+        }
+        if (!canonical.empty()) {
+            by_name_.emplace(std::move(canonical), stored);
+        }
+    }
+
+    // Resolve a free fn call. The IR lowerer rendered generic calls with the
+    // mangled instance key and non-generic calls with the origin canonical
+    // name; the symbol ref is identity-first. Prefer the explicit key when it
+    // names an instance, else resolve the symbol (the canonical non-generic
+    // instance — generic fns ALWAYS render the mangled key, so an id match
+    // here cannot bind a generic body to the wrong instantiation).
+    [[nodiscard]] const Entry *lookup(const SymbolRef &ref,
+                                      std::string_view callee_name) const {
+        if (!callee_name.empty()) {
+            if (auto it = by_key_.find(std::string{callee_name}); it != by_key_.end()) {
+                return it->second;
+            }
+        }
+        if (ref.id.has_value()) {
+            auto range = by_id_.equal_range(*ref.id);
+            for (auto it = range.first; it != range.second; ++it) {
+                return it->second;
+            }
+        }
+        if (!ref.canonical_name.empty()) {
+            auto range = by_name_.equal_range(ref.canonical_name);
+            for (auto it = range.first; it != range.second; ++it) {
+                return it->second;
+            }
+        }
+        return nullptr;
+    }
+
+  private:
+    std::deque<Entry> entries_; // stable addresses for the pointer map
+    std::unordered_map<std::string, const Entry *> by_key_;
+    std::unordered_multimap<std::size_t, const Entry *> by_id_;
+    std::unordered_multimap<std::string, const Entry *> by_name_;
+};
+
+// ---------------------------------------------------------------------------
 // Agent state-machine lowering (unchanged from the prior increment).
 // ---------------------------------------------------------------------------
 [[nodiscard]] CoreStateId
@@ -1714,6 +1787,18 @@ class FlowRootPolicy {
     CoreTypeId context_type_;
 };
 
+// Fn policy (CORE-FNBODY-DESIGN §2.3): a fn body sees ONLY pre-bound params
+// and locals. There is no agent frame / ctx / workflow input; every non-local
+// path root resolves as an Identifier (which, with no same-domain constant
+// resolution inside a fn body, stays fail-closed rather than reading a frame).
+class FnRootPolicy {
+  public:
+    [[nodiscard]] bool root_may_be_local(PathRootKind) const { return true; }
+    [[nodiscard]] ResolvedExternalRoot resolve_external_root(const Path &) const {
+        return ResolvedExternalRoot{CorePathRoot::Identifier, CoreTypeId{}, {}};
+    }
+};
+
 // Workflow policy: a path root inside a node input / return region is either the
 // workflow input (`input`, typed as the workflow input struct) or an upstream
 // node's output (a bare identifier whose name is a declared node — typed as that
@@ -1786,9 +1871,11 @@ template <class RootPolicy> class ExprLowerer {
     ExprLowerer(CoreBodyStorageRef storage, const CapabilityIndex &caps, const TypeEnv &types,
                 RootPolicy policy, const ValueTypeInterner &interner,
                 const std::vector<CoreValueType> &value_type_pool,
-                std::vector<CoreLowerDiagnostic> &diags)
+                std::vector<CoreLowerDiagnostic> &diags,
+                const FnCallResolver *fn_calls = nullptr)
         : storage_(storage), caps_(caps), types_(types), policy_(std::move(policy)),
-          interner_(interner), value_type_pool_(value_type_pool), diags_(diags) {}
+          interner_(interner), value_type_pool_(value_type_pool), diags_(diags),
+          fn_calls_(fn_calls) {}
 
     [[nodiscard]] std::unordered_map<std::string, LocalBinding> &scope() {
         return scope_;
@@ -1888,12 +1975,16 @@ template <class RootPolicy> class ExprLowerer {
         // Every other node (incl. MatchExpr, whose result value carries the match's
         // resolved type) binds `result_ty` here.
         const bool self_typed = std::holds_alternative<CallExpr>(expr.ptr->node) ||
+                                std::holds_alternative<MethodCallExpr>(expr.ptr->node) ||
                                 std::holds_alternative<PathExpr>(expr.ptr->node);
         const CoreValueTypeId result_ty =
             self_typed ? CoreValueTypeId{} : intern_value_type(expr.ptr->resolved_type, range);
         return std::visit(
             Overloaded{
                 [&](const CallExpr &call) { return lower_call_value(call, expr, range, region); },
+                [&](const MethodCallExpr &call) {
+                    return lower_method_call_value(call, expr, range, region);
+                },
                 [&](const PathExpr &e) { return lower_path_value(e, expr, range, region); },
                 [&](const BoolLiteralExpr &e) {
                     return bind_pure(CoreLiteralExpr{CoreLiteralKind::Bool, e.value ? "true" : "false"},
@@ -2766,6 +2857,69 @@ template <class RootPolicy> class ExprLowerer {
         }
     }
 
+    // --- RFC 0026 FB-1 (CORE-FNBODY-DESIGN §4/§5.1): static direct fn calls ---
+
+    // Lower a resolved direct fn/method call to CoreCallExpr. `callee_ref` is
+    // the resolved Fn symbol, `args` are the already-lowered ANF operands
+    // (method calls pass receiver as args[0]), and `result_ty` is the call's
+    // interned result type. Returns false (no diagnostic) when the callee is
+    // unknown/bodyless so the caller keeps its legacy fail-closed path; an
+    // effectful-but-resolved callee is a hard fail-closed diagnostic here.
+    [[nodiscard]] bool emit_direct_call(const SymbolRef &callee_ref,
+                                        std::string_view callee_name,
+                                        std::vector<CoreValueId> args,
+                                        CoreValueTypeId result_ty,
+                                        SourceRangeOpt range,
+                                        CoreRegion &region,
+                                        CoreValueId &out_value) {
+        if (fn_calls_ == nullptr) {
+            return false;
+        }
+        const FnCallResolver::Entry *entry = fn_calls_->lookup(callee_ref, callee_name);
+        if (entry == nullptr || !entry->resolution.has_body) {
+            return false;
+        }
+        if (entry->resolution.effect != ir::FnEffectKind::Pure) {
+            error(entry->resolution.effect == ir::FnEffectKind::Nondet
+                      ? diag::kNondetFnValue
+                      : diag::kFnEffectfulCallee,
+                  entry->resolution.effect == ir::FnEffectKind::Nondet
+                      ? "a Nondet fn cannot be called from the pure wasm computation lane"
+                      : "a capability-effect fn cannot be called directly until the ordered "
+                        "CoreCallStmt slice lands",
+                  range);
+            out_value = fresh_value(result_ty);
+            return true;
+        }
+        const CoreExprId expr_id = push_expr(
+            CoreCallExpr{entry->resolution.instance, std::move(args)}, range, result_ty);
+        out_value = fresh_value(result_ty);
+        region.statements.push_back(CoreStmt{CoreLetStmt{out_value, expr_id}, range});
+        return true;
+    }
+
+    [[nodiscard]] CoreValueId
+    lower_method_call_value(const MethodCallExpr &call, const ExprRef &expr,
+                            SourceRangeOpt range, CoreRegion &region) {
+        const CoreValueTypeId result_ty = intern_value_type(expr.ptr->resolved_type, range);
+        // Receiver-first argument order (design §5.1): exact mirror of the
+        // evaluator's MethodCallExpr flattening.
+        std::vector<CoreValueId> args;
+        args.reserve(call.arguments.size() + 1);
+        if (call.receiver.ptr != nullptr) {
+            args.push_back(lower_value(call.receiver, region));
+        }
+        for (const ExprRef &arg : call.arguments) {
+            args.push_back(lower_value(arg, region));
+        }
+        CoreValueId value{};
+        if (emit_direct_call(call.method_ref, call.method, std::move(args), result_ty, range, region,
+                             value)) {
+            return value;
+        }
+        return lower_unsupported_value(expr, "MethodCallExpr", result_ty, range, region);
+    }
+
     /// The A-normalization core: a capability call becomes an ordered statement.
     [[nodiscard]] CoreValueId lower_call_value(const CallExpr &call, const ExprRef &expr,
                                                SourceRangeOpt range, CoreRegion &region) {
@@ -2810,6 +2964,27 @@ template <class RootPolicy> class ExprLowerer {
         // collection fails closed.
         if (const auto op = collection_op_of_hook(call.callee)) {
             return lower_collection_builtin(call, *op, expr, range, region);
+        }
+        // RFC 0026 FB-1 (CORE-FNBODY-DESIGN §4 rule 4): a statically resolved
+        // pure fn / monomorphized generic fn / body-bearing method lowers to a
+        // direct CoreCallExpr (`call` opcode). Identity-first: the symbol ref is
+        // the fn instance, the IR callee name is the mangled key for a generic.
+        // Arguments are A-normalized first (a nested call hoists to a preceding
+        // let). Unknown / bodyless / effectful callees fall through to the
+        // existing fail-closed arm below.
+        if (call.callee_ref.kind == SymbolRefKind::Function) {
+            const CoreValueTypeId result_ty =
+                intern_value_type(expr.ptr->resolved_type, range);
+            std::vector<CoreValueId> args;
+            args.reserve(call.arguments.size());
+            for (const ExprRef &arg : call.arguments) {
+                args.push_back(lower_value(arg, region));
+            }
+            CoreValueId value{};
+            if (emit_direct_call(call.callee_ref, call.callee, std::move(args), result_ty, range,
+                                 region, value)) {
+                return value;
+            }
         }
         // A non-capability call may be an ENUM-VARIANT CONSTRUCTOR — the front
         // end lowers `Enum::Variant(payload)` to a CallExpr whose `callee_ref`
@@ -3281,53 +3456,26 @@ template <class RootPolicy> class ExprLowerer {
     const ValueTypeInterner &interner_;
     const std::vector<CoreValueType> &value_type_pool_;
     std::vector<CoreLowerDiagnostic> &diags_;
+    // RFC 0026 FB-1: when present, a free `fn` call / method call whose callee
+    // resolves to a body-bearing Fn instance lowers to a direct CoreCallExpr.
+    const FnCallResolver *fn_calls_{nullptr};
     std::unordered_map<std::string, LocalBinding> scope_;
 };
 
-/// Lowers one flow's handler bodies into ANF. Owns a `CoreFlowDecl` and composes
-/// an `ExprLowerer<FlowRootPolicy>` (which owns the per-flow expr / value / pattern
-/// arenas and the per-state local scope) for all expression/pattern/match work;
-/// this class adds only the flow's statement/region lowering on top and resolves
-/// `goto` targets against the agent's state index. Accumulates diagnostics.
-class FlowLowerer {
+/// Statement / region lowering shared by flow handlers and outlined fn bodies
+/// (CORE-FNBODY-DESIGN §2.2 — ONE region lowering implementation, reused by the
+/// third body owner). Owns an `ExprLowerer<Policy>&` for expressions / patterns
+/// and lowers blocks into `CoreRegion`s. `lower_goto` is supplied by the caller
+/// (only flow handlers have states); a fn body never reaches it (a goto there
+/// is fail-closed).
+template <class Policy, class GotoLowerer> class BodyRegionLowerer {
   public:
-    FlowLowerer(CoreFlowDecl &flow, const CapabilityIndex &caps, const StateIndex &states,
-                const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
-                const ValueTypeInterner &interner, const std::vector<CoreValueType> &value_type_pool,
-                std::vector<CoreLowerDiagnostic> &diags)
-        : ex_(CoreBodyStorageRef{flow.storage},
-              caps, types, FlowRootPolicy{input_type, context_type}, interner, value_type_pool,
-              diags),
-          flow_(flow), states_(states) {}
+    BodyRegionLowerer(ExprLowerer<Policy> &ex, GotoLowerer lower_goto)
+        : ex_(ex), lower_goto_(std::move(lower_goto)) {}
 
-    void lower_handler(const StateHandler &handler, CoreStateId state_id) {
-        CoreFlowState core_state;
-        core_state.state = state_id;
-        core_state.state_name = handler.state_name;
-        core_state.policy = lower_policy(handler.policy);
-        ex_.scope().clear();
-        core_state.body = lower_block(handler.body);
-        flow_.states.push_back(std::move(core_state));
-    }
+    using LocalBinding = typename ExprLowerer<Policy>::LocalBinding;
+    using ArmBindings = typename ExprLowerer<Policy>::ArmBindings;
 
-  private:
-    using LocalBinding = ExprLowerer<FlowRootPolicy>::LocalBinding;
-    using ArmBindings = ExprLowerer<FlowRootPolicy>::ArmBindings;
-
-    [[nodiscard]] CoreStatePolicy lower_policy(const std::vector<StatePolicyItem> &policy) {
-        CoreStatePolicy out;
-        for (const StatePolicyItem &item : policy) {
-            std::visit(Overloaded{
-                           [&](const RetryPolicy &r) { out.retry_limit = r.limit; },
-                           [&](const RetryOnPolicy &r) { out.retry_on = r.targets; },
-                           [&](const TimeoutPolicy &t) { out.timeout = t.duration; },
-                       },
-                       item);
-        }
-        return out;
-    }
-
-    // --- region / statement lowering ---
     [[nodiscard]] CoreRegion lower_block(const Block &block) {
         CoreRegion region;
         for (const StatementPtr &stmt : block.statements) {
@@ -3358,14 +3506,11 @@ class FlowLowerer {
 #define LOWER_STMT_Assign(Name)                                                                    \
     [&](const Name &s) { lower_assign(s, stmt.source_range, region); },
 #define LOWER_STMT_Expr(Name)                                                                      \
-    [&](const Name &s) {                                                                           \
-        /* An expression statement is evaluated for its effect; the produced value id (if any) */  \
-        /* is discarded. */                                                                        \
-        static_cast<void>(ex_.lower_value(s.expr, region));                                        \
-    },
+    [&](const Name &s) { static_cast<void>(ex_.lower_value(s.expr, region)); },
 #define LOWER_STMT_If(Name) [&](const Name &s) { lower_if(s, stmt.source_range, region); },
 #define LOWER_STMT_IfLet(Name) [&](const Name &s) { lower_if_let(s, stmt.source_range, region); },
-#define LOWER_STMT_Goto(Name) [&](const Name &s) { lower_goto(s, stmt.source_range, region); },
+#define LOWER_STMT_Goto(Name)                                                                      \
+    [&](const Name &s) { lower_goto_(s, stmt.source_range, region); },
 #define LOWER_STMT_Return(Name) [&](const Name &s) { lower_return(s, stmt.source_range, region); },
 #define LOWER_STMT_LetStatement(Name) LOWER_STMT_Let(Name)
 #define LOWER_STMT_AssignStatement(Name) LOWER_STMT_Assign(Name)
@@ -3415,10 +3560,6 @@ class FlowLowerer {
         }
         const CoreValueId initializer = ex_.lower_value(s.initializer, region);
         const CoreValueId value = ex_.lower_let_boundary(s, initializer, range, region);
-        // Exact/inferred boundaries reuse `initializer`. A real adjustment binds
-        // a fresh CoreCoerceExpr result; in both cases the local's value + logical
-        // type come from the dense SSA table as one source of truth (never re-label
-        // an existing value id with the declared target type).
         ex_.scope()[s.name] = LocalBinding{value, ex_.value_type_of(value)};
     }
 
@@ -3429,9 +3570,6 @@ class FlowLowerer {
         place.root = rr.external_root;
         place.root_name = s.target.root_name;
         place.members = s.target.members;
-        // A store into a member PROJECTION (`ctx.field = …`) resolves each
-        // member to a typed CoreProjectionStep, same as a read. Set the
-        // self-contained root type first; fail closed otherwise (Principle 5).
         place.root_type = rr.root_type;
         if (!s.target.members.empty()) {
             const std::optional<CoreTypeId> root_type =
@@ -3448,26 +3586,127 @@ class FlowLowerer {
         const CoreValueId cond = ex_.lower_value(s.condition, region);
         CoreIfStmt node;
         node.condition = cond;
-        // Each branch is its own region: mutual exclusion is preserved (the two
-        // branches are NOT appended to one flat list). Each branch is lexically
-        // scoped: it starts from the SAME outer scope snapshot and its
-        // branch-local `let` bindings are discarded afterwards, so a binding in
-        // one branch cannot leak into the other branch or past the `if`. The
-        // snapshot restores the value id AND its type together (P0-1): a branch
-        // that shadows an outer local with a DIFFERENT nominal type must not
-        // corrupt the outer local's type after the `if`.
         const auto outer_scope = ex_.scope();
         if (s.then_block) {
             node.then_region = std::make_unique<CoreRegion>(lower_block(*s.then_block));
         } else {
             node.then_region = std::make_unique<CoreRegion>();
         }
-        ex_.scope() = outer_scope; // restore before the else branch
+        ex_.scope() = outer_scope;
         if (s.else_block) {
             node.else_region = std::make_unique<CoreRegion>(lower_block(*s.else_block));
         }
-        ex_.scope() = outer_scope; // restore after the if
+        ex_.scope() = outer_scope;
         region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
+    }
+
+    void lower_return(const ReturnStatement &s, SourceRangeOpt range, CoreRegion &region) {
+        CoreReturnStmt node;
+        if (s.value.ptr != nullptr) {
+            node.has_value = true;
+            node.value = ex_.lower_value(s.value, region);
+        }
+        region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
+    }
+
+    // Statement-position if-let: one pattern arm (yields nothing) with the
+    // then-block as body; the fallback is the else block (or a trap when absent).
+    void lower_if_let(const IfLetStatement &s, SourceRangeOpt range, CoreRegion &region) {
+        const CoreValueId scrutinee = ex_.lower_value(s.scrutinee, region);
+        CoreMatchStmt stmt;
+        stmt.scrutinee = scrutinee;
+        stmt.has_result = false;
+        bool ok = true;
+        ArmBindings bindings;
+        ex_.collect_arm_bindings(s.pattern, bindings);
+        CoreMatchArm arm;
+        arm.pattern = ex_.lower_pattern(s.pattern, bindings, range, ok);
+        arm.body = std::make_unique<CoreRegion>();
+        const auto outer_scope = ex_.scope();
+        if (s.then_block) {
+            *arm.body = lower_block_scoped(*s.then_block, bindings);
+        }
+        ex_.scope() = outer_scope;
+        ex_.seal_statement_arm(*arm.body, range);
+        arm.bindings = std::move(bindings.values);
+        stmt.arms.push_back(std::move(arm));
+        stmt.fallback_region = std::make_unique<CoreRegion>();
+        if (s.else_block) {
+            *stmt.fallback_region = lower_block(*s.else_block);
+        }
+        ex_.scope() = outer_scope;
+        ex_.seal_statement_arm(*stmt.fallback_region, range);
+        region.statements.push_back(CoreStmt{std::move(stmt), std::move(range)});
+        static_cast<void>(ok);
+    }
+
+    [[nodiscard]] CoreRegion lower_block_scoped(const Block &block, const ArmBindings &bindings) {
+        const auto outer = ex_.scope();
+        for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
+            ex_.scope()[bindings.names[i]] =
+                LocalBinding{bindings.values[i].value, bindings.value_types[i]};
+        }
+        CoreRegion region = lower_block(block);
+        ex_.scope() = outer;
+        return region;
+    }
+
+  private:
+    ExprLowerer<Policy> &ex_;
+    GotoLowerer lower_goto_;
+};
+
+/// Lowers one flow's handler bodies into ANF. Owns a `CoreFlowDecl` and composes
+/// an `ExprLowerer<FlowRootPolicy>` (which owns the per-flow expr / value / pattern
+/// arenas and the per-state local scope) for all expression/pattern/match work;
+/// this class adds only the flow's statement/region lowering on top and resolves
+/// `goto` targets against the agent's state index. Accumulates diagnostics.
+class FlowLowerer {
+  public:
+    FlowLowerer(CoreFlowDecl &flow, const CapabilityIndex &caps, const StateIndex &states,
+                const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
+                const ValueTypeInterner &interner, const std::vector<CoreValueType> &value_type_pool,
+                std::vector<CoreLowerDiagnostic> &diags,
+                const FnCallResolver *fn_calls = nullptr)
+        : ex_(CoreBodyStorageRef{flow.storage},
+              caps, types, FlowRootPolicy{input_type, context_type}, interner, value_type_pool,
+              diags, fn_calls),
+          body_(ex_,
+                [this](const GotoStatement &s, SourceRangeOpt range, CoreRegion &region) {
+                    lower_goto(s, range, region);
+                }),
+          flow_(flow), states_(states) {}
+
+    void lower_handler(const StateHandler &handler, CoreStateId state_id) {
+        CoreFlowState core_state;
+        core_state.state = state_id;
+        core_state.state_name = handler.state_name;
+        core_state.policy = lower_policy(handler.policy);
+        ex_.scope().clear();
+        core_state.body = lower_block(handler.body);
+        flow_.states.push_back(std::move(core_state));
+    }
+
+  private:
+    using LocalBinding = ExprLowerer<FlowRootPolicy>::LocalBinding;
+    using ArmBindings = ExprLowerer<FlowRootPolicy>::ArmBindings;
+
+    [[nodiscard]] CoreStatePolicy lower_policy(const std::vector<StatePolicyItem> &policy) {
+        CoreStatePolicy out;
+        for (const StatePolicyItem &item : policy) {
+            std::visit(Overloaded{
+                           [&](const RetryPolicy &r) { out.retry_limit = r.limit; },
+                           [&](const RetryOnPolicy &r) { out.retry_on = r.targets; },
+                           [&](const TimeoutPolicy &t) { out.timeout = t.duration; },
+                       },
+                       item);
+        }
+        return out;
+    }
+
+    // --- region / statement lowering is delegated to BodyRegionLowerer ---
+    [[nodiscard]] CoreRegion lower_block(const Block &block) {
+        return body_.lower_block(block);
     }
 
     void lower_goto(const GotoStatement &s, SourceRangeOpt range, CoreRegion &region) {
@@ -3482,70 +3721,10 @@ class FlowLowerer {
         region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
     }
 
-    void lower_return(const ReturnStatement &s, SourceRangeOpt range, CoreRegion &region) {
-        CoreReturnStmt node;
-        if (s.value.ptr != nullptr) {
-            node.has_value = true;
-            node.value = ex_.lower_value(s.value, region);
-        }
-        region.statements.push_back(CoreStmt{std::move(node), std::move(range)});
-    }
-
-    // Statement-position if-let: one pattern arm (yields nothing) with the
-    // then-block as body; the fallback is the else block (or a trap when absent —
-    // an if-let with no else and a refutable pattern is a non-total match).
-    void lower_if_let(const IfLetStatement &s, SourceRangeOpt range, CoreRegion &region) {
-        const CoreValueId scrutinee = ex_.lower_value(s.scrutinee, region);
-        CoreMatchStmt stmt;
-        stmt.scrutinee = scrutinee;
-        stmt.has_result = false;
-        bool ok = true;
-        // The single arm: pattern + then-block, yielding no value (statement match).
-        ArmBindings bindings;
-        ex_.collect_arm_bindings(s.pattern, bindings);
-        CoreMatchArm arm;
-        arm.pattern = ex_.lower_pattern(s.pattern, bindings, range, ok);
-        arm.body = std::make_unique<CoreRegion>();
-        // Both branches are lexically scoped from the SAME outer snapshot, exactly
-        // like lower_if: the then-branch sees the arm bindings (lower_block_scoped
-        // restores after), and the else-branch sees NEITHER the arm bindings nor
-        // the then-branch's locals. A branch-local `let` in either branch must not
-        // leak into the other branch or past the if-let (P0: the else previously
-        // used a bare lower_block with no restore, leaking its locals downstream).
-        const auto outer_scope = ex_.scope();
-        if (s.then_block) {
-            *arm.body = lower_block_scoped(*s.then_block, bindings);
-        }
-        ex_.scope() = outer_scope; // restore before the else branch
-        ex_.seal_statement_arm(*arm.body, range);
-        arm.bindings = std::move(bindings.values);
-        stmt.arms.push_back(std::move(arm));
-        // Fallback = else block, or a trap when the if-let has no else.
-        stmt.fallback_region = std::make_unique<CoreRegion>();
-        if (s.else_block) {
-            *stmt.fallback_region = lower_block(*s.else_block);
-        }
-        ex_.scope() = outer_scope; // restore after the if-let
-        ex_.seal_statement_arm(*stmt.fallback_region, range);
-        region.statements.push_back(CoreStmt{std::move(stmt), std::move(range)});
-        static_cast<void>(ok);
-    }
-
-    // Lower a block that begins in the CURRENT scope extended with the arm's
-    // pattern bindings (so `local`-rooted paths naming a binding resolve to its
-    // value id). Restores the scope afterwards.
-    [[nodiscard]] CoreRegion lower_block_scoped(const Block &block, const ArmBindings &bindings) {
-        const auto outer = ex_.scope();
-        for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
-            ex_.scope()[bindings.names[i]] =
-                LocalBinding{bindings.values[i].value, bindings.value_types[i]};
-        }
-        CoreRegion region = lower_block(block);
-        ex_.scope() = outer;
-        return region;
-    }
-
     ExprLowerer<FlowRootPolicy> ex_;
+    BodyRegionLowerer<FlowRootPolicy,
+                     std::function<void(const GotoStatement &, SourceRangeOpt, CoreRegion &)>>
+        body_;
     CoreFlowDecl &flow_;
     const StateIndex &states_;
 };
@@ -3568,10 +3747,11 @@ class WorkflowLowerer {
                     const std::unordered_map<std::string, CoreAgentId> &agent_by_name,
                     const ValueTypeInterner &interner,
                     const std::vector<CoreValueType> &value_type_pool,
-                    std::vector<CoreLowerDiagnostic> &diags)
+                    std::vector<CoreLowerDiagnostic> &diags,
+                    const FnCallResolver *fn_calls = nullptr)
         : wf_(wf), caps_(caps), types_(types), agents_(agents), agent_by_id_(agent_by_id),
           agent_by_name_(agent_by_name), interner_(interner), value_type_pool_(value_type_pool),
-          diags_(diags) {}
+          diags_(diags), fn_calls_(fn_calls) {}
 
     void lower(const WorkflowDecl &decl) {
         wf_.name = decl.name;
@@ -3657,7 +3837,7 @@ class WorkflowLowerer {
         ExprLowerer<WorkflowRootPolicy> ex(
             CoreBodyStorageRef{wf_.storage}, caps_,
             types_, WorkflowRootPolicy{wf_.input_type, &node_index_}, interner_, value_type_pool_,
-            diags_);
+            diags_, fn_calls_);
         const CoreValueId value = ex.lower_value(expr, region);
         region.statements.push_back(CoreStmt{CoreYieldStmt{true, value}, range});
     }
@@ -3692,6 +3872,58 @@ class WorkflowLowerer {
     // node name -> {typed id, target agent output type}. Built in Pass A, consumed
     // by Pass B's WorkflowRootPolicy to classify node-output path roots.
     std::unordered_map<std::string, WorkflowRootPolicy::NodeOutput> node_index_;
+    const FnCallResolver *fn_calls_{nullptr};
+};
+
+/// Lowers one monomorphized pure fn body into a CoreFnDecl
+/// (CORE-FNBODY-DESIGN §2.1/§2.3, RFC 0026 FB-1). The body owns a private SSA
+/// domain (its own CoreBodyStorage); the parameters are PRE-BOUND into it with
+/// their concrete substituted types (the dense value_types table follows the
+/// same P4-B rule as flow/workflow bodies). The body completes via return; goto
+/// is impossible inside a fn (the region lowerer's goto callback fail-closes).
+class FnBodyLowerer {
+  public:
+    FnBodyLowerer(CoreFnDecl &fn, const FnDecl &source, const CapabilityIndex &caps,
+                  const TypeEnv &types, const ValueTypeInterner &interner,
+                  const std::vector<CoreValueType> &value_type_pool,
+                  const FnCallResolver &fn_calls,
+                  std::vector<CoreLowerDiagnostic> &diags)
+        : ex_(CoreBodyStorageRef{fn.storage}, caps, types, FnRootPolicy{}, interner,
+              value_type_pool, diags, &fn_calls),
+          body_(ex_,
+                [this](const GotoStatement &, SourceRangeOpt range, CoreRegion &) {
+                    ex_.error(diag::kFnBodyUnlowered,
+                              "a goto statement is illegal inside a fn body", range);
+                }),
+          fn_(fn), source_(source) {}
+
+    void lower() {
+        if (!source_.has_body || source_.body == nullptr) {
+            ex_.error(diag::kFnBodyUnlowered,
+                      "fn '" + source_.name + "' instance has no body to lower",
+                      source_.provenance.source_range);
+            return;
+        }
+        // Pre-bind the parameters in declaration order (design §2.3).
+        fn_.params.reserve(source_.params.size());
+        for (const ParamDecl &param : source_.params) {
+            const CoreValueTypeId ty =
+                ex_.intern_value_type(param.type_ref, param.source_range);
+            const CoreValueId value = ex_.fresh_value(ty);
+            fn_.params.push_back(value);
+            ex_.scope()[param.name] =
+                ExprLowerer<FnRootPolicy>::LocalBinding{value, ty};
+        }
+        fn_.body = body_.lower_block(*source_.body);
+    }
+
+  private:
+    ExprLowerer<FnRootPolicy> ex_;
+    BodyRegionLowerer<FnRootPolicy,
+                     std::function<void(const GotoStatement &, SourceRangeOpt, CoreRegion &)>>
+        body_;
+    CoreFnDecl &fn_;
+    const FnDecl &source_;
 };
 
 } // namespace
@@ -3793,9 +4025,239 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         }
     }
 
+    // Index every has_body FnDecl by origin symbol (id + canonical). Used by
+    // the CORE-FNBODY-DESIGN §2.1 guarantee pass: for each body-bearing fn the
+    // Fn-instance table gets EXACTLY one Fn-kind instance (a non-generic fn is
+    // guaranteed its canonical empty-type-args instance), and the body table
+    // gets one CoreFnDecl. Bodyless @builtin facades / prototypes are absent.
+    struct BodyFn {
+        const FnDecl *decl;
+        bool body_lowered{false};
+    };
+    // Index every has_body FnDecl. The canonical declaration is indexed by
+    // origin symbol (id + canonical); every FnDecl (canonical AND P2d-mangled
+    // concrete instantiations) is indexed by its own `name` so an InstanceDecl
+    // resolves to the EXACT concrete body — never to the generic TypeVar body.
+    std::unordered_multimap<std::size_t, std::size_t> body_fn_by_id;
+    std::unordered_multimap<std::string, std::size_t> body_fn_by_name;
+    std::unordered_map<std::string, std::size_t> body_fn_by_key;
+    std::vector<BodyFn> body_fns;
+    for (const Decl &decl : ahfl_ir.declarations) {
+        const auto *fn = std::get_if<FnDecl>(&decl);
+        if (fn == nullptr || !fn->has_body) {
+            continue;
+        }
+        const std::size_t idx = body_fns.size();
+        body_fns.push_back(BodyFn{fn});
+        body_fn_by_key.emplace(fn->name, idx);
+        // Only the ORIGINAL (non-mangled) declaration carries the symbol index;
+        // a mangled concrete instantiation's name is its instance key.
+        if (fn->name.rfind("_inst_", 0) != 0) {
+            if (fn->symbol_ref.id.has_value()) {
+                body_fn_by_id.emplace(*fn->symbol_ref.id, idx);
+            }
+            if (!fn->symbol_ref.canonical_name.empty()) {
+                body_fn_by_name.emplace(fn->symbol_ref.canonical_name, idx);
+            }
+        }
+    }
+
+    // Pass 1.5 (CORE-FNBODY-DESIGN §2.1): fn-instance guarantee + fn table.
+    //
+    //  * Consume every AHFL-IR Fn-kind InstanceDecl (produced by the typed
+    //    lowerer's emit_instantiated_declarations) into CoreProgram.instances,
+    //    in AHFL declaration order, exactly like Pass 6 does for the other
+    //    kinds. The fn-instance set therefore stays the monomorphization
+    //    registration unit.
+    //  * GUARANTEE exactly one Fn-kind instance per has_body FnDecl. Non-generic
+    //    has_body fns never receive an InstanceDecl from the frontend, so this
+    //    pass synthesizes their canonical EMPTY type-args instance with a
+    //    mangle_instance-empty-form key (the same rule the typed lowerer uses
+    //    for the empty-args shape, never re-derived ad hoc).
+    //  * Build CoreProgram.fns 1:1 with the body-bearing Fn instances and lower
+    //    every body through the third body owner (FnRootPolicy), then publish
+    //    the FnCallResolver flow/workflow bodies use to resolve direct calls.
+    //
+    // Generic fn bodies in the AHFL-IR carry substituted concrete types ONLY
+    // when the P2d typed-body clone ran; the production pipeline runs it before
+    // this lowerer, so a generic fn instance's FnDecl body here is already
+    // concrete. (A TypeVar-shaped generic body cannot exist in a well-formed
+    // input; the verifier rejects its Any parameter types if it ever does.)
+    FnCallResolver fn_call_resolver;
+    {
+        // The FnKind InstanceDecls must land in `core.instances` BEFORE the
+        // non-Fn kinds (Pass 6 appends those), preserving AHFL declaration order
+        // as much as possible while keeping the resolver usable by Pass 2.
+        struct GuaranteedFn {
+            const FnDecl *source;
+            std::string key;
+            ir::SymbolRef origin;
+            std::vector<CoreValueTypeId> dispatch_types;
+            bool from_ir_instance{false};
+            const InstanceDecl *ir_instance{nullptr};
+        };
+        std::vector<GuaranteedFn> guaranteed;
+        std::unordered_map<std::string, std::size_t> guaranteed_by_key;
+
+        // 1) Fn-kind InstanceDecls emitted by the typed lowerer.
+        for (const Decl &decl : ahfl_ir.declarations) {
+            const auto *inst = std::get_if<InstanceDecl>(&decl);
+            if (inst == nullptr || inst->kind != InstanceKind::Fn) {
+                continue;
+            }
+            GuaranteedFn g;
+            g.key = inst->name;
+            g.origin = inst->symbol_ref;
+            g.from_ir_instance = true;
+            g.ir_instance = inst;
+            g.dispatch_types.reserve(inst->type_args.size());
+            for (const TypeRef &t : inst->type_args) {
+                std::string reason;
+                const auto vt = shared_arena.lower(t, &reason);
+                if (!vt) {
+                    result.diagnostics.push_back(CoreLowerDiagnostic{
+                        CoreDiagnosticSeverity::Error, std::string(diag::kUnresolvedType),
+                        "fn instance '" + inst->name +
+                            "' has a non-materializable dispatch type: " + reason,
+                        inst->provenance.source_range});
+                    g.dispatch_types.push_back(CoreValueTypeId{});
+                    continue;
+                }
+                g.dispatch_types.push_back(*vt);
+            }
+            // Locate its body FnDecl. Identity resolution order (design §4):
+            //   1. exact instance_key match against a P2d concrete FnDecl;
+            //   2. symbol id (the canonical declaration for a non-generic fn);
+            //   3. canonical name.
+            const FnDecl *source = nullptr;
+            if (auto it = body_fn_by_key.find(inst->name); it != body_fn_by_key.end()) {
+                source = body_fns[it->second].decl;
+            }
+            if (source == nullptr && inst->symbol_ref.id.has_value()) {
+                if (auto it = body_fn_by_id.find(*inst->symbol_ref.id);
+                    it != body_fn_by_id.end()) {
+                    source = body_fns[it->second].decl;
+                }
+            }
+            if (source == nullptr && !inst->symbol_ref.canonical_name.empty()) {
+                if (auto it = body_fn_by_name.find(inst->symbol_ref.canonical_name);
+                    it != body_fn_by_name.end()) {
+                    source = body_fns[it->second].decl;
+                }
+            }
+            g.source = source;
+            guaranteed_by_key.emplace(g.key, guaranteed.size());
+            guaranteed.push_back(std::move(g));
+        }
+
+        // 2) Guarantee a canonical empty-type-args instance for every has_body
+        //    fn without one. The empty-type-args mangle key is produced through
+        //    the shared mangle SSOT (SymbolId 0 / canonical name resolver), so
+        //    it is byte-identical to the shape emit_instantiated_declarations
+        //    would have produced.
+        for (const BodyFn &bf : body_fns) {
+            const FnDecl &fn = *bf.decl;
+            // A P2d-mangled concrete instantiation is already emitted as its own
+            // FnKind InstanceDecl (step 1) and is NOT a canonical declaration to
+            // guarantee — skip it.
+            if (fn.name.rfind("_inst_", 0) == 0) {
+                continue;
+            }
+            // A generic DECLARATION (type params present) is not guaranteed an
+            // empty-args instance: its body is TypeVar-shaped and only its
+            // concrete instantiations (step 1) are callable.
+            if (!fn.type_param_names.empty()) {
+                continue;
+            }
+            // Precise check: present iff an existing guarantee with the same
+            // symbol id (or canonical) AND empty dispatch types exists.
+            bool present = std::any_of(guaranteed.begin(), guaranteed.end(),
+                                  [&](const GuaranteedFn &g) {
+                                      const bool same_id =
+                                          fn.symbol_ref.id.has_value() &&
+                                          g.origin.id.has_value() &&
+                                          *g.origin.id == *fn.symbol_ref.id &&
+                                          g.dispatch_types.empty();
+                                      const bool same_name =
+                                          !fn.symbol_ref.canonical_name.empty() &&
+                                          g.origin.canonical_name ==
+                                              fn.symbol_ref.canonical_name &&
+                                          g.dispatch_types.empty();
+                                      return same_id || same_name;
+                                  });
+            if (present) {
+                continue;
+            }
+            GuaranteedFn g;
+            g.source = &fn;
+            g.origin = fn.symbol_ref;
+            const std::uint64_t symbol_id =
+                fn.symbol_ref.id.has_value() ? *fn.symbol_ref.id : 0ULL;
+            const ahfl::mangle::SymbolCanonicalNameFn mangle_resolver =
+                [&fn](ahfl::SymbolId) -> std::optional<std::string> {
+                return fn.symbol_ref.canonical_name;
+            };
+            g.key = ahfl::mangle::mangle_instance(
+                ahfl::SymbolId{static_cast<std::uint32_t>(symbol_id)},
+                std::span<const ahfl::TypePtr>{}, mangle_resolver);
+            guaranteed_by_key.emplace(g.key, guaranteed.size());
+            guaranteed.push_back(std::move(g));
+        }
+
+        // 3) Emit Core Fn instances + CoreFnDecl bodies in `guaranteed` order.
+        std::unordered_map<std::string, std::uint32_t> fn_decl_by_instance_key;
+        for (GuaranteedFn &g : guaranteed) {
+            const CoreInstanceId instance_id{
+                static_cast<std::uint32_t>(core.instances.size())};
+            CoreInstanceDecl out;
+            out.id = instance_id;
+            out.instance_key = g.key;
+            out.origin = g.origin;
+            out.dispatch_types = g.dispatch_types;
+            const bool has_body = g.source != nullptr;
+            CoreFnId fn_id{CoreFnId::kInvalid};
+            if (has_body) {
+                fn_id = CoreFnId{static_cast<std::uint32_t>(core.fns.size())};
+            }
+            out.payload = CoreFnInstance{fn_id};
+            core.instances.push_back(std::move(out));
+            if (!has_body) {
+                // A registered generic instance whose body source was not in
+                // this compilation unit (e.g. stdlib facade omitted when
+                // include_stdlib=false): no direct call, stays on intrinsic /
+                // fail-closed path.
+                continue;
+            }
+            CoreFnDecl fn_decl;
+            fn_decl.id = fn_id;
+            fn_decl.instance = instance_id;
+            fn_decl.origin = g.origin;
+            fn_decl.name = g.key;
+            fn_decl.source_range = g.source->provenance.source_range;
+            // Body-lowering must be visible to the resolver BEFORE nested calls
+            // in the same body are lowered, so register the resolution first and
+            // lower after publishing. (Bodies are non-recursive in FB-1, but the
+            // resolver entry existing is what resolves the nested symbol.)
+            FnCallResolver::Entry entry;
+            entry.resolution.instance = instance_id;
+            entry.resolution.has_body = true;
+            entry.resolution.effect = g.source->effect.kind;
+            fn_call_resolver.add(g.key,
+                                 g.origin.id,
+                                 g.origin.canonical_name,
+                                 entry);
+            FnBodyLowerer lowerer(fn_decl, *g.source, cap_index, types, intern_value_type,
+                                  core.value_types, fn_call_resolver, result.diagnostics);
+            lowerer.lower();
+            core.fns.push_back(std::move(fn_decl));
+            fn_decl_by_instance_key.emplace(g.key, fn_id.value);
+        }
+    }
+
     // Pass 2: flows. Resolve each flow's target agent BY IDENTITY; a missing
     // target or an unknown handler state is a fail-closed Error (never a
-    // silent fallback to state 0).
+    // silent fallback to state 0). The FnCallResolver is built BEFORE this loop
+    // (Pass 1.5) so a handler's free `fn` call lowers to a direct CoreCallExpr.
     for (const Decl &decl : ahfl_ir.declarations) {
         const auto *flow = std::get_if<FlowDecl>(&decl);
         if (flow == nullptr) {
@@ -3838,7 +4300,7 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         // `input.` / `ctx.` get typed CoreFieldIds without re-querying AHFL-IR.
         FlowLowerer lowerer(core_flow, cap_index, state_index, types, target_agent.input_type,
                             target_agent.context_type, intern_value_type, core.value_types,
-                            result.diagnostics);
+                            result.diagnostics, &fn_call_resolver);
         for (const StateHandler &handler : flow->state_handlers) {
             const auto state_id = state_index.lookup(handler.state_name);
             if (!state_id) {
@@ -3869,7 +4331,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         CoreWorkflowDecl core_wf;
         core_wf.id = CoreWorkflowId{static_cast<std::uint32_t>(core.workflows.size())};
         WorkflowLowerer lowerer(core_wf, cap_index, types, core.agents, agent_by_id, agent_by_name,
-                                intern_value_type, core.value_types, result.diagnostics);
+                                intern_value_type, core.value_types, result.diagnostics,
+                                &fn_call_resolver);
         lowerer.lower(*wf);
         core.workflows.push_back(std::move(core_wf));
     }
@@ -3888,16 +4351,18 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         }
     }
 
-    // Pass 6: instances. Consume every AHFL-IR InstanceDecl into the flat
-    // CoreProgram.instances table (index == CoreInstanceId, in AHFL declaration
-    // order). The mangled `name` is used VERBATIM as instance_key (never
-    // re-mangled). kind becomes a structural payload variant; Capability / Agent /
-    // Workflow payloads resolve their base BY SYMBOL IDENTITY (no id-0 fallback).
-    // A duplicate instance_key is fail-closed (never a silent dedup). NOTE: the
-    // budgeted authoritative monomorphization closure (run_monomorphization) is
-    // NOT yet wired to this SSOT — we consume emit_instantiated_declarations'
-    // InstanceDecls; unifying the two is a later slice.
+    // Pass 6: non-Fn instances. Consume every AHFL-IR non-Fn InstanceDecl into
+    // the flat CoreProgram.instances table (index == CoreInstanceId, in AHFL
+    // declaration order). Fn-kind InstanceDecls were ALREADY consumed in
+    // Pass 1.5 (the fn-instance guarantee + fn table), so they are skipped here
+    // to keep the 1:1 Fn <-> body link in one place. The mangled `name` is used
+    // VERBATIM as instance_key (never re-mangled). Capability / Agent / Workflow
+    // payloads resolve their base BY SYMBOL IDENTITY (no id-0 fallback). A
+    // duplicate instance_key is fail-closed (never a silent dedup).
     std::unordered_set<std::string> seen_instance_keys;
+    for (const CoreInstanceDecl &existing : core.instances) {
+        seen_instance_keys.insert(existing.instance_key);
+    }
     // Interns each instance's concrete dispatch type into the program's logical
     // value-type arena (RFC 0026 P4), REUSING the one long-lived `shared_arena`
     // hoisted before Pass 2 — so body values and dispatch descriptors intern into
@@ -3907,8 +4372,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     // canonical fallback and fail-closed id/canonical drift — no path drift.
     for (const Decl &decl : ahfl_ir.declarations) {
         const auto *inst = std::get_if<InstanceDecl>(&decl);
-        if (inst == nullptr) {
-            continue;
+        if (inst == nullptr || inst->kind == InstanceKind::Fn) {
+            continue; // Fn instances were consumed + guaranteed in Pass 1.5
         }
         const CoreInstanceId id{static_cast<std::uint32_t>(core.instances.size())};
         CoreInstanceDecl out;

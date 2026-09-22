@@ -2696,3 +2696,295 @@ TEST_CASE("P6-5 verifier: a bounded List nominal with empty args is fail-closed"
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kCollectionOpInvalid));
 }
+
+// ===========================================================================
+// RFC 0026 FB-1 (CORE-FNBODY-DESIGN): outlined fn-body verifier battery.
+//
+// A hand-built minimal program: one program-global Int value type, one
+// Fn-kind instance, and one fn body `fn g0(x0: Int) -> Int { return x0; }`.
+// Each test tampers exactly one FB-1 invariant and asserts the stable code.
+// ===========================================================================
+
+namespace {
+
+struct FnProgram {
+    CoreProgram program;
+    CoreValueTypeId vt_int{};
+    CoreValueTypeId vt_bool{};
+};
+
+// One fn with one Int param returning it verbatim.
+[[nodiscard]] CoreFnDecl make_identity_fn(CoreValueTypeId int_vt,
+                                          std::uint32_t instance = 0) {
+    CoreFnDecl fn;
+    fn.id = CoreFnId{0};
+    fn.instance = CoreInstanceId{instance};
+    fn.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 600};
+    fn.params = {CoreValueId{0}};
+    fn.storage.value_count = 1;
+    fn.storage.value_types = {int_vt};
+    // expr 0: value_ref of the pre-bound param
+    fn.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, int_vt});
+    fn.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    fn.name = "_inst_g0";
+    return fn;
+}
+
+[[nodiscard]] FnProgram make_good_fn_program() {
+    FnProgram f;
+    CoreProgram &p = f.program;
+    f.vt_int = intern_program_vt(p, CoreValueType{CoreVtInt{}});
+    f.vt_bool = intern_program_vt(p, CoreValueType{CoreVtBool{}});
+
+    CoreInstanceDecl inst;
+    inst.id = CoreInstanceId{0};
+    inst.instance_key = "_inst_g0";
+    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 600};
+    inst.payload = CoreFnInstance{CoreFnId{0}};
+    p.instances.push_back(std::move(inst));
+
+    p.fns.push_back(make_identity_fn(f.vt_int));
+    return f;
+}
+
+// Append a call-expr to a fn body's arena without binding it (the arena walker
+// scans every expr, bound or not). Returns nothing; mutates in place.
+void append_orphan_call(CoreFnDecl &fn, CoreInstanceId callee,
+                        std::vector<CoreValueId> args, CoreValueTypeId result_vt) {
+    fn.storage.exprs.push_back(
+        CoreExpr{CoreCallExpr{callee, std::move(args)}, std::nullopt, result_vt});
+}
+
+} // namespace
+
+TEST_CASE("FB-1 verifier: a minimal outlined pure fn body verifies clean") {
+    FnProgram f = make_good_fn_program();
+    const auto result = verify_core_program(f.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("FB-1 verifier: an fn whose id disagrees with its table index fails") {
+    FnProgram f = make_good_fn_program();
+    f.program.fns[0].id = CoreFnId{7};
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnInstanceLinkInvalid));
+}
+
+TEST_CASE("FB-1 verifier: an fn linking an out-of-range instance fails") {
+    FnProgram f = make_good_fn_program();
+    f.program.fns[0].instance = CoreInstanceId{99};
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnInstanceLinkInvalid));
+}
+
+TEST_CASE("FB-1 verifier: an fn linking a non-Fn instance fails") {
+    FnProgram f = make_good_fn_program();
+    // Replace the sole Fn instance with a predicate instance, keep the fn.
+    CoreInstanceDecl pred;
+    pred.id = CoreInstanceId{0};
+    pred.instance_key = "pred";
+    pred.origin = ir::SymbolRef{ir::SymbolRefKind::Predicate, "P", "P", "", 601};
+    pred.payload = CorePredicateInstance{};
+    f.program.instances[0] = std::move(pred);
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnInstanceLinkInvalid));
+}
+
+TEST_CASE("FB-1 verifier: a pre-bound param value out of range fails (FN_SIGNATURE_ARITY)") {
+    FnProgram f = make_good_fn_program();
+    f.program.fns[0].params = {CoreValueId{42}};
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnSignatureArity));
+}
+
+TEST_CASE("FB-1 verifier: one SSA value bound to two params fails") {
+    FnProgram f = make_good_fn_program();
+    f.program.fns[0].params = {CoreValueId{0}, CoreValueId{0}};
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnSignatureArity));
+}
+
+TEST_CASE("FB-1 verifier: an fn body that falls through without return fails") {
+    FnProgram f = make_good_fn_program();
+    f.program.fns[0].body.statements.clear();
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnBodyTermination));
+}
+
+TEST_CASE("FB-1 verifier: a goto inside an fn body fails") {
+    FnProgram f = make_good_fn_program();
+    f.program.fns[0].body.statements.clear();
+    f.program.fns[0].body.statements.push_back(
+        CoreStmt{CoreGotoStmt{CoreStateId{0}, "Done"}, std::nullopt});
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnBodyTermination));
+}
+
+TEST_CASE("FB-1 verifier: an unresolved (out-of-range) direct callee fails") {
+    FnProgram f = make_good_fn_program();
+    append_orphan_call(f.program.fns[0], CoreInstanceId{9999},
+                       {CoreValueId{0}}, f.vt_int);
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallCalleeInvalid));
+}
+
+TEST_CASE("FB-1 verifier: a direct call to a bodyless fn instance fails") {
+    FnProgram f = make_good_fn_program();
+    // Instance 1: Fn kind with kInvalid body (imported facade).
+    CoreInstanceDecl bodyless;
+    bodyless.id = CoreInstanceId{1};
+    bodyless.instance_key = "_inst_external";
+    bodyless.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "ext", "ext", "", 602};
+    bodyless.payload = CoreFnInstance{CoreFnId{CoreFnId::kInvalid}};
+    f.program.instances.push_back(std::move(bodyless));
+    append_orphan_call(f.program.fns[0], CoreInstanceId{1},
+                       {CoreValueId{0}}, f.vt_int);
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallCalleeInvalid));
+}
+
+TEST_CASE("FB-1 verifier: direct-call arity mismatch fails") {
+    FnProgram f = make_good_fn_program();
+    // g0 takes 1 param; pass two args.
+    append_orphan_call(f.program.fns[0], CoreInstanceId{0},
+                       {CoreValueId{0}, CoreValueId{0}}, f.vt_int);
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallArityMismatch));
+}
+
+TEST_CASE("FB-1 verifier: direct-call argument type mismatch fails") {
+    FnProgram f = make_good_fn_program();
+    // A second fn g1(b: Bool) -> Bool whose body calls g0(b): Bool vs Int.
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_g1";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g1", "g1", "", 603};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    f.program.instances.push_back(std::move(inst1));
+
+    CoreFnDecl g1;
+    g1.id = CoreFnId{1};
+    g1.instance = CoreInstanceId{1};
+    g1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g1", "g1", "", 603};
+    g1.params = {CoreValueId{0}};
+    g1.name = "_inst_g1";
+    g1.storage.value_count = 1;
+    g1.storage.value_types = {f.vt_bool};
+    g1.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, f.vt_bool});
+    // The illegal call: pass the Bool param to the Int callee.
+    g1.storage.exprs.push_back(CoreExpr{
+        CoreCallExpr{CoreInstanceId{0}, {CoreValueId{0}}}, std::nullopt, f.vt_int});
+    g1.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    f.program.fns.push_back(std::move(g1));
+
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallArgumentTypeMismatch));
+}
+
+TEST_CASE("FB-1 verifier: direct-call result type mismatch fails") {
+    FnProgram f = make_good_fn_program();
+    // g0 returns Int; record the call's result as Bool.
+    append_orphan_call(f.program.fns[0], CoreInstanceId{0},
+                       {CoreValueId{0}}, f.vt_bool);
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallResultTypeMismatch));
+}
+
+TEST_CASE("FB-1 verifier: a self call (recursion) is rejected until FB-2") {
+    FnProgram f = make_good_fn_program();
+    append_orphan_call(f.program.fns[0], CoreInstanceId{0},
+                       {CoreValueId{0}}, f.vt_int);
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursion));
+}
+
+TEST_CASE("FB-1 verifier: a mutual recursion cycle is rejected") {
+    FnProgram f = make_good_fn_program();
+    // g0 (fn 0 / instance 0) gains a call to the g1 instance added below; g1
+    // calls g0 -> cycle.
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_g1";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g1", "g1", "", 604};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    f.program.instances.push_back(std::move(inst1));
+
+    append_orphan_call(f.program.fns[0], CoreInstanceId{1},
+                       {CoreValueId{0}}, f.vt_int);
+
+    CoreFnDecl g1 = make_identity_fn(f.vt_int, /*instance=*/1);
+    g1.id = CoreFnId{1};
+    g1.name = "_inst_g1";
+    append_orphan_call(g1, CoreInstanceId{0}, {CoreValueId{0}}, f.vt_int);
+    f.program.fns.push_back(std::move(g1));
+
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursion));
+}
+
+TEST_CASE("FB-1 verifier: a direct call to an effectful callee fails") {
+    FnProgram f = make_good_fn_program();
+    // Capability C(Int) -> Int.
+    CoreCapabilityDecl cap;
+    cap.name = "C";
+    cap.symbol_ref = ir::SymbolRef{ir::SymbolRefKind::Capability, "C", "C", "", 610};
+    cap.param_types = {f.vt_int};
+    cap.return_type = f.vt_int;
+    f.program.capabilities.push_back(std::move(cap));
+
+    // Instance 1 / fn 1: body invokes C, so it is an effectful callee.
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_eff";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "eff", "eff", "", 611};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    f.program.instances.push_back(std::move(inst1));
+
+    CoreFnDecl eff;
+    eff.id = CoreFnId{1};
+    eff.instance = CoreInstanceId{1};
+    eff.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "eff", "eff", "", 611};
+    eff.params = {CoreValueId{0}};
+    eff.name = "_inst_eff";
+    eff.storage.value_count = 2;
+    eff.storage.value_types = {f.vt_int, f.vt_int};
+    eff.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, f.vt_int});
+    eff.body.statements.push_back(CoreStmt{
+        CoreCapabilityCallStmt{CoreValueId{1}, CoreCapabilityId{0}, "C",
+                               {CoreValueId{0}}},
+        std::nullopt});
+    eff.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    f.program.fns.push_back(std::move(eff));
+
+    // g0 calls the effectful fn.
+    append_orphan_call(f.program.fns[0], CoreInstanceId{1},
+                       {CoreValueId{0}}, f.vt_int);
+
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallEffectfulCallee));
+}

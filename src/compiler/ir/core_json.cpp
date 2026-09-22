@@ -647,6 +647,7 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
             field("flows", [&]() { print_flows(program.flows, 1); });
             field("workflows", [&]() { print_workflows(program.workflows, 1); });
             field("instances", [&]() { print_instances(program.instances, 1); });
+            field("fns", [&]() { print_fns(program.fns, 1); });
         });
         out() << '\n';
     }
@@ -1258,6 +1259,48 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                     }
                 });
             });
+        });
+    }
+
+    // RFC 0026 FB-1: outlined fn bodies. The wire field layout keeps each
+    // CoreBodyStorage's five arenas inline (one object per fn, same rule as
+    // flow/workflow), plus the 1:1 instance link, pre-bound params, body
+    // region, and display name.
+    void print_fns(const std::vector<CoreFnDecl> &fns, int indent_level) {
+        print_array(indent_level, [&](const auto &item) {
+            for (const auto &fn : fns) {
+                item([&]() { print_fn(fn, indent_level + 1); });
+            }
+        });
+    }
+
+    void print_fn(const CoreFnDecl &fn, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("id", [&]() { write_required_id(fn.id, "fn.id"); });
+            field("instance", [&]() { write_required_id(fn.instance, "fn.instance"); });
+            field("origin", [&]() { write_symbol_ref(fn.origin, indent_level + 1); });
+            field("params", [&]() {
+                print_array(indent_level + 1, [&](const auto &p) {
+                    for (const CoreValueId id : fn.params) {
+                        p([&]() { write_index(id.value); });
+                    }
+                });
+            });
+            field("value_count", [&]() { write_u32(fn.storage.value_count); });
+            field("exprs", [&]() { print_exprs(fn.storage.exprs, indent_level + 1); });
+            field("value_types", [&]() {
+                print_array(indent_level + 1, [&](const auto &vt_item) {
+                    for (const auto &vt : fn.storage.value_types) {
+                        vt_item([&]() { write_index(vt.value); });
+                    }
+                });
+            });
+            field("coercion_plans",
+                  [&]() { print_coercion_plans(fn.storage.coercion_plans, indent_level + 1); });
+            field("patterns", [&]() { print_patterns(fn.storage.patterns, indent_level + 1); });
+            field("body", [&]() { print_region(fn.body, indent_level + 1); });
+            field("name", [&]() { write_string(fn.name); });
+            write_source_range_field(field, fn.source_range, indent_level + 1);
         });
     }
 
@@ -2208,6 +2251,7 @@ class CoreJsonReader final {
     [[nodiscard]] bool read_flows(const JsonValue &array, CoreProgram &program);
     [[nodiscard]] bool read_workflows(const JsonValue &array, CoreProgram &program);
     [[nodiscard]] bool read_instances(const JsonValue &array, CoreProgram &program);
+    [[nodiscard]] bool read_fns(const JsonValue &array, CoreProgram &program);
 
     // --- body readers ------------------------------------------------------
 
@@ -2317,7 +2361,7 @@ bool CoreJsonReader::read(CoreProgram &program) {
 bool CoreJsonReader::read_envelope_fields(const JsonValue &obj, CoreProgram &program) {
     if (!check_fields(obj,
                       {"format_version", "layer", "types", "value_types", "capabilities",
-                       "agents", "flows", "workflows", "instances"},
+                       "agents", "flows", "workflows", "instances", "fns"},
                       "core envelope")) {
         return false;
     }
@@ -2384,13 +2428,16 @@ bool CoreJsonReader::read_envelope_fields(const JsonValue &obj, CoreProgram &pro
     const auto *flows_array = require_array("flows");
     const auto *workflows_array = require_array("workflows");
     const auto *instances_array = require_array("instances");
+    const auto *fns_array = require_array("fns");
     if (capabilities_array == nullptr || agents_array == nullptr || flows_array == nullptr ||
-        workflows_array == nullptr || instances_array == nullptr) {
+        workflows_array == nullptr || instances_array == nullptr || fns_array == nullptr) {
         return false;
     }
     if (!read_capabilities(*capabilities_array, program) || !read_agents(*agents_array, program) ||
         !read_flows(*flows_array, program) || !read_workflows(*workflows_array, program) ||
-        !read_instances(*instances_array, program)) {
+        !read_instances(*instances_array, program) || !read_fns(*fns_array, program)) {
+        // `fns` is read last: it needs the instances table to rebuild the
+        // derived CoreFnInstance::body back-links.
         return false;
     }
     if (!ok()) {
@@ -3680,6 +3727,135 @@ bool CoreJsonReader::read_instances(const JsonValue &array, CoreProgram &program
             return false;
         }
         program.instances.push_back(std::move(decl));
+    }
+    return ok();
+}
+
+// RFC 0026 FB-1: outlined fn bodies. `fns` is read AFTER `instances`: each fn
+// is linked 1:1 to an Fn-kind instance, and reading the instances first lets us
+// reconstruct the payload's derived `CoreFnInstance::body` back-link rather
+// than trusting a serialized one (Principle 2: the fn table position IS the
+// body identity). The verifier (run after the whole document is assembled)
+// supplies every remaining link/SSA/signature gate.
+bool CoreJsonReader::read_fns(const JsonValue &array, CoreProgram &program) {
+    program.fns.clear();
+    program.fns.reserve(array.array_items.size());
+    for (const auto &item : array.array_items) {
+        if (!item->is_object()) {
+            error(std::string(kWrongType), "a fn must be an object", node_range(*item));
+            return false;
+        }
+        if (!check_fields(*item,
+                          {"id", "instance", "origin", "params", "value_count", "exprs",
+                           "value_types", "coercion_plans", "patterns", "body", "name",
+                           "source_range"},
+                          "fn declaration")) {
+            return false;
+        }
+        CoreFnDecl decl;
+        const auto id = req_u32(*item, "id");
+        if (!id.has_value()) {
+            return false;
+        }
+        decl.id = CoreFnId{*id};
+        const auto instance = req_u32(*item, "instance");
+        if (!instance.has_value()) {
+            return false;
+        }
+        decl.instance = CoreInstanceId{*instance};
+        const auto *origin = item->get("origin");
+        if (origin == nullptr) {
+            error(std::string(kMissingField), "fn is missing 'origin'", node_range(*item));
+            return false;
+        }
+        const auto ref = read_symbol_ref(*origin);
+        if (!ref.has_value()) {
+            return false;
+        }
+        decl.origin = *ref;
+        const auto params = req_u32_array(*item, "params");
+        if (!params.has_value()) {
+            return false;
+        }
+        decl.params.reserve(params->size());
+        for (const std::uint32_t param : *params) {
+            decl.params.push_back(CoreValueId{param});
+        }
+        const auto value_count = req_u32(*item, "value_count");
+        if (!value_count.has_value()) {
+            return false;
+        }
+        decl.storage.value_count = *value_count;
+        const auto *exprs = item->get("exprs");
+        if (exprs == nullptr || !exprs->is_array()) {
+            error(std::string(kMissingField), "fn needs an array 'exprs'", node_range(*item));
+            return false;
+        }
+        if (!read_exprs(*exprs, decl.storage.exprs)) {
+            return false;
+        }
+        const auto value_types = map_value_type_id_array(*item, "value_types");
+        if (!value_types.has_value()) {
+            return false;
+        }
+        decl.storage.value_types = *value_types;
+        // §5 — the fn body's value_types table is DENSE (size == value_count),
+        // same rule as a flow/workflow body.
+        if (decl.storage.value_types.size() != decl.storage.value_count) {
+            error(std::string(kValueCountMismatch),
+                  "fn value_types size " + std::to_string(decl.storage.value_types.size()) +
+                      " disagrees with value_count " + std::to_string(decl.storage.value_count),
+                  node_range(*item));
+            return false;
+        }
+        const auto *plans = item->get("coercion_plans");
+        if (plans == nullptr || !plans->is_array()) {
+            error(std::string(kMissingField), "fn needs an array 'coercion_plans'",
+                  node_range(*item));
+            return false;
+        }
+        if (!read_coercion_plans(*plans, decl.storage.coercion_plans)) {
+            return false;
+        }
+        const auto *patterns = item->get("patterns");
+        if (patterns == nullptr || !patterns->is_array()) {
+            error(std::string(kMissingField), "fn needs an array 'patterns'", node_range(*item));
+            return false;
+        }
+        if (!read_patterns(*patterns, decl.storage.patterns)) {
+            return false;
+        }
+        const auto *body = item->get("body");
+        if (body == nullptr) {
+            error(std::string(kMissingField), "fn is missing 'body'", node_range(*item));
+            return false;
+        }
+        if (!read_region(*body, decl.body, /*depth=*/0)) {
+            return false;
+        }
+        const auto name = req_string(*item, "name");
+        if (!name.has_value()) {
+            return false;
+        }
+        decl.name = *name;
+        const auto range = opt_source_range(*item, "source_range");
+        if (!range.has_value()) {
+            return false;
+        }
+        decl.source_range = *range;
+        program.fns.push_back(std::move(decl));
+    }
+    // Rebuild each Fn instance's derived body back-link from the fn table.
+    for (std::uint32_t fi = 0; fi < program.fns.size(); ++fi) {
+        const CoreFnDecl &fn = program.fns[fi];
+        if (fn.instance.value >= program.instances.size()) {
+            // Range is reported by the verifier with the fn's own source range.
+            continue;
+        }
+        auto *payload = std::get_if<CoreFnInstance>(&program.instances[fn.instance.value].payload);
+        if (payload != nullptr) {
+            payload->body = CoreFnId{fi};
+        }
     }
     return ok();
 }

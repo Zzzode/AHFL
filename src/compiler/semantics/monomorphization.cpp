@@ -441,9 +441,12 @@ std::uint32_t clone_stmt(CloneContext &ctx, std::uint32_t old_idx) {
         idx = clone_expr(ctx, idx);
     }
 
-    // Clone then/else blocks (If).
-    new_stmt.then_block_index = clone_block(ctx, old_stmt.then_block_index);
-    new_stmt.else_block_index = clone_block(ctx, old_stmt.else_block_index);
+    // Clone then/else blocks (If). Read the indexes from the LOCAL shallow
+    // copy, never from `old_stmt`: nested clone_block/clone_stmt calls append
+    // to program.statements/program.blocks and may reallocate those vectors,
+    // which would leave an `old_stmt` reference dangling mid-expression.
+    new_stmt.then_block_index = clone_block(ctx, new_stmt.then_block_index);
+    new_stmt.else_block_index = clone_block(ctx, new_stmt.else_block_index);
 
     const std::uint32_t new_idx =
         static_cast<std::uint32_t>(ctx.program.statements.size());
@@ -469,10 +472,15 @@ std::uint32_t clone_block(CloneContext &ctx, std::uint32_t old_idx) {
     const auto &old_block = ctx.program.blocks[old_idx];
     TypedBlock new_block = old_block; // shallow copy
 
-    // Clone all statements in the block.
+    // Clone all statements in the block. Snapshot the source statement indexes
+    // into a local vector first: nested clone_stmt -> clone_block appends to
+    // program.blocks and may reallocate the vector `old_block` lives in, so no
+    // reference into program.blocks may be touched across those calls.
+    const std::vector<std::uint32_t> old_statement_indexes =
+        old_block.statement_indexes;
     new_block.statement_indexes.clear();
-    new_block.statement_indexes.reserve(old_block.statement_indexes.size());
-    for (const auto stmt_idx : old_block.statement_indexes) {
+    new_block.statement_indexes.reserve(old_statement_indexes.size());
+    for (const auto stmt_idx : old_statement_indexes) {
         new_block.statement_indexes.push_back(clone_stmt(ctx, stmt_idx));
     }
 

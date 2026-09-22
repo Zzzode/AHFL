@@ -3548,8 +3548,8 @@ TEST_CASE("erasure (3): fn Pure effect + decreases measures leave only empty FnI
             }
         }
     }
-    CHECK(fn_decls == 4); // length prototype + shrink + id + use_it
-    CHECK(fn_decreases == 3); // shrink (length(xs)), id (0), use_it (0)
+    CHECK(fn_decls == 6); // length prototype + shrink + id + use_it + shrink<Int> + id<Int>
+    CHECK(fn_decreases == 5); // shrink, id, use_it plus the two concrete instantiations
 
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
     for (const auto &d : result.diagnostics) {
@@ -3559,9 +3559,11 @@ TEST_CASE("erasure (3): fn Pure effect + decreases measures leave only empty FnI
     REQUIRE(result.ok());
     CHECK(result.is_executable);
 
-    // Exactly the two generic call sites (shrink<Int>, id<Int>) became
-    // instances; BOTH are empty CoreFnInstance placeholders. Fn bodies, the
-    // Pure grade, and the decreases measures exist nowhere on the payload.
+    // FB-1: the two generic call sites (shrink<Int>, id<Int>) became Fn
+    // instances WITH outlined bodies, and the non-generic use_it gets the
+    // canonical empty-type-args instance, likewise with a body. The Pure grade
+    // and the decreases measures exist nowhere on the payload (they live on the
+    // AHFL-IR FnDecl / the verifier's purity walk, never on CoreFnInstance).
     std::size_t fn_instances = 0;
     for (const auto &inst : result.program.instances) {
         if (std::holds_alternative<ir::core::CoreFnInstance>(inst.payload)) {
@@ -3569,7 +3571,8 @@ TEST_CASE("erasure (3): fn Pure effect + decreases measures leave only empty FnI
             CHECK_FALSE(inst.instance_key.empty());
         }
     }
-    CHECK(fn_instances == 2);
+    CHECK(fn_instances == 3);
+    CHECK(result.program.fns.size() == 3);
     CHECK(result.program.flows.empty());
     CHECK(result.program.workflows.empty());
     CHECK(result.program.agents.empty());
@@ -3843,6 +3846,10 @@ TEST_CASE("KR6.4 mono Slice 1: a generic fn instance is consumed into CoreProgra
     REQUIRE(result.ok());
     // Every AHFL-IR InstanceDecl becomes exactly one CoreInstanceDecl, byte-exact
     // key, and (Fn kind) a CoreFnInstance payload.
+    // FB-1: the AHFL-IR registry contributes exactly one Fn InstanceDecl
+    // (`id<Int>`); the Core table additionally carries the guaranteed
+    // canonical empty-type-args instance for the body-bearing non-generic
+    // `use_it`, so every body fn has a 1:1 Fn instance + CoreFnDecl.
     std::size_t core_fn_instances = 0;
     for (const auto &inst : result.program.instances) {
         CHECK_FALSE(inst.instance_key.empty());
@@ -3850,7 +3857,8 @@ TEST_CASE("KR6.4 mono Slice 1: a generic fn instance is consumed into CoreProgra
             ++core_fn_instances;
         }
     }
-    CHECK(core_fn_instances == ahfl_fn_instances);
+    CHECK(core_fn_instances == ahfl_fn_instances + 1);
+    CHECK(result.program.fns.size() == core_fn_instances);
     // The Core key equals the AHFL InstanceDecl name byte-for-byte (no re-mangle).
     for (const auto &d : ahfl_ir->declarations) {
         if (const auto *inst = std::get_if<ir::InstanceDecl>(&d)) {

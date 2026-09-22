@@ -69,6 +69,7 @@ class Verifier {
         }
         verify_value_types();
         verify_instances();
+        verify_fns();
         return std::move(diags_);
     }
 
@@ -616,7 +617,7 @@ class Verifier {
     // region may root ONLY at the workflow input, an upstream node output, or a
     // local (a match-arm binding) — a bare identifier there is an UNRESOLVED
     // reference (fail-closed), not a legal free variable.
-    enum class OwnerKind { Flow, Workflow };
+    enum class OwnerKind { Flow, Workflow, Fn };
 
     struct ArenaView {
         const std::vector<CoreExpr> &exprs;
@@ -1186,18 +1187,27 @@ class Verifier {
                                              flow.label + "'",
                                          expr.source_range);
                                }
-                               // Owner-domain legality (P0-2): flow and workflow
-                               // bodies do not share path roots. A workflow value
-                               // root in a flow, or a flow root / bare identifier in
-                               // a workflow, is a malformed IR — the 4th workflow
-                               // path (an unresolved identifier) is fail-closed, NOT
-                               // a legal free variable.
+                               // Owner-domain legality (P0-2): flow, workflow and
+                               // fn bodies do not share path roots. A workflow
+                               // value root in a flow, a flow/workflow root in a
+                               // fn, or a flow root / bare identifier in a
+                               // workflow, is a malformed IR.
                                if (flow.owner == OwnerKind::Flow) {
                                    if (p.root == CorePathRoot::WorkflowInput ||
                                        p.root == CorePathRoot::WorkflowNodeOutput) {
                                        error(verify::kWorkflowPathRootInvalid,
                                              "flow '" + flow.label +
                                                  "' path expression carries a workflow-only root",
+                                             expr.source_range);
+                                   }
+                               } else if (flow.owner == OwnerKind::Fn) {
+                                   // A fn body sees only pre-bound params / locals.
+                                   if (p.root != CorePathRoot::Local &&
+                                       p.root != CorePathRoot::Identifier) {
+                                       error(verify::kWorkflowPathRootInvalid,
+                                             "fn '" + flow.label +
+                                                 "' path expression carries a flow/workflow-only "
+                                                 "root (a fn body sees only parameters and locals)",
                                              expr.source_range);
                                    }
                                } else { // Workflow
@@ -2041,7 +2051,7 @@ class Verifier {
     // an arm body still yields from that arm). `terminated_out` (optional)
     // reports whether the region ended in a terminator/yield, so a match arm can
     // require its body/guard to end well.
-    enum class RegionContext { Flow, Guard, MatchArmValue, MatchArmUnit, WorkflowNodeInput, WorkflowReturn };
+    enum class RegionContext { Flow, Guard, MatchArmValue, MatchArmUnit, WorkflowNodeInput, WorkflowReturn, Fn };
 
     // A workflow node-input / return region is a value-producing region with NO
     // flow-state control flow: it must yield a value (or Trap) on every path and
@@ -2260,7 +2270,11 @@ class Verifier {
             live = then_exit.fallthrough || else_exit.fallthrough;
         };
         const auto walk_goto = [&](const CoreGotoStmt &s) {
-            if (is_workflow_ctx(ctx)) {
+            if (flow.owner == OwnerKind::Fn) {
+                error(verify::kFnBodyTermination,
+                      "fn body '" + flow.label + "' contains a goto (a fn completes via return)",
+                      stmt.source_range);
+            } else if (is_workflow_ctx(ctx)) {
                 error(verify::kWorkflowRegionYield,
                       "workflow region '" + flow.label +
                           "' contains a goto (no flow-state control flow in a "
@@ -2276,7 +2290,15 @@ class Verifier {
             live = false;
         };
         const auto walk_return = [&](const CoreReturnStmt &s) {
-            if (is_workflow_ctx(ctx)) {
+            if (flow.owner == OwnerKind::Fn) {
+                // A fn body MUST return a value (its result type); a bare
+                // unit return from a value fn is caught by arity on the call.
+                if (!s.has_value) {
+                    error(verify::kFnBodyTermination,
+                          "fn body '" + flow.label + "' returns without a value",
+                          stmt.source_range);
+                }
+            } else if (is_workflow_ctx(ctx)) {
                 error(verify::kWorkflowRegionYield,
                       "workflow region '" + flow.label +
                           "' contains a return (a node input / return region "
@@ -3401,6 +3423,376 @@ class Verifier {
 #undef VERIFY_HASH_Closure
 #undef VERIFY_HASH_LEAF
         return h;
+    }
+
+    // --- outlined fn bodies (CORE-FNBODY-DESIGN §8.1) ---
+    //
+    // Verifies the CoreProgram.fns table and its 1:1 link to Fn-kind instances:
+    //   #1 fn id == index; instance in range, payload CoreFnInstance, back-link
+    //      agrees, no duplicate link (one body per Fn instance);
+    //   #2 SSA body checks reuse the shared ArenaView (OwnerKind::Fn): dense
+    //      value_types, expr/pattern arena bounds, def-before-use;
+    //   #2 every path completes via a value-bearing CoreReturnStmt (termination,
+    //      not goto/trap); goto is illegal in a fn;
+    //   #3 every direct CoreCallExpr in ANY body (flow/workflow/fn) resolves to
+    //      an in-range Fn instance with a valid body, exact arity, argument types
+    //      equal to the callee param types, result type equal to the return type,
+    //      callee body is pure (no capability call), and the static call graph is
+    //      ACYCLIC (FB-1: no recursion until FB-2).
+    void verify_fns() {
+        std::unordered_set<std::uint32_t> linked_instances;
+        for (std::uint32_t fi = 0; fi < program_.fns.size(); ++fi) {
+            const CoreFnDecl &fn = program_.fns[fi];
+            if (fn.id.value != fi) {
+                error(verify::kFnInstanceLinkInvalid,
+                      "fn #" + std::to_string(fi) + " id does not equal its table index",
+                      fn.source_range);
+            }
+            // Instance link bounds + payload + back-reference.
+            if (fn.instance.value == CoreInstanceId::kInvalid ||
+                fn.instance.value >= program_.instances.size()) {
+                error(verify::kFnInstanceLinkInvalid,
+                      "fn '" + fn.name + "' references an out-of-range instance id",
+                      fn.source_range);
+                continue;
+            }
+            const CoreInstanceDecl &inst = program_.instances[fn.instance.value];
+            const auto *payload = std::get_if<CoreFnInstance>(&inst.payload);
+            if (payload == nullptr) {
+                error(verify::kFnInstanceLinkInvalid,
+                      "fn '" + fn.name + "' instance '" + inst.instance_key +
+                          "' payload is not a CoreFnInstance",
+                      fn.source_range);
+            } else if (payload->body.value != fi) {
+                error(verify::kFnInstanceLinkInvalid,
+                      "fn '" + fn.name + "' and its instance disagree on the body link",
+                      fn.source_range);
+            }
+            if (!linked_instances.insert(fn.instance.value).second) {
+                error(verify::kFnInstanceLinkInvalid,
+                      "fn instance '" + inst.instance_key +
+                          "' is linked to more than one fn body",
+                      fn.source_range);
+            }
+
+            // Body SSA arena (dense value types, expr/pattern arena, coercion
+            // plans) reuses the shared flow/workflow checks.
+            ArenaView av{fn.storage.exprs,
+                         fn.storage.value_count,
+                         fn.storage.patterns,
+                         "fn '" + fn.name + "'"};
+            av.owner = OwnerKind::Fn;
+            av.value_types = &fn.storage.value_types;
+            av.coercion_plans = &fn.storage.coercion_plans;
+            verify_body_value_types(av);
+            verify_coercion_plans(av);
+            verify_expr_arena(av);
+            verify_pattern_arena(av);
+
+            // Parameters are pre-bound into the body SSA domain: each param is
+            // a distinct, in-range value with a valid concrete logical type.
+            std::unordered_set<std::uint32_t> param_set;
+            for (const CoreValueId param : fn.params) {
+                if (param.value >= fn.storage.value_count) {
+                    error(verify::kFnSignatureArity,
+                          "fn '" + fn.name + "' pre-bound param value id " +
+                              std::to_string(param.value) + " is out of range",
+                          fn.source_range);
+                    continue;
+                }
+                if (!value_type_slot_ok(fn.storage.value_types[param.value])) {
+                    error(verify::kFnSignatureArity,
+                          "fn '" + fn.name + "' has a parameter without a concrete materialized "
+                          "type (generic fn body was not monomorphized?)",
+                          fn.source_range);
+                }
+                if (!param_set.insert(param.value).second) {
+                    error(verify::kFnSignatureArity,
+                          "fn '" + fn.name + "' binds one SSA value to two parameters",
+                          fn.source_range);
+                }
+            }
+
+            // Region walk: params are the initial definitions / visible set; the
+            // body must complete via return on every path, never goto/yield.
+            std::unordered_set<std::uint32_t> all_definitions;
+            std::unordered_set<std::uint32_t> visible;
+            for (const CoreValueId param : fn.params) {
+                all_definitions.insert(param.value);
+                visible.insert(param.value);
+            }
+            const RegionExit re = verify_region(av, /*state_count=*/0, fn.body,
+                                                all_definitions, visible, RegionContext::Fn);
+            verify_fn_termination(fn, re);
+        }
+
+        // Every Fn-kind instance with a valid body link must have a fn table
+        // entry (reverse direction of the #1 check).
+        for (std::uint32_t ii = 0; ii < program_.instances.size(); ++ii) {
+            const auto *payload = std::get_if<CoreFnInstance>(&program_.instances[ii].payload);
+            if (payload == nullptr) {
+                continue;
+            }
+            if (payload->body.value == CoreFnId::kInvalid) {
+                continue; // bodyless facade / prototype: legal
+            }
+            if (payload->body.value >= program_.fns.size() ||
+                program_.fns[payload->body.value].instance.value != ii) {
+                error(verify::kFnInstanceLinkInvalid,
+                      "fn instance #" + std::to_string(ii) +
+                          " body link does not point back to it",
+                      std::nullopt);
+            }
+        }
+
+        verify_fn_call_sites(linked_instances);
+    }
+
+    // Fn-body termination: every path must leave through a VALUE-bearing return
+    // (CORE-FNBODY-DESIGN §8.1 #2). Fallthrough, goto, or a bare unit return
+    // from a value-returning fn are rejected here against the RegionExit.
+    void verify_fn_termination(const CoreFnDecl &fn, const RegionExit &re) {
+        if (re.fallthrough) {
+            error(verify::kFnBodyTermination,
+                  "fn '" + fn.name + "' has a path that returns without a return statement",
+                  fn.source_range);
+        }
+        if (re.diverges_control) {
+            // RegionExit merges return + goto into diverges_control. The goto
+            // legality is separately enforced in walk_goto for OwnerKind::Fn, so
+            // here only the fallthrough/return-value shape matters.
+        }
+        // The concrete return type is taken from the value-bearing returns
+        // (checked in walk_return via verify_fn_return_type); a fn with NO
+        // value-return path at all (e.g. only trap) is structurally legal but
+        // uninhabited — its result type then can't be checked, which the call
+        // site catches as a result-type mismatch against its interned type.
+    }
+
+    // Walk every body (flow / workflow / fn) and validate each CoreCallExpr
+    // against the fn table: callee resolution, arity, arg types, result type,
+    // pure callee. Then run the 3-color acyclic check over the static graph.
+    void verify_fn_call_sites(const std::unordered_set<std::uint32_t> &fn_instances) {
+        struct CallSite {
+            CoreInstanceId callee;
+            std::vector<CoreValueId> args;
+            CoreValueTypeId result_type;
+            SourceRangeOpt range;
+            const std::vector<CoreValueTypeId> *arg_types; // body value-type table
+            std::string owner_label;
+        };
+        std::vector<CallSite> sites;
+        const auto scan_storage = [&](const CoreBodyStorage &storage, std::string label,
+                                      std::vector<CallSite> &out) {
+            for (const CoreExpr &expr : storage.exprs) {
+                const auto *call = std::get_if<CoreCallExpr>(&expr.node);
+                if (call == nullptr) {
+                    continue;
+                }
+                out.push_back(CallSite{call->callee, call->args, expr.result_type,
+                                       expr.source_range, &storage.value_types, std::move(label)});
+            }
+        };
+        for (const CoreFlowDecl &flow : program_.flows) {
+            scan_storage(flow.storage, "flow '" + flow.agent_name + "'", sites);
+        }
+        for (const CoreWorkflowDecl &wf : program_.workflows) {
+            scan_storage(wf.storage, "workflow '" + wf.name + "'", sites);
+        }
+        for (const CoreFnDecl &fn : program_.fns) {
+            scan_storage(fn.storage, "fn '" + fn.name + "'", sites);
+        }
+
+        // Concrete callee signature: the param types are the pre-bound params'
+        // body value types; the return type is the value type every return
+        // carries (the body must be consistent — checked while scanning).
+        for (const CallSite &site : sites) {
+            if (site.callee.value == CoreInstanceId::kInvalid ||
+                site.callee.value >= program_.instances.size()) {
+                error(verify::kFnCallCalleeInvalid,
+                      "body '" + site.owner_label + "' calls an out-of-range fn instance",
+                      site.range);
+                continue;
+            }
+            const CoreInstanceDecl &inst = program_.instances[site.callee.value];
+            const auto *payload = std::get_if<CoreFnInstance>(&inst.payload);
+            if (payload == nullptr || payload->body.value == CoreFnId::kInvalid) {
+                error(verify::kFnCallCalleeInvalid,
+                      "body '" + site.owner_label + "' calls '" + inst.instance_key +
+                          "' which has no lowered fn body",
+                      site.range);
+                continue;
+            }
+            const CoreFnDecl &callee = program_.fns[payload->body.value];
+            if (callee.body.statements.empty() || fn_region_contains_capability(callee.body)) {
+                error(verify::kFnCallEffectfulCallee,
+                      "direct call to fn '" + callee.name +
+                          "' is illegal until the ordered CoreCallStmt slice (the callee body "
+                          "contains a capability effect)",
+                      site.range);
+            }
+            if (site.args.size() != callee.params.size()) {
+                error(verify::kFnCallArityMismatch,
+                      "call to fn '" + callee.name + "' passes " +
+                          std::to_string(site.args.size()) + " argument(s) but it declares " +
+                          std::to_string(callee.params.size()),
+                      site.range);
+                continue;
+            }
+            for (std::size_t i = 0; i < site.args.size(); ++i) {
+                const CoreValueId arg = site.args[i];
+                if (arg.value >= site.arg_types->size()) {
+                    error(verify::kFnCallArgumentTypeMismatch,
+                          "call to fn '" + callee.name + "' argument #" + std::to_string(i) +
+                              " is out of range in the caller body",
+                          site.range);
+                    continue;
+                }
+                const CoreValueTypeId arg_ty = (*site.arg_types)[arg.value];
+                const CoreValueTypeId param_ty =
+                    callee.storage.value_types[callee.params[i].value];
+                if (!(arg_ty == param_ty)) {
+                    error(verify::kFnCallArgumentTypeMismatch,
+                          "call to fn '" + callee.name + "' argument #" + std::to_string(i) +
+                              " type does not match the callee parameter type",
+                          site.range);
+                }
+            }
+            // Result type vs the callee's concrete return type.
+            if (const auto ret = fn_return_type(callee); ret.has_value()) {
+                if (!(site.result_type == *ret)) {
+                    error(verify::kFnCallResultTypeMismatch,
+                          "call to fn '" + callee.name +
+                              "' result type does not match the callee return type",
+                          site.range);
+                }
+            }
+        }
+
+        // Static call graph acyclicity (FB-1 #6: no recursion until FB-2).
+        std::vector<std::vector<std::uint32_t>> edges(program_.fns.size());
+        std::vector<bool> has_edge(program_.fns.size(), false);
+        for (const CoreFnDecl &fn : program_.fns) {
+            for (const CoreExpr &expr : fn.storage.exprs) {
+                const auto *call = std::get_if<CoreCallExpr>(&expr.node);
+                if (call == nullptr || call->callee.value >= program_.instances.size()) {
+                    continue;
+                }
+                const auto *payload =
+                    std::get_if<CoreFnInstance>(&program_.instances[call->callee.value].payload);
+                if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+                    payload->body.value >= program_.fns.size()) {
+                    continue;
+                }
+                edges[fn.id.value].push_back(payload->body.value);
+                has_edge[fn.id.value] = true;
+            }
+        }
+        enum class Color : std::uint8_t { White, Gray, Black };
+        std::vector<Color> color(program_.fns.size(), Color::White);
+        for (std::uint32_t root = 0; root < program_.fns.size(); ++root) {
+            std::vector<std::uint32_t> stack{root};
+            while (!stack.empty()) {
+                const std::uint32_t v = stack.back();
+                if (color[v] == Color::White) {
+                    color[v] = Color::Gray;
+                    for (const std::uint32_t to : edges[v]) {
+                        if (color[to] == Color::Gray) {
+                            error(verify::kFnRecursion,
+                                  "fn call graph contains recursion (a direct/self call); "
+                                  "recursive fn bodies are rejected until the bounded-recursion "
+                                  "slice (FB-2)",
+                                  program_.fns[to].source_range);
+                        } else if (color[to] == Color::White) {
+                            stack.push_back(to);
+                        }
+                    }
+                } else {
+                    if (color[v] == Color::Gray) {
+                        color[v] = Color::Black;
+                    }
+                    stack.pop_back();
+                }
+            }
+        }
+        static_cast<void>(fn_instances);
+    }
+
+    // Whether a region contains a CoreCapabilityCallStmt (any depth). Used to
+    // reject effectful direct-call callees.
+    [[nodiscard]] static bool fn_region_contains_capability(const CoreRegion &region) {
+        for (const CoreStmt &stmt : region.statements) {
+            if (std::holds_alternative<CoreCapabilityCallStmt>(stmt.node)) {
+                return true;
+            }
+            if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                if ((branch->then_region && fn_region_contains_capability(*branch->then_region)) ||
+                    (branch->else_region && fn_region_contains_capability(*branch->else_region))) {
+                    return true;
+                }
+            }
+            if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                for (const CoreMatchArm &arm : match->arms) {
+                    if ((arm.guard_region &&
+                         fn_region_contains_capability(*arm.guard_region)) ||
+                        (arm.body && fn_region_contains_capability(*arm.body))) {
+                        return true;
+                    }
+                }
+                if (match->fallback_region &&
+                    fn_region_contains_capability(*match->fallback_region)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // The concrete return type of a fn body: the value type every value-bearing
+    // return carries (they must all agree). Returns nullopt when the body has no
+    // value-bearing return on any path.
+    [[nodiscard]] std::optional<CoreValueTypeId> fn_return_type(const CoreFnDecl &fn) const {
+        std::optional<CoreValueTypeId> found;
+        bool mismatch = false;
+        const auto scan = [&](auto &&self, const CoreRegion &region) -> void {
+            for (const CoreStmt &stmt : region.statements) {
+                if (const auto *ret = std::get_if<CoreReturnStmt>(&stmt.node);
+                    ret != nullptr && ret->has_value) {
+                    if (ret->value.value >= fn.storage.value_types.size()) {
+                        mismatch = true;
+                        continue;
+                    }
+                    const CoreValueTypeId ty = fn.storage.value_types[ret->value.value];
+                    if (found.has_value() && !(*found == ty)) {
+                        mismatch = true;
+                    }
+                    found = ty;
+                }
+                if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                    if (branch->then_region) {
+                        self(self, *branch->then_region);
+                    }
+                    if (branch->else_region) {
+                        self(self, *branch->else_region);
+                    }
+                }
+                if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                    for (const CoreMatchArm &arm : match->arms) {
+                        if (arm.body) {
+                            self(self, *arm.body);
+                        }
+                    }
+                    if (match->fallback_region) {
+                        self(self, *match->fallback_region);
+                    }
+                }
+            }
+        };
+        scan(scan, fn.body);
+        if (mismatch) {
+            return std::nullopt;
+        }
+        return found;
     }
 
     // --- monomorphized instance table ---

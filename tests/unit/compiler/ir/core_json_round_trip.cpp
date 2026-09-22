@@ -303,6 +303,50 @@ flow for Decider {
 [[nodiscard]] std::map<std::string, std::string> sysroot_corpus() {
     std::map<std::string, std::string> sources;
     sources["std_option"] = source_text();
+    // FB-1: outlined fn bodies + a statically-resolved CoreCallExpr (both the
+    // canonical empty-type-args non-generic instance and a monomorphized
+    // generic instance) must survive the fns wire table round-trip.
+    sources["pure_direct_call"] = R"AHFL(
+module app::main;
+
+struct Req { amount: Int; }
+struct Ctx {}
+struct Reply { ok: Bool = false; doubled: Int; }
+
+fn double_it(x: Int) -> Int {
+    return x * 2;
+}
+
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+agent CalcAgent {
+    input: Req;
+    context: Ctx;
+    output: Reply;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+
+    transition Init -> Done;
+}
+
+flow for CalcAgent {
+    state Init {
+        let a: Int = double_it(21);
+        let b: Int = identity<Int>(a);
+        if (b == 42) {
+            goto Done;
+        } else {
+            goto Done;
+        }
+    }
+    state Done {
+        return Reply { ok: false, doubled: 0 };
+    }
+}
+)AHFL";
     return sources;
 }
 
@@ -720,7 +764,8 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
   "agents": [],
   "flows": [],
   "workflows": [],
-  "instances": []
+  "instances": [],
+  "fns": []
 })";
         require_rejected_with(doc, "core.json.FORWARD_VALUE_TYPE");
     }
@@ -744,7 +789,8 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
   "agents": [],
   "flows": [],
   "workflows": [],
-  "instances": []
+  "instances": [],
+  "fns": []
 })";
         // This document is IN canonical order (bool at 0, unit at 1) and legal,
         // so the swap must be constructed by repeating a shape that collides.
@@ -765,7 +811,8 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
   "agents": [],
   "flows": [],
   "workflows": [],
-  "instances": []
+  "instances": [],
+  "fns": []
 })";
         // `tuple` referencing a bool element is structurally fine, but the arena
         // is not a canonical hash-cons (a child id must precede its parent, and
@@ -792,7 +839,8 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
   "agents": [],
   "flows": [],
   "workflows": [],
-  "instances": []
+  "instances": [],
+  "fns": []
 })";
         require_rejected_with(duplicate, "core.json.NONCANONICAL_ARENA");
         (void)doc;
@@ -843,7 +891,8 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
       "dispatch_types": [],
       "payload": {"kind": "predicate"}
     }
-  ]
+  ],
+  "fns": []
 })";
         require_rejected_with(doc, "core.json.DUPLICATE_INSTANCE_KEY");
     }
@@ -867,7 +916,8 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
       "dispatch_types": [],
       "payload": {"kind": "predicate", "base": 0}
     }
-  ]
+  ],
+  "fns": []
 })";
         require_rejected_with(doc, "core.json.UNKNOWN_FIELD");
     }
@@ -913,7 +963,8 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
   "agents": [],
   "flows": [],
   "workflows": [],
-  "instances": []
+  "instances": [],
+  "fns": []
 })";
         require_rejected_with(doc, "core.json.UNKNOWN_FIELD");
     }
@@ -967,7 +1018,7 @@ TEST_CASE("Core-IR JSON reader rejects malformed input with typed diagnostics") 
             R"("value_count":1,"exprs":[],"value_types":[0],"coercion_plans":[],"patterns":[],)";
         const std::string states =
             R"("states":[{"state":0,"state_name":"S","policy":{},"body":)" + body + "}]}]" +
-            R"(,"workflows":[],"instances":[]})";
+            R"(,"workflows":[],"instances":[],"fns":[]})";
         require_rejected_with(doc + flow + tail + states, "core.json.REGION_TOO_DEEP");
     }
 
