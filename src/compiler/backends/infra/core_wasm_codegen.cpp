@@ -31,7 +31,11 @@ using ir::core::CoreAgentId;
 using ir::core::CoreAgentInstance;
 using ir::core::CoreBinaryExpr;
 using ir::core::CoreBinaryOp;
+using ir::core::CoreBodyStorage;
 using ir::core::CoreCallExpr;
+using ir::core::CoreFnId;
+using ir::core::CoreFnDecl;
+using ir::core::CoreFnInstance;
 using ir::core::CoreBindingPat;
 using ir::core::CoreCapabilityCallStmt;
 using ir::core::CoreCapabilityId;
@@ -293,6 +297,11 @@ struct CompiledHandler {
     std::vector<std::uint8_t> body;
 };
 
+// RFC 0026 FB-1 (CORE-FNBODY-DESIGN §6): forward-declared here so AgentPlan
+// can hold a vector of them; the full definition follows the scalar body
+// builder (which owns the planning/emission that fills one).
+struct CompiledFn;
+
 struct AgentPlan {
     CoreAgentId agent{};
     CoreStateId initial{};
@@ -307,6 +316,11 @@ struct AgentPlan {
     // order. Empty for a pure E1-E3 agent, so its function/code sections keep
     // their byte-identical 7-entry shape.
     std::vector<CompiledHandler> handlers;
+    // RFC 0026 FB-1: outlined pure fn bodies reachable from the entry handlers
+    // (and from other reachable fns) via direct CoreCallExpr, in the fixed
+    // point's deterministic CoreFnId order. Empty for a module with no direct
+    // calls, so a zero-fn module is byte-identical to its E1-E3/P6 shape.
+    std::vector<CompiledFn> fns;
 };
 
 struct AgentPlanPolicy {
@@ -389,6 +403,11 @@ struct FunctionTable {
     [[nodiscard]] std::uint32_t handler(std::uint32_t index) const noexcept {
         return import_count + kDefinedHandlerBase + index;
     }
+    // RFC 0026 FB-1: outlined fn bodies follow the computed handlers
+    // (§6.1: [import+7 .. +7+H) handlers, [import+7+H .. +7+H+F) fns).
+    [[nodiscard]] std::uint32_t fn_base(std::uint32_t handler_count) const noexcept {
+        return import_count + kDefinedHandlerBase + handler_count;
+    }
     [[nodiscard]] std::uint32_t defined_count() const noexcept {
         return kDefinedHandlerBase + handler_count;
     }
@@ -400,6 +419,15 @@ struct WorkflowFunctionTable {
     // Identity workflows have import_count == 0, so their indices are unchanged.
     std::uint32_t import_count{0};
     std::uint32_t runner_count{0};
+    // RFC 0026 FB-1: outlined fn bodies follow runner/run2 (§6.1 agent ordering
+    // discipline). In FB-1 a workflow module's node-input/return regions accept
+    // only opaque workflow frames and its packaged agents disallow computed
+    // handlers, so no outlined fn is ever reachable from a workflow MODULE
+    // (a packaged agent's direct calls are compiled into that agent's own
+    // module). The field stays 0 and a workflow module is byte-identical to its
+    // E1-E3/E4 shape; the projection exists for index-space symmetry with the
+    // agent FunctionTable and the FB-3 closure/indirect slice.
+    std::uint32_t fn_count{0};
     [[nodiscard]] std::uint32_t alloc() const noexcept {
         return import_count + 0u;
     }
@@ -420,6 +448,15 @@ struct WorkflowFunctionTable {
     }
     [[nodiscard]] std::uint32_t run2() const noexcept {
         return import_count + 5u + runner_count;
+    }
+    // RFC 0026 FB-1: outlined fn ordinal -> absolute function index. Fn bodies
+    // follow runner/run2; fn_count is 0 for a workflow module in FB-1 (see the
+    // field note), keeping the module byte-identical.
+    [[nodiscard]] std::uint32_t fn(std::uint32_t ordinal) const noexcept {
+        return import_count + 6u + runner_count + ordinal;
+    }
+    [[nodiscard]] std::uint32_t defined_count() const noexcept {
+        return 6u + runner_count + fn_count;
     }
 };
 
@@ -1255,6 +1292,16 @@ p6_coercion_effect(const CoreProgram &program,
 // reachable goto target is recorded by the ordinary statement emitter as it
 // walks the regions, so `targets()` is exact without a separate region walk.
 
+// Maps a CoreFnDecl's own body storage into the scalar builder. The builder is
+// shared by flow handlers and outlined fn bodies (design §6.1: ONE expression
+// compiler, fn bodies are the third body owner); this view is the fn-side twin
+// of (flow, handler).
+struct FnBodyView {
+    const CoreBodyStorage *body_storage{nullptr};
+    const CoreRegion *body{nullptr};
+    std::string_view name;
+};
+
 class P6ComputationHandlerBuilder {
   public:
     P6ComputationHandlerBuilder(const CoreProgram &program,
@@ -1265,7 +1312,8 @@ class P6ComputationHandlerBuilder {
                                 std::vector<bool> &used_exprs,
                                 std::vector<bool> &used_values,
                                 CoreWasmCodegenResult &result)
-        : program_(program), layouts_(layouts), flow_(flow), handler_(handler),
+        : program_(program), layouts_(layouts), storage_(flow.storage),
+          region_(handler.body), state_name_(handler.state_name),
           unsupported_code_(unsupported_code), used_exprs_(used_exprs), used_values_(used_values),
           result_(result), locals_(flow.storage.value_count, LocalInfo{}),
           binding_locals_(flow.storage.value_count, LocalInfo{}),
@@ -1273,17 +1321,71 @@ class P6ComputationHandlerBuilder {
           match_result_locals_(flow.storage.value_count, LocalInfo{}),
           construct_addrs_(flow.storage.exprs.size(), std::nullopt) {}
 
+    // FB-1 fn-body twin. `fn_ordinals` resolves a callee CoreInstanceId to the
+    // wasm ordinal its module placement assigned (CoreFnId ordinal, not the
+    // absolute function index — the builder adds import+7+handler itself at
+    // emit time). The resolver is null in handler mode, where a direct call
+    // stays fail-closed.
+    P6ComputationHandlerBuilder(const CoreProgram &program,
+                                const ir::core::CoreLayoutTable &layouts,
+                                FnBodyView fn,
+                                std::vector<bool> &used_exprs,
+                                std::vector<bool> &used_values,
+                                CoreWasmCodegenResult &result,
+                                const std::vector<std::uint32_t> *instance_to_fn_ordinal,
+                                const std::uint32_t *fn_function_base)
+        : program_(program), layouts_(layouts), storage_(*fn.body_storage), region_(*fn.body),
+          state_name_(fn.name), fn_mode_(true),
+          unsupported_code_(core_wasm_diag::kUnsupportedOrchestration),
+          used_exprs_(used_exprs), used_values_(used_values), result_(result),
+          locals_(fn.body_storage->value_count, LocalInfo{}),
+          binding_locals_(fn.body_storage->value_count, LocalInfo{}),
+          binding_sites_(fn.body_storage->value_count, std::nullopt),
+          match_result_locals_(fn.body_storage->value_count, LocalInfo{}),
+          construct_addrs_(fn.body_storage->exprs.size(), std::nullopt),
+          instance_to_fn_ordinal_(instance_to_fn_ordinal),
+          fn_function_base_(fn_function_base) {}
+
     // Validate the handler is in the scalar subset and assign every bound SSA
     // value a per-repr pool slot (i32 group first, then i64 — a real function
     // needs one fixed type per local index), recording the goto target set.
     [[nodiscard]] bool plan() {
-        if (!p6_region_always_diverges(handler_.body)) {
+        if (!fn_mode_ && !p6_region_always_diverges(region_)) {
             return reject("non-final scalar handler must goto or trap on every path",
-                          handler_.body.statements.empty()
+                          region_.statements.empty()
                               ? ir::SourceRangeOpt{}
-                              : handler_.body.statements.front().source_range);
+                              : region_.statements.front().source_range);
         }
-        return plan_region(handler_.body);
+        return plan_region(region_);
+    }
+
+    // FB-1: after a successful plan, the concrete P6 word each SSA value uses.
+    // The caller maps the fn's pre-bound params and the return value through
+    // this to materialize the wasm functype.
+    [[nodiscard]] std::optional<P6ScalarKind> word_of(CoreValueId value) const {
+        if (value.value >= storage_.value_types.size()) {
+            return std::nullopt;
+        }
+        return p6_scalar_kind(program_, layouts_, storage_.value_types[value.value]);
+    }
+
+    [[nodiscard]] const std::vector<CoreInstanceId> &fn_callees() const noexcept {
+        return fn_callees_;
+    }
+
+    // FB-1: mark a pre-bound fn parameter before plan() walks the body. Public
+    // so the outlined-fn compilation pass can bind the functype parameters.
+    [[nodiscard]] bool bind_param(CoreValueId value, std::uint32_t ordinal,
+                                  P6ScalarKind kind);
+
+    // FB-1: install the direct-call tables AFTER construction (ordinals are
+    // assigned by the reachability fixed point, which runs after every entry
+    // body is planned). Required before emit() when the body contains a
+    // CoreCallExpr; plan() validates callees without these.
+    void set_fn_call_tables(const std::vector<std::uint32_t> *instance_to_fn_ordinal,
+                            const std::uint32_t *fn_function_base) {
+        instance_to_fn_ordinal_ = instance_to_fn_ordinal;
+        fn_function_base_ = fn_function_base;
     }
 
     [[nodiscard]] const std::vector<CoreStateId> &targets() const noexcept {
@@ -1302,37 +1404,59 @@ class P6ComputationHandlerBuilder {
         return reads_raw_input_frame_;
     }
 
-    // Emit the complete body of this handler's own `() -> i32` wasm function:
-    // the local declarations (its OWN i32 group then i64 group — a real function
-    // has private locals, so the P6-1 shared step()-pools hack is gone), a
+    // Emit the complete body.
+    //
+    // Handler mode: the body of this handler's own `() -> i32` wasm function:
+    // the local declarations (its OWN i32 group then i64 group), a
     // `block (result i32)` that every goto path leaves with `br`, the lowered
     // region, and the closing `end`s. The block is the structured early-exit
     // target RFC 0026 Q2 mandates: no relooper, no arbitrary jump.
-    [[nodiscard]] std::optional<std::vector<std::uint8_t>> emit() {
-        if (!emit_region(handler_.body)) {
+    //
+    // Fn mode (FB-1 §6.3): an `(i32 env, args...) -> ret` function. The leading
+    // `env` parameter is wasm local 0; the concrete args occupy locals
+    // 1..param_count in DECLARATION order (their words may mix i32/i64 — the
+    // functype carries the mixed order, so params do not go through the
+    // i32-first SSA pool). Non-param SSA + scratch locals follow, grouped
+    // i32-word then i64-word. The body completes with an explicit value
+    // `return`; there is no result-i32 block.
+    [[nodiscard]] std::optional<std::vector<std::uint8_t>>
+    emit(std::span<const P6ScalarKind> param_words) {
+        // The param count is the pool base EVERY emit-time local lookup adds;
+        // set it before walking the region (which emits local.get/set).
+        fn_param_count_ = static_cast<std::uint32_t>(param_words.size());
+        if (!emit_region(region_)) {
             return std::nullopt;
         }
         ByteBuffer function;
-        const std::uint32_t i32_locals = i32_group_size();
-        const std::uint32_t i64_locals = i64_count_ + scratch_i64_count_;
+        // Declared (non-parameter) locals. Params are implicit locals and must
+        // not appear in the local-declaration group.
+        std::uint32_t local_i32 = i32_count_ + scratch_i32_count_;
+        std::uint32_t local_i64 = i64_count_ + scratch_i64_count_;
         std::uint32_t local_groups = 0;
-        if (i32_locals != 0) {
+        if (local_i32 != 0) {
             ++local_groups;
         }
-        if (i64_locals != 0) {
+        if (local_i64 != 0) {
             ++local_groups;
         }
         function.u32(local_groups);
-        if (i32_locals != 0) {
-            function.u32(i32_locals);
+        if (local_i32 != 0) {
+            function.u32(local_i32);
             function.byte(kI32);
         }
-        if (i64_locals != 0) {
-            function.u32(i64_locals);
+        if (local_i64 != 0) {
+            function.u32(local_i64);
             function.byte(kI64);
         }
-        function.byte(kOpBlock);
-        function.byte(kI32); // block (result i32): the new state id
+        if (fn_mode_) {
+            function.raw_span(body_.span());
+            // plan() proved the region returns a value on every path; this
+            // unreachable only types the (dead) fallthrough for a value fn.
+            function.byte(kOpUnreachable);
+            function.byte(kOpEnd);
+            return std::move(function).take();
+        }
+        function.byte(kOpBlock);        function.byte(kI32); // block (result i32): the new state id
         function.raw_span(body_.span());
         // plan() proved the region diverges on every path, so no real
         // fallthrough reaches here; the trailing unreachable exists only to type
@@ -1346,14 +1470,21 @@ class P6ComputationHandlerBuilder {
   private:
     struct LocalInfo {
         P6ScalarKind kind{P6ScalarKind::IntI32};
-        std::uint32_t slot{0}; // index within the kind's pool
+        std::uint32_t slot{0}; // index within the kind's pool (or param ordinal)
         bool bound{false};
+        // FB-1: a pre-bound fn PARAMETER. It is wasm local (1 + slot), where
+        // slot is its declaration ordinal, and it is NOT part of the declared
+        // i32/i64 SSA pools (parameters are implicit locals whose word order is
+        // fixed by the functype, which may mix i32 and i64).
+        bool is_param{false};
     };
 
     const CoreProgram &program_;
     const ir::core::CoreLayoutTable &layouts_;
-    const CoreFlowDecl &flow_;
-    const CoreFlowState &handler_;
+    const CoreBodyStorage &storage_;
+    const CoreRegion &region_;
+    std::string_view state_name_;
+    bool fn_mode_{false};
     std::string_view unsupported_code_;
     std::vector<bool> &used_exprs_;
     std::vector<bool> &used_values_;
@@ -1363,6 +1494,12 @@ class P6ComputationHandlerBuilder {
     std::vector<LocalInfo> locals_; // CoreValueId -> pool slot
     std::uint32_t i32_count_{0};
     std::uint32_t i64_count_{0};
+    // FB-1 fn mode: number of pre-bound parameters (== functype arg count, env
+    // excluded). Set in emit(); pool_local adds the 1 + this offset.
+    std::uint32_t fn_param_count_{0};
+    // FB-1 fn mode: the direct callee instances this body invokes, in first-use
+    // order (deduped), the edges of the reachability fixed point.
+    std::vector<CoreInstanceId> fn_callees_;
     // Statement-level `if` opens one wasm label per nesting level, so a goto must
     // `br` past all of them to reach the handler's `block (result i32)`.
     std::uint32_t label_depth_{0};
@@ -1417,6 +1554,13 @@ class P6ComputationHandlerBuilder {
     std::vector<std::optional<std::uint32_t>> construct_addrs_;
     std::uint32_t scratch_addr_cursor_{0};
 
+    // FB-1 fn mode: callee CoreInstanceId -> wasm fn ordinal assigned by the
+    // module encoder. Null in handler mode.
+    const std::vector<std::uint32_t> *instance_to_fn_ordinal_{nullptr};
+    // FB-1 fn mode: absolute wasm function index of fn ordinal 0
+    // (import_count+7+handler_count). Null in handler mode; set before emit.
+    const std::uint32_t *fn_function_base_{nullptr};
+
     // KR6.7: set when a projection's root is the raw P4-D input frame. See
     // reads_raw_input_frame().
     bool reads_raw_input_frame_{false};
@@ -1425,8 +1569,8 @@ class P6ComputationHandlerBuilder {
         body_.byte(kOpUnreachable);
         add_diag(result_,
                  unsupported_code_,
-                 "RFC 0026 P6 scalar codegen cannot lower handler of state '" +
-                     handler_.state_name + "': " + std::move(message),
+                 std::string("RFC 0026 P6 scalar codegen cannot lower body '") +
+                     std::string(state_name_) + "': " + std::move(message),
                  std::move(range));
         return false;
     }
@@ -1456,10 +1600,19 @@ class P6ComputationHandlerBuilder {
     // ordinary SSA let pool; within either pool the slot is already offset by
     // its kind, so the base is the only arithmetic left.
     [[nodiscard]] std::uint32_t pool_local(const LocalInfo &info, bool scratch_pool) const {
-        if (info.kind == P6ScalarKind::IntI64) {
-            return i32_group_size() + (scratch_pool ? i64_count_ : 0) + info.slot;
+        if (info.is_param) {
+            // local 0 is env; parameter ordinal i (declaration order, mixed
+            // i32/i64 words) is wasm local 1 + i.
+            return 1u + info.slot;
         }
-        return (scratch_pool ? i32_count_ : 0) + info.slot;
+        // Non-param SSA + scratch declared locals begin at local
+        // 1 + param_count (fn mode) or local 0 (handler mode). They are grouped
+        // i32-word then i64-word; the i64 pool is offset by the i32 group size.
+        const std::uint32_t base = fn_mode_ ? 1u + fn_param_count_ : 0u;
+        if (info.kind == P6ScalarKind::IntI64) {
+            return base + i32_group_size() + (scratch_pool ? i64_count_ : 0) + info.slot;
+        }
+        return base + (scratch_pool ? i32_count_ : 0) + info.slot;
     }
 
     [[nodiscard]] std::optional<std::uint32_t> final_local(CoreValueId value) const {
@@ -1873,11 +2026,11 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool plan_expr(const CoreExprId id) {
-        if (id.value >= flow_.storage.exprs.size()) {
+        if (id.value >= storage_.exprs.size()) {
             return reject("expression id is out of range for this flow", ir::SourceRangeOpt{});
         }
         used_exprs_[id.value] = true;
-        const CoreExpr &expr = flow_.storage.exprs[id.value];
+        const CoreExpr &expr = storage_.exprs[id.value];
         if (scalar_kind(expr.result_type) == std::nullopt) {
             return reject("scalar expression has a non-scalar or f64 result type",
                           expr.source_range);
@@ -1909,13 +2062,52 @@ class P6ComputationHandlerBuilder {
                 [&](const CoreUnsupportedExpr &) {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
-                [&](const CoreCallExpr &) {
-                    return reject("direct fn call is lowered to its own outlined function in a "
-                                  "later step of this slice",
-                                  expr.source_range);
-                },
+                [&](const CoreCallExpr &c) { return plan_direct_call(c, expr); },
             },
             expr.node);
+    }
+
+    // FB-1 §6.1/§6.3: plan a statically-resolved direct call. The callee must
+    // resolve to a body-bearing Fn instance whose wasm ordinal the reachability
+    // pass assigned; every argument and the result must be a single P6 word
+    // (i32/i64 scalar, aggregate i32 address, bounded-collection i32 handle —
+    // String/PtrLen/f64 are exactly the words p6_scalar_kind rejects, so the
+    // multi-word cross-boundary FN_CROSS_BOUNDARY_TYPE gate is shared with the
+    // P6 scalar gate rather than reimplemented).
+    [[nodiscard]] bool plan_direct_call(const CoreCallExpr &c, const CoreExpr &expr) {
+        // Direct calls are legal from a fn body AND from an entry handler /
+        // workflow region (the reachability roots). At PLAN time the ordinal
+        // table may not exist yet (ordinals are assigned by the fixed point
+        // once every entry body is planned), so plan validates only the callee
+        // INSTANCE LINK and the single-word boundary; emit resolves the
+        // ordinal. The callee must be a body-bearing Fn instance.
+        const auto *payload =
+            c.callee.value < program_.instances.size()
+                ? std::get_if<CoreFnInstance>(&program_.instances[c.callee.value].payload)
+                : nullptr;
+        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+            payload->body.value >= program_.fns.size()) {
+            return reject("direct call target has no outlined fn body for the wasm computation lane",
+                          expr.source_range);
+        }
+        if (std::find(fn_callees_.begin(), fn_callees_.end(), c.callee) == fn_callees_.end()) {
+            fn_callees_.push_back(c.callee);
+        }
+        for (const CoreValueId arg : c.args) {
+            used_values_[arg.value] = true;
+            if (arg.value >= storage_.value_types.size() ||
+                p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]) == std::nullopt) {
+                return reject("direct call argument is not a single-word P6 value "
+                              "(String / f64 / multi-word types cannot cross an fn boundary)",
+                              expr.source_range);
+            }
+        }
+        if (p6_scalar_kind(program_, layouts_, expr.result_type) == std::nullopt) {
+            return reject("direct call result is not a single-word P6 value "
+                          "(multi-word types cannot cross an fn boundary)",
+                          expr.source_range);
+        }
+        return true;
     }
 
     // Kind lookup that does not depend on the emit-only i64 base.
@@ -1943,6 +2135,13 @@ class P6ComputationHandlerBuilder {
                 return reject("integer literal has a non-Int scalar type", expr.source_range);
             }
             return true;
+        case CoreLiteralKind::Unit:
+            // FB-1: a Unit literal is the zero-word value; it has no runtime
+            // representation and is legal only where a Unit result is expected
+            // (an fn with no return value — not yet in the slice). Reject here to
+            // keep the single-word boundary, matching the multi-word gate.
+            return reject("a Unit literal has no single-word wasm representation in this slice",
+                          expr.source_range);
         default:
             return reject("only Bool and Integer literals are in the scalar subset",
                           expr.source_range);
@@ -2022,7 +2221,7 @@ class P6ComputationHandlerBuilder {
         if (!construct.resolved) {
             return reject("constructor is unresolved in an executable program", range);
         }
-        const auto result_kind = scalar_kind(flow_.storage.exprs[id.value].result_type);
+        const auto result_kind = scalar_kind(storage_.exprs[id.value].result_type);
         if (result_kind != P6ScalarKind::Ptr) {
             return reject("constructor result is not an aggregate type", range);
         }
@@ -2103,10 +2302,10 @@ class P6ComputationHandlerBuilder {
     // an inline tag-only enum the P6 model cannot address) fails closed.
     [[nodiscard]] bool
     plan_construct_operand(CoreValueId value, CoreLayoutId slot, ir::SourceRangeOpt range) {
-        if (value.value >= flow_.storage.value_types.size()) {
+        if (value.value >= storage_.value_types.size()) {
             return reject("constructor operand value id is out of range", range);
         }
-        const auto kind = scalar_kind(flow_.storage.value_types[value.value]);
+        const auto kind = scalar_kind(storage_.value_types[value.value]);
         if (kind == std::nullopt) {
             return reject("constructor operand has a non-aggregate, non-scalar type", range);
         }
@@ -2152,17 +2351,17 @@ class P6ComputationHandlerBuilder {
     // repr-growing widening lands in an i64 local.
     [[nodiscard]] bool
     plan_coerce(CoreExprId id, const CoreCoerceExpr &coerce, ir::SourceRangeOpt range) {
-        if (id.value >= flow_.storage.exprs.size()) {
+        if (id.value >= storage_.exprs.size()) {
             return reject("coercion expression id is out of range for this flow", range);
         }
-        if (coerce.operand.value >= flow_.storage.value_types.size()) {
+        if (coerce.operand.value >= storage_.value_types.size()) {
             return reject("coercion operand value id is out of range", range);
         }
-        if (coerce.plan.value >= flow_.storage.coercion_plans.size()) {
+        if (coerce.plan.value >= storage_.coercion_plans.size()) {
             return reject("coercion plan id is out of range for this flow", range);
         }
-        const CoreCoercionPlanNode &root = flow_.storage.coercion_plans[coerce.plan.value];
-        if (flow_.storage.value_types[coerce.operand.value] != root.source) {
+        const CoreCoercionPlanNode &root = storage_.coercion_plans[coerce.plan.value];
+        if (storage_.value_types[coerce.operand.value] != root.source) {
             return reject("coercion operand type does not equal its plan root source", range);
         }
         // Every op must name a physical action the P6 value model can perform.
@@ -2180,11 +2379,11 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool emit_coerce(const CoreCoerceExpr &coerce, ir::SourceRangeOpt range) {
-        if (coerce.operand.value >= flow_.storage.value_types.size() ||
-            coerce.plan.value >= flow_.storage.coercion_plans.size()) {
+        if (coerce.operand.value >= storage_.value_types.size() ||
+            coerce.plan.value >= storage_.coercion_plans.size()) {
             return reject("coercion expression references an out-of-range id", std::move(range));
         }
-        const CoreCoercionPlanNode &root = flow_.storage.coercion_plans[coerce.plan.value];
+        const CoreCoercionPlanNode &root = storage_.coercion_plans[coerce.plan.value];
         const auto source_kind = readable_kind(coerce.operand);
         if (source_kind == std::nullopt) {
             return reject("coercion operand is not a readable local in this handler",
@@ -2239,7 +2438,7 @@ class P6ComputationHandlerBuilder {
             return reject("collection operation base is not a bounded collection value",
                           std::move(range));
         }
-        const CoreValueTypeId base_type = flow_.storage.value_types[collection.base.value];
+        const CoreValueTypeId base_type = storage_.value_types[collection.base.value];
         const ir::core::CoreLayoutContainer *container =
             p6_container_layout(program_, layouts_, base_type);
         if (container == nullptr) {
@@ -2258,7 +2457,7 @@ class P6ComputationHandlerBuilder {
             // i32_s` is correct for a length (always >= 0 in a well-formed
             // container, so signed vs unsigned is indistinguishable, but the
             // signed form keeps ONE extension opcode in the module).
-            const auto result_kind = scalar_kind(flow_.storage.exprs[id.value].result_type);
+            const auto result_kind = scalar_kind(storage_.exprs[id.value].result_type);
             if (result_kind == P6ScalarKind::IntI64) {
                 body_.byte(kOpI64ExtendI32S);
             }
@@ -2460,14 +2659,14 @@ class P6ComputationHandlerBuilder {
     // i32 by construction).
     [[nodiscard]] bool
     plan_collection(CoreExprId id, const CoreCollectionExpr &collection, ir::SourceRangeOpt range) {
-        if (id.value >= flow_.storage.exprs.size()) {
+        if (id.value >= storage_.exprs.size()) {
             return reject("collection expression id is out of range for this flow", range);
         }
         const auto base_kind = readable_kind(collection.base);
         if (base_kind != P6ScalarKind::Collection) {
             return reject("collection operation base is not a bounded collection value", range);
         }
-        const CoreValueTypeId base_type = flow_.storage.value_types[collection.base.value];
+        const CoreValueTypeId base_type = storage_.value_types[collection.base.value];
         const ir::core::CoreLayoutContainer *container =
             p6_container_layout(program_, layouts_, base_type);
         if (container == nullptr) {
@@ -2624,10 +2823,10 @@ class P6ComputationHandlerBuilder {
             q.variant.value >= program_.types[q.type_id.value].variants.size()) {
             return reject("qualified variant identity is out of range", range);
         }
-        if (p6_is_tag_only_enum(program_, layouts_, flow_.storage.exprs[id.value].result_type)) {
+        if (p6_is_tag_only_enum(program_, layouts_, storage_.exprs[id.value].result_type)) {
             return true; // a plain i32 discriminant constant
         }
-        if (!p6_is_aggregate(program_, layouts_, flow_.storage.exprs[id.value].result_type)) {
+        if (!p6_is_aggregate(program_, layouts_, storage_.exprs[id.value].result_type)) {
             return reject("qualified variant requires an enum type", range);
         }
         const int kind = enum_payload_kind(q.type_id, q.variant);
@@ -2671,7 +2870,7 @@ class P6ComputationHandlerBuilder {
                 match_result_locals_[match.result.value].bound) {
                 return reject("match result is bound more than once", range);
             }
-            const auto result_kind = scalar_kind(flow_.storage.value_types[match.result.value]);
+            const auto result_kind = scalar_kind(storage_.value_types[match.result.value]);
             if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Index) {
                 return reject("expression match result must have a scalar or aggregate type",
                               range);
@@ -2688,10 +2887,10 @@ class P6ComputationHandlerBuilder {
 
         for (const CoreMatchArm &arm : match.arms) {
             for (const CorePatternBinding &binding : arm.bindings) {
-                if (binding.value.value >= flow_.storage.value_types.size()) {
+                if (binding.value.value >= storage_.value_types.size()) {
                     return reject("match arm binding value id is out of range", range);
                 }
-                const auto binding_kind = scalar_kind(flow_.storage.value_types[binding.value.value]);
+                const auto binding_kind = scalar_kind(storage_.value_types[binding.value.value]);
                 if (binding_kind == std::nullopt || *binding_kind == P6ScalarKind::Index) {
                     return reject("match arm binding has a non-scalar or f64 type", range);
                 }
@@ -2778,10 +2977,10 @@ class P6ComputationHandlerBuilder {
                                         const std::vector<CorePatternBinding> &bindings,
                                         bool allow_payload_bindings,
                                         ir::SourceRangeOpt range) {
-        if (id.value >= flow_.storage.patterns.size()) {
+        if (id.value >= storage_.patterns.size()) {
             return reject("pattern id is out of range for this flow", range);
         }
-        const CorePattern &pattern = flow_.storage.patterns[id.value];
+        const CorePattern &pattern = storage_.patterns[id.value];
         return std::visit(
             Overloaded{
                 [&](const CoreWildcardPat &) { return true; },
@@ -2943,11 +3142,11 @@ class P6ComputationHandlerBuilder {
         return std::visit(
             Overloaded{
                 [&](const CoreLetStmt &s) {
-                    if (s.expr.value >= flow_.storage.exprs.size()) {
+                    if (s.expr.value >= storage_.exprs.size()) {
                         return reject("let references an out-of-range expression",
                                       statement.source_range);
                     }
-                    const CoreExpr &bound = flow_.storage.exprs[s.expr.value];
+                    const CoreExpr &bound = storage_.exprs[s.expr.value];
                     const auto kind = scalar_kind(bound.result_type);
                     if (kind == std::nullopt) {
                         return reject("let value has a non-scalar or f64 type",
@@ -2983,7 +3182,20 @@ class P6ComputationHandlerBuilder {
                                   statement.source_range);
                 },
                 [&](const CoreStoreStmt &s) { return plan_store(s, statement.source_range); },
-                [&](const CoreReturnStmt &) {
+                [&](const CoreReturnStmt &s) {
+                    if (fn_mode_) {
+                        if (!s.has_value) {
+                            return reject("an fn body must return a value", statement.source_range);
+                        }
+                        used_values_[s.value.value] = true;
+                        if (s.value.value >= storage_.value_types.size() ||
+                            p6_scalar_kind(program_, layouts_,
+                                           storage_.value_types[s.value.value]) == std::nullopt) {
+                            return reject("fn return value is not a single-word P6 value",
+                                          statement.source_range);
+                        }
+                        return true;
+                    }
                     return reject("value-returning handlers are a later P6 slice",
                                   statement.source_range);
                 },
@@ -3089,10 +3301,10 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool emit_expr(const CoreExprId id) {
-        if (id.value >= flow_.storage.exprs.size()) {
+        if (id.value >= storage_.exprs.size()) {
             return reject("expression id is out of range for this flow", ir::SourceRangeOpt{});
         }
-        const CoreExpr &expr = flow_.storage.exprs[id.value];
+        const CoreExpr &expr = storage_.exprs[id.value];
         const auto result_kind = scalar_kind(expr.result_type);
         if (result_kind == std::nullopt) {
             return reject("scalar expression has a non-scalar or f64 result type",
@@ -3124,14 +3336,39 @@ class P6ComputationHandlerBuilder {
                 [&](const CoreUnsupportedExpr &) {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
-                [&](const CoreCallExpr &) {
-                    return reject("direct fn call is lowered to its own outlined function in a "
-                                  "later step of this slice",
-                                  expr.source_range);
-                },
+                [&](const CoreCallExpr &c) { return emit_direct_call(c, expr); },
             },
             expr.node);
         return ok;
+    }
+
+    // FB-1 §6.3: emit a static direct call. Wasm operand order requires the
+    // FIRST parameter (env) pushed FIRST: i32.const 0, then each ANF argument
+    // word left to right, then a plain `call` to
+    // fn_function_base_ + ordinal. The module encoder computes the base after
+    // the reachability fixed point (import_count+7+handler_count).
+    [[nodiscard]] bool emit_direct_call(const CoreCallExpr &c, const CoreExpr &expr) {
+        if (instance_to_fn_ordinal_ == nullptr || fn_function_base_ == nullptr) {
+            return reject("direct call reached emit without an fn function table",
+                          expr.source_range);
+        }
+        if (c.callee.value >= instance_to_fn_ordinal_->size()) {
+            return reject("direct call callee is out of range", expr.source_range);
+        }
+        const std::uint32_t ordinal = (*instance_to_fn_ordinal_)[c.callee.value];
+        if (ordinal == std::numeric_limits<std::uint32_t>::max()) {
+            return reject("direct call callee was not reached by the fn reachability pass",
+                          expr.source_range);
+        }
+        emit_const_i32(0); // env: a capture-free static fn ignores it
+        for (const CoreValueId arg : c.args) {
+            if (!emit_value_read(arg, expr.source_range)) {
+                return false;
+            }
+        }
+        body_.byte(kOpCall);
+        body_.u32(*fn_function_base_ + ordinal);
+        return true;
     }
 
     // Emit a projection path READ. The plan pass proved the root is input /
@@ -3206,7 +3443,7 @@ class P6ComputationHandlerBuilder {
     // (a unit variant of a payload enum has all-unit slots in P6).
     [[nodiscard]] bool
     emit_qualified(CoreExprId id, const CoreQualifiedExpr &q, ir::SourceRangeOpt range) {
-        if (p6_is_tag_only_enum(program_, layouts_, flow_.storage.exprs[id.value].result_type)) {
+        if (p6_is_tag_only_enum(program_, layouts_, storage_.exprs[id.value].result_type)) {
             emit_const_i32(static_cast<std::int32_t>(q.variant.value));
             return true;
         }
@@ -3419,10 +3656,10 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool emit_unary(const CoreUnaryExpr &u, ir::SourceRangeOpt range) {
-        if (u.operand.value >= flow_.storage.exprs.size()) {
+        if (u.operand.value >= storage_.exprs.size()) {
             return reject("unary operand id is out of range for this flow", std::move(range));
         }
-        const auto operand_kind = scalar_kind(flow_.storage.exprs[u.operand.value].result_type);
+        const auto operand_kind = scalar_kind(storage_.exprs[u.operand.value].result_type);
         if (operand_kind == std::nullopt) {
             return reject("unary operand has a non-scalar or f64 result type", std::move(range));
         }
@@ -3457,11 +3694,11 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] bool emit_binary(const CoreBinaryExpr &b, ir::SourceRangeOpt range) {
-        if (b.lhs.value >= flow_.storage.exprs.size() || b.rhs.value >= flow_.storage.exprs.size()) {
+        if (b.lhs.value >= storage_.exprs.size() || b.rhs.value >= storage_.exprs.size()) {
             return reject("binary operand id is out of range for this flow", std::move(range));
         }
-        const auto lhs_kind = scalar_kind(flow_.storage.exprs[b.lhs.value].result_type);
-        const auto rhs_kind = scalar_kind(flow_.storage.exprs[b.rhs.value].result_type);
+        const auto lhs_kind = scalar_kind(storage_.exprs[b.lhs.value].result_type);
+        const auto rhs_kind = scalar_kind(storage_.exprs[b.rhs.value].result_type);
         if (lhs_kind == std::nullopt || rhs_kind == std::nullopt || *lhs_kind != *rhs_kind) {
             return reject("binary operands must share one scalar type", std::move(range));
         }
@@ -3586,10 +3823,10 @@ class P6ComputationHandlerBuilder {
                                          std::uint32_t scrutinee_local,
                                          P6PatternSite site,
                                          ir::SourceRangeOpt range) {
-        if (id.value >= flow_.storage.patterns.size()) {
+        if (id.value >= storage_.patterns.size()) {
             return reject("pattern id is out of range for this flow", std::move(range));
         }
-        const CorePattern &pattern = flow_.storage.patterns[id.value];
+        const CorePattern &pattern = storage_.patterns[id.value];
         return std::visit(
             Overloaded{
                 // `_` and `x`: irrefutable — a constant true, so the enclosing
@@ -4041,6 +4278,10 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [&](const CoreGotoStmt &go) {
+                    if (fn_mode_) {
+                        return reject("a goto is illegal inside an fn body",
+                                      statement.source_range);
+                    }
                     record_target(go.target);
                     emit_goto_transition(go);
                     return true;
@@ -4055,7 +4296,18 @@ class P6ComputationHandlerBuilder {
                                   statement.source_range);
                 },
                 [&](const CoreStoreStmt &s) { return emit_store(s, statement.source_range); },
-                [&](const CoreReturnStmt &) {
+                [&](const CoreReturnStmt &s) {
+                    if (fn_mode_) {
+                        if (!s.has_value) {
+                            return reject("an fn body must return a value",
+                                          statement.source_range);
+                        }
+                        if (!emit_value_read(s.value, statement.source_range)) {
+                            return false;
+                        }
+                        body_.byte(kOpReturn);
+                        return true;
+                    }
                     return reject("value-returning handlers are a later P6 slice",
                                   statement.source_range);
                 },
@@ -4066,6 +4318,262 @@ class P6ComputationHandlerBuilder {
             statement.node);
     }
 };
+
+// Out-of-line: a pre-bound fn parameter occupies wasm local 1 + ordinal (local
+// 0 is env), does not consume an SSA-pool slot, and is consumed by the fn
+// signature rather than by a let.
+[[nodiscard]] inline bool P6ComputationHandlerBuilder::bind_param(
+    CoreValueId value, std::uint32_t ordinal, P6ScalarKind kind) {
+    if (value.value >= locals_.size() || locals_[value.value].bound) {
+        return false;
+    }
+    LocalInfo &info = locals_[value.value];
+    info.bound = true;
+    info.is_param = true;
+    info.kind = kind;
+    // A parameter reads the functype argument local directly: env is local 0,
+    // parameter ordinal i is local 1 + i. Params do NOT consume i32/i64 SSA
+    // pool slots (those counters count only let-bound values), so non-param
+    // locals begin at 1 + param_count via pool_local's base.
+    info.slot = ordinal;
+    used_values_[value.value] = true;
+    return true;
+}
+
+// Full definition of the FB-1 outlined-fn compilation record (forward-declared
+// above so AgentPlan can hold a vector of them).
+struct CompiledFn {
+    CoreFnId id{};
+    std::vector<std::uint8_t> body;
+    std::vector<P6ScalarKind> param_words;
+    P6ScalarKind result_word{P6ScalarKind::IntI32};
+    std::vector<CoreInstanceId> callees;
+};
+
+// The single-word P6 result every value-bearing return of `fn` carries, or a
+// reason string. The Core verifier proves the body completes via consistent
+// value returns; this derives the physical result word for the wasm functype.
+struct FnReturnTermination {
+    bool ok{false};
+    P6ScalarKind result_word{P6ScalarKind::IntI32};
+    std::string reason;
+};
+
+[[nodiscard]] FnReturnTermination
+fn_return_termination(const CoreProgram &program,
+                      const ir::core::CoreLayoutTable &layouts,
+                      const CoreFnDecl &fn) {
+    std::optional<P6ScalarKind> word;
+    bool found = false;
+    const auto scan = [&](auto &&self, const CoreRegion &region) -> void {
+        for (const CoreStmt &stmt : region.statements) {
+            if (const auto *ret = std::get_if<CoreReturnStmt>(&stmt.node);
+                ret != nullptr && ret->has_value) {
+                if (ret->value.value >= fn.storage.value_types.size()) {
+                    continue;
+                }
+                found = true;
+                const auto k =
+                    p6_scalar_kind(program, layouts, fn.storage.value_types[ret->value.value]);
+                if (k == std::nullopt) {
+                    continue;
+                }
+                if (word.has_value() && *word != *k) {
+                    continue;
+                }
+                word = k;
+            }
+            if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                if (branch->then_region) {
+                    self(self, *branch->then_region);
+                }
+                if (branch->else_region) {
+                    self(self, *branch->else_region);
+                }
+            }
+            if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                for (const CoreMatchArm &arm : match->arms) {
+                    if (arm.body) {
+                        self(self, *arm.body);
+                    }
+                }
+                if (match->fallback_region) {
+                    self(self, *match->fallback_region);
+                }
+            }
+        }
+    };
+    scan(scan, fn.body);
+    if (!found || !word.has_value()) {
+        return FnReturnTermination{false, P6ScalarKind::IntI32,
+                                   "has no single-word value-bearing return on every path"};
+    }
+    return FnReturnTermination{true, *word, {}};
+}
+
+// Compile the outlined pure fn bodies reachable from the module's ENTRY
+// storages (an agent module's one shared flow storage; a workflow module's
+// workflow storage plus its packaged agent flows). Only fns the direct
+// CoreCallExpr closure reaches are emitted; the closure is a deterministic
+// worklist fixed point over the static (verified-acyclic) call graph, and
+// ordinals are assigned in ascending CoreFnId order so the module is
+// reproducible. A module with no direct calls emits zero fn bodies and stays
+// byte-identical to its E1-E3/P6 shape.
+[[nodiscard]] bool compile_reachable_fn_bodies(
+    const CoreProgram &program,
+    const ir::core::CoreLayoutTable &layouts,
+    std::vector<CompiledFn> &out,
+    std::span<const CoreBodyStorage *const> entry_storages,
+    std::span<const std::vector<CoreInstanceId>> planned_entry_callees,
+    std::uint32_t fn_function_base,
+    CoreWasmCodegenResult &result) {
+    std::vector<CoreInstanceId> worklist;
+    std::vector<bool> queued(program.instances.size(), false);
+    const auto enqueue = [&](CoreInstanceId id) {
+        if (id.value >= queued.size() || queued[id.value]) {
+            return;
+        }
+        queued[id.value] = true;
+        worklist.push_back(id);
+    };
+    // Roots from the raw entry storages (covers identity/capability finals
+    // whose bodies are validated, not built with the P6 builder) ...
+    for (const CoreBodyStorage *storage : entry_storages) {
+        if (storage == nullptr) {
+            continue;
+        }
+        for (const CoreExpr &expr : storage->exprs) {
+            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                enqueue(call->callee);
+            }
+        }
+    }
+    // ... plus the callees the planned computed handlers recorded while
+    // planning (their builder walked the body and validated each call).
+    for (const auto &callees : planned_entry_callees) {
+        for (const CoreInstanceId id : callees) {
+            enqueue(id);
+        }
+    }
+
+    std::vector<CoreFnId> reachable;
+    std::vector<bool> seen_fn(program.fns.size(), false);
+    const auto resolve = [&](CoreInstanceId id) -> const CoreFnDecl * {
+        if (id.value >= program.instances.size()) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "direct call references an out-of-range fn instance during wasm planning");
+            return nullptr;
+        }
+        const auto *payload = std::get_if<CoreFnInstance>(&program.instances[id.value].payload);
+        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+            payload->body.value >= program.fns.size()) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedOrchestration,
+                     "direct call target has no outlined fn body for the wasm computation lane");
+            return nullptr;
+        }
+        return &program.fns[payload->body.value];
+    };
+    while (!worklist.empty()) {
+        const CoreInstanceId id = worklist.back();
+        worklist.pop_back();
+        const CoreFnDecl *fn = resolve(id);
+        if (fn == nullptr) {
+            return false;
+        }
+        if (seen_fn[fn->id.value]) {
+            continue;
+        }
+        seen_fn[fn->id.value] = true;
+        reachable.push_back(fn->id);
+        for (const CoreExpr &expr : fn->storage.exprs) {
+            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                enqueue(call->callee);
+            }
+        }
+    }
+    std::sort(reachable.begin(), reachable.end(), [](CoreFnId a, CoreFnId b) {
+        return a.value < b.value;
+    });
+    if (reachable.empty()) {
+        return true;
+    }
+
+    // callee CoreInstanceId -> fn ordinal (CoreFnId order), for the builder's
+    // `call` emission. The absolute function base is injected at section emit;
+    // emit_direct_call adds it, so plan against a zero base here.
+    std::vector<std::uint32_t> instance_to_ordinal(
+        program.instances.size(), std::numeric_limits<std::uint32_t>::max());
+    for (std::uint32_t ordinal = 0; ordinal < reachable.size(); ++ordinal) {
+        instance_to_ordinal[program.fns[reachable[ordinal].value].instance.value] = ordinal;
+    }
+
+    for (std::uint32_t ordinal = 0; ordinal < reachable.size(); ++ordinal) {
+        const CoreFnDecl &fn = program.fns[reachable[ordinal].value];
+        std::vector<bool> used_exprs(fn.storage.exprs.size(), false);
+        std::vector<bool> used_values(fn.storage.value_count, false);
+        const FnBodyView view{&fn.storage, &fn.body, fn.name};
+        P6ComputationHandlerBuilder builder(program,
+                                           layouts,
+                                           view,
+                                           used_exprs,
+                                           used_values,
+                                           result,
+                                           &instance_to_ordinal,
+                                           &fn_function_base);
+        std::vector<P6ScalarKind> param_words;
+        param_words.reserve(fn.params.size());
+        for (std::uint32_t i = 0; i < fn.params.size(); ++i) {
+            const CoreValueId param = fn.params[i];
+            if (param.value >= fn.storage.value_types.size()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCore,
+                         "fn parameter value is out of range for its body storage");
+                return false;
+            }
+            const auto word =
+                p6_scalar_kind(program, layouts, fn.storage.value_types[param.value]);
+            if (word == std::nullopt) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedOrchestration,
+                         "fn '" + fn.name +
+                             "' crosses a boundary with a non-single-word parameter "
+                             "(String / f64 / multi-word types are rejected)");
+                return false;
+            }
+            param_words.push_back(*word);
+            if (!builder.bind_param(param, i, *word)) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCore,
+                         "fn parameter could not be bound into the wasm local table");
+                return false;
+            }
+        }
+        if (!builder.plan()) {
+            return false;
+        }
+        const FnReturnTermination termination = fn_return_termination(program, layouts, fn);
+        if (!termination.ok) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedOrchestration,
+                     "fn '" + fn.name + "' " + termination.reason);
+            return false;
+        }
+        auto body = builder.emit(param_words);
+        if (!body.has_value()) {
+            return false;
+        }
+        CompiledFn compiled;
+        compiled.id = reachable[ordinal];
+        compiled.body = std::move(*body);
+        compiled.param_words = std::move(param_words);
+        compiled.result_word = termination.result_word;
+        compiled.callees = builder.fn_callees();
+        out.push_back(std::move(compiled));
+    }
+    return true;
+}
 
 [[nodiscard]] std::optional<AgentPlan> build_agent_plan(const CoreProgram &program,
                                                         const ir::core::CoreLayoutTable &layouts,
@@ -4154,6 +4662,17 @@ class P6ComputationHandlerBuilder {
     plan.actions.resize(agent.states.size(), IdentityAction{});
     std::vector<bool> used_exprs(flow->storage.exprs.size(), false);
     std::vector<bool> used_values(flow->storage.value_count, false);
+    // FB-1: a computed handler is PLANNED in the state loop but its body is
+    // EMITTED only after the fn reachability fixed point assigned ordinals (a
+    // handler can directly call an outlined fn, so its emitted `call` indices
+    // depend on that table). Keep one planned builder per computed handler.
+    struct PlannedComputedHandler {
+        std::uint32_t state{0};
+        std::unique_ptr<P6ComputationHandlerBuilder> builder;
+        std::vector<CoreStateId> targets;
+        bool reads_raw_input_frame{false};
+    };
+    std::vector<PlannedComputedHandler> planned_handlers;
 
     // RFC 0026 P6-2: a computed-goto handler compiles to its OWN `() -> i32`
     // function, so its locals are private and every handler can be emitted
@@ -4233,17 +4752,9 @@ class P6ComputationHandlerBuilder {
                 if (!builder->plan()) {
                     return std::nullopt;
                 }
-                // Emit BEFORE the legality check: a match arm's gotos live in the
-                // pattern/guard/body regions and are recorded by the statement
-                // emitter as it walks them, so `targets()` is only complete once
-                // the body has been emitted. A rejection during emit discards the
-                // body, so no partial artifact can escape.
-                auto body = builder->emit();
-                if (!body.has_value()) {
-                    return std::nullopt;
-                }
-                // Every dynamically reachable target must be a declared legal
-                // edge of THIS state.
+                // Targets are recorded during planning (match-arm gotos), so
+                // validate the successor set now; the body itself is emitted
+                // after the fn fixed point (a handler may directly call an fn).
                 for (const CoreStateId destination : builder->targets()) {
                     const bool legal =
                         std::any_of(agent.transitions.begin(),
@@ -4260,12 +4771,13 @@ class P6ComputationHandlerBuilder {
                         return std::nullopt;
                     }
                 }
-                const auto function = static_cast<std::uint32_t>(plan.handlers.size());
-                plan.handlers.push_back(CompiledHandler{std::move(*body)});
-                plan.actions[state] = ComputedGotoAction{function, builder->targets()};
-                if (builder->reads_raw_input_frame()) {
-                    plan.reads_raw_input_frame = true;
-                }
+                // Read the target/raw-frame facts BEFORE moving the builder
+                // (an aggregate field move must not be followed by a read of
+                // the moved-from unique_ptr).
+                const std::vector<CoreStateId> handler_targets = builder->targets();
+                const bool reads_raw = builder->reads_raw_input_frame();
+                planned_handlers.push_back(PlannedComputedHandler{
+                    state, std::move(builder), handler_targets, reads_raw});
                 continue;
             }
             const bool contains_capability = region_contains_capability(handler->body);
@@ -4419,6 +4931,66 @@ class P6ComputationHandlerBuilder {
                      "capability SymbolId is absent or exceeds the uint32 host ABI domain",
                      capability.source_range);
             return std::nullopt;
+        }
+    }
+
+    // RFC 0026 FB-1 §6.1: compile the outlined pure fn bodies reachable from
+    // the entry handler regions via direct CoreCallExpr. The reachability set
+    // is a deterministic fixed point over the static (acyclic, verified) call
+    // graph; ordinals are assigned in CoreFnId order so the module is
+    // reproducible. A zero-call module emits no fn bodies. The handler count
+    // is fixed by the planned computed handlers, so the fn base is known now.
+    plan.handlers.resize(planned_handlers.size());
+    const std::uint32_t agent_fn_base =
+        static_cast<std::uint32_t>(plan.imports.size()) + kDefinedHandlerBase +
+        static_cast<std::uint32_t>(planned_handlers.size());
+    std::vector<std::vector<CoreInstanceId>> planned_entry_callees;
+    planned_entry_callees.reserve(planned_handlers.size());
+    for (const PlannedComputedHandler &planned : planned_handlers) {
+        planned_entry_callees.push_back(planned.builder->fn_callees());
+    }
+    if (!compile_reachable_fn_bodies(program,
+                                     layouts,
+                                     plan.fns,
+                                     std::vector<const CoreBodyStorage *>{&flow->storage},
+                                     planned_entry_callees,
+                                     agent_fn_base,
+                                     result)) {
+        return std::nullopt;
+    }
+
+    // Build the callee-instance -> ordinal table the HANDLER emitters use (a
+    // handler can directly call any reachable fn).
+    std::vector<std::uint32_t> instance_to_ordinal(
+        program.instances.size(), std::numeric_limits<std::uint32_t>::max());
+    for (std::uint32_t ordinal = 0; ordinal < plan.fns.size(); ++ordinal) {
+        instance_to_ordinal[program.fns[plan.fns[ordinal].id.value].instance.value] = ordinal;
+    }
+    const std::uint32_t handler_fn_base = agent_fn_base;
+
+    // Now that ordinals are fixed, emit the planned computed handlers in
+    // state-loop order and publish their actions (the function index is the
+    // handler's position in plan.handlers). A builder owns state via a
+    // unique_ptr whose stored object is stable, so releasing the pointers into
+    // the vector explicitly (no reallocation here) is safe; move the unique_ptr
+    // objects rather than copying them.
+    for (std::uint32_t index = 0; index < planned_handlers.size(); ++index) {
+        PlannedComputedHandler &planned = planned_handlers[index];
+        const std::uint32_t state = planned.state;
+        std::vector<CoreStateId> targets = planned.targets;
+        std::unique_ptr<P6ComputationHandlerBuilder> builder = std::move(planned.builder);
+        builder->set_fn_call_tables(&instance_to_ordinal, &handler_fn_base);
+        auto body = builder->emit({});
+        if (!body.has_value()) {
+            return std::nullopt;
+        }
+        // reads_raw_input_frame_ is latched during EMIT (an input-frame
+        // projection emits a fixed-region load), so read it after emit().
+        const bool reads_raw = builder->reads_raw_input_frame();
+        plan.handlers[index] = CompiledHandler{std::move(*body)};
+        plan.actions[state] = ComputedGotoAction{index, std::move(targets)};
+        if (reads_raw) {
+            plan.reads_raw_input_frame = true;
         }
     }
     return plan;
@@ -4870,6 +5442,17 @@ void append_func_type(ByteBuffer &section,
     section.u32(static_cast<std::uint32_t>(results.size()));
     section.raw(results);
 }
+// FB-1: vector-word overload for the heterogeneous fn functypes (an i64
+// parameter makes the parameter word sequence non-constant).
+void append_func_type(ByteBuffer &section,
+                      const std::vector<std::uint8_t> &params,
+                      std::initializer_list<std::uint8_t> results) {
+    section.byte(kFuncType);
+    section.u32(static_cast<std::uint32_t>(params.size()));
+    section.raw_span(params);
+    section.u32(static_cast<std::uint32_t>(results.size()));
+    section.raw(results);
+}
 void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) {
     section.byte(kI32);
     section.byte(is_mutable ? 1 : 0);
@@ -5191,12 +5774,28 @@ encode_module(const CoreProgram &program,
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
 
     ByteBuffer types;
-    types.u32(5);
+    types.u32(5 + static_cast<std::uint32_t>(plan.fns.size()));
     append_func_type(types, {}, {kI32});
     append_func_type(types, {kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {});
     append_func_type(types, {kI32, kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {kI32, kI32, kI32});
+    // RFC 0026 FB-1: one functype per outlined fn, in ordinal order, appended
+    // beyond the five fixed types. Wasm permits structurally duplicate
+    // functypes, so each fn gets its own type index (5 + ordinal) even when
+    // signatures coincide. Every signature is (i32 env, args...) -> ret with
+    // single-word P6 args/result (an i64 argument is the only non-i32 word).
+    for (const CompiledFn &fn : plan.fns) {
+        std::vector<std::uint8_t> params;
+        params.reserve(fn.param_words.size() + 1);
+        params.push_back(kI32); // env
+        for (const P6ScalarKind word : fn.param_words) {
+            params.push_back(word == P6ScalarKind::IntI64 ? kI64 : kI32);
+        }
+        const std::uint8_t result_word =
+            fn.result_word == P6ScalarKind::IntI64 ? kI64 : kI32;
+        append_func_type(types, params, {result_word});
+    }
     if (!append_section(module, kSectionType, types)) {
         return std::nullopt;
     }
@@ -5218,7 +5817,8 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer functions_section;
-    functions_section.u32(functions.defined_count());
+    functions_section.u32(functions.defined_count() +
+                          static_cast<std::uint32_t>(plan.fns.size()));
     functions_section.u32(kTypeI32ToI32);
     functions_section.u32(kTypeTwoI32ToVoid);
     functions_section.u32(kTypeNoArgsI32);
@@ -5231,6 +5831,11 @@ encode_module(const CoreProgram &program,
     // a pure E1-E3 agent keeps its canonical 7-function section bytes.
     for (std::uint32_t index = 0; index < plan.handlers.size(); ++index) {
         functions_section.u32(kTypeNoArgsI32);
+    }
+    // RFC 0026 FB-1: outlined fn bodies follow the handlers, each with its own
+    // functype (5 + ordinal).
+    for (std::uint32_t index = 0; index < plan.fns.size(); ++index) {
+        functions_section.u32(5u + index);
     }
     if (!append_section(module, kSectionFunction, functions_section)) {
         return std::nullopt;
@@ -5276,7 +5881,8 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer code;
-    code.u32(functions.defined_count());
+    code.u32(functions.defined_count() +
+             static_cast<std::uint32_t>(plan.fns.size()));
     const auto alloc = make_alloc_body();
     const auto dealloc = make_dealloc_body();
     const auto current = make_current_state_body();
@@ -5292,6 +5898,13 @@ encode_module(const CoreProgram &program,
     // same order their indices were assigned (ascending function index).
     for (const auto &handler : plan.handlers) {
         if (!code.sized(handler.body)) {
+            return std::nullopt;
+        }
+    }
+    // RFC 0026 FB-1: the outlined fn bodies follow the handlers in ordinal
+    // order (the function-index order the type/function sections declared).
+    for (const auto &fn : plan.fns) {
+        if (!code.sized(fn.body)) {
             return std::nullopt;
         }
     }
@@ -5953,7 +6566,10 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     ByteBuffer functions_section;
-    functions_section.u32(functions.runner_count + 6u);
+    // RFC 0026 FB-1: defined_count() is runner_count+6+fn_count. A workflow
+    // module carries zero outlined fns in FB-1 (fn_count==0), so this is
+    // byte-identical to the pre-FB-1 runner_count+6 shape.
+    functions_section.u32(functions.defined_count());
     functions_section.u32(kTypeI32ToI32);
     functions_section.u32(kTypeTwoI32ToVoid);
     functions_section.u32(kTypeNoArgsI32);
@@ -6011,7 +6627,7 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     ByteBuffer code;
-    code.u32(functions.runner_count + 6u);
+    code.u32(functions.defined_count());
     // A capability workflow uses the checked-alloc body (returns 0 on capacity
     // exhaustion, never advancing heap_next); identity workflows keep the shared
     // unchecked bump body byte-for-byte.

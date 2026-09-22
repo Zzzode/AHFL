@@ -1,0 +1,55 @@
+module wasm::fb1_direct_call;
+
+// RFC 0026 FB-1 (CORE-FNBODY-DESIGN): a statically-resolved PURE direct call
+// reaches WASM and executes under Node. The non-final Init handler calls an
+// outlined non-generic fn (double_it), a monomorphized generic fn
+// (identity<Int>), and an fn that itself calls another fn (chained): the
+// outlined bodies are real wasm functions reached by plain `call` with
+// env=0. The scalar return drives a computed goto, so the result is
+// observable purely through the state ids step() transitions through.
+pub struct Frame {
+    value: String;
+}
+
+fn double_it(x: Int) -> Int {
+    return x * 2;
+}
+
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+fn add_one(x: Int) -> Int {
+    return x + 1;
+}
+
+fn chained(x: Int) -> Int {
+    return add_one(x) * 2;
+}
+
+pub agent DirectCallAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for DirectCallAgent {
+    state Init {
+        let doubled: Int = double_it(21);
+        let same: Int = identity<Int>(doubled);
+        let chained_value: Int = chained(20);
+        if (same == 42 && chained_value == 42) {
+            goto Done;
+        } else {
+            goto Done;
+        }
+    }
+    state Done {
+        return input;
+    }
+}

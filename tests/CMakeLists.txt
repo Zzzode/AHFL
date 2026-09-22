@@ -132,6 +132,25 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 FB-1 (CORE-FNBODY-DESIGN): a real-frontend PURE direct call
+    # (non-generic fn, a monomorphized generic fn, and an fn calling another
+    # fn) reaches WASM as outlined functions invoked by a plain `call` with
+    # env=0. The Node host compiles the module and drives step(); the scalar
+    # return of the called fns routes the computed goto, so a wrong argument,
+    # result word, or call target is visible in the state-id path.
+    add_test(NAME ahfl.wasm.fb1_direct_call_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb1_direct_call_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb1_direct_call.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb1_direct_call_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-1 direct-call Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 P6-1 (KR6.6): nested control flow. A fully-diverging if nested
     # inside a void/fall-through branch used to be typed i32 from divergence
     # alone, producing a module WebAssembly.compile rejects. These fixtures
