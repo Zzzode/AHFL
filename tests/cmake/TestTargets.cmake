@@ -491,6 +491,32 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     ahfl_apply_project_warnings(ahfl_conformance_wasm_eligibility_tests)
 endif()
 
+# KR6.7 (RFC 0026 P7): manifest-driven Node embedded-engine differential
+# runner. Produces the Core-Wasm module + machine-readable descriptor from each
+# conformance case, drives the generic Node embedded host, and compares the
+# evaluator and Node observations on the three differential dimensions. Links
+# the real evaluator engine and the wasm backend (the producer emits real
+# bytes); only registered when the infra backend exists.
+if(AHFL_ENABLE_BACKEND_INFRA)
+    add_executable(ahfl_conformance_wasm_node_runner
+        conformance/evaluator_engine.cpp
+        conformance/wasm_engine.cpp
+        integration/conformance_wasm_node_runner.cpp
+    )
+    target_link_libraries(ahfl_conformance_wasm_node_runner
+        PRIVATE
+            ahfl_runtime_engine
+            ahfl_compiler_backend_infra_wasm
+            ahfl_base_json
+    )
+    target_include_directories(ahfl_conformance_wasm_node_runner
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_conformance_wasm_node_runner)
+endif()
+
 add_executable(ahfl_payload_store_tests
     unit/runtime/engine/payload_store.cpp
 )

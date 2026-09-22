@@ -75,6 +75,10 @@ struct ExpectedCase {
     std::size_t capability_count;
     std::size_t scenario_count;
     WasmEligibility wasm;
+    // KR6.7: a raw-P4-D-frame P6 case (aggregate/collection) emits on the wasm
+    // lane but its inline raw input frame cannot be materialized from canonical
+    // wire JSON by the evaluator adapter, so it runs the wasm/Node lane only.
+    bool evaluator{true};
 };
 
 void test_committed_cases(const std::filesystem::path &repo_root) {
@@ -154,6 +158,83 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             // former `computation` claim was a stale hand-curated skip.
             WasmEligibility::Orchestration,
         },
+        // KR6.7 (RFC 0026 P7): landed KR6.6 (P6) computation slices, expressed
+        // as manifest-driven cases. Each completes with an identity final that
+        // forwards the borrowed wire frame, so it runs on BOTH the evaluator and
+        // the orchestration wasm/Node lane and differentially compares.
+        {
+            "p6_scalar_cond.case.json",
+            "tests/golden/wasm/p6_scalar_cond.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_scalar_cond::ScalarCondAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_neg_compare.case.json",
+            "tests/golden/wasm/p6_neg_compare.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_neg_cmp::NegCmpAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_cascade.case.json",
+            "tests/golden/wasm/p6_cascade.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_cascade::CascadeAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_match_enum.case.json",
+            "tests/golden/wasm/p6_match_enum.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_match_enum::MatchAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_coerce.case.json",
+            "tests/golden/wasm/p6_coerce.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_coerce::CoerceAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_coerce_bounds.case.json",
+            "tests/golden/wasm/p6_coerce_bounds.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_coerce_bounds::CoerceBoundsAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_nested_depth3.case.json",
+            "tests/golden/wasm/p6_nested_depth3.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_nested_depth3::NestedDepth3Agent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_nested_fallthrough.case.json",
+            "tests/golden/wasm/p6_nested_fallthrough.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_nested_fallthrough::NestedFallthroughAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        // Raw P4-D input-frame handlers: emit on the wasm lane but their inline
+        // raw frame is not materializable from wire JSON by the evaluator
+        // adapter, and canonical output observation is P6-7 gated.
+        {
+            "p6_aggregate.case.json",
+            "tests/golden/wasm/p6_aggregate.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_aggregate::AggregateAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+        },
+        {
+            "p6_collection.case.json",
+            "tests/golden/wasm/p6_collection.ahfl",
+            CaseKind::Agent,
+            "std::collections::CollectionAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";
@@ -219,7 +300,8 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
               "capability count: " + file_name);
         check(manifest.scenarios.size() == expectation->scenario_count,
               "scenario count: " + file_name);
-        check(manifest.engines.evaluator, "evaluator enabled: " + file_name);
+        check(manifest.engines.evaluator == expectation->evaluator,
+              "evaluator enabled: " + file_name);
         check(manifest.engines.wasm.eligibility == expectation->wasm,
               "wasm eligibility: " + file_name);
         check(!manifest.engines.wasm.reason.empty(),

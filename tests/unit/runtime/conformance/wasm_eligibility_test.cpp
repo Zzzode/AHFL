@@ -175,6 +175,21 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"e3_identity_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"e3_capability_workflow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"float_output_e2e.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // KR6.7: landed KR6.6 (P6) computation slices emit cleanly on the agent
+        // lane with an identity final forwarding the borrowed wire frame.
+        {"p6_scalar_cond.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_neg_compare.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_cascade.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_match_enum.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_coerce.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_coerce_bounds.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_nested_depth3.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_nested_fallthrough.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // Raw P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
+        // cleanly; their canonical OUTPUT observation is the separate P6-7
+        // output-frame gate, which the Node differential enforces as a skip.
+        {"p6_aggregate.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_collection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);

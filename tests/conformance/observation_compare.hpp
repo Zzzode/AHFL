@@ -1,0 +1,162 @@
+#pragma once
+
+// KR6.7 (RFC 0026 P7): differential comparator between the in-process evaluator
+// observation and the Node embedded-engine observation.
+//
+// Both adapters emit a canonical observation document over the SAME case /
+// scenario. They use different schema tags and the Node document carries extra
+// execution internals (transition_count, workflow_completed_count), so this
+// comparator asserts equality on exactly the three KR6.7 differential
+// dimensions, plus run status:
+//
+//   1. state_sequence       ordered {agent,state} entries (declaration order);
+//   2. capability_sequence  ordered canonical capability names;
+//   3. output_json          canonical output wire bytes (or both absent);
+//   0. status               completed / suspended / failed.
+//
+// It returns an empty optional when they agree, or a human-readable reason
+// naming the first diverging dimension. Pure: it only parses the two documents.
+
+#include <optional>
+#include <string>
+#include <string_view>
+
+#include "base/json/json_value.hpp"
+#include "conformance/conformance_case.hpp"
+
+namespace ahfl::conformance {
+
+namespace detail {
+
+[[nodiscard]] inline std::optional<std::string> compare_string_array(const json::JsonValue &lhs,
+                                                                     const json::JsonValue &rhs,
+                                                                     std::string_view dimension) {
+    if (!lhs.is_array() || !rhs.is_array()) {
+        return std::string{dimension} + " is not an array in one observation";
+    }
+    if (lhs.array_items.size() != rhs.array_items.size()) {
+        return std::string{dimension} + " length diverged (evaluator " +
+               std::to_string(lhs.array_items.size()) + ", node " +
+               std::to_string(rhs.array_items.size()) + ")";
+    }
+    for (std::size_t i = 0; i < lhs.array_items.size(); ++i) {
+        const auto a = lhs.array_items[i]->as_string();
+        const auto b = rhs.array_items[i]->as_string();
+        if (!a.has_value() || !b.has_value() || *a != *b) {
+            return std::string{dimension} + "[" + std::to_string(i) + "] diverged";
+        }
+    }
+    return std::nullopt;
+}
+
+// Compares the (agent,state) entry sequence element-by-element.
+[[nodiscard]] inline std::optional<std::string> compare_state_sequence(const json::JsonValue &lhs,
+                                                                       const json::JsonValue &rhs) {
+    constexpr std::string_view dimension = "state_sequence";
+    if (!lhs.is_array() || !rhs.is_array()) {
+        return std::string{dimension} + " is not an array in one observation";
+    }
+    if (lhs.array_items.size() != rhs.array_items.size()) {
+        return std::string{dimension} + " length diverged (evaluator " +
+               std::to_string(lhs.array_items.size()) + ", node " +
+               std::to_string(rhs.array_items.size()) + ")";
+    }
+    for (std::size_t i = 0; i < lhs.array_items.size(); ++i) {
+        const auto *a = lhs.array_items[i].get();
+        const auto *b = rhs.array_items[i].get();
+        if (a == nullptr || b == nullptr || !a->is_object() || !b->is_object()) {
+            return std::string{dimension} + "[" + std::to_string(i) +
+                   "] is not an object in one observation";
+        }
+        const auto *a_agent = a->get("agent");
+        const auto *a_state = a->get("state");
+        const auto *b_agent = b->get("agent");
+        const auto *b_state = b->get("state");
+        if (a_agent == nullptr || b_agent == nullptr || a_state == nullptr || b_state == nullptr) {
+            return std::string{dimension} + "[" + std::to_string(i) +
+                   "] entry is missing agent/state";
+        }
+        const auto aa = a_agent->as_string();
+        const auto ba = b_agent->as_string();
+        const auto as = a_state->as_string();
+        const auto bs = b_state->as_string();
+        if (!aa.has_value() || !ba.has_value() || *aa != *ba) {
+            return std::string{dimension} + "[" + std::to_string(i) + "].agent diverged";
+        }
+        if (!as.has_value() || !bs.has_value() || *as != *bs) {
+            return std::string{dimension} + "[" + std::to_string(i) +
+                   "].state diverged (evaluator '" + std::string{as.value_or("?")} + "', node '" +
+                   std::string{bs.value_or("?")} + "')";
+        }
+    }
+    return std::nullopt;
+}
+
+// Compares the output value subtree by re-serializing both through the canonical
+// emitter, so the comparison is byte-exact regardless of document formatting.
+[[nodiscard]] inline std::optional<std::string> compare_output(const json::JsonValue &lhs,
+                                                               const json::JsonValue &rhs) {
+    const json::JsonValue *a = lhs.get("output_json");
+    const json::JsonValue *b = rhs.get("output_json");
+    if (a == nullptr && b == nullptr) {
+        return std::nullopt; // both runs produce no inspectable output
+    }
+    if (a == nullptr || b == nullptr) {
+        return "output_json presence diverged (only one engine produced output)";
+    }
+    const std::string a_bytes = canonical_json(*a);
+    const std::string b_bytes = canonical_json(*b);
+    if (a_bytes != b_bytes) {
+        return "output_json diverged:\n  evaluator: " + a_bytes + "\n  node:      " + b_bytes;
+    }
+    return std::nullopt;
+}
+
+} // namespace detail
+
+/// Asserts an evaluator observation document and a Node embedded-engine
+/// observation document agree on status + the three KR6.7 differential
+/// dimensions. `expected_status` is the manifest's blessed terminal status so
+/// the comparison is independent of either engine's spelling.
+[[nodiscard]] inline std::optional<std::string>
+observations_agree(std::string_view evaluator_observation_json,
+                   std::string_view node_observation_json) {
+    auto evaluator_dom = json::parse_json(evaluator_observation_json);
+    auto node_dom = json::parse_json(node_observation_json);
+    if (!evaluator_dom.has_value() || !*evaluator_dom || !(*evaluator_dom)->is_object()) {
+        return "evaluator observation is not a JSON object";
+    }
+    if (!node_dom.has_value() || !*node_dom || !(*node_dom)->is_object()) {
+        return "node observation is not a JSON object";
+    }
+    const json::JsonValue &ev = **evaluator_dom;
+    const json::JsonValue &nd = **node_dom;
+
+    if (const auto *a = ev.get("status"); a == nullptr || a->as_string() == std::nullopt) {
+        return "evaluator observation has no status";
+    }
+    if (const auto *b = nd.get("status"); b == nullptr || b->as_string() == std::nullopt) {
+        return "node observation has no status";
+    }
+    if (*ev.get("status")->as_string() != *nd.get("status")->as_string()) {
+        return "run status diverged (evaluator '" + std::string{*ev.get("status")->as_string()} +
+               "', node '" + std::string{*nd.get("status")->as_string()} + "')";
+    }
+
+    if (auto divergence =
+            detail::compare_state_sequence(*ev.get("state_sequence"), *nd.get("state_sequence"));
+        divergence.has_value()) {
+        return divergence;
+    }
+    if (auto divergence = detail::compare_string_array(
+            *ev.get("capability_sequence"), *nd.get("capability_sequence"), "capability_sequence");
+        divergence.has_value()) {
+        return divergence;
+    }
+    if (auto divergence = detail::compare_output(ev, nd); divergence.has_value()) {
+        return divergence;
+    }
+    return std::nullopt;
+}
+
+} // namespace ahfl::conformance

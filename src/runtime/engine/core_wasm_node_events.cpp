@@ -3,20 +3,20 @@
 #include <cstdint>
 #include <limits>
 
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
+
 namespace ahfl::runtime::core_wasm_node_events {
 namespace {
 
-// Buffer grammar constants, mirroring the B2-C emitter
-// (src/compiler/backends/infra/core_wasm_codegen.cpp): the header is at byte 1024,
-// records start at 1032, and each record is 40 bytes. The current emitter baseline
-// uses one fixed 64 KiB linear-memory page, but the decoder does NOT hardcode that
-// capacity: it accepts the supplied whole-memory span as the sole size authority.
-// The emitter is the byte-grammar authority; this decoder re-states the same
-// constants (no runtime<->compiler link).
-constexpr std::uint32_t kEventLogBase = 1024;
-constexpr std::uint32_t kEventHeaderBytes = 8;
-constexpr std::uint32_t kEventRecordBytes = 40;
-constexpr std::uint32_t kEventRecordsBase = kEventLogBase + kEventHeaderBytes; // 1032
+// Buffer grammar constants come from the public ABI SSOT
+// (ahfl/compiler/ir/core_wasm_abi_constants.hpp), shared with the B2-C emitter
+// and the KR6.7 Node embedded host, so the grammar is declared exactly once.
+// The decoder accepts the supplied whole-memory span as the sole size
+// authority; the one-page baseline is not hardcoded here.
+constexpr auto kEventLogBase = ir::core::kNodeEventLogBase;
+constexpr auto kEventHeaderBytes = ir::core::kNodeEventHeaderBytes;
+constexpr auto kEventRecordBytes = ir::core::kNodeEventRecordBytes;
+constexpr auto kEventRecordsBase = ir::core::kNodeEventRecordsBase;
 constexpr std::uint8_t kTagIdentity = 0;
 constexpr std::uint8_t kTagCapability = 1;
 constexpr std::uint32_t kStatusOk = 0; // AHFL_CAP_OK
@@ -97,9 +97,8 @@ decode_node_events(std::span<const std::uint8_t> linear_memory, std::size_t node
     records.reserve(event_count);
     for (std::uint32_t i = 0; i < event_count; ++i) {
         const std::size_t base =
-            static_cast<std::size_t>(kEventRecordsBase) + static_cast<std::size_t>(i) *
-                                                              static_cast<std::size_t>(
-                                                                  kEventRecordBytes);
+            static_cast<std::size_t>(kEventRecordsBase) +
+            static_cast<std::size_t>(i) * static_cast<std::size_t>(kEventRecordBytes);
         const std::uint8_t tag = linear_memory[base + 0];
         if (tag != kTagIdentity && tag != kTagCapability) {
             return std::unexpected(NodeEventError::BadTag);

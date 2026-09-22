@@ -15,8 +15,10 @@ copy of the committed golden source, per the B4 ruling) and locks, precisely:
 The run2 pending-latch first instruction, the 40-byte node-event record layout /
 body-before-count write order, the checked-alloc fail/no-advance sequence, and the
 shifted defined/export function indices are covered by the opcode/index assertions
-in tests/unit/compiler/backends/wasm_backend.cpp and the executed
-tests/scripts/wasm_workflow_cap_node_host.py; this gate does not re-assert them.
+in tests/unit/compiler/backends/wasm_backend.cpp and the executed KR6.7
+manifest-driven Node embedded host (tests/conformance/node_embedded_host.mjs,
+driven by ahfl.conformance.wasm_node_differential); this gate does not re-assert
+them.
 """
 
 import hashlib

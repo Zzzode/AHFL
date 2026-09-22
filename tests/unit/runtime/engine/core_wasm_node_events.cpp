@@ -5,9 +5,11 @@
 // test): header event_count = 2, pad = 0; slot 0 = Capability(tag 1, node 0, sched
 // 0, cap 0, source_symbol 1, ordinal 0, status OK); slot 1 = Identity(tag 0, node 1,
 // sched 1, all zero, status OK); every pad / reserved byte is 0. The SAME hex is
-// asserted byte-for-byte against real Node-executed memory[1024:1112] in
-// tests/scripts/wasm_workflow_cap_node_host.py, forming a common-KAT bridge between
-// the emitter/Node bytes and this decoder. FOUNDATION: framing only; NOT no-reinvoke,
+// asserted byte-for-byte against real Node-executed memory[1024:1112] by the KR6.7
+// manifest-driven Node embedded host (tests/conformance/node_embedded_host.mjs,
+// driven by ahfl.conformance.wasm_node_differential over the
+// e3_capability_workflow case), forming a common-KAT bridge between the
+// emitter/Node bytes and this decoder. FOUNDATION: framing only; NOT no-reinvoke,
 // NOT B2-E, NOT a VM / durable resume.
 
 #include "runtime/engine/core_wasm_node_events.hpp"

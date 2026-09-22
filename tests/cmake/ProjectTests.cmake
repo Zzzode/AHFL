@@ -1190,6 +1190,50 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
 endif()
 
+# KR6.7 (RFC 0026 P7): manifest-driven Node embedded-engine differential. For
+# every orchestration-eligible committed case it produces the Core-Wasm module +
+# machine-readable descriptor, drives ONE generic Node embedded host
+# (tests/conformance/node_embedded_host.mjs), and asserts the Node observation
+# (status + state_sequence + capability_sequence + output_json) equals the
+# evaluator observation. Blocked / P6-7-gated scenarios SKIP (77) with a
+# structured reason; an absent Node engine SKIPs visibly. This is Node
+# embedded-engine evidence, explicitly NOT wasmtime evidence.
+if(AHFL_ENABLE_BACKEND_INFRA)
+    set(AHFL_CONFORMANCE_WASM_SCRATCH_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/conformance-wasm-node")
+    add_test(NAME ahfl.conformance.wasm_node_differential
+        COMMAND $<TARGET_FILE:ahfl_conformance_wasm_node_runner>
+                verify
+                "${PROJECT_SOURCE_DIR}"
+                "${AHFL_CONFORMANCE_CASES_DIR}"
+                "${AHFL_CONFORMANCE_WASM_SCRATCH_DIR}"
+    )
+    set_tests_properties(ahfl.conformance.wasm_node_differential PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "Node embedded-engine evidence, NOT wasmtime evidence"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
+    # Mutation gate: the comparator must FAIL on a deliberately mutated Node
+    # observation (flipped terminal status). e1_identity_agent is the simplest
+    # orchestration-eligible case.
+    add_test(NAME ahfl.conformance.wasm_node_mutation
+        COMMAND $<TARGET_FILE:ahfl_conformance_wasm_node_runner>
+                mutation
+                "${PROJECT_SOURCE_DIR}"
+                "${AHFL_CONFORMANCE_CASES_DIR}"
+                "${AHFL_CONFORMANCE_WASM_SCRATCH_DIR}"
+                e1_identity_agent
+    )
+    set_tests_properties(ahfl.conformance.wasm_node_mutation PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "comparator detected mutated expectation"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+endif()
+
 add_test(NAME ahfl.runtime.payload_store
     COMMAND $<TARGET_FILE:ahfl_payload_store_tests>
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/payload-store"

@@ -94,23 +94,12 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution"
     )
 
-    # Supplemental E2 execution evidence. Node is an embedded host that can
-    # allocate/write the target module's private memory, so it covers the OK
-    # result-frame ownership path that a separate wasmtime --preload module
-    # cannot. It is not real-wasmtime evidence and is visibly skipped when Node
-    # is unavailable.
-    add_test(NAME ahfl.wasm.e2_node_embedded_host
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e2_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_e2_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e2_capability_agent.ahfl"
-    )
-    set_tests_properties(ahfl.wasm.e2_node_embedded_host PROPERTIES
-        SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "E2 Node embedded-host execution passed"
-        FAIL_REGULAR_EXPRESSION "FAIL:"
-        LABELS "wasm;backend;conformance;execution;node"
-    )
+    # KR6.7 (RFC 0026 P7): the bespoke per-probe embedded-host lane was retired
+    # in favor of ONE manifest-driven Node embedded host. The E2 OK result-frame
+    # ownership, ERROR/PENDING/unknown normalization and pending-latch contracts
+    # are now produced from the e2 conformance case by
+    # ahfl.conformance.wasm_node_differential (node_embedded_host.mjs ABI matrix);
+    # the structural producer probe below still guards the module bytes.
 
     # RFC 0026 P6-1 (KR6.6): real-frontend arithmetic conditional-goto scalar
     # computation. The Node embedded host drives the stable step()/run ABI and
@@ -329,30 +318,13 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
-    # KR6.7 (RFC 0026 P7): execution witness for the case the eligibility
-    # classifier promoted across the wasm boundary. `float_output_e2e` is a
-    # single-agent f64 identity passthrough; the producer is asked for the
-    # WORKFLOW lane's artifact for the MANIFEST ENTRY (--workflow), which is by
-    # construction the artifact the classifier certified. The Node embedded host
-    # instantiates it and asserts the workflow lane's real execution contract
-    # (step/current_state trap before effects, run2 completes the schedule and
-    # returns the borrowed input frame verbatim, counters match the native run).
-    # The orchestration lane performs no frame field access, so this lane does
-    # NOT claim to pin f64 size/align -- that is the P6 layout Node lanes' job.
-    # Real Node-engine evidence, NOT wasmtime evidence; SKIPs (77) when Node is
-    # unavailable.
-    add_test(NAME ahfl.wasm.eligibility_runnable_node
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_eligibility_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/runtime/float_output_e2e.ahfl"
-    )
-    set_tests_properties(ahfl.wasm.eligibility_runnable_node PROPERTIES
-        SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "wasm eligibility workflow execution passed"
-        FAIL_REGULAR_EXPRESSION "FAIL:"
-        LABELS "wasm;backend;conformance;execution;node"
-    )
+    # KR6.7 (RFC 0026 P7): the eligibility-promotion execution witness for
+    # `float_output_e2e` is now produced manifest-driven by
+    # ahfl.conformance.wasm_node_differential (the float_output_e2e committed
+    # case): the generic Node embedded host runs the certified workflow-lane
+    # module, asserts the step/current_state pre-effect trap, run2 borrowed-frame
+    # passthrough and the native counters, and differentially compares the
+    # observation against the evaluator. The bespoke eligibility host is retired.
 
     add_test(NAME ahfl.wasm.e2_same_frontend_probe
         COMMAND $<TARGET_FILE:ahfl_core_wasm_e2_probe>
@@ -413,21 +385,11 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;structural;cli"
     )
 
-    # Persistent embedded execution observes both workflow counters and the
-    # returned borrowed frame in one module instance. This is real Node-engine
-    # evidence, visibly distinct from real-wasmtime evidence.
-    add_test(NAME ahfl.wasm.e3_node_persistent_workflow
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_e3_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_e3_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_identity_workflow.ahfl"
-    )
-    set_tests_properties(ahfl.wasm.e3_node_persistent_workflow PROPERTIES
-        SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "E3 Node persistent workflow execution passed"
-        FAIL_REGULAR_EXPRESSION "FAIL:"
-        LABELS "wasm;backend;conformance;execution;node"
-    )
+    # KR6.7 (RFC 0026 P7): persistent-instance workflow execution (both workflow
+    # counters, idempotent run2 replay, borrowed-frame return, legacy run pointer
+    # passthrough) is now driven manifest-style from the e3_identity_workflow
+    # committed case by ahfl.conformance.wasm_node_differential. The bespoke
+    # persistent-workflow Node host is retired.
 
     # Separate wasmtime CLI invocations cannot observe persistent globals, so
     # this optional test claims only legacy-run pointer passthrough. Missing
@@ -463,23 +425,16 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;structural"
     )
 
-    # RFC 0026 E4-B2-C: Node embedded-host execution of the capability workflow's
-    # four capability statuses (OK/PENDING/ERROR/unknown) plus the node-event
-    # record layout, the pending latch re-entry negative, and the checked-alloc
-    # sequence. Real Node-engine evidence, NOT wasmtime evidence; SKIPs when Node
-    # is unavailable.
-    add_test(NAME ahfl.wasm.capability_workflow_node_host
-        COMMAND ${Python3_EXECUTABLE}
-                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_workflow_cap_node_host.py"
-                $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
-                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/e3_capability_workflow.ahfl"
-    )
-    set_tests_properties(ahfl.wasm.capability_workflow_node_host PROPERTIES
-        SKIP_RETURN_CODE 77
-        PASS_REGULAR_EXPRESSION "capability-workflow Node execution passed"
-        FAIL_REGULAR_EXPRESSION "FAIL:"
-        LABELS "wasm;backend;conformance;execution;node"
-    )
+    # KR6.7 (RFC 0026 P7): the capability-workflow Node embedded-host matrix
+    # (OK/PENDING/ERROR/unknown normalization, pending-latch re-entry negative,
+    # pending-nonnull non-latching ERROR, the node-event record layout with
+    # tag/ordinal/source_symbol, the corrupt-count defensive coordinate gate, and
+    # the checked-alloc sequence) is now driven manifest-style from the
+    # e3_capability_workflow committed case by
+    # ahfl.conformance.wasm_node_differential's generic Node host. The 88-byte
+    # contract-derived node-event KAT remains pinned byte-for-byte by
+    # core_wasm_node_events.cpp. The bespoke capability-workflow Node host is
+    # retired; the structural producer probe above still guards module bytes.
 endif()
 
 add_test(NAME ahfl.runtime.native_grpc_gate

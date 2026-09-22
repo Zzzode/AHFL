@@ -25,6 +25,7 @@ namespace ahfl::backends {
 
 namespace {
 
+using detail::ByteBuffer;
 using ir::core::CoreAgentDecl;
 using ir::core::CoreAgentId;
 using ir::core::CoreAgentInstance;
@@ -93,6 +94,10 @@ using ir::core::CoreWorkflowNodeId;
 using ir::core::CoreYieldStmt;
 using ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
 using ir::core::kCoreWasmFixedLinearMemoryMinPages;
+using ir::core::kNodeEventHeaderBytes;
+using ir::core::kNodeEventLogBase;
+using ir::core::kNodeEventRecordBytes;
+using ir::core::kNodeEventRecordsBase;
 using ir::core::kP6AggregateContextBase;
 using ir::core::kP6AggregateContextCapacity;
 using ir::core::kP6AggregateInputBase;
@@ -100,7 +105,6 @@ using ir::core::kP6AggregateInputCapacity;
 using ir::core::kP6AggregateScratchBase;
 using ir::core::kP6AggregateScratchCapacity;
 using ir::core::kP6CollectionBackingCapacity;
-using detail::ByteBuffer;
 
 constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kI64 = 0x7e;
@@ -134,15 +138,10 @@ constexpr std::array<std::uint8_t, 6> kExecManifestMagic = {'A', 'H', 'F', 'L', 
 constexpr std::uint8_t kExecManifestVersion = 1;
 constexpr std::uint8_t kExecManifestEntryKindWorkflow = 0;
 
-// RFC 0026 E4-B2-C node-event buffer (seam doc §4.4): a fixed linear-memory
-// region observed by the host as post-run2 completion/ordering evidence. It is
-// NOT a no-reinvoke proof (that is the B2-D host envelope). Header at 1024:
-// event_count u32-LE at [0..3], pad[4..7]==0; records start at 1032; each record
-// is a fixed 40 bytes; the region is statically sized to exactly node_count.
-constexpr std::uint32_t kEventLogBase = 1024;
-constexpr std::uint32_t kEventHeaderBytes = 8;
-constexpr std::uint32_t kEventRecordBytes = 40;
-constexpr std::uint32_t kEventRecordsBase = kEventLogBase + kEventHeaderBytes; // 1032
+// RFC 0026 E4-B2-C node-event record tags. The buffer base / header / record
+// size constants live in the public ABI SSOT
+// (ahfl/compiler/ir/core_wasm_abi_constants.hpp); only the tag spellings are
+// local to the emitter.
 constexpr std::uint8_t kEventTagIdentity = 0;
 constexpr std::uint8_t kEventTagCapability = 1;
 
@@ -298,6 +297,11 @@ struct AgentPlan {
     CoreStateId initial{};
     std::vector<StateAction> actions;
     std::vector<CoreCapabilityId> imports;
+    // KR6.7 (RFC 0026 P7): true when a compiled handler projects raw bytes out
+    // of the P4-D input frame (or an input-reached bounded collection), so the
+    // run2 boundary does not carry canonical wire-JSON output and canonical
+    // observation conformance awaits the P6-7 frame decision.
+    bool reads_raw_input_frame{false};
     // RFC 0026 P6-2: compiled handler functions in ascending function-index
     // order. Empty for a pure E1-E3 agent, so its function/code sections keep
     // their byte-identical 7-entry shape.
@@ -315,7 +319,10 @@ struct AgentPlanPolicy {
     std::string_view slice{"E2"};
 };
 
-enum class WorkflowFrameSourceKind { Input, NodeOutput };
+enum class WorkflowFrameSourceKind {
+    Input,
+    NodeOutput
+};
 
 struct WorkflowFrameSource {
     WorkflowFrameSourceKind kind{WorkflowFrameSourceKind::Input};
@@ -357,17 +364,27 @@ struct FunctionTable {
     // the seven fixed ABI functions. Zero for a pure E1-E3 agent, so its
     // function/code sections keep their byte-identical shape.
     std::uint32_t handler_count{0};
-    [[nodiscard]] std::uint32_t alloc() const noexcept { return import_count + kDefinedAlloc; }
-    [[nodiscard]] std::uint32_t dealloc() const noexcept { return import_count + kDefinedDealloc; }
+    [[nodiscard]] std::uint32_t alloc() const noexcept {
+        return import_count + kDefinedAlloc;
+    }
+    [[nodiscard]] std::uint32_t dealloc() const noexcept {
+        return import_count + kDefinedDealloc;
+    }
     [[nodiscard]] std::uint32_t current_state() const noexcept {
         return import_count + kDefinedCurrentState;
     }
     [[nodiscard]] std::uint32_t is_final() const noexcept {
         return import_count + kDefinedIsFinal;
     }
-    [[nodiscard]] std::uint32_t step() const noexcept { return import_count + kDefinedStep; }
-    [[nodiscard]] std::uint32_t run() const noexcept { return import_count + kDefinedRun; }
-    [[nodiscard]] std::uint32_t run2() const noexcept { return import_count + kDefinedRun2; }
+    [[nodiscard]] std::uint32_t step() const noexcept {
+        return import_count + kDefinedStep;
+    }
+    [[nodiscard]] std::uint32_t run() const noexcept {
+        return import_count + kDefinedRun;
+    }
+    [[nodiscard]] std::uint32_t run2() const noexcept {
+        return import_count + kDefinedRun2;
+    }
     [[nodiscard]] std::uint32_t handler(std::uint32_t index) const noexcept {
         return import_count + kDefinedHandlerBase + index;
     }
@@ -382,10 +399,18 @@ struct WorkflowFunctionTable {
     // Identity workflows have import_count == 0, so their indices are unchanged.
     std::uint32_t import_count{0};
     std::uint32_t runner_count{0};
-    [[nodiscard]] std::uint32_t alloc() const noexcept { return import_count + 0u; }
-    [[nodiscard]] std::uint32_t dealloc() const noexcept { return import_count + 1u; }
-    [[nodiscard]] std::uint32_t current_state() const noexcept { return import_count + 2u; }
-    [[nodiscard]] std::uint32_t step() const noexcept { return import_count + 3u; }
+    [[nodiscard]] std::uint32_t alloc() const noexcept {
+        return import_count + 0u;
+    }
+    [[nodiscard]] std::uint32_t dealloc() const noexcept {
+        return import_count + 1u;
+    }
+    [[nodiscard]] std::uint32_t current_state() const noexcept {
+        return import_count + 2u;
+    }
+    [[nodiscard]] std::uint32_t step() const noexcept {
+        return import_count + 3u;
+    }
     [[nodiscard]] std::uint32_t runner(std::uint32_t index) const noexcept {
         return import_count + 4u + index;
     }
@@ -482,10 +507,8 @@ void add_diag(CoreWasmCodegenResult &result,
             return true;
         }
         if (const auto *branch = std::get_if<ir::core::CoreIfStmt>(&statement.node)) {
-            if ((branch->then_region != nullptr &&
-                 region_contains_match(*branch->then_region)) ||
-                (branch->else_region != nullptr &&
-                 region_contains_match(*branch->else_region))) {
+            if ((branch->then_region != nullptr && region_contains_match(*branch->then_region)) ||
+                (branch->else_region != nullptr && region_contains_match(*branch->else_region))) {
                 return true;
             }
         }
@@ -515,8 +538,7 @@ validate_canonical_input_let(const CoreProgram &program,
                              CoreWasmCodegenResult &result) {
     const auto *let = std::get_if<CoreLetStmt>(&statement.node);
     if (let == nullptr || let->expr.value >= flow.exprs.size() ||
-        let->result.value >= flow.value_types.size() ||
-        let->result.value >= used_values.size()) {
+        let->result.value >= flow.value_types.size() || let->result.value >= used_values.size()) {
         add_diag(result,
                  unsupported_code,
                  "KR6.5 E2 requires a canonical input let as the first final statement",
@@ -579,19 +601,11 @@ validate_canonical_input_let(const CoreProgram &program,
         add_diag(result,
                  unsupported_code,
                  "KR6.5 identity final must contain canonical input and return",
-                 statements.empty() ? ir::SourceRangeOpt{}
-                                    : statements.front().source_range);
+                 statements.empty() ? ir::SourceRangeOpt{} : statements.front().source_range);
         return false;
     }
     const auto input = validate_canonical_input_let(
-        program,
-        agent,
-        flow,
-        statements[0],
-        used_exprs,
-        used_values,
-        unsupported_code,
-        result);
+        program, agent, flow, statements[0], used_exprs, used_values, unsupported_code, result);
     if (!input.has_value()) {
         return false;
     }
@@ -632,22 +646,21 @@ validate_capability_final(const CoreProgram &program,
                  statements.empty() ? ir::SourceRangeOpt{} : statements.front().source_range);
         return std::nullopt;
     }
-    const auto input = validate_canonical_input_let(
-        program,
-        agent,
-        flow,
-        statements[0],
-        used_exprs,
-        used_values,
-        core_wasm_diag::kUnsupportedCapabilityFrame,
-        result);
+    const auto input = validate_canonical_input_let(program,
+                                                    agent,
+                                                    flow,
+                                                    statements[0],
+                                                    used_exprs,
+                                                    used_values,
+                                                    core_wasm_diag::kUnsupportedCapabilityFrame,
+                                                    result);
     if (!input.has_value()) {
         return std::nullopt;
     }
     const auto *call = std::get_if<CoreCapabilityCallStmt>(&statements[1].node);
     const auto *ret = std::get_if<CoreReturnStmt>(&statements[2].node);
-    if (call == nullptr || ret == nullptr || !ret->has_value ||
-        ret->value != call->result || call->args.size() != 1 || call->args[0] != *input) {
+    if (call == nullptr || ret == nullptr || !ret->has_value || ret->value != call->result ||
+        call->args.size() != 1 || call->args[0] != *input) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedCapabilityFrame,
                  "KR6.5 E2 capability final is not the canonical opaque forwarding shape",
@@ -655,8 +668,8 @@ validate_capability_final(const CoreProgram &program,
         return std::nullopt;
     }
     if (call->capability.value >= program.capabilities.size() ||
-        call->result.value >= flow.value_types.size() ||
-        call->result.value >= used_values.size() || used_values[call->result.value]) {
+        call->result.value >= flow.value_types.size() || call->result.value >= used_values.size() ||
+        used_values[call->result.value]) {
         add_diag(result,
                  core_wasm_diag::kInvalidCore,
                  "canonical capability call references an invalid or reused identity",
@@ -695,8 +708,7 @@ validate_capability_final(const CoreProgram &program,
                  statements[1].source_range);
         return std::nullopt;
     }
-    if (!has_finalized_layout(layouts, input_type) ||
-        !has_finalized_layout(layouts, result_type)) {
+    if (!has_finalized_layout(layouts, input_type) || !has_finalized_layout(layouts, result_type)) {
         add_diag(result,
                  core_wasm_diag::kInvalidLayout,
                  "capability boundary type has no finalized P4-D layout",
@@ -707,7 +719,6 @@ validate_capability_final(const CoreProgram &program,
     used_values[call->result.value] = true;
     return CapabilityAction{call->capability};
 }
-
 
 // RFC 0026 P6 (KR6.6) — computation codegen scaffold.
 //
@@ -758,10 +769,8 @@ validate_capability_final(const CoreProgram &program,
                 [](const CoreTrapStmt &) { return true; },
                 [](const CoreYieldStmt &) { return false; },
                 [](const CoreIfStmt &s) {
-                    return (s.then_region == nullptr ||
-                            is_p6_subset_region(*s.then_region)) &&
-                           (s.else_region == nullptr ||
-                            is_p6_subset_region(*s.else_region));
+                    return (s.then_region == nullptr || is_p6_subset_region(*s.then_region)) &&
+                           (s.else_region == nullptr || is_p6_subset_region(*s.else_region));
                 },
                 // A match is structurally in-subset; its consumed regions are
                 // validated by `plan_match_region` (see the header comment).
@@ -829,9 +838,9 @@ struct P6PatternSite {
 
 // The P4-D layout of `type`, or null when the value type / layout id is out of
 // range. One shared bounds-checked accessor for every P6 kind query.
-[[nodiscard]] const ir::core::CoreLayout *
-p6_value_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
-                CoreValueTypeId type) {
+[[nodiscard]] const ir::core::CoreLayout *p6_value_layout(const CoreProgram &program,
+                                                          const ir::core::CoreLayoutTable &layouts,
+                                                          CoreValueTypeId type) {
     if (type.value >= program.value_types.size() || type.value >= layouts.value_layouts.size()) {
         return nullptr;
     }
@@ -849,9 +858,8 @@ p6_value_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &lay
 // checked backing size). An UNBOUNDED collection has no such layout (P4-D fails
 // `core.layout.UNBOUNDED`), so this returns null and every consumer fails
 // closed — the boundedness gate is the layout table's, never a second copy.
-[[nodiscard]] const ir::core::CoreLayoutContainer *
-p6_container_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
-                    CoreValueTypeId type) {
+[[nodiscard]] const ir::core::CoreLayoutContainer *p6_container_layout(
+    const CoreProgram &program, const ir::core::CoreLayoutTable &layouts, CoreValueTypeId type) {
     if (type.value >= program.value_types.size()) {
         return nullptr;
     }
@@ -917,8 +925,8 @@ p6_container_layout(const CoreProgram &program, const ir::core::CoreLayoutTable 
 // (index identity, never a name — Principle 2). A generic instantiation carries
 // a non-empty argument list and is deliberately NOT matched, so a parameterized
 // aggregate fails closed rather than silently picking the wrong instantiation.
-[[nodiscard]] std::optional<CoreValueTypeId>
-p6_nominal_value_type(const CoreProgram &program, CoreTypeId type) {
+[[nodiscard]] std::optional<CoreValueTypeId> p6_nominal_value_type(const CoreProgram &program,
+                                                                   CoreTypeId type) {
     if (type.value >= program.types.size()) {
         return std::nullopt;
     }
@@ -932,9 +940,8 @@ p6_nominal_value_type(const CoreProgram &program, CoreTypeId type) {
 }
 
 // The P4-D struct layout of a (non-generic) nominal struct type, or null.
-[[nodiscard]] const ir::core::CoreLayoutStruct *
-p6_nominal_struct_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
-                         CoreTypeId type) {
+[[nodiscard]] const ir::core::CoreLayoutStruct *p6_nominal_struct_layout(
+    const CoreProgram &program, const ir::core::CoreLayoutTable &layouts, CoreTypeId type) {
     const auto value_type = p6_nominal_value_type(program, type);
     if (!value_type.has_value()) {
         return nullptr;
@@ -947,9 +954,8 @@ p6_nominal_struct_layout(const CoreProgram &program, const ir::core::CoreLayoutT
 }
 
 // The P4-D enum layout of a (non-generic) nominal enum type, or null.
-[[nodiscard]] const ir::core::CoreLayoutEnum *
-p6_nominal_enum_layout(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
-                       CoreTypeId type) {
+[[nodiscard]] const ir::core::CoreLayoutEnum *p6_nominal_enum_layout(
+    const CoreProgram &program, const ir::core::CoreLayoutTable &layouts, CoreTypeId type) {
     const auto value_type = p6_nominal_value_type(program, type);
     if (!value_type.has_value()) {
         return nullptr;
@@ -964,9 +970,9 @@ p6_nominal_enum_layout(const CoreProgram &program, const ir::core::CoreLayoutTab
 // The P4-D byte size of a (non-generic) nominal type, or nullopt when the type
 // has no interned value type / finalized layout. ONE size query, shared by the
 // constructor scratch allocator and the fixed-frame capacity gate.
-[[nodiscard]] std::optional<std::uint64_t>
-p6_nominal_size(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
-                CoreTypeId type) {
+[[nodiscard]] std::optional<std::uint64_t> p6_nominal_size(const CoreProgram &program,
+                                                           const ir::core::CoreLayoutTable &layouts,
+                                                           CoreTypeId type) {
     const auto value_type = p6_nominal_value_type(program, type);
     if (!value_type.has_value()) {
         return std::nullopt;
@@ -984,8 +990,10 @@ p6_nominal_size(const CoreProgram &program, const ir::core::CoreLayoutTable &lay
 // struct whose tail padding crosses the boundary. One RESOURCE-class rejection
 // names the frame and both sizes, so the failure is actionable.
 [[nodiscard]] bool fits_frame_region(const CoreProgram &program,
-                                     const ir::core::CoreLayoutTable &layouts, CoreTypeId type,
-                                     std::uint32_t capacity, std::string_view frame,
+                                     const ir::core::CoreLayoutTable &layouts,
+                                     CoreTypeId type,
+                                     std::uint32_t capacity,
+                                     std::string_view frame,
                                      CoreWasmCodegenResult &result) {
     const auto size = p6_nominal_size(program, layouts, type);
     if (!size.has_value() || *size > capacity) {
@@ -1115,8 +1123,11 @@ enum class P6CoercionEffect {
 // the rest of the scalar ladder uses and the byte-shape equality from the P4-D
 // `value_layouts_equivalent` SSOT — codegen never re-derives a repr.
 [[nodiscard]] std::optional<P6CoercionEffect>
-p6_coercion_effect(const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
-                   CoreCoercionOpKind kind, CoreValueTypeId source, CoreValueTypeId result,
+p6_coercion_effect(const CoreProgram &program,
+                   const ir::core::CoreLayoutTable &layouts,
+                   CoreCoercionOpKind kind,
+                   CoreValueTypeId source,
+                   CoreValueTypeId result,
                    std::string &why) {
     const bool same_bytes = ir::core::value_layouts_equivalent(layouts, source, result);
     const auto source_kind = p6_scalar_kind(program, layouts, source);
@@ -1177,8 +1188,7 @@ p6_coercion_effect(const CoreProgram &program, const ir::core::CoreLayoutTable &
 #define P6_REGION_DIVERGE_CoreTrapStmt(Name) [](const Name &) { return true; },
 #define P6_REGION_DIVERGE_CoreIfStmt(Name)                                                         \
     [](const Name &s) {                                                                            \
-        return s.then_region && s.else_region &&                                                   \
-               p6_region_always_diverges(*s.then_region) &&                                        \
+        return s.then_region && s.else_region && p6_region_always_diverges(*s.then_region) &&      \
                p6_region_always_diverges(*s.else_region);                                          \
     },
 #define P6_REGION_DIVERGE_CoreMatchStmt(Name)                                                      \
@@ -1186,10 +1196,9 @@ p6_coercion_effect(const CoreProgram &program, const ir::core::CoreLayoutTable &
         if (!s.fallback_region || !p6_region_always_diverges(*s.fallback_region)) {                \
             return false;                                                                          \
         }                                                                                          \
-        return std::ranges::all_of(s.arms,                                                         \
-                                   [](const CoreMatchArm &arm) {                                   \
-                                       return arm.body && p6_region_always_diverges(*arm.body);    \
-                                   });                                                             \
+        return std::ranges::all_of(s.arms, [](const CoreMatchArm &arm) {                           \
+            return arm.body && p6_region_always_diverges(*arm.body);                               \
+        });                                                                                        \
     },
 #define P6_REGION_DIVERGE_CoreLetStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreCapabilityCallStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
@@ -1278,6 +1287,18 @@ class P6ComputationHandlerBuilder {
 
     [[nodiscard]] const std::vector<CoreStateId> &targets() const noexcept {
         return targets_;
+    }
+
+    // KR6.7 (RFC 0026 P7): true when this handler projects a field out of the
+    // raw P4-D INPUT frame (or reads a bounded collection reached through the
+    // input frame) using the fixed reserved-region addressing. Such a handler
+    // consumes RAW frame bytes, not the opaque canonical wire-JSON the run2
+    // boundary otherwise forwards, so a canonical output observation awaits the
+    // P6-7 frame decision. Context-only stores and construct/local-rooted
+    // projections do not set this: the output boundary stays the borrowed wire
+    // frame.
+    [[nodiscard]] bool reads_raw_input_frame() const noexcept {
+        return reads_raw_input_frame_;
     }
 
     // Emit the complete body of this handler's own `() -> i32` wasm function:
@@ -1395,6 +1416,10 @@ class P6ComputationHandlerBuilder {
     std::vector<std::optional<std::uint32_t>> construct_addrs_;
     std::uint32_t scratch_addr_cursor_{0};
 
+    // KR6.7: set when a projection's root is the raw P4-D input frame. See
+    // reads_raw_input_frame().
+    bool reads_raw_input_frame_{false};
+
     [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
         body_.byte(kOpUnreachable);
         add_diag(result_,
@@ -1473,8 +1498,10 @@ class P6ComputationHandlerBuilder {
     // Latch one arm binding's value into its scratch local from its SITE: a
     // scalar is loaded, and an aggregate (a `Ptr` site) has its ADDRESS copied
     // (the binding then reads fields through that address later).
-    [[nodiscard]] bool emit_binding_latch(std::uint32_t scrutinee_local, std::uint32_t dest,
-                                          const P6PatternSite &site, ir::SourceRangeOpt range) {
+    [[nodiscard]] bool emit_binding_latch(std::uint32_t scrutinee_local,
+                                          std::uint32_t dest,
+                                          const P6PatternSite &site,
+                                          ir::SourceRangeOpt range) {
         if (!emit_site_value(scrutinee_local, site, range)) {
             return false;
         }
@@ -1484,7 +1511,8 @@ class P6ComputationHandlerBuilder {
     }
 
     [[nodiscard]] std::optional<std::uint32_t> match_result_local(CoreValueId value) const {
-        if (value.value >= match_result_locals_.size() || !match_result_locals_[value.value].bound) {
+        if (value.value >= match_result_locals_.size() ||
+            !match_result_locals_[value.value].bound) {
             return std::nullopt;
         }
         return match_pool_local(match_result_locals_[value.value]);
@@ -1575,7 +1603,8 @@ class P6ComputationHandlerBuilder {
     // walk decides the shape and the encoding, so plan and emit cannot disagree.
     [[nodiscard]] std::optional<ProjectionSlot>
     resolve_projection_slot(const std::vector<ir::core::CoreProjectionStep> &projection,
-                            CoreTypeId root_type, ir::SourceRangeOpt range) {
+                            CoreTypeId root_type,
+                            ir::SourceRangeOpt range) {
         const auto *structure = p6_nominal_struct_layout(program_, layouts_, root_type);
         if (structure == nullptr) {
             return reject_as<ProjectionSlot>("projection root type has no finalized struct layout",
@@ -1605,8 +1634,7 @@ class P6ComputationHandlerBuilder {
             }
             // A non-final step continues INTO a nested struct whose slot holds the
             // child aggregate's address.
-            const auto *nested =
-                p6_nominal_struct_layout(program_, layouts_, step.result_type);
+            const auto *nested = p6_nominal_struct_layout(program_, layouts_, step.result_type);
             if (!place_is_aggregate_leaf(edge) || nested == nullptr) {
                 return reject_as<ProjectionSlot>(
                     "projection step does not continue through a struct", range);
@@ -1626,7 +1654,8 @@ class P6ComputationHandlerBuilder {
     // whether an aggregate field is an inline value or an inline pointer.
     [[nodiscard]] std::optional<ProjectionSlot>
     emit_projection_slot(const std::vector<ir::core::CoreProjectionStep> &projection,
-                         CoreTypeId root_type, const ProjectionRoot &root,
+                         CoreTypeId root_type,
+                         const ProjectionRoot &root,
                          ir::SourceRangeOpt range) {
         const auto slot = resolve_projection_slot(projection, root_type, range);
         if (slot == std::nullopt) {
@@ -1745,8 +1774,10 @@ class P6ComputationHandlerBuilder {
     // pattern-site construction through it makes the P6 boundary uniform instead
     // of relying on "no producer exists yet".
     [[nodiscard]] std::optional<P6PatternSite>
-    payload_sub_site(const ir::core::CoreLayoutStruct &payload, std::uint32_t slot,
-                     std::uint64_t payload_base, ir::SourceRangeOpt range) {
+    payload_sub_site(const ir::core::CoreLayoutStruct &payload,
+                     std::uint32_t slot,
+                     std::uint64_t payload_base,
+                     ir::SourceRangeOpt range) {
         if (slot >= payload.field_offsets.size() || slot >= payload.field_layouts.size()) {
             static_cast<void>(
                 reject("variant payload sub-pattern slot is out of range", std::move(range)));
@@ -1754,20 +1785,19 @@ class P6ComputationHandlerBuilder {
         }
         const CoreLayoutId edge = payload.field_layouts[slot];
         if (!place_is_p6_value(edge)) {
-            static_cast<void>(reject(
-                "variant payload sub-pattern slot is not a single-word P6 value",
-                std::move(range)));
+            static_cast<void>(
+                reject("variant payload sub-pattern slot is not a single-word P6 value",
+                       std::move(range)));
             return std::nullopt;
         }
-        return P6PatternSite{place_kind_of_layout(edge), true,
-                             payload_base + payload.field_offsets[slot]};
+        return P6PatternSite{
+            place_kind_of_layout(edge), true, payload_base + payload.field_offsets[slot]};
     }
 
     // The root of a projection chain as a `ProjectionRoot`. A local-rooted chain
     // starts from the aggregate's own `Ptr` local; `input` / `context` start from
     // the reserved frame base, which IS the frame struct's address.
-    [[nodiscard]] std::optional<ProjectionRoot>
-    projection_root_of(const CorePathExpr &path) const {
+    [[nodiscard]] std::optional<ProjectionRoot> projection_root_of(const CorePathExpr &path) const {
         if (path.has_local) {
             const auto local = readable_local(path.local);
             if (local == std::nullopt || readable_kind(path.local) != P6ScalarKind::Ptr) {
@@ -1799,8 +1829,8 @@ class P6ComputationHandlerBuilder {
     // Allocate a fresh scratch slot for `value` in whichever pool the physical
     // repr needs. `pool` selects binding-vs-result for the diagnostics-free local
     // table; the slot itself comes from the shared cursor.
-    [[nodiscard]] bool bind_scratch(CoreValueId value, P6ScalarKind kind,
-                                    std::vector<LocalInfo> &pool) {
+    [[nodiscard]] bool
+    bind_scratch(CoreValueId value, P6ScalarKind kind, std::vector<LocalInfo> &pool) {
         if (value.value >= pool.size() || pool[value.value].bound) {
             return false;
         }
@@ -1893,8 +1923,7 @@ class P6ComputationHandlerBuilder {
     [[nodiscard]] bool plan_literal(const CoreExpr &expr) {
         const auto kind = scalar_kind(expr.result_type);
         if (kind == std::nullopt) {
-            return reject("scalar literal has a non-scalar or f64 result type",
-                          expr.source_range);
+            return reject("scalar literal has a non-scalar or f64 result type", expr.source_range);
         }
         const auto &lit = std::get<CoreLiteralExpr>(expr.node);
         switch (lit.kind) {
@@ -1960,8 +1989,8 @@ class P6ComputationHandlerBuilder {
     // expected type (the root type for the first step, the previous step's
     // declared result otherwise). The emit pass re-reads the exact edge from the
     // P4-D layout, so this is a fail-closed shape check, not a second authority.
-    [[nodiscard]] bool plan_projection_owner(CoreTypeId owner, CoreTypeId expected,
-                                             ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    plan_projection_owner(CoreTypeId owner, CoreTypeId expected, ir::SourceRangeOpt range) {
         if (owner.value >= program_.types.size() ||
             program_.types[owner.value].kind != CoreTypeDecl::Kind::Struct) {
             return reject("projection owner is not a struct type", range);
@@ -1979,8 +2008,8 @@ class P6ComputationHandlerBuilder {
     // meters the address and validates every operand against its DECLARED field /
     // payload slot (identity, never source order — Principle 2), so emit only
     // stores the operands at the offsets the field identities name.
-    [[nodiscard]] bool plan_construct(CoreExprId id, const CoreConstructExpr &construct,
-                                      ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    plan_construct(CoreExprId id, const CoreConstructExpr &construct, ir::SourceRangeOpt range) {
         if (id.value >= construct_addrs_.size() || construct_addrs_[id.value].has_value()) {
             return reject("constructor is planned more than once", range);
         }
@@ -1992,8 +2021,7 @@ class P6ComputationHandlerBuilder {
             return reject("constructor result is not an aggregate type", range);
         }
         if (!construct.is_enum_variant) {
-            const auto *structure =
-                p6_nominal_struct_layout(program_, layouts_, construct.type_id);
+            const auto *structure = p6_nominal_struct_layout(program_, layouts_, construct.type_id);
             if (structure == nullptr || structure->field_offsets.size() != construct.args.size()) {
                 return reject("struct constructor does not match its declared field layout", range);
             }
@@ -2001,13 +2029,14 @@ class P6ComputationHandlerBuilder {
                 if (arg.field.value >= structure->field_offsets.size()) {
                     return reject("struct constructor field id is out of range", range);
                 }
-                if (!plan_construct_operand(arg.value, structure->field_layouts[arg.field.value],
-                                            range)) {
+                if (!plan_construct_operand(
+                        arg.value, structure->field_layouts[arg.field.value], range)) {
                     return false;
                 }
             }
         } else {
-            if (construct.variant.value >= program_.types[construct.type_id.value].variants.size()) {
+            if (construct.variant.value >=
+                program_.types[construct.type_id.value].variants.size()) {
                 return reject("enum variant constructor id is out of range", range);
             }
             const int kind = enum_payload_kind(construct.type_id, construct.variant);
@@ -2018,8 +2047,8 @@ class P6ComputationHandlerBuilder {
                 return reject("unit enum variant constructor must have no payload args", range);
             }
             if (kind != 0) {
-                if (construct.args.size() != enum_payload_arity(construct.type_id,
-                                                                construct.variant)) {
+                if (construct.args.size() !=
+                    enum_payload_arity(construct.type_id, construct.variant)) {
                     return reject("enum variant constructor payload arity does not match its "
                                   "declaration",
                                   range);
@@ -2027,7 +2056,8 @@ class P6ComputationHandlerBuilder {
             }
             const auto *tagged = p6_nominal_enum_layout(program_, layouts_, construct.type_id);
             const CoreLayoutId payload_layout =
-                tagged != nullptr && construct.variant.value < tagged->variant_payload_layouts.size()
+                tagged != nullptr &&
+                        construct.variant.value < tagged->variant_payload_layouts.size()
                     ? tagged->variant_payload_layouts[construct.variant.value]
                     : CoreLayoutId{};
             const ir::core::CoreLayoutStruct *payload = nullptr;
@@ -2042,8 +2072,8 @@ class P6ComputationHandlerBuilder {
                 if (arg.field.value >= payload->field_layouts.size()) {
                     return reject("enum payload constructor slot id is out of range", range);
                 }
-                if (!plan_construct_operand(arg.value, payload->field_layouts[arg.field.value],
-                                            range)) {
+                if (!plan_construct_operand(
+                        arg.value, payload->field_layouts[arg.field.value], range)) {
                     return false;
                 }
             }
@@ -2065,8 +2095,8 @@ class P6ComputationHandlerBuilder {
     // takes an i32/i64 operand of the same width, an addressable-aggregate slot
     // takes a `Ptr` operand, and any other slot (a String / collection / f64, or
     // an inline tag-only enum the P6 model cannot address) fails closed.
-    [[nodiscard]] bool plan_construct_operand(CoreValueId value, CoreLayoutId slot,
-                                              ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    plan_construct_operand(CoreValueId value, CoreLayoutId slot, ir::SourceRangeOpt range) {
         if (value.value >= flow_.value_types.size()) {
             return reject("constructor operand value id is out of range", range);
         }
@@ -2114,8 +2144,8 @@ class P6ComputationHandlerBuilder {
     // hold has failed closed one frame up. The enclosing `let` binds the result
     // id to a local of that same kind (`bind_value` reads the result type), so a
     // repr-growing widening lands in an i64 local.
-    [[nodiscard]] bool plan_coerce(CoreExprId id, const CoreCoerceExpr &coerce,
-                                   ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    plan_coerce(CoreExprId id, const CoreCoerceExpr &coerce, ir::SourceRangeOpt range) {
         if (id.value >= flow_.exprs.size()) {
             return reject("coercion expression id is out of range for this flow", range);
         }
@@ -2196,8 +2226,8 @@ class P6ComputationHandlerBuilder {
     // it up), so the index scaling is a `mul` and not a shift (a shift would
     // silently be wrong for a non-power-of-two stride such as a 3-byte element
     // padded to 4 — and the layout is the authority, never an assumption).
-    [[nodiscard]] bool emit_collection(CoreExprId id, const CoreCollectionExpr &collection,
-                                       ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    emit_collection(CoreExprId id, const CoreCollectionExpr &collection, ir::SourceRangeOpt range) {
         const auto base_kind = readable_kind(collection.base);
         if (base_kind != P6ScalarKind::Collection) {
             return reject("collection operation base is not a bounded collection value",
@@ -2231,8 +2261,7 @@ class P6ComputationHandlerBuilder {
         const auto index_kind = readable_kind(collection.index);
         const auto element_slot = container->element;
         const bool element_wide = place_kind_of_layout(element_slot) == P6ScalarKind::IntI64;
-        const std::uint32_t element_offset =
-            static_cast<std::uint32_t>(container->value_offset);
+        const std::uint32_t element_offset = static_cast<std::uint32_t>(container->value_offset);
         // The index must be a scalar Int. The bounds test itself is emitted
         // BEFORE the address arithmetic so a bad index cannot compute a wild
         // address even transiently; `stride` / `value_offset` are the P4-D facts.
@@ -2344,7 +2373,8 @@ class P6ComputationHandlerBuilder {
     // exists, so this reads the locals and the header word and emits only the
     // compares — it never re-derives a backing fact.
     [[nodiscard]] bool emit_element_bounds(const CoreCollectionExpr &collection,
-                                           std::uint64_t capacity, ir::SourceRangeOpt range) {
+                                           std::uint64_t capacity,
+                                           ir::SourceRangeOpt range) {
         const auto index_kind = readable_kind(collection.index);
         if (index_kind == std::nullopt) {
             return reject("collection element index is not a readable value", std::move(range));
@@ -2422,8 +2452,8 @@ class P6ComputationHandlerBuilder {
     //     truncate a wider element.
     // `Len` needs no further check beyond the base layout (its header word is an
     // i32 by construction).
-    [[nodiscard]] bool plan_collection(CoreExprId id, const CoreCollectionExpr &collection,
-                                       ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    plan_collection(CoreExprId id, const CoreCollectionExpr &collection, ir::SourceRangeOpt range) {
         if (id.value >= flow_.exprs.size()) {
             return reject("collection expression id is out of range for this flow", range);
         }
@@ -2459,10 +2489,9 @@ class P6ComputationHandlerBuilder {
         // arithmetic and require the whole scaled region to fit the ONE region
         // budget (a single SSOT constant, never a second copy of 65536). A
         // zero-capacity container is empty and passes trivially.
-        const std::uint64_t element_size =
-            container->element.value < layouts_.layouts.size()
-                ? layouts_.layouts[container->element.value].size
-                : 0;
+        const std::uint64_t element_size = container->element.value < layouts_.layouts.size()
+                                               ? layouts_.layouts[container->element.value].size
+                                               : 0;
         const std::uint64_t region = kP6CollectionBackingCapacity;
         const std::uint64_t capacity = container->capacity;
         const std::uint64_t stride = container->stride;
@@ -2482,14 +2511,13 @@ class P6ComputationHandlerBuilder {
             }
             const std::uint64_t scaled = max_index * stride;
             if (scaled > std::numeric_limits<std::uint64_t>::max() - element_size ||
-                scaled + element_size >
-                    std::numeric_limits<std::uint64_t>::max() - value_offset) {
+                scaled + element_size > std::numeric_limits<std::uint64_t>::max() - value_offset) {
                 return reject("collection backing stride * capacity overflows the wasm32 region",
                               range);
             }
             if (scaled + element_size + value_offset > region) {
-                return reject(
-                    "collection backing region exceeds the reserved linear-memory budget", range);
+                return reject("collection backing region exceeds the reserved linear-memory budget",
+                              range);
             }
         }
         // An element slot must be ONE word the P6 memory model can load/store: a
@@ -2514,7 +2542,7 @@ class P6ComputationHandlerBuilder {
         used_values_[collection.index.value] = true;
         if (collection.op == CoreCollectionOpKind::ElementGet) {
             return true;
-        }        // An element WRITE must match the element slot's kind. An address-shaped
+        } // An element WRITE must match the element slot's kind. An address-shaped
         // element takes the child's address (the ONE representation rule); a
         // scalar slot takes a scalar of the same physical width.
         const auto value_kind = readable_kind(collection.value);
@@ -2581,8 +2609,8 @@ class P6ComputationHandlerBuilder {
     // yet, so a unit variant of a payload enum must have an all-unit payload to be
     // lowerable). Planning meters the scratch address and records it, so emit only
     // stores the tag.
-    [[nodiscard]] bool plan_qualified(CoreExprId id, const CoreQualifiedExpr &q,
-                                      ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    plan_qualified(CoreExprId id, const CoreQualifiedExpr &q, ir::SourceRangeOpt range) {
         if (!q.resolved) {
             return reject("qualified variant is not resolved to a typed enum", range);
         }
@@ -2613,7 +2641,6 @@ class P6ComputationHandlerBuilder {
         scratch_addr_cursor_ = static_cast<std::uint32_t>(start + size);
         return true;
     }
-
 
     //
     // Planning a match carves every arm binding and (for an expression match) the
@@ -2651,8 +2678,7 @@ class P6ComputationHandlerBuilder {
 
         // The scrutinee's ROOT site: a scalar sits in its local; an aggregate is
         // addressed (offset 0 of its own address).
-        const P6PatternSite root_site{*scrutinee_kind,
-                                      *scrutinee_kind == P6ScalarKind::Ptr, 0};
+        const P6PatternSite root_site{*scrutinee_kind, *scrutinee_kind == P6ScalarKind::Ptr, 0};
 
         for (const CoreMatchArm &arm : match.arms) {
             for (const CorePatternBinding &binding : arm.bindings) {
@@ -2668,8 +2694,11 @@ class P6ComputationHandlerBuilder {
                 }
                 used_values_[binding.value.value] = true;
             }
-            if (!plan_arm_pattern(arm.pattern, root_site, arm.bindings,
-                                  /*allow_payload_bindings=*/true, range)) {
+            if (!plan_arm_pattern(arm.pattern,
+                                  root_site,
+                                  arm.bindings,
+                                  /*allow_payload_bindings=*/true,
+                                  range)) {
                 return false;
             }
             // A guard region is present iff the source arm wrote `if <guard>`.
@@ -2738,9 +2767,11 @@ class P6ComputationHandlerBuilder {
     // function resolves it to the binding's CoreValueId before recording the
     // site. That is the ONE place the two index spaces meet; everything the emit
     // pass reads is keyed by value id.
-    [[nodiscard]] bool plan_arm_pattern(CorePatternId id, P6PatternSite site,
+    [[nodiscard]] bool plan_arm_pattern(CorePatternId id,
+                                        P6PatternSite site,
                                         const std::vector<CorePatternBinding> &bindings,
-                                        bool allow_payload_bindings, ir::SourceRangeOpt range) {
+                                        bool allow_payload_bindings,
+                                        ir::SourceRangeOpt range) {
         if (id.value >= flow_.patterns.size()) {
             return reject("pattern id is out of range for this flow", range);
         }
@@ -2764,7 +2795,8 @@ class P6ComputationHandlerBuilder {
                     }
                     binding_sites_[value.value] = site;
                     return !b.has_nested ||
-                           plan_arm_pattern(b.nested, site, bindings, allow_payload_bindings, range);
+                           plan_arm_pattern(
+                               b.nested, site, bindings, allow_payload_bindings, range);
                 },
                 [&](const CoreLiteralPat &lit) {
                     if (site.in_memory) {
@@ -2785,16 +2817,19 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [&](const CoreVariantPat &v) {
-                    return plan_variant_pattern_site(v, site, bindings, allow_payload_bindings,
-                                                     range);
+                    return plan_variant_pattern_site(
+                        v, site, bindings, allow_payload_bindings, range);
                 },
                 [&](const CoreOrPat &o) {
                     if (o.alternatives.size() < 2) {
                         return reject("or-pattern must have at least two alternatives", range);
                     }
                     return std::ranges::all_of(o.alternatives, [&](CorePatternId alt) {
-                        return plan_arm_pattern(alt, site, bindings,
-                                                /*allow_payload_bindings=*/false, range);
+                        return plan_arm_pattern(alt,
+                                                site,
+                                                bindings,
+                                                /*allow_payload_bindings=*/false,
+                                                range);
                     });
                 },
                 [&](const CoreTuplePat &t) { return plan_tuple_pattern_site(t, site, range); },
@@ -2805,7 +2840,8 @@ class P6ComputationHandlerBuilder {
     // A variant pattern: the scrutinee must be a tag-only enum (an `Index` value)
     // or an ADDRESSED enum. With a payload, the tag is at the address and each
     // sub-pattern descends to `payload_offset + slot_offset`.
-    [[nodiscard]] bool plan_variant_pattern_site(const CoreVariantPat &v, P6PatternSite site,
+    [[nodiscard]] bool plan_variant_pattern_site(const CoreVariantPat &v,
+                                                 P6PatternSite site,
                                                  const std::vector<CorePatternBinding> &bindings,
                                                  bool allow_payload_bindings,
                                                  ir::SourceRangeOpt range) {
@@ -2854,14 +2890,13 @@ class P6ComputationHandlerBuilder {
             if (sub == std::nullopt) {
                 return false;
             }
-            if (!plan_arm_pattern(v.tuple_subpatterns[i], *sub, bindings, allow_payload_bindings,
-                                  range)) {
+            if (!plan_arm_pattern(
+                    v.tuple_subpatterns[i], *sub, bindings, allow_payload_bindings, range)) {
                 return false;
             }
         }
         for (const CoreVariantPatField &field : v.struct_fields) {
-            const auto sub =
-                payload_sub_site(*payload, field.slot.value, payload_base, range);
+            const auto sub = payload_sub_site(*payload, field.slot.value, payload_base, range);
             if (sub == std::nullopt) {
                 return false;
             }
@@ -2875,12 +2910,13 @@ class P6ComputationHandlerBuilder {
     // An anonymous tuple pattern is not in the P6 aggregate subset: no Core path
     // / construct in this slice materializes a tuple value (Sema's match scrutinee
     // is an enum), so a tuple pattern fails closed rather than matching nothing.
-    [[nodiscard]] bool plan_tuple_pattern_site(const CoreTuplePat &, P6PatternSite,
-                                               ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    plan_tuple_pattern_site(const CoreTuplePat &, P6PatternSite, ir::SourceRangeOpt range) {
         return reject("tuple patterns are not in the P6 aggregate subset", std::move(range));
     }
 
-    [[nodiscard]] bool plan_literal_pattern(const CoreLiteralPat &lit, P6ScalarKind scrutinee_kind,
+    [[nodiscard]] bool plan_literal_pattern(const CoreLiteralPat &lit,
+                                            P6ScalarKind scrutinee_kind,
                                             ir::SourceRangeOpt range) {
         switch (lit.kind) {
         case CoreLiteralKind::Bool:
@@ -3106,11 +3142,18 @@ class P6ComputationHandlerBuilder {
             return reject("projection root is not input, context, or an aggregate local",
                           std::move(range));
         }
+        // KR6.7: a non-empty projection rooted at the input frame reads raw P4-D
+        // input bytes. A context projection or an aggregate-LOCAL projection
+        // (constructor / binding scratch) leaves the run2 wire-frame boundary
+        // intact.
+        if (!path.has_local && path.root == ir::core::CorePathRoot::Input) {
+            reads_raw_input_frame_ = true;
+        }
         // The walk leaves the final slot's ADDRESS on the stack, dereferencing
         // every intermediate aggregate field exactly as `emit_construct_store`
         // wrote it.
-        const auto slot = emit_projection_slot(path.projection, path.root_type, *root,
-                                               std::move(range));
+        const auto slot =
+            emit_projection_slot(path.projection, path.root_type, *root, std::move(range));
         if (slot == std::nullopt) {
             return false;
         }
@@ -3150,8 +3193,8 @@ class P6ComputationHandlerBuilder {
     // Emit a qualified unit variant: a tag-only enum's discriminant constant, or
     // an addressed aggregate with its tag stored at offset 0 and no payload stores
     // (a unit variant of a payload enum has all-unit slots in P6).
-    [[nodiscard]] bool emit_qualified(CoreExprId id, const CoreQualifiedExpr &q,
-                                      ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    emit_qualified(CoreExprId id, const CoreQualifiedExpr &q, ir::SourceRangeOpt range) {
         if (p6_is_tag_only_enum(program_, layouts_, flow_.exprs[id.value].result_type)) {
             emit_const_i32(static_cast<std::int32_t>(q.variant.value));
             return true;
@@ -3174,29 +3217,31 @@ class P6ComputationHandlerBuilder {
     // IDENTITY (never source write order) selects the destination, so
     // `Pair { b: 2, a: 1 }` cannot be mis-assigned (Principle 2). An enum stores
     // its i32 tag at offset 0 and its payload slots at `payload_offset`.
-    [[nodiscard]] bool emit_construct(CoreExprId id, const CoreConstructExpr &construct,
-                                      ir::SourceRangeOpt range) {
+    [[nodiscard]] bool
+    emit_construct(CoreExprId id, const CoreConstructExpr &construct, ir::SourceRangeOpt range) {
         if (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value()) {
             return reject("constructor has no planned scratch address", std::move(range));
         }
         const std::uint32_t address = *construct_addrs_[id.value];
         if (!construct.is_enum_variant) {
-            const auto *structure =
-                p6_nominal_struct_layout(program_, layouts_, construct.type_id);
+            const auto *structure = p6_nominal_struct_layout(program_, layouts_, construct.type_id);
             if (structure == nullptr) {
                 return reject("struct constructor has no finalized layout", std::move(range));
             }
             for (const CoreConstructArg &arg : construct.args) {
-                if (!emit_construct_store(arg, address, structure->field_layouts[arg.field.value],
-                                          structure->field_offsets[arg.field.value], 0,
+                if (!emit_construct_store(arg,
+                                          address,
+                                          structure->field_layouts[arg.field.value],
+                                          structure->field_offsets[arg.field.value],
+                                          0,
                                           std::move(range))) {
                     return false;
                 }
             }
         } else {
-            const auto *tagged =
-                p6_nominal_enum_layout(program_, layouts_, construct.type_id);
-            if (tagged == nullptr || construct.variant.value >= tagged->variant_payload_sizes.size()) {
+            const auto *tagged = p6_nominal_enum_layout(program_, layouts_, construct.type_id);
+            if (tagged == nullptr ||
+                construct.variant.value >= tagged->variant_payload_sizes.size()) {
                 return reject("enum constructor has no finalized layout", std::move(range));
             }
             const CoreLayoutId payload_layout =
@@ -3215,9 +3260,12 @@ class P6ComputationHandlerBuilder {
                     return reject("enum unit variant constructor has an unexpected payload arg",
                                   std::move(range));
                 }
-                if (!emit_construct_store(arg, address, payload->field_layouts[arg.field.value],
+                if (!emit_construct_store(arg,
+                                          address,
+                                          payload->field_layouts[arg.field.value],
                                           payload->field_offsets[arg.field.value],
-                                          tagged->payload_offset, std::move(range))) {
+                                          tagged->payload_offset,
+                                          std::move(range))) {
                     return false;
                 }
             }
@@ -3237,10 +3285,12 @@ class P6ComputationHandlerBuilder {
     // enum payload base). A scalar operand is loaded from its local; an aggregate
     // operand is copied by its address. The SLOT's layout edge selects the width,
     // and the plan pass already proved the operand matches it.
-    [[nodiscard]] bool emit_construct_store(const CoreConstructArg &arg, std::uint32_t address,
+    [[nodiscard]] bool emit_construct_store(const CoreConstructArg &arg,
+                                            std::uint32_t address,
                                             const CoreLayoutId slot_layout,
                                             std::uint64_t slot_offset,
-                                            std::uint64_t payload_base, ir::SourceRangeOpt range) {
+                                            std::uint64_t payload_base,
+                                            ir::SourceRangeOpt range) {
         const std::uint64_t offset = payload_base + slot_offset;
         const auto kind = readable_kind(arg.value);
         const auto local = readable_local(arg.value);
@@ -3299,8 +3349,8 @@ class P6ComputationHandlerBuilder {
         // still points at. P6 has no lifetime rule for a value that outlives its
         // handler yet, so this fails closed exactly like the PtrLen / String leaf
         // rather than emit a dangling pointer.
-        const auto slot = resolve_projection_slot(store.place.projection, store.place.root_type,
-                                                  range);
+        const auto slot =
+            resolve_projection_slot(store.place.projection, store.place.root_type, range);
         if (slot == std::nullopt) {
             return false;
         }
@@ -3320,8 +3370,8 @@ class P6ComputationHandlerBuilder {
         // Stack order for a store is [address][value], so the shared walk pushes
         // the destination slot's address (dereferencing every intermediate
         // aggregate field) before the operand is read.
-        const auto slot = emit_projection_slot(store.place.projection, store.place.root_type, *root,
-                                               std::move(range));
+        const auto slot = emit_projection_slot(
+            store.place.projection, store.place.root_type, *root, std::move(range));
         if (slot == std::nullopt) {
             return false;
         }
@@ -3521,8 +3571,10 @@ class P6ComputationHandlerBuilder {
     // branch instruction is emitted: an or-pattern combines its alternatives with
     // `i32.or`, correct because a pattern test is pure and all alternatives read
     // the same value.
-    [[nodiscard]] bool emit_pattern_test(CorePatternId id, std::uint32_t scrutinee_local,
-                                         P6PatternSite site, ir::SourceRangeOpt range) {
+    [[nodiscard]] bool emit_pattern_test(CorePatternId id,
+                                         std::uint32_t scrutinee_local,
+                                         P6PatternSite site,
+                                         ir::SourceRangeOpt range) {
         if (id.value >= flow_.patterns.size()) {
             return reject("pattern id is out of range for this flow", std::move(range));
         }
@@ -3537,8 +3589,7 @@ class P6ComputationHandlerBuilder {
                 },
                 [&](const CoreBindingPat &b) {
                     if (b.has_nested) {
-                        return emit_pattern_test(b.nested, scrutinee_local, site,
-                                                 std::move(range));
+                        return emit_pattern_test(b.nested, scrutinee_local, site, std::move(range));
                     }
                     emit_const_i32(1);
                     return true;
@@ -3587,7 +3638,8 @@ class P6ComputationHandlerBuilder {
     // Push the VALUE at a pattern site: a scalar in a local (`local.get`), or a
     // scalar at a memory offset (`local.get; i32.load offset=`). A `Ptr` site's
     // "value" is its address, which is what a nested payload test needs.
-    [[nodiscard]] bool emit_site_value(std::uint32_t scrutinee_local, const P6PatternSite &site,
+    [[nodiscard]] bool emit_site_value(std::uint32_t scrutinee_local,
+                                       const P6PatternSite &site,
                                        ir::SourceRangeOpt range) {
         if (site.kind == P6ScalarKind::Ptr) {
             emit_site_address(scrutinee_local, site);
@@ -3613,8 +3665,10 @@ class P6ComputationHandlerBuilder {
     // i32 discriminant in the scrutinee local; an ADDRESSED enum loads the tag
     // from offset 0 of the site, then (with a payload) each sub-pattern is tested
     // at `site + payload_offset + slot_offset`.
-    [[nodiscard]] bool emit_variant_test(const CoreVariantPat &v, std::uint32_t scrutinee_local,
-                                         const P6PatternSite &site, ir::SourceRangeOpt range) {
+    [[nodiscard]] bool emit_variant_test(const CoreVariantPat &v,
+                                         std::uint32_t scrutinee_local,
+                                         const P6PatternSite &site,
+                                         ir::SourceRangeOpt range) {
         if (v.owner_enum.value >= program_.types.size() ||
             v.variant.value >= program_.types[v.owner_enum.value].variants.size()) {
             return reject("variant pattern identity is out of range", std::move(range));
@@ -3643,8 +3697,7 @@ class P6ComputationHandlerBuilder {
         // each sub-pattern leaves its own i32 and `i32.and` folds them.
         const auto *tagged = p6_nominal_enum_layout(program_, layouts_, v.owner_enum);
         if (tagged == nullptr || v.variant.value >= tagged->variant_payload_layouts.size()) {
-            return reject("variant pattern owner has no finalized enum layout",
-                          std::move(range));
+            return reject("variant pattern owner has no finalized enum layout", std::move(range));
         }
         const CoreLayoutId payload_layout = tagged->variant_payload_layouts[v.variant.value];
         const ir::core::CoreLayoutStruct *payload = nullptr;
@@ -3653,8 +3706,7 @@ class P6ComputationHandlerBuilder {
                 &layouts_.layouts[payload_layout.value].shape);
         }
         if (payload == nullptr) {
-            return reject("variant payload pattern has no struct payload layout",
-                          std::move(range));
+            return reject("variant payload pattern has no struct payload layout", std::move(range));
         }
         const std::uint64_t payload_base = site.offset + tagged->payload_offset;
         for (std::uint32_t i = 0; i < v.tuple_subpatterns.size(); ++i) {
@@ -3662,8 +3714,8 @@ class P6ComputationHandlerBuilder {
             if (sub == std::nullopt) {
                 return false;
             }
-            if (!emit_pattern_test(v.tuple_subpatterns[i], scrutinee_local, *sub,
-                                   std::move(range))) {
+            if (!emit_pattern_test(
+                    v.tuple_subpatterns[i], scrutinee_local, *sub, std::move(range))) {
                 return false;
             }
             body_.byte(kOpI32And);
@@ -3681,11 +3733,13 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    [[nodiscard]] bool emit_literal_test(const CoreLiteralPat &lit, std::uint32_t scrutinee_local,
-                                         const P6PatternSite &site, ir::SourceRangeOpt range) {
-        if (site.in_memory || (site.kind != P6ScalarKind::Bool &&
-                               site.kind != P6ScalarKind::IntI32 &&
-                               site.kind != P6ScalarKind::IntI64)) {
+    [[nodiscard]] bool emit_literal_test(const CoreLiteralPat &lit,
+                                         std::uint32_t scrutinee_local,
+                                         const P6PatternSite &site,
+                                         ir::SourceRangeOpt range) {
+        if (site.in_memory ||
+            (site.kind != P6ScalarKind::Bool && site.kind != P6ScalarKind::IntI32 &&
+             site.kind != P6ScalarKind::IntI64)) {
             return reject("literal pattern requires a scalar scrutinee", std::move(range));
         }
         const bool wide = site.kind == P6ScalarKind::IntI64;
@@ -3715,8 +3769,7 @@ class P6ComputationHandlerBuilder {
         if (wide) {
             emit_const_i64(static_cast<std::int64_t>(*parsed));
         } else {
-            if (*parsed >
-                static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+            if (*parsed > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
                 return reject("integer pattern exceeds the i32 scalar range", std::move(range));
             }
             emit_const_i32(static_cast<std::int32_t>(*parsed));
@@ -3730,8 +3783,10 @@ class P6ComputationHandlerBuilder {
     // needs the scrutinee's repr to pick the compare width, plus a bound range
     // check against it (a range bound that does not fit the scrutinee's repr
     // could never be reached / could wrap, so it fails closed).
-    [[nodiscard]] bool emit_int_range_test(const CoreIntRangePat &r, std::uint32_t scrutinee_local,
-                                           const P6PatternSite &site, ir::SourceRangeOpt range) {
+    [[nodiscard]] bool emit_int_range_test(const CoreIntRangePat &r,
+                                           std::uint32_t scrutinee_local,
+                                           const P6PatternSite &site,
+                                           ir::SourceRangeOpt range) {
         if (r.start > r.end) {
             return reject("int-range pattern has start greater than end", std::move(range));
         }
@@ -3740,11 +3795,9 @@ class P6ComputationHandlerBuilder {
             return reject("int-range pattern requires an Int scrutinee", std::move(range));
         }
         const bool wide = site.kind == P6ScalarKind::IntI64;
-        if (!wide &&
-            (r.start < std::numeric_limits<std::int32_t>::min() ||
-             r.end > std::numeric_limits<std::int32_t>::max())) {
-            return reject("int-range pattern bound exceeds the i32 scalar range",
-                          std::move(range));
+        if (!wide && (r.start < std::numeric_limits<std::int32_t>::min() ||
+                      r.end > std::numeric_limits<std::int32_t>::max())) {
+            return reject("int-range pattern bound exceeds the i32 scalar range", std::move(range));
         }
         // `not (v < start)` — the first operand of the `and`.
         emit_local_get(scrutinee_local);
@@ -3906,8 +3959,8 @@ class P6ComputationHandlerBuilder {
                 body_.byte(kOpBrIf);
                 body_.u32(0); // guard false -> next arm
             }
-            if (arm.body && !emit_match_region(*arm.body, result_local, /*completion_offset=*/2,
-                                               range)) {
+            if (arm.body &&
+                !emit_match_region(*arm.body, result_local, /*completion_offset=*/2, range)) {
                 return false;
             }
             --label_depth_;
@@ -3919,8 +3972,8 @@ class P6ComputationHandlerBuilder {
         // leaves through S, a diverging one (a non-exhaustive match's trap, or a
         // goto) leaves on its own.
         if (match.fallback_region &&
-            !emit_match_region(*match.fallback_region, result_local, /*completion_offset=*/1,
-                               range)) {
+            !emit_match_region(
+                *match.fallback_region, result_local, /*completion_offset=*/1, range)) {
             return false;
         }
 
@@ -3985,9 +4038,7 @@ class P6ComputationHandlerBuilder {
                     body_.byte(kOpUnreachable);
                     return true;
                 },
-                [&](const CoreMatchStmt &s) {
-                    return emit_match(s, statement.source_range);
-                },
+                [&](const CoreMatchStmt &s) { return emit_match(s, statement.source_range); },
                 [&](const CoreCapabilityCallStmt &) {
                     return reject("capability effects stay on the orchestration lane",
                                   statement.source_range);
@@ -4005,16 +4056,14 @@ class P6ComputationHandlerBuilder {
     }
 };
 
-[[nodiscard]] std::optional<AgentPlan>
-build_agent_plan(const CoreProgram &program,
-                 const ir::core::CoreLayoutTable &layouts,
-                 CoreAgentId target,
-                 CoreWasmCodegenResult &result,
-                 AgentPlanPolicy policy = {}) {
+[[nodiscard]] std::optional<AgentPlan> build_agent_plan(const CoreProgram &program,
+                                                        const ir::core::CoreLayoutTable &layouts,
+                                                        CoreAgentId target,
+                                                        CoreWasmCodegenResult &result,
+                                                        AgentPlanPolicy policy = {}) {
     if (target.value >= program.agents.size()) {
-        add_diag(result,
-                 core_wasm_diag::kEntryNotFound,
-                 "explicit Core agent entry is out of range");
+        add_diag(
+            result, core_wasm_diag::kEntryNotFound, "explicit Core agent entry is out of range");
         return std::nullopt;
     }
 
@@ -4036,18 +4085,14 @@ build_agent_plan(const CoreProgram &program,
     // closed per-handler below for any pattern kind or expression node outside
     // the landed subset.
     if (!flow->patterns.empty() &&
-        !std::any_of(flow->states.begin(),
-                     flow->states.end(),
-                     [](const ir::core::CoreFlowState &state) {
-                         return region_contains_match(state.body) &&
-                                is_p6_computation_region(state.body);
-                     })) {
-        const bool contains_capability =
-            std::any_of(flow->states.begin(),
-                        flow->states.end(),
-                        [](const ir::core::CoreFlowState &state) {
-                            return region_contains_capability(state.body);
-                        });
+        !std::any_of(
+            flow->states.begin(), flow->states.end(), [](const ir::core::CoreFlowState &state) {
+                return region_contains_match(state.body) && is_p6_computation_region(state.body);
+            })) {
+        const bool contains_capability = std::any_of(
+            flow->states.begin(), flow->states.end(), [](const ir::core::CoreFlowState &state) {
+                return region_contains_capability(state.body);
+            });
         add_diag(result,
                  contains_capability
                      ? (policy.allow_capability ? core_wasm_diag::kUnsupportedCapabilityFrame
@@ -4057,8 +4102,7 @@ build_agent_plan(const CoreProgram &program,
                      " rejects a hidden pattern arena with no matched computation handler");
         return std::nullopt;
     }
-    if (agent.states.size() >=
-        static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+    if (agent.states.size() >= static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
         add_diag(result,
                  core_wasm_diag::kBinaryOverflow,
                  "agent state count exceeds the wasm32 signed-immediate domain");
@@ -4083,21 +4127,13 @@ build_agent_plan(const CoreProgram &program,
     // write into the neighbouring region (or past the page) with no diagnostic.
     // Fail closed with the same RESOURCE-class rejection the constructor scratch
     // arena uses, BEFORE any handler byte is emitted.
-    if (!fits_frame_region(program,
-                           layouts,
-                           agent.input_type,
-                           kP6AggregateInputCapacity,
-                           "input",
-                           result)) {
+    if (!fits_frame_region(
+            program, layouts, agent.input_type, kP6AggregateInputCapacity, "input", result)) {
         return std::nullopt;
     }
     if (agent.context_kind == CoreAgentDecl::ContextKind::Struct &&
-        !fits_frame_region(program,
-                           layouts,
-                           agent.context_type,
-                           kP6AggregateContextCapacity,
-                           "context",
-                           result)) {
+        !fits_frame_region(
+            program, layouts, agent.context_type, kP6AggregateContextCapacity, "context", result)) {
         return std::nullopt;
     }
 
@@ -4114,9 +4150,8 @@ build_agent_plan(const CoreProgram &program,
     for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
         const auto *handler = handlers[state];
         if (handler == nullptr) {
-            add_diag(result,
-                     core_wasm_diag::kInvalidCore,
-                     "target flow is missing a state handler");
+            add_diag(
+                result, core_wasm_diag::kInvalidCore, "target flow is missing a state handler");
             return std::nullopt;
         }
         const auto &statements = handler->body.statements;
@@ -4146,14 +4181,8 @@ build_agent_plan(const CoreProgram &program,
                                  : handler->body.statements.front().source_range);
                     return std::nullopt;
                 }
-                auto action = validate_capability_final(program,
-                                                        layouts,
-                                                        agent,
-                                                        *flow,
-                                                        *handler,
-                                                        used_exprs,
-                                                        used_values,
-                                                        result);
+                auto action = validate_capability_final(
+                    program, layouts, agent, *flow, *handler, used_exprs, used_values, result);
                 if (!action.has_value()) {
                     return std::nullopt;
                 }
@@ -4170,11 +4199,9 @@ build_agent_plan(const CoreProgram &program,
         // Unary/Binary + structured if + goto/trap). All effect-bearing or
         // otherwise out-of-subset regions keep the legacy rejections below.
         const bool single_goto =
-            statements.size() == 1 &&
-            std::holds_alternative<CoreGotoStmt>(statements.front().node);
+            statements.size() == 1 && std::holds_alternative<CoreGotoStmt>(statements.front().node);
         if (!single_goto) {
-            if (!handler->body.statements.empty() &&
-                is_p6_computation_region(handler->body)) {
+            if (!handler->body.statements.empty() && is_p6_computation_region(handler->body)) {
                 if (!policy.allow_computed_goto) {
                     add_diag(result,
                              policy.unsupported_code,
@@ -4222,10 +4249,12 @@ build_agent_plan(const CoreProgram &program,
                         return std::nullopt;
                     }
                 }
-                const auto function =
-                    static_cast<std::uint32_t>(plan.handlers.size());
+                const auto function = static_cast<std::uint32_t>(plan.handlers.size());
                 plan.handlers.push_back(CompiledHandler{std::move(*body)});
                 plan.actions[state] = ComputedGotoAction{function, builder->targets()};
+                if (builder->reads_raw_input_frame()) {
+                    plan.reads_raw_input_frame = true;
+                }
                 continue;
             }
             const bool contains_capability = region_contains_capability(handler->body);
@@ -4239,8 +4268,7 @@ build_agent_plan(const CoreProgram &program,
                                " requires a non-final handler to contain exactly one goto"
                          : "KR6.5 " + std::string(policy.slice) +
                                " supports only CoreGotoStmt in a non-final handler",
-                     statements.empty() ? ir::SourceRangeOpt{}
-                                        : statements.front().source_range);
+                     statements.empty() ? ir::SourceRangeOpt{} : statements.front().source_range);
             return std::nullopt;
         }
         const auto &go = std::get<CoreGotoStmt>(statements.front().node);
@@ -4260,8 +4288,8 @@ build_agent_plan(const CoreProgram &program,
 
     if (std::any_of(used_exprs.begin(), used_exprs.end(), [](bool used) { return !used; }) ||
         std::any_of(used_values.begin(), used_values.end(), [](bool used) { return !used; })) {
-        const bool contains_capability = std::any_of(
-            plan.actions.begin(), plan.actions.end(), [](const StateAction &action) {
+        const bool contains_capability =
+            std::any_of(plan.actions.begin(), plan.actions.end(), [](const StateAction &action) {
                 return std::holds_alternative<CapabilityAction>(action);
             });
         add_diag(result,
@@ -4356,8 +4384,7 @@ build_agent_plan(const CoreProgram &program,
     std::sort(plan.imports.begin(), plan.imports.end(), [](auto lhs, auto rhs) {
         return lhs.value < rhs.value;
     });
-    plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()),
-                       plan.imports.end());
+    plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()), plan.imports.end());
     if (plan.imports.size() > 1) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedCapabilityFrame,
@@ -4386,8 +4413,8 @@ build_agent_plan(const CoreProgram &program,
     return plan;
 }
 
-[[nodiscard]] const ir::core::CoreInstanceDecl *
-agent_instance(const CoreProgram &program, CoreInstanceId id) {
+[[nodiscard]] const ir::core::CoreInstanceDecl *agent_instance(const CoreProgram &program,
+                                                               CoreInstanceId id) {
     if (id.value >= program.instances.size()) {
         return nullptr;
     }
@@ -4396,8 +4423,8 @@ agent_instance(const CoreProgram &program, CoreInstanceId id) {
                : nullptr;
 }
 
-[[nodiscard]] const CoreAgentInstance *
-agent_instance_payload(const CoreProgram &program, CoreInstanceId id) {
+[[nodiscard]] const CoreAgentInstance *agent_instance_payload(const CoreProgram &program,
+                                                              CoreInstanceId id) {
     const auto *instance = agent_instance(program, id);
     return instance == nullptr ? nullptr : std::get_if<CoreAgentInstance>(&instance->payload);
 }
@@ -4489,8 +4516,8 @@ validate_workflow_frame_region(const CoreProgram &program,
                      expr.source_range);
             return std::nullopt;
         }
-        const auto *nominal = std::get_if<CoreVtNominal>(
-            &program.value_types[expr.result_type.value].node);
+        const auto *nominal =
+            std::get_if<CoreVtNominal>(&program.value_types[expr.result_type.value].node);
         if (nominal == nullptr || nominal->base != workflow.input_type) {
             add_diag(result,
                      core_wasm_diag::kUnsupportedWorkflowFrame,
@@ -4509,8 +4536,7 @@ validate_workflow_frame_region(const CoreProgram &program,
         }
         const auto &source_node = workflow.nodes[path->workflow_node.value];
         const auto *source_instance = agent_instance(program, source_node.target_instance);
-        const auto *source_payload =
-            agent_instance_payload(program, source_node.target_instance);
+        const auto *source_payload = agent_instance_payload(program, source_node.target_instance);
         if (source_instance == nullptr || source_payload == nullptr ||
             source_instance->dispatch_types.size() != 3 ||
             path->root_type != source_payload->output_type ||
@@ -4546,8 +4572,8 @@ validate_workflow_frame_region(const CoreProgram &program,
     return source;
 }
 
-[[nodiscard]] std::optional<std::uint32_t>
-workflow_runner_index(const WorkflowPlan &plan, CoreInstanceId instance);
+[[nodiscard]] std::optional<std::uint32_t> workflow_runner_index(const WorkflowPlan &plan,
+                                                                 CoreInstanceId instance);
 
 [[nodiscard]] std::optional<WorkflowPlan>
 build_workflow_plan(const CoreProgram &program,
@@ -4555,9 +4581,8 @@ build_workflow_plan(const CoreProgram &program,
                     CoreWorkflowId target,
                     CoreWasmCodegenResult &result) {
     if (target.value >= program.workflows.size()) {
-        add_diag(result,
-                 core_wasm_diag::kEntryNotFound,
-                 "explicit Core workflow entry is out of range");
+        add_diag(
+            result, core_wasm_diag::kEntryNotFound, "explicit Core workflow entry is out of range");
         return std::nullopt;
     }
     const auto &workflow = program.workflows[target.value];
@@ -4745,8 +4770,7 @@ build_workflow_plan(const CoreProgram &program,
     std::sort(plan.imports.begin(), plan.imports.end(), [](auto lhs, auto rhs) {
         return lhs.value < rhs.value;
     });
-    plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()),
-                       plan.imports.end());
+    plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()), plan.imports.end());
     if (plan.imports.size() >
         static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 6u)) {
         add_diag(result,
@@ -4759,9 +4783,8 @@ build_workflow_plan(const CoreProgram &program,
     // must be the declared workflow output shell; no second type reconstruction is
     // permitted in codegen.
     if (workflow.return_region == nullptr || workflow.return_region->statements.empty()) {
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "workflow return region is absent");
+        add_diag(
+            result, core_wasm_diag::kUnsupportedWorkflowFrame, "workflow return region is absent");
         return std::nullopt;
     }
     const auto *return_let =
@@ -4822,9 +4845,8 @@ void append_indexed_op(ByteBuffer &body, std::uint8_t op, std::uint32_t index) {
     body.byte(op);
     body.u32(index);
 }
-[[nodiscard]] bool append_section(ByteBuffer &module,
-                                  std::uint8_t section_id,
-                                  const ByteBuffer &payload) {
+[[nodiscard]] bool
+append_section(ByteBuffer &module, std::uint8_t section_id, const ByteBuffer &payload) {
     module.byte(section_id);
     return module.sized(payload);
 }
@@ -4843,10 +4865,8 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
     append_const(section, initial);
     section.byte(kOpEnd);
 }
-[[nodiscard]] bool append_export(ByteBuffer &section,
-                                 std::string_view name,
-                                 std::uint8_t kind,
-                                 std::uint32_t index) {
+[[nodiscard]] bool
+append_export(ByteBuffer &section, std::string_view name, std::uint8_t kind, std::uint32_t index) {
     if (!section.name(name)) {
         return false;
     }
@@ -4936,8 +4956,7 @@ void append_global(ByteBuffer &section, bool is_mutable, std::uint32_t initial) 
     body.byte(kOpEnd);
     return body;
 }
-[[nodiscard]] ByteBuffer make_step_body(const AgentPlan &plan,
-                                       const FunctionTable &functions) {
+[[nodiscard]] ByteBuffer make_step_body(const AgentPlan &plan, const FunctionTable &functions) {
     ByteBuffer body;
     // The dispatch ladder is stateless: every handler is a real function now
     // (RFC 0026 P6-2), so step() declares no locals of its own.
@@ -5015,8 +5034,7 @@ void append_run_to_final(ByteBuffer &body,
     return !plan.imports.empty();
 }
 
-[[nodiscard]] ByteBuffer make_run_body(const AgentPlan &plan,
-                                       const FunctionTable &functions) {
+[[nodiscard]] ByteBuffer make_run_body(const AgentPlan &plan, const FunctionTable &functions) {
     ByteBuffer body;
     if (has_capability_action(plan)) {
         // The pointer-only v1 ABI cannot represent status or length. Trap before
@@ -5042,8 +5060,8 @@ void append_error_return(ByteBuffer &body) {
     body.byte(kOpReturn);
 }
 
-[[nodiscard]] std::optional<std::uint32_t>
-import_function_index(const AgentPlan &plan, CoreCapabilityId capability) {
+[[nodiscard]] std::optional<std::uint32_t> import_function_index(const AgentPlan &plan,
+                                                                 CoreCapabilityId capability) {
     const auto it = std::lower_bound(plan.imports.begin(),
                                      plan.imports.end(),
                                      capability,
@@ -5113,8 +5131,7 @@ void append_capability_return(ByteBuffer &body,
     append_error_return(body);
 }
 
-[[nodiscard]] ByteBuffer make_run2_body(const AgentPlan &plan,
-                                        const FunctionTable &functions) {
+[[nodiscard]] ByteBuffer make_run2_body(const AgentPlan &plan, const FunctionTable &functions) {
     ByteBuffer body;
     body.u32(1);
     body.u32(4);
@@ -5178,8 +5195,7 @@ encode_module(const CoreProgram &program,
         imports.u32(static_cast<std::uint32_t>(plan.imports.size()));
         for (const auto id : plan.imports) {
             const auto symbol = *program.capabilities[id.value].symbol_ref.id;
-            if (!imports.name("ahfl_cap") ||
-                !imports.name("cap_" + std::to_string(symbol))) {
+            if (!imports.name("ahfl_cap") || !imports.name("cap_" + std::to_string(symbol))) {
                 return std::nullopt;
             }
             imports.byte(kImportFunction);
@@ -5210,7 +5226,7 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer memories;
-    memories.u32(1); // one memory
+    memories.u32(1);  // one memory
     memories.byte(0); // limits flags: no declared maximum
     memories.u32(kCoreWasmFixedLinearMemoryMinPages);
     if (!append_section(module, kSectionMemory, memories)) {
@@ -5230,27 +5246,16 @@ encode_module(const CoreProgram &program,
 
     ByteBuffer exports;
     exports.u32(9);
-    const bool exports_ok = append_export(exports, "memory", kExportMemory, 0) &&
-                            append_export(exports, "alloc", kExportFunction, functions.alloc()) &&
-                            append_export(exports,
-                                          "dealloc",
-                                          kExportFunction,
-                                          functions.dealloc()) &&
-                            append_export(exports, "run", kExportFunction, functions.run()) &&
-                            append_export(exports, "run2", kExportFunction, functions.run2()) &&
-                            append_export(exports, "step", kExportFunction, functions.step()) &&
-                            append_export(exports,
-                                          "current_state",
-                                          kExportFunction,
-                                          functions.current_state()) &&
-                            append_export(exports,
-                                          "transition_count",
-                                          kExportGlobal,
-                                          kGlobalTransitionCount) &&
-                            append_export(exports,
-                                          "ahfl_abi_version",
-                                          kExportGlobal,
-                                          kGlobalAbiVersion);
+    const bool exports_ok =
+        append_export(exports, "memory", kExportMemory, 0) &&
+        append_export(exports, "alloc", kExportFunction, functions.alloc()) &&
+        append_export(exports, "dealloc", kExportFunction, functions.dealloc()) &&
+        append_export(exports, "run", kExportFunction, functions.run()) &&
+        append_export(exports, "run2", kExportFunction, functions.run2()) &&
+        append_export(exports, "step", kExportFunction, functions.step()) &&
+        append_export(exports, "current_state", kExportFunction, functions.current_state()) &&
+        append_export(exports, "transition_count", kExportGlobal, kGlobalTransitionCount) &&
+        append_export(exports, "ahfl_abi_version", kExportGlobal, kGlobalAbiVersion);
     if (!exports_ok || !append_section(module, kSectionExport, exports)) {
         return std::nullopt;
     }
@@ -5264,9 +5269,8 @@ encode_module(const CoreProgram &program,
     const auto step = make_step_body(plan, functions);
     const auto run = make_run_body(plan, functions);
     const auto run2 = make_run2_body(plan, functions);
-    if (!code.sized(alloc) || !code.sized(dealloc) || !code.sized(current) ||
-        !code.sized(final) || !code.sized(step) || !code.sized(run) ||
-        !code.sized(run2)) {
+    if (!code.sized(alloc) || !code.sized(dealloc) || !code.sized(current) || !code.sized(final) ||
+        !code.sized(step) || !code.sized(run) || !code.sized(run2)) {
         return std::nullopt;
     }
     // RFC 0026 P6-2: the compiled handler function bodies follow run2, in the
@@ -5316,8 +5320,8 @@ encode_module(const CoreProgram &program,
 struct EventLayout {
     std::uint32_t heap_base{0};
 };
-[[nodiscard]] std::optional<EventLayout>
-compute_event_layout(std::size_t node_count, bool &overflow_is_binary) {
+[[nodiscard]] std::optional<EventLayout> compute_event_layout(std::size_t node_count,
+                                                              bool &overflow_is_binary) {
     overflow_is_binary = false;
     // Phase 1: checked wasm32 arithmetic.
     if (node_count > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
@@ -5325,17 +5329,17 @@ compute_event_layout(std::size_t node_count, bool &overflow_is_binary) {
         return std::nullopt;
     }
     const auto n = static_cast<std::uint32_t>(node_count);
-    if (n != 0 && n > (std::numeric_limits<std::uint32_t>::max() - kEventHeaderBytes) /
-                          kEventRecordBytes) {
+    if (n != 0 && n > (std::numeric_limits<std::uint32_t>::max() - kNodeEventHeaderBytes) /
+                          kNodeEventRecordBytes) {
         overflow_is_binary = true;
         return std::nullopt;
     }
-    const std::uint32_t event_bytes = kEventHeaderBytes + n * kEventRecordBytes;
-    if (event_bytes > std::numeric_limits<std::uint32_t>::max() - kEventLogBase) {
+    const std::uint32_t event_bytes = kNodeEventHeaderBytes + n * kNodeEventRecordBytes;
+    if (event_bytes > std::numeric_limits<std::uint32_t>::max() - kNodeEventLogBase) {
         overflow_is_binary = true;
         return std::nullopt;
     }
-    std::uint32_t unaligned = kEventLogBase + event_bytes;
+    std::uint32_t unaligned = kNodeEventLogBase + event_bytes;
     if (unaligned > std::numeric_limits<std::uint32_t>::max() - 7u) {
         overflow_is_binary = true;
         return std::nullopt;
@@ -5411,8 +5415,8 @@ encode_exec_manifest(const WorkflowPlan &plan) {
     return std::move(out).take();
 }
 
-[[nodiscard]] std::optional<std::uint32_t>
-workflow_runner_index(const WorkflowPlan &plan, CoreInstanceId instance) {
+[[nodiscard]] std::optional<std::uint32_t> workflow_runner_index(const WorkflowPlan &plan,
+                                                                 CoreInstanceId instance) {
     const auto it = std::lower_bound(plan.packaged_instances.begin(),
                                      plan.packaged_instances.end(),
                                      instance,
@@ -5462,10 +5466,10 @@ workflow_initial_transitions(const AgentPlan &plan) {
 [[nodiscard]] std::optional<std::uint32_t>
 workflow_import_function_index(std::span<const CoreCapabilityId> imports,
                                CoreCapabilityId capability) {
-    const auto it = std::lower_bound(imports.begin(),
-                                     imports.end(),
-                                     capability,
-                                     [](auto lhs, auto rhs) { return lhs.value < rhs.value; });
+    const auto it =
+        std::lower_bound(imports.begin(), imports.end(), capability, [](auto lhs, auto rhs) {
+            return lhs.value < rhs.value;
+        });
     if (it == imports.end() || *it != capability) {
         return std::nullopt;
     }
@@ -5547,16 +5551,14 @@ make_workflow_runner_body(const AgentPlan &plan,
     return body;
 }
 
-[[nodiscard]] std::optional<std::uint32_t>
-workflow_node_ptr_local(CoreWorkflowNodeId node) {
+[[nodiscard]] std::optional<std::uint32_t> workflow_node_ptr_local(CoreWorkflowNodeId node) {
     if (node.value > (std::numeric_limits<std::uint32_t>::max() - 2u) / 2u) {
         return std::nullopt;
     }
     return 2u + node.value * 2u;
 }
 
-[[nodiscard]] std::optional<std::uint32_t>
-workflow_node_len_local(CoreWorkflowNodeId node) {
+[[nodiscard]] std::optional<std::uint32_t> workflow_node_len_local(CoreWorkflowNodeId node) {
     const auto ptr = workflow_node_ptr_local(node);
     if (!ptr.has_value() || *ptr == std::numeric_limits<std::uint32_t>::max()) {
         return std::nullopt;
@@ -5564,8 +5566,7 @@ workflow_node_len_local(CoreWorkflowNodeId node) {
     return *ptr + 1u;
 }
 
-[[nodiscard]] bool append_workflow_source(ByteBuffer &body,
-                                          const WorkflowFrameSource &source) {
+[[nodiscard]] bool append_workflow_source(ByteBuffer &body, const WorkflowFrameSource &source) {
     if (source.kind == WorkflowFrameSourceKind::Input) {
         append_indexed_op(body, kOpLocalGet, 0);
         append_indexed_op(body, kOpLocalGet, 1);
@@ -5590,7 +5591,8 @@ workflow_node_len_local(CoreWorkflowNodeId node) {
 void append_event_record_write(ByteBuffer &body,
                                const WorkflowNodePlan &node,
                                std::uint32_t status_local) {
-    const std::uint32_t record_addr = kEventRecordsBase + node.schedule_pos * kEventRecordBytes;
+    const std::uint32_t record_addr =
+        kNodeEventRecordsBase + node.schedule_pos * kNodeEventRecordBytes;
     const std::uint8_t tag = node.has_capability ? kEventTagCapability : kEventTagIdentity;
     // [0..3]: tag u8 in byte 0, pad[1..3] == 0 (one aligned 4-byte store).
     append_i32_store_const(body, record_addr + 0u, static_cast<std::uint32_t>(tag));
@@ -5599,8 +5601,8 @@ void append_event_record_write(ByteBuffer &body,
     // [8..11]: schedule_pos.
     append_i32_store_const(body, record_addr + 8u, node.schedule_pos);
     // [12..15]: capability (0 for identity).
-    append_i32_store_const(body, record_addr + 12u,
-                           node.has_capability ? node.capability.value : 0u);
+    append_i32_store_const(
+        body, record_addr + 12u, node.has_capability ? node.capability.value : 0u);
     // [16..23]: source_symbol u64 (0 for identity). A capability source SymbolId
     // is a non-negative value bounded by the existing E2 host-ABI contract
     // (build_agent_plan rejects SymbolId > UINT32_MAX), so it is always < 2^63
@@ -5641,8 +5643,8 @@ void append_event_record_write(ByteBuffer &body,
     if (capability_workflow) {
         // Reset the node-event header: event_count = 0 and pad[4..7] = 0. The
         // latch first-instruction gate (in run2) has already run before this.
-        append_i32_store_const(body, kEventLogBase + 0u, 0u);
-        append_i32_store_const(body, kEventLogBase + 4u, 0u);
+        append_i32_store_const(body, kNodeEventLogBase + 0u, 0u);
+        append_i32_store_const(body, kNodeEventLogBase + 4u, 0u);
     }
 
     for (const auto node_id : plan.schedule) {
@@ -5729,7 +5731,7 @@ void append_event_record_write(ByteBuffer &body,
         // coordinate. schedule_pos < node_count holds by construction (the region
         // is statically sized to node_count). A mismatch returns (ERROR,0,0) with
         // no body/count write.
-        append_const(body, kEventLogBase + 0u);
+        append_const(body, kNodeEventLogBase + 0u);
         body.byte(kOpI32Load);
         body.u32(2u);
         body.u32(0u);
@@ -5744,7 +5746,7 @@ void append_event_record_write(ByteBuffer &body,
         // event_count = schedule_pos + 1 AFTER the full 40-byte body store (so the
         // host never reads a partial record), and bump completed_count.
         append_event_record_write(body, node, status_local);
-        append_const(body, kEventLogBase + 0u);
+        append_const(body, kNodeEventLogBase + 0u);
         append_const(body, node.schedule_pos + 1u);
         body.byte(kOpI32Store);
         body.u32(2u);
@@ -5758,8 +5760,7 @@ void append_event_record_write(ByteBuffer &body,
 }
 
 [[nodiscard]] std::optional<ByteBuffer>
-make_workflow_run2_body(const WorkflowPlan &plan,
-                        const WorkflowFunctionTable &functions) {
+make_workflow_run2_body(const WorkflowPlan &plan, const WorkflowFunctionTable &functions) {
     if (plan.nodes.size() >
         (static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) - 1u) / 2u) {
         return std::nullopt;
@@ -5834,10 +5835,9 @@ encode_workflow_module(const CoreProgram &program,
                        std::span<const std::uint8_t> wire_schema_payload,
                        CoreWasmCodegenResult &result) {
     if (plan.packaged_instances.size() >
-        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 6u) ||
+            static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 6u) ||
         plan.agent_plans.size() != plan.packaged_instances.size() ||
-        plan.nodes.size() >=
-            static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+        plan.nodes.size() >= static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
         add_diag(result,
                  core_wasm_diag::kBinaryOverflow,
                  "workflow WASM function/index domain exceeds the wasm32 limit");
@@ -5848,8 +5848,7 @@ encode_workflow_module(const CoreProgram &program,
         if (node_id.value >= plan.nodes.size()) {
             return std::nullopt;
         }
-        const auto runner = workflow_runner_index(
-            plan, plan.nodes[node_id.value].target_instance);
+        const auto runner = workflow_runner_index(plan, plan.nodes[node_id.value].target_instance);
         if (!runner.has_value() || *runner >= plan.agent_plans.size()) {
             return std::nullopt;
         }
@@ -5874,7 +5873,7 @@ encode_workflow_module(const CoreProgram &program,
     // RFC 0026 E4-B2-C two-phase memory sizing (seam §4.4/§5.2). PHASE 1 checked
     // wasm32 arithmetic -> BINARY_OVERFLOW; PHASE 2 capacity vs the fixed 64 KiB
     // page -> RESOURCE_EXHAUSTED. Identity workflows keep heap_base = 1024.
-    std::uint32_t heap_base = kEventLogBase;
+    std::uint32_t heap_base = kNodeEventLogBase;
     if (capability_workflow) {
         bool overflow_is_binary = false;
         auto layout = compute_event_layout(plan.nodes.size(), overflow_is_binary);
@@ -5927,8 +5926,7 @@ encode_workflow_module(const CoreProgram &program,
             if (!symbol.id.has_value()) {
                 return std::nullopt;
             }
-            if (!imports.name("ahfl_cap") ||
-                !imports.name("cap_" + std::to_string(*symbol.id))) {
+            if (!imports.name("ahfl_cap") || !imports.name("cap_" + std::to_string(*symbol.id))) {
                 return std::nullopt;
             }
             imports.byte(kImportFunction);
@@ -5955,7 +5953,7 @@ encode_workflow_module(const CoreProgram &program,
     }
 
     ByteBuffer memories;
-    memories.u32(1); // one memory
+    memories.u32(1);  // one memory
     memories.byte(0); // limits flags: no declared maximum
     memories.u32(kCoreWasmFixedLinearMemoryMinPages);
     if (!append_section(module, kSectionMemory, memories)) {
@@ -5987,26 +5985,12 @@ encode_workflow_module(const CoreProgram &program,
         append_export(exports, "run", kExportFunction, functions.run()) &&
         append_export(exports, "run2", kExportFunction, functions.run2()) &&
         append_export(exports, "step", kExportFunction, functions.step()) &&
-        append_export(exports,
-                      "current_state",
-                      kExportFunction,
-                      functions.current_state()) &&
-        append_export(exports,
-                      "transition_count",
-                      kExportGlobal,
-                      kWorkflowGlobalTransitionCount) &&
-        append_export(exports,
-                      "ahfl_abi_version",
-                      kExportGlobal,
-                      kWorkflowGlobalAbiVersion) &&
-        append_export(exports,
-                      "workflow_node_count",
-                      kExportGlobal,
-                      kWorkflowGlobalNodeCount) &&
-        append_export(exports,
-                      "workflow_completed_count",
-                      kExportGlobal,
-                      kWorkflowGlobalCompletedCount);
+        append_export(exports, "current_state", kExportFunction, functions.current_state()) &&
+        append_export(exports, "transition_count", kExportGlobal, kWorkflowGlobalTransitionCount) &&
+        append_export(exports, "ahfl_abi_version", kExportGlobal, kWorkflowGlobalAbiVersion) &&
+        append_export(exports, "workflow_node_count", kExportGlobal, kWorkflowGlobalNodeCount) &&
+        append_export(
+            exports, "workflow_completed_count", kExportGlobal, kWorkflowGlobalCompletedCount);
     if (!exports_ok || !append_section(module, kSectionExport, exports)) {
         return std::nullopt;
     }
@@ -6016,14 +6000,12 @@ encode_workflow_module(const CoreProgram &program,
     // A capability workflow uses the checked-alloc body (returns 0 on capacity
     // exhaustion, never advancing heap_next); identity workflows keep the shared
     // unchecked bump body byte-for-byte.
-    const auto alloc = capability_workflow
-                           ? make_checked_alloc_body(kWorkflowGlobalHeapNext)
-                           : make_alloc_body(kWorkflowGlobalHeapNext);
+    const auto alloc = capability_workflow ? make_checked_alloc_body(kWorkflowGlobalHeapNext)
+                                           : make_alloc_body(kWorkflowGlobalHeapNext);
     const auto dealloc = make_dealloc_body();
     const auto current = make_trapping_i32_body();
     const auto step = make_trapping_i32_body();
-    if (!code.sized(alloc) || !code.sized(dealloc) || !code.sized(current) ||
-        !code.sized(step)) {
+    if (!code.sized(alloc) || !code.sized(dealloc) || !code.sized(current) || !code.sized(step)) {
         return std::nullopt;
     }
     for (const auto &agent_plan : plan.agent_plans) {
@@ -6135,6 +6117,137 @@ resolve_core_wasm_entry(const CoreProgram &program,
     return CoreWasmEntry{*found};
 }
 
+namespace {
+
+// KR6.7 (RFC 0026 P7): descriptor builders. Each is derived ONLY from the
+// already-built internal plan (the identical plan the module bytes were
+// emitted from), so the descriptor can never disagree with the artifact.
+
+[[nodiscard]] std::vector<CoreWasmCapabilityImport>
+build_import_descriptors(const CoreProgram &program,
+                         const std::vector<CoreCapabilityId> &plan_imports) {
+    std::vector<CoreWasmCapabilityImport> imports;
+    imports.reserve(plan_imports.size());
+    for (std::uint32_t ordinal = 0; ordinal < plan_imports.size(); ++ordinal) {
+        const auto id = plan_imports[ordinal];
+        const auto &symbol = program.capabilities[id.value].symbol_ref;
+        CoreWasmCapabilityImport import_descriptor;
+        import_descriptor.ordinal = ordinal;
+        if (symbol.id.has_value()) {
+            import_descriptor.field = "cap_" + std::to_string(*symbol.id);
+        }
+        import_descriptor.canonical_name = symbol.canonical_name;
+        imports.push_back(std::move(import_descriptor));
+    }
+    return imports;
+}
+
+// The ordered state names one agent runner enters on a single invocation: the
+// initial state, then every deterministic goto target, ending at the terminal.
+// This is exactly the state walk `make_workflow_runner_body` emits, derived from
+// the same AgentPlan rather than re-walking the graph.
+[[nodiscard]] std::vector<std::string> runner_walk_names(const CoreProgram &program,
+                                                         const AgentPlan &agent_plan) {
+    std::vector<std::string> walk;
+    const auto &states = program.agents[agent_plan.agent.value].states;
+    auto state = agent_plan.initial;
+    std::vector<bool> visited(agent_plan.actions.size(), false);
+    while (true) {
+        if (state.value >= agent_plan.actions.size() || visited[state.value]) {
+            break; // workflow_initial_transitions already proved this terminates
+        }
+        visited[state.value] = true;
+        if (state.value < states.size()) {
+            walk.push_back(states[state.value]);
+        }
+        const auto *go = std::get_if<GotoAction>(&agent_plan.actions[state.value]);
+        if (go == nullptr) {
+            break; // terminal (identity / capability)
+        }
+        state = go->target;
+    }
+    return walk;
+}
+
+[[nodiscard]] CoreWasmExecutionDescriptor build_agent_descriptor(const CoreProgram &program,
+                                                                 const AgentPlan &plan) {
+    CoreWasmExecutionDescriptor descriptor;
+    descriptor.is_workflow = false;
+    descriptor.frame_contract = plan.reads_raw_input_frame ? CoreWasmFrameContract::RawP6Frame
+                                                           : CoreWasmFrameContract::WireJson;
+    descriptor.agent_name = program.agents[plan.agent.value].symbol_ref.canonical_name;
+    descriptor.states = program.agents[plan.agent.value].states;
+    descriptor.initial_state = plan.initial.value;
+    descriptor.imports = build_import_descriptors(program, plan.imports);
+    descriptor.event_log_base = ir::core::kNodeEventLogBase;
+    descriptor.event_header_bytes = ir::core::kNodeEventHeaderBytes;
+    descriptor.event_record_bytes = ir::core::kNodeEventRecordBytes;
+    descriptor.event_records_base = ir::core::kNodeEventRecordsBase;
+    descriptor.workflow_node_count = 0;
+    descriptor.heap_base = ir::core::kNodeEventLogBase;
+    return descriptor;
+}
+
+[[nodiscard]] CoreWasmExecutionDescriptor build_workflow_descriptor(const CoreProgram &program,
+                                                                    const WorkflowPlan &plan) {
+    CoreWasmExecutionDescriptor descriptor;
+    descriptor.is_workflow = true;
+    // A workflow node runner never carries a P6 computed handler
+    // (build_workflow_plan sets allow_computed_goto=false), so the scheduler
+    // forwards opaque canonical frames end to end; the output boundary stays
+    // wire-JSON.
+    descriptor.frame_contract = CoreWasmFrameContract::WireJson;
+    descriptor.imports = build_import_descriptors(program, plan.imports);
+    descriptor.event_log_base = ir::core::kNodeEventLogBase;
+    descriptor.event_header_bytes = ir::core::kNodeEventHeaderBytes;
+    descriptor.event_record_bytes = ir::core::kNodeEventRecordBytes;
+    descriptor.event_records_base = ir::core::kNodeEventRecordsBase;
+    descriptor.workflow_node_count = static_cast<std::uint32_t>(plan.nodes.size());
+
+    // The bump heap starts above the node-event region only for a capability
+    // workflow (the same two-phase layout encode_workflow_module performs); an
+    // identity workflow's heap starts at the log base.
+    descriptor.heap_base = ir::core::kNodeEventLogBase;
+    if (!plan.imports.empty()) {
+        bool overflow_is_binary = false;
+        if (auto layout = compute_event_layout(plan.nodes.size(), overflow_is_binary);
+            layout.has_value()) {
+            descriptor.heap_base = layout->heap_base;
+        }
+    }
+
+    // Runner table: one entry per sorted-unique packaged agent instance.
+    descriptor.agents.reserve(plan.packaged_instances.size());
+    for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
+        const auto &agent_plan = plan.agent_plans[runner];
+        CoreWasmStateWalk walk;
+        walk.agent = program.agents[agent_plan.agent.value].symbol_ref.canonical_name;
+        walk.walk = runner_walk_names(program, agent_plan);
+        descriptor.agents.push_back(std::move(walk));
+    }
+
+    // Node schedule in Kahn execution order.
+    descriptor.nodes.reserve(plan.schedule.size());
+    for (std::uint32_t position = 0; position < plan.schedule.size(); ++position) {
+        const auto node_id = plan.schedule[position];
+        const auto &node = plan.nodes[node_id.value];
+        CoreWasmNodeDescriptor node_descriptor;
+        node_descriptor.node_id = node.node.value;
+        node_descriptor.schedule_pos = node.schedule_pos;
+        node_descriptor.runner = workflow_runner_index(plan, node.target_instance).value_or(0);
+        node_descriptor.has_capability = node.has_capability;
+        if (node.has_capability) {
+            node_descriptor.capability_ordinal =
+                workflow_import_function_index(plan.imports, node.capability).value_or(0);
+            node_descriptor.source_symbol = node.source_symbol;
+        }
+        descriptor.nodes.push_back(std::move(node_descriptor));
+    }
+    return descriptor;
+}
+
+} // namespace
+
 CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
                                      const ir::core::CoreLayoutTable &layouts,
                                      CoreWasmTarget target) {
@@ -6153,8 +6266,7 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         const auto &first = layout_diagnostics.front();
         add_diag(result,
                  core_wasm_diag::kInvalidLayout,
-                 "P4-D verifier rejected the layout table (" + first.code + "): " +
-                     first.message,
+                 "P4-D verifier rejected the layout table (" + first.code + "): " + first.message,
                  first.source_range);
         return result;
     }
@@ -6185,22 +6297,19 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         if (!plan->imports.empty()) {
             auto projection = ir::core::project_core_wire_schema(program, plan->imports);
             if (!projection.ok()) {
-                std::string message =
-                    "reachable capability import ABI is not wire-transportable";
+                std::string message = "reachable capability import ABI is not wire-transportable";
                 ir::SourceRangeOpt range;
                 if (!projection.diagnostics.empty()) {
                     const auto &first = projection.diagnostics.front();
                     message += " (" + first.code + ")";
                     range = first.source_range;
                 }
-                add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message),
-                         range);
+                add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message), range);
                 return result;
             }
             auto encoded = ir::core::encode_core_wire_schema_table(*projection.table);
             if (!encoded.ok()) {
-                std::string message =
-                    "wire-schema section payload exceeds the encoding domain";
+                std::string message = "wire-schema section payload exceeds the encoding domain";
                 ir::SourceRangeOpt range;
                 if (!encoded.diagnostics.empty()) {
                     const auto &first = encoded.diagnostics.front();
@@ -6247,6 +6356,7 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
                             "ahfl_abi_version",
                             "workflow_node_count",
                             "workflow_completed_count"};
+        result.descriptor = build_workflow_descriptor(program, *plan);
         result.artifact = std::move(artifact);
         return result;
     }
@@ -6272,34 +6382,26 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
             // Fail-closed seam: never assume a diagnostic is present. A future or
             // defensive empty-diagnostics result must still reject with a fixed
             // code, not deref an empty vector.
-            std::string message =
-                "reachable capability import ABI is not wire-transportable";
+            std::string message = "reachable capability import ABI is not wire-transportable";
             ir::SourceRangeOpt range;
             if (!projection.diagnostics.empty()) {
                 const auto &first = projection.diagnostics.front();
                 message += " (" + first.code + ")";
                 range = first.source_range;
             }
-            add_diag(result,
-                     core_wasm_diag::kInvalidCapabilityAbi,
-                     std::move(message),
-                     range);
+            add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message), range);
             return result;
         }
         auto encoded = ir::core::encode_core_wire_schema_table(*projection.table);
         if (!encoded.ok()) {
-            std::string message =
-                "wire-schema section payload exceeds the encoding domain";
+            std::string message = "wire-schema section payload exceeds the encoding domain";
             ir::SourceRangeOpt range;
             if (!encoded.diagnostics.empty()) {
                 const auto &first = encoded.diagnostics.front();
                 message += " (" + first.code + ")";
                 range = first.source_range;
             }
-            add_diag(result,
-                     core_wasm_diag::kBinaryOverflow,
-                     std::move(message),
-                     range);
+            add_diag(result, core_wasm_diag::kBinaryOverflow, std::move(message), range);
             return result;
         }
         wire_schema_payload = std::move(*encoded.bytes);
@@ -6326,10 +6428,10 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
                         "transition_count",
                         "ahfl_abi_version"};
     for (const auto id : plan->imports) {
-        artifact.imports.push_back(
-            "ahfl_cap.cap_" +
-            std::to_string(*program.capabilities[id.value].symbol_ref.id));
+        artifact.imports.push_back("ahfl_cap.cap_" +
+                                   std::to_string(*program.capabilities[id.value].symbol_ref.id));
     }
+    result.descriptor = build_agent_descriptor(program, *plan);
     result.artifact = std::move(artifact);
     return result;
 }

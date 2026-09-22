@@ -130,4 +130,34 @@ static_assert(kP6CollectionHeaderLenOffset == kP6CollectionHeaderPtrOffset + 4 &
                   kP6CollectionHeaderSize == kP6CollectionHeaderLenOffset + 4,
               "the P6 collection header is exactly a (ptr:i32, len:i32) pair");
 
+// ----------------------------------------------------------------------------
+// Capability-workflow node-event buffer (RFC 0026 E4-B2-C)
+// ----------------------------------------------------------------------------
+//
+// A capability-workflow module reserves a fixed node-event region at the low
+// end of its linear memory, BELOW the bump heap:
+//
+//   [kNodeEventLogBase, +8)                         8-byte header:
+//                                                     [0..3] event_count u32-LE
+//                                                     [4..7] reserved, always 0
+//   [kNodeEventRecordsBase, + node_count * 40)      one 40-byte record per
+//                                                     scheduled workflow node
+//
+// `heap_base = align_up(kNodeEventLogBase + 8 + node_count * 40, 8)`. These
+// constants are the single wire-grammar authority shared by the emitter
+// (src/compiler/backends/infra/core_wasm_codegen.cpp), the runtime structural
+// decoder (src/runtime/engine/core_wasm_node_events.cpp), and the KR6.7
+// manifest-driven Node embedded host (which reads the same region to
+// reconstruct the canonical observation). An identity workflow (no capability
+// imports) emits no records; its heap starts at kNodeEventLogBase.
+inline constexpr std::uint32_t kNodeEventLogBase = 1024;
+inline constexpr std::uint32_t kNodeEventHeaderBytes = 8;
+inline constexpr std::uint32_t kNodeEventRecordBytes = 40;
+inline constexpr std::uint32_t kNodeEventRecordsBase =
+    kNodeEventLogBase + kNodeEventHeaderBytes; // 1032
+
+static_assert(kNodeEventRecordsBase == 1032,
+              "node-event records start at byte 1032 (1024 + 8-byte header)");
+static_assert(kNodeEventRecordBytes == 40, "one node-event record is 40 bytes");
+
 } // namespace ahfl::ir::core

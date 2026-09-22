@@ -8,8 +8,8 @@
 #include <variant>
 #include <vector>
 
-#include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
+#include "ahfl/compiler/ir/core_layout.hpp"
 #include "compiler/backends/infra/wasm_backend.hpp"
 
 namespace ahfl::backends {
@@ -20,22 +20,17 @@ inline constexpr std::string_view kInvalidLayout = "wasm.INVALID_LAYOUT";
 inline constexpr std::string_view kUnsupportedTarget = "wasm.UNSUPPORTED_TARGET";
 inline constexpr std::string_view kEntryAmbiguous = "wasm.ENTRY_AMBIGUOUS";
 inline constexpr std::string_view kEntryNotFound = "wasm.ENTRY_NOT_FOUND";
-inline constexpr std::string_view kUnsupportedOrchestration =
-    "wasm.UNSUPPORTED_ORCHESTRATION";
+inline constexpr std::string_view kUnsupportedOrchestration = "wasm.UNSUPPORTED_ORCHESTRATION";
 inline constexpr std::string_view kNonterminatingE1Run = "wasm.NONTERMINATING_E1_RUN";
-inline constexpr std::string_view kInvalidCapabilityAbi =
-    "wasm.INVALID_CAPABILITY_ABI";
-inline constexpr std::string_view kUnsupportedCapabilityFrame =
-    "wasm.UNSUPPORTED_CAPABILITY_FRAME";
-inline constexpr std::string_view kUnsupportedWorkflowFrame =
-    "wasm.UNSUPPORTED_WORKFLOW_FRAME";
+inline constexpr std::string_view kInvalidCapabilityAbi = "wasm.INVALID_CAPABILITY_ABI";
+inline constexpr std::string_view kUnsupportedCapabilityFrame = "wasm.UNSUPPORTED_CAPABILITY_FRAME";
+inline constexpr std::string_view kUnsupportedWorkflowFrame = "wasm.UNSUPPORTED_WORKFLOW_FRAME";
 inline constexpr std::string_view kBinaryOverflow = "wasm.BINARY_OVERFLOW";
 inline constexpr std::string_view kResourceExhausted = "wasm.RESOURCE_EXHAUSTED";
 inline constexpr std::string_view kInternalInvalid = "wasm.INTERNAL_INVALID";
 } // namespace core_wasm_diag
 
-using CoreWasmEntry =
-    std::variant<ir::core::CoreAgentId, ir::core::CoreWorkflowId>;
+using CoreWasmEntry = std::variant<ir::core::CoreAgentId, ir::core::CoreWorkflowId>;
 
 struct CoreWasmTarget {
     CoreWasmEntry entry{ir::core::CoreAgentId{}};
@@ -56,9 +51,92 @@ struct CoreWasmDiagnostic {
     ir::SourceRangeOpt source_range;
 };
 
+// KR6.7 (RFC 0026 P7): the machine-readable EXECUTION DESCRIPTOR for one emitted
+// module. It is produced by `emit_core_wasm` from the SAME internal plan the
+// bytes are emitted from (never a second derivation), and is the neutral input a
+// generic embedded engine (the Node conformance host) uses to reconstruct the
+// canonical run observation without parsing bespoke `key=value` lines.
+//
+// Two execution lanes share one Core-Wasm ABI:
+//   * agent:    one state machine driven through step()/run2; `states` is the
+//               id -> state-name table and `initial_state` the entry id.
+//   * workflow: a Kahn-ordered node schedule; each node invokes one PACKAGED
+//               agent runner. `agents` is the runner table (the walk is the
+//               ordered state names that runner enters on one invocation) and
+//               `nodes` is the schedule in execution order.
+//
+// Identity is name-only for the descriptor consumer (state / agent / capability
+// canonical names); all ids here are dense wasm-visible ordinals the host reads
+// from globals and the node-event buffer, never engine-internal SymbolIds.
+struct CoreWasmStateWalk {
+    std::string agent;             // canonical agent name
+    std::vector<std::string> walk; // state names entered on one runner call
+};
+
+struct CoreWasmNodeDescriptor {
+    std::uint32_t node_id{0};      // workflow node id (node-event record)
+    std::uint32_t schedule_pos{0}; // dense execution position
+    std::uint32_t runner{0};       // index into CoreWasmExecutionDescriptor::agents
+    bool has_capability{false};
+    std::uint32_t capability_ordinal{0}; // index into imports when has_capability
+    std::uint64_t source_symbol{0};      // source SymbolId carried in the event record
+};
+
+struct CoreWasmCapabilityImport {
+    std::uint32_t ordinal{0};
+    std::string field;          // wasm import field, e.g. "cap_7"
+    std::string canonical_name; // canonical capability name
+};
+
+/// The input/output frame contract an embedded host must honor.
+enum class CoreWasmFrameContract {
+    /// The run2 boundary carries opaque canonical value_json BYTES: the host
+    /// writes the scenario's canonical input bytes and reads the output bytes
+    /// verbatim (identity passthrough or a forwarded capability result). The
+    /// canonical observation is fully reconstructable.
+    WireJson,
+    /// A P6 computation handler projects a field out of the raw P4-D input
+    /// frame (the fixed reserved regions) or reads a raw backing store. No
+    /// wire-JSON frame crosses run2, so a canonical output observation awaits
+    /// the P6-7 frame decision; differential conformance SKIPs (p6-7).
+    RawP6Frame,
+};
+
+struct CoreWasmExecutionDescriptor {
+    bool is_workflow{false};
+    CoreWasmFrameContract frame_contract{CoreWasmFrameContract::WireJson};
+
+    // Agent lane.
+    std::string agent_name;          // canonical entry agent name
+    std::vector<std::string> states; // id -> state name
+    std::uint32_t initial_state{0};
+
+    // Workflow lane.
+    std::vector<CoreWasmStateWalk> agents;     // runner index -> walk
+    std::vector<CoreWasmNodeDescriptor> nodes; // schedule order
+
+    // Both lanes: reachable capability imports in ordinal order.
+    std::vector<CoreWasmCapabilityImport> imports;
+
+    // Node-event buffer layout (identity for both lanes; the ABI SSOT).
+    std::uint32_t event_log_base{0};
+    std::uint32_t event_header_bytes{0};
+    std::uint32_t event_record_bytes{0};
+    std::uint32_t event_records_base{0};
+    // Number of scheduled nodes (workflow) / 0 for a bare agent; also the
+    // static capacity of the node-event record region.
+    std::uint32_t workflow_node_count{0};
+    // First bump-heap address: kNodeEventLogBase for an identity workflow /
+    // agent, align_up(records_region, 8) for a capability workflow.
+    std::uint32_t heap_base{0};
+};
+
 struct CoreWasmCodegenResult {
     std::optional<CoreWasmArtifact> artifact;
     std::vector<CoreWasmDiagnostic> diagnostics;
+    /// Populated iff `artifact` is present: the machine-readable execution
+    /// descriptor derived from the plan that produced the artifact.
+    std::optional<CoreWasmExecutionDescriptor> descriptor;
 
     [[nodiscard]] bool ok() const noexcept {
         return artifact.has_value() && diagnostics.empty();
@@ -80,9 +158,8 @@ resolve_core_wasm_entry(const ir::core::CoreProgram &program,
 /// additionally carries an exec-manifest and a node-event buffer.
 /// Pure: neither the verified Core program nor its P4-D layout side artifact is
 /// mutated. Unsupported Core nodes fail closed with no partial artifact.
-[[nodiscard]] CoreWasmCodegenResult
-emit_core_wasm(const ir::core::CoreProgram &program,
-               const ir::core::CoreLayoutTable &layouts,
-               CoreWasmTarget target);
+[[nodiscard]] CoreWasmCodegenResult emit_core_wasm(const ir::core::CoreProgram &program,
+                                                   const ir::core::CoreLayoutTable &layouts,
+                                                   CoreWasmTarget target);
 
 } // namespace ahfl::backends
