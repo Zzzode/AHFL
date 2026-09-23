@@ -1342,9 +1342,17 @@ struct CoreFnDecl {
     /// first-class value). The verifier checks a `CoreClosureExpr`'s env count,
     /// per-slot operand types, and `CoreVtClosure` result type against THIS
     /// declared list — not only against the expr's own result type — so a wire
-    /// artifact cannot forge a self-consistent capture pair. Lambda lifting that
-    /// populates this field arrives in FB-3a2.
+    /// artifact cannot forge a self-consistent capture pair.
     std::vector<CoreValueTypeId> captures;
+    /// RFC 0026 FB-3a2 (CORE-FNBODY-DESIGN §3.1.1 D-LIFT): the pre-bound body SSA
+    /// values for the declared environment slots, parallel to `captures`
+    /// (`env_bindings.size() == captures.size()`). These are the in-body values a
+    /// captured name reads. The wasm `env` pointer / slot loads are a codegen
+    /// concern (FB-3b); at the Core SSA layer a capture is simply another
+    /// pre-bound value, so these are deliberately NOT in `params` (the logical
+    /// signature): a capture slot is never a caller-supplied argument. An
+    /// ordinary fn (and a zero-capture closure) leaves this empty.
+    std::vector<CoreValueId> env_bindings;
     CoreBodyStorage storage;              // the fn body's private SSA domain
     CoreRegion body;                      // single-entry region, completes via return
     std::string name;                     // display only (mangled instance name)
@@ -1944,6 +1952,17 @@ inline constexpr std::string_view kFnCrossBoundaryType = "core.FN_CROSS_BOUNDARY
 // stamped from it; a user nominal is consumed verbatim; only a real std decl is
 // cross-checked here).
 inline constexpr std::string_view kBuiltinMetadataDrift = "core.BUILTIN_METADATA_DRIFT";
+// RFC 0026 FB-3a2 (CORE-FNBODY-DESIGN §3.2): a lambda's implicit-capture
+// analysis reached a reference that is neither a local binding at the
+// construction site nor a liftable frame projection.
+inline constexpr std::string_view kClosureCaptureInvalid = "core.CLOSURE_CAPTURE_INVALID";
+// A lambda explicitly captures a name that is not a visible outer binding
+// (§3.2: the explicit list is authoritative, in source order).
+inline constexpr std::string_view kClosureCaptureUnknown = "core.CLOSURE_CAPTURE_UNKNOWN";
+// A closure value flows into a callable slot whose signature differs, or a
+// signature-typed callable is narrowed to a concrete closure (§3.1.1 D-FNREP).
+inline constexpr std::string_view kFnCallableTypeIncompatible =
+    "core.FN_CALLABLE_TYPE_INCOMPATIBLE";
 } // namespace diag
 
 /// A structured lowering diagnostic (fail-closed: no throw, no Unknown node).

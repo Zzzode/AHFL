@@ -1297,6 +1297,15 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                     }
                 });
             });
+            // FB-3a2: the pre-bound in-body SSA values for the declared env
+            // slots, parallel to `captures` (body-local value ids, like params).
+            field("env_bindings", [&]() {
+                print_array(indent_level + 1, [&](const auto &b) {
+                    for (const CoreValueId slot : fn.env_bindings) {
+                        b([&]() { write_index(slot.value); });
+                    }
+                });
+            });
             field("value_count", [&]() { write_u32(fn.storage.value_count); });
             field("exprs", [&]() { print_exprs(fn.storage.exprs, indent_level + 1); });
             field("value_types", [&]() {
@@ -3777,9 +3786,9 @@ bool CoreJsonReader::read_fns(const JsonValue &array, CoreProgram &program) {
             return false;
         }
         if (!check_fields(*item,
-                          {"id", "instance", "origin", "params", "captures", "value_count",
-                           "exprs", "value_types", "coercion_plans", "patterns", "body", "name",
-                           "source_range"},
+                          {"id", "instance", "origin", "params", "captures", "env_bindings",
+                           "value_count", "exprs", "value_types", "coercion_plans", "patterns",
+                           "body", "name", "source_range"},
                           "fn declaration")) {
             return false;
         }
@@ -3820,6 +3829,16 @@ bool CoreJsonReader::read_fns(const JsonValue &array, CoreProgram &program) {
             return false;
         }
         decl.captures = *captures;
+        // FB-3a2: env_bindings are body-local value ids (the same req_u32_array
+        // remap params use), parallel to the declared captures.
+        const auto env_bindings = req_u32_array(*item, "env_bindings");
+        if (!env_bindings.has_value()) {
+            return false;
+        }
+        decl.env_bindings.reserve(env_bindings->size());
+        for (const std::uint32_t slot : *env_bindings) {
+            decl.env_bindings.push_back(CoreValueId{slot});
+        }
         const auto value_count = req_u32(*item, "value_count");
         if (!value_count.has_value()) {
             return false;

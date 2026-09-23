@@ -1280,9 +1280,10 @@ TEST_CASE("Core-IR JSON round-trips CoreClosureExpr / CoreCallClosureExpr and fn
     g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
     g0.params = {CoreValueId{0}};
     g0.captures = {vt_int};
+    g0.env_bindings = {CoreValueId{1}};
     g0.name = "_inst_g0";
-    g0.storage.value_count = 1;
-    g0.storage.value_types = {vt_int};
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {vt_int, vt_int};
     g0.storage.exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, vt_int});
     g0.body.statements.push_back(CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
     program.fns.push_back(std::move(g0));
@@ -1375,9 +1376,10 @@ TEST_CASE("Core-IR JSON reader rejects an unknown field on a closure expression"
     g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
     g0.params = {CoreValueId{0}};
     g0.captures = {CoreValueTypeId{0}};
+    g0.env_bindings = {CoreValueId{1}};
     g0.name = "_inst_g0";
-    g0.storage.value_count = 1;
-    g0.storage.value_types = {CoreValueTypeId{0}};
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{0}};
     g0.storage.exprs.push_back(
         CoreExpr{CoreClosureExpr{CoreFnId{0}, {CoreValueId{0}}}, std::nullopt,
                 CoreValueTypeId{2}});

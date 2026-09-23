@@ -354,6 +354,23 @@ index(4/4)"的决策(`docs/design/core-ir-p4-value-representation.zh.md:233-236`
    (`core.UNSUPPORTED_RECURSIVE_LAMBDA`),不造 Y 组合子。
 5. 提升产生的实例同样满足 §2.1 的有体 Fn 实例 1:1 保证与 §8.1 全部不变式。
 
+> **实现落点(FB-3a2 落地修订):lift 在 Core lowerer 内,而非 typed-HIR。**
+> 设计原拟在"单态化之后的 typed-HIR"上跑 lift;FB-3a2 实现时对照源码
+> 核实了三个事实——(a) `monomorphization.cpp` 对 lambda **零处理**(它只按
+> `body_block_index` 克隆顶层 fn 体,lambda 从不成为 `ir::FnDecl`);(b)
+> `typed_hir_lower.cpp` 仅**誊写** `ir::LambdaExpr`(`visit_lambda`),既不产
+> Fn 实例也不做自由变量分析;(c) 捕获必须主导的"构造点外层 SSA 值"在 Core
+> lowerer A-规范化构造体之前**尚不存在**。故提升身份(每构造点一个确定性
+> 单态 fn)、§3.2 有序捕获表、以及主导构造点的捕获值,三者最早只能在
+> Core lowerer 内同时得出。等价 lift 因此落在
+> `src/compiler/ir/core_lower.cpp`:遇 `LambdaExpr` 即声明 lifted
+> `CoreFnDecl`+Fn 实例、经第三个 body owner(`FnRootPolicy`)降其体(逻辑参数
+> 与 env 槽在 Core SSA 层同为**预绑定值**,槽进入 `CoreFnDecl.captures` /
+> `env_bindings` 而非逻辑参数表),构造点改写为 `CoreClosureExpr`。§3.2 rule 4
+> 的 frame 投影在构造点物化一次并按值捕获,经 `FnRootPolicy` 的 frame
+> redirect 在体内读到预绑定槽。wasm 的 env 指针/`i32.load` 槽读取仍属 FB-3b
+> codegen:Core SSA 层不引入 env 指针形参,捕获即普通预绑定值。
+
 ### 3.2 有序捕获(ordering)——确定性规则
 
 env 槽序 = `CoreVtClosure.captures` 的向量序,该序在**构造点**与**类型

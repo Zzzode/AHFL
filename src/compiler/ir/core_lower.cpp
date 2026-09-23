@@ -241,8 +241,8 @@ bool operator==(const CoreWorkflowDecl &a, const CoreWorkflowDecl &b) noexcept {
 bool operator==(const CoreFnDecl &a, const CoreFnDecl &b) noexcept {
     return a.id == b.id && a.instance == b.instance &&
            symbol_ref_equal(a.origin, b.origin) && a.params == b.params &&
-           a.captures == b.captures && a.storage == b.storage && a.body == b.body &&
-           a.name == b.name;
+           a.captures == b.captures && a.env_bindings == b.env_bindings &&
+           a.storage == b.storage && a.body == b.body && a.name == b.name;
 }
 
 bool operator==(const CoreInstanceDecl &a, const CoreInstanceDecl &b) noexcept {
@@ -929,6 +929,16 @@ class ValueTypeArena {
         return intern(CoreVtFn{std::move(params), ret}, error_reason);
     }
 
+    // Intern a fully-built structural value-type node from OUTSIDE a TypeRef
+    // lowering (FB-3a2 uses it to mint the concrete CoreVtFn signature and the
+    // CoreVtClosure construction type of a lifted lambda). Children must be
+    // interned already; routes through the same shared hash-cons as everything
+    // else (one interning decision point).
+    [[nodiscard]] std::optional<CoreValueTypeId>
+    intern_structural(CoreValueTypeNode node, std::string *error_reason) {
+        return intern(std::move(node), error_reason);
+    }
+
     [[nodiscard]] bool valid_materialized_id(CoreValueTypeId id, std::string *error_reason) const {
         if (id.value >= store_.size()) {
             set_reason(error_reason, "member template references an out-of-range value type");
@@ -1530,7 +1540,7 @@ class FnCallResolver {
     // identifier a generic call's IR callee string carries; `symbol_id` /
     // `canonical` are the origin symbol a non-generic call resolves by.
     void add(std::string key, std::optional<std::size_t> symbol_id,
-             std::string canonical, Entry entry) {
+             std::string canonical, Entry entry) const {
         entries_.push_back(std::move(entry));
         const Entry *stored = &entries_.back();
         by_key_.emplace(std::move(key), stored);
@@ -1587,10 +1597,13 @@ class FnCallResolver {
     }
 
   private:
-    std::deque<Entry> entries_; // stable addresses for the pointer map
-    std::unordered_map<std::string, const Entry *> by_key_;
-    std::unordered_multimap<std::size_t, const Entry *> by_id_;
-    std::unordered_multimap<std::string, const Entry *> by_name_;
+    // Mutable so the lambda-lift driver can register a lifted fn through a const
+    // resolver reference while bodies are being lowered (it extends the same
+    // fixed point Pass 1.5 published).
+    mutable std::deque<Entry> entries_; // stable addresses for the pointer map
+    mutable std::unordered_map<std::string, const Entry *> by_key_;
+    mutable std::unordered_multimap<std::size_t, const Entry *> by_id_;
+    mutable std::unordered_multimap<std::string, const Entry *> by_name_;
 };
 
 // ---------------------------------------------------------------------------
@@ -1784,6 +1797,54 @@ struct CoreBodyStorageRef {
           value_types(s.value_types), coercion_plans(s.coercion_plans) {}
 };
 
+// A let-bound / arm-bound local in a lowering body: its SSA value id plus the
+// value's logical type. Declared before the root policies (the Fn policy's
+// frame-capture redirect references it) and reused as the ExprLowerer binding.
+struct LocalSsaBinding {
+    CoreValueId value{};
+    CoreValueTypeId value_type{};
+};
+
+// Structural (already-built-node) interner: mints a lifted lambda's concrete
+// CoreVtFn signature and its CoreVtClosure construction type, which have no
+// source TypeRef (TypeRef lowering never produces a closure). Routes through
+// the same program-global value-type hash-cons.
+using StructuralInternerFn =
+    std::function<std::optional<CoreValueTypeId>(CoreValueTypeNode, std::string *)>;
+
+// Canonical key of a frame-root path (`input.a.b` / `ctx.x`) captured whole by
+// a lifted fn (design §3.2 rule 4): the fn sees no agent frame, so the
+// projection is evaluated at the construction site and captured by value.
+struct CapturedPathKey {
+    PathRootKind root{PathRootKind::Identifier};
+    std::string root_name;
+    std::vector<std::string> members;
+
+    [[nodiscard]] bool operator==(const CapturedPathKey &) const = default;
+};
+[[nodiscard]] inline std::string captured_path_key_repr(const CapturedPathKey &key) {
+    std::string repr = std::to_string(static_cast<int>(key.root)) + ":" + key.root_name;
+    for (const std::string &member : key.members) {
+        repr += ".";
+        repr += member;
+    }
+    return repr;
+}
+struct CapturedPathKeyHash {
+    [[nodiscard]] std::size_t operator()(const CapturedPathKey &key) const noexcept {
+        std::size_t h = std::hash<int>{}(static_cast<int>(key.root));
+        h ^= std::hash<std::string>{}(key.root_name) + 0x9e3779b97f4a7c15ULL + (h << 6) +
+             (h >> 2);
+        for (const std::string &member : key.members) {
+            h ^= std::hash<std::string>{}(member) + 0x9e3779b97f4a7c15ULL + (h << 6) +
+                 (h >> 2);
+        }
+        return h;
+    }
+};
+using FrameCaptureTable =
+    std::unordered_map<CapturedPathKey, LocalSsaBinding, CapturedPathKeyHash>;
+
 // Flow policy: input/ctx -> agent input/context struct types; others are identifier-like.
 class FlowRootPolicy {
   public:
@@ -1799,21 +1860,114 @@ class FlowRootPolicy {
         default:                    return {CorePathRoot::Identifier, CoreTypeId{}, {}};
         }
     }
+    // Frame paths are only redirected to pre-bound env slots INSIDE a lifted fn
+    // body (FnRootPolicy); a flow handler is the constructing body, so never.
+    [[nodiscard]] std::optional<LocalSsaBinding> captured_frame(const Path &) const {
+        return std::nullopt;
+    }
   private:
     CoreTypeId input_type_;
     CoreTypeId context_type_;
+};
+
+// ---------------------------------------------------------------------------
+// RFC 0026 FB-3a2 (CORE-FNBODY-DESIGN §3.1.1 D-LIFT): lambda lifting bridge
+// ---------------------------------------------------------------------------
+//
+// The design places the lift on post-monomorphization typed-HIR. Verified
+// against source, that layer is the WRONG earliest point here:
+//   * `monomorphization.cpp` has ZERO lambda handling (it clones fn-body blocks
+//     keyed by `body_block_index`; a lambda is never an `ir::FnDecl`);
+//   * `typed_hir_lower.cpp` only *transcribes* an `ir::LambdaExpr`
+//     (`visit_lambda` ~line 2304) — it neither creates an Fn instance nor runs
+//     free-variable analysis, and the Core SSA values a capture must dominate do
+//     not exist until the Core lowerer A-normalizes the constructing body.
+// The lifted fn identity (one fresh monomorphic fn per lambda construction
+// site), the deterministic ordered capture list (§3.2), and the dominant
+// captured SSA values are therefore ALL only derivable inside the Core lowerer.
+// So the equivalent lift runs there: encountering a LambdaExpr declares a
+// lifted CoreFnDecl + Fn instance and rewrites the construction site to a
+// CoreClosureExpr. The bridge below is the policy-independent interface the
+// expression lowerer uses; one concrete driver owns the program fn/instance
+// tables and is shared by flow / workflow / fn bodies, so a lambda nested in an
+// outlined fn lifts exactly like one in a handler (§3.1.1 rule 1: deterministic
+// 1:1 instance per construction site).
+class LambdaLiftBridge {
+  public:
+    // One environment slot resolved at the construction site (design §3.2).
+    //  * a captured OUTER LOCAL: `is_frame == false`, `name` is the binding, and
+    //    the in-body env slot is pre-bound under that name (a member projection
+    //    like `a.x` still captures the whole local `a` and projects inside the
+    //    lifted body);
+    //  * a captured FRAME-ROOT read (`input.x` / `ctx.y`): `is_frame == true`,
+    //    `frame` is the canonical path key, and `outer_value` is the projection
+    //    materialized once at the construction site (the fn sees no agent frame,
+    //    §2.3/§3.2 rule 4).
+    struct ResolvedCapture {
+        std::string name;
+        bool is_frame{false};
+        CapturedPathKey frame{};
+        CoreValueId outer_value{}; // constructing body's captured SSA value
+        CoreValueTypeId value_type{};
+    };
+
+    virtual ~LambdaLiftBridge() = default;
+
+    // Lift one lambda into a new monomorphic CoreFnDecl + Fn instance and lower
+    // its body: logical params are pre-bound with the concrete `param_types`
+    // (declaration order) and capture slots with `captures` (locals pre-bound
+    // under their name, frame paths redirected to their slot). The body
+    // completes via a value-bearing return of `return_type`. Returns the new fn
+    // table id, or nullopt after recording a fail-closed diagnostic.
+    [[nodiscard]] virtual std::optional<CoreFnId>
+    lift(const LambdaExpr &lambda, SourceRangeOpt range,
+         const std::vector<CoreValueTypeId> &param_types, CoreValueTypeId return_type,
+         std::vector<ResolvedCapture> captures) = 0;
+
+    // Resolve a bare top-level fn NAME used as a first-class value to the
+    // body-bearing fn's id (a zero-capture CoreClosureExpr{fn, {}}, §3.1.1
+    // rule 6). Returns nullopt when the name is not a body-bearing static fn.
+    [[nodiscard]] virtual std::optional<CoreFnId>
+    static_fn_value(const SymbolRef &ref, std::string_view name, SourceRangeOpt range) = 0;
 };
 
 // Fn policy (CORE-FNBODY-DESIGN §2.3): a fn body sees ONLY pre-bound params
 // and locals. There is no agent frame / ctx / workflow input; every non-local
 // path root resolves as an Identifier (which, with no same-domain constant
 // resolution inside a fn body, stays fail-closed rather than reading a frame).
+// When lowering a LIFTED lambda body (FB-3a2), `frame_captures` redirects the
+// frame-root paths the closure captured whole (design §3.2 rule 4) to their
+// pre-bound env slot SSA value — the projection was evaluated once at the
+// construction site, so inside the fn it is just another pre-bound value.
 class FnRootPolicy {
   public:
+    FnRootPolicy() = default;
+    explicit FnRootPolicy(const FrameCaptureTable *frame_captures)
+        : frame_captures_(frame_captures) {}
+
     [[nodiscard]] bool root_may_be_local(PathRootKind) const { return true; }
+
+    // A captured frame-root path (`input.x` / `ctx.y` with members) resolves to
+    // the pre-bound env slot; everything else is an unresolved Identifier.
+    [[nodiscard]] std::optional<LocalSsaBinding>
+    captured_frame(const Path &path) const {
+        if (frame_captures_ == nullptr || path.members.empty()) {
+            return std::nullopt;
+        }
+        const auto it = frame_captures_->find(
+            CapturedPathKey{path.root_kind, path.root_name, path.members});
+        if (it == frame_captures_->end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    }
+
     [[nodiscard]] ResolvedExternalRoot resolve_external_root(const Path &) const {
         return ResolvedExternalRoot{CorePathRoot::Identifier, CoreTypeId{}, {}};
     }
+
+  private:
+    const FrameCaptureTable *frame_captures_{nullptr};
 };
 
 // Workflow policy: a path root inside a node input / return region is either the
@@ -1846,6 +2000,10 @@ class WorkflowRootPolicy {
             }
         }
         return {CorePathRoot::Identifier, CoreTypeId{}, {}};
+    }
+    // Frame paths are only redirected inside a lifted fn body (FnRootPolicy).
+    [[nodiscard]] std::optional<LocalSsaBinding> captured_frame(const Path &) const {
+        return std::nullopt;
     }
   private:
     CoreTypeId input_type_;
@@ -1880,19 +2038,20 @@ template <class RootPolicy> class ExprLowerer {
     // branch-local shadow must not leak its value OR its type to the sibling
     // branch or past the `if`). The nominal base for member projection is derived
     // from `value_type` on demand (see `nominal_base_of`).
-    struct LocalBinding {
-        CoreValueId value{};
-        CoreValueTypeId value_type{}; // the binding's logical value type
-    };
+    // A body-local let / arm binding: SSA value + logical type. Same shape as
+    // the standalone LocalSsaBinding the lift bridge uses (one type, no copy).
+    using LocalBinding = LocalSsaBinding;
 
     ExprLowerer(CoreBodyStorageRef storage, const CapabilityIndex &caps, const TypeEnv &types,
                 RootPolicy policy, const ValueTypeInterner &interner,
                 const std::vector<CoreValueType> &value_type_pool,
                 std::vector<CoreLowerDiagnostic> &diags,
-                const FnCallResolver *fn_calls = nullptr)
+                const FnCallResolver *fn_calls = nullptr,
+                LambdaLiftBridge *lifter = nullptr,
+                const StructuralInternerFn *structural_interner = nullptr)
         : storage_(storage), caps_(caps), types_(types), policy_(std::move(policy)),
           interner_(interner), value_type_pool_(value_type_pool), diags_(diags),
-          fn_calls_(fn_calls) {}
+          fn_calls_(fn_calls), lifter_(lifter), structural_interner_(structural_interner) {}
 
     [[nodiscard]] std::unordered_map<std::string, LocalBinding> &scope() {
         return scope_;
@@ -1914,6 +2073,29 @@ template <class RootPolicy> class ExprLowerer {
             error(diag::kUnresolvedType,
                   "value type could not be lowered to a Core-IR value type: " + reason, range);
             return CoreValueTypeId{}; // kInvalid: keeps value_types parallel on the error path
+        }
+        return *id;
+    }
+
+    // FB-3a2: intern a fully-built structural value-type node (a lifted fn's
+    // CoreVtFn signature / CoreVtClosure construction type) through the shared
+    // hash-cons. Only valid on a constructing-body lowerer (the lifter passes
+    // in the structural interner). kInvalid on failure (a diagnostic is already
+    // recorded by the caller-side failure path).
+    [[nodiscard]] CoreValueTypeId intern_structural(CoreValueTypeNode node, SourceRangeOpt range) {
+        if (structural_interner_ == nullptr) {
+            error(diag::kFnBodyUnlowered,
+                  "a lifted fn signature cannot be interned without the structural value-type "
+                  "interner",
+                  range);
+            return CoreValueTypeId{};
+        }
+        std::string reason;
+        const auto id = (*structural_interner_)(std::move(node), &reason);
+        if (!id) {
+            error(diag::kUnresolvedType,
+                  "a lifted fn closure type could not be interned: " + reason, range);
+            return CoreValueTypeId{};
         }
         return *id;
     }
@@ -2040,6 +2222,7 @@ template <class RootPolicy> class ExprLowerer {
                     return lower_struct_value(e, result_ty, range, region);
                 },
                 [&](const MatchExpr &e) { return lower_match_value(e, result_ty, range, region); },
+                [&](const LambdaExpr &e) { return lower_lambda_value(e, expr, range, region); },
                 // Effectful-or-complex shapes not yet lowered. CRITICAL: if the
                 // subtree contains a capability call we MUST fail closed (never
                 // hide an effect); otherwise a pure unsupported node is recorded
@@ -2096,7 +2279,8 @@ template <class RootPolicy> class ExprLowerer {
 
         if (!stmt.adjustment.has_value()) {
             const CoreValueTypeId target_ty = intern_value_type(stmt.type_ref, range);
-            if (target_ty.value != CoreValueTypeId::kInvalid && !(source_ty == target_ty)) {
+            if (target_ty.value != CoreValueTypeId::kInvalid && !(source_ty == target_ty) &&
+                !callable_widens(source_ty, target_ty)) {
                 error(diag::kMissingAdjustment,
                       "let boundary changes logical value type without a persisted adjustment",
                       range);
@@ -2155,12 +2339,37 @@ template <class RootPolicy> class ExprLowerer {
 
     [[nodiscard]] CoreValueId lower_path_value(const PathExpr &e, const ExprRef &expr,
                                                SourceRangeOpt range, CoreRegion &region) {
+        // FB-3a2 (§3.2 rule 4): inside a lifted fn body a frame-root path the
+        // closure captured whole (`input.x` / `ctx.y`) resolves straight to its
+        // pre-bound env slot — the projection was evaluated once at the
+        // construction site, so no frame access (and no member chain) remains.
+        if (const auto captured = policy_.captured_frame(e.path); captured.has_value()) {
+            return captured->value;
+        }
         const auto rr = resolve_path_root(e.path);
         // A bare local reference lowers directly to its bound value id (its type is
         // already recorded in the body value_types table). It produces NO new value,
         // so nothing to intern here.
         if (rr.is_local && e.path.members.empty()) {
             return rr.local;
+        }
+        // FB-3a2 (§3.1.1 rule 6): a bare top-level fn NAME used as a first-class
+        // value (no projection) lowers to a ZERO-CAPTURE closure over that
+        // body-bearing fn — CoreClosureExpr{fn, {}}. Only when it is not a local
+        // and its resolved type is a FnT (so constants / node names keep their
+        // ordinary path lowering).
+        if (!rr.is_local && e.path.members.empty() && lifter_ != nullptr &&
+            expr.ptr != nullptr) {
+            const CoreValueTypeId path_ty = intern_value_type(expr.ptr->resolved_type, range);
+            if (path_ty.value != CoreValueTypeId::kInvalid &&
+                std::holds_alternative<CoreVtFn>(value_type_pool_[path_ty.value].node)) {
+                // A bare fn-name path carries no resolved SymbolRef; resolve by
+                // the rendered name through the fn resolver.
+                const SymbolRef fn_ref{};
+                if (auto fn_id = lifter_->static_fn_value(fn_ref, e.path.root_name, range)) {
+                    return bind_pure(CoreClosureExpr{*fn_id, {}}, path_ty, range, region);
+                }
+            }
         }
         // RFC 0026 P6-5: `xs.length` on a BOUNDED collection local is a length
         // READ of the container's inline `(ptr,len)` header, not a field
@@ -2874,6 +3083,399 @@ template <class RootPolicy> class ExprLowerer {
         }
     }
 
+    // --- RFC 0026 FB-3a2 (CORE-FNBODY-DESIGN §3.1.1 D-LIFT / §3.2): lambda lift ---
+
+    // Deterministic ordered capture analysis over a lambda body (§3.2).
+    //
+    //  * explicit capture list `[a, b]`: the named OUTER LOCALS in source order
+    //    (the resolver already validated each name);
+    //  * implicit: a single syntax-order (left-to-right) DFS collecting each
+    //    referenced outer local at its FIRST use, de-duplicated;
+    //  * lambda parameters and in-body binders (match arms, quantifiers) shadow
+    //    outer names, exactly like the typechecker's child-ValueContext rule;
+    //  * frame-root reads `input.x` / `ctx.y` are ALWAYS captured (explicit list
+    //    or not): the fn sees no agent frame (§2.3), so the projection is
+    //    evaluated once at the construction site (§3.2 rule 4);
+    //  * a bare name that is neither a parameter / in-body binder nor a visible
+    //    outer binding is fail-closed (covers a self-referential / fixpoint
+    //    lambda, which the snapshot-closure evaluator semantics cannot run).
+    //
+    // Frame expressions are materialized HERE (in the constructing body region)
+    // so each slot dominates the closure construction. Returns the resolved,
+    // ordered slot list; failure already recorded a diagnostic.
+    [[nodiscard]] std::vector<LambdaLiftBridge::ResolvedCapture>
+    analyze_lambda_captures(const LambdaExpr &lambda, SourceRangeOpt range, CoreRegion &region) {
+        std::vector<LambdaLiftBridge::ResolvedCapture> slots;
+        std::unordered_set<std::string> seen_locals;
+        std::unordered_set<std::string> seen_frames;
+
+        const auto push_local = [&](const std::string &name) -> bool {
+            if (seen_locals.insert(name).second) {
+                const auto it = scope_.find(name);
+                if (it == scope_.end()) {
+                    error(diag::kClosureCaptureInvalid,
+                          "lambda captures '" + name +
+                              "' which is not a visible outer local at the construction site (a "
+                              "self-referential closure or an unresolvable free reference cannot be "
+                              "lifted)",
+                          range);
+                    return false;
+                }
+                LambdaLiftBridge::ResolvedCapture cap;
+                cap.name = name;
+                cap.is_frame = false;
+                cap.outer_value = it->second.value;
+                cap.value_type = it->second.value_type;
+                slots.push_back(std::move(cap));
+            }
+            return true;
+        };
+
+        // Explicit list first, in source order (authoritative local ordering).
+        for (const std::string &name : lambda.captures) {
+            if (scope_.find(name) == scope_.end()) {
+                error(diag::kClosureCaptureUnknown,
+                      "lambda capture list names '" + name +
+                          "' which is not a visible outer local at the construction site",
+                      range);
+                continue;
+            }
+            static_cast<void>(push_local(name));
+        }
+        const bool explicit_list = !lambda.captures.empty();
+
+        std::unordered_set<std::string> bound;
+        for (const std::string &p : lambda.params) {
+            bound.insert(p);
+        }
+
+        bool ok = true;
+        // Append a frame-root read slot (dedup by canonical path key). The frame
+        // path EXPRESSION is materialized in the constructing body.
+        const auto push_frame = [&](const PathExpr &pe, const ExprRef &ref) {
+            CapturedPathKey key{pe.path.root_kind, pe.path.root_name, pe.path.members};
+            if (!seen_frames.insert(captured_path_key_repr(key)).second) {
+                return;
+            }
+            const CoreValueId value = lower_value(ref, region);
+            const CoreValueTypeId ty = value_type_of(value);
+            LambdaLiftBridge::ResolvedCapture cap;
+            cap.name = captured_path_key_repr(key);
+            cap.is_frame = true;
+            cap.frame = key;
+            cap.outer_value = value;
+            cap.value_type = ty;
+            slots.push_back(std::move(cap));
+        };
+
+        // Recursive DFS. `bound` is the set of lambda params + every binder
+        // introduced inside the body (match-arm bindings, quantifier binders,
+        // nested-lambda params), with shadowing exactly like the typechecker.
+        std::function<void(const ExprRef &)> visit;
+
+        // Collect the binding names a match pattern introduces into `bound`,
+        // appending the NEW names to `introduced` so they can be retracted after
+        // the arm (binders do not leak across arms or after the match).
+        std::function<void(const MatchPattern &, std::vector<std::string> &)> collect_pattern;
+        collect_pattern = [&](const MatchPattern &pattern,
+                              std::vector<std::string> &introduced) {
+            std::visit(
+                Overloaded{
+                    [](const LiteralPattern &) {},
+                    [](const IntRangePattern &) {},
+                    [&](const VariantPattern &v) {
+                        for (const auto &s : v.subpatterns) {
+                            if (s) {
+                                collect_pattern(*s, introduced);
+                            }
+                        }
+                        for (const auto &f : v.fields) {
+                            if (f.pattern) {
+                                collect_pattern(*f.pattern, introduced);
+                            }
+                        }
+                    },
+                    [](const WildcardPattern &) {},
+                    [&](const BindingPattern &b) {
+                        if (!b.name.empty() && bound.insert(b.name).second) {
+                            introduced.push_back(b.name);
+                        }
+                        if (b.nested) {
+                            collect_pattern(*b.nested, introduced);
+                        }
+                    },
+                    [&](const TuplePattern &t) {
+                        for (const auto &e : t.elements) {
+                            if (e) {
+                                collect_pattern(*e, introduced);
+                            }
+                        }
+                    },
+                    [&](const OrPattern &o) {
+                        for (const auto &br : o.branches) {
+                            if (br) {
+                                collect_pattern(*br, introduced);
+                            }
+                        }
+                    },
+                },
+                pattern.node);
+        };
+
+        visit = [&](const ExprRef &ref) {
+            if (!ok || ref.ptr == nullptr) {
+                return;
+            }
+            std::visit(
+                Overloaded{
+                    [&](const PathExpr &pe) {
+                        const bool is_frame_root =
+                            (pe.path.root_kind == PathRootKind::Input ||
+                             pe.path.root_kind == PathRootKind::Context) &&
+                            !pe.path.members.empty();
+                        if (is_frame_root) {
+                            push_frame(pe, ref);
+                            return;
+                        }
+                        // A bare identifier reference: a parameter / in-body
+                        // binder (bound) or an outer local to capture. A member
+                        // projection on a captured local captures the WHOLE local;
+                        // the projection itself is evaluated inside the lifted fn.
+                        if (pe.path.root_kind == PathRootKind::Identifier ||
+                            pe.path.root_kind == PathRootKind::Local) {
+                            const std::string &name = pe.path.root_name;
+                            if (bound.find(name) != bound.end()) {
+                                return;
+                            }
+                            if (!explicit_list) {
+                                if (!push_local(name)) {
+                                    ok = false;
+                                }
+                            } else if (std::none_of(lambda.captures.begin(),
+                                                    lambda.captures.end(),
+                                                    [&](const std::string &c) { return c == name; })) {
+                                error(diag::kClosureCaptureInvalid,
+                                      "lambda body references '" + name +
+                                          "' which is neither a parameter, an in-body binding, nor "
+                                          "a name in its explicit capture list",
+                                      range);
+                                ok = false;
+                            }
+                        }
+                    },
+                    [&](const LambdaExpr &nested) {
+                        // A nested lambda is a scope boundary. Its params bind in
+                        // its body (shadowing outer names); free names found there
+                        // are captures of THIS fn too (the nested lift threads the
+                        // pre-bound slot). Track only the newly-bound names so an
+                        // outer shadowed binding is restored verbatim.
+                        std::vector<std::string> introduced;
+                        for (const std::string &p : nested.params) {
+                            if (bound.insert(p).second) {
+                                introduced.push_back(p);
+                            }
+                        }
+                        visit(nested.body);
+                        for (const std::string &p : introduced) {
+                            bound.erase(p);
+                        }
+                    },
+                    [&](const MatchExpr &m) {
+                        visit(m.scrutinee);
+                        for (const MatchArmExpr &arm : m.arms) {
+                            std::vector<std::string> introduced;
+                            collect_pattern(arm.pattern, introduced);
+                            visit(arm.guard);
+                            visit(arm.body);
+                            for (const std::string &n : introduced) {
+                                bound.erase(n);
+                            }
+                        }
+                    },
+                    [&](const QuantifierExpr &q) {
+                        visit(q.collection);
+                        std::vector<std::string> introduced;
+                        if (!q.binder.empty() && bound.insert(q.binder).second) {
+                            introduced.push_back(q.binder);
+                        }
+                        if (!q.value_binder.empty() && bound.insert(q.value_binder).second) {
+                            introduced.push_back(q.value_binder);
+                        }
+                        visit(q.body);
+                        for (const std::string &n : introduced) {
+                            bound.erase(n);
+                        }
+                    },
+                    [&](const CallExpr &c) {
+                        for (const ExprRef &a : c.arguments) {
+                            visit(a);
+                        }
+                    },
+                    [&](const MethodCallExpr &c) {
+                        visit(c.receiver);
+                        for (const ExprRef &a : c.arguments) {
+                            visit(a);
+                        }
+                    },
+                    [&](const StructLiteralExpr &s) {
+                        for (const StructFieldInit &f : s.fields) {
+                            visit(f.value);
+                        }
+                    },
+                    [&](const UnaryExpr &u) { visit(u.operand); },
+                    [&](const BinaryExpr &b) {
+                        visit(b.lhs);
+                        visit(b.rhs);
+                    },
+                    [&](const MemberAccessExpr &m) { visit(m.base); },
+                    [&](const IndexAccessExpr &i) {
+                        visit(i.base);
+                        visit(i.index);
+                    },
+                    [&](const UnwrapExpr &u) {
+                        visit(u.operand);
+                        if (u.fallback_none_message) {
+                            visit(u.fallback_none_message);
+                        }
+                    },
+                    [](const auto &) {},
+                },
+                ref.ptr->node);
+        };
+        visit(lambda.body);
+        if (!ok) {
+            return {};
+        }
+        return slots;
+    }
+
+    // Lift a lambda construction site into a CoreClosureExpr (design §3.1).
+    [[nodiscard]] CoreValueId lower_lambda_value(const LambdaExpr &lambda, const ExprRef &expr,
+                                                 SourceRangeOpt range, CoreRegion &region) {
+        if (lifter_ == nullptr) {
+            return lower_unsupported_value(expr, "LambdaExpr",
+                                           intern_value_type(expr.ptr->resolved_type, range), range,
+                                           region);
+        }
+        // Concrete signature: the lambda's resolved FnT type is the typed
+        // closure shape; the body's resolved type is its return.
+        const CoreValueTypeId signature =
+            intern_value_type(expr.ptr->resolved_type, range);
+        const auto *sig_fn = signature.value == CoreValueTypeId::kInvalid
+                                 ? nullptr
+                                 : std::get_if<CoreVtFn>(&value_type_pool_[signature.value].node);
+        if (sig_fn == nullptr) {
+            error(diag::kFnCallableTypeIncompatible,
+                  "lambda expression does not have a materialized Fn signature", range);
+            return fresh_value(CoreValueTypeId{});
+        }
+        const CoreValueTypeId return_type =
+            lambda.body.ptr == nullptr
+                ? CoreValueTypeId{}
+                : intern_value_type(lambda.body.ptr->resolved_type, range);
+
+        // Deterministic ordered captures, with frame reads materialized in the
+        // constructing region before the closure is built.
+        std::vector<LambdaLiftBridge::ResolvedCapture> captures =
+            analyze_lambda_captures(lambda, range, region);
+        bool capture_failed = false;
+        for (const auto &cap : captures) {
+            // CoreValueId has no kInvalid sentinel; a slot is invalid only when
+            // its materialized type is kInvalid (value id 0 is a legal first
+            // SSA value).
+            if (cap.value_type.value == CoreValueTypeId::kInvalid) {
+                capture_failed = true;
+            }
+        }
+        if (signature.value == CoreValueTypeId::kInvalid ||
+            return_type.value == CoreValueTypeId::kInvalid || capture_failed) {
+            return fresh_value(signature);
+        }
+
+        const std::optional<CoreFnId> fn =
+            lifter_->lift(lambda, range, sig_fn->params, return_type, captures);
+        if (!fn.has_value()) {
+            return fresh_value(signature);
+        }
+
+        // The closure value type: the concrete signature + one ByValue capture
+        // per slot, same canonical order.
+        std::vector<CoreValueTypeId> capture_types;
+        std::vector<CoreValueId> env;
+        capture_types.reserve(captures.size());
+        env.reserve(captures.size());
+        for (const auto &cap : captures) {
+            capture_types.push_back(cap.value_type);
+            env.push_back(cap.outer_value);
+        }
+        const CoreValueTypeId closure_ty = intern_structural(
+            CoreVtClosure{signature,
+                          [&] {
+                              std::vector<CoreClosureCapture> cs;
+                              cs.reserve(capture_types.size());
+                              for (const CoreValueTypeId t : capture_types) {
+                                  cs.push_back(CoreClosureCapture{t, CoreCaptureMode::ByValue});
+                              }
+                              return cs;
+                          }()},
+            range);
+        if (closure_ty.value == CoreValueTypeId::kInvalid) {
+            return fresh_value(signature);
+        }
+        return bind_pure(CoreClosureExpr{*fn, std::move(env)}, closure_ty, range, region);
+    }
+
+    // An indirect call through a first-class callable VALUE (a FnT parameter,
+    // a callable local, or a constructed closure), design §5.2. Arity / arg /
+    // result types are checked by the verifier against the callable signature.
+    // Returns an unset value id when `callee_name` is not a callable local, so
+    // the caller can try the other resolution paths.
+    [[nodiscard]] std::optional<CoreValueId>
+    lower_closure_call_value(const std::string &callee_name, std::vector<CoreValueId> args,
+                             CoreValueTypeId result_ty, SourceRangeOpt range, CoreRegion &region) {
+        const auto it = scope_.find(callee_name);
+        if (it == scope_.end() ||
+            callable_signature_id(it->second.value_type) == CoreValueTypeId{}) {
+            return std::nullopt;
+        }
+        return bind_pure(CoreCallClosureExpr{it->second.value, std::move(args)}, result_ty, range,
+                         region);
+    }
+
+    // The interned CoreVtFn signature a callable binding carries, or kInvalid:
+    // a bare signature type is itself a CoreVtFn; a constructed closure yields
+    // its referenced signature (D-FNREP, §3.1.1).
+    [[nodiscard]] CoreValueTypeId callable_signature_id(CoreValueTypeId ty) const {
+        if (ty.value == CoreValueTypeId::kInvalid || ty.value >= value_type_pool_.size()) {
+            return CoreValueTypeId{};
+        }
+        const CoreValueTypeNode &node = value_type_pool_[ty.value].node;
+        if (std::holds_alternative<CoreVtFn>(node)) {
+            return ty;
+        }
+        if (const auto *closure = std::get_if<CoreVtClosure>(&node)) {
+            return closure->signature;
+        }
+        return CoreValueTypeId{};
+    }
+
+    // D-FNREP (§3.1.1): a constructed closure value CoreVtClosure{S, _} widens
+    // to the bare signature type S with NO adapter (identical 8-byte layout, the
+    // caller ignores the env). Only closure -> its own Fn signature widens;
+    // Fn -> closure (narrowing) and any other mismatch do not. The verifier
+    // independently re-checks dispatch through callable_signature.
+    [[nodiscard]] bool callable_widens(CoreValueTypeId source, CoreValueTypeId target) const {
+        if (source == target) {
+            return true;
+        }
+        if (source.value == CoreValueTypeId::kInvalid || source.value >= value_type_pool_.size()) {
+            return false;
+        }
+        const auto *closure =
+            std::get_if<CoreVtClosure>(&value_type_pool_[source.value].node);
+        return closure != nullptr && closure->signature == target;
+    }
+
     // --- RFC 0026 FB-1 (CORE-FNBODY-DESIGN §4/§5.1): static direct fn calls ---
 
     // Lower a resolved direct fn/method call to CoreCallExpr. `callee_ref` is
@@ -2981,6 +3583,29 @@ template <class RootPolicy> class ExprLowerer {
         // collection fails closed.
         if (const auto op = collection_op_of_hook(call.callee)) {
             return lower_collection_builtin(call, *op, expr, range, region);
+        }
+        // RFC 0026 FB-3a2 (design §4 rule 5 / §5.2): a call whose callee is a
+        // first-class callable VALUE — a FnT parameter, a callable local, or a
+        // constructed closure — lowers to an indirect CoreCallClosureExpr
+        // (call_indirect). A free `fn` call (SymbolRefKind::Function) is NOT such
+        // a value and stays on the direct-call path below. Arguments are
+        // A-normalized left-to-right first.
+        if (call.callee_ref.kind != SymbolRefKind::Capability &&
+            call.callee_ref.kind != SymbolRefKind::Function) {
+            if (scope_.find(call.callee) != scope_.end()) {
+                const CoreValueTypeId result_ty =
+                    intern_value_type(expr.ptr->resolved_type, range);
+                std::vector<CoreValueId> args;
+                args.reserve(call.arguments.size());
+                for (const ExprRef &arg : call.arguments) {
+                    args.push_back(lower_value(arg, region));
+                }
+                if (auto value =
+                        lower_closure_call_value(call.callee, std::move(args), result_ty, range,
+                                                 region)) {
+                    return *value;
+                }
+            }
         }
         // RFC 0026 FB-1 (CORE-FNBODY-DESIGN §4 rule 4): a statically resolved
         // pure fn / monomorphized generic fn / body-bearing method lowers to a
@@ -3473,9 +4098,15 @@ template <class RootPolicy> class ExprLowerer {
     const ValueTypeInterner &interner_;
     const std::vector<CoreValueType> &value_type_pool_;
     std::vector<CoreLowerDiagnostic> &diags_;
-    // RFC 0026 FB-1: when present, a free `fn` call / method call whose callee
+    // RFC 0026 FB-1: when present, a free `fn` / method call whose callee
     // resolves to a body-bearing Fn instance lowers to a direct CoreCallExpr.
     const FnCallResolver *fn_calls_{nullptr};
+    // RFC 0026 FB-3a2: when present, a LambdaExpr is lifted through this bridge
+    // into a CoreFnDecl and its construction site becomes a CoreClosureExpr.
+    LambdaLiftBridge *lifter_{nullptr};
+    // Structural node interner (mints the lifted fn's CoreVtFn / CoreVtClosure
+    // types without a source TypeRef). Paired with `lifter_`.
+    const StructuralInternerFn *structural_interner_{nullptr};
     std::unordered_map<std::string, LocalBinding> scope_;
 };
 
@@ -3684,10 +4315,12 @@ class FlowLowerer {
                 const TypeEnv &types, CoreTypeId input_type, CoreTypeId context_type,
                 const ValueTypeInterner &interner, const std::vector<CoreValueType> &value_type_pool,
                 std::vector<CoreLowerDiagnostic> &diags,
-                const FnCallResolver *fn_calls = nullptr)
+                const FnCallResolver *fn_calls = nullptr,
+                LambdaLiftBridge *lifter = nullptr,
+                const StructuralInternerFn *structural_interner = nullptr)
         : ex_(CoreBodyStorageRef{flow.storage},
               caps, types, FlowRootPolicy{input_type, context_type}, interner, value_type_pool,
-              diags, fn_calls),
+              diags, fn_calls, lifter, structural_interner),
           body_(ex_,
                 [this](const GotoStatement &s, SourceRangeOpt range, CoreRegion &region) {
                     lower_goto(s, range, region);
@@ -3765,10 +4398,13 @@ class WorkflowLowerer {
                     const ValueTypeInterner &interner,
                     const std::vector<CoreValueType> &value_type_pool,
                     std::vector<CoreLowerDiagnostic> &diags,
-                    const FnCallResolver *fn_calls = nullptr)
+                    const FnCallResolver *fn_calls = nullptr,
+                    LambdaLiftBridge *lifter = nullptr,
+                    const StructuralInternerFn *structural_interner = nullptr)
         : wf_(wf), caps_(caps), types_(types), agents_(agents), agent_by_id_(agent_by_id),
           agent_by_name_(agent_by_name), interner_(interner), value_type_pool_(value_type_pool),
-          diags_(diags), fn_calls_(fn_calls) {}
+          diags_(diags), fn_calls_(fn_calls), lifter_(lifter),
+          structural_interner_(structural_interner) {}
 
     void lower(const WorkflowDecl &decl) {
         wf_.name = decl.name;
@@ -3854,7 +4490,7 @@ class WorkflowLowerer {
         ExprLowerer<WorkflowRootPolicy> ex(
             CoreBodyStorageRef{wf_.storage}, caps_,
             types_, WorkflowRootPolicy{wf_.input_type, &node_index_}, interner_, value_type_pool_,
-            diags_, fn_calls_);
+            diags_, fn_calls_, lifter_, structural_interner_);
         const CoreValueId value = ex.lower_value(expr, region);
         region.statements.push_back(CoreStmt{CoreYieldStmt{true, value}, range});
     }
@@ -3890,6 +4526,8 @@ class WorkflowLowerer {
     // by Pass B's WorkflowRootPolicy to classify node-output path roots.
     std::unordered_map<std::string, WorkflowRootPolicy::NodeOutput> node_index_;
     const FnCallResolver *fn_calls_{nullptr};
+    LambdaLiftBridge *lifter_{nullptr};
+    const StructuralInternerFn *structural_interner_{nullptr};
 };
 
 /// Lowers one monomorphized pure fn body into a CoreFnDecl
@@ -3904,9 +4542,12 @@ class FnBodyLowerer {
                   const TypeEnv &types, const ValueTypeInterner &interner,
                   const std::vector<CoreValueType> &value_type_pool,
                   const FnCallResolver &fn_calls,
-                  std::vector<CoreLowerDiagnostic> &diags)
-        : ex_(CoreBodyStorageRef{fn.storage}, caps, types, FnRootPolicy{}, interner,
-              value_type_pool, diags, &fn_calls),
+                  std::vector<CoreLowerDiagnostic> &diags,
+                  LambdaLiftBridge *lifter = nullptr,
+                  const StructuralInternerFn *structural_interner = nullptr,
+                  FrameCaptureTable *frame_captures = nullptr)
+        : ex_(CoreBodyStorageRef{fn.storage}, caps, types, FnRootPolicy{frame_captures}, interner,
+              value_type_pool, diags, &fn_calls, lifter, structural_interner),
           body_(ex_,
                 [this](const GotoStatement &, SourceRangeOpt range, CoreRegion &) {
                     ex_.error(diag::kFnBodyUnlowered,
@@ -3934,6 +4575,45 @@ class FnBodyLowerer {
         fn_.body = body_.lower_block(*source_.body);
     }
 
+    // FB-3a2: lower a lifted lambda BODY (an expression wrapped in one value-
+    // bearing return). The caller supplies the FnRootPolicy's frame table (its
+    // ADDRESS is already wired into ex_'s policy); this method allocates the
+    // dense logical-param + env-slot SSA values, populates BOTH the in-body
+    // scope (local captures bound by name) and the frame redirect table (frame
+    // captures keyed by path) BEFORE the body expression is lowered, so a frame
+    // read inside the body resolves to its slot via the policy.
+    void lower_lifted_body(const ExprRef &body_expr, SourceRangeOpt range,
+                           const std::vector<std::pair<std::string, CoreValueTypeId>> &param_names,
+                           const std::vector<LambdaLiftBridge::ResolvedCapture> &captures,
+                           FrameCaptureTable &frame_captures) {
+        fn_.params.reserve(param_names.size());
+        for (const auto &[name, ty] : param_names) {
+            const CoreValueId value = ex_.fresh_value(ty);
+            fn_.params.push_back(value);
+            ex_.scope()[name] = ExprLowerer<FnRootPolicy>::LocalBinding{value, ty};
+        }
+        fn_.captures.reserve(captures.size());
+        fn_.env_bindings.reserve(captures.size());
+        for (const auto &cap : captures) {
+            const CoreValueId slot = ex_.fresh_value(cap.value_type);
+            fn_.captures.push_back(cap.value_type);
+            fn_.env_bindings.push_back(slot);
+            ex_.scope()[cap.name] =
+                ExprLowerer<FnRootPolicy>::LocalBinding{slot, cap.value_type};
+            if (cap.is_frame) {
+                frame_captures[cap.frame] = LocalSsaBinding{slot, cap.value_type};
+            }
+        }
+        CoreRegion region;
+        if (body_expr.ptr != nullptr) {
+            const CoreValueId value = ex_.lower_value(body_expr, region);
+            region.statements.push_back(CoreStmt{CoreReturnStmt{true, value}, range});
+        } else {
+            ex_.error(diag::kFnBodyUnlowered, "a lifted lambda has no body expression", range);
+        }
+        fn_.body = std::move(region);
+    }
+
   private:
     ExprLowerer<FnRootPolicy> ex_;
     BodyRegionLowerer<FnRootPolicy,
@@ -3941,6 +4621,115 @@ class FnBodyLowerer {
         body_;
     CoreFnDecl &fn_;
     const FnDecl &source_;
+};
+
+/// RFC 0026 FB-3a2 (CORE-FNBODY-DESIGN §3.1.1 D-LIFT): the concrete lambda-lift
+/// driver. ONE instance is shared by every constructing body (flow / workflow /
+/// fn), so a lambda — including one nested in an outlined fn body — is lifted by
+/// the SAME deterministic path: one monomorphic Fn instance + CoreFnDecl per
+/// construction site, its body lowered through the third body owner
+/// (FnRootPolicy), and the fn id returned for the CoreClosureExpr. The
+/// constructing ExprLowerer owns capture analysis + the construction node; this
+/// driver owns the program fn/instance tables and the interners.
+class LambdaLifter final : public LambdaLiftBridge {
+  public:
+    LambdaLifter(CoreProgram &program, const CapabilityIndex &caps, const TypeEnv &types,
+                 const ValueTypeInterner &interner, const StructuralInternerFn &structural,
+                 const FnCallResolver &fn_calls,
+                 std::vector<CoreLowerDiagnostic> &diags)
+        : program_(program), caps_(caps), types_(types), interner_(interner),
+          structural_(structural), fn_calls_(fn_calls), diags_(diags) {}
+
+    [[nodiscard]] std::optional<CoreFnId>
+    lift(const LambdaExpr &lambda, SourceRangeOpt range,
+         const std::vector<CoreValueTypeId> &param_types, CoreValueTypeId return_type,
+         std::vector<ResolvedCapture> captures) override {
+        const CoreInstanceId instance_id{
+            static_cast<std::uint32_t>(program_.instances.size())};
+        const CoreFnId fn_id{static_cast<std::uint32_t>(program_.fns.size())};
+        const std::string key = lifted_key(fn_id.value);
+
+        CoreInstanceDecl inst;
+        inst.id = instance_id;
+        inst.instance_key = key;
+        inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, key, key, "", std::nullopt};
+        inst.payload = CoreFnInstance{fn_id};
+        program_.instances.push_back(std::move(inst));
+
+        CoreFnDecl fn_decl;
+        fn_decl.id = fn_id;
+        fn_decl.instance = instance_id;
+        fn_decl.origin = ir::SymbolRef{ir::SymbolRefKind::Function, key, key, "", std::nullopt};
+        fn_decl.name = key;
+        fn_decl.source_range = range;
+        program_.fns.push_back(std::move(fn_decl));
+
+        // Publish a direct-call resolver entry BEFORE the body is lowered, so a
+        // legal by-name / nested reference to the lifted fn resolves. A lifted
+        // lambda is Pure (the typechecker enforces PureOnly closures).
+        FnCallResolver::Entry entry;
+        entry.resolution.instance = instance_id;
+        entry.resolution.has_body = true;
+        entry.resolution.effect = ir::FnEffectKind::Pure;
+        fn_calls_.add(key, std::nullopt, key, entry);
+
+        // The frame table's ADDRESS is wired into the FnRootPolicy now; its
+        // contents are populated by lower_lifted_body before the body runs.
+        FrameCaptureTable frame_captures;
+
+        // A synthetic, never-read FnDecl anchors the existing lowerer ctor (the
+        // lifted body is an expression, so its block/params are never touched).
+        FnDecl anchor;
+        anchor.name = key;
+        FnBodyLowerer lowerer(program_.fns[fn_id.value], anchor, caps_, types_, interner_,
+                              program_.value_types, fn_calls_, diags_, this, &structural_,
+                              &frame_captures);
+
+        std::vector<std::pair<std::string, CoreValueTypeId>> param_names;
+        param_names.reserve(lambda.params.size());
+        for (std::size_t i = 0; i < lambda.params.size() && i < param_types.size(); ++i) {
+            param_names.emplace_back(lambda.params[i], param_types[i]);
+        }
+        lowerer.lower_lifted_body(lambda.body, range, param_names, captures, frame_captures);
+        static_cast<void>(return_type); // return-type agreement is enforced by the verifier
+
+        return fn_id;
+    }
+
+    [[nodiscard]] std::optional<CoreFnId>
+    static_fn_value(const SymbolRef &ref, std::string_view name, SourceRangeOpt) override {
+        const FnCallResolver::Entry *entry = fn_calls_.lookup(ref, name);
+        if (entry == nullptr || !entry->resolution.has_body ||
+            entry->resolution.effect != ir::FnEffectKind::Pure) {
+            return std::nullopt;
+        }
+        const CoreInstanceId id = entry->resolution.instance;
+        if (id.value >= program_.instances.size()) {
+            return std::nullopt;
+        }
+        const auto *payload =
+            std::get_if<CoreFnInstance>(&program_.instances[id.value].payload);
+        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid) {
+            return std::nullopt;
+        }
+        return payload->body;
+    }
+
+  private:
+    // Deterministic synthetic instance key for a lifted construction site
+    // (display / dispatch only; identity is the CoreFnId index). The fn-table
+    // ordinal makes it unique and stable across lowering order.
+    [[nodiscard]] static std::string lifted_key(std::uint32_t ordinal) {
+        return "_lambda_" + std::to_string(ordinal);
+    }
+
+    CoreProgram &program_;
+    const CapabilityIndex &caps_;
+    const TypeEnv &types_;
+    const ValueTypeInterner &interner_;
+    const StructuralInternerFn &structural_;
+    const FnCallResolver &fn_calls_;
+    std::vector<CoreLowerDiagnostic> &diags_;
 };
 
 } // namespace
@@ -4101,6 +4890,13 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
     // concrete. (A TypeVar-shaped generic body cannot exist in a well-formed
     // input; the verifier rejects its Any parameter types if it ever does.)
     FnCallResolver fn_call_resolver;
+    // FB-3a2: the structural interner (mints lifted-fn CoreVtFn / CoreVtClosure
+    // types) and the one lambda-lift driver, created lazily right after the fn
+    // shells + resolver fixed point exist (still inside Pass 1.5) but used by
+    // outlined-fn, flow and workflow body lowering alike. Declared here so all
+    // later passes share the same instance.
+    std::optional<StructuralInternerFn> intern_structural_holder;
+    std::optional<LambdaLifter> lambda_lifter_holder;
     {
         // The FnKind InstanceDecls must land in `core.instances` BEFORE the
         // non-Fn kinds (Pass 6 appends those), preserving AHFL declaration order
@@ -4273,6 +5069,37 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         //     shells and all resolver entries already exist, so a forward
         //     callee and every member of a mutual-recursion group resolve no
         //     matter the declaration order.
+        //
+        //     FB-3a2 stability: lambda lifting APPENDS a CoreFnDecl + Fn
+        //     instance for each construction site WHILE a body is being lowered,
+        //     and a body lowerer holds a reference to its own CoreFnDecl. Reserve
+        //     headroom now (the guaranteed fn shells are all pushed) so neither
+        //     vector reallocates and dangles that reference. One LambdaExpr in
+        //     the program is an upper bound on the number of lift sites.
+        {
+            std::size_t lambda_sites = 0;
+            for (const ir::Expr *expr : ahfl_ir.all_exprs()) {
+                if (expr != nullptr && std::holds_alternative<ir::LambdaExpr>(expr->node)) {
+                    ++lambda_sites;
+                }
+            }
+            core.fns.reserve(core.fns.size() + lambda_sites + 1);
+            core.instances.reserve(core.instances.size() + lambda_sites + 1);
+        }
+
+        //     RFC 0026 FB-3a2: build the lambda-lift driver BEFORE lowering any
+        //     body (a lambda can nest in an outlined fn body as well as a
+        //     handler). It appends to the same fn/instance tables and resolver,
+        //     so a lifted fn discovered while lowering an outlined body gets a
+        //     fixed point like every other fn.
+        const StructuralInternerFn intern_structural =
+            [&shared_arena](CoreValueTypeNode node, std::string *reason) {
+                return shared_arena.intern_structural(std::move(node), reason);
+            };
+        intern_structural_holder.emplace(intern_structural);
+        lambda_lifter_holder.emplace(core, cap_index, types, intern_value_type, intern_structural,
+                                     fn_call_resolver, result.diagnostics);
+        LambdaLifter &lambda_lifter = *lambda_lifter_holder;
         for (GuaranteedFn &g : guaranteed) {
             if (g.source == nullptr) {
                 continue;
@@ -4287,10 +5114,14 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             }
             FnBodyLowerer lowerer(core.fns[fn_it->second], *g.source, cap_index, types,
                                   intern_value_type, core.value_types, fn_call_resolver,
-                                  result.diagnostics);
+                                  result.diagnostics, &lambda_lifter, &intern_structural);
             lowerer.lower();
         }
     }
+
+    // The lambda-lift driver + structural interner were created in Pass 1.5
+    // (they must also serve outlined fn-body lowering there); alias them for the
+    // flow / workflow passes below.
 
     // Pass 2: flows. Resolve each flow's target agent BY IDENTITY; a missing
     // target or an unknown handler state is a fail-closed Error (never a
@@ -4338,7 +5169,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         // `input.` / `ctx.` get typed CoreFieldIds without re-querying AHFL-IR.
         FlowLowerer lowerer(core_flow, cap_index, state_index, types, target_agent.input_type,
                             target_agent.context_type, intern_value_type, core.value_types,
-                            result.diagnostics, &fn_call_resolver);
+                            result.diagnostics, &fn_call_resolver, &*lambda_lifter_holder,
+                            &*intern_structural_holder);
         for (const StateHandler &handler : flow->state_handlers) {
             const auto state_id = state_index.lookup(handler.state_name);
             if (!state_id) {
@@ -4370,7 +5202,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         core_wf.id = CoreWorkflowId{static_cast<std::uint32_t>(core.workflows.size())};
         WorkflowLowerer lowerer(core_wf, cap_index, types, core.agents, agent_by_id, agent_by_name,
                                 intern_value_type, core.value_types, result.diagnostics,
-                                &fn_call_resolver);
+                                &fn_call_resolver, &*lambda_lifter_holder,
+                                &*intern_structural_holder);
         lowerer.lower(*wf);
         core.workflows.push_back(std::move(core_wf));
     }

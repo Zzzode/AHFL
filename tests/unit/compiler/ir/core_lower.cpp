@@ -3806,12 +3806,12 @@ TEST_CASE("A3(b): the same quantifier in a contract requires/invariant is erased
 }
 
 // ============================================================================
-// RFC 0026 FB-3a1: the closure DATA MODEL lands (CoreClosureExpr /
-// CoreCallClosureExpr) but lambda LIFTING arrives in FB-3a2. This test pins the
-// required no-behavior-change boundary: a real frontend lambda program still
-// lowers to the SAME enumerated CoreUnsupportedExpr{"LambdaExpr"} +
-// core.UNLOWERED_EXPRESSION fail-closed status as before the model existed. The
-// new closure nodes must never leak out of lowering until lifting lands.
+// RFC 0026 FB-3a2 (CORE-FNBODY-DESIGN §3.1.1 D-LIFT): lambda lifting lands. A
+// real-frontend PURE lambda is no longer an unsupported expression: the Core
+// lowerer lifts it to a monomorphic CoreFnDecl + Fn instance and lowers its
+// construction site to a CoreClosureExpr. The program lowers ok() +
+// is_executable (Core-verify clean); the wasm backend still fails closed only
+// at its own funcref/call_indirect codegen gate (FB-3b), not at lowering.
 // ============================================================================
 
 namespace {
@@ -3836,9 +3836,8 @@ agent A {
 
 flow for A {
     state Init {
-        // A PURE lambda bound as a first-class Fn value. Typecheck accepts it;
-        // Core lowering has no lambda lift yet, so it must fail closed exactly
-        // as it did before FB-3a1 (no CoreClosureExpr emitted).
+        // A PURE lambda bound as a first-class Fn value. FB-3a2 lifts it into a
+        // dedicated fn; the construction site becomes a CoreClosureExpr.
         let dbl: Fn(Int) -> Int = \(x: Int) -> x * 2;
         goto Done;
     }
@@ -3850,12 +3849,12 @@ flow for A {
 
 } // namespace
 
-TEST_CASE("FB-3a1: a real-frontend lambda still lowers to the same unsupported status") {
+TEST_CASE("FB-3a2: a real-frontend lambda lifts to a closure-constructing fn") {
     const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("lambda_flow", kLambdaFlowSource);
     REQUIRE(ahfl_ir.has_value());
 
     // Non-vacuity: a LambdaExpr really reached the AHFL-IR body the Core lowerer
-    // walks (so the assertion below is about lowering, not a frontend reject).
+    // walks (so this exercises lifting, not a frontend reject).
     bool saw_lambda = false;
     for (const ir::Expr *expr : ahfl_ir->all_exprs()) {
         if (expr != nullptr && std::holds_alternative<ir::LambdaExpr>(expr->node)) {
@@ -3865,25 +3864,322 @@ TEST_CASE("FB-3a1: a real-frontend lambda still lowers to the same unsupported s
     CHECK(saw_lambda);
 
     const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
-    CHECK_FALSE(result.ok());
-    CHECK_FALSE(result.is_executable);
-    // Unchanged fail-closed status: the enumerated unsupported node + stable
-    // code, with NO new closure node emitted by lowering.
-    CHECK(has_lower_code(result, ir::core::diag::kUnloweredExpression));
-    CHECK(flow_has_unsupported(result.program, "LambdaExpr"));
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+    CHECK_FALSE(flow_has_unsupported(result.program, "LambdaExpr"));
 
-    // The FB-3a1 closure nodes must NOT appear until lambda lifting (FB-3a2).
+    // Lifting produced exactly one extra fn + Fn instance for the construction
+    // site, and the handler body now carries a CoreClosureExpr (no indirect call
+    // yet — the lambda is constructed but not invoked here).
+    REQUIRE(result.program.fns.size() == 1);
+    const ir::core::CoreFnDecl &lifted = result.program.fns[0];
+    CHECK(lifted.captures.empty());
+    CHECK(lifted.env_bindings.empty());
+    CHECK(lifted.params.size() == 1);
+
+    bool saw_closure = false;
+    bool saw_indirect_call = false;
     for (const auto &flow : result.program.flows) {
         for (const auto &expr : flow.storage.exprs) {
-            CHECK_FALSE(std::holds_alternative<ir::core::CoreClosureExpr>(expr.node));
-            CHECK_FALSE(std::holds_alternative<ir::core::CoreCallClosureExpr>(expr.node));
+            if (std::holds_alternative<ir::core::CoreClosureExpr>(expr.node)) {
+                saw_closure = true;
+            }
+            if (std::holds_alternative<ir::core::CoreCallClosureExpr>(expr.node)) {
+                saw_indirect_call = true;
+            }
         }
     }
-    // A lowering-error candidate SKIPS the auto-wired verifier.
+    CHECK(saw_closure);
+    CHECK_FALSE(saw_indirect_call);
+    // Lifting leaves no lowering-verify diagnostic (the lifted fn is structurally
+    // well-formed: signature / return / SSA all agree).
     CHECK_FALSE(has_verify_prefixed_diagnostic(result));
 }
 
+// ============================================================================
+// FB-3a2 higher-order closure: a PURE top-level fn with an Fn(T)->U parameter
+// invokes the parameter through it. The call site is a CoreCallClosureExpr
+// (indirect), while a lambda passed in lifts to a CoreClosureExpr. This is the
+// `list_map_into` shape (design §5.2). Also pins ByValue capture: a captured
+// outer local is read through its env slot, independent of a later outer store.
+// ============================================================================
+namespace {
+
+const std::string kHigherOrderFnSource = R"AHFL(
+module ho;
+
+fn apply2(f: Fn(Int) -> Int, x: Int) -> Int effect Pure decreases 0 {
+    return f(x);
+}
+
+fn use_apply(n: Int) -> Int effect Pure decreases 0 {
+    let bump: Int = 10;
+    let g: Fn(Int) -> Int = \(y: Int) -> y + bump;
+    return apply2(g, n);
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-3a2: a closure captured local is invoked through an indirect call") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("ho", kHigherOrderFnSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // The lambda `g` lifted to a fn with ONE declared Int capture slot and the
+    // matching pre-bound env value; its body reads the slot via a bare local.
+    const auto closure_fns = [&] {
+        std::vector<const ir::core::CoreFnDecl *> out;
+        for (const auto &fn : result.program.fns) {
+            if (!fn.captures.empty()) {
+                out.push_back(&fn);
+            }
+        }
+        return out;
+    }();
+    REQUIRE(closure_fns.size() == 1);
+    const ir::core::CoreFnDecl &lifted = *closure_fns[0];
+    REQUIRE(lifted.captures.size() == 1);
+    REQUIRE(lifted.env_bindings.size() == 1);
+    CHECK(lifted.params.size() == 1); // only the logical `y`; bump is NOT a param
+
+    // `apply2`'s body contains an indirect closure call (f(x)).
+    bool saw_indirect = false;
+    for (const auto &fn : result.program.fns) {
+        for (const auto &expr : fn.storage.exprs) {
+            if (std::holds_alternative<ir::core::CoreCallClosureExpr>(expr.node)) {
+                saw_indirect = true;
+            }
+        }
+    }
+    CHECK(saw_indirect);
+
+    // ByValue snapshot (§3.4): the closure's env operand is the exact SSA value
+    // the `let bump = 10` bound at the construction site. SSA values are never
+    // rewritten by a later store (stores target a CorePlace, not the value id),
+    // so the captured value cannot change after construction.
+    const auto bump_value = [&]() -> ir::core::CoreValueId {
+        for (const auto &fn : result.program.fns) {
+            for (const auto &stmt : fn.body.statements) {
+                if (const auto *let = std::get_if<ir::core::CoreLetStmt>(&stmt.node)) {
+                    // bump's RHS is the only integer-literal expr in this fn.
+                    const auto &e = fn.storage.exprs[let->expr.value];
+                    if (const auto *lit = std::get_if<ir::core::CoreLiteralExpr>(&e.node)) {
+                        if (lit->kind == ir::core::CoreLiteralKind::Integer &&
+                            lit->spelling == "10") {
+                            return let->result;
+                        }
+                    }
+                }
+            }
+        }
+        return ir::core::CoreValueId{};
+    }();
+    bool env_reads_snapshot = false;
+    for (const auto &fn : result.program.fns) {
+        for (const auto &expr : fn.storage.exprs) {
+            if (const auto *cl = std::get_if<ir::core::CoreClosureExpr>(&expr.node)) {
+                if (cl->fn == lifted.id && cl->env.size() == 1 &&
+                    cl->env[0] == bump_value) {
+                    env_reads_snapshot = true;
+                }
+            }
+        }
+    }
+    CHECK(bump_value.value != ir::core::CoreValueId{}.value);
+    CHECK(env_reads_snapshot);
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
+
+// FB-3a2: an implicit-capture lambda that reads a frame-root projection
+// (`input.seed`) materializes the projection ONCE at the construction site and
+// captures it by value (design §3.2 rule 4): the lifted fn has one frame
+// capture slot and contains no input/ctx path root.
+namespace {
+
+const std::string kFrameCaptureSource = R"AHFL(
+module app::fc;
+
+struct Request { seed: Int; }
+struct Context { }
+struct Response { out: Int; }
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for A {
+    state Init {
+        let f: Fn(Int) -> Int = \(x: Int) -> x + input.seed;
+        goto Done;
+    }
+    state Done {
+        return Response { out: input.seed };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-3a2: a frame-root read is captured by value into the lifted fn") {
+    const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("fc", kFrameCaptureSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const auto lifted =
+        std::find_if(result.program.fns.begin(), result.program.fns.end(),
+                     [](const ir::core::CoreFnDecl &fn) { return !fn.captures.empty(); });
+    REQUIRE(lifted != result.program.fns.end());
+    REQUIRE(lifted->captures.size() == 1);
+    REQUIRE(lifted->env_bindings.size() == 1);
+
+    // The lifted fn body carries no Input/Context path root: the projection was
+    // captured as a pre-bound value.
+    for (const auto &expr : lifted->storage.exprs) {
+        if (const auto *path = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
+            CHECK(path->root != ir::core::CorePathRoot::Input);
+            CHECK(path->root != ir::core::CorePathRoot::Context);
+        }
+    }
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
+
+// FB-3a2 negative: a lambda that references a name which is neither a
+// parameter, an in-body binder, nor a visible outer local fails closed with the
+// structured capture diagnostic (this is also the self-referential shape).
+namespace {
+
+const std::string kBadCaptureSource = R"AHFL(
+module app::bc;
+
+struct Request { seed: Int; }
+struct Context { }
+struct Response { out: Int; }
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for A {
+    state Init {
+        let f: Fn(Int) -> Int = \(x: Int) -> x + missing_thing;
+        goto Done;
+    }
+    state Done {
+        return Response { out: input.seed };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-3a2: an unresolvable free reference in a lambda fails closed") {
+    // The frontend rejects an unknown name, so this may not even reach Core
+    // lowering; guard with has_value and only assert the Core behavior when it
+    // does (the structured diagnostic is also exercised by hand-built inputs).
+    const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("bc", kBadCaptureSource);
+    if (!ahfl_ir.has_value()) {
+        return;
+    }
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    CHECK(has_lower_code(result, ir::core::diag::kClosureCaptureInvalid));
+    CHECK_FALSE(result.is_executable);
+}
+
 // --- KR6.4 monomorphization Slice 1: instance registry / dispatch identity ---
+
+// FB-3a2: NESTED lambdas lift independently, and the inner closure captures a
+// value the outer closure already captured (a chained env slot). Each
+// construction site gets its own lifted fn; the inner fn's capture slot is an
+// ordinary pre-bound value of the OUTER lifted fn.
+namespace {
+
+const std::string kNestedLambdaSource = R"AHFL(
+module nl;
+
+fn hof(g: Fn(Int) -> Int, x: Int) -> Int effect Pure decreases 0 {
+    return g(x);
+}
+
+fn outer() -> Int effect Pure decreases 0 {
+    let a: Int = 3;
+    let g: Fn(Int) -> Int = \(x: Int) -> hof(\(y: Int) -> y + a + x, x);
+    return g(1);
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-3a2: nested lambdas lift with chained captures") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("nl", kNestedLambdaSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // Two lambda construction sites -> two lifted fns. The outer captures `a`;
+    // the inner captures `a` + `x` as seen from the outer fn's pre-bound scope.
+    const auto lifted_count =
+        std::count_if(result.program.fns.begin(), result.program.fns.end(),
+                      [](const ir::core::CoreFnDecl &fn) {
+                          return fn.name.rfind("_lambda_", 0) == 0;
+                      });
+    CHECK(lifted_count == 2);
+
+    bool inner_found = false;
+    for (const auto &fn : result.program.fns) {
+        if (fn.name.rfind("_lambda_", 0) == 0 && fn.captures.size() == 2) {
+            inner_found = true; // the inner closure sees a + x
+        }
+    }
+    CHECK(inner_found);
+    // The inner lifted fn invokes itself indirectly? It calls h(x) -> one
+    // CoreCallClosureExpr inside one of the lifted fn bodies.
+    bool saw_indirect = false;
+    for (const auto &fn : result.program.fns) {
+        for (const auto &expr : fn.storage.exprs) {
+            if (std::holds_alternative<ir::core::CoreCallClosureExpr>(expr.node)) {
+                saw_indirect = true;
+            }
+        }
+    }
+    CHECK(saw_indirect);
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
 
 namespace {
 // A generic `fn id<T>(x: T) -> T` invoked at Int + a workflow whose agents give

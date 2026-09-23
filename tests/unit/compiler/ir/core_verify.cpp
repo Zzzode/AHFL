@@ -3049,9 +3049,10 @@ struct ClosureProgram {
     g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
     g0.params = {CoreValueId{0}};
     g0.captures = {c.vt_int};
+    g0.env_bindings = {CoreValueId{1}};
     g0.name = "_inst_g0";
-    g0.storage.value_count = 1;
-    g0.storage.value_types = {c.vt_int};
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {c.vt_int, c.vt_int};
     g0.storage.exprs.push_back(
         CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, c.vt_int});
     g0.body.statements.push_back(
@@ -3146,6 +3147,28 @@ TEST_CASE("FB-3a1 verifier: a capture operand of the wrong type fails") {
     auto &call = std::get<CoreCallClosureExpr>(
         c.program.fns[1].storage.exprs[kCallClosureExprIndex].node);
     call.callee = CoreValueId{2};
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureCaptureType));
+}
+
+TEST_CASE("FB-3a2 verifier: env_bindings must parallel the declared captures") {
+    ClosureProgram c = make_good_closure_program();
+    // g0 declares one Int capture and pre-binds one env slot; drop the slot so
+    // the counts disagree.
+    c.program.fns[0].env_bindings.clear();
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureCaptureArity));
+}
+
+TEST_CASE("FB-3a2 verifier: an env slot pre-bound to the wrong type fails") {
+    ClosureProgram c = make_good_closure_program();
+    // g0's storage is {param:Int(v0), env:Int(v1)}; widen it and re-type the env
+    // slot as Bool, disagreeing with the declared Int capture.
+    c.program.fns[0].storage.value_count = 3;
+    c.program.fns[0].storage.value_types = {c.vt_int, c.vt_bool, c.vt_int};
+    c.program.fns[0].env_bindings = {CoreValueId{1}}; // Bool slot vs Int capture
     const auto result = verify_core_program(c.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kClosureCaptureType));

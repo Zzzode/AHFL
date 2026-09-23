@@ -3574,13 +3574,59 @@ class Verifier {
                 }
             }
 
-            // Region walk: params are the initial definitions / visible set; the
-            // body must complete via return on every path, never goto/yield.
+            // FB-3a2 (§3.1.1 D-LIFT): the env capture slots are ALSO pre-bound
+            // body SSA values — one per declared capture, parallel to it, distinct
+            // from every logical parameter and from each other. They carry the
+            // declared slot type so the lifted body reads captures like any other
+            // pre-bound value (the wasm env-pointer / slot-load split is a codegen
+            // concern). An ordinary fn has both lists empty.
+            if (fn.env_bindings.size() != fn.captures.size()) {
+                error(verify::kClosureCaptureArity,
+                      "fn '" + fn.name + "' has " + std::to_string(fn.env_bindings.size()) +
+                          " pre-bound env slot value(s) but declares " +
+                          std::to_string(fn.captures.size()) + " capture slot(s)",
+                      fn.source_range);
+            }
+            for (std::size_t i = 0; i < fn.env_bindings.size() && i < fn.captures.size(); ++i) {
+                const CoreValueId slot = fn.env_bindings[i];
+                if (slot.value >= fn.storage.value_count) {
+                    error(verify::kClosureCaptureArity,
+                          "fn '" + fn.name + "' pre-bound env slot #" + std::to_string(i) +
+                              " value id " + std::to_string(slot.value) + " is out of range",
+                          fn.source_range);
+                    continue;
+                }
+                if (!value_type_slot_ok(fn.storage.value_types[slot.value])) {
+                    error(verify::kClosureCaptureType,
+                          "fn '" + fn.name + "' env slot #" + std::to_string(i) +
+                              " has no concrete materialized value type",
+                          fn.source_range);
+                } else if (!(fn.storage.value_types[slot.value] == fn.captures[i])) {
+                    error(verify::kClosureCaptureType,
+                          "fn '" + fn.name + "' env slot #" + std::to_string(i) +
+                              " pre-bound value type does not match its declared capture type",
+                          fn.source_range);
+                }
+                if (!param_set.insert(slot.value).second) {
+                    error(verify::kClosureCaptureArity,
+                          "fn '" + fn.name + "' binds env slot #" + std::to_string(i) +
+                              " to an SSA value already used by a parameter or another env slot",
+                          fn.source_range);
+                }
+            }
+
+            // Region walk: params AND env slots are the initial definitions /
+            // visible set; the body must complete via return on every path,
+            // never goto/yield.
             std::unordered_set<std::uint32_t> all_definitions;
             std::unordered_set<std::uint32_t> visible;
             for (const CoreValueId param : fn.params) {
                 all_definitions.insert(param.value);
                 visible.insert(param.value);
+            }
+            for (const CoreValueId slot : fn.env_bindings) {
+                all_definitions.insert(slot.value);
+                visible.insert(slot.value);
             }
             const RegionExit re = verify_region(av, /*state_count=*/0, fn.body,
                                                 all_definitions, visible, RegionContext::Fn);
@@ -3723,7 +3769,12 @@ class Verifier {
                 const CoreValueTypeId arg_ty = (*site.arg_types)[arg.value];
                 const CoreValueTypeId param_ty =
                     callee.storage.value_types[callee.params[i].value];
-                if (!(arg_ty == param_ty)) {
+                // D-FNREP (design §3.1.1): a constructed CoreVtClosure{S,_}
+                // passed where the bare signature S is expected is a structural
+                // widening (identical layout, env ignored) — accept it, but never
+                // the reverse narrowing.
+                if (!(arg_ty == param_ty) &&
+                    !callable_argument_widens(arg_ty, param_ty)) {
                     error(verify::kFnCallArgumentTypeMismatch,
                           "call to fn '" + callee.name + "' argument #" + std::to_string(i) +
                               " type does not match the callee parameter type",
@@ -3832,8 +3883,7 @@ class Verifier {
 
     // The CoreVtFn a callable logical type resolves to, or nullptr. A signature
     // type is itself a CoreVtFn; a constructed closure yields its signature.
-    [[nodiscard]] const CoreVtFn *callable_signature(CoreValueTypeId id) const {
-        if (id.value == CoreValueTypeId::kInvalid || id.value >= program_.value_types.size()) {
+    [[nodiscard]] const CoreVtFn *callable_signature(CoreValueTypeId id) const {        if (id.value == CoreValueTypeId::kInvalid || id.value >= program_.value_types.size()) {
             return nullptr;
         }
         const CoreValueTypeNode &node = program_.value_types[id.value].node;
@@ -3848,6 +3898,24 @@ class Verifier {
             return std::get_if<CoreVtFn>(&program_.value_types[sig].node);
         }
         return nullptr;
+    }
+
+    // D-FNREP (design §3.1.1): a constructed CoreVtClosure{S,_} widens for free
+    // to the bare signature S when passed where S is expected (identical 8-byte
+    // layout; the caller ignores env). Fn -> closure narrowing and any other
+    // mismatch return false.
+    [[nodiscard]] bool callable_argument_widens(CoreValueTypeId source,
+                                                CoreValueTypeId target) const {
+        if (source == target) {
+            return true;
+        }
+        if (source.value == CoreValueTypeId::kInvalid ||
+            source.value >= program_.value_types.size()) {
+            return false;
+        }
+        const auto *closure =
+            std::get_if<CoreVtClosure>(&program_.value_types[source.value].node);
+        return closure != nullptr && closure->signature == target;
     }
 
     void verify_closure_construction(const std::string &label, const CoreBodyStorage &storage,
