@@ -6,9 +6,9 @@
 //   * clean build (no macro): the variant rebuilt from the PRODUCTION node list
 //     include/ahfl/compiler/ir/core_expr_nodes.def is static_assert-identical to
 //     ahfl::ir::core::CoreExprNode, and the one-handler-per-node visitor (also
-//     generated from the .def) covers all 10 alternatives, so compilation MUST
+//     generated from the .def) covers all 13 alternatives, so compilation MUST
 //     succeed.
-//   * injected build (-DAHFL_SSOT_INJECT_UNHANDLED_CORE_EXPR): one dummy 11th
+//   * injected build (-DAHFL_SSOT_INJECT_UNHANDLED_CORE_EXPR): one dummy 14th
 //     alternative (SsotUnhandledCoreExpr) is appended to the rebuilt variant
 //     WITHOUT a matching visitor handler, so compilation MUST fail with a
 //     diagnostic that names SsotUnhandledCoreExpr.

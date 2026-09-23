@@ -148,6 +148,23 @@ inline constexpr std::string_view kFnCallArgumentTypeMismatch =
 inline constexpr std::string_view kFnCallResultTypeMismatch =
     "core.verify.FN_CALL_RESULT_TYPE_MISMATCH";
 inline constexpr std::string_view kFnCallEffectfulCallee = "core.verify.FN_CALL_EFFECTFUL_CALLEE";
+// RFC 0026 FB-3a1 (CORE-FNBODY-DESIGN §8.1 #4/#5): closure construction and the
+// indirect closure-value call. Until lambda lifting lands (FB-3a2) these nodes
+// are unreachable from lowering, but every rule is enforced on hand-built /
+// wire-reconstructed artifacts so a malformed partial program cannot slip past
+// the consumption boundary.
+inline constexpr std::string_view kClosureFnInvalid = "core.verify.CLOSURE_FN_INVALID";
+inline constexpr std::string_view kClosureCaptureArity = "core.verify.CLOSURE_CAPTURE_ARITY";
+inline constexpr std::string_view kClosureCaptureType = "core.verify.CLOSURE_CAPTURE_TYPE";
+inline constexpr std::string_view kClosureResultTypeInvalid =
+    "core.verify.CLOSURE_RESULT_TYPE_INVALID";
+inline constexpr std::string_view kClosureDispatchCalleeInvalid =
+    "core.verify.CLOSURE_DISPATCH_CALLEE_INVALID";
+inline constexpr std::string_view kClosureDispatchArity = "core.verify.CLOSURE_DISPATCH_ARITY";
+inline constexpr std::string_view kClosureDispatchArgumentType =
+    "core.verify.CLOSURE_DISPATCH_ARGUMENT_TYPE";
+inline constexpr std::string_view kClosureDispatchResultType =
+    "core.verify.CLOSURE_DISPATCH_RESULT_TYPE";
 // RFC 0026 FB-2 (design §8.1 rule 6): bounded recursion. The FB-1 blanket
 // `FN_RECURSION` rejection was replaced by the structural depth lattice, whose
 // two fail-closed outcomes are the codes below (no finite rank bound / bound

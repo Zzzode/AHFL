@@ -28,6 +28,12 @@ inline constexpr std::string_view kUnsupportedWorkflowFrame = "wasm.UNSUPPORTED_
 inline constexpr std::string_view kBinaryOverflow = "wasm.BINARY_OVERFLOW";
 inline constexpr std::string_view kResourceExhausted = "wasm.RESOURCE_EXHAUSTED";
 inline constexpr std::string_view kInternalInvalid = "wasm.INTERNAL_INVALID";
+// RFC 0026 FB-3a1: the closure value model exists, but funcref table / element
+// segment / call_indirect emission arrives with the FB-3 codegen slice. Until
+// then a CoreClosureExpr / CoreCallClosureExpr in a planned body fails closed
+// with NO artifact (the Core verifier may accept a well-formed one, but it is
+// not executable on this backend yet).
+inline constexpr std::string_view kUnsupportedClosure = "wasm.UNSUPPORTED_CLOSURE";
 } // namespace core_wasm_diag
 
 using CoreWasmEntry = std::variant<ir::core::CoreAgentId, ir::core::CoreWorkflowId>;

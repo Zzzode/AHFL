@@ -601,6 +601,46 @@ struct CoreCallExpr {
                                          const CoreCallExpr &) noexcept = default;
 };
 
+/// Construct a closure value `(fn, env)` (CORE-FNBODY-DESIGN §3.1, RFC 0026
+/// FB-3a1). PURE: the environment operands are already-bound ANF SSA values, so
+/// constructing a closure never hides an effect. `fn` is the monomorphized,
+/// outlined fn body this closure dispatches to (a `CoreFnId` into
+/// `CoreProgram::fns`); `env` are the ordered captured SSA operands in canonical
+/// env-slot order (design §3.2 — explicit capture list in source order, else
+/// first-use DFS order). A zero-`env` closure is how a static fn name passed as a
+/// first-class value is represented (`(table_slot, env_ptr=0)`); there is no
+/// separate fn-ref node. A node's `result_type` is an interned
+/// `CoreVtClosure{ signature, captures }` over the callee fn's concrete
+/// `CoreVtFn` signature, with one `CoreClosureCapture` per `env` slot
+/// (ByValue only, design §3.4); the verifier checks `fn` bounds and the
+/// slot-wise count/type agreement with that declared capture signature. Lambda
+/// lifting, which makes the lowerer emit this node, arrives in FB-3a2.
+struct CoreClosureExpr {
+    CoreFnId fn{};
+    std::vector<CoreValueId> env;
+    [[nodiscard]] friend bool operator==(const CoreClosureExpr &,
+                                         const CoreClosureExpr &) noexcept = default;
+};
+
+/// An indirect call through a first-class closure value
+/// (CORE-FNBODY-DESIGN §5.2, RFC 0026 FB-3a1). PURE, like `CoreCallExpr`:
+/// closures are Pure-only at the type-system layer, so a closure call cannot
+/// hide a capability effect and needs no statement form. `callee` is an
+/// already-bound SSA value whose logical type is a callable — a construction-
+/// site `CoreVtClosure` or a binding-site signature `CoreVtFn` (the D-FNREP
+/// compatibility rule, design §3.1.1: a `CoreVtClosure{S,_}` flows at any
+/// `CoreVtFn{S}` slot); `args` are the ANF operands in left-to-right eval order.
+/// Lowers to `call_indirect`, expecting the shared signature. The node's
+/// `result_type` is the callable signature's concrete fn return value type.
+/// Emission arrives with the FB-3 codegen slice; this slice lands the model,
+/// structural verification, and wire symmetry.
+struct CoreCallClosureExpr {
+    CoreValueId callee{};
+    std::vector<CoreValueId> args;
+    [[nodiscard]] friend bool operator==(const CoreCallClosureExpr &,
+                                         const CoreCallClosureExpr &) noexcept = default;
+};
+
 /// A structurally-preserved but not-yet-lowered PURE expression (e.g. match,
 /// lambda, member-access forms deferred to a later sub-slice). It carries
 /// the source expr kind + range so the Core-IR verifier can reject it if a
@@ -657,7 +697,7 @@ core_expr_node_wire_name(std::size_t variant_index) noexcept {
 // count itself now derives from core_expr_nodes.def; this pin turns "a node was
 // added to the .def" into a deliberate review event across every exhaustive
 // visitor (verify / lower / json).
-static_assert(std::variant_size_v<CoreExprNode> == 11,
+static_assert(std::variant_size_v<CoreExprNode> == 13,
               "ahfl::ir::core::CoreExprNode cardinality drift (RFC 0027 P8 "
               "IR SSOT): update every exhaustive visitor, this pin, and "
               "core_expr_nodes.def together.");
@@ -1290,6 +1330,21 @@ struct CoreFnDecl {
     /// Pre-bound body SSA values for the parameters in declaration order. Their
     /// concrete logical types live in `storage.value_types[param]`.
     std::vector<CoreValueId> params;
+    /// RFC 0026 FB-3a1 (CORE-FNBODY-DESIGN §3.1.1 D-LIFT / §3.2): the DECLARED
+    /// env capture signature of this fn body when it is a lambda-lifted closure
+    /// target — one program-global logical value type per environment slot, in
+    /// canonical env-slot order (explicit capture list in source order, else
+    /// first-use DFS order). The captured SSA values themselves live in the
+    /// CONSTRUCTING body's domain (they become a `CoreClosureExpr.env` operand
+    /// list there), never in this fn's body table, so only their logical types
+    /// are declared here. Empty for an ordinary fn, which may still be wrapped by
+    /// a zero-capture `CoreClosureExpr{fn, {}}` (a static fn taken as a
+    /// first-class value). The verifier checks a `CoreClosureExpr`'s env count,
+    /// per-slot operand types, and `CoreVtClosure` result type against THIS
+    /// declared list — not only against the expr's own result type — so a wire
+    /// artifact cannot forge a self-consistent capture pair. Lambda lifting that
+    /// populates this field arrives in FB-3a2.
+    std::vector<CoreValueTypeId> captures;
     CoreBodyStorage storage;              // the fn body's private SSA domain
     CoreRegion body;                      // single-entry region, completes via return
     std::string name;                     // display only (mangled instance name)

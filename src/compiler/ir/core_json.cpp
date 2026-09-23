@@ -1286,6 +1286,17 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                     }
                 });
             });
+            // FB-3a1: the fn body's DECLARED env capture signature (program-
+            // global logical value types, env-slot order); empty for an ordinary
+            // fn. Mapped through the reader's value-type remap like every other
+            // value-type id.
+            field("captures", [&]() {
+                print_array(indent_level + 1, [&](const auto &c) {
+                    for (const CoreValueTypeId cap : fn.captures) {
+                        c([&]() { write_index(cap.value); });
+                    }
+                });
+            });
             field("value_count", [&]() { write_u32(fn.storage.value_count); });
             field("exprs", [&]() { print_exprs(fn.storage.exprs, indent_level + 1); });
             field("value_types", [&]() {
@@ -1470,6 +1481,26 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                         field("source_kind", [&]() { write_string(n.source_kind); });
                     },
                     [&](const CoreCallExpr &n) {
+                        field("callee", [&]() { write_index(n.callee.value); });
+                        field("args", [&]() {
+                            print_array(indent_level + 1, [&](const auto &arg_item) {
+                                for (const CoreValueId arg : n.args) {
+                                    arg_item([&]() { write_index(arg.value); });
+                                }
+                            });
+                        });
+                    },
+                    [&](const CoreClosureExpr &n) {
+                        field("fn", [&]() { write_index(n.fn.value); });
+                        field("env", [&]() {
+                            print_array(indent_level + 1, [&](const auto &env_item) {
+                                for (const CoreValueId env : n.env) {
+                                    env_item([&]() { write_index(env.value); });
+                                }
+                            });
+                        });
+                    },
+                    [&](const CoreCallClosureExpr &n) {
                         field("callee", [&]() { write_index(n.callee.value); });
                         field("args", [&]() {
                             print_array(indent_level + 1, [&](const auto &arg_item) {
@@ -3746,8 +3777,8 @@ bool CoreJsonReader::read_fns(const JsonValue &array, CoreProgram &program) {
             return false;
         }
         if (!check_fields(*item,
-                          {"id", "instance", "origin", "params", "value_count", "exprs",
-                           "value_types", "coercion_plans", "patterns", "body", "name",
+                          {"id", "instance", "origin", "params", "captures", "value_count",
+                           "exprs", "value_types", "coercion_plans", "patterns", "body", "name",
                            "source_range"},
                           "fn declaration")) {
             return false;
@@ -3781,6 +3812,14 @@ bool CoreJsonReader::read_fns(const JsonValue &array, CoreProgram &program) {
         for (const std::uint32_t param : *params) {
             decl.params.push_back(CoreValueId{param});
         }
+        // FB-3a1: the declared env capture signature is program-global value-type
+        // ids, so they go through the same remap as every other value-type id
+        // (never the body-local req_u32_array path params use).
+        const auto captures = map_value_type_id_array(*item, "captures");
+        if (!captures.has_value()) {
+            return false;
+        }
+        decl.captures = *captures;
         const auto value_count = req_u32(*item, "value_count");
         if (!value_count.has_value()) {
             return false;
@@ -4195,6 +4234,50 @@ bool CoreJsonReader::read_expr(const JsonValue &obj, CoreExpr &out) {
             return false;
         }
         node.callee = CoreInstanceId{*callee};
+        const auto args = req_u32_array(obj, "args");
+        if (!args.has_value()) {
+            return false;
+        }
+        node.args.reserve(args->size());
+        for (const std::uint32_t arg : *args) {
+            node.args.push_back(CoreValueId{arg});
+        }
+        out.node = std::move(node);
+        break;
+    }
+    case 11: { // CoreClosureExpr
+        if (!check_fields(obj, {"kind", "source_range", "result_type", "fn", "env"},
+                          "closure expression")) {
+            return false;
+        }
+        CoreClosureExpr node;
+        const auto fn = req_u32(obj, "fn");
+        if (!fn.has_value()) {
+            return false;
+        }
+        node.fn = CoreFnId{*fn};
+        const auto env = req_u32_array(obj, "env");
+        if (!env.has_value()) {
+            return false;
+        }
+        node.env.reserve(env->size());
+        for (const std::uint32_t slot : *env) {
+            node.env.push_back(CoreValueId{slot});
+        }
+        out.node = std::move(node);
+        break;
+    }
+    case 12: { // CoreCallClosureExpr
+        if (!check_fields(obj, {"kind", "source_range", "result_type", "callee", "args"},
+                          "closure call expression")) {
+            return false;
+        }
+        CoreCallClosureExpr node;
+        const auto callee = req_u32(obj, "callee");
+        if (!callee.has_value()) {
+            return false;
+        }
+        node.callee = CoreValueId{*callee};
         const auto args = req_u32_array(obj, "args");
         if (!args.has_value()) {
             return false;
@@ -4859,7 +4942,7 @@ bool core_program_equal(const CoreProgram &a, const CoreProgram &b) noexcept {
     }
     if (a.types != b.types || a.value_types != b.value_types ||
         a.capabilities != b.capabilities || a.agents != b.agents || a.flows != b.flows ||
-        a.workflows != b.workflows || a.instances != b.instances) {
+        a.workflows != b.workflows || a.instances != b.instances || a.fns != b.fns) {
         return false;
     }
     return true;

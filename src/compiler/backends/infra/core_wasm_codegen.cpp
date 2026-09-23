@@ -34,6 +34,8 @@ using ir::core::CoreBinaryExpr;
 using ir::core::CoreBinaryOp;
 using ir::core::CoreBodyStorage;
 using ir::core::CoreCallExpr;
+using ir::core::CoreCallClosureExpr;
+using ir::core::CoreClosureExpr;
 using ir::core::CoreFnId;
 using ir::core::CoreFnDecl;
 using ir::core::CoreFnInstance;
@@ -1663,6 +1665,21 @@ class P6ComputationHandlerBuilder {
         return false;
     }
 
+    // Fail closed with an EXPLICIT code (used for nodes whose blocker is a
+    // distinct, later slice rather than the generic P6 subset): an unreachable
+    // trap is still emitted so no partial artifact can run, while the diagnostic
+    // names the real gate.
+    [[nodiscard]] bool reject_with_code(std::string_view code, std::string message,
+                                        ir::SourceRangeOpt range) {
+        body_.byte(kOpUnreachable);
+        add_diag(result_,
+                 code,
+                 std::string("RFC 0026 P6 scalar codegen cannot lower body '") +
+                     std::string(state_name_) + "': " + std::move(message),
+                 std::move(range));
+        return false;
+    }
+
     [[nodiscard]] std::optional<P6ScalarKind> scalar_kind(CoreValueTypeId type) const {
         return p6_scalar_kind(program_, layouts_, type);
     }
@@ -2119,6 +2136,23 @@ class P6ComputationHandlerBuilder {
         }
         used_exprs_[id.value] = true;
         const CoreExpr &expr = storage_.exprs[id.value];
+        // FB-3a1: the closure model exists but funcref table / element segment /
+        // call_indirect emission arrives with the FB-3 codegen slice. Reject with
+        // the explicit code BEFORE the P6 scalar gate (a closure's result type is
+        // not a P6 scalar, which would otherwise produce a misleading generic
+        // message).
+        if (std::holds_alternative<CoreClosureExpr>(expr.node)) {
+            return reject_with_code(core_wasm_diag::kUnsupportedClosure,
+                                   "closure construction is not emitted until the funcref table / "
+                                   "env lowering slice (FB-3)",
+                                   expr.source_range);
+        }
+        if (std::holds_alternative<CoreCallClosureExpr>(expr.node)) {
+            return reject_with_code(core_wasm_diag::kUnsupportedClosure,
+                                   "indirect closure call is not emitted until the call_indirect "
+                                   "lowering slice (FB-3)",
+                                   expr.source_range);
+        }
         if (scalar_kind(expr.result_type) == std::nullopt) {
             return reject("scalar expression has a non-scalar or f64 result type",
                           expr.source_range);
@@ -2151,6 +2185,20 @@ class P6ComputationHandlerBuilder {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
                 [&](const CoreCallExpr &c) { return plan_direct_call(c, expr); },
+                // Defensive: both closure nodes already fail closed above, before
+                // the scalar gate; the arms exist so the visit stays exhaustive.
+                [&](const CoreClosureExpr &) {
+                    return reject_with_code(core_wasm_diag::kUnsupportedClosure,
+                                           "closure construction is not emitted until the FB-3 "
+                                           "funcref table slice",
+                                           expr.source_range);
+                },
+                [&](const CoreCallClosureExpr &) {
+                    return reject_with_code(core_wasm_diag::kUnsupportedClosure,
+                                           "indirect closure call is not emitted until the FB-3 "
+                                           "call_indirect slice",
+                                           expr.source_range);
+                },
             },
             expr.node);
     }
@@ -3485,6 +3533,21 @@ class P6ComputationHandlerBuilder {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
                 [&](const CoreCallExpr &c) { return emit_direct_call(c, expr); },
+                // FB-3a1: planning already fails these closed with the explicit
+                // kUnsupportedClosure code; the arms keep the emit visit
+                // exhaustive (defensive, unreachable on a planned body).
+                [&](const CoreClosureExpr &) {
+                    return reject_with_code(core_wasm_diag::kUnsupportedClosure,
+                                           "closure construction is not emitted until the FB-3 "
+                                           "funcref table slice",
+                                           expr.source_range);
+                },
+                [&](const CoreCallClosureExpr &) {
+                    return reject_with_code(core_wasm_diag::kUnsupportedClosure,
+                                           "indirect closure call is not emitted until the FB-3 "
+                                           "call_indirect slice",
+                                           expr.source_range);
+                },
             },
             expr.node);
         return ok;

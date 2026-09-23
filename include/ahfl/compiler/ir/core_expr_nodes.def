@@ -58,5 +58,12 @@ HANDLE_CORE_EXPR_NODE(CoreCoerceExpr, "coerce")
 HANDLE_CORE_EXPR_NODE(CoreCollectionExpr, "collection")
 HANDLE_CORE_EXPR_NODE(CoreUnsupportedExpr, "unsupported")
 HANDLE_CORE_EXPR_NODE(CoreCallExpr, "call")
+// RFC 0026 FB-3a1 (CORE-FNBODY-DESIGN §3.1/§5.2): closure construction and the
+// indirect closure-value call. The data model lands first; lambda lifting (which
+// makes the lowerer emit these) arrives in FB-3a2, so until then the nodes are
+// unreachable from lowering but carry full structural verification + wire
+// symmetry like every other node.
+HANDLE_CORE_EXPR_NODE(CoreClosureExpr, "closure")
+HANDLE_CORE_EXPR_NODE(CoreCallClosureExpr, "call_closure")
 
 #undef HANDLE_CORE_EXPR_NODE

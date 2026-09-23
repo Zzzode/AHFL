@@ -72,6 +72,7 @@ class Verifier {
         verify_value_types();
         verify_instances();
         verify_fns();
+        verify_closures();
         return std::move(diags_);
     }
 
@@ -1111,6 +1112,30 @@ class Verifier {
         }
     }
 
+    // FB-3a1 (design §8.1 #4): per-arena FIELD-SHAPE bounds for a closure
+    // construction — the fn id is a valid CoreFnId and every captured operand is
+    // an in-range SSA value of THIS body. The capture-count / per-slot-type /
+    // result-signature rules need the fn table and run in the program-wide
+    // verify_closures pass (like CoreCallExpr's semantic rules in
+    // verify_fn_call_sites), so an out-of-range id here does not cascade.
+    void verify_closure_expr(const ArenaView &body, const CoreClosureExpr &c,
+                             const CoreExpr &expr) {
+        if (c.fn.value == CoreFnId::kInvalid || c.fn.value >= program_.fns.size()) {
+            error(verify::kClosureFnInvalid,
+                  "closure construction in body '" + body.label +
+                      "' references an out-of-range fn id",
+                  expr.source_range);
+        }
+        for (const CoreValueId env : c.env) {
+            if (env.value >= body.value_count) {
+                error(verify::kValueIdOutOfRange,
+                      "closure capture value id " + std::to_string(env.value) +
+                          " is out of range in body '" + body.label + "'",
+                      expr.source_range);
+            }
+        }
+    }
+
     void verify_expr_arena(const ArenaView &flow) {
         const auto expr_count = static_cast<std::uint32_t>(flow.exprs.size());
         const auto check_expr_id = [&](CoreExprId e, SourceRangeOpt range) {
@@ -1293,6 +1318,16 @@ class Verifier {
                                      u.source_range);
                            },
                            [&](const CoreCallExpr &c) { verify_call_expr(flow, c, expr); },
+                           // FB-3a1: field-shape bounds run with every other expr
+                           // (fn-link / arity / signature rules need the fn table
+                           // and run in the program-wide verify_closures pass).
+                           [&](const CoreClosureExpr &c) { verify_closure_expr(flow, c, expr); },
+                           [&](const CoreCallClosureExpr &c) {
+                               check_value_id(c.callee, expr.source_range);
+                               for (const CoreValueId arg : c.args) {
+                                   check_value_id(arg, expr.source_range);
+                               }
+                           },
                        },
                        expr.node);
         }
@@ -1390,6 +1425,10 @@ class Verifier {
 #define CORE_EXPR_ACYCLIC_CoreCollectionExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_ACYCLIC_CoreUnsupportedExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_ACYCLIC_CoreCallExpr(Name, Wire) [](const Name &) {},
+// FB-3a1: closure construction / indirect closure call reference only SSA
+// values (never intra-arena CoreExprIds), so they carry no acyclic-graph edge.
+#define CORE_EXPR_ACYCLIC_CoreClosureExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_ACYCLIC_CoreCallClosureExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_ACYCLIC_CoreUnaryExpr(Name, Wire)                                                       \
     [&](const Name &u) { push_edge(u.operand); },
 #define CORE_EXPR_ACYCLIC_CoreBinaryExpr(Name, Wire)                                                      \
@@ -1413,6 +1452,8 @@ class Verifier {
 #undef CORE_EXPR_ACYCLIC_CoreCollectionExpr
 #undef CORE_EXPR_ACYCLIC_CoreUnsupportedExpr
 #undef CORE_EXPR_ACYCLIC_CoreCallExpr
+#undef CORE_EXPR_ACYCLIC_CoreClosureExpr
+#undef CORE_EXPR_ACYCLIC_CoreCallClosureExpr
 #undef CORE_EXPR_ACYCLIC_CoreUnaryExpr
 #undef CORE_EXPR_ACYCLIC_CoreBinaryExpr
                 } else {
@@ -2030,6 +2071,19 @@ class Verifier {
                            },
                            [&](const CoreUnsupportedExpr &) {},
                            [&](const CoreCallExpr &c) {
+                               for (const CoreValueId arg : c.args) {
+                                   out.push_back(arg);
+                               }
+                           },
+                           [&](const CoreClosureExpr &c) {
+                               // Captured operands are ordinary SSA uses of the
+                               // CONSTRUCTING body (design §3.2).
+                               for (const CoreValueId env : c.env) {
+                                   out.push_back(env);
+                               }
+                           },
+                           [&](const CoreCallClosureExpr &c) {
+                               out.push_back(c.callee);
                                for (const CoreValueId arg : c.args) {
                                    out.push_back(arg);
                                }
@@ -3035,6 +3089,9 @@ class Verifier {
 #define CORE_EXPR_PATHS_CoreCollectionExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_PATHS_CoreUnsupportedExpr(Name, Wire) [](const Name &) {},
 #define CORE_EXPR_PATHS_CoreCallExpr(Name, Wire) [](const Name &) {},
+// FB-3a1: closure nodes carry SSA values only — no path and no intra-arena edge.
+#define CORE_EXPR_PATHS_CoreClosureExpr(Name, Wire) [](const Name &) {},
+#define CORE_EXPR_PATHS_CoreCallClosureExpr(Name, Wire) [](const Name &) {},
 #define HANDLE_CORE_EXPR_NODE(Name, Wire) CORE_EXPR_PATHS_##Name(Name, Wire)
             std::visit(
                 Overloaded{
@@ -3053,6 +3110,8 @@ class Verifier {
 #undef CORE_EXPR_PATHS_CoreCollectionExpr
 #undef CORE_EXPR_PATHS_CoreUnsupportedExpr
 #undef CORE_EXPR_PATHS_CoreCallExpr
+#undef CORE_EXPR_PATHS_CoreClosureExpr
+#undef CORE_EXPR_PATHS_CoreCallClosureExpr
         }
     }
 
@@ -3713,6 +3772,223 @@ class Verifier {
                   program_.fns[scc.members.front()].source_range);
         }
         static_cast<void>(fn_instances);
+    }
+
+    // --- closure construction / indirect closure call (FB-3a1, design §8.1
+    // #4/#5) ---
+    //
+    // Lambda lifting (FB-3a2) is what makes the lowerer EMIT these nodes, but the
+    // model-level rules are enforced now on every artifact — including hand-built
+    // partial programs and JSON wire round-trips — so a malformed closure can
+    // never cross the consumption boundary. The wasm backend independently fails
+    // closed on these nodes until the FB-3 codegen slice, so accepting a
+    // well-formed one here never enables execution.
+    //
+    // A CoreClosureExpr is well-formed iff:
+    //   * `fn` resolves to an in-table CoreFnDecl;
+    //   * the env operand COUNT equals the callee fn's DECLARED capture
+    //     signature (`CoreFnDecl::captures`, env-slot order);
+    //   * each env operand's logical type equals the declared slot type;
+    //   * the expr's result type is an interned CoreVtClosure whose captures
+    //     match the declared list and whose signature is the callee fn's concrete
+    //     CoreVtFn (params + return).
+    // A CoreCallClosureExpr is well-formed iff its callee value is a callable
+    // (CoreVtFn at a binding site or CoreVtClosure at a construction site), the
+    // arity / argument types match the resolved signature, and its result type is
+    // the signature's return type.
+    void verify_closures() {
+        struct BodyArena {
+            const CoreBodyStorage *storage;
+            std::string label;
+        };
+        std::vector<BodyArena> arenas;
+        for (const CoreFlowDecl &flow : program_.flows) {
+            arenas.push_back({&flow.storage, "flow '" + flow.agent_name + "'"});
+        }
+        for (const CoreWorkflowDecl &wf : program_.workflows) {
+            arenas.push_back({&wf.storage, "workflow '" + wf.name + "'"});
+        }
+        for (const CoreFnDecl &fn : program_.fns) {
+            arenas.push_back({&fn.storage, "fn '" + fn.name + "'"});
+        }
+
+        for (const BodyArena &arena : arenas) {
+            const CoreBodyStorage &storage = *arena.storage;
+            for (const CoreExpr &expr : storage.exprs) {
+                std::visit(
+                    Overloaded{
+                        [&](const CoreClosureExpr &c) {
+                            verify_closure_construction(arena.label, storage, c, expr);
+                        },
+                        [&](const CoreCallClosureExpr &c) {
+                            verify_closure_call(arena.label, storage, c, expr);
+                        },
+                        [](const auto &) {},
+                    },
+                    expr.node);
+            }
+        }
+    }
+
+    // The CoreVtFn a callable logical type resolves to, or nullptr. A signature
+    // type is itself a CoreVtFn; a constructed closure yields its signature.
+    [[nodiscard]] const CoreVtFn *callable_signature(CoreValueTypeId id) const {
+        if (id.value == CoreValueTypeId::kInvalid || id.value >= program_.value_types.size()) {
+            return nullptr;
+        }
+        const CoreValueTypeNode &node = program_.value_types[id.value].node;
+        if (const auto *fn = std::get_if<CoreVtFn>(&node)) {
+            return fn;
+        }
+        if (const auto *closure = std::get_if<CoreVtClosure>(&node)) {
+            const auto sig = closure->signature.value;
+            if (sig == CoreValueTypeId::kInvalid || sig >= program_.value_types.size()) {
+                return nullptr;
+            }
+            return std::get_if<CoreVtFn>(&program_.value_types[sig].node);
+        }
+        return nullptr;
+    }
+
+    void verify_closure_construction(const std::string &label, const CoreBodyStorage &storage,
+                                     const CoreClosureExpr &c, const CoreExpr &expr) {
+        // Field-shape pass (verify_closure_expr) already reports an out-of-range
+        // fn / env id; do not cascade into table lookups here.
+        if (c.fn.value == CoreFnId::kInvalid || c.fn.value >= program_.fns.size()) {
+            return;
+        }
+        const CoreFnDecl &target = program_.fns[c.fn.value];
+        if (c.env.size() != target.captures.size()) {
+            error(verify::kClosureCaptureArity,
+                  "closure construction in body '" + label + "' supplies " +
+                      std::to_string(c.env.size()) + " captured value(s) but fn '" + target.name +
+                      "' declares " + std::to_string(target.captures.size()) +
+                      " environment slot(s)",
+                  expr.source_range);
+        }
+        for (std::size_t i = 0; i < c.env.size() && i < target.captures.size(); ++i) {
+            const CoreValueId operand = c.env[i];
+            if (operand.value >= storage.value_types.size()) {
+                continue; // out-of-range operand reported by the field pass
+            }
+            if (!(storage.value_types[operand.value] == target.captures[i])) {
+                error(verify::kClosureCaptureType,
+                      "closure construction in body '" + label + "' capture slot #" +
+                          std::to_string(i) + " operand type does not match fn '" + target.name +
+                          "' declared capture type",
+                      expr.source_range);
+            }
+        }
+        const auto *closure =
+            std::get_if<CoreVtClosure>(&program_.value_types[expr.result_type.value].node);
+        if (expr.result_type.value == CoreValueTypeId::kInvalid ||
+            expr.result_type.value >= program_.value_types.size() || closure == nullptr) {
+            error(verify::kClosureResultTypeInvalid,
+                  "closure construction in body '" + label +
+                      "' result type is not an interned closure value type",
+                  expr.source_range);
+            return;
+        }
+        const auto sig_id = closure->signature.value;
+        const CoreVtFn *signature = nullptr;
+        if (sig_id != CoreValueTypeId::kInvalid && sig_id < program_.value_types.size()) {
+            signature = std::get_if<CoreVtFn>(&program_.value_types[sig_id].node);
+        }
+        if (signature == nullptr) {
+            error(verify::kClosureResultTypeInvalid,
+                  "closure construction in body '" + label +
+                      "' result closure signature does not resolve to a fn value type",
+                  expr.source_range);
+            return;
+        }
+        if (closure->captures.size() != target.captures.size()) {
+            error(verify::kClosureResultTypeInvalid,
+                  "closure construction in body '" + label + "' result closure carries " +
+                      std::to_string(closure->captures.size()) +
+                      " capture type(s) but fn '" + target.name + "' declares " +
+                      std::to_string(target.captures.size()),
+                  expr.source_range);
+        }
+        for (std::size_t i = 0; i < closure->captures.size() && i < target.captures.size(); ++i) {
+            if (closure->captures[i].mode != CoreCaptureMode::ByValue ||
+                !(closure->captures[i].value_type == target.captures[i])) {
+                error(verify::kClosureResultTypeInvalid,
+                      "closure construction in body '" + label + "' result closure capture slot #" +
+                          std::to_string(i) + " does not match fn '" + target.name +
+                          "' declared capture (ByValue) type",
+                      expr.source_range);
+            }
+        }
+        // The closure signature is the callee fn's CONCRETE signature: params are
+        // the pre-bound params' body types (env is a separate wasm-only first
+        // parameter, never a logical parameter — design §3.1.1 D-LIFT), and the
+        // return type is the type every value-bearing return carries.
+        if (signature->params.size() != target.params.size()) {
+            error(verify::kClosureResultTypeInvalid,
+                  "closure construction in body '" + label +
+                      "' closure signature param count does not match fn '" + target.name + "'",
+                  expr.source_range);
+        }
+        for (std::size_t i = 0; i < signature->params.size() && i < target.params.size(); ++i) {
+            const CoreValueId param = target.params[i];
+            if (param.value >= target.storage.value_types.size() ||
+                !(signature->params[i] == target.storage.value_types[param.value])) {
+                error(verify::kClosureResultTypeInvalid,
+                      "closure construction in body '" + label + "' signature parameter #" +
+                          std::to_string(i) + " type does not match fn '" + target.name +
+                          "' concrete parameter type",
+                      expr.source_range);
+            }
+        }
+        const FnReturnTypeSummary ret = fn_return_summary(target);
+        if (ret.status == FnReturnTypeStatus::Ok && !(signature->ret == *ret.type)) {
+            error(verify::kClosureResultTypeInvalid,
+                  "closure construction in body '" + label +
+                      "' signature return type does not match fn '" + target.name +
+                      "' concrete return type",
+                  expr.source_range);
+        }
+    }
+
+    void verify_closure_call(const std::string &label, const CoreBodyStorage &storage,
+                             const CoreCallClosureExpr &c, const CoreExpr &expr) {
+        if (c.callee.value >= storage.value_types.size()) {
+            return; // out-of-range callee reported by the field-shape pass
+        }
+        const CoreValueTypeId callee_type = storage.value_types[c.callee.value];
+        const CoreVtFn *signature = callable_signature(callee_type);
+        if (signature == nullptr) {
+            error(verify::kClosureDispatchCalleeInvalid,
+                  "closure call in body '" + label +
+                      "' callee value does not have a callable (fn / closure) logical type",
+                  expr.source_range);
+            return;
+        }
+        if (c.args.size() != signature->params.size()) {
+            error(verify::kClosureDispatchArity,
+                  "closure call in body '" + label + "' passes " +
+                      std::to_string(c.args.size()) + " argument(s) but its callable signature has " +
+                      std::to_string(signature->params.size()),
+                  expr.source_range);
+        }
+        for (std::size_t i = 0; i < c.args.size() && i < signature->params.size(); ++i) {
+            const CoreValueId arg = c.args[i];
+            if (arg.value >= storage.value_types.size()) {
+                continue; // out-of-range arg reported by the field pass
+            }
+            if (!(storage.value_types[arg.value] == signature->params[i])) {
+                error(verify::kClosureDispatchArgumentType,
+                      "closure call in body '" + label + "' argument #" + std::to_string(i) +
+                          " type does not match the callable signature parameter type",
+                      expr.source_range);
+            }
+        }
+        if (!(expr.result_type == signature->ret)) {
+            error(verify::kClosureDispatchResultType,
+                  "closure call in body '" + label +
+                      "' result type does not match the callable signature return type",
+                  expr.source_range);
+        }
     }
 
     // The human-readable message for one FB-2 unbounded-recursion finding.

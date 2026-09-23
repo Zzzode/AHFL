@@ -241,7 +241,8 @@ bool operator==(const CoreWorkflowDecl &a, const CoreWorkflowDecl &b) noexcept {
 bool operator==(const CoreFnDecl &a, const CoreFnDecl &b) noexcept {
     return a.id == b.id && a.instance == b.instance &&
            symbol_ref_equal(a.origin, b.origin) && a.params == b.params &&
-           a.storage == b.storage && a.body == b.body && a.name == b.name;
+           a.captures == b.captures && a.storage == b.storage && a.body == b.body &&
+           a.name == b.name;
 }
 
 bool operator==(const CoreInstanceDecl &a, const CoreInstanceDecl &b) noexcept {
