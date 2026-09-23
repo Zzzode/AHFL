@@ -219,7 +219,27 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
         }
         return Skip::None;
     }();
-    if (declared.node_observation_skip != required_skip) {
+    // RFC 0026 FB-3b: a case that RUNS on the wasm orchestration lane but whose
+    // surfaced construct (user-defined pure fn calls / first-class closures)
+    // the in-process evaluator does not yet execute is a deliberate,
+    // manifest-declared node-only observation (KR6.8 retires that evaluator
+    // surface). The compiler-derived emit facts cannot detect the evaluator
+    // gap, so this one skip is the manifest's honest claim; it is still
+    // validated below as being attached to a genuinely RUNNABLE artifact (a
+    // blocked case may not claim it), and the Node runner enforces the exact
+    // set via its pinned census. Every other skip must equal the computed one.
+    const bool declared_node_only =
+        declared.node_observation_skip == Skip::EvaluatorSurfaceAwaitsKr68;
+    if (declared_node_only) {
+        if (verdict != WasmEligibilityVerdict::RunnableOrchestration) {
+            return "manifest declares engines.wasm.node_observation_skip="
+                   "'evaluator_surface_awaits_kr68' but the module does not emit on the "
+                   "orchestration lane (" +
+                   std::string{wasm_eligibility_verdict_name(verdict)} +
+                   ": " + computed.reason +
+                   ") -- a node-only observation requires a runnable artifact";
+        }
+    } else if (declared.node_observation_skip != required_skip) {
         return "manifest's engines.wasm.node_observation_skip declaration does not match the "
                "computed emit outcome (verdict " +
                std::string{wasm_eligibility_verdict_name(verdict)} + ", frame_contract " +

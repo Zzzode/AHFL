@@ -1,0 +1,55 @@
+// RFC 0026 FB-3b (CORE-FNBODY-DESIGN §6.3): closure environments allocated by
+// separate (including recursive / outlined) activations must NEVER alias —
+// the 7d6e7224 per-activation aggregate-heap P0 class applied to closures.
+//
+// `step_sum(n, acc)` recurses n->1. Every activation constructs a FRESH
+// capturing closure `add = \x -> x + n` whose env is bumped from the module
+// arena at run time (NOT compile-time static scratch), applies it indirectly
+// to the running accumulator, and recurses. The activation tree sums
+// 4+3+2+1 = 10. If two recursive activations reused one env slot, the
+// captured rank `n` would collapse to a single value and the sum would no
+// longer be 10, routing the computed goto to Fail. This is a pure wasm-lane
+// property (the native evaluator does not execute outlined user fns yet).
+module wasm::fb3_nested_activation;
+
+pub struct Frame {
+    value: Int;
+}
+
+fn step_sum(n: Int, acc: Int) -> Int {
+    let add: Fn(Int) -> Int = \x -> x + n;
+    let acc2: Int = add(acc);
+    if n <= 1 {
+        return acc2;
+    }
+    return step_sum(n - 1, acc2);
+}
+
+pub agent NestedActivationAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for NestedActivationAgent {
+    state Init {
+        let total: Int = step_sum(4, 0);
+        if total == 10 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

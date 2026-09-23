@@ -1,0 +1,50 @@
+// RFC 0026 FB-3b (CORE-FNBODY-DESIGN §5.2 / §6.2): a higher-order lambda
+// actually executes through `call_indirect` under Node.
+//
+// The non-final Init handler constructs a lifted lambda `\x -> x * 2`, passes
+// it to the PURE fn `apply(f, x)` whose FnT parameter is an eight-byte
+// closure, and observes the scalar result. Inside `apply` the call on the
+// callable VALUE is a CoreCallClosureExpr, which lowers to
+// call_indirect against the single funcref table (the lifted fn is the
+// table's only element). A wrong funcref-table slot, a wrong call_indirect
+// expected functype, or a missing env-first argument traps or returns a value
+// that routes the computed goto to Fail instead of Done. The input frame is
+// never read; observation is purely through the state-id path.
+module wasm::fb3_higher_order;
+
+pub struct Frame {
+    value: Int;
+}
+
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
+    return f(x);
+}
+
+pub agent HigherOrderAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for HigherOrderAgent {
+    state Init {
+        let r: Int = apply(\x -> x * 2, 21);
+        if r == 42 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

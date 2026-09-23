@@ -206,6 +206,68 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 FB-3b (CORE-FNBODY-DESIGN §5.2/§6.2): a higher-order lambda is
+    # constructed and invoked through call_indirect against the funcref table;
+    # the module carries Table(4)/Element(9) and the indirect result routes the
+    # computed goto to Done. Real Node-engine evidence (not wasmtime).
+    add_test(NAME ahfl.wasm.fb3_higher_order_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_higher_order_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.fb3_higher_order_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-3 higher-order lambda call_indirect Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
+    # RFC 0026 FB-3b (§3.4 ByValue): two distinct capturing closures must keep
+    # separate construction-time snapshot envs (11 and 21), proving ByValue
+    # isolation with no shared env. Real Node-engine evidence.
+    add_test(NAME ahfl.wasm.fb3_byvalue_capture_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_byvalue_capture_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.fb3_byvalue_capture_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-3 ByValue capture isolation Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
+    # RFC 0026 FB-3b (§8 / §6.3): a recursive fn over a BOUNDED collection
+    # constructs a fresh lifted lambda each activation and invokes it
+    # indirectly, respecting the FB-2 depth sealed by the list length word.
+    # Real Node-engine evidence.
+    add_test(NAME ahfl.wasm.fb3_bounded_collection_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_bounded_collection_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.fb3_bounded_collection_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-3 bounded-collection recursive closure Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
+    # RFC 0026 FB-3b (§6.3): closure envs bumped across recursive activations
+    # must never alias (the 7d6e7224 per-activation-heap P0 class applied to
+    # closures); the captured ranks sum 4+3+2+1=10. Real Node-engine evidence.
+    add_test(NAME ahfl.wasm.fb3_nested_activation_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_nested_activation_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.fb3_nested_activation_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-3 nested-activation closure-env no-alias Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 FB-2 fix-forward: a structurally correct rank guard does NOT
     # seal recursion unless every recursive edge is on its continue path. Both
     # a self call before the guard and one inside the divergent stop (THEN)

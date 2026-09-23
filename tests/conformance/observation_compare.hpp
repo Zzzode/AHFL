@@ -23,7 +23,6 @@
 
 #include "base/json/json_value.hpp"
 #include "conformance/conformance_case.hpp"
-
 namespace ahfl::conformance {
 
 namespace detail {
@@ -155,6 +154,104 @@ observations_agree(std::string_view evaluator_observation_json,
     }
     if (auto divergence = detail::compare_output(ev, nd); divergence.has_value()) {
         return divergence;
+    }
+    return std::nullopt;
+}
+
+/// RFC 0026 FB-3b node-only lane: when no in-process evaluator reference exists
+/// (the surfaced pure-fn / first-class-closure construct awaits KR6.8), the
+/// Node embedded-engine observation is checked DIRECTLY against the manifest's
+/// blessed expectation: terminal run status, the declaration-order state
+/// sequence (state names only), the capability sequence, and the canonical
+/// output JSON. Returns an empty optional on agreement, else a reason.
+[[nodiscard]] inline std::optional<std::string>
+node_observation_matches_expectation(const CaseExpectations &expect,
+                                     std::string_view node_observation_json) {
+    auto node_dom = json::parse_json(node_observation_json);
+    if (!node_dom.has_value() || !*node_dom || !(*node_dom)->is_object()) {
+        return "node observation is not a JSON object";
+    }
+    const json::JsonValue &nd = **node_dom;
+
+    const char *expected_status = "completed";
+    switch (expect.run_status) {
+    case ExpectedRunStatus::Completed:
+        expected_status = "completed";
+        break;
+    case ExpectedRunStatus::Suspended:
+        expected_status = "suspended";
+        break;
+    case ExpectedRunStatus::Failed:
+        expected_status = "failed";
+        break;
+    }
+    if (const auto *b = nd.get("status"); b == nullptr || b->as_string() == std::nullopt) {
+        return "node observation has no status";
+    }
+    if (*nd.get("status")->as_string() != expected_status) {
+        return "run status diverged (expected '" + std::string{expected_status} + "', node '" +
+               std::string{*nd.get("status")->as_string()} + "')";
+    }
+
+    // state_sequence: the Node document is an array of {agent,state} objects;
+    // compare the STATE names in order against the blessed declaration order.
+    const auto *node_states = nd.get("state_sequence");
+    if (node_states == nullptr || !node_states->is_array()) {
+        return "node observation has no state_sequence array";
+    }
+    if (node_states->array_items.size() != expect.state_sequence.size()) {
+        return "state_sequence length diverged (expected " +
+               std::to_string(expect.state_sequence.size()) + ", node " +
+               std::to_string(node_states->array_items.size()) + ")";
+    }
+    for (std::size_t i = 0; i < expect.state_sequence.size(); ++i) {
+        const auto *entry = node_states->array_items[i].get();
+        if (entry == nullptr) {
+            return "state_sequence entry is null";
+        }
+        const auto *state = entry->get("state");
+        if (state == nullptr || state->as_string() == std::nullopt) {
+            return "state_sequence entry has no state";
+        }
+        if (*state->as_string() != expect.state_sequence[i]) {
+            return "state_sequence[" + std::to_string(i) + "] diverged (expected '" +
+                   expect.state_sequence[i] + "', node '" +
+                   std::string{*state->as_string()} + "')";
+        }
+    }
+
+    // capability_sequence: a plain array of canonical names.
+    {
+        json::JsonValue expected_caps;
+        expected_caps.kind = json::Kind::Array;
+        for (const std::string &cap : expect.capability_sequence) {
+            expected_caps.array_items.push_back(json::JsonValue::make_string(cap));
+        }
+        if (auto divergence = detail::compare_string_array(
+                expected_caps, *nd.get("capability_sequence"), "capability_sequence");
+            divergence.has_value()) {
+            return divergence;
+        }
+    }
+
+    // output_json: canonical re-serialize comparison (or both absent).
+    if (expect.output_json.has_value()) {
+        auto expected_dom = json::parse_json(*expect.output_json);
+        if (!expected_dom.has_value() || !*expected_dom) {
+            return "blessed output_json is not a JSON value";
+        }
+        const auto *node_output = nd.get("output_json");
+        if (node_output == nullptr) {
+            return "node observation produced no output_json but one was expected";
+        }
+        const std::string expected_bytes = detail::canonical_json(**expected_dom);
+        const std::string node_bytes = detail::canonical_json(*node_output);
+        if (expected_bytes != node_bytes) {
+            return "output_json diverged:\n  expected: " + expected_bytes +
+                   "\n  node:     " + node_bytes;
+        }
+    } else if (nd.get("output_json") != nullptr) {
+        return "node observation produced output_json but none was expected";
     }
     return std::nullopt;
 }

@@ -247,6 +247,17 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
             WasmNodeObservationSkip::RawP6FrameAwaitsP67,
         },
+        // RFC 0026 FB-3b: higher-order lambda / call_indirect. Emits on the
+        // orchestration lane with the funcref table; the in-process evaluator
+        // has no user-fn / closure surface yet (node-only until KR6.8).
+        {
+            "fb3_higher_order.case.json",
+            "tests/golden/wasm/fb3_higher_order.ahfl",
+            CaseKind::Agent,
+            "wasm::fb3_higher_order::HigherOrderAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";

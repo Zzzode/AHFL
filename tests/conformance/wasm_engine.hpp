@@ -40,6 +40,10 @@ enum class WasmProduceSkip {
     /// The module emits, but a handler projects the raw P4-D input frame; a
     /// canonical wire-JSON output observation awaits the P6-7 frame decision.
     RawP6FrameAwaitsP67,
+    /// The module emits and runs, but the surfaced construct (user-defined
+    /// pure fn calls / first-class closures) has no in-process evaluator
+    /// reference yet; the Node run is authoritative (evaluator retires KR6.8).
+    EvaluatorSurfaceAwaitsKr68,
 };
 
 struct WasmProduceResult {

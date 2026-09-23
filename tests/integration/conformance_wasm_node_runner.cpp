@@ -59,7 +59,7 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // skip set is manifest-declared per case AND counted here, so neither a
 // codegen flag flip nor a manifest-only drift can silently move a case between
 // the compared and skipped sets while ctest stays green.
-constexpr int kExpectedAgreed = 13;
+constexpr int kExpectedAgreed = 14;
 constexpr int kExpectedSkipped = 7;
 
 int g_failures = 0;
@@ -375,8 +375,13 @@ int run_one(const CaseEntry &entry,
 
     // The module emitted. A manifest that declares a Node-observation skip for a
     // case that actually produces a comparable module is a stale skip claim --
-    // fail before running the Node host so neither outcome can mask it.
-    if (declared_skip != WasmNodeObservationSkip::None) {
+    // fail before running the Node host so neither outcome can mask it. The one
+    // exception is the FB-3b node-only lane (EvaluatorSurfaceAwaitsKr68): the
+    // module runs, but there is no evaluator reference, so the Node observation
+    // is compared directly against the manifest's blessed expectation below.
+    const bool node_only =
+        declared_skip == WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
+    if (declared_skip != WasmNodeObservationSkip::None && !node_only) {
         std::cerr << "FAIL: " << label
                   << " emits a comparable module but its manifest declares a "
                      "engines.wasm.node_observation_skip expectation; the skip did not "
@@ -384,14 +389,27 @@ int run_one(const CaseEntry &entry,
         ++g_failures;
         return 1;
     }
-
-    // The evaluator observation is the differential reference.
-    const auto evaluator = run_evaluator_scenario(entry.loaded, scenario);
-    if (!evaluator.ok) {
-        std::cerr << "ERROR: evaluator run failed for " << label << ":\n"
-                  << evaluator.error << "\n";
+    if (node_only && produced.skip != WasmProduceSkip::EvaluatorSurfaceAwaitsKr68) {
+        std::cerr << "FAIL: " << label
+                  << " declares the node-only KR6.8 lane but the producer did not return that "
+                     "structured skip\n";
         ++g_failures;
         return 1;
+    }
+
+    // The evaluator observation is the differential reference, EXCEPT on the
+    // FB-3b node-only lane (the surfaced pure-fn/closure construct has no
+    // evaluator yet); there the manifest's blessed expectation is the reference.
+    std::optional<std::string> evaluator_observation;
+    if (!node_only) {
+        const auto evaluator = run_evaluator_scenario(entry.loaded, scenario);
+        if (!evaluator.ok) {
+            std::cerr << "ERROR: evaluator run failed for " << label << ":\n"
+                      << evaluator.error << "\n";
+            ++g_failures;
+            return 1;
+        }
+        evaluator_observation = evaluator.observation_json;
     }
 
     const fs::path case_scratch = scratch_dir / stem;
@@ -439,12 +457,30 @@ int run_one(const CaseEntry &entry,
         return 1;
     }
 
+    if (node_only) {
+        // No evaluator reference exists: assert the Node observation against
+        // the manifest's blessed expectation (status + state/capability/output).
+        const auto divergence = ahfl::conformance::node_observation_matches_expectation(
+            scenario.expect, *node_observation);
+        if (divergence.has_value()) {
+            std::cerr << "FAIL: node-only expectation mismatch for " << label << ":\n  "
+                      << *divergence << "\n--- node ---\n" << *node_observation << "\n";
+            ++g_failures;
+            return 1;
+        }
+        ++g_compared;
+        std::cout << "OK: " << label
+                  << " Node embedded-engine observation matched the blessed manifest expectation "
+                     "(node-only FB-3b lane; evaluator surface awaits KR6.8; NOT wasmtime)\n";
+        return 0;
+    }
+
     const auto divergence =
-        ahfl::conformance::observations_agree(evaluator.observation_json, *node_observation);
+        ahfl::conformance::observations_agree(*evaluator_observation, *node_observation);
     if (divergence.has_value()) {
         std::cerr << "FAIL: evaluator-vs-Node differential for " << label << ":\n  " << *divergence
                   << "\n--- evaluator ---\n"
-                  << evaluator.observation_json << "\n--- node ---\n"
+                  << *evaluator_observation << "\n--- node ---\n"
                   << *node_observation;
         if (!node_run.stderr_text.empty()) {
             std::cerr << "\n--- node stderr ---\n" << node_run.stderr_text;

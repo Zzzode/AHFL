@@ -201,6 +201,11 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          CoreWasmFrameContract::RawP6Frame},
         {"p6_collection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
          CoreWasmFrameContract::RawP6Frame},
+        // RFC 0026 FB-3b: a higher-order lambda / call_indirect program emits
+        // cleanly on the orchestration lane (funcref table + closure env). Its
+        // node-only observation (no evaluator reference until KR6.8) is a
+        // manifest-pinned skip cross-checked separately by the Node runner.
+        {"fb3_higher_order.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);

@@ -1,0 +1,65 @@
+// RFC 0026 FB-3b (CORE-FNBODY-DESIGN §6.3 / §8 FB-2 depth): a closure over a
+// BOUNDED collection is invoked by a recursive lifted fn, respecting the FB-2
+// bounded recursion depth.
+//
+// `map_sum_into` recurses over a `List<Int>(4)` with the compile-time rank
+// parameter `i` (the FB-2 lattice seals the depth against the bounded
+// container length word). Every activation constructs a FRESH zero-capture
+// lifted lambda `twice = \x -> x * 2` and invokes it via call_indirect on the
+// current element. The lifted fn is in the funcref table; recursion stays
+// native `call`. The sum of twice the LIVE elements (90, 1) is 182, so a
+// wrong rank progression, a stale call_indirect slot, or an env/depth defect
+// routes the computed goto to Fail. The host materializes a two-element live
+// list in the bounded backing store (length 2, two poisoned tail slots).
+module std::collections;
+
+pub struct List<T> { }
+
+@builtin("list_raw_get")
+fn list_raw_get<T>(xs: List<T>, i: Int) -> T effect Pure;
+
+@builtin("list_raw_length")
+fn list_raw_length<T>(xs: List<T>) -> Int effect Pure;
+
+pub struct Frame {
+    items: List<Int>(4);
+}
+
+fn map_sum_into(xs: List<Int>(4), i: Int, acc: Int) -> Int effect Pure
+    decreases list_raw_length<Int>(xs) - i {
+    if i >= list_raw_length<Int>(xs) {
+        return acc;
+    }
+    let twice: Fn(Int) -> Int = \x -> x * 2;
+    let doubled: Int = twice(list_raw_get<Int>(xs, i));
+    return map_sum_into(xs, i + 1, acc + doubled);
+}
+
+pub agent BoundedClosureAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for BoundedClosureAgent {
+    state Init {
+        let total: Int = map_sum_into(input.items, 0, 0);
+        if total == 182 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

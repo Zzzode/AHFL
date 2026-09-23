@@ -133,6 +133,12 @@ enum class WasmNodeObservationSkip {
     /// The emit path rejects the case at a KR6.6 computation-lane seam, so no
     /// Node module exists to observe.
     BlockedOnKr66,
+    /// The module emits and runs, but the in-process evaluator does not yet
+    /// execute the surfaced construct (user-defined pure direct fn calls /
+    /// first-class closures), so there is no evaluator reference to
+    /// differential against. The Node embedded-engine run is the
+    /// authoritative evidence; that evaluator surface retires with KR6.8.
+    EvaluatorSurfaceAwaitsKr68,
 };
 
 struct WasmEngineEligibility {
@@ -1074,8 +1080,12 @@ class ConformanceCaseReader {
         if (*value == "blocked_kr66") {
             return WasmNodeObservationSkip::BlockedOnKr66;
         }
+        if (*value == "evaluator_surface_awaits_kr68") {
+            return WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
+        }
         error("conformance case field 'engines.wasm.node_observation_skip' must be 'none', "
-              "'raw_p6_frame_awaits_p67', or 'blocked_kr66', got '" +
+              "'raw_p6_frame_awaits_p67', 'blocked_kr66', or "
+              "'evaluator_surface_awaits_kr68', got '" +
                   *value + "'",
               range_of(node));
         return std::nullopt;

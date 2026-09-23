@@ -1,0 +1,53 @@
+// RFC 0026 FB-3b (CORE-FNBODY-DESIGN §3.4 ByValue): captured values are a
+// construction-time SNAPSHOT and distinct closures never share an env.
+//
+// Init binds two Ints `a = 10` and `b = 20`, builds two capturing closures
+// `fa = \x -> x + a` and `fb = \x -> x + b`, and applies each indirectly via
+// `apply`. Each closure's env is a separate runtime-bumped aggregate: a
+// ByValue aliasing defect (two closures pointing at the same env slot, or an
+// env overwritten by the second construction) would make `fa(1)`/`fb(1)`
+// disagree with 11 / 21 and route the computed goto to Fail. Observable
+// purely through state ids.
+module wasm::fb3_byvalue_capture;
+
+pub struct Frame {
+    value: Int;
+}
+
+fn apply(f: Fn(Int) -> Int, x: Int) -> Int {
+    return f(x);
+}
+
+pub agent ByValueCaptureAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for ByValueCaptureAgent {
+    state Init {
+        let a: Int = 10;
+        let b: Int = 20;
+        let fa: Fn(Int) -> Int = \x -> x + a;
+        let fb: Fn(Int) -> Int = \x -> x + b;
+        let ra: Int = apply(fa, 1);
+        let rb: Int = apply(fb, 1);
+        if ra == 11 && rb == 21 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}
