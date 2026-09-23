@@ -18,6 +18,7 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -123,10 +124,21 @@ constexpr std::uint8_t kSectionCustom = 0;
 constexpr std::uint8_t kSectionType = 1;
 constexpr std::uint8_t kSectionImport = 2;
 constexpr std::uint8_t kSectionFunction = 3;
+// RFC 0026 FB-3b (CORE-FNBODY-DESIGN §6.2): exactly one funcref table is
+// declared when (and only when) the module constructs a first-class closure.
+// The wasm section order is by non-decreasing section id, so Table(4) sits
+// uniquely between Function(3) and Memory(5); there is no "either side"
+// freedom.
+constexpr std::uint8_t kSectionTable = 4;
 constexpr std::uint8_t kSectionMemory = 5;
 constexpr std::uint8_t kSectionGlobal = 6;
 constexpr std::uint8_t kSectionExport = 7;
+// Element(9) sits uniquely between Export(7) and Code(10). It carries the
+// active funcref initializers table[0..N) -> wasm funcidx.
+constexpr std::uint8_t kSectionElement = 9;
 constexpr std::uint8_t kSectionCode = 10;
+// The funcref reftype encoding (wasm spec reftype space).
+constexpr std::uint8_t kFuncRefType = 0x70;
 
 // RFC 0026 E4-B1 wire-schema transport (seam doc §3.1): the deterministic
 // logical wire schema for reachable capability imports rides in a single Wasm
@@ -169,6 +181,10 @@ constexpr std::uint8_t kOpBr = 0x0c;
 constexpr std::uint8_t kOpBrIf = 0x0d;
 constexpr std::uint8_t kOpReturn = 0x0f;
 constexpr std::uint8_t kOpCall = 0x10;
+// RFC 0026 FB-3b (§5.2 / §6.2): an indirect call through the funcref table.
+// Encoding is the opcode, the expected typeidx (ULEB), then the tableidx (0;
+// the module declares exactly one funcref table).
+constexpr std::uint8_t kOpCallIndirect = 0x11;
 constexpr std::uint8_t kOpDrop = 0x1a;
 constexpr std::uint8_t kOpLocalGet = 0x20;
 constexpr std::uint8_t kOpLocalSet = 0x21;
@@ -305,6 +321,30 @@ struct CompiledHandler {
 // builder (which owns the planning/emission that fills one).
 struct CompiledFn;
 
+// FB-3b: one call_indirect expected functype, expressed as flat wasm value-type
+// bytes. `params` already includes the leading env i32 and expands every
+// closure argument to its two i32 words; `result` is a single word (a closure
+// result needs multi-value return and is fail-closed in this slice). Structural
+// equality (never name identity) is all wasm call_indirect checks, so the
+// per-call-site descriptor and the callee fn's own functype match byte shape.
+struct ClosureCallType {
+    std::vector<std::uint8_t> params;
+    std::uint8_t result{kI32};
+    [[nodiscard]] friend bool operator==(const ClosureCallType &,
+                                         const ClosureCallType &) noexcept = default;
+};
+
+// Stable structural key for a call_indirect functype: the flat param type bytes
+// (env + args, closures expanded to two i32) followed by the result byte.
+[[nodiscard]] inline std::string
+closure_call_type_key(const ClosureCallType &t) {
+    std::string key;
+    key.reserve(t.params.size() + 1);
+    key.append(reinterpret_cast<const char *>(t.params.data()), t.params.size());
+    key.push_back(static_cast<char>(t.result));
+    return key;
+}
+
 struct AgentPlan {
     CoreAgentId agent{};
     CoreStateId initial{};
@@ -331,6 +371,19 @@ struct AgentPlan {
     // legacy initial heap (kNodeEventLogBase) and byte-identical modules.
     bool construct_heap_enabled{false};
     std::uint32_t construct_heap_base{0};
+    // RFC 0026 FB-3b (CORE-FNBODY-DESIGN §6.2): the funcref table content, in
+    // DENSE table-slot order (slot == vector index). Every entry is the
+    // CoreFnId of a reachable fn whose address is taken by a CoreClosureExpr
+    // (a lifted lambda or a zero-capture static-fn reference). Empty for a
+    // closure-free module, which then omits BOTH the Table(4) and Element(9)
+    // sections and stays byte-identical.
+    std::vector<CoreFnId> closure_table;
+    // FB-3b: the deduplicated call_indirect expected functypes beyond the five
+    // fixed ABI types and the per-fn types (which occupy type indices
+    // 5 .. 5+fns-1). Index i here is type index (5 + fns.size() + i). Each
+    // descriptor is the full functype (params already prefixed by the env i32
+    // and with closure args expanded to two i32 words).
+    std::vector<ClosureCallType> closure_signatures;
 };
 
 struct AgentPlanPolicy {
@@ -870,7 +923,17 @@ enum class P6ScalarKind {
     // write) touches one, and every backing fact (element layout, stride,
     // capacity, Map value offset, checked backing size) comes from that
     // `CoreLayoutContainer`, never re-derived.
-    Collection
+    Collection,
+    // RFC 0026 FB-3b (CORE-FNBODY-DESIGN §3.1.1 D-FNREP): a first-class CALLABLE
+    // value. Its whole runtime representation is the eight-byte
+    // `(func_index:i32 @0, env_ptr:i32 @4)` word pair (P4-D
+    // `CoreLayoutClosure`): an i32 dense funcref-table slot plus the i32 address
+    // of the captured environment aggregate (0 for a zero-capture closure). It
+    // is TWO i32 words, so it can never flow through a one-word local or a
+    // scalar/aggregate slot; only `CoreClosureExpr` (constructor),
+    // `CoreCallClosureExpr` (indirect call), and a callable parameter / binding
+    // touch it.
+    Closure
 };
 
 // The location in the scrutinee a pattern is tested at (RFC 0026 P6-4). The root
@@ -897,6 +960,63 @@ struct P6PatternSite {
         return nullptr;
     }
     return &layouts.layouts[layout_id.value];
+}
+
+// FB-3b: the P4-D environment aggregate LAYOUT of a lifted fn's closure type —
+// the indirect edge off its CoreLayoutClosure — located through the hash-consed
+// CoreVtClosure whose ordered capture types equal `fn.captures`. The returned
+// layout's shape is a CoreLayoutStruct (field offsets/sizes) and `size` gives
+// the aggregate's byte extent. Null for an ordinary / zero-capture fn.
+[[nodiscard]] const ir::core::CoreLayout *
+p6_closure_environment_layout(const CoreProgram &program,
+                              const ir::core::CoreLayoutTable &layouts,
+                              const CoreFnDecl &fn) {
+    if (fn.captures.empty()) {
+        return nullptr;
+    }
+    for (std::uint32_t i = 0; i < program.value_types.size(); ++i) {
+        const auto *closure =
+            std::get_if<ir::core::CoreVtClosure>(&program.value_types[i].node);
+        if (closure == nullptr || closure->captures.size() != fn.captures.size()) {
+            continue;
+        }
+        bool matches = true;
+        for (std::uint32_t s = 0; s < fn.captures.size(); ++s) {
+            if (closure->captures[s].value_type != fn.captures[s]) {
+                matches = false;
+                break;
+            }
+        }
+        if (!matches || i >= layouts.value_layouts.size()) {
+            continue;
+        }
+        const CoreLayoutId closure_layout_id = layouts.value_layouts[i];
+        if (closure_layout_id.value >= layouts.layouts.size()) {
+            continue;
+        }
+        const auto *shape = std::get_if<ir::core::CoreLayoutClosure>(
+            &layouts.layouts[closure_layout_id.value].shape);
+        if (shape == nullptr || !shape->environment.has_value()) {
+            continue;
+        }
+        const CoreLayoutId env_id = *shape->environment;
+        if (env_id.value >= layouts.layouts.size()) {
+            continue;
+        }
+        const ir::core::CoreLayout &env_layout = layouts.layouts[env_id.value];
+        if (std::holds_alternative<ir::core::CoreLayoutStruct>(env_layout.shape)) {
+            return &env_layout;
+        }
+    }
+    return nullptr;
+}
+
+// Struct-shape accessor over the env layout above.
+[[nodiscard]] const ir::core::CoreLayoutStruct *
+p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
+    return env_layout == nullptr
+               ? nullptr
+               : std::get_if<ir::core::CoreLayoutStruct>(&env_layout->shape);
 }
 
 // The P4-D CONTAINER layout of a BOUNDED collection value type, or null. A
@@ -1065,6 +1185,15 @@ struct P6PatternSite {
     const CoreLayoutId layout_id = layouts.value_layouts[type.value];
     if (layout_id.value >= layouts.layouts.size()) {
         return std::nullopt;
+    }
+    // RFC 0026 FB-3b (D-FNREP): BOTH the signature type `CoreVtFn` (a
+    // callable parameter / binding slot) and `CoreVtClosure` (a construction
+    // site) share the eight-byte `CoreLayoutClosure` word pair. It is a
+    // first-class P6 value but a TWO-word one, so it gets its own kind and can
+    // never be mistaken for a scalar or an aggregate address.
+    if (std::holds_alternative<ir::core::CoreLayoutClosure>(
+            layouts.layouts[layout_id.value].shape)) {
+        return P6ScalarKind::Closure;
     }
     const auto *scalar =
         std::get_if<ir::core::CoreLayoutScalar>(&layouts.layouts[layout_id.value].shape);
@@ -1414,6 +1543,61 @@ class P6ComputationHandlerBuilder {
         return dynamic_construct_bytes_;
     }
 
+    // FB-3b: bind ONE pre-bound environment slot of a lifted fn. It is an
+    // ordinary bound local of `kind` (a pair for a nested-closure capture),
+    // populated at fn entry by an i32.load/i64.load from the env pointer
+    // (wasm local 0) at `offset`. Env slots never appear in the logical
+    // functype parameters, so they consume declared-local pool slots rather
+    // than parameter ordinals; the entry loads run before the region.
+    [[nodiscard]] bool
+    bind_env_binding(CoreValueId value, std::uint32_t offset, P6ScalarKind kind) {
+        if (value.value >= locals_.size() || locals_[value.value].bound) {
+            return false;
+        }
+        LocalInfo &info = locals_[value.value];
+        info.bound = true;
+        info.kind = kind;
+        if (kind == P6ScalarKind::IntI64) {
+            info.slot = i64_count_++;
+        } else {
+            info.slot = i32_count_++;
+            if (kind == P6ScalarKind::Closure) {
+                info.is_word_pair = true;
+                ++i32_count_;
+            }
+        }
+        EnvBindingInit init;
+        init.value = value;
+        init.offset = offset;
+        init.wide = kind == P6ScalarKind::IntI64;
+        init.pair = kind == P6ScalarKind::Closure;
+        env_binding_inits_.push_back(init);
+        used_values_[value.value] = true;
+        return true;
+    }
+
+    // FB-3b: funcref-table facts the module driver unions across bodies.
+    [[nodiscard]] const std::vector<CoreFnId> &closure_targets() const noexcept {
+        return closure_targets_;
+    }
+    [[nodiscard]] const std::vector<ClosureCallType> &closure_call_types() const noexcept {
+        return closure_call_types_;
+    }
+    [[nodiscard]] std::uint32_t closure_env_bytes() const noexcept {
+        return closure_env_bytes_;
+    }
+
+    // FB-3b: install the finalized funcref-table slots and call_indirect type
+    // indices. Called after every reachable body was planned and before
+    // emit().
+    void install_closure_tables(
+        const std::unordered_map<std::uint32_t, std::uint32_t> &fn_to_table_slot,
+        std::unordered_map<std::string, std::uint32_t> closure_type_index) {
+        fn_to_table_slot_ = &fn_to_table_slot;
+        closure_type_index_ = std::move(closure_type_index);
+        closure_tables_installed_ = true;
+    }
+
     [[nodiscard]] const std::vector<CoreStateId> &targets() const noexcept {
         return targets_;
     }
@@ -1447,30 +1631,73 @@ class P6ComputationHandlerBuilder {
     // `return`; there is no result-i32 block.
     [[nodiscard]] std::optional<std::vector<std::uint8_t>>
     emit(std::span<const P6ScalarKind> param_words) {
-        // The param count is the pool base EVERY emit-time local lookup adds;
-        // set it before walking the region (which emits local.get/set).
-        fn_param_count_ = static_cast<std::uint32_t>(param_words.size());
-        // fn-mode dynamic aggregate constructs need two inline-allocation
-        // temporaries (fresh base + advanced heap pointer). They are the LAST
+        // The pool base EVERY non-param local lookup adds is 1 (env) + the
+        // total flat PARAM WORD count: a Closure parameter occupies two i32
+        // argument locals (func_index, env_ptr). Set it before walking the
+        // region (which emits local.get/set).
+        fn_param_count_ = 0;
+        for (const P6ScalarKind word : param_words) {
+            fn_param_count_ += boundary_word_count(word);
+        }
+        // Runtime checked-bump temporaries (fresh base + advanced heap pointer).
+        // They are needed by fn-mode aggregate constructs AND by capturing
+        // closure construction in EITHER mode (closure envs are module-arena
+        // memory that must outlive the creating activation). They are the LAST
         // two i32 locals so the SSA/scratch pool indices are unchanged.
-        const bool dynamic = fn_mode_ && has_dynamic_construct();
+        const bool dynamic =
+            (fn_mode_ && has_dynamic_construct()) || closure_env_bytes_ > 0;
         if (dynamic) {
             // The two bump temporaries are placed AFTER the i64 group (a second
             // i32 local group) so they do not shift the SSA/scratch i64 pool
-            // indices pool_local derives from i32_group_size().
+            // indices pool_local derives from i32_group_size(). Fn bodies have
+            // the leading env local plus the flat param words; handlers have no
+            // parameters, so their pool begins at local 0.
+            const std::uint32_t pool_base = fn_mode_ ? 1u + fn_param_count_ : 0u;
             const std::uint32_t after_groups =
-                1u + fn_param_count_ + i32_count_ + scratch_i32_count_ +
+                pool_base + i32_count_ + scratch_i32_count_ +
                 i64_count_ + scratch_i64_count_;
             alloc_temp_local_ = after_groups;
             alloc_new_local_ = after_groups + 1u;
         }
-        // Handler mode, aggregate heap enabled: reset the per-activation bump
-        // heap before the handler region so every step() starts with a fresh
-        // activation tree (the prior step's aggregate bytes are abandoned).
+        // Handler mode, aggregate/closure heap enabled: reset the per-activation
+        // bump heap before the handler region so every step() starts with a
+        // fresh arena (the prior step's aggregate / closure-env bytes are
+        // abandoned — ByValue snapshots never alias across activations).
         if (!fn_mode_ && reset_construct_heap_) {
             emit_const_i32(static_cast<std::int32_t>(reset_heap_base_));
             body_.byte(kOpGlobalSet);
             body_.u32(kGlobalHeapNext);
+        }
+        // Fn mode (lifted fn with captures): populate every pre-bound
+        // environment slot by loading from the env pointer (wasm local 0) at
+        // its P4-D slot offset. This is the ONLY body the env pointer has;
+        // captured names then read as ordinary bound locals.
+        if (fn_mode_) {
+            for (const EnvBindingInit &init : env_binding_inits_) {
+                body_.byte(kOpLocalGet);
+                body_.u32(0); // env pointer
+                if (init.pair) {
+                    const auto first = pool_local(locals_[init.value.value], false);
+                    body_.byte(kOpI32Load);
+                    body_.u32(kAlignI32);
+                    body_.u32(init.offset);
+                    body_.byte(kOpLocalSet);
+                    body_.u32(first);
+                    body_.byte(kOpLocalGet);
+                    body_.u32(0);
+                    body_.byte(kOpI32Load);
+                    body_.u32(kAlignI32);
+                    body_.u32(init.offset + 4u);
+                    body_.byte(kOpLocalSet);
+                    body_.u32(first + 1u);
+                } else {
+                    body_.byte(init.wide ? kOpI64Load : kOpI32Load);
+                    body_.u32(init.wide ? kAlignI64 : kAlignI32);
+                    body_.u32(init.offset);
+                    body_.byte(kOpLocalSet);
+                    body_.u32(pool_local(locals_[init.value.value], false));
+                }
+            }
         }
         if (!emit_region(region_)) {
             return std::nullopt;
@@ -1535,6 +1762,10 @@ class P6ComputationHandlerBuilder {
         // i32/i64 SSA pools (parameters are implicit locals whose word order is
         // fixed by the functype, which may mix i32 and i64).
         bool is_param{false};
+        // FB-3b: a Closure value occupies TWO consecutive i32 parameter / pool
+        // slots (func_index word at `slot`, env_ptr word at `slot + 1`). Set
+        // only for kind == P6ScalarKind::Closure.
+        bool is_word_pair{false};
     };
 
     const CoreProgram &program_;
@@ -1650,6 +1881,39 @@ class P6ComputationHandlerBuilder {
     // Set in emit() when the fn body contains at least one dynamic construct.
     std::uint32_t alloc_temp_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t alloc_new_local_{std::numeric_limits<std::uint32_t>::max()};
+
+    // --- RFC 0026 FB-3b closures ---
+    //
+    // A closure value is the eight-byte (func_index, env_ptr) pair; every
+    // closure SSA value occupies TWO consecutive i32 locals / stack words
+    // (func_index first, env_ptr second). The module driver finalizes the
+    // dense funcref-table slots and call_indirect type indices after every
+    // reachable body is planned, then installs the two maps before emit();
+    // plan() records the targets / descriptors / env bytes the driver unions.
+    const std::unordered_map<std::uint32_t, std::uint32_t> *fn_to_table_slot_{nullptr};
+    std::unordered_map<std::string, std::uint32_t> closure_type_index_{};
+    bool closure_tables_installed_{false};
+    // Every fn whose address a CoreClosureExpr takes in THIS body (unique,
+    // first-seen order); the driver seeds funcref-table reachability.
+    std::vector<CoreFnId> closure_targets_;
+    // Every distinct call_indirect functype this body emits (plan time).
+    std::vector<ClosureCallType> closure_call_types_;
+    // Aligned heap bytes this body bumps for closure ENVIRONMENTS (the
+    // captured-word aggregate each capturing closure allocates). Fn bodies
+    // fold this into the per-activation recursion budget; a handler bumps it
+    // once per step. Zero-capture closures allocate nothing.
+    std::uint32_t closure_env_bytes_{0};
+    // A lifted fn's pre-bound environment slots, installed by the driver via
+    // bind_env_binding() BEFORE plan(). At fn entry the builder emits one load
+    // per slot from the env pointer (wasm local 0) into the ordinary bound
+    // local; a pair slot loads two words.
+    struct EnvBindingInit {
+        CoreValueId value{};
+        std::uint32_t offset{0};
+        bool wide{false}; // i64 slot
+        bool pair{false}; // nested-closure (two i32 words)
+    };
+    std::vector<EnvBindingInit> env_binding_inits_;
 
     // KR6.7: set when a projection's root is the raw P4-D input frame. See
     // reads_raw_input_frame().
@@ -1816,6 +2080,68 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
+    // Push ONE boundary argument's words onto the operand stack in declared
+    // (func_index, env_ptr) order. A one-word value emits one local.get; a
+    // Closure pair emits the function-index word then the env-pointer word,
+    // matching the flat two-i32 functype parameter layout.
+    [[nodiscard]] bool
+    emit_boundary_value_read(CoreValueId value, ir::SourceRangeOpt range) {
+        const auto kind = value.value < storage_.value_types.size()
+                              ? scalar_kind(storage_.value_types[value.value])
+                              : std::nullopt;
+        const auto local = readable_local(value);
+        if (kind == std::nullopt || local == std::nullopt) {
+            return reject("boundary argument is not a readable representable value",
+                          std::move(range));
+        }
+        if (*kind == P6ScalarKind::Closure) {
+            emit_local_get(*local);         // func_index word
+            emit_local_get(*local + 1u);    // env_ptr word
+            return true;
+        }
+        emit_local_get(*local);
+        return true;
+    }
+
+    // Store ONE captured environment value (already known to be P6-representable)
+    // into the env aggregate at `base` + slot `offset`.
+    [[nodiscard]] bool emit_env_slot_store(CoreValueId value,
+                                           std::uint32_t base_local,
+                                           std::uint64_t offset,
+                                           ir::SourceRangeOpt range) {
+        if (offset > std::numeric_limits<std::uint32_t>::max()) {
+            return reject("environment slot offset exceeds the wasm32 domain", std::move(range));
+        }
+        const auto kind = scalar_kind(storage_.value_types[value.value]);
+        const auto local = readable_local(value);
+        if (kind == std::nullopt || local == std::nullopt) {
+            return reject("captured value is not a readable representable value", std::move(range));
+        }
+        if (*kind == P6ScalarKind::Closure) {
+            // Two words at offset (func_index) and offset+4 (env_ptr).
+            emit_local_get(base_local);
+            emit_local_get(*local);
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(static_cast<std::uint32_t>(offset));
+            emit_local_get(base_local);
+            emit_local_get(*local + 1u);
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(static_cast<std::uint32_t>(offset + 4u));
+            return true;
+        }
+        const bool wide = *kind == P6ScalarKind::IntI64;
+        emit_local_get(base_local);
+        if (!emit_value_read(value, range)) {
+            return false;
+        }
+        body_.byte(wide ? kOpI64Store : kOpI32Store);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(static_cast<std::uint32_t>(offset));
+        return true;
+    }
+
     // --- P6-4 aggregate places ---
     //
     // AGGREGATE FIELD REPRESENTATION (the ONE rule both directions obey): a
@@ -1955,6 +2281,12 @@ class P6ComputationHandlerBuilder {
     [[nodiscard]] P6ScalarKind place_kind_of_layout(CoreLayoutId layout_id) const {
         if (layout_id.value < layouts_.layouts.size()) {
             const ir::core::CoreLayout &layout = layouts_.layouts[layout_id.value];
+            // FB-3b: the eight-byte (func_index, env_ptr) callable word pair.
+            // It is deliberately NOT mapped to Ptr: it is two words and only
+            // the closure constructor / call_indirect paths may touch it.
+            if (std::holds_alternative<ir::core::CoreLayoutClosure>(layout.shape)) {
+                return P6ScalarKind::Closure;
+            }
             if (const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(&layout.shape)) {
                 switch (scalar->repr) {
                 case ir::core::CoreScalarRepr::I32:
@@ -2096,12 +2428,19 @@ class P6ComputationHandlerBuilder {
         LocalInfo &info = pool[value.value];
         info.bound = true;
         info.kind = kind;
+        // A Closure is a TWO-word (func_index, env_ptr) pair; only one-word
+        // kinds reach the monotone match-scratch pool in this slice, so pairs
+        // are never allocated here (defensive guard).
+        if (kind == P6ScalarKind::Closure) {
+            return false;
+        }
         info.slot = kind == P6ScalarKind::IntI64 ? scratch_i64_count_++ : scratch_i32_count_++;
         return true;
     }
 
     // Assign a pool slot to a let-bound value (one slot per CoreValueId; the
-    // Core verifier proves flow-global single definition).
+    // Core verifier proves flow-global single definition). A Closure value
+    // occupies TWO consecutive i32 pool slots (func_index then env_ptr).
     [[nodiscard]] bool bind_value(CoreValueId value, P6ScalarKind kind) {
         if (value.value >= locals_.size() || locals_[value.value].bound) {
             return false;
@@ -2109,7 +2448,15 @@ class P6ComputationHandlerBuilder {
         LocalInfo &info = locals_[value.value];
         info.bound = true;
         info.kind = kind;
-        info.slot = kind == P6ScalarKind::IntI64 ? i64_count_++ : i32_count_++;
+        if (kind == P6ScalarKind::IntI64) {
+            info.slot = i64_count_++;
+        } else {
+            info.slot = i32_count_++;
+            if (kind == P6ScalarKind::Closure) {
+                info.is_word_pair = true;
+                ++i32_count_; // env_ptr word
+            }
+        }
         return true;
     }
 
@@ -2136,22 +2483,14 @@ class P6ComputationHandlerBuilder {
         }
         used_exprs_[id.value] = true;
         const CoreExpr &expr = storage_.exprs[id.value];
-        // FB-3a1: the closure model exists but funcref table / element segment /
-        // call_indirect emission arrives with the FB-3 codegen slice. Reject with
-        // the explicit code BEFORE the P6 scalar gate (a closure's result type is
-        // not a P6 scalar, which would otherwise produce a misleading generic
-        // message).
-        if (std::holds_alternative<CoreClosureExpr>(expr.node)) {
-            return reject_with_code(core_wasm_diag::kUnsupportedClosure,
-                                   "closure construction is not emitted until the funcref table / "
-                                   "env lowering slice (FB-3)",
-                                   expr.source_range);
+        // FB-3b: closures construct / indirect-call through the funcref table.
+        // They are TWO-word P6 values, so they are handled before the single
+        // scalar-result gate below.
+        if (const auto *closure = std::get_if<CoreClosureExpr>(&expr.node)) {
+            return plan_closure_expr(*closure, expr);
         }
-        if (std::holds_alternative<CoreCallClosureExpr>(expr.node)) {
-            return reject_with_code(core_wasm_diag::kUnsupportedClosure,
-                                   "indirect closure call is not emitted until the call_indirect "
-                                   "lowering slice (FB-3)",
-                                   expr.source_range);
+        if (const auto *call = std::get_if<CoreCallClosureExpr>(&expr.node)) {
+            return plan_call_closure_expr(*call, expr);
         }
         if (scalar_kind(expr.result_type) == std::nullopt) {
             return reject("scalar expression has a non-scalar or f64 result type",
@@ -2185,20 +2524,9 @@ class P6ComputationHandlerBuilder {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
                 [&](const CoreCallExpr &c) { return plan_direct_call(c, expr); },
-                // Defensive: both closure nodes already fail closed above, before
-                // the scalar gate; the arms exist so the visit stays exhaustive.
-                [&](const CoreClosureExpr &) {
-                    return reject_with_code(core_wasm_diag::kUnsupportedClosure,
-                                           "closure construction is not emitted until the FB-3 "
-                                           "funcref table slice",
-                                           expr.source_range);
-                },
-                [&](const CoreCallClosureExpr &) {
-                    return reject_with_code(core_wasm_diag::kUnsupportedClosure,
-                                           "indirect closure call is not emitted until the FB-3 "
-                                           "call_indirect slice",
-                                           expr.source_range);
-                },
+                // Defensive: the two closure nodes are handled above.
+                [&](const CoreClosureExpr &) { return false; },
+                [&](const CoreCallClosureExpr &) { return false; },
             },
             expr.node);
     }
@@ -2231,17 +2559,206 @@ class P6ComputationHandlerBuilder {
         }
         for (const CoreValueId arg : c.args) {
             used_values_[arg.value] = true;
-            if (arg.value >= storage_.value_types.size() ||
-                p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]) == std::nullopt) {
-                return reject("direct call argument is not a single-word P6 value "
+            if (arg.value >= storage_.value_types.size()) {
+                return reject("direct call argument id is out of range", expr.source_range);
+            }
+            const auto arg_kind =
+                p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]);
+            // A closure argument is legal: the unified functype expands it to
+            // its two (func_index, env_ptr) words. Only genuinely non-P6 types
+            // (String PtrLen / bytes / f64) cross no boundary in this slice.
+            if (arg_kind == std::nullopt) {
+                return reject("direct call argument is not a representable P6 boundary value "
                               "(String / f64 / multi-word types cannot cross an fn boundary)",
                               expr.source_range);
             }
         }
-        if (p6_scalar_kind(program_, layouts_, expr.result_type) == std::nullopt) {
+        const auto direct_result_kind =
+            p6_scalar_kind(program_, layouts_, expr.result_type);
+        if (direct_result_kind == std::nullopt ||
+            *direct_result_kind == P6ScalarKind::Closure) {
             return reject("direct call result is not a single-word P6 value "
-                          "(multi-word types cannot cross an fn boundary)",
+                          "(a closure / String / f64 / multi-word result cannot cross an fn "
+                          "boundary in this slice)",
                           expr.source_range);
+        }
+        return true;
+    }
+
+    // FB-3b: number of flat wasm parameter WORDS a boundary value occupies, and
+    // the corresponding type bytes. A scalar / aggregate-address / collection
+    // handle is one i32 (or i64) word; a Closure callable is the two-word
+    // (func_index, env_ptr) pair. A non-P6 type (String PtrLen / bytes / f64)
+    // has no representation and rejects.
+    [[nodiscard]] static std::uint32_t boundary_word_count(P6ScalarKind kind) {
+        return kind == P6ScalarKind::Closure ? 2u : 1u;
+    }
+    static void append_boundary_param_bytes(P6ScalarKind kind, std::vector<std::uint8_t> &out) {
+        if (kind == P6ScalarKind::Closure) {
+            out.push_back(kI32);
+            out.push_back(kI32);
+        } else {
+            out.push_back(kind == P6ScalarKind::IntI64 ? kI64 : kI32);
+        }
+    }
+    // A single RESULT word's type byte; nullopt for a closure (two-word) or
+    // otherwise non-P6 result, which this slice cannot return.
+    [[nodiscard]] static std::optional<std::uint8_t>
+    boundary_result_byte(const std::optional<P6ScalarKind> &kind) {
+        if (kind == std::nullopt || *kind == P6ScalarKind::Closure) {
+            return std::nullopt;
+        }
+        return *kind == P6ScalarKind::IntI64 ? kI64 : kI32;
+    }
+
+    // Resolve the CoreVtFn signature behind a callable logical value: a
+    // signature-site CoreVtFn (a parameter / binding) or a construction-site
+    // CoreVtClosure's referenced signature. Index identity, never a name.
+    [[nodiscard]] const ir::core::CoreVtFn *
+    callable_signature_of(CoreValueTypeId type) const {
+        if (type.value >= program_.value_types.size()) {
+            return nullptr;
+        }
+        const CoreValueTypeNode &node = program_.value_types[type.value].node;
+        if (const auto *fn = std::get_if<ir::core::CoreVtFn>(&node)) {
+            return fn;
+        }
+        if (const auto *closure = std::get_if<ir::core::CoreVtClosure>(&node)) {
+            if (closure->signature.value >= program_.value_types.size()) {
+                return nullptr;
+            }
+            return std::get_if<ir::core::CoreVtFn>(
+                &program_.value_types[closure->signature.value].node);
+        }
+        return nullptr;
+    }
+
+    // The P4-D environment aggregate of a lifted fn's closure type (the
+    // indirect edge off its CoreLayoutClosure), located through the hash-consed
+    // CoreVtClosure whose captures equal `fn.captures`. Null for an
+    // ordinary / zero-capture fn. Codegen reads field offsets/size from THIS
+    // layout; it never re-derives them.
+    [[nodiscard]] const ir::core::CoreLayout *
+    fn_environment_layout(const CoreFnDecl &fn) const {
+        return p6_closure_environment_layout(program_, layouts_, fn);
+    }
+    [[nodiscard]] static const ir::core::CoreLayoutStruct *
+    fn_environment_struct(const ir::core::CoreLayout *env_layout) {
+        return p6_closure_environment_struct(env_layout);
+    }
+
+    // FB-3b: plan a closure construction. Validates the target fn, the
+    // capture-arity/types against the fn's declared env signature, and meters
+    // the runtime env bump (only a capturing closure allocates).
+    [[nodiscard]] bool
+    plan_closure_expr(const CoreClosureExpr &c, const CoreExpr &expr) {
+        if (scalar_kind(expr.result_type) != P6ScalarKind::Closure) {
+            return reject("closure construction result has a non-closure type", expr.source_range);
+        }
+        if (c.fn.value >= program_.fns.size()) {
+            return reject("closure construction references an out-of-range fn", expr.source_range);
+        }
+        const CoreFnDecl &fn = program_.fns[c.fn.value];
+        if (std::find(closure_targets_.begin(), closure_targets_.end(), fn.id) ==
+            closure_targets_.end()) {
+            closure_targets_.push_back(fn.id);
+        }
+        if (c.env.size() != fn.captures.size()) {
+            return reject("closure capture count does not match the lifted fn's environment "
+                          "signature",
+                          expr.source_range);
+        }
+        for (std::uint32_t i = 0; i < c.env.size(); ++i) {
+            const CoreValueId captured = c.env[i];
+            used_values_[captured.value] = true;
+            if (captured.value >= storage_.value_types.size() ||
+                p6_scalar_kind(program_, layouts_,
+                               storage_.value_types[captured.value]) == std::nullopt) {
+                return reject("a captured closure value is not a representable P6 value "
+                              "(String / f64 captures cross no boundary in this slice)",
+                              expr.source_range);
+            }
+            if (storage_.value_types[captured.value] != fn.captures[i]) {
+                return reject("closure capture value type does not match its environment slot",
+                              expr.source_range);
+            }
+        }
+        // Meter the env bump for capturing closures. The env aggregate is
+        // module-arena memory that must outlive the creating activation, so it
+        // is bumped at run time (never static scratch). The driver folds fn-body
+        // bytes into the per-activation recursion budget; a handler bumps once
+        // per step (its entry resets the heap).
+        if (!fn.captures.empty()) {
+            const ir::core::CoreLayout *env = fn_environment_layout(fn);
+            if (env == nullptr || env->size == 0 ||
+                env->size > std::numeric_limits<std::uint32_t>::max()) {
+                return reject("capturing closure has no valid finalized environment layout",
+                              expr.source_range);
+            }
+            closure_env_bytes_ +=
+                static_cast<std::uint32_t>(align_up(env->size, 8));
+        }
+        return true;
+    }
+
+    // FB-3b: plan an indirect call through a closure value. Resolves the
+    // callable signature, checks arity and every boundary word, and records the
+    // expected call_indirect functype (deduplicated by the driver).
+    [[nodiscard]] bool
+    plan_call_closure_expr(const CoreCallClosureExpr &c, const CoreExpr &expr) {
+        used_values_[c.callee.value] = true;
+        if (c.callee.value >= storage_.value_types.size()) {
+            return reject("indirect call callee id is out of range", expr.source_range);
+        }
+        const CoreValueTypeId callee_type = storage_.value_types[c.callee.value];
+        if (p6_scalar_kind(program_, layouts_, callee_type) != P6ScalarKind::Closure) {
+            return reject("indirect call callee is not a callable closure value",
+                          expr.source_range);
+        }
+        const ir::core::CoreVtFn *signature = callable_signature_of(callee_type);
+        if (signature == nullptr) {
+            return reject("indirect call callee has no resolvable Fn signature",
+                          expr.source_range);
+        }
+        if (c.args.size() != signature->params.size()) {
+            return reject("indirect call argument arity does not match the closure signature",
+                          expr.source_range);
+        }
+        ClosureCallType descriptor;
+        descriptor.params.push_back(kI32); // leading env pointer
+        for (std::uint32_t i = 0; i < c.args.size(); ++i) {
+            const CoreValueId arg = c.args[i];
+            used_values_[arg.value] = true;
+            if (arg.value >= storage_.value_types.size()) {
+                return reject("indirect call argument id is out of range", expr.source_range);
+            }
+            const auto arg_kind =
+                p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]);
+            if (arg_kind == std::nullopt) {
+                return reject("indirect call argument is not a representable P6 boundary value "
+                              "(String / f64 cross no boundary in this slice)",
+                              expr.source_range);
+            }
+            const auto param_kind =
+                p6_scalar_kind(program_, layouts_, signature->params[i]);
+            if (param_kind == std::nullopt || *arg_kind != *param_kind) {
+                return reject("indirect call argument kind does not match the closure signature",
+                              expr.source_range);
+            }
+            append_boundary_param_bytes(*arg_kind, descriptor.params);
+        }
+        const auto result_kind =
+            p6_scalar_kind(program_, layouts_, expr.result_type);
+        const auto result_byte = boundary_result_byte(result_kind);
+        if (result_byte == std::nullopt) {
+            return reject("indirect call result is not a single-word P6 value "
+                          "(a closure / String / f64 result cannot cross in this slice)",
+                          expr.source_range);
+        }
+        descriptor.result = *result_byte;
+        if (std::find(closure_call_types_.begin(), closure_call_types_.end(), descriptor) ==
+            closure_call_types_.end()) {
+            closure_call_types_.push_back(descriptor);
         }
         return true;
     }
@@ -3501,6 +4018,15 @@ class P6ComputationHandlerBuilder {
             return reject("expression id is out of range for this flow", ir::SourceRangeOpt{});
         }
         const CoreExpr &expr = storage_.exprs[id.value];
+        // FB-3b: closure construction / indirect call produce or consume the
+        // two-word callable pair and are handled before the single-word scalar
+        // result gate.
+        if (const auto *closure = std::get_if<CoreClosureExpr>(&expr.node)) {
+            return emit_closure_expr(*closure, expr);
+        }
+        if (const auto *call = std::get_if<CoreCallClosureExpr>(&expr.node)) {
+            return emit_call_closure_expr(*call, expr);
+        }
         const auto result_kind = scalar_kind(expr.result_type);
         if (result_kind == std::nullopt) {
             return reject("scalar expression has a non-scalar or f64 result type",
@@ -3533,31 +4059,130 @@ class P6ComputationHandlerBuilder {
                     return reject("expression was not fully lowered to Core-IR", expr.source_range);
                 },
                 [&](const CoreCallExpr &c) { return emit_direct_call(c, expr); },
-                // FB-3a1: planning already fails these closed with the explicit
-                // kUnsupportedClosure code; the arms keep the emit visit
-                // exhaustive (defensive, unreachable on a planned body).
-                [&](const CoreClosureExpr &) {
-                    return reject_with_code(core_wasm_diag::kUnsupportedClosure,
-                                           "closure construction is not emitted until the FB-3 "
-                                           "funcref table slice",
-                                           expr.source_range);
-                },
-                [&](const CoreCallClosureExpr &) {
-                    return reject_with_code(core_wasm_diag::kUnsupportedClosure,
-                                           "indirect closure call is not emitted until the FB-3 "
-                                           "call_indirect slice",
-                                           expr.source_range);
-                },
+                // Defensive: the two closure nodes are dispatched above.
+                [&](const CoreClosureExpr &) { return false; },
+                [&](const CoreCallClosureExpr &) { return false; },
             },
             expr.node);
         return ok;
     }
 
-    // FB-1 §6.3: emit a static direct call. Wasm operand order requires the
-    // FIRST parameter (env) pushed FIRST: i32.const 0, then each ANF argument
-    // word left to right, then a plain `call` to
-    // fn_function_base_ + ordinal. The module encoder computes the base after
-    // the reachability fixed point (import_count+7+handler_count).
+    // FB-3b §6.2/§6.3: emit a closure construction, leaving the eight-byte pair
+    // on the stack as (func_index, env_ptr): the dense funcref-table slot
+    // constant, then the runtime-bumped environment address (0 for a
+    // zero-capture closure). A capturing closure bumps the module arena for its
+    // env aggregate and stores each captured value at its P4-D slot offset.
+    [[nodiscard]] bool emit_closure_expr(const CoreClosureExpr &c, const CoreExpr &expr) {
+        if (fn_to_table_slot_ == nullptr) {
+            return reject("closure construction reached emit without a funcref table",
+                          expr.source_range);
+        }
+        const auto slot_it = fn_to_table_slot_->find(c.fn.value);
+        if (slot_it == fn_to_table_slot_->end()) {
+            return reject("closure target fn was not assigned a funcref-table slot",
+                          expr.source_range);
+        }
+        const CoreFnDecl &fn = program_.fns[c.fn.value];
+        const ir::core::CoreLayoutStruct *env_struct = nullptr;
+        if (!fn.captures.empty()) {
+            const ir::core::CoreLayout *env_layout = fn_environment_layout(fn);
+            if (env_layout == nullptr) {
+                return reject("capturing closure has no finalized environment layout",
+                              expr.source_range);
+            }
+            env_struct = fn_environment_struct(env_layout);
+            if (env_struct == nullptr) {
+                return reject("capturing closure environment is not an aggregate layout",
+                              expr.source_range);
+            }
+            if (alloc_temp_local_ == std::numeric_limits<std::uint32_t>::max()) {
+                return reject("closure env allocation temp local was not reserved",
+                              expr.source_range);
+            }
+            const std::uint32_t env_size =
+                static_cast<std::uint32_t>(align_up(env_layout->size, 8));
+            // Bump the module arena; emit_dynamic_construct_alloc leaves
+            // NOTHING on the stack and holds the fresh base in alloc_temp_local_.
+            emit_dynamic_construct_alloc(env_size);
+            for (std::uint32_t i = 0; i < c.env.size(); ++i) {
+                if (env_struct->field_layouts.size() <= i) {
+                    return reject("environment layout has too few slots", expr.source_range);
+                }
+                if (!emit_env_slot_store(c.env[i], alloc_temp_local_,
+                                         env_struct->field_offsets[i], expr.source_range)) {
+                    return false;
+                }
+            }
+        }
+        emit_const_i32(static_cast<std::int32_t>(slot_it->second)); // func_index
+        if (fn.captures.empty()) {
+            emit_const_i32(0); // env_ptr: zero-capture static reference
+        } else {
+            emit_local_get(alloc_temp_local_); // env_ptr: runtime env base
+        }
+        return true;
+    }
+
+    // FB-3b §5.2: emit call_indirect through a closure value. Push the
+    // closure's env_ptr word first, then each argument word left to right, then
+    // the func_index word as the table slot, and execute call_indirect with the
+    // expected functype (type trap unreachable in a well-formed program).
+    [[nodiscard]] bool emit_call_closure_expr(const CoreCallClosureExpr &c,
+                                              const CoreExpr &expr) {
+        if (c.callee.value >= storage_.value_types.size()) {
+            return reject("indirect call callee id is out of range", expr.source_range);
+        }
+        const auto callee_kind = scalar_kind(storage_.value_types[c.callee.value]);
+        if (callee_kind != P6ScalarKind::Closure) {
+            return reject("indirect call callee is not a closure pair", expr.source_range);
+        }
+        const auto callee_local = readable_local(c.callee);
+        if (callee_local == std::nullopt) {
+            return reject("indirect call callee is not a readable closure local",
+                          expr.source_range);
+        }
+        ClosureCallType descriptor;
+        descriptor.params.push_back(kI32); // leading env pointer
+        for (const CoreValueId arg : c.args) {
+            if (arg.value >= storage_.value_types.size()) {
+                return reject("indirect call argument id is out of range", expr.source_range);
+            }
+            const auto arg_kind = scalar_kind(storage_.value_types[arg.value]);
+            if (arg_kind == std::nullopt) {
+                return reject("indirect call argument is not a representable boundary value",
+                              expr.source_range);
+            }
+            append_boundary_param_bytes(*arg_kind, descriptor.params);
+        }
+        const auto result_byte = boundary_result_byte(scalar_kind(expr.result_type));
+        if (result_byte == std::nullopt) {
+            return reject("indirect call result is not a single-word P6 value",
+                          expr.source_range);
+        }
+        descriptor.result = *result_byte;
+        const auto type_it = closure_type_index_.find(closure_call_type_key(descriptor));
+        if (type_it == closure_type_index_.end()) {
+            return reject("indirect call functype was not assigned a type index",
+                          expr.source_range);
+        }
+        emit_local_get(*callee_local + 1u); // env_ptr first
+        for (const CoreValueId arg : c.args) {
+            if (!emit_boundary_value_read(arg, expr.source_range)) {
+                return false;
+            }
+        }
+        emit_local_get(*callee_local); // func_index -> table slot
+        body_.byte(kOpCallIndirect);
+        body_.u32(type_it->second);
+        body_.u32(0); // the single declared funcref table
+        return true;
+    }
+
+    // FB-1 §6.3 / FB-3b: emit a static direct call. Wasm operand order pushes
+    // the FIRST parameter (env) FIRST (i32.const 0), then each argument word
+    // left to right — a closure argument expands to its (func_index, env_ptr)
+    // pair — then a plain `call` to fn_function_base_ + ordinal. The module
+    // encoder computes the base after the reachability fixed point.
     [[nodiscard]] bool emit_direct_call(const CoreCallExpr &c, const CoreExpr &expr) {
         if (instance_to_fn_ordinal_ == nullptr || fn_function_base_ == nullptr) {
             return reject("direct call reached emit without an fn function table",
@@ -3571,9 +4196,9 @@ class P6ComputationHandlerBuilder {
             return reject("direct call callee was not reached by the fn reachability pass",
                           expr.source_range);
         }
-        emit_const_i32(0); // env: a capture-free static fn ignores it
+        emit_const_i32(0); // env: a static direct call never passes captures
         for (const CoreValueId arg : c.args) {
-            if (!emit_value_read(arg, expr.source_range)) {
+            if (!emit_boundary_value_read(arg, expr.source_range)) {
                 return false;
             }
         }
@@ -4557,6 +5182,17 @@ class P6ComputationHandlerBuilder {
                     if (local == std::nullopt) {
                         return reject("let result has no SSA local", statement.source_range);
                     }
+                    // FB-3b: a closure result is the two-word (func_index,
+                    // env_ptr) pair, popped in REVERSE push order: env_ptr into
+                    // slot+1 first, then func_index into slot.
+                    const auto result_kind =
+                        s.result.value < storage_.value_types.size()
+                            ? scalar_kind(storage_.value_types[s.result.value])
+                            : std::nullopt;
+                    if (result_kind == P6ScalarKind::Closure) {
+                        body_.byte(kOpLocalSet);
+                        body_.u32(*local + 1u);
+                    }
                     body_.byte(kOpLocalSet);
                     body_.u32(*local);
                     return true;
@@ -4633,9 +5269,12 @@ class P6ComputationHandlerBuilder {
     }
 };
 
-// Out-of-line: a pre-bound fn parameter occupies wasm local 1 + ordinal (local
-// 0 is env), does not consume an SSA-pool slot, and is consumed by the fn
-// signature rather than by a let.
+// Out-of-line: a pre-bound fn parameter occupies wasm local 1 + `ordinal`,
+// where `ordinal` is the parameter's FLAT WORD index among the functype
+// arguments (local 0 is env). A single-word parameter takes one local; a
+// Closure parameter takes TWO consecutive i32 locals (func_index at 1+ordinal,
+// env_ptr at 1+ordinal+1). Parameters never consume SSA-pool slots; the
+// non-param pool begins at 1 + total param words.
 [[nodiscard]] inline bool P6ComputationHandlerBuilder::bind_param(
     CoreValueId value, std::uint32_t ordinal, P6ScalarKind kind) {
     if (value.value >= locals_.size() || locals_[value.value].bound) {
@@ -4645,11 +5284,8 @@ class P6ComputationHandlerBuilder {
     info.bound = true;
     info.is_param = true;
     info.kind = kind;
-    // A parameter reads the functype argument local directly: env is local 0,
-    // parameter ordinal i is local 1 + i. Params do NOT consume i32/i64 SSA
-    // pool slots (those counters count only let-bound values), so non-param
-    // locals begin at 1 + param_count via pool_local's base.
     info.slot = ordinal;
+    info.is_word_pair = kind == P6ScalarKind::Closure;
     used_values_[value.value] = true;
     return true;
 }
@@ -4965,12 +5601,19 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
     std::vector<CompiledFn> &out,
     std::span<const CoreBodyStorage *const> entry_storages,
     std::span<const std::vector<CoreInstanceId>> planned_entry_callees,
+    std::span<P6ComputationHandlerBuilder *const> entry_builders,
     std::uint32_t fn_function_base,
     CoreWasmCodegenResult &result,
     bool &construct_heap_enabled_out,
-    std::uint32_t &construct_heap_base_out) {
+    std::uint32_t &construct_heap_base_out,
+    std::vector<CoreFnId> &closure_table_out,
+    std::vector<ClosureCallType> &closure_signatures_out,
+    std::uint32_t &entry_closure_env_bytes_out) {
     construct_heap_enabled_out = false;
     construct_heap_base_out = ir::core::kNodeEventLogBase;
+    closure_table_out.clear();
+    closure_signatures_out.clear();
+    entry_closure_env_bytes_out = 0;
     std::vector<CoreInstanceId> worklist;
     std::vector<bool> queued(program.instances.size(), false);
     const auto enqueue = [&](CoreInstanceId id) {
@@ -4982,6 +5625,12 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
     };
     // Roots from the raw entry storages (covers identity/capability finals
     // whose bodies are validated, not built with the P6 builder) ...
+    const auto enqueue_fn_id = [&](CoreFnId fn_id) {
+        if (fn_id.value >= program.fns.size()) {
+            return;
+        }
+        enqueue(program.fns[fn_id.value].instance);
+    };
     for (const CoreBodyStorage *storage : entry_storages) {
         if (storage == nullptr) {
             continue;
@@ -4989,6 +5638,12 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
         for (const CoreExpr &expr : storage->exprs) {
             if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
                 enqueue(call->callee);
+            }
+            // FB-3b: a lifted fn / static-fn reference whose closure is
+            // constructed in an entry handler must itself be emitted (its
+            // funcidx goes into the funcref table).
+            if (const auto *closure = std::get_if<CoreClosureExpr>(&expr.node)) {
+                enqueue_fn_id(closure->fn);
             }
         }
     }
@@ -5034,6 +5689,11 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
         for (const CoreExpr &expr : fn->storage.exprs) {
             if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
                 enqueue(call->callee);
+            }
+            // FB-3b: a fn may construct a closure over another lifted fn (or a
+            // zero-capture static fn); its body must be emitted and tabled too.
+            if (const auto *closure = std::get_if<CoreClosureExpr>(&expr.node)) {
+                enqueue_fn_id(closure->fn);
             }
         }
     }
@@ -5096,6 +5756,9 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
         P6ScalarKind result_word{P6ScalarKind::IntI32};
         std::vector<CoreInstanceId> callees;
         std::uint32_t dynamic_bytes{0};
+        std::uint32_t closure_env_bytes{0};
+        std::vector<CoreFnId> closure_targets;
+        std::vector<ClosureCallType> closure_call_types;
     };
     std::vector<PlannedFn> planned_fns;
     planned_fns.reserve(reachable.size());
@@ -5114,6 +5777,9 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
                                            &fn_function_base);
         std::vector<P6ScalarKind> param_words;
         param_words.reserve(fn.params.size());
+        // Flat functype ARGUMENT word ordinal (env local 0 excluded). A closure
+        // parameter occupies two i32 words, so its ordinal advances by two.
+        std::uint32_t param_word_ordinal = 0;
         for (std::uint32_t i = 0; i < fn.params.size(); ++i) {
             const CoreValueId param = fn.params[i];
             if (param.value >= fn.storage.value_types.size()) {
@@ -5128,16 +5794,68 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
                 add_diag(result,
                          core_wasm_diag::kUnsupportedOrchestration,
                          "fn '" + fn.name +
-                             "' crosses a boundary with a non-single-word parameter "
+                             "' crosses a boundary with a non-representable parameter "
                              "(String / f64 / multi-word types are rejected)");
                 return false;
             }
             param_words.push_back(*word);
-            if (!builder->bind_param(param, i, *word)) {
+            if (!builder->bind_param(param, param_word_ordinal, *word)) {
                 add_diag(result,
                          core_wasm_diag::kInvalidCore,
                          "fn parameter could not be bound into the wasm local table");
                 return false;
+            }
+            param_word_ordinal += (*word == P6ScalarKind::Closure) ? 2u : 1u;
+        }
+        // FB-3b: bind a lifted fn's pre-bound environment slots (parallel to
+        // fn.env_bindings / fn.captures) from the P4-D env aggregate offsets,
+        // BEFORE plan() walks the body. These consume declared-local pool
+        // slots, never logical functype parameters.
+        if (!fn.env_bindings.empty()) {
+            const ir::core::CoreLayout *env_layout =
+                p6_closure_environment_layout(program, layouts, fn);
+            const ir::core::CoreLayoutStruct *env_struct =
+                p6_closure_environment_struct(env_layout);
+            if (env_struct == nullptr ||
+                env_struct->field_offsets.size() != fn.env_bindings.size()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCore,
+                         "lifted fn '" + fn.name +
+                             "' has env bindings but no matching finalized environment layout");
+                return false;
+            }
+            for (std::uint32_t i = 0; i < fn.env_bindings.size(); ++i) {
+                const CoreValueId slot = fn.env_bindings[i];
+                if (slot.value >= fn.storage.value_types.size()) {
+                    add_diag(result,
+                             core_wasm_diag::kInvalidCore,
+                             "lifted fn env binding is out of range for its body storage");
+                    return false;
+                }
+                const auto slot_word =
+                    p6_scalar_kind(program, layouts, fn.storage.value_types[slot.value]);
+                if (slot_word == std::nullopt) {
+                    add_diag(result,
+                             core_wasm_diag::kUnsupportedOrchestration,
+                             "lifted fn '" + fn.name +
+                                 "' captures a non-representable value "
+                                 "(String / f64 captures cross no boundary in this slice)");
+                    return false;
+                }
+                const std::uint64_t field_offset = env_struct->field_offsets[i];
+                if (field_offset > std::numeric_limits<std::uint32_t>::max()) {
+                    add_diag(result,
+                             core_wasm_diag::kInvalidCore,
+                             "lifted fn environment slot offset exceeds the wasm32 domain");
+                    return false;
+                }
+                if (!builder->bind_env_binding(
+                        slot, static_cast<std::uint32_t>(field_offset), *slot_word)) {
+                    add_diag(result,
+                             core_wasm_diag::kInvalidCore,
+                             "lifted fn env binding could not be bound into the wasm local table");
+                    return false;
+                }
             }
         }
         if (!builder->plan()) {
@@ -5156,8 +5874,80 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
         planned.result_word = termination.result_word;
         planned.callees = builder->fn_callees();
         planned.dynamic_bytes = builder->dynamic_construct_bytes();
+        planned.closure_env_bytes = builder->closure_env_bytes();
+        planned.closure_targets = builder->closure_targets();
+        planned.closure_call_types = builder->closure_call_types();
         planned.builder = std::move(builder);
         planned_fns.push_back(std::move(planned));
+    }
+
+    // FB-3b: finalize the funcref table and the call_indirect functype set
+    // across EVERY reachable body (entry handlers + outlined fns). The table
+    // holds the reachable fns whose address a CoreClosureExpr takes; dense
+    // slots are assigned in ascending CoreFnId order (deterministic and
+    // independent of internal fn-index placement). The call_indirect functypes
+    // are deduplicated and indexed in deterministic body-visit order (entry
+    // handlers first, then outlined fns in ordinal order).
+    std::unordered_map<std::uint32_t, std::uint32_t> fn_to_table_slot;
+    {
+        std::vector<CoreFnId> targets;
+        const auto add_target = [&](CoreFnId id) {
+            if (id.value < seen_fn.size() && seen_fn[id.value]) {
+                targets.push_back(id);
+            }
+        };
+        for (const P6ComputationHandlerBuilder *entry_builder : entry_builders) {
+            if (entry_builder != nullptr) {
+                for (const CoreFnId id : entry_builder->closure_targets()) {
+                    add_target(id);
+                }
+            }
+        }
+        for (const PlannedFn &planned : planned_fns) {
+            for (const CoreFnId id : planned.closure_targets) {
+                add_target(id);
+            }
+        }
+        std::sort(targets.begin(), targets.end(), [](CoreFnId a, CoreFnId b) {
+            return a.value < b.value;
+        });
+        targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+        closure_table_out = targets;
+        for (std::uint32_t slot = 0; slot < targets.size(); ++slot) {
+            fn_to_table_slot.emplace(targets[slot].value, slot);
+        }
+    }
+    std::unordered_map<std::string, std::uint32_t> closure_type_index_by_key;
+    {
+        std::vector<ClosureCallType> signatures;
+        const auto add_signatures = [&](const std::vector<ClosureCallType> &types) {
+            for (const ClosureCallType &type : types) {
+                std::string key = closure_call_type_key(type);
+                if (closure_type_index_by_key.try_emplace(key, 0).second) {
+                    signatures.push_back(type);
+                }
+            }
+        };
+        for (const P6ComputationHandlerBuilder *entry_builder : entry_builders) {
+            if (entry_builder != nullptr) {
+                add_signatures(entry_builder->closure_call_types());
+            }
+        }
+        for (const PlannedFn &planned : planned_fns) {
+            add_signatures(planned.closure_call_types);
+        }
+        for (std::uint32_t i = 0; i < signatures.size(); ++i) {
+            closure_type_index_by_key[
+                closure_call_type_key(signatures[i])] = i;
+        }
+        closure_signatures_out = std::move(signatures);
+    }
+    // Once-per-step closure-env bytes the ENTRY handlers bump (fn-body envs
+    // are already folded into the per-activation recursion budget below).
+    for (const P6ComputationHandlerBuilder *entry_builder : entry_builders) {
+        if (entry_builder != nullptr) {
+            entry_closure_env_bytes_out += entry_builder->closure_env_bytes();
+        }
     }
 
     // FB-1 fix-forward: the per-activation aggregate heap. When at least one
@@ -5169,10 +5959,13 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
     // fixed page. Both are checked here against the ONE page budget.
     bool construct_heap_enabled = false;
     for (const PlannedFn &planned : planned_fns) {
-        if (planned.dynamic_bytes != 0) {
+        if (planned.dynamic_bytes != 0 || planned.closure_env_bytes != 0) {
             construct_heap_enabled = true;
             break;
         }
+    }
+    if (entry_closure_env_bytes_out != 0) {
+        construct_heap_enabled = true;
     }
     std::uint32_t construct_heap_base = ir::core::kNodeEventLogBase;
     if (construct_heap_enabled) {
@@ -5201,39 +5994,57 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
 
         std::vector<std::uint32_t> dynamic_bytes_by_fn(program.fns.size(), 0);
         for (const PlannedFn &planned : planned_fns) {
-            dynamic_bytes_by_fn[planned.id.value] = planned.dynamic_bytes;
+            // Per-activation bump of one fn activation = its dynamic aggregates
+            // PLUS the closure environments it constructs. Both share the
+            // module arena and the recursion-depth multiplicity below, so a
+            // recursive lifted fn allocating fresh envs is bounded by the same
+            // single-page gate (design §6.3 / FB-2 depth product).
+            dynamic_bytes_by_fn[planned.id.value] =
+                planned.dynamic_bytes + planned.closure_env_bytes;
         }
-        // Worst-case aggregate bytes one computed handler can bump in a single
-        // step (one whole activation tree). Per-fn activation multiplicity is
-        // derived over the SAME sealed recursion analysis (handler call sites
-        // are roots; intra-SCC edges multiply by the sealed depth). This is a
-        // deliberate over-approximation: the heap never reclaims within a step,
-        // so every (possibly dead) result slot is counted, which is sound.
-        const std::uint64_t budget = compute_fn_construct_heap_budget(
+        // Worst-case aggregate/env bytes one computed handler can bump in a
+        // single step (one whole activation tree). Per-fn activation
+        // multiplicity is derived over the SAME sealed recursion analysis
+        // (handler call sites are roots; intra-SCC edges multiply by the sealed
+        // depth). This is a deliberate over-approximation: the heap never
+        // reclaims within a step, so every (possibly dead) slot is counted.
+        std::uint64_t budget = compute_fn_construct_heap_budget(
             program, dynamic_bytes_by_fn, entry_storages, seen_fn,
             recursion_analysis, result);
         if (budget == std::numeric_limits<std::uint64_t>::max()) {
             return false;
         }
+        // Entry-handler closure envs bump once per step OUTSIDE any fn
+        // activation, so they are added on top of the fn activation tree.
+        budget += entry_closure_env_bytes_out;
         const std::uint64_t capacity =
             ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
         if (static_cast<std::uint64_t>(construct_heap_base) > capacity ||
             budget > capacity - static_cast<std::uint64_t>(construct_heap_base)) {
             add_diag(result,
                      core_wasm_diag::kResourceExhausted,
-                     "the outlined-fn aggregate plan needs " + std::to_string(budget) +
+                     "the aggregate / closure-environment plan needs " + std::to_string(budget) +
                          " heap bytes above base " + std::to_string(construct_heap_base) +
                          " but the fixed 64 KiB linear-memory page has only " +
                          std::to_string(capacity - construct_heap_base) +
-                         "; use smaller aggregates or bounded collections");
+                         "; use smaller aggregates / captures or bounded collections");
             return false;
         }
     }
 
-    // Phase B: emit every planned fn body in ordinal order. An fn builder with
-    // dynamic constructs already routes them through the runtime heap; the
-    // module encoder relocates/initializes the heap global and the entry
-    // handlers reset it when `construct_heap_enabled`.
+    // Phase B: install the finalized funcref / call_indirect tables (with
+    // ABSOLUTE type indices beyond the per-fn types), then emit every planned
+    // fn body in ordinal order.
+    const std::uint32_t closure_type_base = 5u + static_cast<std::uint32_t>(reachable.size());
+    std::unordered_map<std::string, std::uint32_t> absolute_closure_type_index;
+    absolute_closure_type_index.reserve(closure_signatures_out.size());
+    for (std::uint32_t i = 0; i < closure_signatures_out.size(); ++i) {
+        absolute_closure_type_index.emplace(
+            closure_call_type_key(closure_signatures_out[i]), closure_type_base + i);
+    }
+    for (PlannedFn &planned : planned_fns) {
+        planned.builder->install_closure_tables(fn_to_table_slot, absolute_closure_type_index);
+    }
     for (std::uint32_t ordinal = 0; ordinal < planned_fns.size(); ++ordinal) {
         PlannedFn &planned = planned_fns[ordinal];
         auto body = planned.builder->emit(planned.param_words);
@@ -5628,15 +6439,29 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
     for (const PlannedComputedHandler &planned : planned_handlers) {
         planned_entry_callees.push_back(planned.builder->fn_callees());
     }
+    // Keep raw pointers to the planned entry-handler builders so the fn
+    // reachability / closure-table driver can read their closure facts and
+    // install the finalized tables before the handlers are emitted below. The
+    // unique_ptrs stay alive in `planned_handlers` for this whole window.
+    std::vector<P6ComputationHandlerBuilder *> entry_builder_ptrs;
+    entry_builder_ptrs.reserve(planned_handlers.size());
+    for (const PlannedComputedHandler &planned : planned_handlers) {
+        entry_builder_ptrs.push_back(planned.builder.get());
+    }
+    std::uint32_t entry_closure_env_bytes = 0;
     if (!compile_reachable_fn_bodies(program,
                                      layouts,
                                      plan.fns,
                                      std::vector<const CoreBodyStorage *>{&flow->storage},
                                      planned_entry_callees,
+                                     entry_builder_ptrs,
                                      agent_fn_base,
                                      result,
                                      plan.construct_heap_enabled,
-                                     plan.construct_heap_base)) {
+                                     plan.construct_heap_base,
+                                     plan.closure_table,
+                                     plan.closure_signatures,
+                                     entry_closure_env_bytes)) {
         return std::nullopt;
     }
 
@@ -5648,6 +6473,21 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
         instance_to_ordinal[program.fns[plan.fns[ordinal].id.value].instance.value] = ordinal;
     }
     const std::uint32_t handler_fn_base = agent_fn_base;
+
+    // FB-3b: absolute call_indirect type indices sit beyond the five fixed ABI
+    // types and the per-fn types (5 + fns.size()). Install the finalized
+    // funcref-slot and call_indirect type maps on each entry handler.
+    const std::uint32_t agent_closure_type_base =
+        5u + static_cast<std::uint32_t>(plan.fns.size());
+    std::unordered_map<std::uint32_t, std::uint32_t> fn_to_table_slot;
+    for (std::uint32_t slot = 0; slot < plan.closure_table.size(); ++slot) {
+        fn_to_table_slot.emplace(plan.closure_table[slot].value, slot);
+    }
+    std::unordered_map<std::string, std::uint32_t> entry_closure_type_index;
+    for (std::uint32_t i = 0; i < plan.closure_signatures.size(); ++i) {
+        entry_closure_type_index.emplace(
+            closure_call_type_key(plan.closure_signatures[i]), agent_closure_type_base + i);
+    }
 
     // Now that ordinals are fixed, emit the planned computed handlers in
     // state-loop order and publish their actions (the function index is the
@@ -5661,6 +6501,7 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
         std::vector<CoreStateId> targets = planned.targets;
         std::unique_ptr<P6ComputationHandlerBuilder> builder = std::move(planned.builder);
         builder->set_fn_call_tables(&instance_to_ordinal, &handler_fn_base);
+        builder->install_closure_tables(fn_to_table_slot, entry_closure_type_index);
         if (plan.construct_heap_enabled) {
             builder->reset_construct_heap_on_entry(plan.construct_heap_base);
         }
@@ -6458,7 +7299,8 @@ encode_module(const CoreProgram &program,
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
 
     ByteBuffer types;
-    types.u32(5 + static_cast<std::uint32_t>(plan.fns.size()));
+    types.u32(5 + static_cast<std::uint32_t>(plan.fns.size()) +
+                  static_cast<std::uint32_t>(plan.closure_signatures.size()));
     append_func_type(types, {}, {kI32});
     append_func_type(types, {kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {});
@@ -6467,18 +7309,34 @@ encode_module(const CoreProgram &program,
     // RFC 0026 FB-1: one functype per outlined fn, in ordinal order, appended
     // beyond the five fixed types. Wasm permits structurally duplicate
     // functypes, so each fn gets its own type index (5 + ordinal) even when
-    // signatures coincide. Every signature is (i32 env, args...) -> ret with
-    // single-word P6 args/result (an i64 argument is the only non-i32 word).
+    // signatures coincide. Every signature is (i32 env, args...) -> ret; a
+    // closure ARGUMENT is two i32 words (func_index, env_ptr), an i64 argument
+    // is one i64 word.
     for (const CompiledFn &fn : plan.fns) {
         std::vector<std::uint8_t> params;
         params.reserve(fn.param_words.size() + 1);
         params.push_back(kI32); // env
         for (const P6ScalarKind word : fn.param_words) {
-            params.push_back(word == P6ScalarKind::IntI64 ? kI64 : kI32);
+            if (word == P6ScalarKind::Closure) {
+                params.push_back(kI32);
+                params.push_back(kI32);
+            } else {
+                params.push_back(word == P6ScalarKind::IntI64 ? kI64 : kI32);
+            }
         }
         const std::uint8_t result_word =
             fn.result_word == P6ScalarKind::IntI64 ? kI64 : kI32;
         append_func_type(types, params, {result_word});
+    }
+    // RFC 0026 FB-3b: the call_indirect expected functypes follow the per-fn
+    // types at index (5 + fns.size() + i). Their bytes are already complete
+    // (leading env + closure-arg expansion + single-word result).
+    for (const ClosureCallType &signature : plan.closure_signatures) {
+        types.byte(kFuncType);
+        types.u32(static_cast<std::uint32_t>(signature.params.size()));
+        types.raw_span(signature.params);
+        types.u32(1);
+        types.byte(signature.result);
     }
     if (!append_section(module, kSectionType, types)) {
         return std::nullopt;
@@ -6525,6 +7383,21 @@ encode_module(const CoreProgram &program,
         return std::nullopt;
     }
 
+    // RFC 0026 FB-3b §6.2: exactly ONE funcref table, declared ONLY when the
+    // module constructs a closure. Table(4) is emitted in its fixed position
+    // between Function(3) and Memory(5); a closure-free module omits the whole
+    // section (and Element(9)) and stays byte-identical.
+    if (!plan.closure_table.empty()) {
+        ByteBuffer tables;
+        tables.u32(1);                 // one table
+        tables.byte(kFuncRefType);     // element type funcref
+        tables.byte(0);                // limits: minimum only, no maximum
+        tables.u32(static_cast<std::uint32_t>(plan.closure_table.size()));
+        if (!append_section(module, kSectionTable, tables)) {
+            return std::nullopt;
+        }
+    }
+
     ByteBuffer memories;
     memories.u32(1);  // one memory
     memories.byte(0); // limits flags: no declared maximum
@@ -6566,6 +7439,36 @@ encode_module(const CoreProgram &program,
         append_export(exports, "ahfl_abi_version", kExportGlobal, kGlobalAbiVersion);
     if (!exports_ok || !append_section(module, kSectionExport, exports)) {
         return std::nullopt;
+    }
+
+    // RFC 0026 FB-3b §6.2: Element(9) in its fixed position between Export(7)
+    // and Code(10). One ACTIVE segment initializes table[0..N) with the wasm
+    // function index of each closure target in DENSE table-slot order. The
+    // dense slot is what a constructed closure's func_index word holds; this
+    // segment maps slot -> absolute funcidx. A closure-free module omits it.
+    if (!plan.closure_table.empty()) {
+        std::vector<std::uint32_t> fn_ordinal_by_id(program.fns.size(),
+                                                    std::numeric_limits<std::uint32_t>::max());
+        for (std::uint32_t ordinal = 0; ordinal < plan.fns.size(); ++ordinal) {
+            fn_ordinal_by_id[plan.fns[ordinal].id.value] = ordinal;
+        }
+        ByteBuffer elements;
+        elements.u32(1);                 // one segment
+        elements.byte(0);               // active, implicit table 0, offset expr
+        elements.byte(kOpI32Const);
+        elements.s32(0);                // offset = 0
+        elements.byte(kOpEnd);
+        elements.u32(static_cast<std::uint32_t>(plan.closure_table.size()));
+        for (const CoreFnId fn_id : plan.closure_table) {
+            const std::uint32_t ordinal = fn_ordinal_by_id[fn_id.value];
+            if (ordinal == std::numeric_limits<std::uint32_t>::max()) {
+                return std::nullopt;
+            }
+            elements.u32(functions.fn_base(functions.handler_count) + ordinal);
+        }
+        if (!append_section(module, kSectionElement, elements)) {
+            return std::nullopt;
+        }
     }
 
     ByteBuffer code;
