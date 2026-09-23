@@ -69,6 +69,21 @@ struct Interval {
                          : -b);
 }
 
+// Saturating ceiling division of a NON-NEGATIVE span by a POSITIVE step:
+// ceil(span / step), pinned at INT64_MAX instead of wrapping the
+// `span + step - 1` numerator. A saturated quotient is far above the depth
+// ceiling, so the caller rejects it as FN_RECURSION_DEPTH.
+[[nodiscard]] std::int64_t sat_div_ceil(std::int64_t span, std::int64_t step) {
+    constexpr std::int64_t kMax = std::numeric_limits<std::int64_t>::max();
+    if (span <= 0 || step <= 0) {
+        return 0;
+    }
+    if (span > kMax - (step - 1)) {
+        return kMax;
+    }
+    return (span + step - 1) / step;
+}
+
 // Symbolic evaluator over one body storage. Resolves SSA values through
 // let-bound chains (a full value->expr index is built by walking every region).
 class TermAnalyzer {
@@ -223,7 +238,9 @@ class TermAnalyzer {
             if (unary->op == CoreUnaryOp::Neg) {
                 const Term inner = eval_expr(unary->operand);
                 if (inner.kind == TermKind::Const) {
-                    return Term{TermKind::Const, -inner.c, {}};
+                    // Saturating negation: -INT64_MIN is unrepresentable and the
+                    // raw unary minus is signed overflow UB.
+                    return Term{TermKind::Const, sat_sub(0, inner.c), {}};
                 }
             }
             return {};
@@ -243,17 +260,23 @@ class TermAnalyzer {
             }
             const Term lhs = eval_expr(binary->lhs);
             const Term rhs = eval_expr(binary->rhs);
-            const std::int64_t sign = binary->op == CoreBinaryOp::Add ? 1 : -1;
+            // Every constant fold is saturated: a hostile i64 literal (Int is
+            // i64; the frontend accepts INT64_MAX) must not wrap the offset into
+            // a small/negative value that would seal a tiny finite depth. A
+            // saturated quantity reaches the ceiling gate below.
+            const auto combine = [&](std::int64_t a, std::int64_t b) {
+                return binary->op == CoreBinaryOp::Add ? sat_add(a, b) : sat_sub(a, b);
+            };
             if (lhs.kind == TermKind::Const && rhs.kind == TermKind::Const) {
-                return Term{TermKind::Const, lhs.c + sign * rhs.c, {}};
+                return Term{TermKind::Const, combine(lhs.c, rhs.c), {}};
             }
             if ((lhs.kind == TermKind::Param || lhs.kind == TermKind::Len) &&
                 rhs.kind == TermKind::Const) {
-                return Term{lhs.kind, lhs.c + sign * rhs.c, lhs.ref};
+                return Term{lhs.kind, combine(lhs.c, rhs.c), lhs.ref};
             }
             if (binary->op == CoreBinaryOp::Add && lhs.kind == TermKind::Const &&
                 (rhs.kind == TermKind::Param || rhs.kind == TermKind::Len)) {
-                return Term{rhs.kind, rhs.c + lhs.c, rhs.ref};
+                return Term{rhs.kind, sat_add(rhs.c, lhs.c), rhs.ref};
             }
             return {};
         }
@@ -279,9 +302,15 @@ class Tarjan {
                 connect(root);
             }
         }
-        std::sort(components_.begin(), components_.end(),
-                  [](const std::vector<std::uint32_t> &a,
-                     const std::vector<std::uint32_t> &b) { return a.front() < b.front(); });
+        // SCCs stay in their genuine POP order: Tarjan emits sink components
+        // before their predecessors, which is a deterministic reverse
+        // topological order of the condensation (the DFS root order is fixed by
+        // the caller). Members WITHIN a component are sorted in `connect`, but
+        // the components themselves must NOT be re-sorted by front() — doing so
+        // destroys the emission order and breaks every consumer that walks the
+        // condensation as a DAG (the documented contract in
+        // FnRecursionAnalysis::components). Consumers that need an order
+        // independent of this one derive their own topological walk.
         return std::move(components_);
     }
 
@@ -536,7 +565,8 @@ class RecursionLattice {
         if (ascending ? t.c <= 0 : t.c >= 0) {
             return {};
         }
-        return Progression{true, ascending ? t.c : -t.c};
+        // Saturating negation of the descending offset (which can be INT64_MIN).
+        return Progression{true, ascending ? t.c : sat_sub(0, t.c)};
     }
 
     // R2 divergent guard over a member's rank, at top level of its body.
@@ -796,11 +826,15 @@ class RecursionLattice {
         }
         if (t.kind == TermKind::Len) {
             const auto capacity = ta.container_capacity(t.ref);
-            if (!capacity.has_value()) {
+            if (!capacity.has_value() ||
+                *capacity > static_cast<std::uint64_t>(
+                                std::numeric_limits<std::int64_t>::max())) {
                 return {};
             }
             const std::int64_t cap = static_cast<std::int64_t>(*capacity);
-            return Interval{t.c, cap + t.c, true};
+            // The upper endpoint cap + offset is saturated so a hostile affine
+            // offset cannot wrap it below the lower endpoint.
+            return Interval{t.c, sat_add(cap, t.c), true};
         }
         return {};
     }
@@ -995,7 +1029,10 @@ class RecursionLattice {
         if (span < 0) {
             span = 0;
         }
-        std::int64_t depth = (span + min_step - 1) / min_step + 1;
+        // depth = ceil(span / min_step) + 1, every op saturated; a saturated
+        // span / step / quotient is pinned at INT64_MAX and therefore exceeds
+        // kFnRecursionDepthCeiling in the overflow gate below.
+        std::int64_t depth = sat_add(sat_div_ceil(span, min_step), 1);
         if (depth < 1) {
             depth = 1;
         }
@@ -1172,11 +1209,39 @@ std::uint64_t max_native_fn_call_depth(const CoreProgram &program,
         std::sort(outs.begin(), outs.end());
         outs.erase(std::unique(outs.begin(), outs.end()), outs.end());
     }
-    // Longest weighted path over the DAG (Tarjan emission order is a reverse
-    // topological order, so a reverse scan is a forward walk).
+    // Longest weighted path over the condensation DAG:
+    //   best[C] = weight[C] + max(best[D] for every condensation edge C -> D).
+    // This must be correct regardless of how the SCC components happen to be
+    // ordered in the vector (helpers declared before their callers make the
+    // common case edges toward a LOWER fn id, so the component order is the
+    // opposite of the call direction). Derive an explicit topological order of
+    // the DAG with Kahn (sources first) and walk it in REVERSE, so every
+    // successor D is finalized before C is weighted.
+    std::vector<std::uint32_t> indegree(components.size(), 0);
+    for (const std::vector<std::uint32_t> &outs : dag) {
+        for (const std::uint32_t to : outs) {
+            ++indegree[to];
+        }
+    }
+    std::vector<std::uint32_t> topo;
+    topo.reserve(components.size());
+    for (std::uint32_t ci = 0; ci < components.size(); ++ci) {
+        if (indegree[ci] == 0) {
+            topo.push_back(ci);
+        }
+    }
+    for (std::size_t head = 0; head < topo.size(); ++head) {
+        const std::uint32_t ci = topo[head];
+        for (const std::uint32_t to : dag[ci]) {
+            if (--indegree[to] == 0) {
+                topo.push_back(to);
+            }
+        }
+    }
     std::vector<std::uint64_t> best(components.size(), 0);
     std::uint64_t global = 0;
-    for (std::int64_t ci = static_cast<std::int64_t>(components.size()) - 1; ci >= 0; --ci) {
+    for (auto it = topo.rbegin(); it != topo.rend(); ++it) {
+        const std::uint32_t ci = *it;
         std::uint64_t follow = 0;
         for (const std::uint32_t to : dag[ci]) {
             follow = std::max(follow, best[to]);

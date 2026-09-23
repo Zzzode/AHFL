@@ -3558,3 +3558,198 @@ TEST_CASE("FB-2 lattice: a self call inside the guard's stop branch fails the do
     CHECK(a.unbounded_issues.front().kind ==
           FnRecursionIssueKind::EdgeNotDominatedByGuard);
 }
+
+// ===========================================================================
+// RFC 0026 FB-2 fix-forward: condensation-DAG native-depth weighting and
+// saturating hostile-literal arithmetic.
+//
+// The native-stack gate (max_native_fn_call_depth) weights the SCC condensation
+// DAG, not just one self edge. Its longest weighted path must be independent of
+// the order fns happen to be declared (helpers-first edges point at a LOWER fn
+// id, the common layout), and a hostile i64 literal must saturate instead of
+// wrapping the sealed depth to a small finite value.
+// ===========================================================================
+
+namespace {
+
+// Append `n` acyclic plain fns (one Int param each). helpers_first=true makes
+// f_k call f_{k-1} (edges toward a LOWER fn id, the ordinary helper layout);
+// false makes f_k call f_{k+1}. The leaf returns a literal. Fn ids are
+// consecutive starting at the current fn-table size.
+void append_plain_chain(RecProgram &r, std::uint32_t n, bool helpers_first) {
+    const std::uint32_t base =
+        static_cast<std::uint32_t>(r.program.fns.size());
+    for (std::uint32_t k = 0; k < n; ++k) {
+        static_cast<void>(add_rec_fn(r, "chain_" + std::to_string(base) + "_" +
+                                             std::to_string(k),
+                                     {r.vt_int}));
+    }
+    for (std::uint32_t k = 0; k < n; ++k) {
+        RecBody b = rec_body(r, base + k);
+        const CoreValueId x{0};
+        const bool is_leaf = helpers_first ? (k == 0) : (k == n - 1);
+        if (is_leaf) {
+            const CoreValueId z = b.bind(b.lit(0), r.vt_int);
+            b.ret(z);
+        } else {
+            const std::uint32_t callee = helpers_first ? base + k - 1 : base + k + 1;
+            const CoreValueId rv =
+                b.bind(b.call(CoreInstanceId{callee}, {x}), r.vt_int);
+            b.ret(rv);
+        }
+    }
+}
+
+} // namespace
+
+TEST_CASE("FB-2 native depth: helpers-first plain chain is weighted by full length") {
+    RecProgram r = make_rec_program();
+    constexpr std::uint32_t kN = 12;
+    append_plain_chain(r, kN, /*helpers_first=*/true);
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    CHECK(a.overflow_sccs.empty());
+    // nullptr reachable: every fn participates. The buggy reverse-index scan
+    // collapsed this edges-to-lower-id chain to 1.
+    CHECK(max_native_fn_call_depth(r.program, a, nullptr) == kN);
+}
+
+TEST_CASE("FB-2 native depth: callers-first plain chain is weighted by full length") {
+    RecProgram r = make_rec_program();
+    constexpr std::uint32_t kN = 12;
+    append_plain_chain(r, kN, /*helpers_first=*/false);
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    CHECK(a.overflow_sccs.empty());
+    CHECK(max_native_fn_call_depth(r.program, a, nullptr) == kN);
+}
+
+TEST_CASE("FB-2 native depth: a sealed SCC adds its weight to a downstream chain") {
+    RecProgram r = make_rec_program();
+    // loop (id 0), rank i: if (i >= 2) return i; t = h1(i); return loop(i + 1).
+    // Sealed entry i = 0 -> activations i = 0,1,2 -> weight 3.
+    const std::uint32_t loop = add_rec_fn(r, "loop_with_chain", {r.vt_int});
+    const std::uint32_t chain_len = 3; // h1 -> h2 -> h3(leaf)
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId i{0};
+        const CoreValueId two = b.bind(b.lit(2), r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Ge, b.vref(i, r.vt_int), b.vref(two, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        b.base_if(cond, i);
+        // External helper edge (NOT an internal SCC edge): allowed before the
+        // recursive edge; it extends the condensation path by chain_len fns.
+        static_cast<void>(
+            b.bind(b.call(CoreInstanceId{loop + 1}, {i}), r.vt_int));
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        const CoreValueId rv =
+            b.bind(b.call(CoreInstanceId{loop}, {i1}), r.vt_int);
+        b.ret(rv);
+    }
+    append_plain_chain(r, chain_len, /*helpers_first=*/false); // ids 1..3
+    // A starter supplies the entry edge so the SCC seals at depth 3, but it is
+    // marked UNREACHABLE for the native-depth weighting (so its own frame is not
+    // counted). analyze_fn_recursion scans every body regardless of liveness.
+    const std::uint32_t starter = add_rec_fn(r, "starter_unreachable", {r.vt_int});
+    {
+        RecBody b = rec_body(r, starter);
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv =
+            b.bind(b.call(CoreInstanceId{loop}, {zero}), r.vt_int);
+        b.ret(rv);
+    }
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    REQUIRE(a.sccs.size() == 1);
+    CHECK(a.sccs[0].depth_bound == 3);
+
+    std::vector<bool> reachable(r.program.fns.size(), false);
+    for (std::uint32_t f = loop; f <= loop + chain_len; ++f) {
+        reachable[f] = true;
+    }
+    CHECK(max_native_fn_call_depth(r.program, a, &reachable) == 3 + chain_len);
+}
+
+TEST_CASE("FB-2 lattice: an INT64_MAX literal bound saturates to FN_RECURSION_DEPTH") {
+    RecProgram r = make_rec_program();
+    constexpr std::int64_t kMax = std::numeric_limits<std::int64_t>::max();
+    const std::uint32_t loop = add_rec_fn(r, "huge_lit", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        const CoreValueId big = b.bind(b.lit(kMax), r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Ge, b.vref(i, r.vt_int), b.vref(big, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        b.base_if(cond, i);
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i1}), r.vt_int);
+        b.ret(rv);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_huge", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, zero}), r.vt_int);
+        b.ret(rv);
+    }
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    REQUIRE_FALSE(a.overflow_sccs.empty()); // saturates far past the 1,000,000 ceiling
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionDepth));
+}
+
+TEST_CASE("FB-2 lattice: a folded-overflow constant bound saturates to FN_RECURSION_DEPTH") {
+    RecProgram r = make_rec_program();
+    constexpr std::int64_t kHalf = 5'000'000'000'000'000'000LL; // 5e18
+    const std::uint32_t loop = add_rec_fn(r, "fold_overflow", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        // big = 5e18 + 5e18 (1e19) — raw folding wrapped this to a negative
+        // constant and sealed depth 1; saturated folding pins it at INT64_MAX.
+        const CoreValueId big = b.bind(
+            b.binary(CoreBinaryOp::Add, b.lit(kHalf), b.lit(kHalf), r.vt_int),
+            r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Ge, b.vref(i, r.vt_int), b.vref(big, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        b.base_if(cond, i);
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i1}), r.vt_int);
+        b.ret(rv);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_fold", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, zero}), r.vt_int);
+        b.ret(rv);
+    }
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    REQUIRE_FALSE(a.overflow_sccs.empty());
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionDepth));
+}

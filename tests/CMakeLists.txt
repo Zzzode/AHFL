@@ -170,6 +170,24 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 FB-2 fix-forward: the executed recursion bound must match the
+    # sealed one even when a host LIES about the input-frame length word. The
+    # outlined fn clamps every Len read to min(header_len, capacity); a host that
+    # reports length 100000 over a capacity-4 backing store still completes one
+    # bounded step (routing Done) instead of trap-of-stack-exhaustion. A positive
+    # control at len == capacity is included. Real Node-engine evidence.
+    add_test(NAME ahfl.wasm.fb2_len_lie_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb2_len_lie_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.fb2_len_lie_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-2 hostile length-word clamp Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 FB-1 fix-forward: outlined-fn AGGREGATE results must not alias
     # compile-time static scratch across native call activations. The handler
     # makes repeated, nested, distinct-fn, and aggregate-argument direct calls
@@ -202,6 +220,24 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
     set_tests_properties(ahfl.wasm.fb2_guard_placement_reject PROPERTIES
         PASS_REGULAR_EXPRESSION "FB-2 guard-dominance compile-reject lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # RFC 0026 FB-2 fix-forward: a plan the depth lattice SEALS (under the
+    # 1,000,000 Core ceiling) but whose worst-case native call depth exceeds the
+    # engine-safe 1024 budget is rejected at codegen with wasm.RESOURCE_EXHAUSTED
+    # and emits no module (it would trap a real engine with stack exhaustion).
+    # The condensation-DAG depth weighting must count the whole path regardless
+    # of fn declaration order. Engine-independent (the gate is the rejection).
+    add_test(NAME ahfl.wasm.fb2_native_depth_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb2_native_depth_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb2_too_deep_recursion.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb2_native_depth_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "FB-2 native-depth RESOURCE compile-reject lane passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural"
     )

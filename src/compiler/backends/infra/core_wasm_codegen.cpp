@@ -2548,12 +2548,49 @@ class P6ComputationHandlerBuilder {
                           std::move(range));
         }
         if (collection.op == CoreCollectionOpKind::Len) {
-            if (!emit_value_read(collection.base, range)) {
+            // The header length word is HOST-WRITTEN. Element access clamps its
+            // address with index<capacity below, but a LENGTH is otherwise an
+            // untrusted i32 the recursion lattice sealed against the STATIC
+            // container capacity (core_recursion: a Len term bounds the rank by
+            // the P4-D capacity). In an outlined fn body that length can drive a
+            // recursion guard/entry, so clamp it to the sealed capacity here —
+            // min(header_len, capacity) — using an UNSIGNED compare so a hostile
+            // huge (or sign-negative) word is pinned to capacity instead of
+            // driving unbounded native recursion. The clamp is restricted to fn
+            // bodies: handler-mode bytes (E1-E3/P6) must stay byte-identical.
+            const auto emit_len_load = [&]() -> bool {
+                if (!emit_value_read(collection.base, range)) {
+                    return false;
+                }
+                body_.byte(kOpI32Load); // len @ 4 (pointer @ 0 is the other word)
+                body_.u32(kAlignI32);
+                body_.u32(ir::core::kP6CollectionHeaderLenOffset);
+                return true;
+            };
+            if (fn_mode_ &&
+                container->capacity <=
+                    static_cast<std::uint64_t>(
+                        std::numeric_limits<std::int32_t>::max())) {
+                // block (result i32): (len >u cap) ? cap : len
+                body_.byte(kOpBlock);
+                body_.byte(kI32);
+                if (!emit_len_load()) {
+                    return false;
+                }
+                emit_const_i32(static_cast<std::int32_t>(container->capacity));
+                body_.byte(kOpI32GtU); // len >u cap
+                body_.byte(kOpIf);
+                body_.byte(kI32);
+                emit_const_i32(static_cast<std::int32_t>(container->capacity));
+                body_.byte(kOpElse);
+                if (!emit_len_load()) {
+                    return false;
+                }
+                body_.byte(kOpEnd); // if
+                body_.byte(kOpEnd); // block
+            } else if (!emit_len_load()) {
                 return false;
             }
-            body_.byte(kOpI32Load); // len @ 4 (pointer @ 0 is the other word)
-            body_.u32(kAlignI32);
-            body_.u32(ir::core::kP6CollectionHeaderLenOffset);
             // The header word is an i32 by construction; the LENGTH result is an
             // `Int`, which may be the wider i64 repr, so widen it. `i64.extend_
             // i32_s` is correct for a length (always >= 0 in a well-formed
@@ -4854,7 +4891,8 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
 // storages (an agent module's one shared flow storage; a workflow module's
 // workflow storage plus its packaged agent flows). Only fns the direct
 // CoreCallExpr closure reaches are emitted; the closure is a deterministic
-// worklist fixed point over the static (verified-acyclic) call graph, and
+// worklist fixed point over the static fn call graph (its recursion groups are
+// SCCs sealed with a finite static depth by analyze_fn_recursion), and
 // ordinals are assigned in ascending CoreFnId order so the module is
 // reproducible. A module with no direct calls emits zero fn bodies and stays
 // byte-identical to its E1-E3/P6 shape.
@@ -5513,10 +5551,11 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
 
     // RFC 0026 FB-1 §6.1: compile the outlined pure fn bodies reachable from
     // the entry handler regions via direct CoreCallExpr. The reachability set
-    // is a deterministic fixed point over the static (acyclic, verified) call
-    // graph; ordinals are assigned in CoreFnId order so the module is
-    // reproducible. A zero-call module emits no fn bodies. The handler count
-    // is fixed by the planned computed handlers, so the fn base is known now.
+    // is a deterministic fixed point over the static fn call graph (recursion
+    // groups are SCCs sealed by analyze_fn_recursion); ordinals are assigned in
+    // CoreFnId order so the module is reproducible. A zero-call module emits no
+    // fn bodies. The handler count is fixed by the planned computed handlers,
+    // so the fn base is known now.
     plan.handlers.resize(planned_handlers.size());
     const std::uint32_t agent_fn_base =
         static_cast<std::uint32_t>(plan.imports.size()) + kDefinedHandlerBase +

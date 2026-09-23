@@ -1,0 +1,61 @@
+// RFC 0026 FB-2 fix-forward: native-stack RESOURCE gate (>1024 plan).
+//
+// The structural depth lattice seals this recursion correctly (rank i ascends
+// by 1, guarded by the bounded-container length, entered at i = 0), so the
+// Core verifier accepts it: capacity 1100 seals a static depth of 1101, which
+// is under the Core-layer ceiling (1,000,000) but ABOVE the engine-safe native
+// stack budget (kFnRecursionNativeStackDepthMax = 1024). The wasm backend must
+// therefore fail closed with wasm.RESOURCE_EXHAUSTED and write no artifact,
+// rather than emit a module that traps with native stack exhaustion. The
+// depth-weighting must follow the condensation DAG regardless of declaration
+// order; this single SCC drives the gate directly.
+module std::collections;
+
+pub struct List<T> { }
+
+pub struct Frame {
+    items: List<Int>(1100);
+}
+
+@builtin("list_raw_get")
+fn list_raw_get<T>(xs: List<T>, i: Int) -> T effect Pure;
+
+@builtin("list_raw_length")
+fn list_raw_length<T>(xs: List<T>) -> Int effect Pure;
+
+fn sum_deep(xs: List<Int>(1100), i: Int, acc: Int) -> Int effect Pure
+    decreases list_raw_length<Int>(xs) - i {
+    if i >= list_raw_length<Int>(xs) {
+        return acc;
+    }
+    return sum_deep(xs, i + 1, acc + list_raw_get<Int>(xs, i));
+}
+
+pub agent TooDeepAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for TooDeepAgent {
+    state Init {
+        let total: Int = sum_deep(input.items, 0, 0);
+        if total == 0 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

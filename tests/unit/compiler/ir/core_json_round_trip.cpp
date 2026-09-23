@@ -548,6 +548,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/fb1_aggregate_direct_call.ahfl",
         "wasm/fb1_direct_call.ahfl",
         "wasm/fb2_bounded_recursion.ahfl",
+        "wasm/fb2_too_deep_recursion.ahfl",
         "wasm/p6_aggregate.ahfl",
         "wasm/p6_cascade.ahfl",
         "wasm/p6_cascade_high.ahfl",
