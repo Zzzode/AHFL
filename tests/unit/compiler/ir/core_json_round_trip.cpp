@@ -1247,3 +1247,155 @@ TEST_CASE("Core-IR JSON round-trips the full 64-bit numeric domain (R1/R2)") {
     CHECK(int_leaf.bounds->first == INT64_MIN);
     CHECK(int_leaf.bounds->second == INT64_MAX);
 }
+
+// RFC 0026 FB-3a1: the two new closure expr nodes (§3.1 CoreClosureExpr, §5.2
+// CoreCallClosureExpr) and the CoreFnDecl declared `captures` signature must be
+// wire-symmetric (R1 byte-exact, R2 structural identity) through the same
+// kind-name SSOT as every other node. The fixture is a verifier-clean
+// lambda-lifted shape built by hand (lifting itself arrives in FB-3a2).
+TEST_CASE("Core-IR JSON round-trips CoreClosureExpr / CoreCallClosureExpr and fn captures") {
+    using namespace ir::core;
+    CoreProgram program;
+    program.value_types.push_back(CoreValueType{CoreVtInt{}});                 // 0 Int
+    program.value_types.push_back(CoreValueType{CoreVtFn{{CoreValueTypeId{0}}, // 1 Fn(Int)->Int
+                                                        CoreValueTypeId{0}}});
+    program.value_types.push_back(CoreValueType{CoreVtClosure{ // 2 Closure{sig1,[Int]}
+        CoreValueTypeId{1},
+        {CoreClosureCapture{CoreValueTypeId{0}, CoreCaptureMode::ByValue}}}});
+    const auto vt_int = CoreValueTypeId{0};
+    const auto vt_closure = CoreValueTypeId{2};
+
+    // Instance / fn 0: the lifted body g0(Int) -> Int with one declared Int env
+    // capture slot.
+    CoreInstanceDecl inst0;
+    inst0.id = CoreInstanceId{0};
+    inst0.instance_key = "_inst_g0";
+    inst0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    inst0.payload = CoreFnInstance{CoreFnId{0}};
+    program.instances.push_back(std::move(inst0));
+
+    CoreFnDecl g0;
+    g0.id = CoreFnId{0};
+    g0.instance = CoreInstanceId{0};
+    g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    g0.params = {CoreValueId{0}};
+    g0.captures = {vt_int};
+    g0.name = "_inst_g0";
+    g0.storage.value_count = 1;
+    g0.storage.value_types = {vt_int};
+    g0.storage.exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, vt_int});
+    g0.body.statements.push_back(CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    program.fns.push_back(std::move(g0));
+
+    // Instance / fn 1: the constructing body mk. v0 = Int param, v1 = closure.
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_mk";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "mk", "mk", "", 701};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    program.instances.push_back(std::move(inst1));
+
+    CoreFnDecl mk;
+    mk.id = CoreFnId{1};
+    mk.instance = CoreInstanceId{1};
+    mk.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "mk", "mk", "", 701};
+    mk.params = {CoreValueId{0}};
+    mk.name = "_inst_mk";
+    mk.storage.value_count = 2;
+    mk.storage.value_types = {vt_int, vt_closure};
+    mk.storage.exprs.push_back(
+        CoreExpr{CoreClosureExpr{CoreFnId{0}, {CoreValueId{0}}}, std::nullopt, vt_closure});
+    mk.storage.exprs.push_back(CoreExpr{
+        CoreCallClosureExpr{CoreValueId{1}, {CoreValueId{0}}}, std::nullopt, vt_int});
+    mk.body.statements.push_back(CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    program.fns.push_back(std::move(mk));
+
+    // The seed is verifier-clean (the reader's final gate would reject otherwise).
+    REQUIRE(verify_core_program(program).ok());
+
+    const std::string first = print(program);
+    REQUIRE_FALSE(first.empty());
+    // The wire kind names resolve from core_expr_nodes.def (single SSOT).
+    CHECK(first.find("\"kind\": \"closure\"") != std::string::npos);
+    CHECK(first.find("\"kind\": \"call_closure\"") != std::string::npos);
+    // The declared fn capture signature is serialized (and remapped on read).
+    CHECK(first.find("\"captures\": [") != std::string::npos);
+
+    const auto parsed = ir::core::parse_core_ir_json(first);
+    for (const auto &diagnostic : parsed.diagnostics) {
+        INFO("diagnostic: " << diagnostic.code << " - " << diagnostic.message);
+    }
+    REQUIRE(parsed.ok());
+    CHECK(parsed.diagnostics.empty());
+
+    // R1 byte-exact and R2 structural identity (now including the fns table).
+    CHECK(print(*parsed.program) == first);
+    CHECK(core_program_equal(program, *parsed.program));
+
+    // The two nodes survive with their exact fn id / operand lists.
+    const auto &mk_ex = parsed.program->fns[1].storage.exprs;
+    REQUIRE(mk_ex.size() == 2);
+    const auto *closure = std::get_if<CoreClosureExpr>(&mk_ex[0].node);
+    REQUIRE(closure != nullptr);
+    CHECK(closure->fn == CoreFnId{0});
+    REQUIRE(closure->env.size() == 1);
+    CHECK(closure->env[0] == CoreValueId{0});
+    const auto *call = std::get_if<CoreCallClosureExpr>(&mk_ex[1].node);
+    REQUIRE(call != nullptr);
+    CHECK(call->callee == CoreValueId{1});
+    REQUIRE(call->args.size() == 1);
+    CHECK(call->args[0] == CoreValueId{0});
+    // The lifted fn's declared capture signature round-trips.
+    REQUIRE(parsed.program->fns[0].captures.size() == 1);
+    CHECK(parsed.program->fns[0].captures[0] == vt_int);
+}
+
+// The closure-node reader enforces its field mask: an unknown key on a closure
+// expr is rejected rather than silently dropped.
+TEST_CASE("Core-IR JSON reader rejects an unknown field on a closure expression") {
+    using namespace ir::core;
+    CoreProgram program;
+    program.value_types.push_back(CoreValueType{CoreVtInt{}});
+    program.value_types.push_back(CoreValueType{CoreVtFn{{CoreValueTypeId{0}},
+                                                        CoreValueTypeId{0}}});
+    program.value_types.push_back(CoreValueType{CoreVtClosure{
+        CoreValueTypeId{1},
+        {CoreClosureCapture{CoreValueTypeId{0}, CoreCaptureMode::ByValue}}}});
+
+    CoreInstanceDecl inst;
+    inst.id = CoreInstanceId{0};
+    inst.instance_key = "_inst_g0";
+    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    inst.payload = CoreFnInstance{CoreFnId{0}};
+    program.instances.push_back(std::move(inst));
+
+    CoreFnDecl g0;
+    g0.id = CoreFnId{0};
+    g0.instance = CoreInstanceId{0};
+    g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    g0.params = {CoreValueId{0}};
+    g0.captures = {CoreValueTypeId{0}};
+    g0.name = "_inst_g0";
+    g0.storage.value_count = 1;
+    g0.storage.value_types = {CoreValueTypeId{0}};
+    g0.storage.exprs.push_back(
+        CoreExpr{CoreClosureExpr{CoreFnId{0}, {CoreValueId{0}}}, std::nullopt,
+                CoreValueTypeId{2}});
+    g0.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    program.fns.push_back(std::move(g0));
+
+    std::string doc = print(program);
+    REQUIRE_FALSE(doc.empty());
+    // Insert a stray field at the start of the closure EXPR object. Its unique
+    // `"fn"` member distinguishes it from the value-type closure entry (which
+    // also spells its kind "closure" but carries "signature"); the reader's
+    // per-object field mask must reject the stray key rather than drop it.
+    const std::string anchor = "\"fn\": 0,";
+    const auto fn_pos = doc.find(anchor);
+    REQUIRE(fn_pos != std::string::npos);
+    const auto line_start = doc.rfind('\n', fn_pos) + 1;
+    const std::string indent = doc.substr(line_start, fn_pos - line_start);
+    doc.insert(line_start, indent + "\"bogus\": 1,\n");
+    require_rejected_with(doc, "core.json.UNKNOWN_FIELD");
+}

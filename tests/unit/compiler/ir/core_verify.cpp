@@ -2994,6 +2994,227 @@ TEST_CASE("FB-1 verifier: a direct call to an effectful callee fails") {
 }
 
 // ===========================================================================
+// RFC 0026 FB-3a1 (CORE-FNBODY-DESIGN §3.1/§5.2/§8.1 #4/#5): closure
+// construction + indirect closure call structural verification.
+//
+// Lambda lifting (FB-3a2) is what makes the lowerer emit these nodes, but every
+// model-level rule is enforced on hand-built / wire-reconstructed artifacts now.
+// The fixture is a lambda-lifted shape:
+//
+//   global value types: Int, Bool, Fn(Int)->Int, Closure{Fn(Int)->Int, [Int]}
+//   fn g0  (fn 0)     : the lifted body — one Int LOGICAL param, one declared
+//                       Int capture slot, returns the Int param verbatim;
+//   fn mk  (fn 1)     : the constructing body — one Int param (v0), a recorded
+//                       closure-typed SSA value (v1), and two ORPHAN arena
+//                       exprs: CoreClosureExpr{fn=g0, env=[v0]} (-> v1's type)
+//                       and CoreCallClosureExpr{callee=v1, args=[v0]} (-> Int).
+//
+// Orphan exprs are not region-reachable but the all-arena walks (field shapes)
+// and the program-wide verify_closures pass (semantic rules) scan them anyway,
+// which is exactly the tamper-with-one-field discipline the FB-1 battery uses.
+// ===========================================================================
+
+namespace {
+
+struct ClosureProgram {
+    CoreProgram program;
+    CoreValueTypeId vt_int{};
+    CoreValueTypeId vt_bool{};
+    CoreValueTypeId vt_sig{};   // Fn(Int) -> Int
+    CoreValueTypeId vt_closure{}; // Closure{sig, [Int ByValue]}
+};
+
+[[nodiscard]] ClosureProgram make_good_closure_program() {
+    ClosureProgram c;
+    CoreProgram &p = c.program;
+    c.vt_int = intern_program_vt(p, CoreValueType{CoreVtInt{}});
+    c.vt_bool = intern_program_vt(p, CoreValueType{CoreVtBool{}});
+    c.vt_sig = intern_program_vt(p, CoreValueType{CoreVtFn{{c.vt_int}, c.vt_int}});
+    c.vt_closure = intern_program_vt(
+        p, CoreValueType{CoreVtClosure{c.vt_sig,
+                                       {CoreClosureCapture{c.vt_int, CoreCaptureMode::ByValue}}}});
+
+    // Instance / fn 0: the lifted lambda body g0(Int) -> Int with one declared
+    // Int env capture slot.
+    CoreInstanceDecl inst0;
+    inst0.id = CoreInstanceId{0};
+    inst0.instance_key = "_inst_g0";
+    inst0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    inst0.payload = CoreFnInstance{CoreFnId{0}};
+    p.instances.push_back(std::move(inst0));
+
+    CoreFnDecl g0;
+    g0.id = CoreFnId{0};
+    g0.instance = CoreInstanceId{0};
+    g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    g0.params = {CoreValueId{0}};
+    g0.captures = {c.vt_int};
+    g0.name = "_inst_g0";
+    g0.storage.value_count = 1;
+    g0.storage.value_types = {c.vt_int};
+    g0.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, c.vt_int});
+    g0.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    p.fns.push_back(std::move(g0));
+
+    // Instance / fn 1: the constructing body mk.
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_mk";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "mk", "mk", "", 701};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    p.instances.push_back(std::move(inst1));
+
+    CoreFnDecl mk;
+    mk.id = CoreFnId{1};
+    mk.instance = CoreInstanceId{1};
+    mk.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "mk", "mk", "", 701};
+    mk.params = {CoreValueId{0}};
+    mk.name = "_inst_mk";
+    // v0 = Int param, v1 = the constructed closure value.
+    mk.storage.value_count = 2;
+    mk.storage.value_types = {c.vt_int, c.vt_closure};
+    mk.storage.exprs.push_back(
+        CoreExpr{CoreClosureExpr{CoreFnId{0}, {CoreValueId{0}}}, std::nullopt, c.vt_closure});
+    mk.storage.exprs.push_back(CoreExpr{
+        CoreCallClosureExpr{CoreValueId{1}, {CoreValueId{0}}}, std::nullopt, c.vt_int});
+    mk.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    p.fns.push_back(std::move(mk));
+
+    return c;
+}
+
+// Index of the closure construction / closure call orphan exprs in fn mk's arena.
+constexpr std::uint32_t kClosureExprIndex = 0;
+constexpr std::uint32_t kCallClosureExprIndex = 1;
+
+} // namespace
+
+TEST_CASE("FB-3a1 verifier: a lifted-fn closure construction and closure call verify clean") {
+    ClosureProgram c = make_good_closure_program();
+    const auto result = verify_core_program(c.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("FB-3a1 verifier: a closure with an out-of-range fn id fails") {
+    ClosureProgram c = make_good_closure_program();
+    auto &node = std::get<CoreClosureExpr>(
+        c.program.fns[1].storage.exprs[kClosureExprIndex].node);
+    node.fn = CoreFnId{9999};
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureFnInvalid));
+}
+
+TEST_CASE("FB-3a1 verifier: a closure with an out-of-range capture operand fails") {
+    ClosureProgram c = make_good_closure_program();
+    auto &node = std::get<CoreClosureExpr>(
+        c.program.fns[1].storage.exprs[kClosureExprIndex].node);
+    node.env = {CoreValueId{42}};
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kValueIdOutOfRange));
+}
+
+TEST_CASE("FB-3a1 verifier: capture count mismatch with the fn capture signature fails") {
+    ClosureProgram c = make_good_closure_program();
+    // g0 declares one Int capture; construct with zero env operands.
+    auto &node = std::get<CoreClosureExpr>(
+        c.program.fns[1].storage.exprs[kClosureExprIndex].node);
+    node.env.clear();
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureCaptureArity));
+}
+
+TEST_CASE("FB-3a1 verifier: a capture operand of the wrong type fails") {
+    ClosureProgram c = make_good_closure_program();
+    // Reorder mk's SSA table to {Int param, Bool, closure} so the env operand can
+    // be a Bool value that disagrees with g0's declared Int capture slot; the
+    // closure call's callee is re-pointed at the closure slot (v2).
+    c.program.fns[1].storage.value_count = 3;
+    c.program.fns[1].storage.value_types = {c.vt_int, c.vt_bool, c.vt_closure};
+    auto &node = std::get<CoreClosureExpr>(
+        c.program.fns[1].storage.exprs[kClosureExprIndex].node);
+    node.env = {CoreValueId{1}}; // Bool operand vs declared Int capture
+    auto &call = std::get<CoreCallClosureExpr>(
+        c.program.fns[1].storage.exprs[kCallClosureExprIndex].node);
+    call.callee = CoreValueId{2};
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureCaptureType));
+}
+
+TEST_CASE("FB-3a1 verifier: a closure construction whose result type is not a closure fails") {
+    ClosureProgram c = make_good_closure_program();
+    c.program.fns[1].storage.exprs[kClosureExprIndex].result_type = c.vt_int;
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureResultTypeInvalid));
+}
+
+TEST_CASE("FB-3a1 verifier: a closure result whose captures disagree with the fn signature fails") {
+    ClosureProgram c = make_good_closure_program();
+    // Re-type the construction result as a ZERO-capture closure over the same
+    // signature; g0 declares one Int slot, so the arity check fires.
+    const auto vt_closure_zero = intern_program_vt(
+        c.program, CoreValueType{CoreVtClosure{c.vt_sig, {}}});
+    c.program.fns[1].storage.exprs[kClosureExprIndex].result_type = vt_closure_zero;
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureResultTypeInvalid));
+}
+
+TEST_CASE("FB-3a1 verifier: a closure call on a non-callable value fails") {
+    ClosureProgram c = make_good_closure_program();
+    // Point the closure call's callee at the Int param (v0) instead of the
+    // closure-typed v1.
+    auto &call = std::get<CoreCallClosureExpr>(
+        c.program.fns[1].storage.exprs[kCallClosureExprIndex].node);
+    call.callee = CoreValueId{0};
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureDispatchCalleeInvalid));
+}
+
+TEST_CASE("FB-3a1 verifier: a closure call with the wrong arity fails") {
+    ClosureProgram c = make_good_closure_program();
+    auto &call = std::get<CoreCallClosureExpr>(
+        c.program.fns[1].storage.exprs[kCallClosureExprIndex].node);
+    call.args.clear(); // Fn(Int) -> Int expects one argument
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureDispatchArity));
+}
+
+TEST_CASE("FB-3a1 verifier: a closure call with a wrong-typed argument fails") {
+    ClosureProgram c = make_good_closure_program();
+    // Add a Bool SSA slot and pass it where the signature expects Int.
+    c.program.fns[1].storage.value_count = 3;
+    c.program.fns[1].storage.value_types = {c.vt_int, c.vt_closure, c.vt_bool};
+    auto &call = std::get<CoreCallClosureExpr>(
+        c.program.fns[1].storage.exprs[kCallClosureExprIndex].node);
+    call.args = {CoreValueId{2}}; // Bool vs Int
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureDispatchArgumentType));
+}
+
+TEST_CASE("FB-3a1 verifier: a closure call with the wrong result type fails") {
+    ClosureProgram c = make_good_closure_program();
+    c.program.fns[1].storage.exprs[kCallClosureExprIndex].result_type = c.vt_bool;
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureDispatchResultType));
+}
+
+// ===========================================================================
 // RFC 0026 FB-2 (CORE-FNBODY-DESIGN §8.1 rule 6): the compile-time recursion
 // depth lattice. These fixtures build Core fn bodies directly in ANF and drive
 // BOTH the pure lattice analysis (`analyze_fn_recursion`, for exact sealed

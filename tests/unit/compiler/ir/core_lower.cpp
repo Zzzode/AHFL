@@ -3805,6 +3805,84 @@ TEST_CASE("A3(b): the same quantifier in a contract requires/invariant is erased
     REQUIRE(result.program.flows.size() == 1);
 }
 
+// ============================================================================
+// RFC 0026 FB-3a1: the closure DATA MODEL lands (CoreClosureExpr /
+// CoreCallClosureExpr) but lambda LIFTING arrives in FB-3a2. This test pins the
+// required no-behavior-change boundary: a real frontend lambda program still
+// lowers to the SAME enumerated CoreUnsupportedExpr{"LambdaExpr"} +
+// core.UNLOWERED_EXPRESSION fail-closed status as before the model existed. The
+// new closure nodes must never leak out of lowering until lifting lands.
+// ============================================================================
+
+namespace {
+
+const std::string kLambdaFlowSource = R"AHFL(
+module app::main;
+
+struct Request { seed: Int; }
+struct Context { }
+struct Response { doubled: Int; }
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for A {
+    state Init {
+        // A PURE lambda bound as a first-class Fn value. Typecheck accepts it;
+        // Core lowering has no lambda lift yet, so it must fail closed exactly
+        // as it did before FB-3a1 (no CoreClosureExpr emitted).
+        let dbl: Fn(Int) -> Int = \(x: Int) -> x * 2;
+        goto Done;
+    }
+    state Done {
+        return Response { doubled: input.seed };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-3a1: a real-frontend lambda still lowers to the same unsupported status") {
+    const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("lambda_flow", kLambdaFlowSource);
+    REQUIRE(ahfl_ir.has_value());
+
+    // Non-vacuity: a LambdaExpr really reached the AHFL-IR body the Core lowerer
+    // walks (so the assertion below is about lowering, not a frontend reject).
+    bool saw_lambda = false;
+    for (const ir::Expr *expr : ahfl_ir->all_exprs()) {
+        if (expr != nullptr && std::holds_alternative<ir::LambdaExpr>(expr->node)) {
+            saw_lambda = true;
+        }
+    }
+    CHECK(saw_lambda);
+
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.is_executable);
+    // Unchanged fail-closed status: the enumerated unsupported node + stable
+    // code, with NO new closure node emitted by lowering.
+    CHECK(has_lower_code(result, ir::core::diag::kUnloweredExpression));
+    CHECK(flow_has_unsupported(result.program, "LambdaExpr"));
+
+    // The FB-3a1 closure nodes must NOT appear until lambda lifting (FB-3a2).
+    for (const auto &flow : result.program.flows) {
+        for (const auto &expr : flow.storage.exprs) {
+            CHECK_FALSE(std::holds_alternative<ir::core::CoreClosureExpr>(expr.node));
+            CHECK_FALSE(std::holds_alternative<ir::core::CoreCallClosureExpr>(expr.node));
+        }
+    }
+    // A lowering-error candidate SKIPS the auto-wired verifier.
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
+
 // --- KR6.4 monomorphization Slice 1: instance registry / dispatch identity ---
 
 namespace {
