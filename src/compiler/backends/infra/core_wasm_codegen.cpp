@@ -322,6 +322,13 @@ struct AgentPlan {
     // point's deterministic CoreFnId order. Empty for a module with no direct
     // calls, so a zero-fn module is byte-identical to its E1-E3/P6 shape.
     std::vector<CompiledFn> fns;
+    // FB-1 fix-forward: when true, an aggregate-returning reachable fn bumps the
+    // runtime heap per activation; kGlobalHeapNext is initialized to
+    // `construct_heap_base` (relocated above every reserved frame/backing
+    // region) and every computed handler resets it on entry. False keeps the
+    // legacy initial heap (kNodeEventLogBase) and byte-identical modules.
+    bool construct_heap_enabled{false};
+    std::uint32_t construct_heap_base{0};
 };
 
 struct AgentPlanPolicy {
@@ -1320,7 +1327,8 @@ class P6ComputationHandlerBuilder {
           binding_locals_(flow.storage.value_count, LocalInfo{}),
           binding_sites_(flow.storage.value_count, std::nullopt),
           match_result_locals_(flow.storage.value_count, LocalInfo{}),
-          construct_addrs_(flow.storage.exprs.size(), std::nullopt) {}
+          construct_addrs_(flow.storage.exprs.size(), std::nullopt),
+          dynamic_constructs_(flow.storage.exprs.size(), false) {}
 
     // FB-1 fn-body twin. `fn_ordinals` resolves a callee CoreInstanceId to the
     // wasm ordinal its module placement assigned (CoreFnId ordinal, not the
@@ -1344,6 +1352,7 @@ class P6ComputationHandlerBuilder {
           binding_sites_(fn.body_storage->value_count, std::nullopt),
           match_result_locals_(fn.body_storage->value_count, LocalInfo{}),
           construct_addrs_(fn.body_storage->exprs.size(), std::nullopt),
+          dynamic_constructs_(fn.body_storage->exprs.size(), false),
           instance_to_fn_ordinal_(instance_to_fn_ordinal),
           fn_function_base_(fn_function_base) {}
 
@@ -1389,6 +1398,20 @@ class P6ComputationHandlerBuilder {
         fn_function_base_ = fn_function_base;
     }
 
+    // FB-1 fix-forward (handler mode): emit a `heap_next = heap_base` reset as
+    // this entry handler's first instruction so every step() starts a fresh
+    // per-activation aggregate heap.
+    void reset_construct_heap_on_entry(std::uint32_t heap_base) {
+        reset_construct_heap_ = true;
+        reset_heap_base_ = heap_base;
+    }
+
+    // FB-1 fix-forward: aligned per-activation bytes the planned fn body bumps
+    // the aggregate heap for its dynamic constructs (0 for handlers).
+    [[nodiscard]] std::uint32_t dynamic_construct_bytes() const noexcept {
+        return dynamic_construct_bytes_;
+    }
+
     [[nodiscard]] const std::vector<CoreStateId> &targets() const noexcept {
         return targets_;
     }
@@ -1425,29 +1448,61 @@ class P6ComputationHandlerBuilder {
         // The param count is the pool base EVERY emit-time local lookup adds;
         // set it before walking the region (which emits local.get/set).
         fn_param_count_ = static_cast<std::uint32_t>(param_words.size());
+        // fn-mode dynamic aggregate constructs need two inline-allocation
+        // temporaries (fresh base + advanced heap pointer). They are the LAST
+        // two i32 locals so the SSA/scratch pool indices are unchanged.
+        const bool dynamic = fn_mode_ && has_dynamic_construct();
+        if (dynamic) {
+            // The two bump temporaries are placed AFTER the i64 group (a second
+            // i32 local group) so they do not shift the SSA/scratch i64 pool
+            // indices pool_local derives from i32_group_size().
+            const std::uint32_t after_groups =
+                1u + fn_param_count_ + i32_count_ + scratch_i32_count_ +
+                i64_count_ + scratch_i64_count_;
+            alloc_temp_local_ = after_groups;
+            alloc_new_local_ = after_groups + 1u;
+        }
+        // Handler mode, aggregate heap enabled: reset the per-activation bump
+        // heap before the handler region so every step() starts with a fresh
+        // activation tree (the prior step's aggregate bytes are abandoned).
+        if (!fn_mode_ && reset_construct_heap_) {
+            emit_const_i32(static_cast<std::int32_t>(reset_heap_base_));
+            body_.byte(kOpGlobalSet);
+            body_.u32(kGlobalHeapNext);
+        }
         if (!emit_region(region_)) {
             return std::nullopt;
         }
         ByteBuffer function;
         // Declared (non-parameter) locals. Params are implicit locals and must
         // not appear in the local-declaration group.
-        std::uint32_t local_i32 = i32_count_ + scratch_i32_count_;
-        std::uint32_t local_i64 = i64_count_ + scratch_i64_count_;
+        const std::uint32_t pool_i32 = i32_count_ + scratch_i32_count_;
+        const std::uint32_t pool_i64 = i64_count_ + scratch_i64_count_;
         std::uint32_t local_groups = 0;
-        if (local_i32 != 0) {
+        if (pool_i32 != 0) {
             ++local_groups;
         }
-        if (local_i64 != 0) {
+        if (pool_i64 != 0) {
+            ++local_groups;
+        }
+        // The fn-mode bump temporaries form a SECOND i32 group after the i64
+        // group, keeping the pool index spaces stable.
+        const std::uint32_t temp_i32 = dynamic ? 2u : 0u;
+        if (temp_i32 != 0) {
             ++local_groups;
         }
         function.u32(local_groups);
-        if (local_i32 != 0) {
-            function.u32(local_i32);
+        if (pool_i32 != 0) {
+            function.u32(pool_i32);
             function.byte(kI32);
         }
-        if (local_i64 != 0) {
-            function.u32(local_i64);
+        if (pool_i64 != 0) {
+            function.u32(pool_i64);
             function.byte(kI64);
+        }
+        if (temp_i32 != 0) {
+            function.u32(temp_i32);
+            function.byte(kI32);
         }
         if (fn_mode_) {
             function.raw_span(body_.span());
@@ -1554,6 +1609,21 @@ class P6ComputationHandlerBuilder {
     // scratch arena base (an absolute wasm32 address).
     std::vector<std::optional<std::uint32_t>> construct_addrs_;
     std::uint32_t scratch_addr_cursor_{0};
+    // fn-mode only: aligned bytes this body bumps the per-activation arena.
+    std::uint32_t dynamic_construct_bytes_{0};
+
+    // FB-1 fix-forward: outlined fn bodies do NOT use the compile-time static
+    // scratch arena for CoreConstructExpr storage. Every builder used to start
+    // its own `scratch_addr_cursor_` at zero in the MODULE-SHARED scratch
+    // region, so two native `call` activations (repeated, nested, or a callee
+    // clobbering an aggregate argument) aliased one another's live aggregate —
+    // a silent wrong-code defect (design §6.3 prescribes per-activation runtime
+    // checked bump-heap storage for exactly this hazard). In fn mode every
+    // construct is therefore materialized at run time with `call alloc`;
+    // `dynamic_constructs_` marks those plan sites, and `dynamic_constructs_`
+    // being non-empty adds one i32 temp local (the fresh allocation address).
+    // Handler mode never sets these and stays byte-identical.
+    std::vector<bool> dynamic_constructs_;
 
     // FB-1 fn mode: callee CoreInstanceId -> wasm fn ordinal assigned by the
     // module encoder. Null in handler mode.
@@ -1561,6 +1631,23 @@ class P6ComputationHandlerBuilder {
     // FB-1 fn mode: absolute wasm function index of fn ordinal 0
     // (import_count+7+handler_count). Null in handler mode; set before emit.
     const std::uint32_t *fn_function_base_{nullptr};
+    // FB-1 fix-forward (fn mode): aggregate constructs are bumped from the
+    // module heap (fn_mode_ alone is the gate — an outlined fn ALWAYS uses the
+    // per-activation heap; scalar fns simply construct nothing). Handler mode
+    // only carries the entry-reset flag below.
+    // Handler mode only (FB-1 fix-forward): when set, emit
+    // `global.set heap_next <reset_heap_base_>` as the first body instruction
+    // so each step() starts a fresh per-activation aggregate heap. Fn mode
+    // bumps the SAME global (kGlobalHeapNext) inline for its dynamic aggregate
+    // constructs. Unset on every builder of a module with no
+    // aggregate-returning fn, which then stays byte-identical.
+    bool reset_construct_heap_{false};
+    std::uint32_t reset_heap_base_{0};
+    // Emit-time absolute local indices for the fn-mode inline checked bump:
+    // A = the fresh base (the construct's result address), B = cursor + size.
+    // Set in emit() when the fn body contains at least one dynamic construct.
+    std::uint32_t alloc_temp_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t alloc_new_local_{std::numeric_limits<std::uint32_t>::max()};
 
     // KR6.7: set when a projection's root is the raw P4-D input frame. See
     // reads_raw_input_frame().
@@ -2216,7 +2303,8 @@ class P6ComputationHandlerBuilder {
     // stores the operands at the offsets the field identities name.
     [[nodiscard]] bool
     plan_construct(CoreExprId id, const CoreConstructExpr &construct, ir::SourceRangeOpt range) {
-        if (id.value >= construct_addrs_.size() || construct_addrs_[id.value].has_value()) {
+        if (id.value >= construct_addrs_.size() || construct_addrs_[id.value].has_value() ||
+            dynamic_constructs_[id.value]) {
             return reject("constructor is planned more than once", range);
         }
         if (!construct.resolved) {
@@ -2284,9 +2372,22 @@ class P6ComputationHandlerBuilder {
                 }
             }
         }
-        // Meter the scratch address LAST so a rejected constructor never consumes
-        // an address slot (plans stay deterministic regardless of reject order).
+        // Meter the construct storage LAST so a rejected constructor never
+        // consumes capacity (plans stay deterministic regardless of reject
+        // order). Outlined fn bodies allocate PER ACTIVATION at run time from
+        // the checked bump heap (design §6.3): static scratch would alias
+        // across repeated/nested native calls; entry handlers keep the
+        // compile-time static arena.
         const std::uint64_t size = aggregate_size(construct.type_id);
+        if (fn_mode_) {
+            if (size == 0 || size > std::numeric_limits<std::uint32_t>::max()) {
+                return reject("an fn aggregate constructor has an invalid size", range);
+            }
+            dynamic_constructs_[id.value] = true;
+            dynamic_construct_bytes_ +=
+                static_cast<std::uint32_t>(align_up(size, 8));
+            return true;
+        }
         const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
         if (start + size > kP6AggregateScratchCapacity ||
             start + size > std::numeric_limits<std::uint32_t>::max()) {
@@ -2834,10 +2935,19 @@ class P6ComputationHandlerBuilder {
         if (kind != 0) {
             return reject("a payload-bearing variant cannot be a unit qualified value", range);
         }
-        if (id.value >= construct_addrs_.size() || construct_addrs_[id.value].has_value()) {
+        if (id.value >= construct_addrs_.size() || construct_addrs_[id.value].has_value() ||
+            dynamic_constructs_[id.value]) {
             return reject("qualified variant is planned more than once", range);
         }
         const std::uint64_t size = aggregate_size(q.type_id);
+        if (fn_mode_) {
+            if (size == 0 || size > std::numeric_limits<std::uint32_t>::max()) {
+                return reject("an fn aggregate qualified variant has an invalid size", range);
+            }
+            dynamic_constructs_[id.value] = true;
+            dynamic_construct_bytes_ += static_cast<std::uint32_t>(size);
+            return true;
+        }
         const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
         if (start + size > kP6AggregateScratchCapacity ||
             start + size > std::numeric_limits<std::uint32_t>::max()) {
@@ -3448,10 +3558,24 @@ class P6ComputationHandlerBuilder {
             emit_const_i32(static_cast<std::int32_t>(q.variant.value));
             return true;
         }
-        if (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value()) {
+        const bool dynamic = id.value < dynamic_constructs_.size() && dynamic_constructs_[id.value];
+        if (!dynamic &&
+            (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value())) {
             return reject("qualified variant has no planned scratch address", std::move(range));
         }
-        const std::uint32_t address = *construct_addrs_[id.value];
+        const std::uint64_t size = aggregate_size(q.type_id);
+        const std::uint32_t address =
+            dynamic ? 0u : *construct_addrs_[id.value];
+        if (dynamic) {
+            emit_dynamic_construct_alloc(static_cast<std::uint32_t>(size));
+            emit_local_get(alloc_temp_local_);
+            emit_const_i32(static_cast<std::int32_t>(q.variant.value));
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+            emit_local_get(alloc_temp_local_);
+            return true;
+        }
         emit_const_i32(static_cast<std::int32_t>(address));
         emit_const_i32(static_cast<std::int32_t>(q.variant.value));
         body_.byte(kOpI32Store);
@@ -3461,6 +3585,63 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
+    // Whether this planned body allocates at least one aggregate at run time
+    // (fn mode only; handlers keep static scratch).
+    [[nodiscard]] bool has_dynamic_construct() const {
+        for (bool d : dynamic_constructs_) {
+            if (d) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Emit one per-activation bump from the module aggregate arena for an
+    // fn-mode aggregate construct of `size` bytes. Leaves NOTHING on the
+    // operand stack: the fresh base is held in alloc_temp_local_ and the
+    // advanced cursor in alloc_new_local_. The cursor global is module-level
+    // and monotonically increases across nested/repeated native calls, so two
+    // live results never alias. Bumping past `arena_limit_` traps (RESOURCE
+    // fail-closed); a compile-time depth-aware budget guarantees the worst-case
+    // chain fits, making the trap a defensive guard only.
+    void emit_dynamic_construct_alloc(std::uint32_t size) {
+        const auto global_get = [&](std::uint32_t g) {
+            body_.byte(kOpGlobalGet);
+            body_.u32(g);
+        };
+        const auto global_set = [&](std::uint32_t g) {
+            body_.byte(kOpGlobalSet);
+            body_.u32(g);
+        };
+        const auto local_get = [&](std::uint32_t l) {
+            body_.byte(kOpLocalGet);
+            body_.u32(l);
+        };
+        const auto local_set = [&](std::uint32_t l) {
+            body_.byte(kOpLocalSet);
+            body_.u32(l);
+        };
+        const auto local_tee = [&](std::uint32_t l) {
+            body_.byte(kOpLocalTee);
+            body_.u32(l);
+        };
+        global_get(kGlobalHeapNext);
+        local_tee(alloc_temp_local_);
+        emit_const_i32(static_cast<std::int32_t>(size));
+        body_.byte(kOpI32Add);
+        local_set(alloc_new_local_);
+        local_get(alloc_new_local_);
+        emit_const_i32(static_cast<std::int32_t>(
+            kCoreWasmFixedLinearMemoryCapacityBytes));
+        body_.byte(kOpI32GtU);
+        body_.byte(kOpIf);
+        body_.byte(kEmptyBlock);
+        body_.byte(kOpUnreachable);
+        body_.byte(kOpEnd);
+        local_get(alloc_new_local_);
+        global_set(kGlobalHeapNext);
+    }
+
     // Emit a constructor: allocate its scratch bytes and store every operand at
     // its DECLARED slot offset, then leave the address on the stack. Field
     // IDENTITY (never source write order) selects the destination, so
@@ -3468,10 +3649,20 @@ class P6ComputationHandlerBuilder {
     // its i32 tag at offset 0 and its payload slots at `payload_offset`.
     [[nodiscard]] bool
     emit_construct(CoreExprId id, const CoreConstructExpr &construct, ir::SourceRangeOpt range) {
-        if (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value()) {
+        const bool dynamic =
+            id.value < dynamic_constructs_.size() && dynamic_constructs_[id.value];
+        if (!dynamic &&
+            (id.value >= construct_addrs_.size() || !construct_addrs_[id.value].has_value())) {
             return reject("constructor has no planned scratch address", std::move(range));
         }
-        const std::uint32_t address = *construct_addrs_[id.value];
+        const std::uint64_t dyn_size = aggregate_size(construct.type_id);
+        const std::uint32_t static_address =
+            dynamic ? 0u : *construct_addrs_[id.value];
+        if (dynamic) {
+            // Allocate a fresh per-activation aggregate; its base is held in the
+            // allocation temp local while the fields are written.
+            emit_dynamic_construct_alloc(static_cast<std::uint32_t>(dyn_size));
+        }
         if (!construct.is_enum_variant) {
             const auto *structure = p6_nominal_struct_layout(program_, layouts_, construct.type_id);
             if (structure == nullptr) {
@@ -3479,10 +3670,11 @@ class P6ComputationHandlerBuilder {
             }
             for (const CoreConstructArg &arg : construct.args) {
                 if (!emit_construct_store(arg,
-                                          address,
+                                          static_address,
                                           structure->field_layouts[arg.field.value],
                                           structure->field_offsets[arg.field.value],
                                           0,
+                                          dynamic,
                                           std::move(range))) {
                     return false;
                 }
@@ -3510,35 +3702,48 @@ class P6ComputationHandlerBuilder {
                                   std::move(range));
                 }
                 if (!emit_construct_store(arg,
-                                          address,
+                                          static_address,
                                           payload->field_layouts[arg.field.value],
                                           payload->field_offsets[arg.field.value],
                                           tagged->payload_offset,
+                                          dynamic,
                                           std::move(range))) {
                     return false;
                 }
             }
             // The discriminant is written after the payload so the tag is the LAST
             // store; the value is the variant id (its declaration-order index).
-            emit_const_i32(address);
+            if (dynamic) {
+                emit_local_get(alloc_temp_local_);
+            } else {
+                emit_const_i32(static_cast<std::int32_t>(static_address));
+            }
             emit_const_i32(static_cast<std::int32_t>(construct.variant.value));
             body_.byte(kOpI32Store);
             body_.u32(kAlignI32);
             body_.u32(0);
         }
-        emit_const_i32(static_cast<std::int32_t>(address));
+        if (dynamic) {
+            emit_local_get(alloc_temp_local_);
+        } else {
+            emit_const_i32(static_cast<std::int32_t>(static_address));
+        }
         return true;
     }
 
     // Store ONE constructor operand at its declared slot offset (plus an optional
     // enum payload base). A scalar operand is loaded from its local; an aggregate
     // operand is copied by its address. The SLOT's layout edge selects the width,
-    // and the plan pass already proved the operand matches it.
+    // and the plan pass already proved the operand matches it. When
+    // `dynamic_address` is set the destination base is the fn-mode allocation
+    // temp local (a fresh per-activation heap slot) rather than a static scratch
+    // constant.
     [[nodiscard]] bool emit_construct_store(const CoreConstructArg &arg,
-                                            std::uint32_t address,
+                                            std::uint32_t static_address,
                                             const CoreLayoutId slot_layout,
                                             std::uint64_t slot_offset,
                                             std::uint64_t payload_base,
+                                            bool dynamic_address,
                                             ir::SourceRangeOpt range) {
         const std::uint64_t offset = payload_base + slot_offset;
         const auto kind = readable_kind(arg.value);
@@ -3549,7 +3754,11 @@ class P6ComputationHandlerBuilder {
         if (place_is_aggregate_leaf(slot_layout)) {
             // An aggregate operand materializes as a 32-bit ADDRESS; it is one i32
             // slot. A P6 aggregate is never flattened inline.
-            emit_const_i32(static_cast<std::int32_t>(address));
+            if (dynamic_address) {
+                emit_local_get(alloc_temp_local_);
+            } else {
+                emit_const_i32(static_cast<std::int32_t>(static_address));
+            }
             emit_local_get(*local);
             body_.byte(kOpI32Store);
             body_.u32(kAlignI32);
@@ -3558,7 +3767,11 @@ class P6ComputationHandlerBuilder {
         }
         const bool wide = place_kind_of_layout(slot_layout) == P6ScalarKind::IntI64;
         // Stack order: [address][value] for a store, so push the address first.
-        emit_const_i32(static_cast<std::int32_t>(address));
+        if (dynamic_address) {
+            emit_local_get(alloc_temp_local_);
+        } else {
+            emit_const_i32(static_cast<std::int32_t>(static_address));
+        }
         emit_local_get(*local);
         body_.byte(wide ? kOpI64Store : kOpI32Store);
         body_.u32(wide ? kAlignI64 : kAlignI32);
@@ -4366,21 +4579,24 @@ fn_return_termination(const CoreProgram &program,
                       const CoreFnDecl &fn) {
     std::optional<P6ScalarKind> word;
     bool found = false;
+    bool mismatch = false;
     const auto scan = [&](auto &&self, const CoreRegion &region) -> void {
         for (const CoreStmt &stmt : region.statements) {
             if (const auto *ret = std::get_if<CoreReturnStmt>(&stmt.node);
                 ret != nullptr && ret->has_value) {
                 if (ret->value.value >= fn.storage.value_types.size()) {
+                    mismatch = true;
                     continue;
                 }
                 found = true;
                 const auto k =
                     p6_scalar_kind(program, layouts, fn.storage.value_types[ret->value.value]);
                 if (k == std::nullopt) {
+                    mismatch = true;
                     continue;
                 }
                 if (word.has_value() && *word != *k) {
-                    continue;
+                    mismatch = true;
                 }
                 word = k;
             }
@@ -4405,11 +4621,233 @@ fn_return_termination(const CoreProgram &program,
         }
     };
     scan(scan, fn.body);
+    if (mismatch) {
+        // Two value-bearing returns disagree on their physical word (or one is
+        // not a single-word P6 value). The verifier rejects this at the fn
+        // definition; codegen must never silently keep the first word and emit a
+        // functype that contradicts the other returns.
+        return FnReturnTermination{false, P6ScalarKind::IntI32,
+                                   "has value-bearing returns with disagreeing result words; "
+                                   "every return must carry the same single-word type"};
+    }
     if (!found || !word.has_value()) {
         return FnReturnTermination{false, P6ScalarKind::IntI32,
                                    "has no single-word value-bearing return on every path"};
     }
     return FnReturnTermination{true, *word, {}};
+}
+
+// FB-1 fix-forward: worst-case aggregate-heap bytes one computed-handler
+// activation (one step) can bump. The bump heap never reclaims within a step,
+// so EVERY reachable activation's constructs are counted, including results on
+// branches that do not both execute (a deliberate over-approximation) and
+// bounded-recursion activations (multiplied by the sealed SCC depth). Tree
+// recursion (>=2 internal call sites in one member) fans out geometrically and
+// is rejected through the fixed-page budget rather than under-counted. Returns
+// UINT64_MAX after emitting a RESOURCE diagnostic on saturation/overflow.
+[[nodiscard]] std::uint64_t
+compute_fn_construct_heap_budget(const CoreProgram &program,
+                                 const std::vector<std::uint32_t> &dynamic_bytes_by_fn,
+                                 std::span<const CoreBodyStorage *const> entry_storages,
+                                 const std::vector<bool> &reachable_fn,
+                                 const ir::core::FnRecursionAnalysis &recursion,
+                                 CoreWasmCodegenResult &result) {
+    constexpr std::uint64_t kCap = ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
+    const auto sat_mul = [](std::uint64_t a, std::uint64_t b) -> std::uint64_t {
+        if (a != 0 && b > std::numeric_limits<std::uint64_t>::max() / a) {
+            return std::numeric_limits<std::uint64_t>::max();
+        }
+        return a * b;
+    };
+    const auto sat_add = [](std::uint64_t a, std::uint64_t b) -> std::uint64_t {
+        if (a > std::numeric_limits<std::uint64_t>::max() - b) {
+            return std::numeric_limits<std::uint64_t>::max();
+        }
+        return a + b;
+    };
+
+    const std::size_t cc = recursion.components.size();
+    const auto &component_of = recursion.component_of;
+
+    // Per-component facts.
+    std::vector<std::uint32_t> depth(cc, 1);
+    std::vector<std::uint64_t> bytes_max(cc, 0);
+    std::vector<std::uint64_t> internal_branch(cc, 0); // max internal sites/member
+    for (std::uint32_t ci = 0; ci < cc; ++ci) {
+        const auto &members = recursion.components[ci];
+        // A component is nontrivial iff it was sealed as a recursion group
+        // (fn_depth_bound >= 0 for its members); a trivial acyclic component
+        // stays at depth 1.
+        const bool nontrivial =
+            std::any_of(members.begin(), members.end(), [&](std::uint32_t f) {
+                return f < recursion.fn_depth_bound.size() &&
+                       recursion.fn_depth_bound[f] >= 0;
+            });
+        std::uint64_t sites_max = 0;
+        for (const std::uint32_t f : members) {
+            if (f < reachable_fn.size() && reachable_fn[f]) {
+                bytes_max[ci] =
+                    std::max<std::uint64_t>(bytes_max[ci], dynamic_bytes_by_fn[f]);
+            }
+            if (nontrivial) {
+                const std::int64_t bound = recursion.fn_depth_bound[f];
+                if (bound > 0) {
+                    depth[ci] = std::max<std::uint32_t>(
+                        depth[ci], static_cast<std::uint32_t>(bound));
+                }
+            }
+            // Count this member's internal call SITES (graph_ retains one edge
+            // per CoreCallExpr, so branching is preserved).
+            std::uint64_t sites = 0;
+            for (const CoreExpr &expr : program.fns[f].storage.exprs) {
+                const auto *call = std::get_if<CoreCallExpr>(&expr.node);
+                if (call == nullptr ||
+                    call->callee.value >= program.instances.size()) {
+                    continue;
+                }
+                const auto *payload = std::get_if<CoreFnInstance>(
+                    &program.instances[call->callee.value].payload);
+                if (payload != nullptr &&
+                    payload->body.value != CoreFnId::kInvalid &&
+                    payload->body.value < program.fns.size() &&
+                    component_of[payload->body.value] == ci) {
+                    ++sites;
+                }
+            }
+            sites_max = std::max(sites_max, sites);
+        }
+        internal_branch[ci] = nontrivial ? sites_max : 0;
+    }
+
+    // G(C): total activations inside C per external entry. b==1 -> depth;
+    // b>=2 -> geometric sum 1+b+...+b^(d-1).
+    std::vector<std::uint64_t> activations_per_entry(cc, 1);
+    for (std::uint32_t ci = 0; ci < cc; ++ci) {
+        const std::uint64_t b = internal_branch[ci];
+        if (b <= 1) {
+            activations_per_entry[ci] = depth[ci];
+            continue;
+        }
+        std::uint64_t total = 0;
+        std::uint64_t power = 1;
+        for (std::uint32_t k = 0; k < depth[ci]; ++k) {
+            total = sat_add(total, power);
+            power = sat_mul(power, b);
+            if (total == std::numeric_limits<std::uint64_t>::max()) {
+                break;
+            }
+        }
+        activations_per_entry[ci] = total;
+    }
+
+    // Resolve an instance to its fn's component, or -1.
+    const auto instance_component = [&](CoreInstanceId id) -> std::int64_t {
+        if (id.value >= program.instances.size()) {
+            return -1;
+        }
+        const auto *payload =
+            std::get_if<CoreFnInstance>(&program.instances[id.value].payload);
+        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+            payload->body.value >= program.fns.size()) {
+            return -1;
+        }
+        const std::uint32_t f = payload->body.value;
+        if (f < reachable_fn.size() && !reachable_fn[f]) {
+            return -1;
+        }
+        return static_cast<std::int64_t>(component_of[f]);
+    };
+
+    // Root sites: one per direct call expr in an entry (handler/workflow)
+    // storage.
+    std::vector<std::uint64_t> entries(cc, 0);
+    for (const CoreBodyStorage *storage : entry_storages) {
+        if (storage == nullptr) {
+            continue;
+        }
+        for (const CoreExpr &expr : storage->exprs) {
+            const auto *call = std::get_if<CoreCallExpr>(&expr.node);
+            if (call == nullptr) {
+                continue;
+            }
+            const std::int64_t c = instance_component(call->callee);
+            if (c >= 0) {
+                entries[c] = sat_add(entries[c], 1);
+            }
+        }
+    }
+
+    // External site counts D -> C (one per call expr).
+    std::vector<std::vector<std::pair<std::uint32_t, std::uint64_t>>> ext(cc);
+    std::vector<std::uint32_t> indegree(cc, 0);
+    for (std::uint32_t d = 0; d < cc; ++d) {
+        std::unordered_map<std::uint32_t, std::uint64_t> per_target;
+        for (const std::uint32_t f : recursion.components[d]) {
+            for (const CoreExpr &expr : program.fns[f].storage.exprs) {
+                const auto *call = std::get_if<CoreCallExpr>(&expr.node);
+                if (call == nullptr) {
+                    continue;
+                }
+                const std::int64_t c = instance_component(call->callee);
+                if (c >= 0 && static_cast<std::uint32_t>(c) != d) {
+                    per_target[static_cast<std::uint32_t>(c)] =
+                        sat_add(per_target[static_cast<std::uint32_t>(c)], 1);
+                }
+            }
+        }
+        for (const auto &[target, count] : per_target) {
+            ext[d].push_back({target, count});
+            ++indegree[target];
+        }
+    }
+
+    // Propagation over the condensation DAG (Kahn): mult[C] = root sites into C
+    // plus every (total activation of D) * external D->C sites.
+    std::vector<std::uint64_t> mult = entries;
+    std::vector<std::uint32_t> queue;
+    for (std::uint32_t ci = 0; ci < cc; ++ci) {
+        if (indegree[ci] == 0) {
+            queue.push_back(ci);
+        }
+    }
+    std::uint32_t visited = 0;
+    while (!queue.empty()) {
+        const std::uint32_t d = queue.back();
+        queue.pop_back();
+        ++visited;
+        const std::uint64_t total_activ_d = sat_mul(mult[d], activations_per_entry[d]);
+        for (const auto &[target, count] : ext[d]) {
+            mult[target] =
+                sat_add(mult[target], sat_mul(total_activ_d, count));
+            if (--indegree[target] == 0) {
+                queue.push_back(target);
+            }
+        }
+    }
+    if (visited != cc) {
+        add_diag(result,
+                 core_wasm_diag::kInvalidCore,
+                 "internal error: the fn-call condensation is not acyclic while "
+                 "computing the aggregate heap budget");
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+
+    std::uint64_t total = 0;
+    for (std::uint32_t ci = 0; ci < cc; ++ci) {
+        const std::uint64_t component_bytes =
+            sat_mul(sat_mul(mult[ci], activations_per_entry[ci]), bytes_max[ci]);
+        total = sat_add(total, component_bytes);
+    }
+    if (total > kCap) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "the outlined-fn aggregate activation tree can bump " +
+                     std::to_string(total) +
+                     " bytes (branching recursion counts geometrically); bound the "
+                     "recursion or reduce aggregate sizes to fit the 64 KiB page");
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+    return total;
 }
 
 // Compile the outlined pure fn bodies reachable from the module's ENTRY
@@ -4427,7 +4865,11 @@ fn_return_termination(const CoreProgram &program,
     std::span<const CoreBodyStorage *const> entry_storages,
     std::span<const std::vector<CoreInstanceId>> planned_entry_callees,
     std::uint32_t fn_function_base,
-    CoreWasmCodegenResult &result) {
+    CoreWasmCodegenResult &result,
+    bool &construct_heap_enabled_out,
+    std::uint32_t &construct_heap_base_out) {
+    construct_heap_enabled_out = false;
+    construct_heap_base_out = ir::core::kNodeEventLogBase;
     std::vector<CoreInstanceId> worklist;
     std::vector<bool> queued(program.instances.size(), false);
     const auto enqueue = [&](CoreInstanceId id) {
@@ -4509,10 +4951,11 @@ fn_return_termination(const CoreProgram &program,
     // than overflowing the engine stack at runtime. This consumes the SAME
     // analysis the verifier ran (never a second derivation). The FB-3 slice
     // extends this budget with the closure-env linear-memory accounting.
+    ir::core::FnRecursionAnalysis recursion_analysis;
     {
-        const ir::core::FnRecursionAnalysis recursion =
-            ir::core::analyze_fn_recursion(program);
-        if (!recursion.unbounded_issues.empty() || !recursion.overflow_sccs.empty()) {
+        recursion_analysis = ir::core::analyze_fn_recursion(program);
+        if (!recursion_analysis.unbounded_issues.empty() ||
+            !recursion_analysis.overflow_sccs.empty()) {
             add_diag(result,
                      core_wasm_diag::kInvalidCore,
                      "an outlined fn recursion group reached by this module is not structurally "
@@ -4520,7 +4963,7 @@ fn_return_termination(const CoreProgram &program,
             return false;
         }
         const std::uint64_t native_depth =
-            ir::core::max_native_fn_call_depth(program, recursion, &seen_fn);
+            ir::core::max_native_fn_call_depth(program, recursion_analysis, &seen_fn);
         if (native_depth > ir::core::kFnRecursionNativeStackDepthMax) {
             add_diag(result,
                      core_wasm_diag::kResourceExhausted,
@@ -4541,12 +4984,26 @@ fn_return_termination(const CoreProgram &program,
         instance_to_ordinal[program.fns[reachable[ordinal].value].instance.value] = ordinal;
     }
 
+    // Phase A: construct + plan every fn builder and derive its functype /
+    // per-activation construct bytes BEFORE any body is emitted, so the
+    // per-activation aggregate heap budget (FB-1 fix-forward) can be checked
+    // module-wide once. Builders are retained and emitted in Phase B.
+    struct PlannedFn {
+        CoreFnId id{};
+        std::unique_ptr<P6ComputationHandlerBuilder> builder;
+        std::vector<P6ScalarKind> param_words;
+        P6ScalarKind result_word{P6ScalarKind::IntI32};
+        std::vector<CoreInstanceId> callees;
+        std::uint32_t dynamic_bytes{0};
+    };
+    std::vector<PlannedFn> planned_fns;
+    planned_fns.reserve(reachable.size());
     for (std::uint32_t ordinal = 0; ordinal < reachable.size(); ++ordinal) {
         const CoreFnDecl &fn = program.fns[reachable[ordinal].value];
         std::vector<bool> used_exprs(fn.storage.exprs.size(), false);
         std::vector<bool> used_values(fn.storage.value_count, false);
         const FnBodyView view{&fn.storage, &fn.body, fn.name};
-        P6ComputationHandlerBuilder builder(program,
+        auto builder = std::make_unique<P6ComputationHandlerBuilder>(program,
                                            layouts,
                                            view,
                                            used_exprs,
@@ -4575,14 +5032,14 @@ fn_return_termination(const CoreProgram &program,
                 return false;
             }
             param_words.push_back(*word);
-            if (!builder.bind_param(param, i, *word)) {
+            if (!builder->bind_param(param, i, *word)) {
                 add_diag(result,
                          core_wasm_diag::kInvalidCore,
                          "fn parameter could not be bound into the wasm local table");
                 return false;
             }
         }
-        if (!builder.plan()) {
+        if (!builder->plan()) {
             return false;
         }
         const FnReturnTermination termination = fn_return_termination(program, layouts, fn);
@@ -4592,18 +5049,106 @@ fn_return_termination(const CoreProgram &program,
                      "fn '" + fn.name + "' " + termination.reason);
             return false;
         }
-        auto body = builder.emit(param_words);
+        PlannedFn planned;
+        planned.id = reachable[ordinal];
+        planned.param_words = std::move(param_words);
+        planned.result_word = termination.result_word;
+        planned.callees = builder->fn_callees();
+        planned.dynamic_bytes = builder->dynamic_construct_bytes();
+        planned.builder = std::move(builder);
+        planned_fns.push_back(std::move(planned));
+    }
+
+    // FB-1 fix-forward: the per-activation aggregate heap. When at least one
+    // reachable fn constructs an aggregate, its constructs are bumped at run
+    // time (never static scratch, which aliases across native call
+    // activations). The heap base must sit above every reserved frame AND the
+    // bounded-collection backing high-water; the worst-case bump of one
+    // handler activation tree (sealed recursion depths included) must fit the
+    // fixed page. Both are checked here against the ONE page budget.
+    bool construct_heap_enabled = false;
+    for (const PlannedFn &planned : planned_fns) {
+        if (planned.dynamic_bytes != 0) {
+            construct_heap_enabled = true;
+            break;
+        }
+    }
+    std::uint32_t construct_heap_base = ir::core::kNodeEventLogBase;
+    if (construct_heap_enabled) {
+        std::uint64_t backing_high = ir::core::kP6CollectionBackingBase;
+        const auto account_storage = [&](const CoreBodyStorage &storage) {
+            for (const CoreValueTypeId vt : storage.value_types) {
+                const auto *container = p6_container_layout(program, layouts, vt);
+                if (container == nullptr) {
+                    continue;
+                }
+                backing_high = std::max<std::uint64_t>(
+                    backing_high,
+                    ir::core::kP6CollectionBackingBase + container->backing_size);
+            }
+        };
+        for (const CoreBodyStorage *storage : entry_storages) {
+            if (storage != nullptr) {
+                account_storage(*storage);
+            }
+        }
+        for (const PlannedFn &planned : planned_fns) {
+            account_storage(program.fns[planned.id.value].storage);
+        }
+        construct_heap_base =
+            static_cast<std::uint32_t>((backing_high + 7u) & ~static_cast<std::uint64_t>(7u));
+
+        std::vector<std::uint32_t> dynamic_bytes_by_fn(program.fns.size(), 0);
+        for (const PlannedFn &planned : planned_fns) {
+            dynamic_bytes_by_fn[planned.id.value] = planned.dynamic_bytes;
+        }
+        // Worst-case aggregate bytes one computed handler can bump in a single
+        // step (one whole activation tree). Per-fn activation multiplicity is
+        // derived over the SAME sealed recursion analysis (handler call sites
+        // are roots; intra-SCC edges multiply by the sealed depth). This is a
+        // deliberate over-approximation: the heap never reclaims within a step,
+        // so every (possibly dead) result slot is counted, which is sound.
+        const std::uint64_t budget = compute_fn_construct_heap_budget(
+            program, dynamic_bytes_by_fn, entry_storages, seen_fn,
+            recursion_analysis, result);
+        if (budget == std::numeric_limits<std::uint64_t>::max()) {
+            return false;
+        }
+        const std::uint64_t capacity =
+            ir::core::kCoreWasmFixedLinearMemoryCapacityBytes;
+        if (static_cast<std::uint64_t>(construct_heap_base) > capacity ||
+            budget > capacity - static_cast<std::uint64_t>(construct_heap_base)) {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "the outlined-fn aggregate plan needs " + std::to_string(budget) +
+                         " heap bytes above base " + std::to_string(construct_heap_base) +
+                         " but the fixed 64 KiB linear-memory page has only " +
+                         std::to_string(capacity - construct_heap_base) +
+                         "; use smaller aggregates or bounded collections");
+            return false;
+        }
+    }
+
+    // Phase B: emit every planned fn body in ordinal order. An fn builder with
+    // dynamic constructs already routes them through the runtime heap; the
+    // module encoder relocates/initializes the heap global and the entry
+    // handlers reset it when `construct_heap_enabled`.
+    for (std::uint32_t ordinal = 0; ordinal < planned_fns.size(); ++ordinal) {
+        PlannedFn &planned = planned_fns[ordinal];
+        auto body = planned.builder->emit(planned.param_words);
         if (!body.has_value()) {
             return false;
         }
         CompiledFn compiled;
-        compiled.id = reachable[ordinal];
+        compiled.id = planned.id;
         compiled.body = std::move(*body);
-        compiled.param_words = std::move(param_words);
-        compiled.result_word = termination.result_word;
-        compiled.callees = builder.fn_callees();
+        compiled.param_words = std::move(planned.param_words);
+        compiled.result_word = planned.result_word;
+        compiled.callees = std::move(planned.callees);
         out.push_back(std::move(compiled));
     }
+    construct_heap_enabled_out = construct_heap_enabled;
+    construct_heap_base_out = construct_heap_base;
     return true;
 }
 
@@ -4987,7 +5532,9 @@ fn_return_termination(const CoreProgram &program,
                                      std::vector<const CoreBodyStorage *>{&flow->storage},
                                      planned_entry_callees,
                                      agent_fn_base,
-                                     result)) {
+                                     result,
+                                     plan.construct_heap_enabled,
+                                     plan.construct_heap_base)) {
         return std::nullopt;
     }
 
@@ -5012,6 +5559,9 @@ fn_return_termination(const CoreProgram &program,
         std::vector<CoreStateId> targets = planned.targets;
         std::unique_ptr<P6ComputationHandlerBuilder> builder = std::move(planned.builder);
         builder->set_fn_call_tables(&instance_to_ordinal, &handler_fn_base);
+        if (plan.construct_heap_enabled) {
+            builder->reset_construct_heap_on_entry(plan.construct_heap_base);
+        }
         auto body = builder->emit({});
         if (!body.has_value()) {
             return std::nullopt;
@@ -5886,11 +6436,15 @@ encode_module(const CoreProgram &program,
     append_global(globals, true, plan.initial.value);
     append_global(globals, true, 0);
     append_global(globals, false, 1);
-    // The agent lane's bump heap starts at the SAME region origin as the
-    // identity-workflow node-event log base (and the descriptor's
-    // `heap_base`); an agent emits no event records, so its first bump
-    // allocation begins exactly there.
-    append_global(globals, true, kNodeEventLogBase);
+    // The agent lane's bump heap starts at the identity-workflow node-event log
+    // base. When the module uses per-activation outlined-fn aggregate constructs
+    // (FB-1 fix-forward) it is RELOCATED above every reserved frame and the
+    // bounded-collection backing high-water, and each computed handler resets it
+    // on entry; the legacy host alloc()/run() path simply begins at that higher
+    // base.
+    append_global(globals, true,
+                  plan.construct_heap_enabled ? plan.construct_heap_base
+                                              : kNodeEventLogBase);
     append_global(globals, true, 0);
     if (!append_section(module, kSectionGlobal, globals)) {
         return std::nullopt;

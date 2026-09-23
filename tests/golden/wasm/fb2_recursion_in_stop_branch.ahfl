@@ -1,0 +1,52 @@
+module std::collections;
+
+// RFC 0026 FB-2 fix-forward (CORE-FNBODY-DESIGN §8.1 rule 6, R2b dominance):
+// the recursive edge must lie on the guard's CONTINUE path. Here the self call
+// is inside the divergent THEN (stop) branch, i.e. recursion happens exactly
+// when the rank reaches its bound; rank progression and the comparison guard
+// both look right but the finite depth never gates the call. Rejected at
+// compile time with FN_RECURSION_UNBOUNDED.
+pub struct List<T> { }
+
+pub struct Frame {
+    items: List<Int>(4);
+}
+
+@builtin("list_raw_get")
+fn list_raw_get<T>(xs: List<T>, i: Int) -> T effect Pure;
+
+@builtin("list_raw_length")
+fn list_raw_length<T>(xs: List<T>) -> Int effect Pure;
+
+fn wrong_branch(xs: List<Int>(4), i: Int, acc: Int) -> Int effect Pure
+    decreases list_raw_length<Int>(xs) - i {
+    if i >= list_raw_length<Int>(xs) {
+        return wrong_branch(xs, i + 1, acc);
+    }
+    return acc;
+}
+
+pub agent RecInStopAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for RecInStopAgent {
+    state Init {
+        let total: Int = wrong_branch(input.items, 0, 0);
+        if total == 0 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done { return input; }
+    state Fail { return input; }
+}

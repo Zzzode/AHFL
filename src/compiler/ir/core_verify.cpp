@@ -3526,6 +3526,17 @@ class Verifier {
             const RegionExit re = verify_region(av, /*state_count=*/0, fn.body,
                                                 all_definitions, visible, RegionContext::Fn);
             verify_fn_termination(fn, re);
+            // Every value-bearing return must carry the SAME concrete value
+            // type. Disagreement is a malformed body (not the same as an
+            // uninhabited fn with no value return); reject it here so the
+            // call-site result gate can never silently disappear.
+            if (fn_return_summary(fn).status == FnReturnTypeStatus::Disagree) {
+                error(verify::kFnBodyTermination,
+                      "fn '" + fn.name +
+                          "' has value-bearing returns with disagreeing result types; every "
+                          "return must carry the fn's single concrete return type",
+                      fn.source_range);
+            }
         }
 
         // Every Fn-kind instance with a valid body link must have a fn table
@@ -3660,14 +3671,16 @@ class Verifier {
                           site.range);
                 }
             }
-            // Result type vs the callee's concrete return type.
-            if (const auto ret = fn_return_type(callee); ret.has_value()) {
-                if (!(site.result_type == *ret)) {
-                    error(verify::kFnCallResultTypeMismatch,
-                          "call to fn '" + callee.name +
-                              "' result type does not match the callee return type",
-                          site.range);
-                }
+            // Result type vs the callee's concrete return type. A `Disagree`
+            // callee was already rejected at its definition; an uninhabited
+            // callee (no value return) is checked below.
+            const FnReturnTypeSummary ret_summary = fn_return_summary(callee);
+            if (ret_summary.status == FnReturnTypeStatus::Ok &&
+                !(site.result_type == *ret_summary.type)) {
+                error(verify::kFnCallResultTypeMismatch,
+                      "call to fn '" + callee.name +
+                          "' result type does not match the callee return type",
+                      site.range);
             }
         }
 
@@ -3746,6 +3759,14 @@ class Verifier {
                    "(not a literal and not a bounded-collection length); the "
                    "initial recursion depth is unknown";
             break;
+        case FnRecursionIssueKind::EdgeNotDominatedByGuard:
+            msg << "a recursive edge from '" << name_of(issue.edge_from) << "' to '"
+                << name_of(issue.edge_to)
+                << "' is not dominated by its base-case guard: the call executes "
+                   "before the guard or inside the guard's stop branch, so the "
+                   "finite depth bound does not gate it; place the recursive call "
+                   "on the post-guard continue path (else / after the if)";
+            break;
         }
         return msg.str();
     }
@@ -3780,10 +3801,23 @@ class Verifier {
         return false;
     }
 
-    // The concrete return type of a fn body: the value type every value-bearing
-    // return carries (they must all agree). Returns nullopt when the body has no
-    // value-bearing return on any path.
-    [[nodiscard]] std::optional<CoreValueTypeId> fn_return_type(const CoreFnDecl &fn) const {
+    // Classification of an fn body's value-bearing returns.
+    enum class FnReturnTypeStatus {
+        NoValueReturn, // no value-bearing return on any path (an uninhabited fn)
+        Ok,            // every value-bearing return carries ONE value type
+        Disagree,      // two value-bearing returns carry DIFFERENT value types
+    };
+    struct FnReturnTypeSummary {
+        FnReturnTypeStatus status{FnReturnTypeStatus::NoValueReturn};
+        std::optional<CoreValueTypeId> type;
+    };
+
+    // The concrete return type of an fn body: the value type every value-bearing
+    // return carries. `Disagree` (rather than a nullopt masquerading as
+    // NoValueReturn) marks returns that carry different value types — a
+    // malformed body the caller MUST reject with FN_BODY_TERMINATION instead of
+    // silently dropping the call-site result-type gate.
+    [[nodiscard]] FnReturnTypeSummary fn_return_summary(const CoreFnDecl &fn) const {
         std::optional<CoreValueTypeId> found;
         bool mismatch = false;
         const auto scan = [&](auto &&self, const CoreRegion &region) -> void {
@@ -3822,9 +3856,12 @@ class Verifier {
         };
         scan(scan, fn.body);
         if (mismatch) {
-            return std::nullopt;
+            return FnReturnTypeSummary{FnReturnTypeStatus::Disagree, std::nullopt};
         }
-        return found;
+        if (!found.has_value()) {
+            return FnReturnTypeSummary{FnReturnTypeStatus::NoValueReturn, std::nullopt};
+        }
+        return FnReturnTypeSummary{FnReturnTypeStatus::Ok, found};
     }
 
     // --- monomorphized instance table ---

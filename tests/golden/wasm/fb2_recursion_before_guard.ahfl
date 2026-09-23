@@ -1,0 +1,58 @@
+module std::collections;
+
+// RFC 0026 FB-2 fix-forward (CORE-FNBODY-DESIGN §8.1 rule 6, R2b dominance):
+// a structurally correct rank guard does NOT seal recursion when the recursive
+// edge is reached BEFORE the guard. The self call here is unconditional on
+// entry (`let r = bad_sum(...); if guard return; return r;`), so the guard
+// never gates the first activation and the native call stack grows forever.
+// The Core verifier must reject this with FN_RECURSION_UNBOUNDED
+// (EdgeNotDominatedByGuard) at compile time; no wasm is ever emitted.
+pub struct List<T> { }
+
+pub struct Frame {
+    items: List<Int>(4);
+}
+
+@builtin("list_raw_get")
+fn list_raw_get<T>(xs: List<T>, i: Int) -> T effect Pure;
+
+@builtin("list_raw_length")
+fn list_raw_length<T>(xs: List<T>) -> Int effect Pure;
+
+fn bad_sum(xs: List<Int>(4), i: Int, acc: Int) -> Int effect Pure
+    decreases list_raw_length<Int>(xs) - i {
+    let recval: Int = bad_sum(xs, i + 1, acc);
+    if i >= list_raw_length<Int>(xs) {
+        return acc;
+    }
+    return recval;
+}
+
+pub agent RecBeforeGuardAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for RecBeforeGuardAgent {
+    state Init {
+        let total: Int = bad_sum(input.items, 0, 0);
+        if total == 0 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

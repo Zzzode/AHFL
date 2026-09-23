@@ -170,6 +170,42 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 FB-1 fix-forward: outlined-fn AGGREGATE results must not alias
+    # compile-time static scratch across native call activations. The handler
+    # makes repeated, nested, distinct-fn, and aggregate-argument direct calls
+    # to struct-returning pure fns; every aggregate must survive to route the
+    # computed goto to Good. Real Node-engine evidence (not wasmtime).
+    add_test(NAME ahfl.wasm.fb1_aggregate_direct_call_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb1_aggregate_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb1_aggregate_direct_call.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb1_aggregate_direct_call_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-1 aggregate outlined-fn Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
+    # RFC 0026 FB-2 fix-forward: a structurally correct rank guard does NOT
+    # seal recursion unless every recursive edge is on its continue path. Both
+    # a self call before the guard and one inside the divergent stop (THEN)
+    # branch are compile-rejected with FN_RECURSION_UNBOUNDED and emit no wasm.
+    # Engine-independent (the gate is the compile rejection).
+    add_test(NAME ahfl.wasm.fb2_guard_placement_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb2_guard_placement_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb2_recursion_before_guard.ahfl"
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb2_recursion_in_stop_branch.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb2_guard_placement_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "FB-2 guard-dominance compile-reject lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
     # RFC 0026 P6-1 (KR6.6): nested control flow. A fully-diverging if nested
     # inside a void/fall-through branch used to be typed i32 from divergence
     # alone, producing a module WebAssembly.compile rejects. These fixtures

@@ -106,6 +106,14 @@ enum class FnRecursionIssueKind {
     /// An edge entering the recursion group binds the rank slot to a value
     /// with no static interval (R3).
     EntryRankNotStatic,
+    /// A recursive edge is NOT dominated by the accepted base guard: the call
+    /// sits lexically BEFORE the guard (so the guard cannot stop the first
+    /// activation) or INSIDE the guard's divergent stop (THEN) branch, where it
+    /// runs exactly when the rank has already reached its bound. A structurally
+    /// correct guard plus rank progression are not enough — the recursive edges
+    /// must be reachable only on the guard's continue path (its ELSE / the
+    /// fallthrough after the if).
+    EdgeNotDominatedByGuard,
 };
 
 /// One structural finding against one recursion group. Ranges anchor the
@@ -134,6 +142,16 @@ struct FnRecursionAnalysis {
     /// Per-fn sealed depth: -1 = not part of a recursion group; >= 0 = the
     /// bound of the (unique) SCC the fn belongs to.
     std::vector<std::int64_t> fn_depth_bound;
+    /// Full Tarjan condensation (trivial, acyclic components included), each a
+    /// sorted member list in deterministic component order (Tarjan emission
+    /// order: a reverse topological order). Backends that budget a resource
+    /// across a whole call tree consume this so they never re-derive SCCs.
+    std::vector<std::vector<std::uint32_t>> components;
+    /// CoreFnId -> condensation component index for every fn.
+    std::vector<std::uint32_t> component_of;
+    /// Condensation DAG edges (component -> component), external edges only,
+    /// each sorted/deduped, indexed in parallel with `components`.
+    std::vector<std::vector<std::uint32_t>> condensation_edges;
     /// Structural failures; a non-empty vector means the recursion groups are
     /// NOT executable.
     std::vector<FnRecursionIssue> unbounded_issues;

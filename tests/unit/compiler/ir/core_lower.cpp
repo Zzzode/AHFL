@@ -4720,3 +4720,64 @@ TEST_CASE("FB-2 e2e: recursion bounded by a runtime parameter is fail-closed") {
     }
     CHECK(has_code);
 }
+
+// FB-1 fix-forward: a legal whole-program FORWARD reference (a non-generic fn
+// declared BEFORE the callee it calls) must lower with the resolver fixed
+// point fully published — declaration order must not decide resolvability.
+const std::string kFb1ForwardReferenceSource = R"AHFL(
+module fwd;
+
+fn first(a: Int) -> Int {
+    return second(a) + 1;
+}
+
+fn second(a: Int) -> Int {
+    return a * 3;
+}
+
+struct Frame { v: Int; }
+
+agent ForwardAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for ForwardAgent {
+    state Init {
+        let x: Int = first(10);
+        goto Done;
+    }
+    state Done {
+        return input;
+    }
+}
+)AHFL";
+
+TEST_CASE("FB-1 e2e: a forward-referenced callee lowers regardless of declaration order") {
+    const auto ahfl_ir =
+        lower_source_to_ahfl_ir("fb1_forward", kFb1ForwardReferenceSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    CHECK(result.ok());
+    CHECK(result.is_executable);
+    bool saw_first = false;
+    bool saw_second = false;
+    for (const auto &fn : result.program.fns) {
+        for (const auto &expr : fn.storage.exprs) {
+            if (std::holds_alternative<ir::core::CoreCallExpr>(expr.node)) {
+                saw_first = true; // first() contains a CoreCallExpr to second()
+            }
+        }
+        if (fn.name.find("second") != std::string::npos) {
+            saw_second = true;
+        }
+    }
+    CHECK(saw_first);
+    CHECK(saw_second);
+}

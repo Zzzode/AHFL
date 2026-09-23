@@ -1,0 +1,91 @@
+module wasm::fb1_aggregate_direct_call;
+
+// RFC 0026 FB-1 fix-forward: outlined pure fn bodies returning AGGREGATES must
+// not alias static construct scratch across native `call` activations. Before
+// the fix every outlined fn emitted its CoreConstructExpr into the same
+// module-shared scratch addresses (each builder's cursor restarted at zero),
+// so a second call overwrote the first call's live result, a callee's own
+// construct clobbered an aggregate passed in as an argument, and nested calls
+// aliased. The non-final handler exercises ALL THREE shapes plus a single call
+// (the control) and routes to Good only when every aggregate survives; under
+// Node the per-activation bump-heap allocation makes them distinct.
+//
+// Shape A (repeated call): make_pair(1) and make_pair(2) are both live.
+// Shape B (two distinct fns): make_other(7) has its own construct site.
+// Shape C (nested call): combine calls make_pair and reads its result.
+// Shape D (aggregate argument): project(p) must see the CALLER's pair even
+//           though project itself constructs a local aggregate at the same
+//           static slot the old codegen reused.
+pub struct Pair {
+    x: Int;
+    y: Int;
+}
+
+pub struct Frame {
+    a: Int;
+}
+
+pub struct Context {
+    sum: Int = 0;
+}
+
+fn make_pair(a: Int) -> Pair {
+    return Pair { x: a, y: a + 1000 };
+}
+
+fn make_other(a: Int) -> Pair {
+    return Pair { x: a, y: a + 2000 };
+}
+
+fn project(p: Pair) -> Int {
+    // A local construct at the SAME static scratch offset the old codegen gave
+    // this fn's builder; the argument `p` lives at the caller's allocation and
+    // must survive it.
+    let local_q: Pair = Pair { x: 9, y: 9 };
+    return p.x;
+}
+
+fn combine(a: Int) -> Int {
+    // Nested: the inner result is read AFTER the outer fn's own construct would
+    // have reused the slot under the old per-builder cursor.
+    let inner: Pair = make_pair(a);
+    let outer: Pair = Pair { x: 5, y: 6 };
+    return inner.y + outer.x;
+}
+
+pub agent Fb1AggregateAgent {
+    input: Frame;
+    context: Context;
+    output: Frame;
+    states: [Init, Good, Bad];
+    initial: Init;
+    final: [Good, Bad];
+    capabilities: [];
+    transition Init -> Good;
+    transition Init -> Bad;
+}
+
+flow for Fb1AggregateAgent {
+    state Init {
+        let p1: Pair = make_pair(1);
+        let p2: Pair = make_pair(2);
+        let q: Pair = make_other(7);
+        let projected: Int = project(p1);
+        let combined: Int = combine(3);
+        if (p1.x == 1 && p1.y == 1001 &&
+            p2.x == 2 && p2.y == 1002 &&
+            q.x == 7 && q.y == 2007 &&
+            projected == 1 &&
+            combined == 1008) {
+            goto Good;
+        } else {
+            goto Bad;
+        }
+    }
+    state Good {
+        return input;
+    }
+    state Bad {
+        return input;
+    }
+}

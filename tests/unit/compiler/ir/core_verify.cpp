@@ -3070,6 +3070,21 @@ struct RecBody {
         fn->body.statements.push_back(
             CoreStmt{CoreIfStmt{cond, std::move(then_region), nullptr}, std::nullopt});
     }
+    // `if (cond) { return retv; }` built FIRST, so a subsequent statement can be
+    // re-ordered into its THEN region by the test (stop-branch placement).
+    [[nodiscard]] std::size_t diverging_if(CoreValueId cond, CoreValueId retv) {
+        base_if(cond, retv);
+        return fn->body.statements.size() - 1;
+    }
+    // Move the last appended statement (e.g. a self-call let) into the divergent
+    // if statement's THEN region.
+    void move_last_stmt_into_if(std::size_t if_index) {
+        CoreStmt moved = std::move(fn->body.statements.back());
+        fn->body.statements.pop_back();
+        auto *branch = std::get_if<CoreIfStmt>(&fn->body.statements[if_index].node);
+        branch->then_region->statements.insert(
+            branch->then_region->statements.begin(), std::move(moved));
+    }
 };
 
 [[nodiscard]] RecProgram make_rec_program() {
@@ -3464,4 +3479,82 @@ TEST_CASE("FB-2 lattice: unbounded mutual recursion fails closed") {
     const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
     REQUIRE_FALSE(a.unbounded_issues.empty());
     CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::NoRankProgression);
+}
+
+TEST_CASE("FB-2 lattice: a self call placed BEFORE the guard fails the dominance rule") {
+    RecProgram r = make_rec_program();
+    const std::uint32_t loop = add_rec_fn(r, "before_guard", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        // Rank progresses (i+1) and the literal guard exists, but the self call
+        // is bound UNCONDITIONALLY before the guard statement.
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, i1}), r.vt_int);
+        const CoreValueId four = b.bind(b.lit(4), r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Ge, b.vref(i, r.vt_int), b.vref(four, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        b.base_if(cond, i);
+        b.ret(rv);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_before", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, zero}), r.vt_int);
+        b.ret(rv);
+    }
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind ==
+          FnRecursionIssueKind::EdgeNotDominatedByGuard);
+}
+
+TEST_CASE("FB-2 lattice: a self call inside the guard's stop branch fails the dominance rule") {
+    RecProgram r = make_rec_program();
+    const std::uint32_t loop = add_rec_fn(r, "in_stop", {r.vt_list4, r.vt_int});
+    {
+        RecBody b = rec_body(r, loop);
+        const CoreValueId xs{0}, i{1};
+        const CoreValueId four = b.bind(b.lit(4), r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Ge, b.vref(i, r.vt_int), b.vref(four, r.vt_int),
+                            r.vt_bool),
+                   r.vt_bool);
+        const std::size_t guard = b.diverging_if(cond, i);
+        // Append a progressing self call, then move it INTO the divergent THEN.
+        const CoreValueId onev = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId i1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(i, r.vt_int), b.vref(onev, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        static_cast<void>(b.bind(b.call(CoreInstanceId{loop}, {xs, i1}), r.vt_int));
+        b.move_last_stmt_into_if(guard);
+        b.ret(i);
+    }
+    const std::uint32_t start = add_rec_fn(r, "start_stop", {r.vt_list4});
+    {
+        RecBody b = rec_body(r, start);
+        const CoreValueId xs{0};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{loop}, {xs, zero}), r.vt_int);
+        b.ret(rv);
+    }
+    const auto result = verify_core_program(r.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind ==
+          FnRecursionIssueKind::EdgeNotDominatedByGuard);
 }

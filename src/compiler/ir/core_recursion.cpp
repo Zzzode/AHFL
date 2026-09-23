@@ -31,6 +31,7 @@ struct CallEdge {
     std::uint32_t callee_fn{CoreFnId::kInvalid};
     const std::vector<CoreValueId> *args{nullptr};
     const CoreBodyStorage *storage{nullptr}; // caller storage (roots too)
+    std::uint32_t expr{CoreExprId::kInvalid}; // the CoreCallExpr arena id
     SourceRangeOpt range;
 };
 
@@ -369,8 +370,30 @@ class RecursionLattice {
         FnRecursionAnalysis out;
         out.fn_depth_bound.assign(program_.fns.size(), -1);
 
-        Tarjan tarjan(graph_);
-        for (const std::vector<std::uint32_t> &component : tarjan.run()) {
+        const std::vector<std::vector<std::uint32_t>> components = Tarjan(graph_).run();
+        out.components = components;
+        out.component_of.assign(program_.fns.size(), 0);
+        for (std::uint32_t ci = 0; ci < components.size(); ++ci) {
+            for (const std::uint32_t fn : components[ci]) {
+                out.component_of[fn] = ci;
+            }
+        }
+        out.condensation_edges.assign(components.size(), {});
+        for (std::uint32_t fi = 0; fi < graph_.size(); ++fi) {
+            for (const std::uint32_t to : graph_[fi]) {
+                const std::uint32_t from_c = out.component_of[fi];
+                const std::uint32_t to_c = out.component_of[to];
+                if (from_c != to_c) {
+                    out.condensation_edges[from_c].push_back(to_c);
+                }
+            }
+        }
+        for (auto &outs : out.condensation_edges) {
+            std::sort(outs.begin(), outs.end());
+            outs.erase(std::unique(outs.begin(), outs.end()), outs.end());
+        }
+
+        for (const std::vector<std::uint32_t> &component : components) {
             if (is_nontrivial(component)) {
                 analyze_scc(component, out);
             }
@@ -382,7 +405,8 @@ class RecursionLattice {
     void collect_edges() {
         graph_.assign(program_.fns.size(), {});
         const auto scan = [&](std::uint32_t caller_fn, const CoreBodyStorage &storage) {
-            for (const CoreExpr &expr : storage.exprs) {
+            for (std::uint32_t ei = 0; ei < storage.exprs.size(); ++ei) {
+                const CoreExpr &expr = storage.exprs[ei];
                 const auto *call = std::get_if<CoreCallExpr>(&expr.node);
                 if (call == nullptr) {
                     continue;
@@ -391,8 +415,8 @@ class RecursionLattice {
                 if (!callee.has_value()) {
                     continue;
                 }
-                edges_.push_back(
-                    CallEdge{caller_fn, *callee, &call->args, &storage, expr.source_range});
+                edges_.push_back(CallEdge{caller_fn, *callee, &call->args, &storage, ei,
+                                          expr.source_range});
                 if (caller_fn != CoreFnId::kInvalid) {
                     graph_[caller_fn].push_back(*callee);
                 }
@@ -522,6 +546,10 @@ class RecursionLattice {
         Term bound;     // Const / Len / invariant Param (+ b)
         bool ascending{true};
         bool strict{false}; // Gt / Lt rather than Ge / Le
+        // The guard `if` statement's index in the body's TOP-LEVEL statement
+        // list. The dominance rule (R2b) only permits recursive edges on the
+        // post-guard continue path; this anchors "before / inside / after".
+        std::uint32_t body_index{0};
     };
     [[nodiscard]] Guard find_guard(std::uint32_t fn, std::uint32_t rank_slot,
                                    const std::unordered_set<std::uint32_t> &invariant_slots) const {
@@ -529,7 +557,8 @@ class RecursionLattice {
         const TermAnalyzer &ta = *fn_analyzers_[fn];
         const CoreValueId rank = decl.params[rank_slot];
         Guard guard;
-        for (const CoreStmt &stmt : decl.body.statements) {
+        for (std::uint32_t si = 0; si < decl.body.statements.size(); ++si) {
+            const CoreStmt &stmt = decl.body.statements[si];
             const auto *branch = std::get_if<CoreIfStmt>(&stmt.node);
             if (branch == nullptr) {
                 continue;
@@ -590,9 +619,171 @@ class RecursionLattice {
             guard.bound = rhs;
             guard.ascending = asc_op;
             guard.strict = binary->op == CoreBinaryOp::Gt || binary->op == CoreBinaryOp::Lt;
+            guard.body_index = si;
             break;
         }
         return guard;
+    }
+
+    // R2b (dominance / placement): a divergent base guard seals the recursion
+    // ONLY when every internal recursive edge is reachable on the guard's
+    // CONTINUE path (the path taken when the guard condition is false). The
+    // accepted normal form has a divergent THEN (the stop path) and the
+    // recursion after the `if` or in its ELSE. Rank progression plus a
+    // structurally-correct guard alone are insufficient: a self-call placed
+    // UNCONDITIONALLY before the guard, or inside the divergent THEN stop
+    // branch, satisfies both and still recurses forever at runtime.
+    [[nodiscard]] bool
+    recursive_edge_guard_dominated(std::uint32_t fn, const Guard &guard,
+                                   const std::vector<std::uint32_t> &internal,
+                                   std::optional<std::uint32_t> &bad_edge) const {
+        bad_edge.reset();
+        const CoreFnDecl &decl = program_.fns[fn];
+        const auto *guard_if =
+            std::get_if<CoreIfStmt>(&decl.body.statements[guard.body_index].node);
+        if (guard_if == nullptr) {
+            // The guard index was derived from an if; this cannot happen. Fail
+            // closed rather than silently accept placement.
+            bad_edge = internal.empty() ? std::nullopt
+                                        : std::optional{internal.front()};
+            return internal.empty();
+        }
+
+        // Expr ids of CoreCallExpr at any nesting depth inside ONE region.
+        const auto calls_in = [&](const CoreRegion &region,
+                                  std::unordered_set<std::uint32_t> &out) {
+            const auto walk = [&](auto &&self, const CoreRegion &r) -> void {
+                for (const CoreStmt &stmt : r.statements) {
+                    if (const auto *let = std::get_if<CoreLetStmt>(&stmt.node)) {
+                        if (let->expr.value < decl.storage.exprs.size() &&
+                            std::holds_alternative<CoreCallExpr>(
+                                decl.storage.exprs[let->expr.value].node)) {
+                            out.insert(let->expr.value);
+                        }
+                    }
+                    if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                        if (branch->then_region) {
+                            self(self, *branch->then_region);
+                        }
+                        if (branch->else_region) {
+                            self(self, *branch->else_region);
+                        }
+                    }
+                    if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                        for (const CoreMatchArm &arm : match->arms) {
+                            if (arm.guard_region) {
+                                self(self, *arm.guard_region);
+                            }
+                            if (arm.body) {
+                                self(self, *arm.body);
+                            }
+                        }
+                        if (match->fallback_region) {
+                            self(self, *match->fallback_region);
+                        }
+                    }
+                }
+            };
+            walk(walk, region);
+        };
+        std::unordered_set<std::uint32_t> stop_calls;
+        if (guard_if->then_region) {
+            calls_in(*guard_if->then_region, stop_calls);
+        }
+
+        // The top-level statement index that lexically CONTAINS each call expr
+        // in the fn body (recursing into if/match regions).
+        std::unordered_map<std::uint32_t, std::uint32_t> top_index;
+        const auto index_region_calls = [&](auto &&self, const CoreRegion &region,
+                                           std::uint32_t top) -> void {
+            for (const CoreStmt &stmt : region.statements) {
+                if (const auto *let = std::get_if<CoreLetStmt>(&stmt.node)) {
+                    if (let->expr.value < decl.storage.exprs.size() &&
+                        std::holds_alternative<CoreCallExpr>(
+                            decl.storage.exprs[let->expr.value].node)) {
+                        top_index.emplace(let->expr.value, top);
+                    }
+                }
+                if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                    if (branch->then_region) {
+                        self(self, *branch->then_region, top);
+                    }
+                    if (branch->else_region) {
+                        self(self, *branch->else_region, top);
+                    }
+                }
+                if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                    for (const CoreMatchArm &arm : match->arms) {
+                        if (arm.guard_region) {
+                            self(self, *arm.guard_region, top);
+                        }
+                        if (arm.body) {
+                            self(self, *arm.body, top);
+                        }
+                    }
+                    if (match->fallback_region) {
+                        self(self, *match->fallback_region, top);
+                    }
+                }
+            }
+        };
+        for (std::uint32_t si = 0; si < decl.body.statements.size(); ++si) {
+            const CoreStmt &stmt = decl.body.statements[si];
+            if (const auto *let = std::get_if<CoreLetStmt>(&stmt.node)) {
+                if (let->expr.value < decl.storage.exprs.size() &&
+                    std::holds_alternative<CoreCallExpr>(
+                        decl.storage.exprs[let->expr.value].node)) {
+                    top_index.emplace(let->expr.value, si);
+                }
+            }
+            if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                if (branch->then_region) {
+                    index_region_calls(index_region_calls, *branch->then_region, si);
+                }
+                if (branch->else_region) {
+                    index_region_calls(index_region_calls, *branch->else_region, si);
+                }
+            }
+            if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                for (const CoreMatchArm &arm : match->arms) {
+                    if (arm.guard_region) {
+                        index_region_calls(index_region_calls, *arm.guard_region, si);
+                    }
+                    if (arm.body) {
+                        index_region_calls(index_region_calls, *arm.body, si);
+                    }
+                }
+                if (match->fallback_region) {
+                    index_region_calls(index_region_calls, *match->fallback_region, si);
+                }
+            }
+        }
+
+        for (const std::uint32_t ei : internal) {
+            const CallEdge &edge = edges_[ei];
+            if (edge.caller_fn != fn) {
+                continue;
+            }
+            // Inside the divergent stop (THEN) region: the call runs exactly
+            // when the rank reached its bound.
+            if (stop_calls.contains(edge.expr)) {
+                bad_edge = ei;
+                return false;
+            }
+            const auto placed = top_index.find(edge.expr);
+            if (placed == top_index.end()) {
+                bad_edge = ei; // unplaceable edge: fail closed
+                return false;
+            }
+            // In the guard's ELSE (same top index, not in THEN) or after it:
+            // continue path, legal. Before it: unconditional first-activation
+            // recursion the guard never gates.
+            if (placed->second < guard.body_index) {
+                bad_edge = ei;
+                return false;
+            }
+        }
+        return true;
     }
 
     // Static finite interval of an SSA value at an entry call site (evaluated
@@ -669,6 +860,25 @@ class RecursionLattice {
                 return;
             }
             guards[fn] = guard;
+        }
+
+        // R2b: every internal recursive edge must be dominated by the member's
+        // accepted guard (reachable only on the guard's continue path). A call
+        // before the guard or inside its divergent stop branch escapes the
+        // lattice even though the guard structurally exists.
+        for (const std::uint32_t fn : component) {
+            std::optional<std::uint32_t> bad_edge;
+            if (!recursive_edge_guard_dominated(fn, guards[fn], internal, bad_edge)) {
+                if (bad_edge.has_value()) {
+                    const CallEdge &edge = edges_[*bad_edge];
+                    report(FnRecursionIssueKind::EdgeNotDominatedByGuard,
+                           edge.caller_fn, edge.callee_fn, std::nullopt, edge.range, out);
+                } else {
+                    report(FnRecursionIssueKind::EdgeNotDominatedByGuard, fn, fn,
+                           std::nullopt, program_.fns[fn].source_range, out);
+                }
+                return;
+            }
         }
 
         // No-entry groups are unreachable (codegen only emits reachable fns);

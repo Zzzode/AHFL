@@ -545,6 +545,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/e3_capability_workflow.ahfl",
         "wasm/e3_capability_workflow_resume.ahfl",
         "wasm/e3_identity_workflow.ahfl",
+        "wasm/fb1_aggregate_direct_call.ahfl",
         "wasm/fb1_direct_call.ahfl",
         "wasm/fb2_bounded_recursion.ahfl",
         "wasm/p6_aggregate.ahfl",

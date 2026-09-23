@@ -1545,8 +1545,14 @@ class FnCallResolver {
     // mangled instance key and non-generic calls with the origin canonical
     // name; the symbol ref is identity-first. Prefer the explicit key when it
     // names an instance, else resolve the symbol (the canonical non-generic
-    // instance — generic fns ALWAYS render the mangled key, so an id match
-    // here cannot bind a generic body to the wrong instantiation).
+    // instance — user generics ALWAYS render the mangled key, so an id match
+    // here cannot bind a generic body to the wrong instantiation). The
+    // symbol/name fallback must resolve to EXACTLY one entry: several concrete
+    // instantiations of one generic can share an origin SymbolId / canonical
+    // name (notably std-namespaced generics once the sysroot is inlined), and
+    // picking the first would silently dispatch an arbitrary instantiation.
+    // Such a call must carry the mangled key (the by_key path above); an
+    // ambiguous fallback is fail-closed rather than first-entry-wins.
     [[nodiscard]] const Entry *lookup(const SymbolRef &ref,
                                       std::string_view callee_name) const {
         if (!callee_name.empty()) {
@@ -1556,14 +1562,24 @@ class FnCallResolver {
         }
         if (ref.id.has_value()) {
             auto range = by_id_.equal_range(*ref.id);
-            for (auto it = range.first; it != range.second; ++it) {
-                return it->second;
+            const auto count = static_cast<std::size_t>(
+                std::distance(range.first, range.second));
+            if (count == 1) {
+                return range.first->second;
+            }
+            if (count > 1) {
+                return nullptr; // ambiguous: concrete instantiation, needs the key
             }
         }
         if (!ref.canonical_name.empty()) {
             auto range = by_name_.equal_range(ref.canonical_name);
-            for (auto it = range.first; it != range.second; ++it) {
-                return it->second;
+            const auto count = static_cast<std::size_t>(
+                std::distance(range.first, range.second));
+            if (count == 1) {
+                return range.first->second;
+            }
+            if (count > 1) {
+                return nullptr; // ambiguous: concrete instantiation, needs the key
             }
         }
         return nullptr;
@@ -4204,7 +4220,13 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             guaranteed.push_back(std::move(g));
         }
 
-        // 3) Emit Core Fn instances + CoreFnDecl bodies in `guaranteed` order.
+        // 3) Emit Core Fn instances + CoreFnDecl shells. EVERY resolver entry
+        //    is published in this loop BEFORE any body is lowered, so a legal
+        //    whole-program forward reference (an fn calling an fn declared
+        //    later) and a mutual-recursion group resolve: the fixed point is
+        //    visible to every FnBodyLowerer, independent of AHFL declaration
+        //    order. Bodies are populated in a second loop (3b) once the whole
+        //    fn table + resolver are in place.
         std::unordered_map<std::string, std::uint32_t> fn_decl_by_instance_key;
         for (GuaranteedFn &g : guaranteed) {
             const CoreInstanceId instance_id{
@@ -4234,10 +4256,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             fn_decl.origin = g.origin;
             fn_decl.name = g.key;
             fn_decl.source_range = g.source->provenance.source_range;
-            // Body-lowering must be visible to the resolver BEFORE nested calls
-            // in the same body are lowered, so register the resolution first and
-            // lower after publishing. (Bodies are non-recursive in FB-1, but the
-            // resolver entry existing is what resolves the nested symbol.)
+            core.fns.push_back(std::move(fn_decl));
+            fn_decl_by_instance_key.emplace(g.key, fn_id.value);
             FnCallResolver::Entry entry;
             entry.resolution.instance = instance_id;
             entry.resolution.has_body = true;
@@ -4246,11 +4266,28 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                                  g.origin.id,
                                  g.origin.canonical_name,
                                  entry);
-            FnBodyLowerer lowerer(fn_decl, *g.source, cap_index, types, intern_value_type,
-                                  core.value_types, fn_call_resolver, result.diagnostics);
+        }
+
+        // 3b) Lower every body against the COMPLETE fixed point. The fn decl
+        //     shells and all resolver entries already exist, so a forward
+        //     callee and every member of a mutual-recursion group resolve no
+        //     matter the declaration order.
+        for (GuaranteedFn &g : guaranteed) {
+            if (g.source == nullptr) {
+                continue;
+            }
+            const auto fn_it = fn_decl_by_instance_key.find(g.key);
+            if (fn_it == fn_decl_by_instance_key.end()) {
+                result.diagnostics.push_back(CoreLowerDiagnostic{
+                    CoreDiagnosticSeverity::Error, std::string(diag::kFnBodyUnlowered),
+                    "fn instance '" + g.key + "' lost its body table link during lowering",
+                    g.source->provenance.source_range});
+                continue;
+            }
+            FnBodyLowerer lowerer(core.fns[fn_it->second], *g.source, cap_index, types,
+                                  intern_value_type, core.value_types, fn_call_resolver,
+                                  result.diagnostics);
             lowerer.lower();
-            core.fns.push_back(std::move(fn_decl));
-            fn_decl_by_instance_key.emplace(g.key, fn_id.value);
         }
     }
 
