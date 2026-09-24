@@ -891,6 +891,31 @@ struct CoreCapabilityCallStmt {
                                          const CoreCapabilityCallStmt &) noexcept = default;
 };
 
+/// RFC 0026 FB-4 (CORE-FNBODY-DESIGN §5.3): an ORDERED statement invoking an
+/// EFFECTFUL outlined fn — the statement-position twin of `CoreCallExpr`. An
+/// effectful fn is one whose body (transitively, through other effectful fns)
+/// performs a `CoreCapabilityCallStmt`; the verifier computes that set as a
+/// structural fixed point, never trusting a spelling. This node MUST be a
+/// statement: an effectful callee can never sit in a pure A-normal expression
+/// position (`CoreCallExpr` accepts PURE callees only), so an effect orders, can
+/// pending/suspend, and is never reordered or duplicated by a pure rewrite.
+/// `callee` is the resolved Fn-kind `CoreInstanceId` (a `CoreFnInstance` with a
+/// body); `args` are the ANF operands and `result` the single SSA value the call
+/// produces (dense in the owning body's value-type table). Codegen lowers it to
+/// a plain wasm `call` to the outlined effect fn; the capability import the
+/// fn reaches is emitted through the SAME ahfl_cap import sequence the
+/// flow-handler capability statements use. Single-run ordering/execution only:
+/// cross-process memo / replay / no-reinvoke of in-fn effects awaits the wire
+/// checkpoint framework (D2b), so no durable replay is claimed here and the
+/// direct flow-handler resume behavior is unchanged.
+struct CoreCallStmt {
+    CoreValueId result{};
+    CoreInstanceId callee{}; // payload MUST be a CoreFnInstance with a body
+    std::vector<CoreValueId> args; // ANF operands, in left-to-right eval order
+    [[nodiscard]] friend bool operator==(const CoreCallStmt &,
+                                         const CoreCallStmt &) noexcept = default;
+};
+
 /// Store a value id into a place.
 struct CoreStoreStmt {
     CorePlace place;
@@ -1020,7 +1045,7 @@ core_stmt_node_wire_name(std::size_t variant_index) noexcept {
 
 // RFC 0027 P8 IR SSOT compile-time cardinality gate (see CoreDecl). The node
 // count derives from core_stmt_nodes.def.
-static_assert(std::variant_size_v<CoreStmtNode> == 9,
+static_assert(std::variant_size_v<CoreStmtNode> == 10,
               "ahfl::ir::core::CoreStmtNode cardinality drift (RFC 0027 P8 "
               "IR SSOT): update every exhaustive visitor, this pin, and "
               "core_stmt_nodes.def together.");
@@ -1168,6 +1193,7 @@ inline CoreRegionExit core_region_exit(const CoreRegion &region) noexcept {
 
 #define CORE_REGION_EXIT_CoreLetStmt(Name, Wire) CORE_REGION_EXIT_CONTINUE(Name, Wire)
 #define CORE_REGION_EXIT_CoreCapabilityCallStmt(Name, Wire) CORE_REGION_EXIT_CONTINUE(Name, Wire)
+#define CORE_REGION_EXIT_CoreCallStmt(Name, Wire) CORE_REGION_EXIT_CONTINUE(Name, Wire)
 #define CORE_REGION_EXIT_CoreStoreStmt(Name, Wire) CORE_REGION_EXIT_CONTINUE(Name, Wire)
 #define CORE_REGION_EXIT_CoreGotoStmt(Name, Wire) CORE_REGION_EXIT_DIVERGE(Name, Wire)
 #define CORE_REGION_EXIT_CoreReturnStmt(Name, Wire) CORE_REGION_EXIT_DIVERGE(Name, Wire)
@@ -1182,6 +1208,7 @@ inline CoreRegionExit core_region_exit(const CoreRegion &region) noexcept {
 #undef HANDLE_CORE_STMT_NODE
 #undef CORE_REGION_EXIT_CoreLetStmt
 #undef CORE_REGION_EXIT_CoreCapabilityCallStmt
+#undef CORE_REGION_EXIT_CoreCallStmt
 #undef CORE_REGION_EXIT_CoreStoreStmt
 #undef CORE_REGION_EXIT_CoreGotoStmt
 #undef CORE_REGION_EXIT_CoreReturnStmt
@@ -1936,9 +1963,12 @@ inline constexpr std::string_view kUnresolvedFnCall = "core.UNRESOLVED_FN_CALL";
 // A fn body contains a statement / expression this slice does not yet lower
 // (fail-closed: never an Unknown node).
 inline constexpr std::string_view kFnBodyUnlowered = "core.FN_BODY_UNLOWERED";
-// The resolved callee fn body carries a capability effect; effectful callees
-// stay fail-closed until FB-4's ordered CoreCallStmt.
-inline constexpr std::string_view kFnEffectfulCallee = "core.FN_EFFECTFUL_CALLEE";
+// RFC 0026 FB-4 (CORE-FNBODY-DESIGN §5.3): a CALLEE whose body (transitively)
+// reaches a capability invocation lowers to the ordered CoreCallStmt, not a
+// pure expression; the structural verifier's
+// core.verify.FN_CALL_EFFECTFUL_CALLEE enforces the boundary on a Core
+// artifact. A Nondet callee stays fail-closed on the pure wasm computation
+// lane with the code below.
 // A Nondet fn value call in the pure computation lane (no value-level
 // nondeterminism semantics on the wasm lane yet).
 inline constexpr std::string_view kNondetFnValue = "core.NONDET_FN_VALUE";

@@ -217,6 +217,32 @@ class ClosurePointsTo {
 /// bounds, and findings.
 [[nodiscard]] FnRecursionAnalysis analyze_fn_recursion(const CoreProgram &program);
 
+// ---------------------------------------------------------------------------
+// Effectful-fn transitivity (RFC 0026 FB-4 / CORE-FNBODY-DESIGN §5.3).
+// ---------------------------------------------------------------------------
+//
+// A fn is EFFECTFUL when its body can reach a capability invocation — either a
+// direct `CoreCapabilityCallStmt` or an ordered `CoreCallStmt` (FB-4) to
+// another effectful fn. The set is computed as a structural least fixed point
+// over Core-ANF, NEVER from a spelling: pure `CoreCallExpr` edges are walked
+// too so the classification cannot be fooled by how the source annotated (or
+// failed to annotate) an intermediate fn. This is the SINGLE derivation the
+// lowerer, the verifier (pure-vs-effectful call-site discipline and the
+// capability-whitelist transitive check), and the wasm backend (reachability +
+// import planning) share.
+struct FnEffectAnalysis {
+    /// Per CoreFnId: true iff the fn body reaches a capability invocation.
+    std::vector<bool> effectful;
+    /// Per CoreFnId: the sorted, de-duplicated capabilities the fn reaches
+    /// transitively (empty for a pure fn). The import-planning / whitelist
+    /// authorities read this rather than re-walking bodies.
+    std::vector<std::vector<CoreCapabilityId>> capabilities;
+};
+
+/// Compute the effectful-fn fixed point for one Core program. Pure and
+/// deterministic (capability sets are sorted by id).
+[[nodiscard]] FnEffectAnalysis analyze_fn_effects(const CoreProgram &program);
+
 /// The worst-case NATIVE wasm call-stack depth the direct-call graph can
 /// reach, given a sealed analysis: the condensation DAG is weighted with each
 /// nontrivial SCC's sealed `depth_bound` and each trivial SCC's single

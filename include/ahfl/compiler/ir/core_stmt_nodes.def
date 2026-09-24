@@ -49,5 +49,6 @@ HANDLE_CORE_STMT_NODE(CoreReturnStmt, "return")
 HANDLE_CORE_STMT_NODE(CoreYieldStmt, "yield")
 HANDLE_CORE_STMT_NODE(CoreTrapStmt, "trap")
 HANDLE_CORE_STMT_NODE(CoreMatchStmt, "match")
+HANDLE_CORE_STMT_NODE(CoreCallStmt, "call")
 
 #undef HANDLE_CORE_STMT_NODE

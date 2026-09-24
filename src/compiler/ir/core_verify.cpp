@@ -73,6 +73,7 @@ class Verifier {
         verify_instances();
         verify_fns();
         verify_closures();
+        verify_fn_effect_authorization();
         return std::move(diags_);
     }
 
@@ -2259,12 +2260,13 @@ class Verifier {
                 }
             }
 
-            if (flow.owner != OwnerKind::Flow) {
+            if (flow.owner == OwnerKind::Workflow) {
                 error(verify::kCapabilityOutsideFlow,
                       "capability call '" + s.callee_name +
-                          "' appears outside a flow region",
+                          "' appears in a workflow node region (capabilities stay on the "
+                          "flow/fn execution lane)",
                       stmt.source_range);
-            } else if (decl != nullptr &&
+            } else if (flow.owner == OwnerKind::Flow &&
                        (flow.allowed_capabilities == nullptr ||
                         flow.allowed_capabilities->find(s.capability.value) ==
                             flow.allowed_capabilities->end())) {
@@ -2273,6 +2275,12 @@ class Verifier {
                           "' is not in the target agent's whitelist",
                       stmt.source_range);
             }
+            // RFC 0026 FB-4: a capability call inside an FN body
+            // (OwnerKind::Fn) is legal — that is what makes the fn effectful.
+            // It carries no per-fn whitelist (an fn is not bound to one agent);
+            // transitive authorization is enforced program-wide in
+            // verify_fn_effect_authorization, where an agent's reachable effect
+            // graph is checked against that agent's whitelist.
             for (const CoreValueId a : s.args) {
                 use_value(a, stmt.source_range);
             }
@@ -2283,6 +2291,35 @@ class Verifier {
                               s.place.projection_resolved, s.place.root_name,
                               stmt.source_range);
             use_value(s.value, stmt.source_range);
+        };
+        // RFC 0026 FB-4 (design §5.3): an ordered effectful fn call. Like the
+        // capability walk it is a USE (args must be bound) followed by a single
+        // DEF (result), so effect order and def-before-use are structural.
+        // Callee-resolution / arity / argument-result types / effect-kind are
+        // checked in the program-wide verify_fn_call_sites pass (it has the fn
+        // table and the effect fixed point); this body-local walk owns the SSA
+        // ordering and bounds only.
+        const auto walk_callStmt = [&](const CoreCallStmt &s) {
+            if (s.callee.value == CoreInstanceId::kInvalid ||
+                s.callee.value >= program_.instances.size()) {
+                error(verify::kFnCallCalleeInvalid,
+                      "ordered effectful call references an out-of-range fn instance id in body '" +
+                          flow.label + "'",
+                      stmt.source_range);
+            } else {
+                const CoreInstanceDecl &inst = program_.instances[s.callee.value];
+                const auto *payload = std::get_if<CoreFnInstance>(&inst.payload);
+                if (payload == nullptr || payload->body.value == CoreFnId::kInvalid) {
+                    error(verify::kFnCallCalleeInvalid,
+                          "ordered effectful call in body '" + flow.label + "' targets '" +
+                              inst.instance_key + "' which has no lowered fn body",
+                          stmt.source_range);
+                }
+            }
+            for (const CoreValueId a : s.args) {
+                use_value(a, stmt.source_range);
+            }
+            define_value(s.result, stmt.source_range);
         };
         const auto walk_if = [&](const CoreIfStmt &s) {
             use_value(s.condition, stmt.source_range);
@@ -2437,6 +2474,7 @@ class Verifier {
 #define STMT_WALK_CoreYieldStmt(Name, Wire) walk_yield
 #define STMT_WALK_CoreTrapStmt(Name, Wire) walk_trap
 #define STMT_WALK_CoreMatchStmt(Name, Wire) walk_match
+#define STMT_WALK_CoreCallStmt(Name, Wire) walk_callStmt
 #define HANDLE_CORE_STMT_NODE(Name, Wire) STMT_WALK_##Name(Name, Wire),
         std::visit(
             Overloaded{
@@ -2453,6 +2491,7 @@ class Verifier {
 #undef STMT_WALK_CoreYieldStmt
 #undef STMT_WALK_CoreTrapStmt
 #undef STMT_WALK_CoreMatchStmt
+#undef STMT_WALK_CoreCallStmt
         }
         if (live) {
             exit.fallthrough = true;
@@ -3020,6 +3059,7 @@ class Verifier {
 #define CORE_REGION_PATHS_CoreReturnStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
 #define CORE_REGION_PATHS_CoreGotoStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
 #define CORE_REGION_PATHS_CoreTrapStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
+#define CORE_REGION_PATHS_CoreCallStmt(Name, Wire) CORE_REGION_PATHS_LEAF(Name, Wire)
 #define HANDLE_CORE_STMT_NODE(Name, Wire) CORE_REGION_PATHS_##Name(Name, Wire)
             std::visit(
                 Overloaded{
@@ -3037,6 +3077,7 @@ class Verifier {
 #undef CORE_REGION_PATHS_CoreReturnStmt
 #undef CORE_REGION_PATHS_CoreGotoStmt
 #undef CORE_REGION_PATHS_CoreTrapStmt
+#undef CORE_REGION_PATHS_CoreCallStmt
         }
     }
 
@@ -3705,10 +3746,18 @@ class Verifier {
         // site catches as a result-type mismatch against its interned type.
     }
 
-    // Walk every body (flow / workflow / fn) and validate each CoreCallExpr
-    // against the fn table: callee resolution, arity, arg types, result type,
-    // pure callee. Then run the 3-color acyclic check over the static graph.
+    // Walk every body (flow / workflow / fn) and validate each direct fn call —
+    // the pure CoreCallExpr (expression position) and the FB-4 ordered
+    // CoreCallStmt (statement position) — against the fn table: callee
+    // resolution, arity, arg types, result type, and EFFECT-KIND consistency
+    // (a pure expr may call only a PURE fn; an effectful callee is legal ONLY
+    // through the ordered statement). Then run the recursion lattice over the
+    // static graph.
     void verify_fn_call_sites(const std::unordered_set<std::uint32_t> &fn_instances) {
+        // FB-4: the structural effect fixed point (shared with the backend), so
+        // the pure-vs-effectful callee discipline is decided here, not by a
+        // spelling.
+        const FnEffectAnalysis effects = analyze_fn_effects(program_);
         struct CallSite {
             CoreInstanceId callee;
             std::vector<CoreValueId> args;
@@ -3716,27 +3765,75 @@ class Verifier {
             SourceRangeOpt range;
             const std::vector<CoreValueTypeId> *arg_types; // body value-type table
             std::string owner_label;
+            bool statement_position{false}; // true = CoreCallStmt, false = CoreCallExpr
         };
         std::vector<CallSite> sites;
-        const auto scan_storage = [&](const CoreBodyStorage &storage, std::string label,
-                                      std::vector<CallSite> &out) {
+        const auto scan_storage_exprs = [&](const CoreBodyStorage &storage, std::string label,
+                                           std::vector<CallSite> &out) {
             for (const CoreExpr &expr : storage.exprs) {
                 const auto *call = std::get_if<CoreCallExpr>(&expr.node);
                 if (call == nullptr) {
                     continue;
                 }
                 out.push_back(CallSite{call->callee, call->args, expr.result_type,
-                                       expr.source_range, &storage.value_types, std::move(label)});
+                                       expr.source_range, &storage.value_types, std::move(label),
+                                       /*statement_position=*/false});
+            }
+        };
+        // CoreCallStmt lives in a region, not the pure expr arena. Walk every
+        // region statement of a body (and nested if/match regions).
+        const auto scan_region_stmts = [&](const CoreRegion &root, const CoreBodyStorage &storage,
+                                           std::string label, std::vector<CallSite> &out) {
+            std::vector<const CoreRegion *> pending{&root};
+            while (!pending.empty()) {
+                const CoreRegion *region = pending.back();
+                pending.pop_back();
+                for (const CoreStmt &stmt : region->statements) {
+                    if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                        const CoreValueTypeId result_ty =
+                            call->result.value < storage.value_types.size()
+                                ? storage.value_types[call->result.value]
+                                : CoreValueTypeId{};
+                        out.push_back(CallSite{call->callee, call->args, result_ty,
+                                               stmt.source_range, &storage.value_types, label,
+                                               /*statement_position=*/true});
+                    }
+                    if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                        if (branch->then_region != nullptr) {
+                            pending.push_back(branch->then_region.get());
+                        }
+                        if (branch->else_region != nullptr) {
+                            pending.push_back(branch->else_region.get());
+                        }
+                    } else if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                        for (const CoreMatchArm &arm : match->arms) {
+                            if (arm.guard_region != nullptr) {
+                                pending.push_back(arm.guard_region.get());
+                            }
+                            if (arm.body != nullptr) {
+                                pending.push_back(arm.body.get());
+                            }
+                        }
+                        if (match->fallback_region != nullptr) {
+                            pending.push_back(match->fallback_region.get());
+                        }
+                    }
+                }
             }
         };
         for (const CoreFlowDecl &flow : program_.flows) {
-            scan_storage(flow.storage, "flow '" + flow.agent_name + "'", sites);
+            scan_storage_exprs(flow.storage, "flow '" + flow.agent_name + "'", sites);
+            for (const CoreFlowState &state : flow.states) {
+                scan_region_stmts(state.body, flow.storage,
+                                  "flow '" + flow.agent_name + "'", sites);
+            }
         }
         for (const CoreWorkflowDecl &wf : program_.workflows) {
-            scan_storage(wf.storage, "workflow '" + wf.name + "'", sites);
+            scan_storage_exprs(wf.storage, "workflow '" + wf.name + "'", sites);
         }
         for (const CoreFnDecl &fn : program_.fns) {
-            scan_storage(fn.storage, "fn '" + fn.name + "'", sites);
+            scan_storage_exprs(fn.storage, "fn '" + fn.name + "'", sites);
+            scan_region_stmts(fn.body, fn.storage, "fn '" + fn.name + "'", sites);
         }
 
         // Concrete callee signature: the param types are the pre-bound params'
@@ -3759,12 +3856,30 @@ class Verifier {
                       site.range);
                 continue;
             }
-            const CoreFnDecl &callee = program_.fns[payload->body.value];
-            if (callee.body.statements.empty() || fn_region_contains_capability(callee.body)) {
+            const std::uint32_t callee_index = payload->body.value;
+            const CoreFnDecl &callee = program_.fns[callee_index];
+            const bool callee_effectful =
+                callee_index < effects.effectful.size() && effects.effectful[callee_index];
+            // EFFECT-KIND CONSISTENCY (design §5.3): the ordered statement is the
+            // ONLY legal position for an effectful callee; a PURE CoreCallExpr
+            // that reaches an effectful fn is a misclassification / dropped-order
+            // and fails closed. Conversely an ordered CoreCallStmt to a PURE fn
+            // is a needless (but harmless) misclassification rejected so the two
+            // call shapes never encode the same callee differently.
+            if (!site.statement_position && callee_effectful) {
                 error(verify::kFnCallEffectfulCallee,
-                      "direct call to fn '" + callee.name +
-                          "' is illegal until the ordered CoreCallStmt slice (the callee body "
-                          "contains a capability effect)",
+                      "pure direct call to effectful fn '" + callee.name +
+                          "' in body '" + site.owner_label +
+                          "': an effectful callee may be invoked only from an ordered call "
+                          "statement (CoreCallStmt), never from a pure expression position",
+                      site.range);
+            }
+            if (site.statement_position && !callee_effectful) {
+                error(verify::kFnCallEffectKind,
+                      "ordered call statement targets pure fn '" + callee.name +
+                          "' in body '" + site.owner_label +
+                          "': a pure callee is invoked as a CoreCallExpr, not an effect "
+                          "statement",
                       site.range);
             }
             if (site.args.size() != callee.params.size()) {
@@ -3852,8 +3967,175 @@ class Verifier {
         static_cast<void>(fn_instances);
     }
 
-    // --- closure construction / indirect closure call (FB-3a1, design §8.1
-    // #4/#5) ---
+    // RFC 0026 FB-4 (design §5.3): effect-authorization at the AGENT boundary.
+    // A direct capability call inside a flow handler is already checked against
+    // the target agent's whitelist by walk_capabilityCall. An effect reached
+    // TRANSITIVELY through an ordered CoreCallStmt (a handler calls an fn that
+    // calls a capability, across any fn depth) must be whitelisted too. This is a
+    // program-wide reachability check over the fn call graph (BOTH the ordered
+    // CoreCallStmt and the pure CoreCallExpr edges, so authorization follows the
+    // effect fixed point the call-site discipline uses), independent of the
+    // per-fn whitelist an fn itself carries (an fn is not bound to one agent).
+    void verify_fn_effect_authorization() {
+        if (program_.flows.empty() || program_.fns.empty()) {
+            return;
+        }
+        const FnEffectAnalysis effects = analyze_fn_effects(program_);
+        // Resolve a Fn instance id to its CoreFnId body, or nullopt.
+        const auto resolve_fn = [&](CoreInstanceId id) -> std::optional<std::uint32_t> {
+            if (id.value == CoreInstanceId::kInvalid || id.value >= program_.instances.size()) {
+                return std::nullopt;
+            }
+            const auto *payload =
+                std::get_if<CoreFnInstance>(&program_.instances[id.value].payload);
+            if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+                payload->body.value >= program_.fns.size()) {
+                return std::nullopt;
+            }
+            return payload->body.value;
+        };
+        // Collect every fn a region STATEMENT invokes (CoreCallStmt) and every
+        // fn the region's pure expr arena invokes (CoreCallExpr).
+        const auto region_fn_calls = [&](const CoreRegion &region,
+                                         const CoreBodyStorage &storage,
+                                         std::vector<std::uint32_t> &out) {
+            std::vector<const CoreRegion *> pending{&region};
+            while (!pending.empty()) {
+                const CoreRegion *r = pending.back();
+                pending.pop_back();
+                for (const CoreStmt &stmt : r->statements) {
+                    if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                        if (auto fn = resolve_fn(call->callee)) {
+                            out.push_back(*fn);
+                        }
+                    }
+                    if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                        if (branch->then_region != nullptr) {
+                            pending.push_back(branch->then_region.get());
+                        }
+                        if (branch->else_region != nullptr) {
+                            pending.push_back(branch->else_region.get());
+                        }
+                    } else if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                        for (const CoreMatchArm &arm : match->arms) {
+                            if (arm.guard_region != nullptr) {
+                                pending.push_back(arm.guard_region.get());
+                            }
+                            if (arm.body != nullptr) {
+                                pending.push_back(arm.body.get());
+                            }
+                        }
+                        if (match->fallback_region != nullptr) {
+                            pending.push_back(match->fallback_region.get());
+                        }
+                    }
+                }
+            }
+            for (const CoreExpr &expr : storage.exprs) {
+                if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                    if (auto fn = resolve_fn(call->callee)) {
+                        out.push_back(*fn);
+                    }
+                }
+            }
+        };
+        // One fn's outgoing fn calls (statement + expr edges).
+        const auto fn_outgoing = [&](std::uint32_t fi,
+                                     std::vector<std::uint32_t> &out) {
+            const CoreFnDecl &fn = program_.fns[fi];
+            for (const CoreExpr &expr : fn.storage.exprs) {
+                if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                    if (auto c = resolve_fn(call->callee)) {
+                        out.push_back(*c);
+                    }
+                }
+            }
+            std::vector<const CoreRegion *> pending{&fn.body};
+            while (!pending.empty()) {
+                const CoreRegion *r = pending.back();
+                pending.pop_back();
+                for (const CoreStmt &stmt : r->statements) {
+                    if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                        if (auto c = resolve_fn(call->callee)) {
+                            out.push_back(*c);
+                        }
+                    }
+                    if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                        if (branch->then_region != nullptr) {
+                            pending.push_back(branch->then_region.get());
+                        }
+                        if (branch->else_region != nullptr) {
+                            pending.push_back(branch->else_region.get());
+                        }
+                    } else if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                        for (const CoreMatchArm &arm : match->arms) {
+                            if (arm.guard_region != nullptr) {
+                                pending.push_back(arm.guard_region.get());
+                            }
+                            if (arm.body != nullptr) {
+                                pending.push_back(arm.body.get());
+                            }
+                        }
+                        if (match->fallback_region != nullptr) {
+                            pending.push_back(match->fallback_region.get());
+                        }
+                    }
+                }
+            }
+        };
+
+        for (const CoreFlowDecl &flow : program_.flows) {
+            if (flow.target.value >= program_.agents.size()) {
+                continue;
+            }
+            const CoreAgentDecl &agent = program_.agents[flow.target.value];
+            std::unordered_set<std::uint32_t> allowed;
+            for (const CoreCapabilityId id : agent.capabilities) {
+                if (id.value < program_.capabilities.size()) {
+                    allowed.insert(id.value);
+                }
+            }
+            // Reachability fixed point from every handler.
+            std::vector<std::uint32_t> roots;
+            for (const CoreFlowState &state : flow.states) {
+                region_fn_calls(state.body, flow.storage, roots);
+            }
+            std::unordered_set<std::uint32_t> seen;
+            std::vector<std::uint32_t> worklist = roots;
+            while (!worklist.empty()) {
+                const std::uint32_t fi = worklist.back();
+                worklist.pop_back();
+                if (!seen.insert(fi).second) {
+                    continue;
+                }
+                std::vector<std::uint32_t> next;
+                fn_outgoing(fi, next);
+                for (const std::uint32_t c : next) {
+                    if (!seen.contains(c)) {
+                        worklist.push_back(c);
+                    }
+                }
+            }
+            for (const std::uint32_t fi : seen) {
+                for (const CoreCapabilityId cap : effects.capabilities[fi]) {
+                    if (!allowed.contains(cap.value)) {
+                        error(verify::kFnEffectCapabilityUnauthorized,
+                              "effectful fn '" + program_.fns[fi].name +
+                                  "' reachable from flow '" + flow.agent_name +
+                                  "' invokes capability '" +
+                                  (cap.value < program_.capabilities.size()
+                                       ? program_.capabilities[cap.value].name
+                                       : std::to_string(cap.value)) +
+                                  "' which is not in target agent '" + agent.name +
+                                  "' whitelist",
+                              program_.fns[fi].source_range);
+                    }
+                }
+            }
+        }
+    }
+
+
     //
     // Lambda lifting (FB-3a2) is what makes the lowerer EMIT these nodes, but the
     // model-level rules are enforced now on every artifact — including hand-built
@@ -4165,36 +4447,6 @@ class Verifier {
             break;
         }
         return msg.str();
-    }
-
-    // Whether a region contains a CoreCapabilityCallStmt (any depth). Used to
-    // reject effectful direct-call callees.
-    [[nodiscard]] static bool fn_region_contains_capability(const CoreRegion &region) {
-        for (const CoreStmt &stmt : region.statements) {
-            if (std::holds_alternative<CoreCapabilityCallStmt>(stmt.node)) {
-                return true;
-            }
-            if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
-                if ((branch->then_region && fn_region_contains_capability(*branch->then_region)) ||
-                    (branch->else_region && fn_region_contains_capability(*branch->else_region))) {
-                    return true;
-                }
-            }
-            if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
-                for (const CoreMatchArm &arm : match->arms) {
-                    if ((arm.guard_region &&
-                         fn_region_contains_capability(*arm.guard_region)) ||
-                        (arm.body && fn_region_contains_capability(*arm.body))) {
-                        return true;
-                    }
-                }
-                if (match->fallback_region &&
-                    fn_region_contains_capability(*match->fallback_region)) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     // Classification of an fn body's value-bearing returns.

@@ -1706,6 +1706,17 @@ class CoreJsonPrinter final : private PrettyJsonWriter {
                             });
                         });
                     },
+                    [&](const CoreCallStmt &n) {
+                        field("result", [&]() { write_index(n.result.value); });
+                        field("callee", [&]() { write_index(n.callee.value); });
+                        field("args", [&]() {
+                            print_array(indent_level + 1, [&](const auto &arg_item) {
+                                for (const auto &arg : n.args) {
+                                    arg_item([&]() { write_index(arg.value); });
+                                }
+                            });
+                        });
+                    },
                     [&](const CoreStoreStmt &n) {
                         field("place", [&]() { print_place(n.place, indent_level + 1); });
                         field("value", [&]() { write_index(n.value.value); });
@@ -4856,6 +4867,29 @@ bool CoreJsonReader::read_stmt(const JsonValue &obj, CoreStmt &out, std::size_t 
         node.fallback_region = std::make_unique<CoreRegion>();
         if (!read_region(*fallback, *node.fallback_region, depth + 1)) {
             return false;
+        }
+        out.node = std::move(node);
+        break;
+    }
+    case 9: { // CoreCallStmt
+        if (!check_fields(obj, {"kind", "source_range", "result", "callee", "args"},
+                          "call statement")) {
+            return false;
+        }
+        CoreCallStmt node;
+        const auto result = req_u32(obj, "result");
+        const auto callee = req_u32(obj, "callee");
+        if (!result.has_value() || !callee.has_value()) {
+            return false;
+        }
+        node.result = CoreValueId{*result};
+        node.callee = CoreInstanceId{*callee};
+        const auto args = req_u32_array(obj, "args");
+        if (!args.has_value()) {
+            return false;
+        }
+        for (const auto raw : *args) {
+            node.args.push_back(CoreValueId{raw});
         }
         out.node = std::move(node);
         break;

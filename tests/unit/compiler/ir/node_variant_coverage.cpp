@@ -194,7 +194,7 @@ static_assert(std::variant_size_v<ahfl::ir::Decl> == 16);
 static_assert(std::variant_size_v<ahfl::ir::core::CoreDecl> == 2);
 static_assert(std::variant_size_v<ahfl::ir::core::CoreExprNode> == 13);
 static_assert(std::variant_size_v<ahfl::ir::core::CorePatternNode> == 7);
-static_assert(std::variant_size_v<ahfl::ir::core::CoreStmtNode> == 9);
+static_assert(std::variant_size_v<ahfl::ir::core::CoreStmtNode> == 10);
 static_assert(std::variant_size_v<ahfl::ir::core::CoreInstancePayload> == 5);
 static_assert(std::variant_size_v<ahfl::ir::core::CoreValueTypeNode> == 14);
 
@@ -248,6 +248,8 @@ static_assert(alternative_at_index<ahfl::ir::core::CoreStmtNode, 0,
                                    ahfl::ir::core::CoreLetStmt>());
 static_assert(alternative_at_index<ahfl::ir::core::CoreStmtNode, 8,
                                    ahfl::ir::core::CoreMatchStmt>());
+static_assert(alternative_at_index<ahfl::ir::core::CoreStmtNode, 9,
+                                   ahfl::ir::core::CoreCallStmt>());
 static_assert(alternative_at_index<ahfl::ir::core::CoreInstancePayload, 0,
                                    ahfl::ir::core::CoreCapabilityInstance>());
 static_assert(alternative_at_index<ahfl::ir::core::CoreInstancePayload, 4,
@@ -329,7 +331,7 @@ TEST_CASE("ir node variants: pinned cardinalities") {
     CHECK(std::variant_size_v<ahfl::ir::core::CoreDecl> == 2);
     CHECK(std::variant_size_v<ahfl::ir::core::CoreExprNode> == 13);
     CHECK(std::variant_size_v<ahfl::ir::core::CorePatternNode> == 7);
-    CHECK(std::variant_size_v<ahfl::ir::core::CoreStmtNode> == 9);
+    CHECK(std::variant_size_v<ahfl::ir::core::CoreStmtNode> == 10);
     CHECK(std::variant_size_v<ahfl::ir::core::CoreInstancePayload> == 5);
     CHECK(std::variant_size_v<ahfl::ir::core::CoreValueTypeNode> == 14);
 }
@@ -355,9 +357,9 @@ TEST_CASE("ir node variants: runtime variant index stability") {
     }
     SUBCASE("CoreStmtNode anchors") {
         ahfl::ir::core::CoreStmtNode first{ahfl::ir::core::CoreLetStmt{}};
-        ahfl::ir::core::CoreStmtNode last{ahfl::ir::core::CoreMatchStmt{}};
+        ahfl::ir::core::CoreStmtNode last{ahfl::ir::core::CoreCallStmt{}};
         CHECK(first.index() == 0);
-        CHECK(last.index() == 8);
+        CHECK(last.index() == 9);
     }
 }
 

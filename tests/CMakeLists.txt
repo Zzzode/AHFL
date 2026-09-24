@@ -237,6 +237,26 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 FB-4 (CORE-FNBODY-DESIGN §5.3): an effectful call inside an fn
+    # body is an ORDERED CoreCallStmt (never a pure expr). A handler calls an
+    # effectful fn through a transitive wrapper; the effect fixed point is
+    # computed structurally, the outlined effect fn routes its capability
+    # through the SAME ahfl_cap import ordinal a handler statement would use,
+    # and the capability result drives the computed goto. Real Node-engine
+    # evidence (single-run ordering/execution; durable replay is the later
+    # wire-checkpoint slice).
+    add_test(NAME ahfl.wasm.fb4_effectful_fn_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_effectful_fn_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.fb4_effectful_fn_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-4 transitive effectful fn ordered CoreCallStmt Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 FB-3b (§8 / §6.3): a recursive fn over a BOUNDED collection
     # constructs a fresh lifted lambda each activation and invokes it
     # indirectly, respecting the FB-2 depth sealed by the list length word.

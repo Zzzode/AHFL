@@ -2994,7 +2994,194 @@ TEST_CASE("FB-1 verifier: a direct call to an effectful callee fails") {
 }
 
 // ===========================================================================
-// RFC 0026 FB-3a1 (CORE-FNBODY-DESIGN §3.1/§5.2/§8.1 #4/#5): closure
+// RFC 0026 FB-4 (CORE-FNBODY-DESIGN §5.3): ordered effectful calls.
+// ===========================================================================
+
+namespace {
+
+// A valid effectful fn: one Int param, one CoreCapabilityCallStmt producing v1,
+// returned. Returns the built FnProgram (with the capability / instance / fn).
+[[nodiscard]] FnProgram make_good_effectful_fn_program() {
+    FnProgram f = make_good_fn_program();
+    CoreCapabilityDecl cap;
+    cap.name = "C";
+    cap.symbol_ref = ir::SymbolRef{ir::SymbolRefKind::Capability, "C", "C", "", 620};
+    cap.param_types = {f.vt_int};
+    cap.return_type = f.vt_int;
+    f.program.capabilities.push_back(std::move(cap));
+
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_eff";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "eff", "eff", "", 621};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    f.program.instances.push_back(std::move(inst1));
+
+    CoreFnDecl eff;
+    eff.id = CoreFnId{1};
+    eff.instance = CoreInstanceId{1};
+    eff.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "eff", "eff", "", 621};
+    eff.params = {CoreValueId{0}};
+    eff.name = "_inst_eff";
+    eff.storage.value_count = 2;
+    eff.storage.value_types = {f.vt_int, f.vt_int};
+    eff.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, f.vt_int});
+    eff.body.statements.push_back(CoreStmt{
+        CoreCapabilityCallStmt{CoreValueId{1}, CoreCapabilityId{0}, "C",
+                               {CoreValueId{0}}},
+        std::nullopt});
+    eff.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    f.program.fns.push_back(std::move(eff));
+    return f;
+}
+
+} // namespace
+
+TEST_CASE("FB-4 verifier: an ordered CoreCallStmt to an effectful fn verifies clean") {
+    FnProgram f = make_good_effectful_fn_program();
+    // g0 (fn 0) calls the effectful fn via the ORDERED STATEMENT, result v1.
+    CoreFnDecl &g0 = f.program.fns[0];
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {f.vt_int, f.vt_int};
+    g0.body.statements.clear();
+    g0.body.statements.push_back(CoreStmt{
+        CoreCallStmt{CoreValueId{1}, CoreInstanceId{1}, {CoreValueId{0}}}, std::nullopt});
+    g0.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    const auto result = verify_core_program(f.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("FB-4 verifier: a pure CoreCallExpr to an effectful fn is a misclassification") {
+    FnProgram f = make_good_effectful_fn_program();
+    // g0 calls the effectful fn through a PURE expression (forbidden).
+    append_orphan_call(f.program.fns[0], CoreInstanceId{1}, {CoreValueId{0}}, f.vt_int);
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallEffectfulCallee));
+}
+
+TEST_CASE("FB-4 verifier: an ordered CoreCallStmt to a PURE fn is a misclassification") {
+    FnProgram f = make_good_fn_program();
+    // Instance / fn 1 is a pure identity; call it via an ordered statement.
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_pure";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "pure2", "pure2", "", 630};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    f.program.instances.push_back(std::move(inst1));
+    CoreFnDecl pure2 = make_identity_fn(f.vt_int, 1);
+    pure2.id = CoreFnId{1};
+    pure2.name = "_inst_pure";
+    f.program.fns.push_back(std::move(pure2));
+
+    CoreFnDecl &g0 = f.program.fns[0];
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {f.vt_int, f.vt_int};
+    g0.body.statements.clear();
+    g0.body.statements.push_back(CoreStmt{
+        CoreCallStmt{CoreValueId{1}, CoreInstanceId{1}, {CoreValueId{0}}}, std::nullopt});
+    g0.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallEffectKind));
+}
+
+TEST_CASE("FB-4 verifier: transitive effect is structural (a wrapping fn is effectful)") {
+    // A -> C directly; B -> A through an ordered statement. The effect fixed
+    // point must mark BOTH A and B effectful; a pure CoreCallExpr B->A must
+    // therefore be rejected even though B's body holds no capability statement.
+    FnProgram f = make_good_effectful_fn_program(); // fn 1 = A (effectful)
+
+    // fn 2 = B wrapping A via an ordered CoreCallStmt.
+    CoreInstanceDecl inst2;
+    inst2.id = CoreInstanceId{2};
+    inst2.instance_key = "_inst_wrap";
+    inst2.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "wrap", "wrap", "", 640};
+    inst2.payload = CoreFnInstance{CoreFnId{2}};
+    f.program.instances.push_back(std::move(inst2));
+    CoreFnDecl wrap;
+    wrap.id = CoreFnId{2};
+    wrap.instance = CoreInstanceId{2};
+    wrap.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "wrap", "wrap", "", 640};
+    wrap.params = {CoreValueId{0}};
+    wrap.name = "_inst_wrap";
+    wrap.storage.value_count = 2;
+    wrap.storage.value_types = {f.vt_int, f.vt_int};
+    wrap.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, f.vt_int});
+    wrap.body.statements.push_back(CoreStmt{
+        CoreCallStmt{CoreValueId{1}, CoreInstanceId{1}, {CoreValueId{0}}}, std::nullopt});
+    wrap.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    f.program.fns.push_back(std::move(wrap));
+
+    // g0 (fn 0) calls the WRAPPER B through a PURE expr: must be rejected
+    // because B is transitively effectful.
+    append_orphan_call(f.program.fns[0], CoreInstanceId{2}, {CoreValueId{0}}, f.vt_int);
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallEffectfulCallee));
+}
+
+TEST_CASE("FB-4 verifier: an ordered effectful call with the wrong arity fails") {
+    FnProgram f = make_good_effectful_fn_program();
+    CoreFnDecl &g0 = f.program.fns[0];
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {f.vt_int, f.vt_int};
+    g0.body.statements.clear();
+    // Effectful fn A takes one Int param; pass none.
+    g0.body.statements.push_back(CoreStmt{
+        CoreCallStmt{CoreValueId{1}, CoreInstanceId{1}, {}}, std::nullopt});
+    g0.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallArityMismatch));
+}
+
+TEST_CASE("FB-4 verifier: an effectful fn reaching an unauthorized capability fails") {
+    FnProgram f = make_good_effectful_fn_program();
+    // An agent whose whitelist does NOT include the fn's capability, and a flow
+    // whose handler invokes the effectful fn.
+    CoreAgentDecl agent;
+    agent.name = "Agt";
+    agent.symbol_ref = ir::SymbolRef{ir::SymbolRefKind::Agent, "Agt", "Agt", "", 650};
+    agent.input_type = CoreTypeId{};
+    agent.output_type = CoreTypeId{};
+    agent.context_kind = CoreAgentDecl::ContextKind::Unit;
+    agent.states = {"Init", "Done"};
+    agent.initial = CoreStateId{0};
+    agent.finals = {CoreStateId{1}};
+    // capabilities intentionally left EMPTY (fn reaches cap 0)
+    agent.transitions.push_back(CoreTransition{CoreStateId{0}, CoreStateId{1}});
+    f.program.agents.push_back(std::move(agent));
+
+    CoreFlowDecl flow;
+    flow.agent_name = "Agt";
+    flow.target = CoreAgentId{0};
+    flow.storage.value_count = 2;
+    flow.storage.value_types = {f.vt_int, f.vt_int};
+    CoreFlowState state;
+    state.state = CoreStateId{0};
+    state.state_name = "Init";
+    state.body.statements.push_back(CoreStmt{
+        CoreCallStmt{CoreValueId{1}, CoreInstanceId{1}, {CoreValueId{0}}}, std::nullopt});
+    state.body.statements.push_back(CoreStmt{CoreGotoStmt{CoreStateId{1}, "Done"}, std::nullopt});
+    flow.states.push_back(std::move(state));
+    f.program.flows.push_back(std::move(flow));
+
+    const auto result = verify_core_program(f.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnEffectCapabilityUnauthorized));
+}
 // construction + indirect closure call structural verification.
 //
 // Lambda lifting (FB-3a2) is what makes the lowerer emit these nodes, but every

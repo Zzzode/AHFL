@@ -17,6 +17,7 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
+#include "ahfl/compiler/ir/expr_child_edges.hpp"
 #include "ahfl/compiler/ir/mangling.hpp" // mangle_instance (fn-instance guarantee)
 
 #include <cctype>
@@ -1605,6 +1606,247 @@ class FnCallResolver {
     mutable std::unordered_multimap<std::size_t, const Entry *> by_id_;
     mutable std::unordered_multimap<std::string, const Entry *> by_name_;
 };
+
+// ---------------------------------------------------------------------------
+// RFC 0026 FB-4 (CORE-FNBODY-DESIGN §5.3): source-level transitive effect
+// classification. The published FnCallResolver entry of a fn instance carries
+// the fn's EFFECT so an effectful callee is ordered as a CoreCallStmt instead
+// of a pure CoreCallExpr. That effect is computed here as a least fixed point
+// over the AHFL-IR fn bodies — an fn is capability-effectful when its declared
+// clause says so OR its body directly invokes a capability OR it (transitively)
+// calls another capability-effectful fn; the same for Nondet. This never trusts
+// a single declaration spelling: an fn that only WRAPS an effectful callee is
+// classified by the body call graph, exactly as the design demands.
+// ---------------------------------------------------------------------------
+namespace {
+
+// The capability / fn-call references one expression subtree reaches.
+struct ExprCallFacts {
+    bool capability{false};
+    std::vector<const FnDecl *> fn_callees;
+};
+
+class FnEffectScanner {
+  public:
+    explicit FnEffectScanner(const std::unordered_map<std::string, std::size_t> &by_key,
+                             const std::unordered_multimap<std::size_t, std::size_t> &by_id,
+                             const std::vector<const FnDecl *> &bodies)
+        : by_key_(by_key), by_id_(by_id), bodies_(bodies) {}
+
+    // Fixed point over every body. Returns one effect kind per `bodies` entry.
+    [[nodiscard]] std::vector<ir::FnEffectKind> run() {
+        const std::size_t n = bodies_.size();
+        std::vector<bool> has_cap(n, false);
+        std::vector<bool> has_nondet(n, false);
+        std::vector<std::vector<std::size_t>> callees(n);
+
+        for (std::size_t i = 0; i < n; ++i) {
+            const FnDecl &fn = *bodies_[i];
+            if (fn.effect.kind == ir::FnEffectKind::Capability) {
+                has_cap[i] = true;
+            } else if (fn.effect.kind == ir::FnEffectKind::Nondet) {
+                has_nondet[i] = true;
+            }
+            if (fn.has_body && fn.body != nullptr) {
+                ExprCallFacts facts = scan_block(*fn.body);
+                has_cap[i] = has_cap[i] || facts.capability;
+                for (const FnDecl *callee : facts.fn_callees) {
+                    if (const auto idx = index_of(callee); idx.has_value()) {
+                        callees[i].push_back(*idx);
+                    }
+                }
+            }
+            std::sort(callees[i].begin(), callees[i].end());
+            callees[i].erase(std::unique(callees[i].begin(), callees[i].end()), callees[i].end());
+        }
+
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (std::size_t i = 0; i < n; ++i) {
+                for (const std::size_t c : callees[i]) {
+                    if (has_cap[c] && !has_cap[i]) {
+                        has_cap[i] = true;
+                        changed = true;
+                    }
+                    if (has_nondet[c] && !has_nondet[i]) {
+                        has_nondet[i] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        std::vector<ir::FnEffectKind> kinds(n, ir::FnEffectKind::Pure);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (has_cap[i]) {
+                kinds[i] = ir::FnEffectKind::Capability;
+            } else if (has_nondet[i]) {
+                kinds[i] = ir::FnEffectKind::Nondet;
+            }
+        }
+        return kinds;
+    }
+
+  private:
+    // Resolve one fn-call callee to a BodyFn index: an exact mangled-key match
+    // first (concrete generic instantiation), else a UNIQUE origin-symbol match
+    // (a non-generic fn). Several concrete instantiations share one origin id;
+    // such an ambiguous id fallback resolves to nothing (the call must carry a
+    // key), mirroring FnCallResolver::lookup.
+    [[nodiscard]] std::optional<std::size_t>
+    resolve(const SymbolRef &ref, std::string_view callee_name) const {
+        if (!callee_name.empty()) {
+            if (const auto it = by_key_.find(std::string{callee_name}); it != by_key_.end()) {
+                return it->second;
+            }
+        }
+        if (ref.id.has_value()) {
+            auto range = by_id_.equal_range(*ref.id);
+            const auto count = static_cast<std::size_t>(std::distance(range.first, range.second));
+            if (count == 1) {
+                return range.first->second;
+            }
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<std::size_t> index_of(const FnDecl *fn) const {
+        for (std::size_t i = 0; i < bodies_.size(); ++i) {
+            if (bodies_[i] == fn) {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+
+    void scan_expr(const Expr &expr, ExprCallFacts &facts) const {
+        if (const auto *call = std::get_if<CallExpr>(&expr.node)) {
+            if (call->callee_ref.kind == SymbolRefKind::Capability) {
+                facts.capability = true;
+            } else if (call->callee_ref.kind == SymbolRefKind::Function) {
+                if (const auto idx = resolve(call->callee_ref, call->callee)) {
+                    facts.fn_callees.push_back(bodies_[*idx]);
+                }
+            }
+        } else if (const auto *method = std::get_if<MethodCallExpr>(&expr.node)) {
+            // An impl method call resolves by its method symbol the same way a
+            // free fn call does (the lowerer's direct-call path treats both as
+            // a Fn instance); an effectful method is therefore part of the same
+            // transitive fixed point.
+            if (method->method_ref.kind == SymbolRefKind::Function) {
+                if (const auto idx = resolve(method->method_ref, method->method)) {
+                    facts.fn_callees.push_back(bodies_[*idx]);
+                }
+            }
+        }
+        // Derived child-edge DFS: every operand subtree is walked, so a
+        // capability / fn call nested in an argument, constructor, match arm,
+        // etc. is seen. A new ExprNode alternative without declared children is a
+        // compile error upstream, so no effect site can be silently skipped.
+        auto sink = [&](const Expr &child) {
+            scan_expr(child, facts);
+            return true;
+        };
+        (void)expr_child_detail::walk_children(expr, sink);
+    }
+
+    void scan_stmt(const Statement &stmt, ExprCallFacts &facts) const {
+        std::visit(
+            Overloaded{
+                [&](const LetStatement &s) {
+                    if (s.initializer.ptr != nullptr) {
+                        scan_expr(*s.initializer.ptr, facts);
+                    }
+                },
+                [&](const AssignStatement &s) {
+                    if (s.value.ptr != nullptr) {
+                        scan_expr(*s.value.ptr, facts);
+                    }
+                },
+                [&](const IfStatement &s) {
+                    if (s.condition.ptr != nullptr) {
+                        scan_expr(*s.condition.ptr, facts);
+                    }
+                    if (s.then_block != nullptr) {
+                        scan_block(*s.then_block, facts);
+                    }
+                    if (s.else_block != nullptr) {
+                        scan_block(*s.else_block, facts);
+                    }
+                },
+                [&](const IfLetStatement &s) {
+                    if (s.scrutinee.ptr != nullptr) {
+                        scan_expr(*s.scrutinee.ptr, facts);
+                    }
+                    if (s.then_block != nullptr) {
+                        scan_block(*s.then_block, facts);
+                    }
+                    if (s.else_block != nullptr) {
+                        scan_block(*s.else_block, facts);
+                    }
+                },
+                [](const GotoStatement &) {},
+                [&](const ReturnStatement &s) {
+                    if (s.value.ptr != nullptr) {
+                        scan_expr(*s.value.ptr, facts);
+                    }
+                },
+                [&](const AssertStatement &s) {
+                    if (s.condition.ptr != nullptr) {
+                        scan_expr(*s.condition.ptr, facts);
+                    }
+                    if (s.message.ptr != nullptr) {
+                        scan_expr(*s.message.ptr, facts);
+                    }
+                },
+                [&](const UnwrapStatement &s) {
+                    if (s.operand.ptr != nullptr) {
+                        scan_expr(*s.operand.ptr, facts);
+                    }
+                },
+                [&](const RequiresStatement &s) {
+                    if (s.condition.ptr != nullptr) {
+                        scan_expr(*s.condition.ptr, facts);
+                    }
+                    if (s.message.ptr != nullptr) {
+                        scan_expr(*s.message.ptr, facts);
+                    }
+                },
+                [&](const UnreachableStatement &s) {
+                    if (s.message.ptr != nullptr) {
+                        scan_expr(*s.message.ptr, facts);
+                    }
+                },
+                [&](const ExprStatement &s) {
+                    if (s.expr.ptr != nullptr) {
+                        scan_expr(*s.expr.ptr, facts);
+                    }
+                },
+            },
+            stmt.node);
+    }
+
+    [[nodiscard]] ExprCallFacts scan_block(const Block &block) const {
+        ExprCallFacts facts;
+        scan_block(block, facts);
+        return facts;
+    }
+
+    void scan_block(const Block &block, ExprCallFacts &facts) const {
+        for (const StatementPtr &stmt : block.statements) {
+            if (stmt != nullptr) {
+                scan_stmt(*stmt, facts);
+            }
+        }
+    }
+
+    const std::unordered_map<std::string, std::size_t> &by_key_;
+    const std::unordered_multimap<std::size_t, std::size_t> &by_id_;
+    const std::vector<const FnDecl *> &bodies_;
+};
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Agent state-machine lowering (unchanged from the prior increment).
@@ -3493,8 +3735,13 @@ template <class RootPolicy> class ExprLowerer {
     // the resolved Fn symbol, `args` are the already-lowered ANF operands
     // (method calls pass receiver as args[0]), and `result_ty` is the call's
     // interned result type. Returns false (no diagnostic) when the callee is
-    // unknown/bodyless so the caller keeps its legacy fail-closed path; an
-    // effectful-but-resolved callee is a hard fail-closed diagnostic here.
+    // unknown/bodyless so the caller keeps its legacy fail-closed path.
+    // RFC 0026 FB-4 (design §5.3): a CALLEE whose transitive effect is
+    // Capability is an ordered statement, not a pure expression — it lowers to
+    // CoreCallStmt (the statement twin of CoreCallExpr), never a CoreCallExpr,
+    // so the effect orders / can pending-suspend exactly like a capability
+    // statement. A Nondet callee stays fail-closed (no value-level nondet on the
+    // wasm computation lane yet).
     [[nodiscard]] bool emit_direct_call(const SymbolRef &callee_ref,
                                         std::string_view callee_name,
                                         std::vector<CoreValueId> args,
@@ -3509,16 +3756,23 @@ template <class RootPolicy> class ExprLowerer {
         if (entry == nullptr || !entry->resolution.has_body) {
             return false;
         }
-        if (entry->resolution.effect != ir::FnEffectKind::Pure) {
-            error(entry->resolution.effect == ir::FnEffectKind::Nondet
-                      ? diag::kNondetFnValue
-                      : diag::kFnEffectfulCallee,
-                  entry->resolution.effect == ir::FnEffectKind::Nondet
-                      ? "a Nondet fn cannot be called from the pure wasm computation lane"
-                      : "a capability-effect fn cannot be called directly until the ordered "
-                        "CoreCallStmt slice lands",
+        if (entry->resolution.effect == ir::FnEffectKind::Nondet) {
+            error(diag::kNondetFnValue,
+                  "a Nondet fn cannot be called from the pure wasm computation lane",
                   range);
             out_value = fresh_value(result_ty);
+            return true;
+        }
+        if (entry->resolution.effect == ir::FnEffectKind::Capability) {
+            // FB-4: ordered effectful call. The result is a fresh SSA value;
+            // the call is a statement appended AFTER its (already-lowered,
+            // left-to-right) argument statements, preserving evaluation order.
+            CoreCallStmt stmt;
+            stmt.callee = entry->resolution.instance;
+            stmt.args = std::move(args);
+            stmt.result = fresh_value(result_ty);
+            out_value = stmt.result;
+            region.statements.push_back(CoreStmt{std::move(stmt), range});
             return true;
         }
         const CoreExprId expr_id = push_expr(
@@ -5022,7 +5276,27 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         //    visible to every FnBodyLowerer, independent of AHFL declaration
         //    order. Bodies are populated in a second loop (3b) once the whole
         //    fn table + resolver are in place.
+        //
+        // FB-4: the published resolver entry carries the fn's TRANSITIVE effect
+        // (an fn that wraps a capability call is classified effectful even when
+        // its own clause says Pure), so an effectful callee lowers to the
+        // ordered CoreCallStmt rather than a pure CoreCallExpr. The scanner is
+        // keyed on the same body-fn indices the guarantee loop resolves through.
+        std::vector<const FnDecl *> scanner_bodies;
+        scanner_bodies.reserve(body_fns.size());
+        for (const BodyFn &bf : body_fns) {
+            scanner_bodies.push_back(bf.decl);
+        }
+        const std::vector<ir::FnEffectKind> body_effects =
+            FnEffectScanner{body_fn_by_key, body_fn_by_id, scanner_bodies}.run();
+
         std::unordered_map<std::string, std::uint32_t> fn_decl_by_instance_key;
+        // Map each guaranteed body's FnDecl* to its transitively-derived effect.
+        std::unordered_map<const FnDecl *, ir::FnEffectKind> effect_by_decl;
+        effect_by_decl.reserve(scanner_bodies.size());
+        for (std::size_t i = 0; i < scanner_bodies.size(); ++i) {
+            effect_by_decl.emplace(scanner_bodies[i], body_effects[i]);
+        }
         for (GuaranteedFn &g : guaranteed) {
             const CoreInstanceId instance_id{
                 static_cast<std::uint32_t>(core.instances.size())};
@@ -5056,7 +5330,15 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             FnCallResolver::Entry entry;
             entry.resolution.instance = instance_id;
             entry.resolution.has_body = true;
-            entry.resolution.effect = g.source->effect.kind;
+            // FB-4: the TRANSITIVE effect (fixed point over fn bodies), not the
+            // source clause spelling — an fn that only wraps an effectful callee
+            // is still effectful and must lower to an ordered CoreCallStmt.
+            if (const auto found = effect_by_decl.find(g.source);
+                found != effect_by_decl.end()) {
+                entry.resolution.effect = found->second;
+            } else {
+                entry.resolution.effect = g.source->effect.kind;
+            }
             fn_call_resolver.add(g.key,
                                  g.origin.id,
                                  g.origin.canonical_name,

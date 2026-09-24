@@ -776,14 +776,68 @@ class RecursionLattice {
                 }
             }
         };
+        // FB-4: an ordered CoreCallStmt is also a direct invocation edge, so an
+        // effectful fn participates in SCC partitioning and the native-depth
+        // budget. It carries no expr-arena id (it is a statement), so the rank
+        // term analyzer — which proves r' = r +/- c only over expr-bound SSA
+        // ranks — can never seal a recursion cycle that closes through one: such
+        // a group fails closed with FN_RECURSION_UNBOUNDED. That is the honest
+        // single-run boundary (effectful recursion + bounded rank awaits its own
+        // slice); non-recursive effectful calls are ordinary condensation edges.
+        const auto scan_statements =
+            [&](std::uint32_t caller_fn, const CoreRegion &root, const CoreBodyStorage &storage) {
+                std::vector<const CoreRegion *> pending{&root};
+                while (!pending.empty()) {
+                    const CoreRegion *region = pending.back();
+                    pending.pop_back();
+                    for (const CoreStmt &stmt : region->statements) {
+                        if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                            const auto callee = resolve_fn(call->callee);
+                            if (callee.has_value()) {
+                                edges_.push_back(
+                                    CallEdge{caller_fn, *callee, &call->args, &storage,
+                                             CoreExprId::kInvalid, /*indirect=*/false,
+                                             stmt.source_range});
+                                if (caller_fn != CoreFnId::kInvalid) {
+                                    graph_[caller_fn].push_back(*callee);
+                                }
+                            }
+                        }
+                        if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                            if (branch->then_region != nullptr) {
+                                pending.push_back(branch->then_region.get());
+                            }
+                            if (branch->else_region != nullptr) {
+                                pending.push_back(branch->else_region.get());
+                            }
+                        } else if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                            for (const CoreMatchArm &arm : match->arms) {
+                                if (arm.guard_region != nullptr) {
+                                    pending.push_back(arm.guard_region.get());
+                                }
+                                if (arm.body != nullptr) {
+                                    pending.push_back(arm.body.get());
+                                }
+                            }
+                            if (match->fallback_region != nullptr) {
+                                pending.push_back(match->fallback_region.get());
+                            }
+                        }
+                    }
+                }
+            };
         for (const CoreFlowDecl &flow : program_.flows) {
             scan(CoreFnId::kInvalid, flow.storage);
+            for (const CoreFlowState &state : flow.states) {
+                scan_statements(CoreFnId::kInvalid, state.body, flow.storage);
+            }
         }
         for (const CoreWorkflowDecl &wf : program_.workflows) {
             scan(CoreFnId::kInvalid, wf.storage);
         }
         for (std::uint32_t fi = 0; fi < program_.fns.size(); ++fi) {
             scan(fi, program_.fns[fi].storage);
+            scan_statements(fi, program_.fns[fi].body, program_.fns[fi].storage);
         }
     }
 
@@ -1523,6 +1577,48 @@ std::uint64_t max_native_fn_call_depth(const CoreProgram &program,
                 }
             }
         }
+        // FB-4: ordered CoreCallStmt invocations are condensation edges too, so
+        // a handler->effectful-fn call chain's native frames are budgeted.
+        std::vector<const CoreRegion *> pending{&caller.body};
+        while (!pending.empty()) {
+            const CoreRegion *region = pending.back();
+            pending.pop_back();
+            for (const CoreStmt &stmt : region->statements) {
+                if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                    if (call->callee.value < program.instances.size()) {
+                        const auto *payload =
+                            std::get_if<CoreFnInstance>(
+                                &program.instances[call->callee.value].payload);
+                        if (payload != nullptr &&
+                            payload->body.value != CoreFnId::kInvalid &&
+                            payload->body.value < program.fns.size() &&
+                            is_live(payload->body.value)) {
+                            graph[fi].push_back(payload->body.value);
+                        }
+                    }
+                }
+                if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                    if (branch->then_region != nullptr) {
+                        pending.push_back(branch->then_region.get());
+                    }
+                    if (branch->else_region != nullptr) {
+                        pending.push_back(branch->else_region.get());
+                    }
+                } else if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                    for (const CoreMatchArm &arm : match->arms) {
+                        if (arm.guard_region != nullptr) {
+                            pending.push_back(arm.guard_region.get());
+                        }
+                        if (arm.body != nullptr) {
+                            pending.push_back(arm.body.get());
+                        }
+                    }
+                    if (match->fallback_region != nullptr) {
+                        pending.push_back(match->fallback_region.get());
+                    }
+                }
+            }
+        }
     }
     const std::vector<std::vector<std::uint32_t>> components = Tarjan(graph).run();
     std::vector<std::uint32_t> component_of(program.fns.size(), 0);
@@ -1599,3 +1695,121 @@ std::uint64_t max_native_fn_call_depth(const CoreProgram &program,
 }
 
 } // namespace ahfl::ir::core
+
+// ===========================================================================
+// FB-4: effectful-fn transitivity (CORE-FNBODY-DESIGN §5.3).
+// ===========================================================================
+
+namespace ahfl::ir::core {
+
+namespace {
+
+// Walk every STATEMENT in a region (and its nested if / match regions),
+// invoking one callback per statement. Iterative with an explicit stack so a
+// hostile nesting depth cannot recurse the native stack.
+template <class Fn>
+void for_each_region_statement(const CoreRegion &root, Fn &&visit) {
+    std::vector<const CoreRegion *> pending{&root};
+    while (!pending.empty()) {
+        const CoreRegion *region = pending.back();
+        pending.pop_back();
+        for (const CoreStmt &stmt : region->statements) {
+            visit(stmt);
+            if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                if (branch->then_region != nullptr) {
+                    pending.push_back(branch->then_region.get());
+                }
+                if (branch->else_region != nullptr) {
+                    pending.push_back(branch->else_region.get());
+                }
+            } else if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                for (const CoreMatchArm &arm : match->arms) {
+                    if (arm.guard_region != nullptr) {
+                        pending.push_back(arm.guard_region.get());
+                    }
+                    if (arm.body != nullptr) {
+                        pending.push_back(arm.body.get());
+                    }
+                }
+                if (match->fallback_region != nullptr) {
+                    pending.push_back(match->fallback_region.get());
+                }
+            }
+        }
+    }
+}
+
+} // namespace
+
+FnEffectAnalysis analyze_fn_effects(const CoreProgram &program) {
+    const std::size_t n = program.fns.size();
+    FnEffectAnalysis out;
+    out.effectful.assign(n, false);
+    out.capabilities.resize(n);
+
+    // Per-fn direct capabilities (a CoreCapabilityCallStmt in the body) and the
+    // set of fn bodies it invokes (both the ordered CoreCallStmt and the pure
+    // CoreCallExpr edges — walking the pure edge too makes the classification
+    // immune to a misclassified intermediate fn).
+    std::vector<std::unordered_set<std::uint32_t>> direct_caps(n);
+    std::vector<std::vector<std::uint32_t>> callees(n);
+
+    for (std::uint32_t fi = 0; fi < n; ++fi) {
+        const CoreFnDecl &fn = program.fns[fi];
+
+        for_each_region_statement(fn.body, [&](const CoreStmt &stmt) {
+            if (const auto *cap = std::get_if<CoreCapabilityCallStmt>(&stmt.node)) {
+                direct_caps[fi].insert(cap->capability.value);
+            } else if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                if (auto callee = resolve_instance_body(program, call->callee)) {
+                    callees[fi].push_back(*callee);
+                }
+            }
+        });
+
+        for (const CoreExpr &expr : fn.storage.exprs) {
+            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                if (auto callee = resolve_instance_body(program, call->callee)) {
+                    callees[fi].push_back(*callee);
+                }
+            }
+        }
+    }
+
+    // Least fixed point: an fn is effectful iff it directly invokes a capability
+    // or calls an effectful fn; its capability set is the union over both.
+    std::vector<std::unordered_set<std::uint32_t>> cap_set(n);
+    for (std::uint32_t fi = 0; fi < n; ++fi) {
+        cap_set[fi] = direct_caps[fi];
+        std::sort(callees[fi].begin(), callees[fi].end());
+        callees[fi].erase(std::unique(callees[fi].begin(), callees[fi].end()), callees[fi].end());
+    }
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (std::uint32_t fi = 0; fi < n; ++fi) {
+            for (const std::uint32_t callee : callees[fi]) {
+                for (const std::uint32_t cap : cap_set[callee]) {
+                    if (cap_set[fi].insert(cap).second) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    for (std::uint32_t fi = 0; fi < n; ++fi) {
+        out.effectful[fi] = !cap_set[fi].empty();
+        out.capabilities[fi].reserve(cap_set[fi].size());
+        for (const std::uint32_t cap : cap_set[fi]) {
+            out.capabilities[fi].push_back(CoreCapabilityId{cap});
+        }
+        std::sort(out.capabilities[fi].begin(), out.capabilities[fi].end(),
+                  [](CoreCapabilityId a, CoreCapabilityId b) { return a.value < b.value; });
+    }
+    return out;
+}
+
+} // namespace ahfl::ir::core
+

@@ -529,12 +529,16 @@ struct CoreCallExpr {
 - 对**体含 capability 调用**的 fn 的调用:不是纯操作(它会排序、会
   pending/suspend),不能进 `CoreCallExpr`。决策:FB-1..FB-3 **fail-closed**
   (新 lowerer 诊断,见 §8.2),要求用户/库把该调用直接写在 handler;
-  **FB-4** 引入有序语句形态的 `CoreCallStmt { result, callee, args }`
+  **FB-4(已落地)** 引入有序语句形态的 `CoreCallStmt { result, callee, args }`
   (与 `CoreCapabilityCallStmt` 同构的 ordered statement + resume
-  checkpoint),codegen 为 outlined 效果函数的 `call`,其内部 cap-call 的
-  不重放/恢复语义随 wire checkpoint 框架一并落地。把它放在 FB-4 是因为
-  pending 结果的帧/恢复身份依赖 P6-7 与 B2 系列的帧决策,提前做只会产生
-  第二套帧 SSOT。
+  checkpoint),codegen 为 outlined 效果函数的 `call`;效果分类由 Core-ANF
+  上的结构最小不动点 `analyze_fn_effects`(core_recursion.hpp)给出——含
+  transitive 效果的包装 fn 也被分类为效果 fn,不读任何 effect 子句拼写。
+  效果 fn 内部的 cap-call 经与 handler capability 语句相同的 ahfl_cap
+  import 序号发射;本次只实现**单次 run 的有序执行**,跨进程 memo/replay/
+  不重放语义随 wire checkpoint 框架(D2b)一并落地,flow-handler 直接
+  resume 行为保持不变。把完整 checkpoint 放在 FB-4 之外是因为 pending 结果的
+  帧/恢复身份依赖 P6-7 与 B2 系列的帧决策,提前做只会产生第二套帧 SSOT。
 - `effect Nondet` fn:编排层的 Nondet 语义是跨 run 的 goto 非确定性
   (agent state 机),值级 Nondet 表达式在单值 WASM 计算 lane 没有对应物。
   决策:fn 体/闭包内出现 Nondet 调用,FB-1..FB-4 fail-closed;待值级
@@ -764,9 +768,12 @@ KR6.6 各 typed 节点 / 宿主能力面另行退役)。
    新码 `FN_BODY_TERMINATION`)。
 3. **直调合法**:`CoreCallExpr.callee` 是有体 Fn 实例;arity 精确;逐参
    逻辑类型与签名一致(同 interned id 或 P4 已证 layout 等价的 coercion
-   路径);result_type == 签名 ret;callee 体必须无
-   `CoreCapabilityCallStmt`(新码 `FN_CALL_EFFECTFUL_CALLEE`,FB-4 前
-   拒绝,FB-4 改为只允许经 `CoreCallStmt`)。
+   路径);result_type == 签名 ret。**效果种类一致性(FB-4 已落地)**:
+   纯 `CoreCallExpr` 只能调用 PURE fn;体(经 transitive 固定点)到达
+   capability 的效果 fn 只能经有序 `CoreCallStmt` 调用。纯 expr 调效果
+   fn 报 `FN_CALL_EFFECTFUL_CALLEE`,有序 stmt 调纯 fn 报
+   `FN_CALL_EFFECT_KIND`;fn 经 transitive 效果图到达 agent 白名单之外
+   的 capability 报 `FN_EFFECT_CAPABILITY_UNAUTHORIZED`。
 4. **闭包构造合法**:`CoreClosureExpr.fn` 在表内;captures 个数/类型与该
    fn 闭包类型 `CoreVtClosure.captures` 逐槽相等;每个捕获 SSA 值在构造
    点可见、跨体不直接引用外层 SSA;捕获槽序与 P4-D env 间接边物化结果一

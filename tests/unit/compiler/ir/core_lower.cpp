@@ -3849,6 +3849,136 @@ flow for A {
 
 } // namespace
 
+// ============================================================================
+// RFC 0026 FB-4 (CORE-FNBODY-DESIGN §5.3): a transitive capability effect
+// lowers an fn call to the ORDERED CoreCallStmt, never a pure CoreCallExpr.
+// ============================================================================
+namespace {
+
+const std::string kFb4EffectfulSource = R"AHFL(
+module fb4eff;
+
+pub struct Frame {
+    n: Int;
+}
+
+capability Bump(request: Frame) -> Frame;
+
+fn call_cap(n: Int) -> Frame effect Bump {
+    let f: Frame = Frame { n: n };
+    return Bump(f);
+}
+
+// A transitively-effectful wrapper: it names Bump honestly (the typechecker
+// enforces effect soundness), and the Core structural fixed point must STILL
+// derive its effect from the body call to call_cap rather than trusting the
+// clause spelling.
+fn ask_cap(n: Int) -> Frame effect Bump {
+    return call_cap(n);
+}
+
+pub agent EffectAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Bump];
+    transition Init -> Done;
+}
+
+flow for EffectAgent {
+    state Init {
+        let answered: Frame = ask_cap(input.n);
+        if (answered.n == 42) { goto Done; } else { goto Done; }
+    }
+    state Done { return input; }
+}
+)AHFL";
+
+// Collect ordered CoreCallStmts in one fn body (any nesting depth).
+void collect_call_stmts(const ir::core::CoreRegion &region,
+                        std::vector<const ir::core::CoreCallStmt *> &out) {
+    for (const auto &stmt : region.statements) {
+        std::visit(
+            [&](const auto &node) {
+                using T = std::decay_t<decltype(node)>;
+                if constexpr (std::is_same_v<T, ir::core::CoreCallStmt>) {
+                    out.push_back(&node);
+                } else if constexpr (std::is_same_v<T, ir::core::CoreIfStmt>) {
+                    if (node.then_region) {
+                        collect_call_stmts(*node.then_region, out);
+                    }
+                    if (node.else_region) {
+                        collect_call_stmts(*node.else_region, out);
+                    }
+                } else if constexpr (std::is_same_v<T, ir::core::CoreMatchStmt>) {
+                    for (const auto &arm : node.arms) {
+                        if (arm.body) {
+                            collect_call_stmts(*arm.body, out);
+                        }
+                    }
+                    if (node.fallback_region) {
+                        collect_call_stmts(*node.fallback_region, out);
+                    }
+                }
+            },
+            stmt.node);
+    }
+}
+
+} // namespace
+
+TEST_CASE("FB-4 lowerer: a transitive effect fn call lowers to an ordered CoreCallStmt") {
+    const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("fb4_effect", kFb4EffectfulSource);
+    REQUIRE(ahfl_ir.has_value());
+    auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    REQUIRE(result.is_executable);
+
+    // The flow handler must invoke ask_cap through an ordered statement (not a
+    // pure CoreCallExpr), and the wrapper fn must invoke call_cap the same way.
+    REQUIRE(result.program.flows.size() == 1);
+    const auto &flow = result.program.flows[0];
+    std::vector<const ir::core::CoreCallStmt *> handler_calls;
+    for (const auto &state : flow.states) {
+        collect_call_stmts(state.body, handler_calls);
+    }
+    CHECK(handler_calls.size() == 1);
+
+    // Every outlined fn body that calls another fn: the effectful ones use the
+    // statement; no effectful callee appears as a pure CoreCallExpr.
+    const auto effects = ir::core::analyze_fn_effects(result.program);
+    std::size_t effectful_fns = 0;
+    for (std::size_t i = 0; i < result.program.fns.size(); ++i) {
+        if (effects.effectful[i]) {
+            ++effectful_fns;
+        }
+    }
+    // call_cap + ask_cap are both effectful (the wrapper via transitivity).
+    CHECK(effectful_fns >= 2);
+
+    // No pure CoreCallExpr may target an effectful fn (the verifier also enforces
+    // this; assert it on the lowered program directly).
+    for (const auto &fn : result.program.fns) {
+        for (const auto &expr : fn.storage.exprs) {
+            if (const auto *call = std::get_if<ir::core::CoreCallExpr>(&expr.node)) {
+                const auto *payload =
+                    std::get_if<ir::core::CoreFnInstance>(
+                        &result.program.instances[call->callee.value].payload);
+                REQUIRE(payload != nullptr);
+                CHECK_FALSE(effects.effectful[payload->body.value]);
+            }
+        }
+    }
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
+
 TEST_CASE("FB-3a2: a real-frontend lambda lifts to a closure-constructing fn") {
     const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("lambda_flow", kLambdaFlowSource);
     REQUIRE(ahfl_ir.has_value());

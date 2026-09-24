@@ -97,9 +97,9 @@ TEST_CASE("Core-IR closed node sets keep their exact erasure-barrier size") {
     static_assert(std::variant_size_v<CoreExprNode> == 13,
                   "CoreExprNode alternatives: literal/value-ref/path/qualified/unary/binary/"
                   "construct/coerce/collection/unsupported/call/closure/call_closure");
-    static_assert(std::variant_size_v<CoreStmtNode> == 9,
+    static_assert(std::variant_size_v<CoreStmtNode> == 10,
                   "CoreStmtNode alternatives: let/capability-call/store/if/goto/return/yield/"
-                  "trap/match");
+                  "trap/match/call");
     static_assert(std::variant_size_v<CorePatternNode> == 7,
                   "CorePatternNode alternatives: wildcard/literal/int-range/binding/variant/"
                   "tuple/or");
@@ -112,7 +112,7 @@ TEST_CASE("Core-IR closed node sets keep their exact erasure-barrier size") {
                   "CoreDecl alternatives: agent/capability (flows and workflows live in "
                   "CoreProgram flat stores, never in the decl variant)");
     CHECK(std::variant_size_v<CoreExprNode> == 13);
-    CHECK(std::variant_size_v<CoreStmtNode> == 9);
+    CHECK(std::variant_size_v<CoreStmtNode> == 10);
     CHECK(std::variant_size_v<CorePatternNode> == 7);
     CHECK(std::variant_size_v<CoreValueTypeNode> == 14);
     CHECK(std::variant_size_v<CoreInstancePayload> == 5);

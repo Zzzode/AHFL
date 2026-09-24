@@ -1,0 +1,62 @@
+module wasm::fb4_effectful_fn;
+
+// RFC 0026 FB-4 (CORE-FNBODY-DESIGN §5.3): an effectful call inside an fn body
+// is an ORDERED CoreCallStmt, never a pure expression. This fixture's
+// non-final Init handler calls an effectful fn THROUGH a transitive wrapper:
+//
+//   handler Init -> ask_cap(input.n)       (ordered CoreCallStmt)
+//   ask_cap(n)  -> call_cap(n)             (effect Cap; wraps)
+//   call_cap(n) -> Bump(Frame{n})          (effect Bump; builds the opaque
+//                                           import frame, calls the ahfl_cap
+//                                           import, returns its Frame result)
+//
+// The transitive effect is computed structurally from the body call graph, so
+// the wrapper is classified effectful even though no annotation needs to guess
+// it. The outlined effect fn routes its capability through the SAME ahfl_cap
+// import ordinal a handler capability statement would use; the call result
+// (a Frame the host allocated) is projected and drives the computed goto.
+// Single-run ordering/execution only — durable replay / no-reinvoke of in-fn
+// effects awaits the wire checkpoint framework (D2b); an ERROR/PENDING import
+// status traps this single-run path rather than claiming resume semantics.
+
+pub struct Frame {
+    n: Int;
+}
+
+capability Bump(request: Frame) -> Frame;
+
+fn call_cap(n: Int) -> Frame effect Bump {
+    let f: Frame = Frame { n: n };
+    return Bump(f);
+}
+
+// A transitively-effectful wrapper: the structural effect fixed point must
+// classify it effectful through the body call to call_cap.
+fn ask_cap(n: Int) -> Frame effect Bump {
+    return call_cap(n);
+}
+
+pub agent EffectfulFnAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Bump];
+    transition Init -> Done;
+}
+
+flow for EffectfulFnAgent {
+    state Init {
+        let answered: Frame = ask_cap(input.n);
+        if (answered.n == 42) {
+            goto Done;
+        } else {
+            goto Done;
+        }
+    }
+    state Done {
+        return input;
+    }
+}

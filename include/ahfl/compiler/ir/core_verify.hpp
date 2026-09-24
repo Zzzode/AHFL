@@ -148,6 +148,14 @@ inline constexpr std::string_view kFnCallArgumentTypeMismatch =
 inline constexpr std::string_view kFnCallResultTypeMismatch =
     "core.verify.FN_CALL_RESULT_TYPE_MISMATCH";
 inline constexpr std::string_view kFnCallEffectfulCallee = "core.verify.FN_CALL_EFFECTFUL_CALLEE";
+// RFC 0026 FB-4: an ordered CoreCallStmt targets a PURE fn (or a pure
+// CoreCallExpr targets an effectful fn) — the two call shapes disagree on the
+// callee's structural effect kind.
+inline constexpr std::string_view kFnCallEffectKind = "core.verify.FN_CALL_EFFECT_KIND";
+// FB-4: an effectful fn reachable from a flow handler transitively invokes a
+// capability the target agent did not whitelist.
+inline constexpr std::string_view kFnEffectCapabilityUnauthorized =
+    "core.verify.FN_EFFECT_CAPABILITY_UNAUTHORIZED";
 // RFC 0026 FB-3a1 (CORE-FNBODY-DESIGN §8.1 #4/#5): closure construction and the
 // indirect closure-value call. Until lambda lifting lands (FB-3a2) these nodes
 // are unreachable from lowering, but every rule is enforced on hand-built /

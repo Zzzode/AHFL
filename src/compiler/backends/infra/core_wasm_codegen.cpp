@@ -42,6 +42,8 @@ using ir::core::CoreFnDecl;
 using ir::core::CoreFnInstance;
 using ir::core::CoreBindingPat;
 using ir::core::CoreCapabilityCallStmt;
+using ir::core::CoreCallStmt;
+using ir::core::CoreCapabilityDecl;
 using ir::core::CoreCapabilityId;
 using ir::core::CoreCoerceExpr;
 using ir::core::CoreCoercionOp;
@@ -598,6 +600,42 @@ void add_diag(CoreWasmCodegenResult &result,
     return false;
 }
 
+// RFC 0026 FB-4: invoke `visit` for every STATEMENT in a region and its nested
+// if / match regions (iterative, explicit stack). Shared by the effectful-fn
+// reachability walk, the in-fn call enumeration, and the import pre-pass.
+template <class Fn>
+void for_each_region_statement(const ir::core::CoreRegion &root, Fn &&visit) {
+    std::vector<const ir::core::CoreRegion *> pending{&root};
+    while (!pending.empty()) {
+        const ir::core::CoreRegion *region = pending.back();
+        pending.pop_back();
+        for (const ir::core::CoreStmt &stmt : region->statements) {
+            visit(stmt);
+            if (const auto *branch = std::get_if<ir::core::CoreIfStmt>(&stmt.node)) {
+                if (branch->then_region != nullptr) {
+                    pending.push_back(branch->then_region.get());
+                }
+                if (branch->else_region != nullptr) {
+                    pending.push_back(branch->else_region.get());
+                }
+            } else if (const auto *match =
+                           std::get_if<ir::core::CoreMatchStmt>(&stmt.node)) {
+                for (const ir::core::CoreMatchArm &arm : match->arms) {
+                    if (arm.guard_region != nullptr) {
+                        pending.push_back(arm.guard_region.get());
+                    }
+                    if (arm.body != nullptr) {
+                        pending.push_back(arm.body.get());
+                    }
+                }
+                if (match->fallback_region != nullptr) {
+                    pending.push_back(match->fallback_region.get());
+                }
+            }
+        }
+    }
+}
+
 // Flow-gate predicate: does the region contain any match statement? A
 // top-level match is caught directly; a match nested under an if is reached by
 // branch recursion. Match arm traversal is unnecessary (any arm containing a
@@ -882,6 +920,10 @@ validate_capability_final(const CoreProgram &program,
                 [](const CoreStoreStmt &) { return true; },
                 [](const CoreCapabilityCallStmt &) { return false; },
                 [](const CoreReturnStmt &) { return false; },
+                // RFC 0026 FB-4: an ordered effectful fn call is a straight-line
+                // statement (like a let); it is in the scalar subset and is
+                // emitted as a `call` to an outlined effect fn.
+                [](const CoreCallStmt &) { return true; },
             },
             statement.node);
         if (!in_subset) {
@@ -1379,6 +1421,7 @@ p6_coercion_effect(const CoreProgram &program,
     },
 #define P6_REGION_DIVERGE_CoreLetStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreCapabilityCallStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
+#define P6_REGION_DIVERGE_CoreCallStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreStoreStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreReturnStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
 #define P6_REGION_DIVERGE_CoreYieldStmt(Name) P6_REGION_DIVERGE_NEVER(Name)
@@ -1396,6 +1439,7 @@ p6_coercion_effect(const CoreProgram &program,
 #undef P6_REGION_DIVERGE_CoreMatchStmt
 #undef P6_REGION_DIVERGE_CoreLetStmt
 #undef P6_REGION_DIVERGE_CoreCapabilityCallStmt
+#undef P6_REGION_DIVERGE_CoreCallStmt
 #undef P6_REGION_DIVERGE_CoreStoreStmt
 #undef P6_REGION_DIVERGE_CoreReturnStmt
 #undef P6_REGION_DIVERGE_CoreYieldStmt
@@ -1598,6 +1642,14 @@ class P6ComputationHandlerBuilder {
         closure_tables_installed_ = true;
     }
 
+    // RFC 0026 FB-4: install the module's sorted capability import table so an
+    // outlined effect fn can emit its in-body ahfl_cap `call` at the SAME
+    // import ordinal a handler capability statement would use. Called after
+    // import planning and before fn bodies are emitted.
+    void install_import_table(const std::vector<CoreCapabilityId> *imports) {
+        imports_ = imports;
+    }
+
     [[nodiscard]] const std::vector<CoreStateId> &targets() const noexcept {
         return targets_;
     }
@@ -1646,8 +1698,14 @@ class P6ComputationHandlerBuilder {
         // two i32 locals so the SSA/scratch pool indices are unchanged.
         const bool dynamic =
             (fn_mode_ && has_dynamic_construct()) || closure_env_bytes_ > 0;
-        if (dynamic) {
-            // The two bump temporaries are placed AFTER the i64 group (a second
+        // FB-4: an outlined fn body with an in-fn capability call needs three
+        // more trailing i32 scratch locals (status, ptr, len) for the
+        // multi-value import result. They share the second i32 local group
+        // after the bump temporaries.
+        const std::uint32_t cap_scratch = (fn_mode_ && capability_scratch_needed_) ? 3u : 0u;
+        const std::uint32_t temp_count = (dynamic ? 2u : 0u) + cap_scratch;
+        if (temp_count != 0) {
+            // The bump temporaries are placed AFTER the i64 group (a second
             // i32 local group) so they do not shift the SSA/scratch i64 pool
             // indices pool_local derives from i32_group_size(). Fn bodies have
             // the leading env local plus the flat param words; handlers have no
@@ -1656,8 +1714,16 @@ class P6ComputationHandlerBuilder {
             const std::uint32_t after_groups =
                 pool_base + i32_count_ + scratch_i32_count_ +
                 i64_count_ + scratch_i64_count_;
-            alloc_temp_local_ = after_groups;
-            alloc_new_local_ = after_groups + 1u;
+            if (dynamic) {
+                alloc_temp_local_ = after_groups;
+                alloc_new_local_ = after_groups + 1u;
+            }
+            if (cap_scratch != 0) {
+                const std::uint32_t base = after_groups + (dynamic ? 2u : 0u);
+                cap_status_local_ = base;
+                cap_ptr_local_ = base + 1u;
+                cap_len_local_ = base + 2u;
+            }
         }
         // Handler mode, aggregate/closure heap enabled: reset the per-activation
         // bump heap before the handler region so every step() starts with a
@@ -1716,7 +1782,7 @@ class P6ComputationHandlerBuilder {
         }
         // The fn-mode bump temporaries form a SECOND i32 group after the i64
         // group, keeping the pool index spaces stable.
-        const std::uint32_t temp_i32 = dynamic ? 2u : 0u;
+        const std::uint32_t temp_i32 = temp_count;
         if (temp_i32 != 0) {
             ++local_groups;
         }
@@ -1881,6 +1947,13 @@ class P6ComputationHandlerBuilder {
     // Set in emit() when the fn body contains at least one dynamic construct.
     std::uint32_t alloc_temp_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t alloc_new_local_{std::numeric_limits<std::uint32_t>::max()};
+    // FB-4: set when an outlined fn body contains at least one in-fn capability
+    // call; emit() reserves three scratch i32 locals (status, ptr, len) for the
+    // multi-value import result.
+    bool capability_scratch_needed_{false};
+    std::uint32_t cap_status_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t cap_ptr_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t cap_len_local_{std::numeric_limits<std::uint32_t>::max()};
 
     // --- RFC 0026 FB-3b closures ---
     //
@@ -1891,6 +1964,10 @@ class P6ComputationHandlerBuilder {
     // reachable body is planned, then installs the two maps before emit();
     // plan() records the targets / descriptors / env bytes the driver unions.
     const std::unordered_map<std::uint32_t, std::uint32_t> *fn_to_table_slot_{nullptr};
+    // RFC 0026 FB-4: the module's sorted capability import table (imports
+    // occupy the low function indices). Null in handler mode; set on every
+    // builder before an effectful fn body is emitted.
+    const std::vector<CoreCapabilityId> *imports_{nullptr};
     std::unordered_map<std::string, std::uint32_t> closure_type_index_{};
     bool closure_tables_installed_{false};
     // Every fn whose address a CoreClosureExpr takes in THIS body (unique,
@@ -2539,28 +2616,128 @@ class P6ComputationHandlerBuilder {
     // multi-word cross-boundary FN_CROSS_BOUNDARY_TYPE gate is shared with the
     // P6 scalar gate rather than reimplemented).
     [[nodiscard]] bool plan_direct_call(const CoreCallExpr &c, const CoreExpr &expr) {
-        // Direct calls are legal from a fn body AND from an entry handler /
-        // workflow region (the reachability roots). At PLAN time the ordinal
-        // table may not exist yet (ordinals are assigned by the fixed point
-        // once every entry body is planned), so plan validates only the callee
-        // INSTANCE LINK and the single-word boundary; emit resolves the
-        // ordinal. The callee must be a body-bearing Fn instance.
+        if (c.callee.value >= program_.instances.size()) {
+            return reject("direct call target is out of range", expr.source_range);
+        }
         const auto *payload =
-            c.callee.value < program_.instances.size()
-                ? std::get_if<CoreFnInstance>(&program_.instances[c.callee.value].payload)
-                : nullptr;
+            std::get_if<CoreFnInstance>(&program_.instances[c.callee.value].payload);
         if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
             payload->body.value >= program_.fns.size()) {
             return reject("direct call target has no outlined fn body for the wasm computation lane",
                           expr.source_range);
         }
-        if (std::find(fn_callees_.begin(), fn_callees_.end(), c.callee) == fn_callees_.end()) {
-            fn_callees_.push_back(c.callee);
+        if (!plan_call_operands(c.callee, c.args, expr.result_type, expr.source_range)) {
+            return false;
         }
-        for (const CoreValueId arg : c.args) {
+        return true;
+    }
+
+    // FB-4: the ordered-statement twin of plan_direct_call. Same callee-link +
+    // single-word boundary validation; the result type comes from the owning
+    // body's dense value-type table (the statement is not in the expr arena).
+    [[nodiscard]] bool plan_call_stmt(const CoreCallStmt &c, ir::SourceRangeOpt range) {
+        if (c.callee.value >= program_.instances.size()) {
+            return reject("ordered call target is out of range", range);
+        }
+        const auto *payload =
+            std::get_if<CoreFnInstance>(&program_.instances[c.callee.value].payload);
+        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+            payload->body.value >= program_.fns.size()) {
+            return reject("ordered call target has no outlined fn body for the wasm effect lane",
+                          range);
+        }
+        const CoreValueTypeId result_ty =
+            c.result.value < storage_.value_types.size()
+                ? storage_.value_types[c.result.value]
+                : CoreValueTypeId{};
+        if (!plan_call_operands(c.callee, c.args, result_ty, range)) {
+            return false;
+        }
+        // The call result is a bound SSA local (like a let result).
+        const auto kind = scalar_kind(result_ty);
+        if (kind == std::nullopt) {
+            return reject("ordered call result has a non-scalar type", range);
+        }
+        if (!bind_value(c.result, *kind)) {
+            return reject("ordered call result SSA value is bound more than once", range);
+        }
+        used_values_[c.result.value] = true;
+        return true;
+    }
+
+    // FB-4: ensure the effect fn owns the three scratch locals an in-fn
+    // capability call's multi-value (status,ptr,len) result uses. They live in
+    // the SECOND i32 local group (after the i64 group) so the SSA/scratch pool
+    // indices are unchanged, exactly like the bump temporaries.
+    void ensure_capability_scratch() { capability_scratch_needed_ = true; }
+
+    // RFC 0026 FB-4 (design §5.3): plan a capability invocation INSIDE an
+    // outlined fn body. Only fn mode admits it (a handler capability call keeps
+    // its KR6.5 canonical-final shape). The opaque capability ABI is
+    // (ptr,len) -> (status,ptr,len), so both the single argument and the result
+    // must be single-word P6 values (an aggregate/collection i32 address /
+    // handle). The capability must be in the module's planned import table.
+    [[nodiscard]] bool plan_capability_call(const CoreCapabilityCallStmt &s,
+                                            ir::SourceRangeOpt range) {
+        if (!fn_mode_) {
+            return reject("a direct capability invocation is legal only at an agent capability "
+                          "final (or inside an outlined effect fn body)",
+                          range);
+        }
+        if (s.capability.value >= program_.capabilities.size()) {
+            return reject("in-fn capability call references an out-of-range capability", range);
+        }
+        // The import table is finalized AFTER every reachable fn is planned
+        // (Phase B installs it), so import membership is enforced at emit time
+        // (and by the Core verifier effect-authorization pass); plan validates
+        // only the capability id and the opaque single-word boundary.
+        if (s.args.size() != 1) {
+            return reject("the capability ABI takes exactly one opaque (ptr,len) frame; an in-fn "
+                          "capability call passes " +
+                              std::to_string(s.args.size()) + " argument(s)",
+                          range);
+        }
+        const CoreValueId arg = s.args[0];
+        used_values_[arg.value] = true;
+        if (arg.value >= storage_.value_types.size()) {
+            return reject("in-fn capability argument id is out of range", range);
+        }
+        if (p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]) == std::nullopt) {
+            return reject("in-fn capability argument is not a representable opaque frame word "
+                          "(String / f64 / multi-word types are rejected)",
+                          range);
+        }
+        if (s.result.value >= storage_.value_types.size() ||
+            p6_scalar_kind(program_, layouts_, storage_.value_types[s.result.value]) ==
+                std::nullopt) {
+            return reject("in-fn capability result is not a single-word opaque frame", range);
+        }
+        const auto result_kind =
+            p6_scalar_kind(program_, layouts_, storage_.value_types[s.result.value]);
+        if (!bind_value(s.result, *result_kind)) {
+            return reject("in-fn capability result SSA value is bound more than once", range);
+        }
+        used_values_[s.result.value] = true;
+        // Reserve the (status, ptr, len) scratch locals for the multi-value
+        // import result.
+        ensure_capability_scratch();
+        return true;
+    }
+
+    // Shared callee-link / single-word boundary validation for a direct Records the callee instance for
+    // the reachability fixed point and rejects String/f64/multi-word
+    // arguments/results and a closure RESULT (one-word functype limit).
+    [[nodiscard]] bool plan_call_operands(CoreInstanceId callee,
+                                          const std::vector<CoreValueId> &args,
+                                          CoreValueTypeId result_type,
+                                          ir::SourceRangeOpt range) {
+        if (std::find(fn_callees_.begin(), fn_callees_.end(), callee) == fn_callees_.end()) {
+            fn_callees_.push_back(callee);
+        }
+        for (const CoreValueId arg : args) {
             used_values_[arg.value] = true;
             if (arg.value >= storage_.value_types.size()) {
-                return reject("direct call argument id is out of range", expr.source_range);
+                return reject("call argument id is out of range", range);
             }
             const auto arg_kind =
                 p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]);
@@ -2568,19 +2745,17 @@ class P6ComputationHandlerBuilder {
             // its two (func_index, env_ptr) words. Only genuinely non-P6 types
             // (String PtrLen / bytes / f64) cross no boundary in this slice.
             if (arg_kind == std::nullopt) {
-                return reject("direct call argument is not a representable P6 boundary value "
+                return reject("call argument is not a representable P6 boundary value "
                               "(String / f64 / multi-word types cannot cross an fn boundary)",
-                              expr.source_range);
+                              range);
             }
         }
-        const auto direct_result_kind =
-            p6_scalar_kind(program_, layouts_, expr.result_type);
-        if (direct_result_kind == std::nullopt ||
-            *direct_result_kind == P6ScalarKind::Closure) {
-            return reject("direct call result is not a single-word P6 value "
+        const auto result_kind = p6_scalar_kind(program_, layouts_, result_type);
+        if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Closure) {
+            return reject("call result is not a single-word P6 value "
                           "(a closure / String / f64 / multi-word result cannot cross an fn "
                           "boundary in this slice)",
-                          expr.source_range);
+                          range);
         }
         return true;
     }
@@ -3890,9 +4065,12 @@ class P6ComputationHandlerBuilder {
                 },
                 [](const CoreTrapStmt &) { return true; },
                 [&](const CoreMatchStmt &s) { return plan_match(s, statement.source_range); },
-                [&](const CoreCapabilityCallStmt &) {
-                    return reject("capability effects stay on the orchestration lane",
-                                  statement.source_range);
+                [&](const CoreCapabilityCallStmt &s) {
+                    return plan_capability_call(s, statement.source_range);
+                },
+                // RFC 0026 FB-4: ordered effectful fn call.
+                [&](const CoreCallStmt &s) {
+                    return plan_call_stmt(s, statement.source_range);
                 },
                 [&](const CoreStoreStmt &s) { return plan_store(s, statement.source_range); },
                 [&](const CoreReturnStmt &s) {
@@ -4196,14 +4374,136 @@ class P6ComputationHandlerBuilder {
             return reject("direct call callee was not reached by the fn reachability pass",
                           expr.source_range);
         }
-        emit_const_i32(0); // env: a static direct call never passes captures
-        for (const CoreValueId arg : c.args) {
-            if (!emit_boundary_value_read(arg, expr.source_range)) {
+        if (!emit_call_words(c.callee, ordinal, c.args, expr.source_range)) {
+            return false;
+        }
+        return true;
+    }
+
+    // FB-4: emit an ordered effectful fn call. Identical `call` lowering to the
+    // pure direct call (env=0, args left-to-right, call fn base + ordinal); the
+    // single result word is left on the stack for the caller to set into the
+    // statement's result local.
+    [[nodiscard]] bool emit_call_stmt(const CoreCallStmt &s, ir::SourceRangeOpt range) {
+        if (instance_to_fn_ordinal_ == nullptr || fn_function_base_ == nullptr) {
+            return reject("ordered call reached emit without an fn function table", range);
+        }
+        if (s.callee.value >= instance_to_fn_ordinal_->size()) {
+            return reject("ordered call callee is out of range", range);
+        }
+        const std::uint32_t ordinal = (*instance_to_fn_ordinal_)[s.callee.value];
+        if (ordinal == std::numeric_limits<std::uint32_t>::max()) {
+            return reject("ordered call callee was not reached by the fn reachability pass", range);
+        }
+        if (!emit_call_words(s.callee, ordinal, s.args, range)) {
+            return false;
+        }
+        const auto local = final_local(s.result);
+        if (local == std::nullopt) {
+            return reject("ordered call result has no SSA local", range);
+        }
+        body_.byte(kOpLocalSet);
+        body_.u32(*local);
+        return true;
+    }
+
+    // Push env=0, every argument word, and the plain `call`. Shared by the pure
+    // CoreCallExpr (whose let-local set is done by emit_statement) and the
+    // ordered CoreCallStmt.
+    [[nodiscard]] bool emit_call_words(CoreInstanceId callee, std::uint32_t ordinal,
+                                       const std::vector<CoreValueId> &args,
+                                       ir::SourceRangeOpt range) {
+        static_cast<void>(callee);
+        emit_const_i32(0); // env: a static call never passes captures
+        for (const CoreValueId arg : args) {
+            if (!emit_boundary_value_read(arg, range)) {
                 return false;
             }
         }
         body_.byte(kOpCall);
         body_.u32(*fn_function_base_ + ordinal);
+        return true;
+    }
+
+    // RFC 0026 FB-4 (design §5.3): emit a capability invocation INSIDE an
+    // outlined effect fn. The import occupies the SAME low function index a
+    // handler capability statement uses (its ordinal in the sorted import
+    // table), so the in-fn call routes through the identical ahfl_cap import
+    // sequence. The opaque (status,ptr,len) tuple is popped into scratch
+    // locals; a non-OK status is a single-run failure and traps (durable
+    // replay / pending-latch for in-fn effects is the later wire-checkpoint
+    // slice — explicitly NOT implemented here), and on OK the result ptr word
+    // becomes the call's SSA value (the opaque frame address).
+    [[nodiscard]] bool emit_capability_call(const CoreCapabilityCallStmt &s,
+                                            ir::SourceRangeOpt range) {
+        if (imports_ == nullptr) {
+            return reject("effect fn capability call reached emit without an import table", range);
+        }
+        const auto it = std::find(imports_->begin(), imports_->end(), s.capability);
+        if (it == imports_->end()) {
+            return reject("effect fn capability was not planned into the import table", range);
+        }
+        const std::uint32_t import_ordinal =
+            static_cast<std::uint32_t>(std::distance(imports_->begin(), it));
+        // Push the single opaque (ptr,len) argument. The capability tuple
+        // functype takes exactly two i32 words: the frame ADDRESS followed by
+        // its P4-D byte length (an aggregate / collection address), or a scalar
+        // value followed by an unspecified length (0).
+        if (s.args.size() != 1) {
+            return reject("in-fn capability call must pass one opaque frame", range);
+        }
+        const CoreValueId arg = s.args[0];
+        if (arg.value >= storage_.value_types.size()) {
+            return reject("in-fn capability argument id is out of range", range);
+        }
+        const auto arg_kind =
+            p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]);
+        if (arg_kind == std::nullopt) {
+            return reject("in-fn capability argument is not a representable opaque frame", range);
+        }
+        if (!emit_boundary_value_read(arg, range)) {
+            return false;
+        }
+        if (*arg_kind == P6ScalarKind::Ptr || *arg_kind == P6ScalarKind::Collection) {
+            const ir::core::CoreLayout *layout =
+                p6_value_layout(program_, layouts_, storage_.value_types[arg.value]);
+            if (layout == nullptr || layout->size >
+                                         static_cast<std::uint64_t>(
+                                             std::numeric_limits<std::uint32_t>::max())) {
+                return reject("in-fn capability argument frame has no valid P4-D byte length",
+                              range);
+            }
+            emit_const_i32(static_cast<std::int32_t>(layout->size));
+        } else {
+            emit_const_i32(0); // a scalar opaque value carries no frame length
+        }
+        body_.byte(kOpCall);
+        body_.u32(import_ordinal); // imports are the low function indices
+        // Pop (status, ptr, len) in reverse push order.
+        body_.byte(kOpLocalSet);
+        body_.u32(cap_len_local_);
+        body_.byte(kOpLocalSet);
+        body_.u32(cap_ptr_local_);
+        body_.byte(kOpLocalSet);
+        body_.u32(cap_status_local_);
+        // Single-run contract: a non-OK status (ERROR / PENDING / unknown) is a
+        // hard trap. This is the honest FB-4 boundary — pending suspend + resume
+        // / no-reinvoke through an fn body is the wire-checkpoint slice.
+        body_.byte(kOpLocalGet);
+        body_.u32(cap_status_local_);
+        body_.byte(kOpIf);
+        body_.byte(kEmptyBlock);
+        body_.byte(kOpUnreachable);
+        body_.byte(kOpEnd);
+        // OK: the result is the opaque frame pointer word.
+        body_.byte(kOpLocalGet);
+        body_.u32(cap_ptr_local_);
+        const auto local = final_local(s.result);
+        if (local == std::nullopt) {
+            return reject("in-fn capability result has no SSA local", range);
+        }
+        body_.byte(kOpLocalSet);
+        body_.u32(*local);
         return true;
     }
 
@@ -5241,9 +5541,17 @@ class P6ComputationHandlerBuilder {
                     return true;
                 },
                 [&](const CoreMatchStmt &s) { return emit_match(s, statement.source_range); },
-                [&](const CoreCapabilityCallStmt &) {
-                    return reject("capability effects stay on the orchestration lane",
-                                  statement.source_range);
+                // RFC 0026 FB-4: a capability invocation INSIDE an outlined
+                // effect fn routes through the same ahfl_cap import sequence.
+                // (A handler capability call keeps its canonical KR6.5 final
+                // shape and is rejected here in handler mode.)
+                [&](const CoreCapabilityCallStmt &s) {
+                    return emit_capability_call(s, statement.source_range);
+                },
+                // RFC 0026 FB-4: ordered effectful fn call (a plain `call` to
+                // an outlined effect fn; its result is set into a local).
+                [&](const CoreCallStmt &s) {
+                    return emit_call_stmt(s, statement.source_range);
                 },
                 [&](const CoreStoreStmt &s) { return emit_store(s, statement.source_range); },
                 [&](const CoreReturnStmt &s) {
@@ -5637,6 +5945,117 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
 // ordinals are assigned in ascending CoreFnId order so the module is
 // reproducible. A module with no direct calls emits zero fn bodies and stays
 // byte-identical to its E1-E3/P6 shape.
+// RFC 0026 FB-4: compute ONLY the reachable fn ids (no emission), seeded from
+// the entry storages' direct calls / closures and the planned computed
+// handlers' recorded callees. Used to size the capability import table BEFORE
+// the function base is fixed, so an effectful fn's capability is imported at a
+// stable low ordinal (the same import sequence the handler path uses).
+[[nodiscard]] std::vector<CoreFnId>
+compute_reachable_fn_ids(const CoreProgram &program,
+                         std::span<const CoreBodyStorage *const> entry_storages,
+                         std::span<const std::vector<CoreInstanceId>> planned_entry_callees) {
+    std::vector<CoreInstanceId> worklist;
+    std::vector<bool> queued(program.instances.size(), false);
+    const auto enqueue = [&](CoreInstanceId id) {
+        if (id.value < queued.size() && !queued[id.value]) {
+            queued[id.value] = true;
+            worklist.push_back(id);
+        }
+    };
+    const auto enqueue_fn_id = [&](CoreFnId fn_id) {
+        if (fn_id.value < program.fns.size()) {
+            enqueue(program.fns[fn_id.value].instance);
+        }
+    };
+    const auto enqueue_region = [&](const CoreRegion &region) {
+        for_each_region_statement(region, [&](const CoreStmt &stmt) {
+            if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                enqueue(call->callee);
+            }
+        });
+    };
+    for (const CoreBodyStorage *storage : entry_storages) {
+        if (storage == nullptr) {
+            continue;
+        }
+        for (const CoreExpr &expr : storage->exprs) {
+            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                enqueue(call->callee);
+            }
+            if (const auto *closure = std::get_if<CoreClosureExpr>(&expr.node)) {
+                enqueue_fn_id(closure->fn);
+            }
+        }
+    }
+    for (const CoreFlowDecl &flow : program.flows) {
+        for (const CoreFlowState &state : flow.states) {
+            enqueue_region(state.body);
+        }
+    }
+    for (const auto &callees : planned_entry_callees) {
+        for (const CoreInstanceId id : callees) {
+            enqueue(id);
+        }
+    }
+    std::vector<bool> seen_fn(program.fns.size(), false);
+    std::vector<CoreFnId> reachable;
+    while (!worklist.empty()) {
+        const CoreInstanceId id = worklist.back();
+        worklist.pop_back();
+        if (id.value >= program.instances.size()) {
+            continue;
+        }
+        const auto *payload = std::get_if<CoreFnInstance>(&program.instances[id.value].payload);
+        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+            payload->body.value >= program.fns.size()) {
+            continue;
+        }
+        const CoreFnId fn_id = payload->body;
+        if (seen_fn[fn_id.value]) {
+            continue;
+        }
+        seen_fn[fn_id.value] = true;
+        reachable.push_back(fn_id);
+        const CoreFnDecl &fn = program.fns[fn_id.value];
+        for (const CoreExpr &expr : fn.storage.exprs) {
+            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                enqueue(call->callee);
+            }
+            if (const auto *closure = std::get_if<CoreClosureExpr>(&expr.node)) {
+                enqueue_fn_id(closure->fn);
+            }
+        }
+        enqueue_region(fn.body);
+    }
+    std::sort(reachable.begin(), reachable.end(),
+              [](CoreFnId a, CoreFnId b) { return a.value < b.value; });
+    return reachable;
+}
+
+// The sorted, de-duplicated capabilities reached by a set of reachable fns.
+[[nodiscard]] std::vector<CoreCapabilityId>
+capabilities_of_reachable_fns(const CoreProgram &program,
+                              const std::vector<CoreFnId> &reachable) {
+    std::vector<CoreCapabilityId> out;
+    if (reachable.empty()) {
+        return out;
+    }
+    const ir::core::FnEffectAnalysis effects = ir::core::analyze_fn_effects(program);
+    for (const CoreFnId fn_id : reachable) {
+        if (fn_id.value >= effects.capabilities.size()) {
+            continue;
+        }
+        for (const CoreCapabilityId cap : effects.capabilities[fn_id.value]) {
+            out.push_back(cap);
+        }
+    }
+    std::sort(out.begin(), out.end(), [](CoreCapabilityId a, CoreCapabilityId b) {
+        return a.value < b.value;
+    });
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 [[nodiscard]] bool compile_reachable_fn_bodies(
     const CoreProgram &program,
     const ir::core::CoreLayoutTable &layouts,
@@ -5650,7 +6069,8 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
     std::uint32_t &construct_heap_base_out,
     std::vector<CoreFnId> &closure_table_out,
     std::vector<ClosureCallType> &closure_signatures_out,
-    std::uint32_t &entry_closure_env_bytes_out) {
+    std::uint32_t &entry_closure_env_bytes_out,
+    const std::vector<CoreCapabilityId> *imports = nullptr) {
     construct_heap_enabled_out = false;
     construct_heap_base_out = ir::core::kNodeEventLogBase;
     closure_table_out.clear();
@@ -5738,6 +6158,13 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
                 enqueue_fn_id(closure->fn);
             }
         }
+        // RFC 0026 FB-4: an outlined fn's ordered effectful calls are reachable
+        // fn bodies too (including a fn that only wraps another effectful fn).
+        for_each_region_statement(fn->body, [&](const CoreStmt &stmt) {
+            if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                enqueue(call->callee);
+            }
+        });
     }
     std::sort(reachable.begin(), reachable.end(), [](CoreFnId a, CoreFnId b) {
         return a.value < b.value;
@@ -6086,6 +6513,9 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
     }
     for (PlannedFn &planned : planned_fns) {
         planned.builder->install_closure_tables(fn_to_table_slot, absolute_closure_type_index);
+        // FB-4: give each outlined fn builder the module import table so an
+        // in-body capability call emits at the correct ahfl_cap ordinal.
+        planned.builder->install_import_table(imports);
     }
     for (std::uint32_t ordinal = 0; ordinal < planned_fns.size(); ++ordinal) {
         PlannedFn &planned = planned_fns[ordinal];
@@ -6473,14 +6903,53 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
     // fn bodies. The handler count is fixed by the planned computed handlers,
     // so the fn base is known now.
     plan.handlers.resize(planned_handlers.size());
-    const std::uint32_t agent_fn_base =
-        static_cast<std::uint32_t>(plan.imports.size()) + kDefinedHandlerBase +
-        static_cast<std::uint32_t>(planned_handlers.size());
     std::vector<std::vector<CoreInstanceId>> planned_entry_callees;
     planned_entry_callees.reserve(planned_handlers.size());
     for (const PlannedComputedHandler &planned : planned_handlers) {
         planned_entry_callees.push_back(planned.builder->fn_callees());
     }
+
+    // RFC 0026 FB-4 (design §5.3): the capability imports an effectful outlined
+    // fn reaches transitively must be planned BEFORE the function base is
+    // fixed, so they occupy the same low import ordinals the handler
+    // capability statements use (import ordinal == position in the sorted
+    // table). Merge them with the capability-final imports.
+    {
+        const std::vector<CoreFnId> reachable_fn_ids = compute_reachable_fn_ids(
+            program,
+            std::vector<const CoreBodyStorage *>{&flow->storage},
+            planned_entry_callees);
+        for (const CoreCapabilityId cap : capabilities_of_reachable_fns(program, reachable_fn_ids)) {
+            plan.imports.push_back(cap);
+        }
+        std::sort(plan.imports.begin(), plan.imports.end(),
+                  [](auto lhs, auto rhs) { return lhs.value < rhs.value; });
+        plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()),
+                           plan.imports.end());
+        if (plan.imports.size() >
+            static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCapabilityAbi,
+                     "reachable capability import table (handler + effectful-fn) exceeds the "
+                     "wasm32 index domain");
+            return std::nullopt;
+        }
+        for (const auto id : plan.imports) {
+            const auto &capability = program.capabilities[id.value];
+            if (!capability.symbol_ref.id.has_value() ||
+                *capability.symbol_ref.id > std::numeric_limits<std::uint32_t>::max()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCapabilityAbi,
+                         "capability SymbolId is absent or exceeds the uint32 host ABI domain",
+                         capability.source_range);
+                return std::nullopt;
+            }
+        }
+    }
+
+    const std::uint32_t agent_fn_base =
+        static_cast<std::uint32_t>(plan.imports.size()) + kDefinedHandlerBase +
+        static_cast<std::uint32_t>(planned_handlers.size());
     // Keep raw pointers to the planned entry-handler builders so the fn
     // reachability / closure-table driver can read their closure facts and
     // install the finalized tables before the handlers are emitted below. The
@@ -6503,7 +6972,8 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
                                      plan.construct_heap_base,
                                      plan.closure_table,
                                      plan.closure_signatures,
-                                     entry_closure_env_bytes)) {
+                                     entry_closure_env_bytes,
+                                     &plan.imports)) {
         return std::nullopt;
     }
 
