@@ -334,6 +334,14 @@ class FrontendQueries {
     // date), so they borrow only a slot that is Clean/Verified.
     [[nodiscard]] const ast::Program *program(FileId file) const;
 
+    // Borrow the full parse result (SourceFile, AST, diagnostic bag) of a file
+    // whose parse slot is currently valid (Clean/Verified) at the current
+    // engine revision — including a parse that produced error diagnostics (the
+    // owned program is then null, but the source and the bag the LSP must
+    // publish are still meaningful). Null when the slot was never computed.
+    // Fail-closed on a stale revision exactly like program().
+    [[nodiscard]] const ParseResult *parse_result(FileId file) const;
+
     // How many times parse(file) actually ran its compute function. Precise
     // per-file instrumentation for the invalidation tests.
     [[nodiscard]] std::size_t parse_computes(FileId file) const;
@@ -423,6 +431,13 @@ class FrontendQueries {
     // it was checked at.
     [[nodiscard]] const SourceGraph *project_graph(ProjectId project) const;
 
+    // Borrow the project-level parse diagnostic bag of a project whose parse
+    // slot is valid (Clean/Verified) at the current revision — including a
+    // project parse that produced errors (project_graph is still non-null in
+    // that case, but the bag is the authoritative error surface the LSP
+    // publishes). Null when the slot was never computed.
+    [[nodiscard]] const DiagnosticBag *project_parse_diagnostics(ProjectId project) const;
+
     // Evaluate resolve_project(project) / typecheck_project(project): run the
     // graph-wide resolver / type checker over the memoized project graph, caching
     // the results. Short-circuit exactly as the CLI pipeline does — a project
@@ -468,10 +483,15 @@ class FrontendQueries {
         std::size_t computes = 0;
     };
 
-    // Per-ProjectId slot record: the parsed graph (owning every unit's AST) plus
-    // the compute counter, the same one-store-one-index shape as SlotRecord.
+    // Per-ProjectId slot record: the parsed graph (owning every unit's AST),
+    // the project-level parse diagnostic bag the LSP publishes, plus the
+    // compute counter. The graph and the bag are stored separately because the
+    // full ProjectParseResult type lives in the compiler's internal `src/` tree
+    // and only references cross this installed header; both move out of the
+    // compute's ProjectParseResult at one point, so they never disagree.
     struct ProjectSlotRecord {
         SourceGraph graph;
+        DiagnosticBag diagnostics;
         std::size_t computes = 0;
     };
 

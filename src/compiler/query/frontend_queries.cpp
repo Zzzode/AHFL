@@ -406,8 +406,11 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
               }
               // Replacing the whole graph drops the previous units' ASTs at exactly
               // the point the memo is replaced — graph and snapshot never disagree
-              // about which model they came from.
+              // about which model they came from. The project-level parse
+              // diagnostic bag moves into the same slot record for the same
+              // reason: the LSP publishes it alongside the graph.
               project_slots_[slot].graph = std::move(result.graph);
+              project_slots_[slot].diagnostics = std::move(result.diagnostics);
               ++project_slots_[slot].computes;
               return snapshot;
           })),
@@ -608,6 +611,19 @@ const SourceGraph *FrontendQueries::project_graph(ProjectId project) const {
     return &project_slots_[slot].graph;
 }
 
+const DiagnosticBag *FrontendQueries::project_parse_diagnostics(ProjectId project) const {
+    const std::size_t slot = project.index();
+    if (project_slots_.size() <= slot) {
+        return nullptr;
+    }
+    const SlotInfo info = engine_.inspect_slot(project_parse_.family(), slot);
+    if (!info.has_value ||
+        (info.state != SlotState::Clean && info.state != SlotState::Verified)) {
+        return nullptr;
+    }
+    return &project_slots_[slot].diagnostics;
+}
+
 const ResolveResult *FrontendQueries::project_resolve_result(ProjectId project) const {
     const std::size_t slot = project.index();
     if (project_resolve_slots_.size() <= slot) {
@@ -653,6 +669,24 @@ const ast::Program *FrontendQueries::program(FileId file) const {
         return nullptr;
     }
     return slots_[slot].result.program.get();
+}
+
+const ParseResult *FrontendQueries::parse_result(FileId file) const {
+    const std::size_t slot = file.index();
+    if (slots_.size() <= slot) {
+        return nullptr;
+    }
+    // Same Clean/Verified revision contract as program(): the result handed
+    // out must belong to the slot's current text. Unlike program() the result
+    // is available even for a parse that errored — an errored parse stores a
+    // null program, but its source and diagnostics are exactly what an LSP
+    // consumer publishes.
+    const SlotInfo info = engine_.inspect_slot(parse_.family(), slot);
+    if (!info.has_value ||
+        (info.state != SlotState::Clean && info.state != SlotState::Verified)) {
+        return nullptr;
+    }
+    return &slots_[slot].result;
 }
 
 const ResolveResult *FrontendQueries::resolve_result(ModuleId module) const {
