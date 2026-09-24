@@ -1249,6 +1249,17 @@ target_link_libraries(ahfl_tooling_lsp_handler_tests
 )
 ahfl_apply_project_warnings(ahfl_tooling_lsp_handler_tests)
 
+# RFC 0027 P4 (KR6.12): deterministic edit-sequence equivalence at the pure
+# LSP analysis-engine level — no JSON-RPC / display server needed.
+add_executable(ahfl_tooling_lsp_analysis_edits_tests
+    unit/tooling/lsp/analysis_engine_edits.cpp
+)
+target_link_libraries(ahfl_tooling_lsp_analysis_edits_tests
+    PRIVATE
+        ahfl_tooling_lsp
+)
+ahfl_apply_project_warnings(ahfl_tooling_lsp_analysis_edits_tests)
+
 add_executable(ahfl_connection_pool_tests
     unit/runtime/engine/connection_pool.cpp
 )
@@ -1539,14 +1550,18 @@ target_link_libraries(ahfl_tooling_abi_tests
 )
 ahfl_apply_project_warnings(ahfl_tooling_abi_tests)
 
-add_executable(ahfl_tooling_incremental_tests
-    unit/tooling/incremental/incremental.cpp
+# RFC 0016 cache contract tests for the QueryEngine persistence layer
+# (RFC 0027 P5 / KR6.12). The hand-rolled incremental subsystem they used to
+# live beside is retired; only the deterministic persistent-cache contract
+# remains, re-anchored as ahfl_tooling_cache.
+add_executable(ahfl_tooling_cache_tests
+    unit/tooling/cache/cache_core.cpp
 )
-target_link_libraries(ahfl_tooling_incremental_tests
+target_link_libraries(ahfl_tooling_cache_tests
     PRIVATE
-        ahfl_tooling_incremental
+        ahfl_tooling_cache
 )
-ahfl_apply_project_warnings(ahfl_tooling_incremental_tests)
+ahfl_apply_project_warnings(ahfl_tooling_cache_tests)
 
 if(AHFL_ENABLE_BACKEND_INFRA)
     add_executable(ahfl_wasm_backend_tests
@@ -1793,6 +1808,7 @@ foreach(_tgt
     ahfl_streaming_tests
     ahfl_tooling_lsp_json_rpc_tests
     ahfl_tooling_lsp_handler_tests
+    ahfl_tooling_lsp_analysis_edits_tests
     ahfl_connection_pool_tests
     ahfl_error_recovery_tests
     ahfl_syntax_trait_impl_tests
@@ -1820,7 +1836,7 @@ foreach(_tgt
     ahfl_tooling_telemetry_tests
     ahfl_tooling_profiling_tests
     ahfl_tooling_abi_tests
-    ahfl_tooling_incremental_tests
+    ahfl_tooling_cache_tests
     ahfl_tooling_package_tests
     ahfl_property_lowering_tests
     ahfl_property_core_erasure_tests

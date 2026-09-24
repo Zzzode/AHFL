@@ -253,7 +253,7 @@ schema_label_range(const SourceFile &source, const ast::TypeSyntax &type, std::s
                                                        SymbolKind kind,
                                                        std::string_view local_name,
                                                        SourceRange declaration_range) {
-    for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
+    for (const auto &symbol : snapshot.resolve_result->symbol_table.symbols()) {
         if (symbol.kind == kind && symbol.local_name == local_name &&
             same_source(symbol.source_id, source.source_id) &&
             same_range(symbol.declaration_range, declaration_range)) {
@@ -331,7 +331,7 @@ void add_symbol_target(HoverTargetIndex &index,
 [[nodiscard]] std::optional<ImportBinding> import_alias_at(const LspAnalysisSnapshot &snapshot,
                                                            const LspSourceSnapshot &source,
                                                            std::string_view alias) {
-    for (const auto &binding : snapshot.resolve_result.imports()) {
+    for (const auto &binding : snapshot.resolve_result->imports()) {
         if (binding.alias == alias && same_source(binding.source_id, source.source_id)) {
             return binding;
         }
@@ -346,7 +346,7 @@ void add_reference_target(HoverTargetIndex &index,
     if (source.source == nullptr || !same_source(reference.source_id, source.source_id)) {
         return;
     }
-    const auto symbol = snapshot.resolve_result.symbol_table.get(reference.target);
+    const auto symbol = snapshot.resolve_result->symbol_table.get(reference.target);
     if (!symbol.has_value()) {
         return;
     }
@@ -554,14 +554,14 @@ void add_workflow_temporal_clause_target(HoverTargetIndex &index,
 [[nodiscard]] std::optional<SymbolId> capability_symbol(const LspAnalysisSnapshot &snapshot,
                                                         const LspSourceSnapshot &source,
                                                         std::string_view name) {
-    for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
+    for (const auto &symbol : snapshot.resolve_result->symbol_table.symbols()) {
         if (symbol.kind == SymbolKind::Capability && symbol.local_name == name &&
             same_source(symbol.source_id, source.source_id)) {
             return symbol.id;
         }
     }
     if (const auto symbol =
-            snapshot.resolve_result.symbol_table.find_local(SymbolNamespace::Capabilities, name);
+            snapshot.resolve_result->symbol_table.find_local(SymbolNamespace::Capabilities, name);
         symbol.has_value() && symbol->get().kind == SymbolKind::Capability) {
         return symbol->get().id;
     }
@@ -594,10 +594,11 @@ void add_agent_capability_targets(HoverTargetIndex &index,
 [[nodiscard]] bool has_resolved_type_reference(const LspAnalysisSnapshot &snapshot,
                                                const LspSourceSnapshot &source,
                                                SourceRange range) {
-    return snapshot.resolve_result.find_reference(ReferenceKind::TypeName, range, source.source_id)
+    return snapshot.resolve_result
+               ->find_reference(ReferenceKind::TypeName, range, source.source_id)
                .has_value() ||
            snapshot.resolve_result
-               .find_reference(ReferenceKind::TraitBound, range, source.source_id)
+               ->find_reference(ReferenceKind::TraitBound, range, source.source_id)
                .has_value();
 }
 
@@ -741,24 +742,24 @@ void add_predicate_return_type_target(HoverTargetIndex &index,
     if (name == nullptr) {
         return std::nullopt;
     }
-    if (const auto reference = snapshot.resolve_result.find_reference(
+    if (const auto reference = snapshot.resolve_result->find_reference(
             ReferenceKind::TypeName, name->range, source.source_id);
         reference.has_value()) {
-        if (const auto symbol = snapshot.resolve_result.symbol_table.get(reference->get().target);
+        if (const auto symbol = snapshot.resolve_result->symbol_table.get(reference->get().target);
             symbol.has_value() && symbol->get().kind == SymbolKind::Struct) {
             return symbol->get().id;
         }
     }
 
     const auto spelling = name->spelling();
-    for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
+    for (const auto &symbol : snapshot.resolve_result->symbol_table.symbols()) {
         if (symbol.kind == SymbolKind::Struct && symbol.local_name == spelling &&
             same_source(symbol.source_id, source.source_id)) {
             return symbol.id;
         }
     }
     if (const auto symbol =
-            snapshot.resolve_result.symbol_table.find_local(SymbolNamespace::Types, spelling);
+            snapshot.resolve_result->symbol_table.find_local(SymbolNamespace::Types, spelling);
         symbol.has_value() && symbol->get().kind == SymbolKind::Struct) {
         return symbol->get().id;
     }
@@ -839,7 +840,7 @@ void try_register_construct_targets(HoverTargetIndex &index,
     if (snapshot.type_check_result == nullptr || expr == nullptr || source.source == nullptr) {
         return;
     }
-    const auto *type_check_result = snapshot.type_check_result.get();
+    const auto *type_check_result = snapshot.type_check_result;
     const TypedExpr *typed =
         type_check_result->typed_program.find_expr(expr->node_id, source.source_id);
     std::uint32_t expr_index = fallback_expr_index;
@@ -1645,12 +1646,12 @@ void add_ast_targets(HoverTargetIndex &index,
 void add_resolver_targets(HoverTargetIndex &index,
                           const LspAnalysisSnapshot &snapshot,
                           const LspSourceSnapshot &source) {
-    for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
+    for (const auto &symbol : snapshot.resolve_result->symbol_table.symbols()) {
         if (same_source(symbol.source_id, source.source_id)) {
             add_symbol_target(index, source, symbol);
         }
     }
-    for (const auto &reference : snapshot.resolve_result.references()) {
+    for (const auto &reference : snapshot.resolve_result->references()) {
         add_reference_target(index, snapshot, source, reference);
     }
 }
@@ -2056,7 +2057,7 @@ void build_hover_indices(LspAnalysisSnapshot &snapshot) {
         HoverTargetIndex index;
         add_ast_targets(index, snapshot, source);
         add_resolver_targets(index, snapshot, source);
-        add_typed_targets(index, source, snapshot.type_check_result.get());
+        add_typed_targets(index, source, snapshot.type_check_result);
         index.sort();
         snapshot.hover_indices.emplace(hover_index_key(source), std::move(index));
     }

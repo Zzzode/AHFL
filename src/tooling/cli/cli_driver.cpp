@@ -3708,25 +3708,18 @@ ExitCode CliDriver::format_source_file() {
 //              body), so a SourceGraph is no longer a barrier to querying.
 //
 // Routing rebinds the analysis input to the object the engine produced rather
-// than letting the tail consume the direct pipeline's graph/AST: the engine's
+// than letting the tail consume a separately parsed graph/AST: the engine's
 // owned `SourceGraph` / `ast::Program` is what the borrowed stage results were
-// computed against, so the IR lowering, validation and summary must see the same
-// objects or the route would be half-switched under the hood.
+// computed against, so the IR lowering, validation and summary must see the
+// same objects.
 //
-// TEMPORARY escape hatch. `AHFL_QUERY_LEGACY_PIPELINE=1` forces the pre-S4C
-// direct pipeline. It exists only to bisect a field report against the cutover
-// and must be removed once the direct tail inside run_analysis is deleted; that
-// removal is tracked as the follow-up to KR6.11-S4C in
-// docs/design/query-frontend-p3-migration.zh.md §3.3 (RFC 0027 P5 / KR6.12
-// cleanup). Do not grow new callers.
-[[nodiscard]] bool legacy_pipeline_forced() {
-    const char *flag = std::getenv("AHFL_QUERY_LEGACY_PIPELINE");
-    return flag != nullptr && flag[0] != '\0' && std::string_view{flag} != "0";
-}
+// RFC 0027 P5 (KR6.12) removed the AHFL_QUERY_LEGACY_PIPELINE escape hatch and
+// the direct resolve/typecheck tail: the engine is the only route. A cycle in
+// this acyclic frontend graph is impossible; if the engine reports one it is an
+// internal error, surfaced as such instead of silently routing around the query
+// layer.
 
-// Whether to emit the route trace the CLI default-route gate reads. Kept
-// separate from the legacy escape hatch so a normal engine-route run stays
-// quiet.
+// Emit the route trace the CLI route gate reads (AHFL_QUERY_ENGINE_TRACE=1).
 [[nodiscard]] bool query_engine_trace_requested() {
     const char *flag = std::getenv("AHFL_QUERY_ENGINE_TRACE");
     return flag != nullptr && flag[0] != '\0' && std::string_view{flag} != "0";
@@ -3839,88 +3832,76 @@ ExitCode CliDriver::run_analysis(const InputT &input,
     const auto *capability_mock_set_ptr =
         capability_mock_set_.has_value() ? &*capability_mock_set_ : nullptr;
 
-    // The engine route borrows its stage results — and, for the project shape,
-    // its analyzed input — from a FrontendQueries that must outlive every use
-    // below; the direct route owns them outright. Exactly one of the two is
-    // populated, and the tail of this function is identical either way.
-    std::optional<ahfl::query::FrontendQueries> engine_holder;
-    ahfl::ResolveResult owned_resolve;
-    ahfl::TypeCheckResult owned_typecheck;
+    // The engine is the only route since RFC 0027 P5 (KR6.12). It owns the
+    // stage results and, for the project shape, the analyzed input; it must
+    // outlive every use below.
+    ahfl::query::FrontendQueries engine_holder;
     const ahfl::ResolveResult *resolve_ptr = nullptr;
     const ahfl::TypeCheckResult *typecheck_ptr = nullptr;
-    // The analysis input the tail below consumes. For the direct route it is the
-    // caller's `input`; for the engine route it is the object the borrowed stage
-    // results were computed against (the engine's AST / graph). Pointers, not
-    // copies: the two input types are not copyable and the tail only reads.
+    // The analysis input the tail below consumes: the object the borrowed
+    // stage results were computed against (the engine's AST / graph).
+    // Pointers, not copies: the two input types are not copyable and the tail
+    // only reads.
     const InputT *analysis_input = &input;
 
-    // The engine is the default route since KR6.11-S4C. The legacy direct
-    // pipeline is reachable only through the temporary AHFL_QUERY_LEGACY_PIPELINE
-    // escape hatch (see the comment on legacy_pipeline_forced); a failed engine
-    // serve still falls back to the direct tail below.
-    if (!legacy_pipeline_forced()) {
-        if constexpr (std::is_same_v<InputT, ahfl::ast::Program>) {
-            if (source_file.has_value()) {
-                engine_holder.emplace();
-                if (const auto stages = run_query_engine_stages(*engine_holder, source_file->get());
-                    stages.has_value()) {
-                    resolve_ptr = stages->resolve;
-                    typecheck_ptr = stages->typecheck;
-                    // The AST the engine parsed (from the same display name and
-                    // bytes) is the input the tail must lower. It is owned by
-                    // `engine_holder`, which outlives the tail.
-                    if (const ahfl::ast::Program *program =
-                            engine_holder->program(ahfl::query::FileId{0});
-                        program != nullptr) {
-                        analysis_input = program;
-                    }
-                } else {
-                    engine_holder.reset(); // engine could not serve: use the direct pipeline
-                }
-            }
-        } else if constexpr (std::is_same_v<InputT, ahfl::SourceGraph>) {
-            if (project_model != nullptr) {
-                engine_holder.emplace();
-                const ahfl::SourceGraph *graph = nullptr;
-                if (const auto stages =
-                        run_query_engine_project_stages(*engine_holder, *project_model, graph);
-                    stages.has_value()) {
-                    resolve_ptr = stages->resolve;
-                    typecheck_ptr = stages->typecheck;
-                    analysis_input = graph;
-                } else {
-                    engine_holder.reset();
-                }
-            }
+    if constexpr (std::is_same_v<InputT, ahfl::ast::Program>) {
+        if (!source_file.has_value()) {
+            std::cerr << "internal error: file analysis reached without a source file\n";
+            return ExitCode::CompileError;
         }
+        const auto stages = run_query_engine_stages(engine_holder, source_file->get());
+        if (!stages.has_value()) {
+            // Unreachable: parse errors are handled before run_analysis and the
+            // frontend graph is acyclic. Fail loudly rather than silently
+            // bypassing the query layer.
+            std::cerr << "internal error: query engine could not serve file analysis\n";
+            return ExitCode::CompileError;
+        }
+        resolve_ptr = stages->resolve;
+        typecheck_ptr = stages->typecheck;
+        // The AST the engine parsed (from the same display name and bytes) is
+        // the input the tail must lower.
+        if (const ahfl::ast::Program *program =
+                engine_holder.program(ahfl::query::FileId{0});
+            program != nullptr) {
+            analysis_input = program;
+        }
+    } else if constexpr (std::is_same_v<InputT, ahfl::SourceGraph>) {
+        if (project_model == nullptr) {
+            std::cerr << "internal error: project analysis reached without an input model\n";
+            return ExitCode::CompileError;
+        }
+        const ahfl::SourceGraph *graph = nullptr;
+        const auto stages =
+            run_query_engine_project_stages(engine_holder, *project_model, graph);
+        if (!stages.has_value()) {
+            std::cerr << "internal error: query engine could not serve project analysis\n";
+            return ExitCode::CompileError;
+        }
+        resolve_ptr = stages->resolve;
+        typecheck_ptr = stages->typecheck;
+        analysis_input = graph;
     }
 
-    // Non-vacuity trace for the CLI default-route gate: exactly one route line
-    // per analysis, emitted only when this function was reached at all (a parse
-    // error returns before here on both the file and the project path, so the
-    // absence of any line is itself the signal that analysis never ran). stderr
-    // only — stdout (the golden artifact) is untouched. Since S4C the default
-    // route is the engine; the line reads "direct" only under the temporary
-    // legacy escape hatch or after an engine-serve fallback.
+    // Route trace for the CLI route gate: exactly one line per analysis,
+    // emitted only when this function was reached (a parse error returns before
+    // here on both arrival paths). stderr only — stdout (the golden artifact)
+    // is untouched.
     if (query_engine_trace_requested()) {
-        std::cerr << "query-engine-route: " << (resolve_ptr != nullptr ? "engine" : "direct")
-                  << '\n';
+        std::cerr << "query-engine-route: engine\n";
     }
 
-    if (resolve_ptr == nullptr) {
-        const ahfl::Resolver resolver;
-        owned_resolve = resolver.resolve(*analysis_input);
-        resolve_ptr = &owned_resolve;
-    }
     render_diagnostics(*diag_consumer_, *resolve_ptr, source_file);
     if (resolve_ptr->has_errors()) {
         return ExitCode::CompileError;
     }
 
     if (typecheck_ptr == nullptr) {
-        const ahfl::TypeChecker type_checker;
-        owned_typecheck = type_checker.check(*analysis_input, *resolve_ptr);
-        typecheck_ptr = &owned_typecheck;
+        // resolve ran clean yet the engine has no typecheck result. The stage
+        // graph guarantees one on a clean resolve, so this is unreachable;
+        // fail loudly instead of dereferencing null or bypassing the engine.
+        std::cerr << "internal error: query engine produced no typecheck result\n";
+        return ExitCode::CompileError;
     }
     render_diagnostics(*diag_consumer_, *typecheck_ptr, source_file);
 

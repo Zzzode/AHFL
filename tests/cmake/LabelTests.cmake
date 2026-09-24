@@ -371,6 +371,7 @@ ahfl_label_tests(
     LABELS lsp-handlers
     TESTS
         ahfl.lsp.handler_all
+        ahfl.lsp.analysis_engine_edit_equiv
 )
 
 ahfl_label_tests(
@@ -606,10 +607,9 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS incremental
+    LABELS cache
     TESTS
-        ahfl.incremental.incremental_all
-        ahfl.incremental.process_smoke
+        ahfl.cache.cache_core_all
 )
 
 if(AHFL_ENABLE_BACKEND_INFRA)

@@ -10,12 +10,13 @@
 #include <vector>
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/query/frontend_queries.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/project_discovery/discovery.hpp"
 #include "compiler/syntax/frontend/project.hpp"
-#include "tooling/incremental/cache_core.hpp"
+#include "tooling/cache/cache_core.hpp"
 #include "tooling/lsp/document_store.hpp"
 #include "tooling/lsp/hover_index.hpp"
 #include "tooling/lsp/protocol_types.hpp"
@@ -55,6 +56,22 @@ struct LspToolchainCacheKey {
 };
 
 struct LspAnalysisSnapshot {
+    // RFC 0027 P4 (KR6.12): every semantic fact this snapshot publishes is
+    // BORROWED from the workspace's QueryEngine (AnalysisService::engine_).
+    // The engine owns the parse / resolve / typecheck results (typed HIR
+    // included) and keeps them honest under edits: an edit re-sets only the
+    // changed query inputs (so unrelated slots stay memo-verified), the
+    // snapshots that referenced the changed units are invalidated first, and
+    // every engine borrow is revision-checked, so neither a stale AST nor a
+    // superseded typed program can ever reach a handler. The engine outlives
+    // every snapshot (it is owned by the service and ordered before its
+    // snapshot cache).
+
+    // Which slot shape the engine evaluated: exactly one. Project-aware
+    // snapshots use project_slot; detached/parse-only snapshots use file_slot.
+    std::optional<query::ProjectId> project_slot;
+    std::optional<query::FileId> file_slot;
+
     std::string requested_uri;
     int document_version{0};
     std::uint64_t document_revision{0};
@@ -67,11 +84,27 @@ struct LspAnalysisSnapshot {
     std::optional<std::filesystem::path> package_graph_manifest;
     std::vector<LspDiagnostic> project_diagnostics;
 
-    std::unique_ptr<ParseResult> parse_result;
-    std::unique_ptr<ProjectParseResult> project_result;
-    ResolveResult resolve_result;
-    std::unique_ptr<TypeCheckResult> type_check_result;
-    std::unique_ptr<ValidationResult> validation_result;
+    // Borrowed engine stage results (nullptr when the stage short-circuited).
+    const ParseResult *parse_result = nullptr;
+    const SourceGraph *project_graph = nullptr;
+    const DiagnosticBag *project_parse_diagnostics = nullptr;
+    const ResolveResult *resolve_result = nullptr;
+    // Before the query migration resolve_result was a by-value member that
+    // default-constructed (empty symbol table, empty diagnostics) whenever the
+    // stage short-circuited, so every handler could iterate it unconditionally.
+    // When the engine never ran resolve (a parse failure), point at this empty
+    // fallback instead of null to preserve that "empty table" contract.
+    ResolveResult empty_resolve_result;
+    const TypeCheckResult *type_check_result = nullptr;
+    // A persistent-cache cold start (RFC 0016) rebuilds a degraded snapshot:
+    // resolve/environment are unavailable, but the typed program round-trips
+    // through the cache envelope. It cannot live in the engine (the engine
+    // computes it, never deserializes it), so it is owned here and
+    // type_check_result borrows it while the snapshot lives.
+    std::unique_ptr<TypeCheckResult> cold_type_check_result;
+    // Validation runs inside build_snapshot over the borrowed inputs; it owns
+    // no large data beyond its diagnostic bag, so it is held by value.
+    std::optional<ValidationResult> validation_result;
     std::unique_ptr<LspWorkspaceIndex> workspace_index;
 
     std::vector<LspSourceSnapshot> sources;
@@ -126,6 +159,13 @@ class AnalysisService {
     [[nodiscard]] static std::string normalized_path_key(const std::filesystem::path &path);
 
   private:
+    [[nodiscard]] query::FileId file_slot_for_uri(const std::string &uri);
+    // Semantic project inputs carry the requesting file as their entry point,
+    // so even two open files of one package can produce different resolved
+    // models. Project slots are keyed by URI for that reason: merging them
+    // could replace one live snapshot's graph through a stale borrow.
+    [[nodiscard]] query::ProjectId project_slot_for_uri(const std::string &uri);
+
     [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot>
     build_snapshot(const std::string &uri,
                    std::optional<LspToolchainCacheKey> toolchain_cache_key,
@@ -141,26 +181,26 @@ class AnalysisService {
     // Builds the unified RFC 0016 CacheKey for a URI from the LSP toolchain
     // key. Returns nullopt when the persistent cache is disabled, the file is
     // detached (no project manifest), or the document is unavailable.
-    [[nodiscard]] std::optional<incremental::CacheKey>
+    [[nodiscard]] std::optional<cache::CacheKey>
     persistent_cache_key_for_uri(const std::string &uri,
                                  const std::optional<LspToolchainCacheKey> &toolchain_key) const;
     // Returns the persistent cache for a project root, creating it on first
     // use. The cache directory is <cache-root>/<project-root-hash>/.
-    [[nodiscard]] incremental::PersistentCache *
+    [[nodiscard]] cache::PersistentCache *
     persistent_cache_for_project(const std::filesystem::path &project_root);
     // Builds a degraded snapshot from a persistent cache hit: the document is
-    // parsed (cheap) and the typed program is deserialized, but resolve,
-    // typecheck, workspace index, and hover indices are skipped. Returns
-    // nullptr on any deserialization failure so the caller falls back to full
-    // analysis (graceful fallback).
+    // parsed through the snapshot's query engine (cheap) and the typed program
+    // is deserialized, but resolve, the environment, workspace index, and hover
+    // indices are skipped. Returns nullptr on any deserialization failure so
+    // the caller falls back to full analysis (graceful fallback).
     [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot>
     build_snapshot_from_persistent(const std::string &uri,
                                    const LspToolchainCacheKey &toolchain_key,
-                                   const incremental::PersistentCacheEntry &entry);
+                                   const cache::PersistentCacheEntry &entry);
     // Serializes the snapshot's typed program into the cache envelope and
     // stores it. No-op when the snapshot has no typed program.
     void persist_typed_program(const LspAnalysisSnapshot &snapshot,
-                               const incremental::CacheKey &key,
+                               const cache::CacheKey &key,
                                const std::filesystem::path &project_root);
     // Removes the persistent entries for the given absolute path keys. Used by
     // invalidate_paths so stale typed HIR is never reloaded on cold start.
@@ -169,6 +209,18 @@ class AnalysisService {
     void invalidate_persistent_all();
 
     const DocumentStore &store_;
+    // The workspace's single QueryEngine (RFC 0027 P4). All snapshots borrow
+    // their stage results from it, so it is declared before cache_ and is
+    // destroyed after every snapshot. Held by unique_ptr (FrontendQueries is
+    // non-movable) so invalidate_all can reconstruct it wholesale once the
+    // snapshots are gone. Every open document is one FileId slot, every
+    // analyzed package one ProjectId slot; an edit re-sets only the changed
+    // inputs, so unaffected slots stay memo-verified (the cross-edit reuse).
+    std::unique_ptr<query::FrontendQueries> engine_;
+    std::unordered_map<std::string, query::FileId> file_slots_;
+    std::unordered_map<std::string, query::ProjectId> project_slots_;
+    std::size_t next_file_slot_{0};
+    std::size_t next_project_slot_{0};
     std::vector<std::filesystem::path> workspace_folders_;
     project_discovery::ToolchainProfileSet toolchain_profiles_;
     std::unordered_map<std::string, std::unique_ptr<LspAnalysisSnapshot>> cache_;
@@ -180,7 +232,7 @@ class AnalysisService {
     std::size_t next_extra_source_unit_id_{0};
     std::size_t analysis_runs_{0};
     bool persistent_cache_enabled_{false};
-    std::unordered_map<std::string, std::unique_ptr<incremental::PersistentCache>>
+    std::unordered_map<std::string, std::unique_ptr<cache::PersistentCache>>
         persistent_caches_;
 };
 

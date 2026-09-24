@@ -1,35 +1,31 @@
 #!/usr/bin/env python3
-"""RFC 0027 P3 (KR6.11-S4C): the CLI default query-engine route gate.
+"""RFC 0027 P5 (KR6.12): the CLI query-engine route gate.
 
 Since KR6.11-S4C `ahflc` evaluates the frontend through the self-built query
-engine BY DEFAULT — the pre-S4 direct pipeline is reachable only through the
-temporary `AHFL_QUERY_LEGACY_PIPELINE=1` escape hatch (see
-`legacy_pipeline_forced` in `src/tooling/cli/cli_driver.cpp`; removal is tracked
-in docs/design/query-frontend-p3-migration.zh.md §3.3). This gate is the
-cutover's regression anchor: for a corpus of sources it runs the same command
-twice — once on the default engine route and once with the legacy pipeline
-forced — and asserts the exit code, stdout, and stderr are byte-identical.
-stdout is the artifact a user sees (IR JSON, SMV, summaries), so byte-equality
-here is the CLI-level statement of RFC 0027's migration criterion ("the query
-result is the same result").
+engine by default. KR6.12 removed the AHFL_QUERY_LEGACY_PIPELINE escape hatch
+and the direct resolve/typecheck tail, so there is no second route to
+differentiate against: this gate is now the pure non-vacuity gate the P3
+migration design (docs/design/query-frontend-p3-migration.zh.md §3.3) says it
+degrades to once the legacy half is deleted.
 
-Non-vacuity. A gate that silently fell back to the direct pipeline on every
-input would pass trivially. The engine route emits a `query-engine-route:`
-trace line on stderr *only* when it actually served the analysis; with
-`AHFL_QUERY_ENGINE_TRACE=1` this gate asserts that the DEFAULT run of every
-corpus entry reports "engine" and the legacy-forced run reports "direct", so a
-regression that flips the default back to the direct pipeline fails the gate
-rather than hiding behind byte-equality.
+For every corpus entry it runs the command in the DEFAULT environment (with
+AHFL_QUERY_ENGINE_TRACE=1) and asserts:
+
+  1. the command exits and is deterministic (rerun stability, including stderr
+     after the route line is removed — this catches accidental nondeterminism
+     a differential-vs-itself run would also see);
+  2. every run that REACHES analysis reports the `query-engine-route: engine`
+     trace line on stderr — a regression that stopped routing through the query
+     engine would either drop the line or change its token, failing this gate
+     rather than hiding behind the golden fleet.
 
 Scope. BOTH input shapes the driver's `run_analysis` template is instantiated
-for are covered, so the gate spans the file/package arrival boundary the
-driver's own comment describes:
+for are covered:
 
   * bare single files (`run_analysis<ast::Program>`), driven with `check`;
   * package/workspace arrivals (`run_analysis<SourceGraph>`), driven with
     `check` and `emit ir-json` through the integration fixtures that carry an
-    `ahfl.toml` / `ahfl.workspace.toml`. A `SourceGraph` became routable once
-    its parse was expressed as a value-semantics `ProjectInputModel`.
+    `ahfl.toml` / `ahfl.workspace.toml`.
 
 The two corpora are disjoint by construction: the file corpus excludes anything
 with a package ancestor, the project corpus is exactly the package fixtures.
@@ -48,30 +44,22 @@ from pathlib import Path
 
 # Bare-file commands whose output is deterministic and whose pipeline reaches
 # resolve/typecheck (so the engine route has something to serve). `check` is the
-# one command a bare single file can drive end to end: `emit ir` / `emit ir-json`
-# refuse a bare file with a usage error (they require a package manifest), so they
-# never reach `run_analysis` and are not part of the bare-file half of this gate.
+# one command a bare single file can drive end to end.
 FILE_COMMANDS = (("check",),)
 
 # Package-arrival commands. These require a package context, so they are only run
-# against the project corpus below; `emit ir-json` is included because it drives
-# the analysis input (the engine's graph) all the way through IR lowering and
-# printing, which is the strongest artifact-level statement of equivalence.
+# against the project corpus below; `emit ir-json` drives the analysis input (the
+# engine's graph) all the way through IR lowering and printing.
 PROJECT_COMMANDS = (("check",), ("emit", "ir-json"))
 
 # Corpus roots scanned recursively for single-file `.ahfl` sources. Golden
-# fixtures include malformed and semantically-erroring sources on purpose: route
-# equivalence must hold for the failure projections too, not just success.
+# fixtures include malformed and semantically-erroring sources on purpose.
 CORPUS_ROOTS = ("tests/golden", "examples")
 
-# Package fixtures with a workflow target, driven as package arrivals. Each entry
-# is a (manifest-or-workspace path, extra args) pair; the target and sysroot are
-# appended uniformly below so the package graph build is identical to the one the
-# CLI golden fleet uses.
+# Package fixtures with a workflow target, driven as package arrivals.
 PROJECT_FIXTURE_ROOTS = ("tests/integration/package_golden",)
 
-# Upper bound so the gate stays a smoke-sized ctest. The corpus is walked in
-# sorted order, which is deterministic run to run.
+# Upper bound so the gate stays a smoke-sized ctest.
 MAX_FILES = 200
 MAX_PROJECTS = 40
 
@@ -83,14 +71,7 @@ def fail(message: str) -> None:
 
 
 def has_package_ancestor(path: Path, repo_root: Path) -> bool:
-    """Whether the file is inside an AHFL package (has an ahfl.toml ancestor).
-
-    Files WITHOUT a package ancestor reach the single-file
-    (`run_analysis<ast::Program>`) path; a file inside a package is discovered as
-    a package graph and takes the `SourceGraph` path, which is exercised by the
-    project corpus instead. Filtering here keeps the two halves disjoint and each
-    non-vacuity assertion exact.
-    """
+    """Whether the file is inside an AHFL package (has an ahfl.toml ancestor)."""
     current = path.parent
     while True:
         if (current / "ahfl.toml").is_file() or (current / "ahfl.workspace.toml").is_file():
@@ -113,15 +94,6 @@ def collect_corpus(repo_root: Path) -> list[Path]:
 
 
 def collect_project_runs(repo_root: Path) -> list[tuple[str, list[str]]]:
-    """Package-arrival (label, argv) pairs, one per fixture command.
-
-    A fixture is any `ahfl.toml` under a project fixture root that declares a
-    workflow target; it is driven as `--manifest <path> --target workflow
-    --sysroot <repo-root>`, the exact shape `ahflc.check.*` uses. Fixtures
-    without a workflow target are skipped rather than guessed at. The label is
-    built here (not reconstructed from argv positions) so it stays correct if
-    the argument shape changes.
-    """
     runs: list[tuple[str, list[str]]] = []
     for relative in PROJECT_FIXTURE_ROOTS:
         base = repo_root / relative
@@ -177,21 +149,14 @@ def main() -> int:
         fail("project corpus found no package fixtures (vacuous gate)")
         return 1
 
-    # Since S4C the DEFAULT environment (no route variables) must take the
-    # engine; the legacy direct pipeline is forced explicitly through its
-    # temporary escape hatch. Both runs set the trace flag so the route line is
-    # observable on each side. The line is stripped before the stderr comparison
-    # below. Any pre-existing AHFL_QUERY_ENGINE is removed on both sides: that
-    # opt-in variable was deleted by the cutover and must have no effect.
-    default_env = dict(os.environ)
-    default_env.pop("AHFL_QUERY_ENGINE", None)
-    default_env.pop("AHFL_QUERY_LEGACY_PIPELINE", None)
-    default_env["AHFL_QUERY_ENGINE_TRACE"] = "1"
-
-    legacy_env = dict(os.environ)
-    legacy_env.pop("AHFL_QUERY_ENGINE", None)
-    legacy_env["AHFL_QUERY_LEGACY_PIPELINE"] = "1"
-    legacy_env["AHFL_QUERY_ENGINE_TRACE"] = "1"
+    # The ONLY route since KR6.12. The trace flag makes the engine route
+    # observable. The deleted legacy variable is popped defensively so a stale
+    # environment in a developer's shell can never affect this gate (it is now
+    # an unknown variable the driver ignores).
+    env = dict(os.environ)
+    env.pop("AHFL_QUERY_ENGINE", None)
+    env.pop("AHFL_QUERY_LEGACY_PIPELINE", None)
+    env["AHFL_QUERY_ENGINE_TRACE"] = "1"
 
     def route_of(stderr: str) -> str | None:
         for line in stderr.splitlines():
@@ -205,14 +170,9 @@ def main() -> int:
         )
 
     compared = 0
-    engine_served = 0
-    legacy_served = 0
     analysis_reached = 0
     failures = 0
 
-    # One (label, argv) pair per command to compare. The file corpus is bare
-    # single files; the project corpus is package/workspace arrivals. Both
-    # halves assert the same invariants, so they share the loop.
     file_runs = [
         (f"{' '.join(command)} {path.relative_to(repo_root)}", [*command, str(path)])
         for path in corpus
@@ -222,59 +182,32 @@ def main() -> int:
     project_compared = len(project_runs)
 
     for label, args in file_runs + project_runs:
-        default = run(ahflc, args, default_env)
-        legacy = run(ahflc, args, legacy_env)
+        first = run(ahflc, args, env)
+        second = run(ahflc, args, env)
 
-        if default.returncode != legacy.returncode:
-            fail(f"{label}: exit {default.returncode} (default) != {legacy.returncode} (legacy)")
+        # Determinism: the query route must produce identical output across
+        # reruns in the same environment (the route line stripped).
+        if first.returncode != second.returncode:
+            fail(f"{label}: exit code differs across reruns")
+            failures += 1
+            continue
+        if first.stdout != second.stdout:
+            fail(f"{label}: stdout differs across reruns")
+            failures += 1
+            continue
+        if without_route(first.stderr) != without_route(second.stderr):
+            fail(f"{label}: stderr differs across reruns (besides the route line)")
             failures += 1
             continue
 
-        default_route = route_of(default.stderr)
-        legacy_route = route_of(legacy.stderr)
-
-        # Analysis-reached must agree: a parse error returns before the route
-        # line on both sides, so one side reaching analysis and the other not
-        # is a real divergence, not a fixture quirk.
-        if (default_route is None) != (legacy_route is None):
-            fail(
-                f"{label}: analysis reached on one route only "
-                f"(default={default_route!r}, legacy={legacy_route!r})"
-            )
-            failures += 1
-            continue
-
-        if default.stdout != legacy.stdout:
-            fail(f"{label}: stdout differs between routes")
-            failures += 1
-            continue
-
-        # stderr must match once the route line (present on both sides) is
-        # removed: a genuine diagnostic difference still fails here.
-        if without_route(default.stderr) != without_route(legacy.stderr):
-            fail(f"{label}: stderr differs between routes besides the route line")
-            failures += 1
-            continue
-
-        if default_route is not None:
-            # Analysis was reached. The DEFAULT run must have actually used the
-            # engine — a fallback to direct would make the gate vacuous — and
-            # the legacy-forced run must be on the direct pipeline; otherwise the
-            # escape hatch (and hence this differential anchor) is broken.
-            if default_route != "engine":
-                fail(f"{label}: default run did not engage the engine route ({default_route!r})")
-                failures += 1
-                continue
-            if legacy_route != "direct":
-                fail(
-                    f"{label}: legacy-forced run did not take the direct route "
-                    f"({legacy_route!r})"
-                )
+        route = route_of(first.stderr)
+        if route is not None:
+            # Analysis was reached: it MUST have gone through the query engine.
+            if route != "engine":
+                fail(f"{label}: analysis did not engage the engine route ({route!r})")
                 failures += 1
                 continue
             analysis_reached += 1
-            engine_served += 1
-            legacy_served += 1
         compared += 1
 
     if compared == 0:
@@ -283,17 +216,11 @@ def main() -> int:
     if analysis_reached == 0:
         fail("no run reached analysis (vacuous gate)")
         return 1
-    if engine_served != analysis_reached or legacy_served != analysis_reached:
-        fail(
-            f"route accounting broken: {analysis_reached} reached analysis, "
-            f"{engine_served} engine-served, {legacy_served} legacy-served"
-        )
-        return 1
 
     print(
-        f"query-engine default-route equivalence: {compared} runs "
+        f"query-engine default-route gate: {compared} runs "
         f"({file_compared} file + {project_compared} project), "
-        f"{analysis_reached} reached analysis engine-default vs legacy-direct"
+        f"{analysis_reached} reached analysis via the engine"
     )
     return 1 if failures else 0
 

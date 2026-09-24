@@ -95,8 +95,9 @@ ahflc verify-formal [--formal-backend <nuxmv|nusmv|spin|tlaplus>] [--model-check
 ```text
 ahfl-repl [--help]
 ahfl-dap [--help]
-ahfl-incremental [--help] <changed.ahfl>...
 ```
+
+> `ahfl-incremental` 已在 RFC 0027 P5(KR6.12)退役,见下文 [Incremental](#incremental) 一节。
 
 ## 选项
 
@@ -342,16 +343,29 @@ printf ':help\n:quit\n' | ahfl-repl
 
 ## Incremental
 
-`ahfl-incremental` 是当前 incremental compiler 的窄入口，接收一组 changed source paths，构建单层 dependency graph，运行 parse / resolve / typecheck / IR lowering，并输出模块状态和 cache stats。
+> **BREAKING CHANGE(RFC 0027 P5 / KR6.12):`ahfl-incremental` 入口已移除。**
+>
+> 下面的用法仅作为历史记录保留;该可执行文件不再构建或发布。增量编译现由主编译路径的
+> QueryEngine 原生提供:`ahflc check`(及 LSP)经查询图求值 parse → resolve → typecheck,
+> 编辑只失效依赖子图,不存在旁路的手工 dependency graph。其 RFC 0016 持久化 cache contract
+> 重锚为 QueryEngine 持久化层,代码位于 `src/tooling/cache/`(库名 `ahfl_tooling_cache`),
+> 仍被 LSP 的 opt-in typed-HIR 持久缓存复用;独立 daemon 与 changed-compile CLI 不再存在。
+
+`ahfl-incremental` 是历史上 incremental compiler 的窄入口,接收一组 changed source paths,
+构建单层 dependency graph,运行 parse / resolve / typecheck / IR lowering,并输出模块状态和
+cache stats。**该入口已随 RFC 0027 P5 删除**;等价能力(增量重算 + IR cache)由 QueryEngine
+原生提供。
+
+历史命令(不再可用):
 
 ```bash
 ahfl-incremental tests/golden/ir/ok_workflow_value_flow.ahfl
 ```
 
-当前边界：
+历史边界(已被 QueryEngine 取代):
 
-1. 入口使用进程内 `IrCache`，适合 smoke test 和 daemon-facing 原型验证，不提供跨进程持久缓存。
-2. 入口不会读取 PackageGraph manifest，也不会从 import graph 自动发现 transitive dependents；package-aware invalidation contract 仍是后续工作。
+1. 入口曾使用进程内 `IrCache`;现统一为 `src/tooling/cache/` 的 RFC 0016 持久化契约。
+2. 手工 dependency graph / daemon 已删除;package-aware 失效由查询图的 revision 失效原生覆盖。
 
 ## Profiling
 

@@ -263,7 +263,11 @@ CLI-level telemetry 不等于 workflow runtime evidence：
 |---|---|---|
 | `ahfl-repl` | `:type`、`:verify`、`:simulate` 的本地探索 | 不替代 package-aware runtime 调试 |
 | `ahfl-dap` | DAP handler 与 framing 入口 | 没有 capability breakpoint 或真实 runtime stepping 承诺 |
-| `ahfl-incremental` | 变更 source 的进程内 incremental 原型 | 非 persistent daemon、非完整 PackageGraph invalidation |
+
+> **历史入口移除(RFC 0027 P5 / KR6.12)**:`ahfl-incremental` 独立增量编译原型已退役。
+> 增量编译现在由主编译路径的 QueryEngine 原生提供(编辑只失效依赖子图);其 RFC 0016
+> 持久化 cache contract(secret-free / 确定性 / 索引式 key)重锚为 QueryEngine 持久化层,
+> 落在 `src/tooling/cache/`,仍由 LSP 的 opt-in typed-HIR 持久缓存使用。
 
 ## 诊断顺序与退出码
 

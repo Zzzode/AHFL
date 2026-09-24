@@ -159,7 +159,7 @@ IR（`ahfl.ir.v2`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系�
 | VS Code 扩展 | `tools/vscode/` | 扩展客户端、TextMate grammar、snippet |
 | REPL | `src/tooling/repl/`（`ahfl-repl`） | 交互式求值、`:simulate` 状态机步进 |
 | DAP | `src/tooling/dap/`（`ahfl-dap`） | 调试协议适配（runtime 深集成待补） |
-| Incremental | `src/tooling/incremental/`（`ahfl-incremental`） | 增量编译骨架 |
+| Query 持久化层 | `src/tooling/cache/` | RFC 0016 cache contract(RFC 0027 P5 重锚):secret-free / 确定性 / 索引式 key 的 typed-HIR 持久缓存 |
 | Formatter | `src/tooling/formatter/` | `ahflc fmt` / `fmt --check` |
 | Playground | `tools/playground/` | 浏览器端试验场（product path 未闭环） |
 

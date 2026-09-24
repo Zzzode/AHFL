@@ -9,7 +9,7 @@
 #include <string_view>
 #include <unordered_map>
 
-namespace ahfl::incremental {
+namespace ahfl::cache {
 
 // Schema version for the on-disk Typed HIR cache envelope (RFC 0016). Any
 // mismatch is a cache miss, so bumping this string invalidates every cache
@@ -157,13 +157,13 @@ class PersistentCache {
     std::unordered_map<std::string, IndexEntry> index_;
 };
 
-} // namespace ahfl::incremental
+} // namespace ahfl::cache
 
 namespace std {
 
-template <> struct hash<ahfl::incremental::CacheKey> {
+template <> struct hash<ahfl::cache::CacheKey> {
     [[nodiscard]] std::size_t
-    operator()(const ahfl::incremental::CacheKey &key) const noexcept {
+    operator()(const ahfl::cache::CacheKey &key) const noexcept {
         // FNV-1a over the four fields with length framing so distinct fields
         // cannot collide by concatenation.
         constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;

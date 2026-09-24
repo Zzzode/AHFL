@@ -5,7 +5,7 @@
 #include "tooling/lsp/server.hpp"
 
 #include "compiler/syntax/frontend/project.hpp"
-#include "tooling/incremental/cache_core.hpp"
+#include "tooling/cache/cache_core.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -28,7 +28,7 @@ namespace {
 
 using namespace ahfl::lsp;
 namespace project_discovery = ahfl::project_discovery;
-namespace incremental = ahfl::incremental;
+namespace cache = ahfl::cache;
 
 int test_count = 0;
 int pass_count = 0;
@@ -1432,9 +1432,9 @@ void test_persistent_cache_cold_start_serves_typed_program() {
 
     // The persistent cache directory now holds exactly one entry.
     const auto cache_dir =
-        cache_home / "ahfl" / incremental::project_root_hash(app_root);
+        cache_home / "ahfl" / cache::project_root_hash(app_root);
     {
-        incremental::PersistentCache cache(cache_dir);
+        cache::PersistentCache cache(cache_dir);
         check(cache.entry_count() == 1, "persistentCache.coldStart.entry_stored");
     }
 
@@ -1483,7 +1483,7 @@ void test_persistent_cache_invalidation_on_change() {
     });
 
     const auto cache_dir =
-        cache_home / "ahfl" / incremental::project_root_hash(app_root);
+        cache_home / "ahfl" / cache::project_root_hash(app_root);
 
     // First service: full analysis persists the typed HIR.
     AnalysisService analysis(store);
@@ -1497,7 +1497,7 @@ void test_persistent_cache_invalidation_on_change() {
               "persistentCache.invalidation.first_runs_full_analysis");
     }
     {
-        incremental::PersistentCache cache(cache_dir);
+        cache::PersistentCache cache(cache_dir);
         check(cache.entry_count() == 1, "persistentCache.invalidation.entry_stored");
     }
 
@@ -1511,7 +1511,7 @@ void test_persistent_cache_invalidation_on_change() {
     store.change(main_uri, 2, source_v2);
     analysis.invalidate_paths({main_path});
     {
-        incremental::PersistentCache cache(cache_dir);
+        cache::PersistentCache cache(cache_dir);
         check(cache.entry_count() == 0,
               "persistentCache.invalidation.entry_removed_after_change");
     }
@@ -1559,7 +1559,7 @@ void test_persistent_cache_corrupt_file_falls_back() {
     });
 
     const auto cache_dir =
-        cache_home / "ahfl" / incremental::project_root_hash(app_root);
+        cache_home / "ahfl" / cache::project_root_hash(app_root);
 
     // First service: full analysis persists the typed HIR.
     {
@@ -1573,7 +1573,7 @@ void test_persistent_cache_corrupt_file_falls_back() {
               "persistentCache.corrupt.first_runs_full_analysis");
     }
     {
-        incremental::PersistentCache cache(cache_dir);
+        cache::PersistentCache cache(cache_dir);
         check(cache.entry_count() == 1, "persistentCache.corrupt.entry_stored");
     }
 
@@ -2851,7 +2851,7 @@ void test_project_references_include_indexed_unopened_source() {
                 if (msg_symbol != symbols.end()) {
                     check(msg_symbol->name_space == ahfl::SymbolNamespace::Types,
                           "references.index_model.msg_symbol_namespace");
-                    const auto &semantic_symbols = snapshot->resolve_result.symbol_table.symbols();
+                    const auto &semantic_symbols = snapshot->resolve_result->symbol_table.symbols();
                     const auto semantic_msg =
                         std::find_if(semantic_symbols.begin(),
                                      semantic_symbols.end(),
@@ -5403,7 +5403,7 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
                 check(msg_symbol != symbols.end(),
                       "implementation.nominal_index.msg_symbol_fact_exists");
                 if (msg_symbol != symbols.end()) {
-                    const auto &semantic_symbols = snapshot->resolve_result.symbol_table.symbols();
+                    const auto &semantic_symbols = snapshot->resolve_result->symbol_table.symbols();
                     const auto semantic_msg =
                         std::find_if(semantic_symbols.begin(),
                                      semantic_symbols.end(),

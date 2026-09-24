@@ -1,4 +1,4 @@
-#include "tooling/incremental/cache_core.hpp"
+#include "tooling/cache/cache_core.hpp"
 
 #include "base/json/json_value.hpp"
 #include "base/support/atomic_file.hpp"
@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace ahfl::incremental {
+namespace ahfl::cache {
 
 namespace {
 
@@ -427,4 +427,4 @@ const fs::path &PersistentCache::cache_dir() const noexcept {
     return cache_dir_;
 }
 
-} // namespace ahfl::incremental
+} // namespace ahfl::cache

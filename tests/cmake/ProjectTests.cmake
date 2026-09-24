@@ -1548,6 +1548,12 @@ add_test(NAME ahfl.lsp.handler_all
     COMMAND $<TARGET_FILE:ahfl_tooling_lsp_handler_tests>
 )
 
+# RFC 0027 P4 (KR6.12): deterministic edit-sequence equivalence, pure
+# analysis-engine level (CI does not need a display server for this one).
+add_test(NAME ahfl.lsp.analysis_engine_edit_equiv
+    COMMAND $<TARGET_FILE:ahfl_tooling_lsp_analysis_edits_tests>
+)
+
 add_test(NAME ahfl.lsp.process_smoke
     COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/lsp_smoke.py" $<TARGET_FILE:ahfl-lsp>
 )
@@ -1734,12 +1740,8 @@ add_test(NAME ahfl.abi.compat_all
     COMMAND $<TARGET_FILE:ahfl_tooling_abi_tests>
 )
 
-add_test(NAME ahfl.incremental.incremental_all
-    COMMAND $<TARGET_FILE:ahfl_tooling_incremental_tests>
-)
-
-add_test(NAME ahfl.incremental.process_smoke
-    COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/incremental_smoke.py" $<TARGET_FILE:ahfl-incremental> "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+add_test(NAME ahfl.cache.cache_core_all
+    COMMAND $<TARGET_FILE:ahfl_tooling_cache_tests>
 )
 
 if(AHFL_ENABLE_BACKEND_INFRA)

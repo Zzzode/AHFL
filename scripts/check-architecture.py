@@ -56,7 +56,7 @@ STALE_PREFIXES = (
     "profiling/",
     "repl/",
     "telemetry/",
-    "incremental/",
+    "cache/",
     "testing/",
     "package/",
     "cli/",

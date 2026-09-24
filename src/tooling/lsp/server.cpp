@@ -297,14 +297,14 @@ symbol_selection_source_range(const Symbol &symbol, const LspSourceSnapshot &sou
 [[nodiscard]] std::optional<SymbolId> symbol_at(const LspAnalysisSnapshot &snapshot,
                                                 const LspSourceSnapshot &source,
                                                 std::size_t offset) {
-    for (const auto &reference : snapshot.resolve_result.references()) {
+    for (const auto &reference : snapshot.resolve_result->references()) {
         if (same_source(reference.source_id, source.source_id) &&
             contains(reference.range, offset)) {
             return reference.target;
         }
     }
 
-    for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
+    for (const auto &symbol : snapshot.resolve_result->symbol_table.symbols()) {
         if (!same_source(symbol.source_id, source.source_id)) {
             continue;
         }
@@ -1264,7 +1264,7 @@ local_binding_document_highlights(const LspAnalysisSnapshot &snapshot,
         return locations;
     }
 
-    const auto symbol = snapshot.resolve_result.symbol_table.get(*symbol_id);
+    const auto symbol = snapshot.resolve_result->symbol_table.get(*symbol_id);
     if (!symbol.has_value()) {
         return locations;
     }
@@ -1450,14 +1450,14 @@ serialize_location_or_array(const std::vector<Location> &locations) {
 [[nodiscard]] std::optional<Location> rename_location_at(const LspAnalysisSnapshot &snapshot,
                                                          const LspSourceSnapshot &source,
                                                          std::size_t offset) {
-    for (const auto &reference : snapshot.resolve_result.references()) {
+    for (const auto &reference : snapshot.resolve_result->references()) {
         if (same_source(reference.source_id, source.source_id) &&
             contains(reference.range, offset)) {
             return reference_location(snapshot, reference, source);
         }
     }
 
-    for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
+    for (const auto &symbol : snapshot.resolve_result->symbol_table.symbols()) {
         if (!same_source(symbol.source_id, source.source_id)) {
             continue;
         }
@@ -2089,7 +2089,7 @@ void push_symbol_completion(std::vector<CompletionItem> &items, const Symbol &sy
         return true;
     }
     return symbol.visibility == ast::Visibility::Public &&
-           snapshot.resolve_result.is_api_reachable(symbol.id);
+           snapshot.resolve_result->is_api_reachable(symbol.id);
 }
 
 [[nodiscard]] bool looks_like_type_position(const SourceFile &source, std::size_t offset) {
@@ -4187,7 +4187,7 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
         // a typed pattern, generic expression symbols would be noisy and can
         // offer symbols that are not valid constructors for this scrutinee.
     } else if (looks_like_type_position(*source->source, offset)) {
-        for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+        for (const auto &symbol : snapshot->resolve_result->symbol_table.symbols()) {
             if (!symbol_visible_for_completion(*snapshot, *source, symbol)) {
                 continue;
             }
@@ -4203,7 +4203,7 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
         for (const auto keyword : kExpressionKeywords) {
             push_keyword_completion(items, keyword);
         }
-        for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+        for (const auto &symbol : snapshot->resolve_result->symbol_table.symbols()) {
             if (!symbol_visible_for_completion(*snapshot, *source, symbol)) {
                 continue;
             }
@@ -4281,7 +4281,7 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
         return;
     }
 
-    const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+    const auto symbol = snapshot->resolve_result->symbol_table.get(*target);
     if (!symbol.has_value()) {
         send_null(transport_, req.id);
         return;
@@ -4352,7 +4352,7 @@ void LspServer::handle_type_definition(const JsonRpcRequest &req) {
         return;
     }
 
-    const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+    const auto symbol = snapshot->resolve_result->symbol_table.get(*target);
     if (!symbol.has_value() ||
         (symbol->get().kind != SymbolKind::Struct && symbol->get().kind != SymbolKind::Enum &&
          symbol->get().kind != SymbolKind::TypeAlias && symbol->get().kind != SymbolKind::Trait)) {
@@ -4397,7 +4397,7 @@ void LspServer::handle_implementation(const JsonRpcRequest &req) {
     const auto offset = offset_at(*source->source, position);
     std::vector<Location> locations;
     if (const auto target = symbol_at(*snapshot, *source, offset); target.has_value()) {
-        const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+        const auto symbol = snapshot->resolve_result->symbol_table.get(*target);
         if (symbol.has_value()) {
             locations = implementation_locations_for_symbol(*snapshot, *source, symbol->get());
         }
@@ -4485,7 +4485,7 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
         }
 
         if (include_declaration) {
-            const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+            const auto symbol = snapshot->resolve_result->symbol_table.get(*target);
             if (symbol.has_value()) {
                 auto location = indexed_symbol_location(*snapshot, symbol->get());
                 if (!location.has_value()) {
@@ -4498,7 +4498,7 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
         }
 
         bool used_workspace_index = false;
-        const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+        const auto symbol = snapshot->resolve_result->symbol_table.get(*target);
         if (symbol.has_value() && snapshot->workspace_index != nullptr) {
             const auto def = snapshot->workspace_def_for_symbol(symbol->get().id);
             if (def.has_value()) {
@@ -4522,7 +4522,7 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
         }
 
         if (!used_workspace_index) {
-            for (const auto &reference : snapshot->resolve_result.references()) {
+            for (const auto &reference : snapshot->resolve_result->references()) {
                 if (reference.target == *target) {
                     if (const auto location = reference_location(*snapshot, reference, *source);
                         location.has_value()) {
@@ -4655,13 +4655,13 @@ void LspServer::handle_rename(const JsonRpcRequest &req) {
         return;
     }
 
-    const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+    const auto symbol = snapshot->resolve_result->symbol_table.get(*target);
     if (!symbol.has_value()) {
         send_null(transport_, req.id);
         return;
     }
 
-    if (const auto conflict = snapshot->resolve_result.symbol_table.find_local(
+    if (const auto conflict = snapshot->resolve_result->symbol_table.find_local(
             symbol->get().name_space, new_name, symbol->get().module_name);
         conflict.has_value() && !(conflict->get().id == symbol->get().id)) {
         send_invalid_params(transport_, req.id, "rename would conflict with an existing symbol");
@@ -4676,7 +4676,7 @@ void LspServer::handle_rename(const JsonRpcRequest &req) {
             .new_text = new_name,
         });
     }
-    for (const auto &reference : snapshot->resolve_result.references()) {
+    for (const auto &reference : snapshot->resolve_result->references()) {
         if (reference.target == *target) {
             if (const auto location = reference_location(*snapshot, reference, *source);
                 location.has_value()) {
@@ -4814,7 +4814,7 @@ void LspServer::handle_document_symbol(const JsonRpcRequest &req) {
     }
 
     auto result = json::JsonValue::make_array();
-    for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+    for (const auto &symbol : snapshot->resolve_result->symbol_table.symbols()) {
         if (!same_source(symbol.source_id, source->source_id)) {
             continue;
         }
@@ -4888,7 +4888,7 @@ void LspServer::handle_workspace_symbol(const JsonRpcRequest &req) {
         if (fallback == nullptr) {
             continue;
         }
-        for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+        for (const auto &symbol : snapshot->resolve_result->symbol_table.symbols()) {
             if (!query.empty() && symbol.local_name.find(query) == std::string::npos &&
                 symbol.canonical_name.find(query) == std::string::npos) {
                 continue;
@@ -4997,7 +4997,7 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
 
     if (has_typecheck) {
         const auto &environment = snapshot->type_check_result->environment;
-        if (const auto symbol = snapshot->resolve_result.symbol_table.find_local(
+        if (const auto symbol = snapshot->resolve_result->symbol_table.find_local(
                 SymbolNamespace::Capabilities, callable_name);
             symbol.has_value()) {
             const auto capability = environment.get_capability(symbol->get().id);
@@ -5011,7 +5011,7 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
         }
 
         if (help.signatures.empty()) {
-            if (const auto symbol = snapshot->resolve_result.symbol_table.find_local(
+            if (const auto symbol = snapshot->resolve_result->symbol_table.find_local(
                     SymbolNamespace::Predicates, callable_name);
                 symbol.has_value()) {
                 const auto predicate = environment.get_predicate(symbol->get().id);

@@ -921,13 +921,13 @@ paths_from_scope_kinds(const NavigationScopeKindMap &scope_kinds) {
             return true;
         }
     }
-    if (snapshot.project_result != nullptr) {
+    if (snapshot.project_graph != nullptr) {
         // Project-aware snapshots carry their own import graph. Invalidate only
         // when a changed source unit is in the snapshot's transitive import
         // closure; the workspace index spans the whole workspace and must not
         // be used here (it would invalidate every snapshot on every change).
         const auto closure =
-            transitive_importer_closure(snapshot.project_result->graph, path_keys);
+            transitive_importer_closure(*snapshot.project_graph, path_keys);
         for (const auto &source : snapshot.sources) {
             if (source.source_id.has_value() && closure.contains(*source.source_id)) {
                 return true;
@@ -1361,12 +1361,12 @@ void index_source(LspAnalysisSnapshot &snapshot, LspSourceSnapshot source) {
 
 void build_workspace_def_remap(LspAnalysisSnapshot &snapshot) {
     snapshot.workspace_def_by_symbol.clear();
-    if (snapshot.workspace_index == nullptr) {
+    if (snapshot.workspace_index == nullptr || snapshot.resolve_result == nullptr) {
         return;
     }
 
     const auto &index_symbols = snapshot.workspace_index->symbols();
-    for (const auto &semantic_symbol : snapshot.resolve_result.symbol_table.symbols()) {
+    for (const auto &semantic_symbol : snapshot.resolve_result->symbol_table.symbols()) {
         if (!semantic_symbol.source_id.has_value()) {
             continue;
         }
@@ -1422,7 +1422,7 @@ std::optional<DefId> LspAnalysisSnapshot::workspace_def_for_symbol(SymbolId symb
 }
 
 const TypedProgram *LspAnalysisSnapshot::typed_program() const noexcept {
-    return type_check_result ? &type_check_result->typed_program : nullptr;
+    return type_check_result != nullptr ? &type_check_result->typed_program : nullptr;
 }
 
 std::vector<LspDiagnostic> LspAnalysisSnapshot::diagnostics_for_uri(std::string_view uri) const {
@@ -1432,21 +1432,23 @@ std::vector<LspDiagnostic> LspAnalysisSnapshot::diagnostics_for_uri(std::string_
         diagnostics.insert(
             diagnostics.end(), project_diagnostics.begin(), project_diagnostics.end());
     }
-    if (project_result) {
+    if (project_parse_diagnostics != nullptr) {
         collect_diagnostics_for_uri(
-            diagnostics, project_result->diagnostics, *this, uri, "parse.diagnostic");
+            diagnostics, *project_parse_diagnostics, *this, uri, "parse.diagnostic");
     }
-    if (parse_result) {
+    if (parse_result != nullptr) {
         collect_diagnostics_for_uri(
             diagnostics, parse_result->diagnostics, *this, uri, "parse.diagnostic");
     }
-    collect_diagnostics_for_uri(
-        diagnostics, resolve_result.diagnostics, *this, uri, "resolve.diagnostic");
-    if (type_check_result) {
+    if (resolve_result != nullptr) {
+        collect_diagnostics_for_uri(
+            diagnostics, resolve_result->diagnostics, *this, uri, "resolve.diagnostic");
+    }
+    if (type_check_result != nullptr) {
         collect_diagnostics_for_uri(
             diagnostics, type_check_result->diagnostics, *this, uri, "typecheck.diagnostic");
     }
-    if (validation_result) {
+    if (validation_result.has_value()) {
         collect_diagnostics_for_uri(
             diagnostics, validation_result->diagnostics, *this, uri, "validation.diagnostic");
     }
@@ -1454,7 +1456,26 @@ std::vector<LspDiagnostic> LspAnalysisSnapshot::diagnostics_for_uri(std::string_
     return diagnostics;
 }
 
-AnalysisService::AnalysisService(const DocumentStore &store) : store_(store) {}
+AnalysisService::AnalysisService(const DocumentStore &store)
+    : store_(store), engine_(std::make_unique<query::FrontendQueries>()) {}
+
+query::FileId AnalysisService::file_slot_for_uri(const std::string &uri) {
+    if (const auto found = file_slots_.find(uri); found != file_slots_.end()) {
+        return found->second;
+    }
+    const query::FileId slot{next_file_slot_++};
+    file_slots_.emplace(uri, slot);
+    return slot;
+}
+
+query::ProjectId AnalysisService::project_slot_for_uri(const std::string &uri) {
+    if (const auto found = project_slots_.find(uri); found != project_slots_.end()) {
+        return found->second;
+    }
+    const query::ProjectId slot{next_project_slot_++};
+    project_slots_.emplace(uri, slot);
+    return slot;
+}
 
 void AnalysisService::set_workspace_folders(std::vector<std::filesystem::path> roots) {
     workspace_folders_.clear();
@@ -1477,6 +1498,15 @@ void AnalysisService::invalidate_all() {
     sysroot_primitive_index_cache_.clear();
     sysroot_index_cache_.clear();
     workspace_root_index_cache_.clear();
+    // Drop every memoized query result and start from a fresh workspace
+    // engine: a workspace-folder or toolchain change alters project inputs in
+    // ways a per-slot input reset cannot express. Snapshots are already gone
+    // (cache_.clear), so no borrow outlives this reconstruction.
+    file_slots_.clear();
+    project_slots_.clear();
+    next_file_slot_ = 0;
+    next_project_slot_ = 0;
+    engine_ = std::make_unique<query::FrontendQueries>();
     invalidate_persistent_all();
 }
 
@@ -1505,12 +1535,12 @@ void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> 
     if (persistent_cache_enabled_) {
         for (const auto &[uri, snapshot] : cache_) {
             (void)uri;
-            if (snapshot == nullptr || snapshot->project_result == nullptr) {
+            if (snapshot == nullptr || snapshot->project_graph == nullptr) {
                 continue;
             }
             const auto closure =
-                transitive_importer_closure(snapshot->project_result->graph, path_keys);
-            for (const auto &source : snapshot->project_result->graph.sources) {
+                transitive_importer_closure(*snapshot->project_graph, path_keys);
+            for (const auto &source : snapshot->project_graph->sources) {
                 if (closure.contains(source.id)) {
                     persistent_paths.insert(normalized_path_key(source.path));
                 }
@@ -1559,7 +1589,7 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
     // Resolve the persistent cache target (unified CacheKey + project root)
     // once. Nullopt when the persistent cache is disabled, the file is
     // detached (no project manifest), or the document is unavailable.
-    std::optional<incremental::CacheKey> persistent_key;
+    std::optional<cache::CacheKey> persistent_key;
     std::filesystem::path persistent_project_root;
     if (persistent_cache_enabled_) {
         persistent_key = persistent_cache_key_for_uri(uri, toolchain_cache_key);
@@ -1589,7 +1619,7 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
         if (auto *persistent = persistent_cache_for_project(persistent_project_root);
             persistent != nullptr) {
             auto lookup = persistent->lookup(*persistent_key);
-            if (lookup.kind == incremental::PersistentCacheHitKind::Hit &&
+            if (lookup.kind == cache::PersistentCacheHitKind::Hit &&
                 lookup.entry.has_value()) {
                 if (auto cached = build_snapshot_from_persistent(
                         uri, *toolchain_cache_key, *lookup.entry);
@@ -1896,6 +1926,13 @@ AnalysisService::build_snapshot(const std::string &uri,
     }
 
     auto snapshot = std::make_unique<LspAnalysisSnapshot>();
+    auto &engine = *engine_;
+
+    // When the stage chain short-circuited before resolve, keep the old
+    // by-value member's "empty symbol table" contract rather than null: many
+    // handlers iterate the table unconditionally.
+    snapshot->resolve_result = &snapshot->empty_resolve_result;
+
     snapshot->requested_uri = uri;
     snapshot->document_version = document->version;
     snapshot->document_revision = *revision;
@@ -1905,9 +1942,6 @@ AnalysisService::build_snapshot(const std::string &uri,
 
     const auto document_path = path_from_uri(uri);
 
-    Frontend frontend;
-    Resolver resolver;
-    TypeChecker type_checker;
     Validator validator;
 
     if (document_path.has_value()) {
@@ -1961,15 +1995,41 @@ AnalysisService::build_snapshot(const std::string &uri,
                     },
                 .previous_index = previous_index,
             };
-            auto project_result = ahfl::parse_project(frontend, project_input);
-            snapshot->project_result =
-                std::make_unique<ProjectParseResult>(std::move(project_result));
-            seed_source_cache_from_graph(index_input.project, snapshot->project_result->graph);
-            auto workspace_index = build_lsp_workspace_index(frontend, std::move(index_input));
+
+            // Evaluate parse_project through the workspace engine. The
+            // semantic project input is frozen (the one filesystem read)
+            // inside set_project_input and parse_project over the frozen model
+            // is a pure query; an unchanged model is a memo no-op.
+            // Semantic project inputs carry the requesting file as their
+            // entry point, so two open files of one package can legitimately
+            // produce different resolved models. Project slots are therefore
+            // keyed by URI (like file slots), not by package identity: merging
+            // them could replace one live snapshot's graph with another entry's
+            // and hand out a superseded graph through its stale borrow.
+            const query::ProjectId project_slot = project_slot_for_uri(uri);
+            snapshot->project_slot = project_slot;
+            engine.set_project_input(project_slot, project_input);
+            if (auto parsed = engine.parse_project(project_slot); !parsed.has_value()) {
+                return nullptr; // a cycle cannot occur in this acyclic graph; fail closed
+            }
+            snapshot->project_graph = engine.project_graph(project_slot);
+            snapshot->project_parse_diagnostics = engine.project_parse_diagnostics(project_slot);
+            if (snapshot->project_graph == nullptr ||
+                snapshot->project_parse_diagnostics == nullptr) {
+                return nullptr;
+            }
+
+            seed_source_cache_from_graph(index_input.project, *snapshot->project_graph);
+            // The workspace index runs its own parse over a deliberately
+            // separate (index-shaped) project input; its Frontend is local to
+            // build_lsp_workspace_index and is not part of the semantic graph.
+            Frontend index_frontend;
+            auto workspace_index = build_lsp_workspace_index(index_frontend,
+                                                             std::move(index_input));
             snapshot->workspace_index =
                 std::make_unique<LspWorkspaceIndex>(std::move(workspace_index));
 
-            for (const auto &source : snapshot->project_result->graph.sources) {
+            for (const auto &source : snapshot->project_graph->sources) {
                 index_source(*snapshot,
                              LspSourceSnapshot{
                                  .uri = uri_from_path(source.path),
@@ -1980,20 +2040,24 @@ AnalysisService::build_snapshot(const std::string &uri,
                              });
             }
 
-            if (!snapshot->project_result->has_errors()) {
-                snapshot->resolve_result = resolver.resolve(snapshot->project_result->graph);
+            if (!snapshot->project_parse_diagnostics->has_error()) {
+                if (auto resolved = engine.project_resolve(project_slot); resolved.has_value()) {
+                    snapshot->resolve_result = engine.project_resolve_result(project_slot);
+                }
                 build_workspace_def_remap(*snapshot);
-                if (!snapshot->resolve_result.has_errors()) {
-                    auto type_result = type_checker.check(snapshot->project_result->graph,
-                                                          snapshot->resolve_result);
-                    snapshot->type_check_result =
-                        std::make_unique<TypeCheckResult>(std::move(type_result));
-                    if (!snapshot->type_check_result->has_errors()) {
-                        auto validation_result = validator.validate(snapshot->project_result->graph,
-                                                                    snapshot->resolve_result,
-                                                                    *snapshot->type_check_result);
+                if (snapshot->resolve_result != nullptr &&
+                    !snapshot->resolve_result->has_errors()) {
+                    if (auto checked = engine.project_typecheck(project_slot);
+                        checked.has_value()) {
+                        snapshot->type_check_result =
+                            engine.project_typecheck_result(project_slot);
+                    }
+                    if (snapshot->type_check_result != nullptr &&
+                        !snapshot->type_check_result->has_errors()) {
                         snapshot->validation_result =
-                            std::make_unique<ValidationResult>(std::move(validation_result));
+                            validator.validate(*snapshot->project_graph,
+                                               *snapshot->resolve_result,
+                                               *snapshot->type_check_result);
                     }
                 }
             }
@@ -2006,8 +2070,16 @@ AnalysisService::build_snapshot(const std::string &uri,
 
         if (project_context.project_manifest_found || project_context.has_errors()) {
             snapshot->project_aware = project_context.project_manifest_found;
-            auto parse_result = frontend.parse_text(document->uri, document->text);
-            snapshot->parse_result = std::make_unique<ParseResult>(std::move(parse_result));
+            const query::FileId file_slot = file_slot_for_uri(uri);
+            snapshot->file_slot = file_slot;
+            engine.set_source_text(file_slot, document->uri, document->text);
+            if (auto parsed = engine.parse(file_slot); !parsed.has_value()) {
+                return nullptr;
+            }
+            snapshot->parse_result = engine.parse_result(file_slot);
+            if (snapshot->parse_result == nullptr) {
+                return nullptr;
+            }
             index_source(*snapshot,
                          LspSourceSnapshot{
                              .uri = uri,
@@ -2024,8 +2096,17 @@ AnalysisService::build_snapshot(const std::string &uri,
         }
     }
 
-    auto parse_result = frontend.parse_text(document->uri, document->text);
-    snapshot->parse_result = std::make_unique<ParseResult>(std::move(parse_result));
+    const query::FileId file_slot = file_slot_for_uri(uri);
+    const query::ModuleId module_slot{file_slot.index()};
+    snapshot->file_slot = file_slot;
+    engine.set_source_text(file_slot, document->uri, document->text);
+    if (auto parsed = engine.parse(file_slot); !parsed.has_value()) {
+        return nullptr;
+    }
+    snapshot->parse_result = engine.parse_result(file_slot);
+    if (snapshot->parse_result == nullptr) {
+        return nullptr;
+    }
     index_source(*snapshot,
                  LspSourceSnapshot{
                      .uri = uri,
@@ -2042,18 +2123,23 @@ AnalysisService::build_snapshot(const std::string &uri,
             *snapshot, uri, primitive_index, snapshot->toolchain_cache_key.has_value());
     }
 
+    // The semantic stages are memoized queries; the borrow accessors hand back
+    // the cached stage results (nullptr when the chain short-circuited),
+    // preserving the pipeline's parse -> resolve -> typecheck short-circuit.
     if (!snapshot->parse_result->has_errors() && snapshot->parse_result->program) {
-        snapshot->resolve_result = resolver.resolve(*snapshot->parse_result->program);
-        if (!snapshot->resolve_result.has_errors()) {
-            auto type_result =
-                type_checker.check(*snapshot->parse_result->program, snapshot->resolve_result);
-            snapshot->type_check_result = std::make_unique<TypeCheckResult>(std::move(type_result));
-            if (!snapshot->type_check_result->has_errors()) {
-                auto validation_result = validator.validate(*snapshot->parse_result->program,
-                                                            snapshot->resolve_result,
-                                                            *snapshot->type_check_result);
+        if (auto resolved = engine.resolve(module_slot); resolved.has_value()) {
+            snapshot->resolve_result = engine.resolve_result(module_slot);
+        }
+        if (snapshot->resolve_result != nullptr && !snapshot->resolve_result->has_errors()) {
+            if (auto checked = engine.typecheck(module_slot); checked.has_value()) {
+                snapshot->type_check_result = engine.typecheck_result(module_slot);
+            }
+            if (snapshot->type_check_result != nullptr &&
+                !snapshot->type_check_result->has_errors()) {
                 snapshot->validation_result =
-                    std::make_unique<ValidationResult>(std::move(validation_result));
+                    validator.validate(*snapshot->parse_result->program,
+                                       *snapshot->resolve_result,
+                                       *snapshot->type_check_result);
             }
         }
     }
@@ -2073,7 +2159,7 @@ void AnalysisService::set_persistent_cache_enabled(bool enabled) {
     }
 }
 
-std::optional<incremental::CacheKey>
+std::optional<cache::CacheKey>
 AnalysisService::persistent_cache_key_for_uri(
     const std::string &uri,
     const std::optional<LspToolchainCacheKey> &toolchain_key) const {
@@ -2097,17 +2183,17 @@ AnalysisService::persistent_cache_key_for_uri(
     const auto relative =
         std::filesystem::relative(*document_path, project_root, error);
 
-    incremental::CacheKey key;
-    key.project_root_hash = incremental::project_root_hash(project_root);
+    cache::CacheKey key;
+    key.project_root_hash = cache::project_root_hash(project_root);
     key.source_path = error ? document_path->generic_string() : relative.generic_string();
     // Use the shared FNV-1a content hash (matches the standalone compiler and
     // IrCache) so cache identity is consistent across tooling.
-    key.content_hash = incremental::fnv1a64(document->text);
-    key.toolchain_fingerprint = incremental::default_toolchain_fingerprint();
+    key.content_hash = cache::fnv1a64(document->text);
+    key.toolchain_fingerprint = cache::default_toolchain_fingerprint();
     return key;
 }
 
-incremental::PersistentCache *
+cache::PersistentCache *
 AnalysisService::persistent_cache_for_project(const std::filesystem::path &project_root) {
     const auto root_key = normalized_path_key(project_root);
     if (const auto existing = persistent_caches_.find(root_key);
@@ -2115,8 +2201,8 @@ AnalysisService::persistent_cache_for_project(const std::filesystem::path &proje
         return existing->second.get();
     }
     const auto cache_dir =
-        default_persistent_cache_root() / incremental::project_root_hash(project_root);
-    auto cache = std::make_unique<incremental::PersistentCache>(cache_dir);
+        default_persistent_cache_root() / cache::project_root_hash(project_root);
+    auto cache = std::make_unique<cache::PersistentCache>(cache_dir);
     auto *ptr = cache.get();
     persistent_caches_.emplace(root_key, std::move(cache));
     return ptr;
@@ -2126,7 +2212,7 @@ std::unique_ptr<LspAnalysisSnapshot>
 AnalysisService::build_snapshot_from_persistent(
     const std::string &uri,
     const LspToolchainCacheKey &toolchain_key,
-    const incremental::PersistentCacheEntry &entry) {
+    const cache::PersistentCacheEntry &entry) {
     const auto *document = store_.get(uri);
     const auto revision = store_.revision(uri);
     const auto hash = store_.content_hash(uri);
@@ -2148,13 +2234,23 @@ AnalysisService::build_snapshot_from_persistent(
         return nullptr;
     }
 
-    // Parse the document to anchor source ranges and populate the source
-    // snapshot. Parse is cheap; the expensive resolve/typecheck phases are
-    // skipped because the typed program is loaded from the persistent cache.
-    Frontend frontend;
-    auto parse_result = frontend.parse_text(document->uri, document->text);
-
+    // Parse the document through the workspace engine to anchor source ranges
+    // and populate the source snapshot. Parse is cheap; the expensive
+    // resolve/typecheck phases are skipped because the typed program is loaded
+    // from the persistent cache.
     auto snapshot = std::make_unique<LspAnalysisSnapshot>();
+    const query::FileId file_slot = file_slot_for_uri(uri);
+    snapshot->file_slot = file_slot;
+    engine_->set_source_text(file_slot, document->uri, document->text);
+    if (auto parsed = engine_->parse(file_slot); !parsed.has_value()) {
+        return nullptr;
+    }
+    snapshot->parse_result = engine_->parse_result(file_slot);
+    if (snapshot->parse_result == nullptr) {
+        return nullptr;
+    }
+    snapshot->resolve_result = &snapshot->empty_resolve_result;
+
     snapshot->requested_uri = uri;
     snapshot->document_version = document->version;
     snapshot->document_revision = *revision;
@@ -2163,7 +2259,6 @@ AnalysisService::build_snapshot_from_persistent(
     snapshot->toolchain_cache_key = toolchain_key;
     snapshot->analysis_mode = analysis_mode_from_name(toolchain_key.analysis_mode);
     snapshot->project_aware = true;
-    snapshot->parse_result = std::make_unique<ParseResult>(std::move(parse_result));
 
     index_source(*snapshot,
                  LspSourceSnapshot{
@@ -2177,9 +2272,10 @@ AnalysisService::build_snapshot_from_persistent(
     // Wrap the deserialized typed program in a TypeCheckResult. The
     // environment is default-constructed (not serializable in the current
     // cache envelope); environment-dependent features require a full rebuild.
-    auto type_check_result = std::make_unique<TypeCheckResult>();
-    type_check_result->typed_program = std::move(*loaded.program);
-    snapshot->type_check_result = std::move(type_check_result);
+    auto cold_type_check_result = std::make_unique<TypeCheckResult>();
+    cold_type_check_result->typed_program = std::move(*loaded.program);
+    snapshot->type_check_result = cold_type_check_result.get();
+    snapshot->cold_type_check_result = std::move(cold_type_check_result);
 
     snapshot->open_document_overlay_revision_set =
         open_document_overlay_revision_set_for_snapshot(*snapshot);
@@ -2188,7 +2284,7 @@ AnalysisService::build_snapshot_from_persistent(
 
 void AnalysisService::persist_typed_program(
     const LspAnalysisSnapshot &snapshot,
-    const incremental::CacheKey &key,
+    const cache::CacheKey &key,
     const std::filesystem::path &project_root) {
     const auto *typed_program = snapshot.typed_program();
     if (typed_program == nullptr) {
@@ -2202,7 +2298,7 @@ void AnalysisService::persist_typed_program(
         .source_content_hash = std::to_string(key.content_hash),
         .resolver_snapshot_version = std::string{},
     };
-    incremental::PersistentCacheEntry entry;
+    cache::PersistentCacheEntry entry;
     entry.key = key;
     entry.source_graph_revision = metadata.source_graph_revision;
     // resolver_snapshot_version: canonical ResolveResult hashing is a

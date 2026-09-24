@@ -294,7 +294,7 @@ void add_state_facts(HoverPayload &payload, const AgentTypeInfo &agent) {
     add_symbol_identity(payload, symbol);
 
     const auto *typed = snapshot.typed_program();
-    const auto *type_result = snapshot.type_check_result.get();
+    const auto *type_result = snapshot.type_check_result;
     const auto *environment = type_result != nullptr ? &type_result->environment : nullptr;
 
     switch (symbol.kind) {
@@ -416,7 +416,7 @@ void add_state_facts(HoverPayload &payload, const AgentTypeInfo &agent) {
                 add_primary_fact(
                     payload,
                     "Effect",
-                    describe_effect_fact_line(info->get().effect, snapshot.resolve_result));
+                    describe_effect_fact_line(info->get().effect, *snapshot.resolve_result));
             }
         }
         if (payload.signature.empty()) {
@@ -444,7 +444,7 @@ void add_state_facts(HoverPayload &payload, const AgentTypeInfo &agent) {
                     std::string joined;
                     const char *sep = "";
                     for (const auto super_id : trait.super_traits) {
-                        const auto name = capability_display_name(snapshot.resolve_result, super_id);
+                        const auto name = capability_display_name(*snapshot.resolve_result, super_id);
                         if (name.empty()) {
                             continue;
                         }
@@ -484,7 +484,7 @@ schema_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &target, b
     }
 
     const auto &environment = snapshot.type_check_result->environment;
-    const auto owner_symbol = snapshot.resolve_result.symbol_table.get(*target.owner_symbol_id);
+    const auto owner_symbol = snapshot.resolve_result->symbol_table.get(*target.owner_symbol_id);
     const std::string owner_name =
         owner_symbol.has_value() ? symbol_display_name(owner_symbol->get()) : std::string{};
 
@@ -671,7 +671,7 @@ param_payload(const HoverTarget &target, const CallableInfo &callable, std::stri
 
     auto payload = base_payload(target, std::move(summary));
     payload.signature = "state " + target.local_name;
-    const auto owner_symbol = snapshot.resolve_result.symbol_table.get(*target.owner_symbol_id);
+    const auto owner_symbol = snapshot.resolve_result->symbol_table.get(*target.owner_symbol_id);
     const std::string owner_name = owner_symbol.has_value()
                                        ? symbol_display_name(owner_symbol->get())
                                        : info->get().canonical_name;
@@ -726,7 +726,7 @@ agent_transition_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget 
 
     auto payload = base_payload(target, "agent transition");
     payload.signature = "transition " + target.declared_spelling;
-    const auto owner_symbol = snapshot.resolve_result.symbol_table.get(*target.owner_symbol_id);
+    const auto owner_symbol = snapshot.resolve_result->symbol_table.get(*target.owner_symbol_id);
     const std::string owner_name = owner_symbol.has_value()
                                        ? symbol_display_name(owner_symbol->get())
                                        : info->get().canonical_name;
@@ -767,7 +767,7 @@ agent_transition_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget 
             }
             add_primary_fact(payload, "After", after);
         }
-        if (const auto symbol = snapshot.resolve_result.symbol_table.get(node.target_symbol);
+        if (const auto symbol = snapshot.resolve_result->symbol_table.get(node.target_symbol);
             symbol.has_value()) {
             payload.canonical_name = symbol->get().canonical_name;
             add_primary_fact(payload, "Agent", inline_code(symbol_display_name(symbol->get())));
@@ -785,7 +785,7 @@ workflow_temporal_clause_payload(const LspAnalysisSnapshot &snapshot, const Hove
     payload.signature = target.local_name + ": " + target.declared_spelling;
 
     if (target.owner_symbol_id.has_value()) {
-        if (const auto symbol = snapshot.resolve_result.symbol_table.get(*target.owner_symbol_id);
+        if (const auto symbol = snapshot.resolve_result->symbol_table.get(*target.owner_symbol_id);
             symbol.has_value()) {
             payload.canonical_name = symbol->get().canonical_name + "." + target.local_name;
             payload.module_name = symbol->get().module_name;
@@ -825,7 +825,7 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
         add_secondary_fact(payload, "", expr.semantic_name);
     }
     if (expr.resolved_symbol.has_value()) {
-        if (const auto symbol = snapshot.resolve_result.symbol_table.get(*expr.resolved_symbol);
+        if (const auto symbol = snapshot.resolve_result->symbol_table.get(*expr.resolved_symbol);
             symbol.has_value()) {
             payload.canonical_name = symbol->get().canonical_name;
         }
@@ -862,7 +862,7 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
     case HoverTargetKind::ConstReference:
     case HoverTargetKind::CallableReference:
         if (target.symbol_id.has_value()) {
-            if (const auto symbol = snapshot.resolve_result.symbol_table.get(*target.symbol_id);
+            if (const auto symbol = snapshot.resolve_result->symbol_table.get(*target.symbol_id);
                 symbol.has_value()) {
                 return symbol_payload(snapshot, target, symbol->get());
             }
@@ -1032,7 +1032,7 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
             add_primary_fact(payload, "evaluates to", target.local_name);
         }
         if (target.symbol_id.has_value()) {
-            if (const auto sym = snapshot.resolve_result.symbol_table.get(
+            if (const auto sym = snapshot.resolve_result->symbol_table.get(
                     *target.symbol_id);
                 sym.has_value()) {
                 payload.canonical_name = sym->get().canonical_name;
@@ -1071,7 +1071,7 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
             }
         }
         if (target.symbol_id.has_value()) {
-            if (const auto sym = snapshot.resolve_result.symbol_table.get(
+            if (const auto sym = snapshot.resolve_result->symbol_table.get(
                     *target.symbol_id);
                 sym.has_value() && !target.role.empty()) {
                 payload.canonical_name = sym->get().canonical_name;
