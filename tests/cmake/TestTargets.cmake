@@ -734,6 +734,26 @@ target_compile_definitions(ahfl_compiler_query_tests
 )
 ahfl_apply_project_warnings(ahfl_compiler_query_tests)
 
+# RFC 0027 P2 (KR6.11): hir(file) derived query + the query-vs-direct
+# equivalence guard over the golden corpus. hir is a derived view over the
+# typecheck memo (AHFL has no standalone HIR stage); the guard independently
+# re-derives the direct TypedProgram and exercises the O(1) hir_expr accessor
+# LSP will read. ahfl_compiler_query publicly links ahfl_compiler_semantics,
+# which supplies serialize_typed_program_json and the TypedProgram store.
+add_executable(ahfl_compiler_hir_query_tests
+    unit/compiler/query/hir_query_equiv.cpp
+)
+target_link_libraries(ahfl_compiler_hir_query_tests
+    PRIVATE
+        ahfl_compiler_query
+        doctest
+)
+target_compile_definitions(ahfl_compiler_hir_query_tests
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+ahfl_apply_project_warnings(ahfl_compiler_hir_query_tests)
+
 # RFC 0027 P3 (KR6.11-S4): resolve / typecheck / type_of derived queries + the
 # query-vs-direct equivalence guard over the golden corpus, including the IR JSON
 # the CLI's golden fleet feeds from. ahfl_compiler_query publicly links

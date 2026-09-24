@@ -1392,6 +1392,13 @@ add_test(NAME ahfl.query.frontend_equiv_all
     COMMAND $<TARGET_FILE:ahfl_compiler_frontend_queries_tests>
 )
 
+# RFC 0027 P2 (KR6.11): hir(file) derived query (a typed-program view over
+# typecheck) with the query-vs-direct equivalence guard over the golden corpus,
+# including the O(1) hir_expr accessor surface LSP migrates onto in KR6.12.
+add_test(NAME ahfl.query.hir_equiv
+    COMMAND $<TARGET_FILE:ahfl_compiler_hir_query_tests>
+)
+
 # RFC 0027 P3 (KR6.11-S4C): the query engine is the DEFAULT CLI route. Runs
 # `ahflc check` twice per bare-file corpus source and `check` / `emit ir-json`
 # per package fixture (default environment vs AHFL_QUERY_LEGACY_PIPELINE=1) and

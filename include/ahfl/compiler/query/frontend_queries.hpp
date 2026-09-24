@@ -37,7 +37,8 @@ struct ProjectParseResult;
 //   parse(FileId)        -> ParseSnapshot     (derived)
 //   resolve(ModuleId)    -> ResolveSnapshot   (derived; reads parse, caches ResolveResult)
 //   typecheck(ModuleId)  -> TypecheckSnapshot (derived; reads resolve, caches TypeCheckResult)
-//   type_of(ModuleId, node_id, source_id)     (derived VIEW over the typecheck memo)
+//   hir(FileId)          -> HirSnapshot       (derived view over typecheck; the typed HIR)
+//   type_of(ModuleId, node_id, source_id)     (derived VIEW reading through hir)
 //
 // Identity is index-based (CLAUDE.md Principle 2): a FileId / ModuleId is a
 // numeric slot index, never a path string. In the file-scoped frontend graph one
@@ -154,6 +155,33 @@ struct TypecheckSnapshot {
 [[nodiscard]] ResolveSnapshot snapshot_resolve_result(const ResolveResult &result, bool ran);
 [[nodiscard]] TypecheckSnapshot snapshot_typecheck_result(const TypeCheckResult &result, bool ran);
 
+// Value identity of `hir(file)`: the typed HIR (the type checker's TypedProgram
+// — there is no separate HIR stage in AHFL) projected through the one canonical
+// `serialize_typed_program_json`, plus the run flag (false when the parse/resolve
+// chain short-circuited typecheck and no typed program exists). hir is a
+// *derived view* over typecheck: it recomputes nothing the typecheck query does
+// not already own, but it is a distinct node on the query graph (its own family,
+// memo and revision edge) because the RFC names `hir(file)` as the node LSP
+// hover/completion read, and KR6.12 migrates those handlers onto it. Its
+// snapshot deliberately omits diagnostics: the typed program is the artifact,
+// and diagnostics stay the identity of `typecheck(module)`, so hir cannot
+// green-prove a typed program across a diagnostics-only change (the edge through
+// the typecheck memo invalidates it either way).
+struct HirSnapshot {
+    std::string typed_program_json;
+    bool ran = false;
+
+    [[nodiscard]] friend bool operator==(const HirSnapshot &, const HirSnapshot &) noexcept =
+        default;
+};
+
+// Canonical snapshot of hir: the single *production* definition of the
+// hir(file) identity. The query body routes through it (and only it); the
+// equivalence guard re-derives the same projection independently so a regression
+// inside this definition is caught rather than reproduced — do not route the
+// guard through it.
+[[nodiscard]] HirSnapshot snapshot_hir(const TypeCheckResult &result, bool ran);
+
 // Canonical textual projection of a ResolveResult: symbols, references, imports,
 // public aliases and reachability, each in its store's order.
 //
@@ -179,15 +207,15 @@ void dump_resolve_outline(const ResolveResult &result, std::ostream &out);
 // carries no record for the requested AST node id (e.g. the node is not an
 // expression, or the stage chain short-circuited); `type` is then null.
 //
-// This view is a thin read over the *memoized* typecheck result: it does not
+// This view is a thin read through the *memoized* `hir(file)` node: it does not
 // register a family of its own, because a per-expression query would need a
-// (module, node_id) key registry whose only purpose would be to re-read a table
-// the typecheck memo already holds. The brief's `type_of(module, node_id,
-// source_id)` therefore resolves to: bring the typecheck memo up to date, then
-// look the node up through `TypedProgram::find_expr` (the existing reverse
-// index). Repeated reads are memo hits at the typecheck slot; no per-expression
-// recompute is promised (RFC 0027 P3). The type pointer is interned through
-// TypeContext, so its identity is stable and the view is cheap to compare.
+// (file, node_id) key registry whose only purpose would be to re-read a table
+// the hir memo already holds. The brief's `type_of(module, node_id,
+// source_id)` therefore resolves to: bring hir up to date, then look the node up
+// through `hir_expr` (the O(1) reverse index over the cached TypedProgram).
+// Repeated reads are memo hits at the hir slot; no per-expression recompute is
+// promised (RFC 0027 P3). The type pointer is interned through TypeContext, so
+// its identity is stable and the view is cheap to compare.
 struct TypeOfResult {
     TypePtr type = nullptr;
     bool found = false;
@@ -242,11 +270,13 @@ void dump_project_graph_outline(const SourceGraph &graph, std::ostream &out);
 //
 // Two analysis-unit shapes live on this graph:
 //
-//  * File-scoped: `parse(FileId)` -> `resolve(ModuleId)` -> `typecheck(ModuleId)`,
-//    the CLI's file path (`run_analysis<ast::Program>`). One unit, one file, so
-//    ModuleId slot i names the same unit as FileId slot i — the two tags are
-//    distinct precisely so the RFC's graded granularities (file-level parse,
-//    module-level resolve) cannot be confused at a call site.
+//  * File-scoped: `parse(FileId)` -> `resolve(ModuleId)` -> `typecheck(ModuleId)`
+//    -> `hir(FileId)`, the CLI's file path (`run_analysis<ast::Program>`). One
+//    unit, one file, so ModuleId slot i names the same unit as FileId slot i —
+//    the two tags are distinct precisely so the RFC's graded granularities
+//    (file-level parse/hir, module-level resolve) cannot be confused at a call
+//    site. hir is a derived projection of the typecheck result (the typed HIR),
+//    read by LSP via hir_expr / typed_program; it recomputes nothing on its own.
 //
 //  * Project-scoped: `parse_project(ProjectId)`, the CLI's package/workspace path
 //    (`run_analysis<SourceGraph>`). Its input is a whole `ProjectInputModel` — the
@@ -328,6 +358,40 @@ class FrontendQueries {
     // the node is not a recorded expression.
     [[nodiscard]] std::expected<TypeOfResult, CycleError>
     type_of(ModuleId module, std::uint64_t node_id, std::optional<SourceId> source_id);
+
+    // Evaluate hir(file): the typed HIR node. AHFL has no standalone HIR stage —
+    // `TypeChecker::check` emits the TypedProgram wholesale — so hir is a derived
+    // view over the typecheck memo, not a second semantic computation. It is a
+    // query of its own (family + memo + revision edge) so the RFC's graph names
+    // the node LSP reads and so an LSP consumer invalidates on exactly the
+    // parse/resolve/typecheck chain and on nothing else. `ran` is false when the
+    // stage chain short-circuited (a parse or resolve error).
+    [[nodiscard]] std::expected<HirSnapshot, CycleError> hir(FileId file);
+
+    // Borrow the cached TypedProgram of a file whose hir slot is currently valid
+    // (Clean/Verified) and whose typecheck actually ran. Null otherwise — the
+    // same fail-closed revision contract as program() / typecheck_result(): an
+    // edit marks the chain Dirty, so a superseded text's typed program is never
+    // handed out. The pointer is owned by this object (the typecheck slot store)
+    // and is meaningful only for the revision it was checked at. This is the
+    // `hir(file)` value LSP consumers (hover/completion) navigate; per-expression
+    // reads should go through hir_expr, which also drives the memo.
+    [[nodiscard]] const TypedProgram *typed_program(FileId file) const;
+
+    // O(1) accessor surface over `hir(file)` for LSP consumers: bring the hir
+    // memo up to date (a memo hit when nothing changed) and resolve one AST
+    // expression through the TypedProgram's existing reverse index
+    // (`TypedProgram::find_expr`, hash-map lookup). Null when the chain
+    // short-circuited, the node is not a recorded expression, or the slot is
+    // stale. The returned pointer is borrowed from the typecheck slot store and
+    // follows that store's revision/lifetime contract.
+    [[nodiscard]] std::expected<const TypedExpr *, CycleError>
+    hir_expr(FileId file, std::uint64_t node_id, std::optional<SourceId> source_id);
+
+    // How many times hir(file) actually ran its compute function. The compute
+    // only re-projects the cached TypedProgram; it never re-runs the type
+    // checker (which typecheck_computes counts separately).
+    [[nodiscard]] std::size_t hir_computes(FileId file) const;
 
     // Borrow the cached resolve result of a unit whose resolve slot is currently
     // valid (Clean/Verified). Null when the slot is unset/dirty/visiting, never
@@ -432,6 +496,10 @@ class FrontendQueries {
     DerivedQueryT<ParseSnapshot> parse_;
     DerivedQueryT<ResolveSnapshot> resolve_;
     DerivedQueryT<TypecheckSnapshot> typecheck_;
+    // hir(file): a derived VIEW over typecheck. It owns no TypedProgram — the
+    // typecheck slot store owns it — only its own memo (the HirSnapshot value
+    // identity) and a per-slot compute counter.
+    DerivedQueryT<HirSnapshot> hir_;
     DerivedQueryT<ProjectParseSnapshot> project_parse_;
     DerivedQueryT<ResolveSnapshot> project_resolve_;
     DerivedQueryT<TypecheckSnapshot> project_typecheck_;
@@ -442,6 +510,11 @@ class FrontendQueries {
     std::deque<SlotRecord> slots_;
     std::deque<ResolveSlotRecord> resolve_slots_;
     std::deque<TypecheckSlotRecord> typecheck_slots_;
+    // Per-FileId hir compute counters, parallel to the hir_ family's slots. The
+    // TypedProgram itself is not duplicated: hir reads the one owned by
+    // typecheck_slots_. A plain counter deque (no record struct) because hir owns
+    // no other per-slot state.
+    std::deque<std::size_t> hir_compute_slots_;
     std::deque<ProjectSlotRecord> project_slots_;
     std::deque<ProjectResolveSlotRecord> project_resolve_slots_;
     std::deque<ProjectTypecheckSlotRecord> project_typecheck_slots_;

@@ -136,6 +136,20 @@ TypecheckSnapshot snapshot_typecheck_result(const TypeCheckResult &result, bool 
     return snapshot;
 }
 
+HirSnapshot snapshot_hir(const TypeCheckResult &result, bool ran) {
+    HirSnapshot snapshot;
+    snapshot.ran = ran;
+    // hir's identity is the typed HIR alone — the same one-SSOT projection
+    // typecheck uses for its typed_program_json half, deliberately without the
+    // diagnostics (those stay the identity of the typecheck node).
+    if (ran) {
+        snapshot.typed_program_json = serialize_typed_program_json(result.typed_program);
+    }
+    // A short-circuited chain (parse/resolve failed) leaves the projection empty;
+    // `ran` distinguishes it from a clean run, exactly as the stage snapshots do.
+    return snapshot;
+}
+
 void dump_project_graph_outline(const SourceGraph &graph, std::ostream &out) {
     // Deterministic by construction: entries and sources are projected in their
     // own store order (the parser's deterministic load order), so the outline is
@@ -338,6 +352,37 @@ FrontendQueries::FrontendQueries(FrontendOptions options)
               ++record.computes;
               return snapshot_typecheck_result(record.result, /*ran=*/true);
           })),
+      hir_(engine_.register_derived<HirSnapshot>(
+          [this](QueryContext &ctx, DerivedId key) -> HirSnapshot {
+              // hir is a pure VIEW over the typecheck memo: this read is the
+              // whole dependency edge (it transitively covers resolve and parse,
+              // and the AST's span-sensitive outline through them), so hir
+              // invalidates on exactly the chain that produces the typed program.
+              // hir never runs the type checker itself; the count below measures
+              // only the (cheap) projection, and typecheck_computes the checker.
+              const TypecheckSnapshot typecheck_snapshot = ctx.read(typecheck_, key);
+
+              const std::size_t slot = key.index();
+              if (hir_compute_slots_.size() <= slot) {
+                  hir_compute_slots_.resize(slot + 1);
+              }
+              ++hir_compute_slots_[slot];
+
+              // The snapshot carries whether the chain actually produced a typed
+              // program (the CLI's short-circuit structure); mirror the
+              // typecheck body by deciding on the snapshot and then borrowing the
+              // object the projection is taken of.
+              if (!typecheck_snapshot.ran) {
+                  return HirSnapshot{};
+              }
+              const TypeCheckResult *result = this->typecheck_result(ModuleId{key.index()});
+              if (result == nullptr) {
+                  // Unreachable when the snapshot says typecheck ran clean at the
+                  // current revision; guard anyway rather than dereference.
+                  return HirSnapshot{};
+              }
+              return snapshot_hir(*result, /*ran=*/true);
+          })),
       project_parse_(engine_.register_derived<ProjectParseSnapshot>(
           [this](QueryContext &ctx, DerivedId key) -> ProjectParseSnapshot {
               // The project parse is a pure function of the model for every
@@ -461,6 +506,10 @@ std::expected<TypecheckSnapshot, CycleError> FrontendQueries::typecheck(ModuleId
     return engine_.eval(typecheck_, DerivedId{module.index()});
 }
 
+std::expected<HirSnapshot, CycleError> FrontendQueries::hir(FileId file) {
+    return engine_.eval(hir_, DerivedId{file.index()});
+}
+
 std::expected<ProjectParseSnapshot, CycleError>
 FrontendQueries::parse_project(ProjectId project) {
     return engine_.eval(project_parse_, DerivedId{project.index()});
@@ -478,25 +527,70 @@ FrontendQueries::project_typecheck(ProjectId project) {
 
 std::expected<TypeOfResult, CycleError>
 FrontendQueries::type_of(ModuleId module, std::uint64_t node_id, std::optional<SourceId> source_id) {
-    // Bring the typecheck memo up to date (a memo hit when nothing changed), then
-    // resolve the node id through the typed program's existing reverse index.
-    // The stage chain is the only compute; the lookup itself is O(1).
-    const auto checked = engine_.eval(typecheck_, DerivedId{module.index()});
-    if (!checked.has_value()) {
-        return std::unexpected(std::move(checked.error()));
+    // Drive the memo through hir (the node the RFC's graph points LSP at); in
+    // the file-scoped graph ModuleId slot i and FileId slot i name the same
+    // unit. The stage chain is the only compute; the lookup itself is O(1).
+    const FileId file{module.index()};
+    const auto evaluated = hir(file);
+    if (!evaluated.has_value()) {
+        return std::unexpected(std::move(evaluated.error()));
+    }
+
+    const auto expr = hir_expr(file, node_id, std::move(source_id));
+    if (!expr.has_value()) {
+        return std::unexpected(std::move(expr.error()));
     }
 
     TypeOfResult result;
-    const TypeCheckResult *current = typecheck_result(module);
-    if (current == nullptr) {
-        return result; // the stage chain short-circuited: no node has a type
-    }
-    if (const TypedExpr *expr = current->typed_program.find_expr(node_id, source_id);
-        expr != nullptr) {
-        result.type = expr->type;
+    if (*expr != nullptr) {
+        result.type = (*expr)->type;
         result.found = true;
     }
     return result;
+}
+
+std::expected<const TypedExpr *, CycleError>
+FrontendQueries::hir_expr(FileId file, std::uint64_t node_id, std::optional<SourceId> source_id) {
+    // Bring the hir memo up to date (a memo hit when nothing changed). Driving
+    // here — rather than assuming a prior hir() — is what keeps the O(1) lookup
+    // sound on a stale slot: the engine never lets us index a superseded text's
+    // typed program.
+    const auto evaluated = engine_.eval(hir_, DerivedId{file.index()});
+    if (!evaluated.has_value()) {
+        return std::unexpected(std::move(evaluated.error()));
+    }
+
+    const TypedProgram *program = typed_program(file);
+    if (program == nullptr) {
+        return nullptr; // the stage chain short-circuited: no node has a type
+    }
+    return program->find_expr(node_id, std::move(source_id));
+}
+
+const TypedProgram *FrontendQueries::typed_program(FileId file) const {
+    // The same Clean/Verified borrow contract as typecheck_result(): hand out
+    // only the typed program of a hir/typecheck slot valid at the current
+    // revision whose stage actually ran. The TypedProgram is owned by the
+    // typecheck slot store; inspecting that family is the revision edge that
+    // keeps this fail-closed (hir_ is a pure projection of it).
+    const std::size_t slot = file.index();
+    if (typecheck_slots_.size() <= slot || !typecheck_slots_[slot].ran) {
+        return nullptr;
+    }
+    const SlotInfo info = engine_.inspect_slot(hir_.family(), slot);
+    if (!info.has_value ||
+        (info.state != SlotState::Clean && info.state != SlotState::Verified)) {
+        return nullptr;
+    }
+    return &typecheck_slots_[slot].result.typed_program;
+}
+
+std::size_t FrontendQueries::hir_computes(FileId file) const {
+    const std::size_t slot = file.index();
+    if (hir_compute_slots_.size() <= slot) {
+        return 0;
+    }
+    return hir_compute_slots_[slot];
 }
 
 const SourceGraph *FrontendQueries::project_graph(ProjectId project) const {
