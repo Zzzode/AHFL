@@ -3802,9 +3802,18 @@ class Verifier {
             // Result type vs the callee's concrete return type. A `Disagree`
             // callee was already rejected at its definition; an uninhabited
             // callee (no value return) is checked below.
+            //
+            // D-FNREP (design §3.1.1): the same one-directional widening that
+            // applies at callable ARGUMENT slots applies to the call RESULT: a
+            // callee whose concrete return is a constructed
+            // CoreVtClosure{S,_} (e.g. an fn declared `-> Fn(Int)->Int` whose
+            // body returns a captured lambda) is accepted at a call site typed
+            // with the bare signature S. The reverse (site typed closure over a
+            // bare-Fn return) stays a mismatch.
             const FnReturnTypeSummary ret_summary = fn_return_summary(callee);
             if (ret_summary.status == FnReturnTypeStatus::Ok &&
-                !(site.result_type == *ret_summary.type)) {
+                !(site.result_type == *ret_summary.type) &&
+                !callable_argument_widens(*ret_summary.type, site.result_type)) {
                 error(verify::kFnCallResultTypeMismatch,
                       "call to fn '" + callee.name +
                           "' result type does not match the callee return type",
@@ -3901,7 +3910,8 @@ class Verifier {
 
     // The CoreVtFn a callable logical type resolves to, or nullptr. A signature
     // type is itself a CoreVtFn; a constructed closure yields its signature.
-    [[nodiscard]] const CoreVtFn *callable_signature(CoreValueTypeId id) const {        if (id.value == CoreValueTypeId::kInvalid || id.value >= program_.value_types.size()) {
+    [[nodiscard]] const CoreVtFn *callable_signature(CoreValueTypeId id) const {
+        if (id.value == CoreValueTypeId::kInvalid || id.value >= program_.value_types.size()) {
             return nullptr;
         }
         const CoreValueTypeNode &node = program_.value_types[id.value].node;
@@ -4038,8 +4048,14 @@ class Verifier {
                       expr.source_range);
             }
         }
+        // D-FNREP (design §3.1.1): the body may RETURN a constructed
+        // CoreVtClosure{S2,_} where the lifted fn's declared signature names
+        // the bare S2 (a lambda whose body itself constructs a closure) — the
+        // same one-directional result widening as a direct call site. The
+        // reverse (bare-Fn return at a closure-typed signature) is rejected.
         const FnReturnTypeSummary ret = fn_return_summary(target);
-        if (ret.status == FnReturnTypeStatus::Ok && !(signature->ret == *ret.type)) {
+        if (ret.status == FnReturnTypeStatus::Ok && !(signature->ret == *ret.type) &&
+            !callable_argument_widens(*ret.type, signature->ret)) {
             error(verify::kClosureResultTypeInvalid,
                   "closure construction in body '" + label +
                       "' signature return type does not match fn '" + target.name +

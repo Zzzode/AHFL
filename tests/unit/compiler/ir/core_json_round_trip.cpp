@@ -1492,3 +1492,140 @@ TEST_CASE("Core-IR JSON reader rejects an out-of-range numeric closure result_ty
     const std::string doc = tampered_closure_result_type_doc(9999);
     require_rejected_with(doc, "core.json.OUT_OF_RANGE");
 }
+
+// FB-3a2 fix-forward P2: 'captures' and 'env_bindings' were added to the fn
+// object WITHOUT bumping the pre-stabilization 'ahfl.core.v1' format. An older
+// v1 producer therefore emits fn objects with neither field; the reader must
+// default both to empty (an ordinary fn declares no env slots) and accept the
+// doc rather than failing the required-field check.
+TEST_CASE("Core-IR JSON reader accepts a v1 fn object without captures or env_bindings") {
+    using namespace ir::core;
+    CoreProgram program;
+    program.value_types.push_back(CoreValueType{CoreVtInt{}});
+
+    CoreInstanceDecl inst;
+    inst.id = CoreInstanceId{0};
+    inst.instance_key = "_inst_g0";
+    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    inst.payload = CoreFnInstance{CoreFnId{0}};
+    program.instances.push_back(std::move(inst));
+
+    // An ordinary fn with no env capture signature at all.
+    CoreFnDecl g0;
+    g0.id = CoreFnId{0};
+    g0.instance = CoreInstanceId{0};
+    g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    g0.params = {CoreValueId{0}};
+    g0.name = "_inst_g0";
+    g0.storage.value_count = 1;
+    g0.storage.value_types = {CoreValueTypeId{0}};
+    g0.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, CoreValueTypeId{0}});
+    g0.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    program.fns.push_back(std::move(g0));
+
+    std::string doc = print(program);
+    REQUIRE_FALSE(doc.empty());
+
+    // Erase the two field lines exactly as an older v1 writer would omit them
+    // (each printed line carries its own trailing comma).
+    const auto erase_field_lines = [&doc](std::string_view key) {
+        const std::string needle = "\"" + std::string(key) + "\"";
+        for (auto pos = doc.find(needle); pos != std::string::npos;
+             pos = doc.find(needle, pos)) {
+            const auto line_begin = doc.rfind('\n', pos) + 1;
+            const auto line_end = doc.find('\n', pos);
+            REQUIRE(line_end != std::string::npos);
+            doc.erase(line_begin, line_end - line_begin + 1);
+            pos = line_begin;
+        }
+    };
+    erase_field_lines("captures");
+    erase_field_lines("env_bindings");
+    CHECK(doc.find("\"captures\"") == std::string::npos);
+    CHECK(doc.find("\"env_bindings\"") == std::string::npos);
+
+    const auto parsed = parse_core_ir_json(doc);
+    for (const auto &diagnostic : parsed.diagnostics) {
+        INFO("diagnostic: " << diagnostic.code << " - " << diagnostic.message);
+        CHECK(false);
+    }
+    REQUIRE(parsed.ok());
+    REQUIRE(parsed.program->fns.size() == 1);
+    CHECK(parsed.program->fns[0].captures.empty());
+    CHECK(parsed.program->fns[0].env_bindings.empty());
+}
+
+// The pairing invariant stays fail-closed: a fn object that carries
+// env_bindings WITHOUT the parallel captures (a partial / tampered doc) cannot
+// satisfy env_bindings.size()==captures.size() and is rejected by the verifier
+// gate, instead of silently binding phantom env slots.
+TEST_CASE("Core-IR JSON reader rejects a fn object pairing env_bindings without captures") {
+    using namespace ir::core;
+    CoreProgram program;
+    program.value_types.push_back(CoreValueType{CoreVtInt{}});
+
+    CoreInstanceDecl inst;
+    inst.id = CoreInstanceId{0};
+    inst.instance_key = "_inst_g0";
+    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    inst.payload = CoreFnInstance{CoreFnId{0}};
+    program.instances.push_back(std::move(inst));
+
+    CoreFnDecl g0;
+    g0.id = CoreFnId{0};
+    g0.instance = CoreInstanceId{0};
+    g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    g0.params = {CoreValueId{0}};
+    g0.captures = {CoreValueTypeId{0}};
+    g0.env_bindings = {CoreValueId{1}};
+    g0.name = "_inst_g0";
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{0}};
+    g0.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, CoreValueTypeId{0}});
+    g0.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    program.fns.push_back(std::move(g0));
+
+    std::string doc = print(program);
+    REQUIRE_FALSE(doc.empty());
+
+    // Print the doc to find the span: the fn-declared captures array prints as
+    // `"captures": [\n  0\n],` (one id per line). Remove from the key's line
+    // start through the line of the array's closing "]," so the remaining JSON
+    // stays well-formed, leaving env_bindings behind unpaired.
+    {
+        const std::string needle = "\"captures\": [";
+        const auto key_pos = doc.find(needle);
+        REQUIRE(key_pos != std::string::npos);
+        const auto line_begin = doc.rfind('\n', key_pos) + 1;
+        auto close_pos = doc.find(']', key_pos);
+        REQUIRE(close_pos != std::string::npos);
+        const auto line_end = doc.find('\n', close_pos);
+        REQUIRE(line_end != std::string::npos);
+        doc.erase(line_begin, line_end - line_begin + 1);
+    }
+    REQUIRE(doc.find("\"captures\"") == std::string::npos);
+
+    // Parsing succeeds structurally (both fields default independently), but the
+    // reader's final verifier gate rejects the 0-vs-1 pairing.
+    const auto parsed = parse_core_ir_json(doc);
+    for (const auto &diagnostic : parsed.diagnostics) {
+        INFO("diagnostic: " << diagnostic.code << " - " << diagnostic.message);
+    }
+    CHECK_FALSE(parsed.ok());
+    bool saw_pairing_gate = false;
+    for (const auto &diagnostic : parsed.diagnostics) {
+        // The reader wraps post-parse verification failures as
+        // core.json.VERIFY_FAILED with the inner verifier code in the message.
+        if (diagnostic.code == "core.json.VERIFY_FAILED" &&
+            diagnostic.message.find("core.verify.CLOSURE_CAPTURE_ARITY") !=
+                std::string::npos &&
+            diagnostic.message.find("pre-bound env slot") != std::string::npos) {
+            saw_pairing_gate = true;
+        }
+    }
+    CHECK(saw_pairing_gate);
+}

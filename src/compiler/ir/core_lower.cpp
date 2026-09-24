@@ -1923,12 +1923,6 @@ class LambdaLiftBridge {
     lift(const LambdaExpr &lambda, SourceRangeOpt range,
          const std::vector<CoreValueTypeId> &param_types, CoreValueTypeId return_type,
          std::vector<ResolvedCapture> captures) = 0;
-
-    // Resolve a bare top-level fn NAME used as a first-class value to the
-    // body-bearing fn's id (a zero-capture CoreClosureExpr{fn, {}}, §3.1.1
-    // rule 6). Returns nullopt when the name is not a body-bearing static fn.
-    [[nodiscard]] virtual std::optional<CoreFnId>
-    static_fn_value(const SymbolRef &ref, std::string_view name, SourceRangeOpt range) = 0;
 };
 
 // Fn policy (CORE-FNBODY-DESIGN §2.3): a fn body sees ONLY pre-bound params
@@ -2353,24 +2347,13 @@ template <class RootPolicy> class ExprLowerer {
         if (rr.is_local && e.path.members.empty()) {
             return rr.local;
         }
-        // FB-3a2 (§3.1.1 rule 6): a bare top-level fn NAME used as a first-class
-        // value (no projection) lowers to a ZERO-CAPTURE closure over that
-        // body-bearing fn — CoreClosureExpr{fn, {}}. Only when it is not a local
-        // and its resolved type is a FnT (so constants / node names keep their
-        // ordinary path lowering).
-        if (!rr.is_local && e.path.members.empty() && lifter_ != nullptr &&
-            expr.ptr != nullptr) {
-            const CoreValueTypeId path_ty = intern_value_type(expr.ptr->resolved_type, range);
-            if (path_ty.value != CoreValueTypeId::kInvalid &&
-                std::holds_alternative<CoreVtFn>(value_type_pool_[path_ty.value].node)) {
-                // A bare fn-name path carries no resolved SymbolRef; resolve by
-                // the rendered name through the fn resolver.
-                const SymbolRef fn_ref{};
-                if (auto fn_id = lifter_->static_fn_value(fn_ref, e.path.root_name, range)) {
-                    return bind_pure(CoreClosureExpr{*fn_id, {}}, path_ty, range, region);
-                }
-            }
-        }
+        // Design §3.1.1 rule 6 (a bare top-level fn NAME as a zero-capture
+        // first-class value -> CoreClosureExpr{fn, {}}) is intentionally NOT
+        // lowered here yet. The frontend rejects a bare fn name in value
+        // position (UNKNOWN_VALUE), so no source reaches such a path, and the
+        // resolver keys fns by mangled identity rather than the rendered name.
+        // It returns when the frontend can produce a first-class bare fn value;
+        // until then such a path keeps its ordinary fail-closed lowering below.
         // RFC 0026 P6-5: `xs.length` on a BOUNDED collection local is a length
         // READ of the container's inline `(ptr,len)` header, not a field
         // projection (a collection nominal declares no fields). The container
@@ -3222,6 +3205,32 @@ template <class RootPolicy> class ExprLowerer {
                 pattern.node);
         };
 
+        // A bare-identifier USE of a name — the identifier root of a PathExpr
+        // or the callee slot of a CallExpr whose target is a first-class local
+        // rather than a statically resolved fn/capability. A name shadowed by a
+        // lambda parameter / in-body binder is a local of the lifted fn; any
+        // other visible name is an outer local captured at its first use (or
+        // validated against an explicit capture list). Frame-root paths take
+        // their own push_frame path and never reach this.
+        const auto use_bare_identifier = [&](const std::string &name) {
+            if (bound.find(name) != bound.end()) {
+                return;
+            }
+            if (!explicit_list) {
+                if (!push_local(name)) {
+                    ok = false;
+                }
+            } else if (std::none_of(lambda.captures.begin(), lambda.captures.end(),
+                                    [&](const std::string &c) { return c == name; })) {
+                error(diag::kClosureCaptureInvalid,
+                      "lambda body references '" + name +
+                          "' which is neither a parameter, an in-body binding, nor "
+                          "a name in its explicit capture list",
+                      range);
+                ok = false;
+            }
+        };
+
         visit = [&](const ExprRef &ref) {
             if (!ok || ref.ptr == nullptr) {
                 return;
@@ -3243,24 +3252,7 @@ template <class RootPolicy> class ExprLowerer {
                         // the projection itself is evaluated inside the lifted fn.
                         if (pe.path.root_kind == PathRootKind::Identifier ||
                             pe.path.root_kind == PathRootKind::Local) {
-                            const std::string &name = pe.path.root_name;
-                            if (bound.find(name) != bound.end()) {
-                                return;
-                            }
-                            if (!explicit_list) {
-                                if (!push_local(name)) {
-                                    ok = false;
-                                }
-                            } else if (std::none_of(lambda.captures.begin(),
-                                                    lambda.captures.end(),
-                                                    [&](const std::string &c) { return c == name; })) {
-                                error(diag::kClosureCaptureInvalid,
-                                      "lambda body references '" + name +
-                                          "' which is neither a parameter, an in-body binding, nor "
-                                          "a name in its explicit capture list",
-                                      range);
-                                ok = false;
-                            }
+                            use_bare_identifier(pe.path.root_name);
                         }
                     },
                     [&](const LambdaExpr &nested) {
@@ -3307,6 +3299,25 @@ template <class RootPolicy> class ExprLowerer {
                         }
                     },
                     [&](const CallExpr &c) {
+                        // The callee slot is a first-class local callable (a
+                        // FnT parameter, a callable local, or a constructed
+                        // closure) precisely when it did not statically resolve
+                        // to a top-level fn / capability AND its name names a
+                        // binder of the lifted fn (`bound`) or a visible outer
+                        // local (`scope_`) — the same scope gate the call
+                        // lowering itself applies. A qualified enum-variant
+                        // constructor / collection hook / stdlib helper has a
+                        // non-Function callee_ref too but names NO local, so it
+                        // must not be mistaken for a capture. A local callee is
+                        // a USE exactly like the identifier root of a PathExpr,
+                        // so it is captured in first-use order; otherwise the
+                        // name is unbound in the lifted SSA domain and the call
+                        // falls into the generic unsupported arm.
+                        if (c.callee_ref.kind != SymbolRefKind::Function &&
+                            c.callee_ref.kind != SymbolRefKind::Capability &&
+                            (bound.count(c.callee) != 0 || scope_.count(c.callee) != 0)) {
+                            use_bare_identifier(c.callee);
+                        }
                         for (const ExprRef &a : c.arguments) {
                             visit(a);
                         }
@@ -4633,12 +4644,18 @@ class FnBodyLowerer {
 /// driver owns the program fn/instance tables and the interners.
 class LambdaLifter final : public LambdaLiftBridge {
   public:
+    // The structural interner is OWNED BY VALUE, never held by reference. A
+    // lifter is constructed inside the Pass-1.5 block but serves Pass 2 (flows)
+    // and Pass 3 (workflows) long after that block's locals are gone; a
+    // const-reference member bound to a block-local interner would dangle and
+    // call a dead std::function while lifting a nested lambda from a handler
+    // (stack-use-after-scope / SIGSEGV).
     LambdaLifter(CoreProgram &program, const CapabilityIndex &caps, const TypeEnv &types,
-                 const ValueTypeInterner &interner, const StructuralInternerFn &structural,
+                 const ValueTypeInterner &interner, StructuralInternerFn structural,
                  const FnCallResolver &fn_calls,
                  std::vector<CoreLowerDiagnostic> &diags)
         : program_(program), caps_(caps), types_(types), interner_(interner),
-          structural_(structural), fn_calls_(fn_calls), diags_(diags) {}
+          structural_(std::move(structural)), fn_calls_(fn_calls), diags_(diags) {}
 
     [[nodiscard]] std::optional<CoreFnId>
     lift(const LambdaExpr &lambda, SourceRangeOpt range,
@@ -4696,25 +4713,6 @@ class LambdaLifter final : public LambdaLiftBridge {
         return fn_id;
     }
 
-    [[nodiscard]] std::optional<CoreFnId>
-    static_fn_value(const SymbolRef &ref, std::string_view name, SourceRangeOpt) override {
-        const FnCallResolver::Entry *entry = fn_calls_.lookup(ref, name);
-        if (entry == nullptr || !entry->resolution.has_body ||
-            entry->resolution.effect != ir::FnEffectKind::Pure) {
-            return std::nullopt;
-        }
-        const CoreInstanceId id = entry->resolution.instance;
-        if (id.value >= program_.instances.size()) {
-            return std::nullopt;
-        }
-        const auto *payload =
-            std::get_if<CoreFnInstance>(&program_.instances[id.value].payload);
-        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid) {
-            return std::nullopt;
-        }
-        return payload->body;
-    }
-
   private:
     // Deterministic synthetic instance key for a lifted construction site
     // (display / dispatch only; identity is the CoreFnId index). The fn-table
@@ -4727,7 +4725,7 @@ class LambdaLifter final : public LambdaLiftBridge {
     const CapabilityIndex &caps_;
     const TypeEnv &types_;
     const ValueTypeInterner &interner_;
-    const StructuralInternerFn &structural_;
+    StructuralInternerFn structural_; // owned: outlives the Pass-1.5 construction block
     const FnCallResolver &fn_calls_;
     std::vector<CoreLowerDiagnostic> &diags_;
 };
@@ -5092,13 +5090,19 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
         //     handler). It appends to the same fn/instance tables and resolver,
         //     so a lifted fn discovered while lowering an outlined body gets a
         //     fixed point like every other fn.
-        const StructuralInternerFn intern_structural =
+        //
+        //     The interner is constructed straight into the OUTER-SCOPE holder
+        //     (which Pass 2/3 alias) — never a block-local the holder-held lifter
+        //     could dangle on once this block closes. The lifter takes its OWN
+        //     by-value copy; both copies forward to the same long-lived
+        //     shared_arena and so mint identical interned ids.
+        intern_structural_holder.emplace(
             [&shared_arena](CoreValueTypeNode node, std::string *reason) {
                 return shared_arena.intern_structural(std::move(node), reason);
-            };
-        intern_structural_holder.emplace(intern_structural);
-        lambda_lifter_holder.emplace(core, cap_index, types, intern_value_type, intern_structural,
-                                     fn_call_resolver, result.diagnostics);
+            });
+        lambda_lifter_holder.emplace(core, cap_index, types, intern_value_type,
+                                     *intern_structural_holder, fn_call_resolver,
+                                     result.diagnostics);
         LambdaLifter &lambda_lifter = *lambda_lifter_holder;
         for (GuaranteedFn &g : guaranteed) {
             if (g.source == nullptr) {
@@ -5114,7 +5118,8 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
             }
             FnBodyLowerer lowerer(core.fns[fn_it->second], *g.source, cap_index, types,
                                   intern_value_type, core.value_types, fn_call_resolver,
-                                  result.diagnostics, &lambda_lifter, &intern_structural);
+                                  result.diagnostics, &lambda_lifter,
+                                  &*intern_structural_holder);
             lowerer.lower();
         }
     }

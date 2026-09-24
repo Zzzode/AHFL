@@ -4181,6 +4181,202 @@ TEST_CASE("FB-3a2: nested lambdas lift with chained captures") {
     CHECK_FALSE(has_verify_prefixed_diagnostic(result));
 }
 
+// FB-3a2 fix-forward P0: the same nested-lambda shape, but constructed in a
+// FLOW HANDLER (Pass 2), not inside an outlined fn (Pass 1.5). The lifter must
+// own its structural interner by value: a const reference bound to the
+// Pass-1.5 block-local interner dangles once that block closes, so lifting the
+// inner lambda from a handler used to call a dead std::function (SIGSEGV /
+// ASan stack-use-after-scope).
+namespace {
+
+const std::string kNestedFlowLambdaSource = R"AHFL(
+module nfl;
+
+struct Request { seed: Int; }
+struct Context { }
+struct Response { out: Int; }
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+fn hof(g: Fn(Int) -> Int, x: Int) -> Int effect Pure decreases 0 {
+    return g(x);
+}
+
+flow for A {
+    state Init {
+        let a: Int = 3;
+        let f: Fn(Int) -> Int = \(x: Int) -> hof(\(y: Int) -> y + a + x, x);
+        goto Done;
+    }
+    state Done {
+        return Response { out: input.seed };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-3a2: nested lambda constructed in a flow handler lifts without dangling interner") {
+    const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("nfl", kNestedFlowLambdaSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const auto lifted_count =
+        std::count_if(result.program.fns.begin(), result.program.fns.end(),
+                      [](const ir::core::CoreFnDecl &fn) {
+                          return fn.name.rfind("_lambda_", 0) == 0;
+                      });
+    CHECK(lifted_count == 2);
+    bool inner_found = false;
+    for (const auto &fn : result.program.fns) {
+        if (fn.name.rfind("_lambda_", 0) == 0 && fn.captures.size() == 2) {
+            inner_found = true; // the inner closure sees a + x
+        }
+    }
+    CHECK(inner_found);
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
+
+// FB-3a2 fix-forward P1: a lifted lambda that invokes another captured callable
+// SOLELY in the callee position of a CallExpr (`g(z)`). The implicit-capture
+// DFS used to visit only call arguments, so `g` was never recorded as a
+// capture and the call fell through to the generic UNLOWERED_EXPRESSION arm
+// instead of becoming a CoreCallClosureExpr.
+namespace {
+
+const std::string kCalleeCaptureSource = R"AHFL(
+module cc;
+
+fn hof(g: Fn(Int) -> Int, x: Int) -> Int effect Pure decreases 0 {
+    return g(x);
+}
+
+fn outer(x: Int) -> Int effect Pure decreases 0 {
+    let g: Fn(Int) -> Int = \(y: Int) -> y + 1;
+    let h: Fn(Int) -> Int = \(z: Int) -> g(z);
+    return hof(h, x);
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-3a2: a callable used in callee position is captured and called indirectly") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("cc", kCalleeCaptureSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // Two lifted fns: `g` (zero captures) and `h` (captures g in its one env
+    // slot). `h`'s lifted body calls that slot through CoreCallClosureExpr.
+    const auto lifted_count =
+        std::count_if(result.program.fns.begin(), result.program.fns.end(),
+                      [](const ir::core::CoreFnDecl &fn) {
+                          return fn.name.rfind("_lambda_", 0) == 0;
+                      });
+    CHECK(lifted_count == 2);
+
+    const auto h_lifted =
+        std::find_if(result.program.fns.begin(), result.program.fns.end(),
+                     [](const ir::core::CoreFnDecl &fn) {
+                         return fn.name.rfind("_lambda_", 0) == 0 && fn.captures.size() == 1;
+                     });
+    REQUIRE(h_lifted != result.program.fns.end());
+    bool h_calls_indirectly = false;
+    for (const auto &expr : h_lifted->storage.exprs) {
+        if (std::holds_alternative<ir::core::CoreCallClosureExpr>(expr.node)) {
+            h_calls_indirectly = true;
+        }
+    }
+    CHECK(h_calls_indirectly);
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
+
+// FB-3a2 fix-forward P1 (D-FNREP, design §3.1.1): two one-directional result
+// widenings the verifier used to reject. (1) A fn declared to return the BARE
+// signature returns a lambda that captures, whose concrete return is the
+// constructed CoreVtClosure over that signature; the call site is typed with
+// the bare signature. (2) A zero-capture lambda minted as CoreVtClosure is
+// passed at the callable parameter of an INDIRECT CoreCallClosureExpr (h(...)).
+namespace {
+
+const std::string kFnRepWidenSource = R"AHFL(
+module fw;
+
+fn apply2(f: Fn(Int) -> Int, x: Int) -> Int effect Pure decreases 0 {
+    return f(x);
+}
+
+// Declared return is the bare signature; the body's concrete value return is a
+// constructed closure over that same signature.
+fn mk(bump: Int) -> Fn(Int) -> Int effect Pure decreases 0 {
+    return \(y: Int) -> y + bump;
+}
+
+// The argument `h` is itself a callable taking a callable; the indirect call
+// h(\y -> y, x) passes a constructed (zero-capture) closure where the bare
+// Fn(Int)->Int signature is expected.
+fn driver(h: Fn(Fn(Int) -> Int, Int) -> Int, x: Int) -> Int effect Pure decreases 0 {
+    return h(\(y: Int) -> y, x);
+}
+
+// The lifted outer lambda's own body RETURNS a constructed inner closure, so
+// verify_closure_construction compares the outer closure signature's bare
+// Fn(Int)->Int return against the concrete closure-typed value return of the
+// lifted fn (the same one-directional result widening, site B).
+fn use_curried(n: Int) -> Int effect Pure decreases 0 {
+    let f: Fn(Int) -> Fn(Int) -> Int = \(a: Int) -> \(b: Int) -> a + b;
+    let g: Fn(Int) -> Int = f(1);
+    return apply2(g, n);
+}
+
+fn use_mk(n: Int) -> Int effect Pure decreases 0 {
+    return apply2(mk(5), n);
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("FB-3a2: constructed closures widen to the bare signature at result and indirect slots") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("fw", kFnRepWidenSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected core diagnostic: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    // mk(5) is consumed through a DIRECT call whose site result is the bare
+    // Fn signature while mk's concrete return is a constructed closure.
+    // driver's body carries the INDIRECT call whose callable argument is the
+    // zero-capture constructed closure; both widenings must leave the program
+    // verifier-clean (a failure here used to surface as
+    // FN_CALL_RESULT_TYPE_MISMATCH / CLOSURE_DISPATCH_ARGUMENT_TYPE /
+    // CLOSURE_RESULT_TYPE_INVALID).
+    CHECK_FALSE(has_verify_prefixed_diagnostic(result));
+}
+
 namespace {
 // A generic `fn id<T>(x: T) -> T` invoked at Int + a workflow whose agents give
 // Agent instances. Exercises the Fn-instance + Agent-instance consumption path.

@@ -3408,6 +3408,74 @@ TEST_CASE("FB-3a1 verifier: a bare fn value does not narrow to a demanded captur
     CHECK(has_code(result, verify::kClosureDispatchArgumentType));
 }
 
+// FB-3a2 fix-forward P1: the D-FNREP result widening is one-directional. A
+// callee whose concrete value return is the BARE Fn signature must NOT satisfy
+// a direct call site whose result is typed with the constructed
+// CoreVtClosure over that same signature (the reverse narrowing the design
+// rejects).
+TEST_CASE("FB-3a2 verifier: a bare-fn concrete return does not narrow to a closure-typed call "
+          "result") {
+    CoreProgram p;
+    const CoreValueTypeId vt_int = intern_program_vt(p, CoreValueType{CoreVtInt{}});
+    const CoreValueTypeId vt_sig =
+        intern_program_vt(p, CoreValueType{CoreVtFn{{vt_int}, vt_int}});
+    const CoreValueTypeId vt_closure = intern_program_vt(
+        p, CoreValueType{
+               CoreVtClosure{vt_sig,
+                             {CoreClosureCapture{vt_int, CoreCaptureMode::ByValue}}}});
+
+    // fn 0 retbare: one bare-signature parameter returned verbatim, so its
+    // concrete return summary is the bare Fn(Int)->Int type.
+    CoreInstanceDecl inst0;
+    inst0.id = CoreInstanceId{0};
+    inst0.instance_key = "_inst_retbare";
+    inst0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "retbare", "retbare", "", 710};
+    inst0.payload = CoreFnInstance{CoreFnId{0}};
+    p.instances.push_back(std::move(inst0));
+
+    CoreFnDecl retbare;
+    retbare.id = CoreFnId{0};
+    retbare.instance = CoreInstanceId{0};
+    retbare.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "retbare", "retbare", "", 710};
+    retbare.params = {CoreValueId{0}};
+    retbare.name = "_inst_retbare";
+    retbare.storage.value_count = 1;
+    retbare.storage.value_types = {vt_sig};
+    retbare.storage.exprs.push_back(
+        CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, vt_sig});
+    retbare.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    p.fns.push_back(std::move(retbare));
+
+    // fn 1 caller: v0 = the bare-signature argument, v1 = an Int it returns.
+    // Its orphan arena call to retbare(v0) is recorded with the CLOSURE type as
+    // its result — the illegal narrowing.
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_caller";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "caller", "caller", "", 711};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    p.instances.push_back(std::move(inst1));
+
+    CoreFnDecl caller;
+    caller.id = CoreFnId{1};
+    caller.instance = CoreInstanceId{1};
+    caller.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "caller", "caller", "", 711};
+    caller.params = {CoreValueId{0}, CoreValueId{1}};
+    caller.name = "_inst_caller";
+    caller.storage.value_count = 2;
+    caller.storage.value_types = {vt_sig, vt_int};
+    caller.storage.exprs.push_back(
+        CoreExpr{CoreCallExpr{CoreInstanceId{0}, {CoreValueId{0}}}, std::nullopt, vt_closure});
+    caller.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    p.fns.push_back(std::move(caller));
+
+    const auto result = verify_core_program(p);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kFnCallResultTypeMismatch));
+}
+
 // FB-3a1 fix-forward P2: the DECLARED CoreFnDecl::captures signature is the
 // trust anchor every construction/env check resolves against, but its
 // program-global ids were never bounds-checked on the fn itself — a bogus slot

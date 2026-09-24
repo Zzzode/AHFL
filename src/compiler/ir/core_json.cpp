@@ -3821,23 +3821,37 @@ bool CoreJsonReader::read_fns(const JsonValue &array, CoreProgram &program) {
         for (const std::uint32_t param : *params) {
             decl.params.push_back(CoreValueId{param});
         }
-        // FB-3a1: the declared env capture signature is program-global value-type
-        // ids, so they go through the same remap as every other value-type id
-        // (never the body-local req_u32_array path params use).
-        const auto captures = map_value_type_id_array(*item, "captures");
-        if (!captures.has_value()) {
-            return false;
+        // FB-3a1/FB-3a2 added the declared capture signature and the pre-bound
+        // env-slot value ids to the fn object WITHOUT bumping the pre-
+        // stabilization 'ahfl.core.v1' format. Both fields therefore default to
+        // empty when absent so an older v1 fn object still reads; the
+        // env_bindings.size()==captures.size() gate below rejects any partial /
+        // inconsistent pairing.
+        const auto captures_node = item->get("captures");
+        if (captures_node == nullptr) {
+            decl.captures.clear();
+        } else {
+            const auto captures = map_value_type_id_array(*item, "captures");
+            if (!captures.has_value()) {
+                return false;
+            }
+            decl.captures = *captures;
         }
-        decl.captures = *captures;
-        // FB-3a2: env_bindings are body-local value ids (the same req_u32_array
-        // remap params use), parallel to the declared captures.
-        const auto env_bindings = req_u32_array(*item, "env_bindings");
-        if (!env_bindings.has_value()) {
-            return false;
-        }
-        decl.env_bindings.reserve(env_bindings->size());
-        for (const std::uint32_t slot : *env_bindings) {
-            decl.env_bindings.push_back(CoreValueId{slot});
+        const auto env_node = item->get("env_bindings");
+        if (env_node == nullptr) {
+            decl.env_bindings.clear();
+        } else {
+            // FB-3a2: env_bindings are body-local value ids (the same
+            // req_u32_array remap params use), parallel to the declared
+            // captures.
+            const auto env_bindings = req_u32_array(*item, "env_bindings");
+            if (!env_bindings.has_value()) {
+                return false;
+            }
+            decl.env_bindings.reserve(env_bindings->size());
+            for (const std::uint32_t slot : *env_bindings) {
+                decl.env_bindings.push_back(CoreValueId{slot});
+            }
         }
         const auto value_count = req_u32(*item, "value_count");
         if (!value_count.has_value()) {
