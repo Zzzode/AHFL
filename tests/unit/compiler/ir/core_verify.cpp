@@ -3561,6 +3561,25 @@ struct RecBody {
             CoreExpr{CoreCallExpr{callee, std::move(args)}, std::nullopt, vt_int});
         return id;
     }
+    // FB-3b: construct a zero-env closure over `target_fn`; the result type is
+    // supplied by the caller (an interned CoreVtClosure).
+    [[nodiscard]] CoreExprId closure(std::uint32_t target_fn,
+                                     std::vector<CoreValueId> env,
+                                     CoreValueTypeId result_ty) {
+        const auto id = CoreExprId{static_cast<std::uint32_t>(fn->storage.exprs.size())};
+        fn->storage.exprs.push_back(
+            CoreExpr{CoreClosureExpr{CoreFnId{target_fn}, std::move(env)},
+                     std::nullopt, result_ty});
+        return id;
+    }
+    // FB-3b: invoke a closure-valued SSA slot through call_indirect.
+    [[nodiscard]] CoreExprId call_closure(CoreValueId callee,
+                                          std::vector<CoreValueId> args) {
+        const auto id = CoreExprId{static_cast<std::uint32_t>(fn->storage.exprs.size())};
+        fn->storage.exprs.push_back(
+            CoreExpr{CoreCallClosureExpr{callee, std::move(args)}, std::nullopt, vt_int});
+        return id;
+    }
     [[nodiscard]] CoreValueId bind(CoreExprId expr, CoreValueTypeId ty) {
         const auto v = CoreValueId{fn->storage.value_count++};
         fn->storage.value_types.push_back(ty);
@@ -3984,6 +4003,121 @@ TEST_CASE("FB-2 lattice: unbounded mutual recursion fails closed") {
     const auto result = verify_core_program(r.program);
     CHECK_FALSE(result.ok());
     CHECK(has_code(result, verify::kFnRecursionUnbounded));
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    REQUIRE_FALSE(a.unbounded_issues.empty());
+    CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::NoRankProgression);
+}
+
+TEST_CASE("FB-3b points-to: an acyclic HOF threaded with a fresh lambda stays acyclic") {
+    RecProgram r = make_rec_program();
+    // hof(g: Fn(Int)->Int, x: Int) -> Int { return g(x); }
+    const std::uint32_t hof = add_rec_fn(r, "hof", {r.vt_int, r.vt_int});
+    {
+        RecBody b = rec_body(r, hof);
+        const CoreValueId g{0}, x{1};
+        const CoreValueId rv = b.bind(b.call_closure(g, {x}), r.vt_int);
+        b.ret(rv);
+    }
+    // lam(x: Int) -> Int { return x + 1; } zero captures; invoked indirectly.
+    const std::uint32_t lam = add_rec_fn(r, "lam", {r.vt_int});
+    {
+        RecBody b = rec_body(r, lam);
+        const CoreValueId x{0};
+        const CoreValueId one = b.bind(b.lit(1), r.vt_int);
+        const CoreValueId xp1 =
+            b.bind(b.binary(CoreBinaryOp::Add, b.vref(x, r.vt_int), b.vref(one, r.vt_int),
+                            r.vt_int),
+                   r.vt_int);
+        b.ret(xp1);
+    }
+    // outer(x: Int) -> Int { let k = <closure lam>; return hof(k, x); }
+    const std::uint32_t outer = add_rec_fn(r, "outer", {r.vt_int});
+    {
+        RecBody b = rec_body(r, outer);
+        const CoreValueId x{0};
+        // The closure result type only needs to be SOME value type for the
+        // points-to analyzer (it reads CoreClosureExpr.fn, not the type).
+        const CoreValueId k = b.bind(b.closure(lam, {}, r.vt_int), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{hof}, {k, x}), r.vt_int);
+        b.ret(rv);
+    }
+
+    // The points-to set of hof's parameter slot must be exactly {lam}; it must
+    // NOT contain outer/lam in a way that closes a fake cycle.
+    const ClosurePointsTo pt = ClosurePointsTo::analyze(r.program);
+    const std::vector<std::uint32_t> g_targets =
+        pt.slot_set(r.program.fns[hof].storage, CoreValueId{0});
+    CHECK(g_targets == std::vector<std::uint32_t>{lam});
+
+    // Consequently the invocation graph is acyclic: no unbounded issue and no
+    // sealed SCC (the verifier's own shape gates are exercised elsewhere; here
+    // only the recursion lattice is under test).
+    const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
+    CHECK(a.unbounded_issues.empty());
+    CHECK(a.sccs.empty());
+}
+
+TEST_CASE("FB-3b points-to: a call_indirect-mediated mutual cycle fails closed") {
+    RecProgram r = make_rec_program();
+    // g(f, rank) { if rank<=0 return 0; return 1 + f(rank-1); } — the closure
+    // call f() is the only recursive edge.
+    const std::uint32_t g = add_rec_fn(r, "g", {r.vt_int, r.vt_int});
+    {
+        RecBody b = rec_body(r, g);
+        const CoreValueId f{0}, rank{1};
+        const CoreValueId zero = b.bind(b.lit(0), r.vt_int);
+        const CoreExprId rref = b.vref(rank, r.vt_int);
+        const CoreExprId zref = b.vref(zero, r.vt_int);
+        const CoreValueId cond =
+            b.bind(b.binary(CoreBinaryOp::Le, rref, zref, r.vt_bool), r.vt_bool);
+        b.base_if(cond, zero);
+        const CoreValueId one = b.bind(b.lit(1), r.vt_int);
+        const CoreExprId rref2 = b.vref(rank, r.vt_int);
+        const CoreExprId oref = b.vref(one, r.vt_int);
+        const CoreValueId rm1 =
+            b.bind(b.binary(CoreBinaryOp::Sub, rref2, oref, r.vt_int), r.vt_int);
+        const CoreValueId fr = b.bind(b.call_closure(f, {rm1}), r.vt_int);
+        const CoreExprId fref = b.vref(one, r.vt_int);
+        const CoreValueId sum =
+            b.bind(b.binary(CoreBinaryOp::Add, fref, b.vref(fr, r.vt_int), r.vt_int),
+                   r.vt_int);
+        b.ret(sum);
+    }
+    // lb(x) -> Int { let h = <closure lc>; return g(h, x); }
+    const std::uint32_t lb = add_rec_fn(r, "lb", {r.vt_int});
+    const std::uint32_t lc = add_rec_fn(r, "lc", {r.vt_int});
+    {
+        RecBody b = rec_body(r, lb);
+        const CoreValueId x{0};
+        const CoreValueId h = b.bind(b.closure(lc, {}, r.vt_int), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{g}, {h, x}), r.vt_int);
+        b.ret(rv);
+    }
+    {
+        RecBody b = rec_body(r, lc);
+        const CoreValueId x{0};
+        const CoreValueId h = b.bind(b.closure(lb, {}, r.vt_int), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{g}, {h, x}), r.vt_int);
+        b.ret(rv);
+    }
+    // starter(n) { let h = <closure lb>; return g(h, n); }
+    const std::uint32_t starter = add_rec_fn(r, "starter", {r.vt_int});
+    {
+        RecBody b = rec_body(r, starter);
+        const CoreValueId n{0};
+        const CoreValueId h = b.bind(b.closure(lb, {}, r.vt_int), r.vt_int);
+        const CoreValueId rv = b.bind(b.call(CoreInstanceId{g}, {h, n}), r.vt_int);
+        b.ret(rv);
+    }
+
+    // g's closure-parameter slot must contain BOTH lifted fns; the invocation
+    // graph then closes g -> {lb,lc} -> g.
+    const ClosurePointsTo pt = ClosurePointsTo::analyze(r.program);
+    const std::vector<std::uint32_t> f_targets =
+        pt.slot_set(r.program.fns[g].storage, CoreValueId{0});
+    const std::vector<std::uint32_t> expected{lb, lc};
+    CHECK(f_targets == expected);
+
     const FnRecursionAnalysis a = analyze_fn_recursion(r.program);
     REQUIRE_FALSE(a.unbounded_issues.empty());
     CHECK(a.unbounded_issues.front().kind == FnRecursionIssueKind::NoRankProgression);

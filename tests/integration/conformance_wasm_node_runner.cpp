@@ -22,6 +22,7 @@
 // (Node absent).
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <filesystem>
@@ -62,9 +63,24 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 constexpr int kExpectedAgreed = 14;
 constexpr int kExpectedSkipped = 7;
 
+// Pinned STEM SET (not merely a census) of cases allowed to declare
+// engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
+// FB-3b node-only lane). A manifest edit that moves a comparable differential
+// case onto the node-only lane (dropping its evaluator reference) while adding
+// another comparable case would keep the 14/7 totals green; this exact-set pin
+// catches that. The pin moves deliberately when the KR6.8 evaluator surface
+// retires or a reviewed node-only case lands. Keep sorted; the runner compares
+// the sorted observed set against it.
+constexpr std::array<std::string_view, 1> kExpectedNodeOnlyStems{
+    "fb3_higher_order",
+};
+
 int g_failures = 0;
 int g_compared = 0;
 int g_skipped = 0;
+// Stems that actually ran the node-only (evaluator_surface_awaits_kr68) lane in
+// this invocation; compared against kExpectedNodeOnlyStems on a full run.
+std::vector<std::string> g_node_only_stems;
 
 void check(bool condition, std::string_view name) {
     if (!condition) {
@@ -469,6 +485,7 @@ int run_one(const CaseEntry &entry,
             return 1;
         }
         ++g_compared;
+        g_node_only_stems.push_back(stem);
         std::cout << "OK: " << label
                   << " Node embedded-engine observation matched the blessed manifest expectation "
                      "(node-only FB-3b lane; evaluator surface awaits KR6.8; NOT wasmtime)\n";
@@ -552,6 +569,31 @@ int mode_verify(const fs::path &repo_root,
                       << " (a case moved between the compared and skipped sets?)\n";
             ++g_failures;
         }
+        // Exact-set pin of the node-only (evaluator_surface_awaits_kr68) stems:
+        // a manifest cannot silently move a differential case onto the
+        // evaluator-free lane (or add an un-reviewed node-only case) while
+        // holding the 14/7 census steady.
+        std::sort(g_node_only_stems.begin(), g_node_only_stems.end());
+        g_node_only_stems.erase(
+            std::unique(g_node_only_stems.begin(), g_node_only_stems.end()),
+            g_node_only_stems.end());
+        std::vector<std::string> expected_stems;
+        expected_stems.reserve(kExpectedNodeOnlyStems.size());
+        for (const std::string_view s : kExpectedNodeOnlyStems) {
+            expected_stems.emplace_back(s);
+        }
+        if (g_node_only_stems != expected_stems) {
+            std::cerr << "FAIL: node-only (evaluator_surface_awaits_kr68) stem set is {";
+            for (std::size_t i = 0; i < g_node_only_stems.size(); ++i) {
+                std::cerr << (i ? ", " : "") << g_node_only_stems[i];
+            }
+            std::cerr << "} but the pinned set is {";
+            for (std::size_t i = 0; i < expected_stems.size(); ++i) {
+                std::cerr << (i ? ", " : "") << expected_stems[i];
+            }
+            std::cerr << "} (an un-reviewed case moved onto the node-only lane?)\n";
+            ++g_failures;
+        }
     }
     return g_failures == 0 ? 0 : 1;
 }
@@ -588,6 +630,110 @@ int mode_mutation(const fs::path &repo_root,
     check(node_observation.has_value(), "pristine node observation is on disk");
     if (!node_observation.has_value()) {
         return 1;
+    }
+
+    // FB-3b node-only lane (evaluator_surface_awaits_kr68): there is no
+    // in-process evaluator reference, so the comparator under test is
+    // node_observation_matches_expectation against the manifest's blessed
+    // expectation. Exercise its status / state_sequence / output_json branches
+    // directly; the differential observations_agree path below needs an
+    // evaluator and is skipped for this lane.
+    const bool node_only =
+        entry.loaded.manifest.engines.wasm.node_observation_skip ==
+        WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
+    if (node_only) {
+        // (N1) Flip the terminal status.
+        {
+            auto dom = ahfl::json::parse_json(*node_observation);
+            check(dom.has_value() && *dom && (*dom)->is_object(),
+                  "node-only observation parses");
+            auto *status = (*dom)->get_mut("status");
+            check(status != nullptr && status->as_string().has_value(),
+                  "node-only observation carries a status");
+            if (status == nullptr || !status->as_string().has_value()) {
+                return 1;
+            }
+            status->string_val =
+                status->string_val == "failed" ? "completed" : "failed";
+            const std::string mutated = ahfl::json::serialize_json(**dom);
+            const auto divergence = ahfl::conformance::node_observation_matches_expectation(
+                scenario.expect, mutated);
+            check(divergence.has_value(),
+                  "node-only comparator FAILS on a deliberately mutated status");
+            if (divergence.has_value()) {
+                std::cout << "OK: node-only comparator detected mutated expectation: "
+                          << *divergence << "\n";
+            }
+        }
+
+        // (N2) Corrupt a state_sequence element.
+        {
+            auto dom = ahfl::json::parse_json(*node_observation);
+            auto *states = (*dom)->get_mut("state_sequence");
+            check(states != nullptr && states->is_array() && !states->array_items.empty(),
+                  "node-only observation carries a non-empty state_sequence");
+            if (states == nullptr || !states->is_array() || states->array_items.empty()) {
+                return 1;
+            }
+            auto *entry0 = states->array_items.front()->get_mut("state");
+            check(entry0 != nullptr && entry0->as_string().has_value(),
+                  "state_sequence[0] carries a state name");
+            if (entry0 == nullptr || !entry0->as_string().has_value()) {
+                return 1;
+            }
+            entry0->string_val = "mutated-unexpected-state";
+            const std::string mutated = ahfl::json::serialize_json(**dom);
+            const auto divergence = ahfl::conformance::node_observation_matches_expectation(
+                scenario.expect, mutated);
+            check(divergence.has_value(),
+                  "node-only comparator FAILS on a deliberately mutated state_sequence element");
+            if (divergence.has_value()) {
+                std::cout << "OK: node-only comparator detected mutated expectation: "
+                          << *divergence << "\n";
+            }
+        }
+
+        // (N3) Corrupt the output JSON (only when the case blesses one).
+        if (scenario.expect.output_json.has_value()) {
+            auto dom = ahfl::json::parse_json(*node_observation);
+            auto *output = (*dom)->get_mut("output_json");
+            check(output != nullptr && output->is_object(),
+                  "node-only observation carries an output_json object");
+            if (output == nullptr || !output->is_object()) {
+                return 1;
+            }
+            // Flip an integer field when present, else a string field; the
+            // blessed expectation differs either way.
+            bool tampered = false;
+            for (auto &[key, value] : output->object_fields) {
+                static_cast<void>(key);
+                if (value->as_int().has_value()) {
+                    value->int_val = *value->as_int() + 1;
+                    tampered = true;
+                    break;
+                }
+                if (value->as_string().has_value()) {
+                    value->string_val = "mutated-unexpected-output";
+                    tampered = true;
+                    break;
+                }
+            }
+            check(tampered, "the node-only output_json has a tamperable scalar field");
+            if (!tampered) {
+                return 1;
+            }
+            const std::string mutated = ahfl::json::serialize_json(**dom);
+            const auto divergence = ahfl::conformance::node_observation_matches_expectation(
+                scenario.expect, mutated);
+            check(divergence.has_value(),
+                  "node-only comparator FAILS on deliberately mutated output_json");
+            if (divergence.has_value()) {
+                std::cout << "OK: node-only comparator detected mutated expectation: "
+                          << *divergence << "\n";
+            }
+        }
+
+        return g_failures == 0 ? 0 : 1;
     }
 
     // Mutation matrix on the pristine observation: each dimension the

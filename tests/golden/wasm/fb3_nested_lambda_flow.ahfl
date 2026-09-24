@@ -1,0 +1,55 @@
+// RFC 0026 FB-3b fix-forward (P0 lifetime regression): a NESTED lambda literal
+// constructed in a FLOW HANDLER must lift cleanly. The long-lived LambdaLifter
+// used to hold a const reference to the Pass-1.5 block-local structural
+// interner, which was destroyed before Pass 2 lowered handler bodies; lifting
+// the INNER lambda from a handler then called a dead std::function and the
+// producer crashed (SIGSEGV / ASan stack-use-after-scope). The lifter now owns
+// the interner. This is the codegen/evidence counterpart of the unit test: the
+// outer lambda returns a scalar (it forwards the inner closure to the
+// higher-order `hof`), both lifted fns are tabled, and the module emits and
+// runs through call_indirect with no recursion cycle.
+module wasm::fb3_nested_lambda_flow;
+
+pub struct Frame {
+    value: Int;
+}
+
+fn hof(g: Fn(Int) -> Int, x: Int) -> Int {
+    return g(x);
+}
+
+pub agent NestedLambdaFlowAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for NestedLambdaFlowAgent {
+    state Init {
+        let a: Int = 3;
+        // Outer lifted lambda: takes x, constructs the INNER captured lambda
+        // `\y -> y + a + x` and forwards it to hof (a scalar Int result).
+        let f: Fn(Int) -> Int = \(x: Int) -> hof(\(y: Int) -> y + a + x, x);
+        // Invoke the constructed outer closure INDIRECTLY (call_indirect); it
+        // in turn reaches hof and the inner closure. f(1) -> hof(inner,1) ->
+        // inner(1) = 1 + 3 + 1 = 5.
+        let r: Int = f(1);
+        if r == 5 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

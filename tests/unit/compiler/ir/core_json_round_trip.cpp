@@ -553,6 +553,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/fb3_byvalue_capture.ahfl",
         "wasm/fb3_higher_order.ahfl",
         "wasm/fb3_nested_activation.ahfl",
+        "wasm/fb3_nested_lambda_flow.ahfl",
         "wasm/p6_aggregate.ahfl",
         "wasm/p6_cascade.ahfl",
         "wasm/p6_cascade_high.ahfl",

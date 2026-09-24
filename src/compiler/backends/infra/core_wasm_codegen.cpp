@@ -5316,6 +5316,7 @@ fn_return_termination(const CoreProgram &program,
     std::optional<P6ScalarKind> word;
     bool found = false;
     bool mismatch = false;
+    bool closure_result = false;
     const auto scan = [&](auto &&self, const CoreRegion &region) -> void {
         for (const CoreStmt &stmt : region.statements) {
             if (const auto *ret = std::get_if<CoreReturnStmt>(&stmt.node);
@@ -5328,6 +5329,20 @@ fn_return_termination(const CoreProgram &program,
                 const auto k =
                     p6_scalar_kind(program, layouts, fn.storage.value_types[ret->value.value]);
                 if (k == std::nullopt) {
+                    mismatch = true;
+                    continue;
+                }
+                // FB-3b fail-closed boundary: a closure is a TWO-word
+                // (func_index, env_ptr) value, so a closure-returning fn cannot
+                // have the one-word functype this encoder emits (it would
+                // declare one i32 result while the body pushes two). Reject at
+                // this functype decision rather than relying on the upstream
+                // Core verifier / call-site gates, so a partially-validated or
+                // hand-built artifact can never carry an arity-inconsistent
+                // functype or silently drop the env word. Multi-value results
+                // are a later slice.
+                if (*k == P6ScalarKind::Closure) {
+                    closure_result = true;
                     mismatch = true;
                     continue;
                 }
@@ -5357,6 +5372,12 @@ fn_return_termination(const CoreProgram &program,
         }
     };
     scan(scan, fn.body);
+    if (closure_result) {
+        return FnReturnTermination{false, P6ScalarKind::IntI32,
+                                   "returns a closure value, which needs multi-value "
+                                   "(func_index + env_ptr) and is fail-closed in FB-3b; "
+                                   "a closure result cannot cross the single-word functype"};
+    }
     if (mismatch) {
         // Two value-bearing returns disagree on their physical word (or one is
         // not a single-word P6 value). The verifier rejects this at the fn
@@ -5405,6 +5426,55 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
     const std::size_t cc = recursion.components.size();
     const auto &component_of = recursion.component_of;
 
+    // Resolve an instance to its fn's component, or -1.
+    const auto instance_component = [&](CoreInstanceId id) -> std::int64_t {
+        if (id.value >= program.instances.size()) {
+            return -1;
+        }
+        const auto *payload =
+            std::get_if<CoreFnInstance>(&program.instances[id.value].payload);
+        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+            payload->body.value >= program.fns.size()) {
+            return -1;
+        }
+        const std::uint32_t f = payload->body.value;
+        if (f < reachable_fn.size() && !reachable_fn[f]) {
+            return -1;
+        }
+        return static_cast<std::int64_t>(component_of[f]);
+    };
+
+    // FB-3b: every invocation expr's possible target COMPONENTS. A direct
+    // CoreCallExpr contributes one (its resolved callee); a
+    // CoreCallClosureExpr contributes one per closure its callee slot can hold
+    // (the flow-sensitive call_indirect points-to set — the SAME conservative
+    // set the recursion lattice sealed), so the activation/heap multiplicity
+    // counts an indirect cycle exactly like a direct one. Each occurrence is
+    // one possible runtime activation.
+    const ir::core::ClosurePointsTo points_to =
+        ir::core::ClosurePointsTo::analyze(program);
+    const auto expr_target_components =
+        [&](const CoreBodyStorage &storage, const CoreExpr &expr) {
+            std::vector<std::int64_t> out;
+            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                const std::int64_t c = instance_component(call->callee);
+                if (c >= 0) {
+                    out.push_back(c);
+                }
+                return out;
+            }
+            if (const auto *indirect_call =
+                    std::get_if<CoreCallClosureExpr>(&expr.node)) {
+                for (const std::uint32_t target :
+                     points_to.targets_of(storage, *indirect_call)) {
+                    if (target < reachable_fn.size() && reachable_fn[target]) {
+                        out.push_back(static_cast<std::int64_t>(component_of[target]));
+                    }
+                }
+            }
+            return out;
+        };
+
     // Per-component facts.
     std::vector<std::uint32_t> depth(cc, 1);
     std::vector<std::uint64_t> bytes_max(cc, 0);
@@ -5432,22 +5502,17 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
                         depth[ci], static_cast<std::uint32_t>(bound));
                 }
             }
-            // Count this member's internal call SITES (graph_ retains one edge
-            // per CoreCallExpr, so branching is preserved).
+            // Count this member's internal invocation SITES (one direct
+            // CoreCallExpr = 1, one CoreCallClosureExpr = the number of its
+            // possible targets inside C), so branching is preserved for both
+            // direct and call_indirect cycles.
             std::uint64_t sites = 0;
             for (const CoreExpr &expr : program.fns[f].storage.exprs) {
-                const auto *call = std::get_if<CoreCallExpr>(&expr.node);
-                if (call == nullptr ||
-                    call->callee.value >= program.instances.size()) {
-                    continue;
-                }
-                const auto *payload = std::get_if<CoreFnInstance>(
-                    &program.instances[call->callee.value].payload);
-                if (payload != nullptr &&
-                    payload->body.value != CoreFnId::kInvalid &&
-                    payload->body.value < program.fns.size() &&
-                    component_of[payload->body.value] == ci) {
-                    ++sites;
+                for (const std::int64_t target_c :
+                     expr_target_components(program.fns[f].storage, expr)) {
+                    if (target_c == static_cast<std::int64_t>(ci)) {
+                        ++sites;
+                    }
                 }
             }
             sites_max = std::max(sites_max, sites);
@@ -5476,58 +5541,35 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
         activations_per_entry[ci] = total;
     }
 
-    // Resolve an instance to its fn's component, or -1.
-    const auto instance_component = [&](CoreInstanceId id) -> std::int64_t {
-        if (id.value >= program.instances.size()) {
-            return -1;
-        }
-        const auto *payload =
-            std::get_if<CoreFnInstance>(&program.instances[id.value].payload);
-        if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
-            payload->body.value >= program.fns.size()) {
-            return -1;
-        }
-        const std::uint32_t f = payload->body.value;
-        if (f < reachable_fn.size() && !reachable_fn[f]) {
-            return -1;
-        }
-        return static_cast<std::int64_t>(component_of[f]);
-    };
-
-    // Root sites: one per direct call expr in an entry (handler/workflow)
-    // storage.
+    // Root sites: one invocation in an entry (handler/workflow) storage per
+    // possible target component (a closure call contributes one per matching
+    // construction).
     std::vector<std::uint64_t> entries(cc, 0);
     for (const CoreBodyStorage *storage : entry_storages) {
         if (storage == nullptr) {
             continue;
         }
         for (const CoreExpr &expr : storage->exprs) {
-            const auto *call = std::get_if<CoreCallExpr>(&expr.node);
-            if (call == nullptr) {
-                continue;
-            }
-            const std::int64_t c = instance_component(call->callee);
-            if (c >= 0) {
+            for (const std::int64_t c : expr_target_components(*storage, expr)) {
                 entries[c] = sat_add(entries[c], 1);
             }
         }
     }
 
-    // External site counts D -> C (one per call expr).
+    // External site counts D -> C (one per possible target per invocation
+    // expr; direct = 1, closure call = 1..N).
     std::vector<std::vector<std::pair<std::uint32_t, std::uint64_t>>> ext(cc);
     std::vector<std::uint32_t> indegree(cc, 0);
     for (std::uint32_t d = 0; d < cc; ++d) {
         std::unordered_map<std::uint32_t, std::uint64_t> per_target;
         for (const std::uint32_t f : recursion.components[d]) {
             for (const CoreExpr &expr : program.fns[f].storage.exprs) {
-                const auto *call = std::get_if<CoreCallExpr>(&expr.node);
-                if (call == nullptr) {
-                    continue;
-                }
-                const std::int64_t c = instance_component(call->callee);
-                if (c >= 0 && static_cast<std::uint32_t>(c) != d) {
-                    per_target[static_cast<std::uint32_t>(c)] =
-                        sat_add(per_target[static_cast<std::uint32_t>(c)], 1);
+                for (const std::int64_t c :
+                     expr_target_components(program.fns[f].storage, expr)) {
+                    if (c >= 0 && static_cast<std::uint32_t>(c) != d) {
+                        per_target[static_cast<std::uint32_t>(c)] =
+                            sat_add(per_target[static_cast<std::uint32_t>(c)], 1);
+                    }
                 }
             }
         }

@@ -1236,6 +1236,28 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         # Shares AHFL_CONFORMANCE_WASM_SCRATCH_DIR with the differential test.
         RUN_SERIAL TRUE
     )
+
+    # FB-3b node-only lane mutation gate: with no in-process evaluator
+    # reference, node_observation_matches_expectation is the comparator under
+    # test. fb3_higher_order is the (pinned) node-only case; each blessed
+    # dimension (status / state_sequence / output_json) must independently
+    # reject a tampered expectation.
+    add_test(NAME ahfl.conformance.wasm_node_mutation_node_only
+        COMMAND $<TARGET_FILE:ahfl_conformance_wasm_node_runner>
+                mutation
+                "${PROJECT_SOURCE_DIR}"
+                "${AHFL_CONFORMANCE_CASES_DIR}"
+                "${AHFL_CONFORMANCE_WASM_SCRATCH_DIR}"
+                fb3_higher_order
+    )
+    set_tests_properties(ahfl.conformance.wasm_node_mutation_node_only PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "node-only comparator detected mutated expectation"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+        # Shares AHFL_CONFORMANCE_WASM_SCRATCH_DIR with the differential test.
+        RUN_SERIAL TRUE
+    )
 endif()
 
 add_test(NAME ahfl.runtime.payload_store

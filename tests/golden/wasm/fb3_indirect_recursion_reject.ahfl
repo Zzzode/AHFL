@@ -1,0 +1,64 @@
+// RFC 0026 FB-3b fix-forward (CORE-FNBODY-DESIGN §5.2/§6.2/§8.1-6): a recursion
+// cycle that closes ONLY through a closure argument (a call_indirect edge)
+// must be sealed at COMPILE TIME, exactly like a direct-recursion cycle.
+//
+// `g` invokes its closure parameter `f`. `b` wraps the static fn `c` in a
+// lifted lambda `\x -> c(x)` and passes it to `g`; `c` symmetrically wraps
+// `b`. The STATIC direct-call graph (b -> g, c -> g, lifted -> b/c) is
+// acyclic, but the runtime call_indirect graph closes the cycle
+// b -> g ->(f=Lc) c -> g ->(f=Lb) b. No rank flows through the closure
+// parameter and is strictly decremented with a static bound, so the FB-2/FB-3
+// lattice must fail closed with core.verify.FN_RECURSION_UNBOUNDED and emit no
+// wasm (a real engine traps with native stack exhaustion otherwise). The small
+// literal entry rank (10) makes clear the rejection is NOT about its size.
+module wasm::fb3_indirect_recursion_reject;
+
+pub struct Frame {
+    value: Int;
+}
+
+fn g(f: Fn(Int) -> Int, r: Int) -> Int {
+    if r <= 0 {
+        return 0;
+    }
+    return 1 + f(r - 1);
+}
+
+fn c(r: Int) -> Int {
+    let h: Fn(Int) -> Int = \x -> b(x);
+    return g(h, r);
+}
+
+fn b(r: Int) -> Int {
+    let h: Fn(Int) -> Int = \x -> c(x);
+    return g(h, r);
+}
+
+pub agent IndirectRecursionRejectAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done, Fail];
+    initial: Init;
+    final: [Done, Fail];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Fail;
+}
+
+flow for IndirectRecursionRejectAgent {
+    state Init {
+        let t: Int = b(10);
+        if t == 10 {
+            goto Done;
+        } else {
+            goto Fail;
+        }
+    }
+    state Done {
+        return input;
+    }
+    state Fail {
+        return input;
+    }
+}

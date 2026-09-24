@@ -25,13 +25,18 @@ namespace ahfl::ir::core {
 
 namespace {
 
-// One direct call observed in a body storage.
+// One invocation edge observed in a body storage. A DIRECT edge is a
+// CoreCallExpr (plain wasm `call`); an INDIRECT edge is one possible runtime
+// target of a CoreCallClosureExpr (wasm `call_indirect`, FB-3b). One closure
+// call site contributes 0..N indirect CallEdges (N = signature-matching
+// closure constructions).
 struct CallEdge {
     std::uint32_t caller_fn{CoreFnId::kInvalid}; // kInvalid = flow/workflow root
     std::uint32_t callee_fn{CoreFnId::kInvalid};
     const std::vector<CoreValueId> *args{nullptr};
     const CoreBodyStorage *storage{nullptr}; // caller storage (roots too)
-    std::uint32_t expr{CoreExprId::kInvalid}; // the CoreCallExpr arena id
+    std::uint32_t expr{CoreExprId::kInvalid}; // the call expr's arena id
+    bool indirect{false};                     // CoreCallClosureExpr possible target
     SourceRangeOpt range;
 };
 
@@ -289,6 +294,309 @@ class TermAnalyzer {
     std::unordered_map<std::uint32_t, std::uint32_t> lets_;
 };
 
+// One let binding observed in a region (recursing into if/match): the bound
+// result SSA value and its arena expr id.
+struct LetBinding {
+    CoreValueId result{};
+    CoreExprId expr{};
+};
+
+void collect_let_bindings_impl(const CoreRegion &region, const CoreBodyStorage &storage,
+                               std::vector<LetBinding> &out) {
+    for (const CoreStmt &stmt : region.statements) {
+        if (const auto *let = std::get_if<CoreLetStmt>(&stmt.node)) {
+            if (let->expr.value < storage.exprs.size()) {
+                out.push_back({let->result, let->expr});
+            }
+        }
+        if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+            if (branch->then_region) {
+                collect_let_bindings_impl(*branch->then_region, storage, out);
+            }
+            if (branch->else_region) {
+                collect_let_bindings_impl(*branch->else_region, storage, out);
+            }
+        }
+        if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+            for (const CoreMatchArm &arm : match->arms) {
+                if (arm.guard_region) {
+                    collect_let_bindings_impl(*arm.guard_region, storage, out);
+                }
+                if (arm.body) {
+                    collect_let_bindings_impl(*arm.body, storage, out);
+                }
+            }
+            if (match->fallback_region) {
+                collect_let_bindings_impl(*match->fallback_region, storage, out);
+            }
+        }
+    }
+}
+
+// The let bindings of one fn body (rooted at its single region) and of every
+// region sharing a flow/workflow root storage.
+[[nodiscard]] std::vector<LetBinding>
+storage_let_bindings(const CoreProgram &program, const CoreBodyStorage &storage) {
+    std::vector<LetBinding> out;
+    for (const CoreFnDecl &fn : program.fns) {
+        if (&fn.storage == &storage) {
+            collect_let_bindings_impl(fn.body, storage, out);
+        }
+    }
+    for (const CoreFlowDecl &flow : program.flows) {
+        if (&flow.storage == &storage) {
+            for (const CoreFlowState &state : flow.states) {
+                collect_let_bindings_impl(state.body, storage, out);
+            }
+        }
+    }
+    for (const CoreWorkflowDecl &wf : program.workflows) {
+        if (&wf.storage == &storage) {
+            for (const CoreWorkflowNode &node : wf.nodes) {
+                if (node.input_region) {
+                    collect_let_bindings_impl(*node.input_region, storage, out);
+                }
+            }
+            if (wf.return_region) {
+                collect_let_bindings_impl(*wf.return_region, storage, out);
+            }
+        }
+    }
+    return out;
+}
+
+// The value-bearing return operands of one fn body (any nesting depth).
+void collect_return_values_impl(const CoreRegion &region, const CoreBodyStorage &storage,
+                                std::vector<CoreValueId> &out) {
+    for (const CoreStmt &stmt : region.statements) {
+        if (const auto *ret = std::get_if<CoreReturnStmt>(&stmt.node);
+            ret != nullptr && ret->has_value && ret->value.value < storage.value_count) {
+            out.push_back(ret->value);
+        }
+        if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+            if (branch->then_region) {
+                collect_return_values_impl(*branch->then_region, storage, out);
+            }
+            if (branch->else_region) {
+                collect_return_values_impl(*branch->else_region, storage, out);
+            }
+        }
+        if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+            for (const CoreMatchArm &arm : match->arms) {
+                if (arm.guard_region) {
+                    collect_return_values_impl(*arm.guard_region, storage, out);
+                }
+                if (arm.body) {
+                    collect_return_values_impl(*arm.body, storage, out);
+                }
+            }
+            if (match->fallback_region) {
+                collect_return_values_impl(*match->fallback_region, storage, out);
+            }
+        }
+    }
+}
+
+[[nodiscard]] std::optional<std::uint32_t>
+resolve_instance_body(const CoreProgram &program, CoreInstanceId instance) {
+    if (instance.value == CoreInstanceId::kInvalid ||
+        instance.value >= program.instances.size()) {
+        return std::nullopt;
+    }
+    const auto *payload =
+        std::get_if<CoreFnInstance>(&program.instances[instance.value].payload);
+    if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+        payload->body.value >= program.fns.size()) {
+        return std::nullopt;
+    }
+    return payload->body.value;
+}
+
+// The mutable fixed-point engine behind ClosurePointsTo.
+struct ClosureFlowEngine {
+    const CoreProgram &program;
+    // storage identity -> dense per-SSA-slot closure sets.
+    std::unordered_map<const CoreBodyStorage *, std::vector<std::vector<std::uint32_t>>> sets;
+    // storage identity -> its let bindings (collected once, reused every pass).
+    std::unordered_map<const CoreBodyStorage *, std::vector<LetBinding>> bindings;
+    std::vector<std::uint32_t> dead; // returned for an out-of-range/foreign slot
+    std::vector<std::vector<CoreValueId>> return_values; // per fn
+
+    explicit ClosureFlowEngine(const CoreProgram &p) : program(p) {
+        const auto allocate = [&](const CoreBodyStorage &storage) {
+            sets.emplace(&storage,
+                         std::vector<std::vector<std::uint32_t>>(storage.value_count));
+            bindings.emplace(&storage, storage_let_bindings(program, storage));
+        };
+        for (const CoreFlowDecl &flow : program.flows) {
+            allocate(flow.storage);
+        }
+        for (const CoreWorkflowDecl &wf : program.workflows) {
+            allocate(wf.storage);
+        }
+        for (const CoreFnDecl &fn : program.fns) {
+            allocate(fn.storage);
+        }
+        return_values.reserve(program.fns.size());
+        for (const CoreFnDecl &fn : program.fns) {
+            std::vector<CoreValueId> rets;
+            collect_return_values_impl(fn.body, fn.storage, rets);
+            return_values.push_back(std::move(rets));
+        }
+    }
+
+    [[nodiscard]] std::vector<std::uint32_t> &slot(const CoreBodyStorage &storage,
+                                                    CoreValueId v) {
+        auto found = sets.find(&storage);
+        if (found == sets.end() || v.value >= found->second.size()) {
+            return dead;
+        }
+        return found->second[v.value];
+    }
+
+    bool add(std::vector<std::uint32_t> &set, std::uint32_t fn) {
+        if (std::find(set.begin(), set.end(), fn) != set.end()) {
+            return false;
+        }
+        set.push_back(fn);
+        return true;
+    }
+
+    bool merge_into(std::vector<std::uint32_t> &dst,
+                    const std::vector<std::uint32_t> &src) {
+        bool changed = false;
+        for (const std::uint32_t fn : src) {
+            changed = add(dst, fn) || changed;
+        }
+        return changed;
+    }
+
+    // The closures a fn currently RETURNS (recomputed per pass).
+    [[nodiscard]] std::vector<std::uint32_t> return_set(std::uint32_t fn) {
+        std::vector<std::uint32_t> out;
+        if (fn >= program.fns.size()) {
+            return out;
+        }
+        const CoreFnDecl &decl = program.fns[fn];
+        for (const CoreValueId v : return_values[fn]) {
+            merge_into(out, slot(decl.storage, v));
+        }
+        return out;
+    }
+
+    // Propagate one call's argument closure sets into a target fn's params.
+    bool propagate_args(const CoreBodyStorage &caller, const std::vector<CoreValueId> &args,
+                        std::uint32_t target_fn) {
+        bool changed = false;
+        const CoreFnDecl &target = program.fns[target_fn];
+        const std::size_t n = std::min(args.size(), target.params.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            changed = merge_into(slot(target.storage, target.params[i]),
+                                 slot(caller, args[i])) || changed;
+        }
+        return changed;
+    }
+
+    bool run_pass() {
+        bool changed = false;
+        const auto propagate_storage = [&](const CoreBodyStorage &storage) {
+            for (const LetBinding &b : bindings.at(&storage)) {
+                const CoreExpr &expr = storage.exprs[b.expr.value];
+                if (const auto *closure = std::get_if<CoreClosureExpr>(&expr.node)) {
+                    if (closure->fn.value < program.fns.size()) {
+                        changed = add(slot(storage, b.result), closure->fn.value) || changed;
+                        // The construction's env operands flow into the lifted
+                        // fn's pre-bound environment slots.
+                        const CoreFnDecl &target = program.fns[closure->fn.value];
+                        const std::size_t n =
+                            std::min(closure->env.size(), target.env_bindings.size());
+                        for (std::size_t i = 0; i < n; ++i) {
+                            changed = merge_into(slot(target.storage, target.env_bindings[i]),
+                                                 slot(storage, closure->env[i])) || changed;
+                        }
+                    }
+                    continue;
+                }
+                if (const auto *alias = std::get_if<CoreValueRefExpr>(&expr.node)) {
+                    changed = merge_into(slot(storage, b.result),
+                                         slot(storage, alias->value)) || changed;
+                    continue;
+                }
+                if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                    const auto target = resolve_instance_body(program, call->callee);
+                    if (!target.has_value()) {
+                        continue;
+                    }
+                    changed = propagate_args(storage, call->args, *target) || changed;
+                    changed = merge_into(slot(storage, b.result), return_set(*target)) || changed;
+                    continue;
+                }
+                if (const auto *icall = std::get_if<CoreCallClosureExpr>(&expr.node)) {
+                    // Dispatch to every closure the callee slot currently holds.
+                    const std::vector<std::uint32_t> targets =
+                        slot(storage, icall->callee);
+                    for (const std::uint32_t target : targets) {
+                        changed = propagate_args(storage, icall->args, target) || changed;
+                        changed =
+                            merge_into(slot(storage, b.result), return_set(target)) || changed;
+                    }
+                }
+            }
+        };
+        for (const CoreFlowDecl &flow : program.flows) {
+            propagate_storage(flow.storage);
+        }
+        for (const CoreWorkflowDecl &wf : program.workflows) {
+            propagate_storage(wf.storage);
+        }
+        for (const CoreFnDecl &fn : program.fns) {
+            propagate_storage(fn.storage);
+        }
+        return changed;
+    }
+
+    void run() {
+        // Sets only grow; each slot's set is bounded by the number of closure
+        // constructions (== number of fns), so this reaches a fixed point.
+        while (run_pass()) {
+        }
+        for (auto &[storage, per_slot] : sets) {
+            static_cast<void>(storage);
+            for (auto &set : per_slot) {
+                std::sort(set.begin(), set.end());
+                set.erase(std::unique(set.begin(), set.end()), set.end());
+            }
+        }
+    }
+};
+
+} // namespace
+
+ClosurePointsTo ClosurePointsTo::analyze(const CoreProgram &program) {
+    ClosureFlowEngine engine(program);
+    engine.run();
+    ClosurePointsTo out;
+    out.sets_ = std::move(engine.sets);
+    return out;
+}
+
+const std::vector<std::uint32_t> &ClosurePointsTo::slot_set(
+    const CoreBodyStorage &storage, CoreValueId slot) const {
+    static const std::vector<std::uint32_t> kEmpty;
+    const auto found = sets_.find(&storage);
+    if (found == sets_.end() || slot.value >= found->second.size()) {
+        return kEmpty;
+    }
+    return found->second[slot.value];
+}
+
+std::vector<std::uint32_t> ClosurePointsTo::targets_of(
+    const CoreBodyStorage &caller_storage, const CoreCallClosureExpr &call) const {
+    return slot_set(caller_storage, call.callee);
+}
+
+namespace {
+
 // Tarjan SCC with an EXPLICIT work stack (no recursion — the graph is small but
 // the verifier avoids native recursion on hostile input elsewhere too).
 class Tarjan {
@@ -433,21 +741,38 @@ class RecursionLattice {
   private:
     void collect_edges() {
         graph_.assign(program_.fns.size(), {});
+        // FB-3b: compute the program's closure points-to set ONCE; every
+        // CoreCallClosureExpr adds one INDIRECT invocation edge per fn its
+        // callee slot can hold (the flow-sensitive call_indirect target set),
+        // so a cycle that closes through a closure value is visible to the
+        // SCC/rank lattice exactly like a direct cycle.
+        const ClosurePointsTo points_to = ClosurePointsTo::analyze(program_);
         const auto scan = [&](std::uint32_t caller_fn, const CoreBodyStorage &storage) {
             for (std::uint32_t ei = 0; ei < storage.exprs.size(); ++ei) {
                 const CoreExpr &expr = storage.exprs[ei];
-                const auto *call = std::get_if<CoreCallExpr>(&expr.node);
-                if (call == nullptr) {
+                if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                    const auto callee = resolve_fn(call->callee);
+                    if (!callee.has_value()) {
+                        continue;
+                    }
+                    edges_.push_back(CallEdge{caller_fn, *callee, &call->args, &storage, ei,
+                                              /*indirect=*/false, expr.source_range});
+                    if (caller_fn != CoreFnId::kInvalid) {
+                        graph_[caller_fn].push_back(*callee);
+                    }
                     continue;
                 }
-                const auto callee = resolve_fn(call->callee);
-                if (!callee.has_value()) {
-                    continue;
-                }
-                edges_.push_back(CallEdge{caller_fn, *callee, &call->args, &storage, ei,
-                                          expr.source_range});
-                if (caller_fn != CoreFnId::kInvalid) {
-                    graph_[caller_fn].push_back(*callee);
+                if (const auto *indirect_call =
+                        std::get_if<CoreCallClosureExpr>(&expr.node)) {
+                    for (const std::uint32_t target :
+                         points_to.targets_of(storage, *indirect_call)) {
+                        edges_.push_back(
+                            CallEdge{caller_fn, target, &indirect_call->args, &storage, ei,
+                                     /*indirect=*/true, expr.source_range});
+                        if (caller_fn != CoreFnId::kInvalid) {
+                            graph_[caller_fn].push_back(target);
+                        }
+                    }
                 }
             }
         };
@@ -679,15 +1004,24 @@ class RecursionLattice {
             return internal.empty();
         }
 
-        // Expr ids of CoreCallExpr at any nesting depth inside ONE region.
+        // A recursive invocation expr id: a direct CoreCallExpr or an indirect
+        // CoreCallClosureExpr (FB-3b). The rank lattice treats both as edges.
+        const auto is_call_expr = [&](CoreExprId id) {
+            if (id.value >= decl.storage.exprs.size()) {
+                return false;
+            }
+            const CoreExprNode &node = decl.storage.exprs[id.value].node;
+            return std::holds_alternative<CoreCallExpr>(node) ||
+                   std::holds_alternative<CoreCallClosureExpr>(node);
+        };
+
+        // Expr ids of invocation exprs at any nesting depth inside ONE region.
         const auto calls_in = [&](const CoreRegion &region,
                                   std::unordered_set<std::uint32_t> &out) {
             const auto walk = [&](auto &&self, const CoreRegion &r) -> void {
                 for (const CoreStmt &stmt : r.statements) {
                     if (const auto *let = std::get_if<CoreLetStmt>(&stmt.node)) {
-                        if (let->expr.value < decl.storage.exprs.size() &&
-                            std::holds_alternative<CoreCallExpr>(
-                                decl.storage.exprs[let->expr.value].node)) {
+                        if (is_call_expr(let->expr)) {
                             out.insert(let->expr.value);
                         }
                     }
@@ -728,9 +1062,7 @@ class RecursionLattice {
                                            std::uint32_t top) -> void {
             for (const CoreStmt &stmt : region.statements) {
                 if (const auto *let = std::get_if<CoreLetStmt>(&stmt.node)) {
-                    if (let->expr.value < decl.storage.exprs.size() &&
-                        std::holds_alternative<CoreCallExpr>(
-                            decl.storage.exprs[let->expr.value].node)) {
+                    if (is_call_expr(let->expr)) {
                         top_index.emplace(let->expr.value, top);
                     }
                 }
@@ -760,9 +1092,7 @@ class RecursionLattice {
         for (std::uint32_t si = 0; si < decl.body.statements.size(); ++si) {
             const CoreStmt &stmt = decl.body.statements[si];
             if (const auto *let = std::get_if<CoreLetStmt>(&stmt.node)) {
-                if (let->expr.value < decl.storage.exprs.size() &&
-                    std::holds_alternative<CoreCallExpr>(
-                        decl.storage.exprs[let->expr.value].node)) {
+                if (is_call_expr(let->expr)) {
                     top_index.emplace(let->expr.value, si);
                 }
             }
@@ -1157,25 +1487,41 @@ std::uint64_t max_native_fn_call_depth(const CoreProgram &program,
     const auto is_live = [&](std::uint32_t fn) {
         return reachable == nullptr || (fn < reachable->size() && (*reachable)[fn]);
     };
-    // Rebuild the direct-call graph (same deterministic derivation).
+    // Rebuild the invocation graph (same deterministic derivation). A direct
+    // CoreCallExpr contributes one edge; a CoreCallClosureExpr contributes one
+    // edge per closure its callee slot can hold (FB-3b call_indirect, from the
+    // flow-sensitive points-to set), so a cycle that closes only through a
+    // closure value still weights the native stack path. The verifier already
+    // rejects an unsealed indirect cycle; reachable targets only participate.
     std::vector<std::vector<std::uint32_t>> graph(program.fns.size());
+    const ClosurePointsTo points_to = ClosurePointsTo::analyze(program);
     for (std::uint32_t fi = 0; fi < program.fns.size(); ++fi) {
         if (!is_live(fi)) {
             continue;
         }
-        for (const CoreExpr &expr : program.fns[fi].storage.exprs) {
-            const auto *call = std::get_if<CoreCallExpr>(&expr.node);
-            if (call == nullptr || call->callee.value >= program.instances.size()) {
-                continue;
+        const CoreFnDecl &caller = program.fns[fi];
+        for (const CoreExpr &expr : caller.storage.exprs) {
+            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                if (call->callee.value >= program.instances.size()) {
+                    continue;
+                }
+                const auto *payload =
+                    std::get_if<CoreFnInstance>(&program.instances[call->callee.value].payload);
+                if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+                    payload->body.value >= program.fns.size() ||
+                    !is_live(payload->body.value)) {
+                    continue;
+                }
+                graph[fi].push_back(payload->body.value);
+            } else if (const auto *indirect_call =
+                           std::get_if<CoreCallClosureExpr>(&expr.node)) {
+                for (const std::uint32_t target :
+                     points_to.targets_of(caller.storage, *indirect_call)) {
+                    if (is_live(target)) {
+                        graph[fi].push_back(target);
+                    }
+                }
             }
-            const auto *payload =
-                std::get_if<CoreFnInstance>(&program.instances[call->callee.value].payload);
-            if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
-                payload->body.value >= program.fns.size() ||
-                !is_live(payload->body.value)) {
-                continue;
-            }
-            graph[fi].push_back(payload->body.value);
         }
     }
     const std::vector<std::vector<std::uint32_t>> components = Tarjan(graph).run();

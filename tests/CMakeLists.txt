@@ -268,6 +268,22 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 FB-3b fix-forward: a NESTED lambda literal constructed in a FLOW
+    # handler lifts and runs through call_indirect (regression for the dangling
+    # Pass-1.5 interner lifetime defect that crashed the producer). Real
+    # Node-engine evidence.
+    add_test(NAME ahfl.wasm.fb3_nested_lambda_flow_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_nested_lambda_flow_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.fb3_nested_lambda_flow_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-3 nested flow-lambda lift Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 FB-2 fix-forward: a structurally correct rank guard does NOT
     # seal recursion unless every recursive edge is on its continue path. Both
     # a self call before the guard and one inside the divergent stop (THEN)
@@ -282,6 +298,24 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
     set_tests_properties(ahfl.wasm.fb2_guard_placement_reject PROPERTIES
         PASS_REGULAR_EXPRESSION "FB-2 guard-dominance compile-reject lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # RFC 0026 FB-3b fix-forward: a recursion cycle that closes ONLY through a
+    # closure argument (call_indirect) is invisible to the direct-call graph
+    # but must still be sealed. With no rank threaded through the closure the
+    # closure points-to lattice fails closed with FN_RECURSION_UNBOUNDED and
+    # emits no wasm (a real engine traps with stack exhaustion otherwise).
+    # Engine-independent (the gate is the compile rejection).
+    add_test(NAME ahfl.wasm.fb3_indirect_recursion_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb3_indirect_recursion_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb3_indirect_recursion_reject.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb3_indirect_recursion_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "FB-3b call_indirect-cycle compile-reject lane passed"
         FAIL_REGULAR_EXPRESSION "FAIL:"
         LABELS "wasm;backend;conformance;structural"
     )

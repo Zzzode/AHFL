@@ -6,18 +6,25 @@
 // ---------------------------------------------------------------------------
 //
 // AHFL fn bodies have no loop statement: the ONLY way a pure fn body repeats
-// work is recursion through static `CoreCallExpr` edges (design §5.4). On the
-// wasm MVP target that recursion is realized with a plain native `call`, so the
-// compiler must seal the call depth at COMPILE TIME instead of relying on tail
-// call optimization or a runtime stack guard.
+// work is recursion through a static `CoreCallExpr` edge OR through an indirect
+// `CoreCallClosureExpr` edge (FB-3b call_indirect, design §5.2/§6.2). On the
+// wasm MVP target both are realized with a native frame (a plain `call` or
+// `call_indirect`), so the compiler must seal the call depth at COMPILE TIME
+// instead of relying on tail call optimization or a runtime stack guard.
 //
 // The termination MEASURE (`decreases`) is deliberately NOT read here: it is
 // erased before Core (termination was already consumed at the AHFL-IR layer).
 // The bound is derived independently from STRUCTURAL Core-ANF facts. Formal
 // rule:
 //
-//   Direct-call graph G over CoreProgram::fns; compute SCCs. A nontrivial SCC
-//   (self edge, or >= 2 members) is a recursion group.
+//   Invocation graph G over CoreProgram::fns; compute SCCs. A direct edge is a
+//   CoreCallExpr; an INDIRECT edge is one possible target of a
+//   CoreCallClosureExpr. The possible-target set of a closure call is computed
+//   conservatively as EVERY fn whose address a CoreClosureExpr takes anywhere
+//   in the program and whose interned CoreVtFn signature structurally matches
+//   the call site (one closure call site therefore contributes 1..N edges, N =
+//   matching targets). A nontrivial SCC (self edge, or >= 2 members) is a
+//   recursion group.
 //
 //   For every member f of a recursion group C, one Int-typed RANK PARAMETER
 //   r_f (some slot of f.params) must satisfy:
@@ -74,6 +81,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include "ahfl/compiler/ir/core_ir.hpp"
@@ -157,6 +165,51 @@ struct FnRecursionAnalysis {
     std::vector<FnRecursionIssue> unbounded_issues;
     /// Groups whose derived bound exceeds `kFnRecursionDepthCeiling`.
     std::vector<FnRecursionScc> overflow_sccs;
+};
+
+/// FB-3b (design §5.2/§6.2/§8.1-6): an interprocedural, flow-sensitive CLOSURE
+/// POINTS-TO analysis (a simple 0-CFA over Core-ANF). For every abstract slot
+/// that can hold a first-class callable — a fn parameter, a lifted fn's env
+/// capture slot, or a let-bound SSA local — it records the CONSERVATIVE set of
+/// fn bodies (`CoreFnId`) a closure value at that slot can actually be at run
+/// time. The set is derived structurally, never by signature alone:
+///   * a `CoreClosureExpr` seeds its target fn into its result slot;
+///   * a direct `CoreCallExpr` propagates each argument's set into the callee
+///     fn's corresponding PARAMETER slot;
+///   * a `CoreClosureExpr` operand propagates into the lifted fn's ENV slot;
+///   * a `CoreValueRefExpr` aliases its source slot;
+///   * a `CoreCallClosureExpr` through a slot dispatches to that slot's set.
+/// This is a CLOSED-WORLD fact: every callable value in a Core program
+/// originates at a `CoreClosureExpr` (a bare static-fn reference lowers to a
+/// zero-env `CoreClosureExpr`, and the Pure lane has no external/opaque
+/// function pointers), so an EMPTY set at a call site means no constructable
+/// closure reaches it in THIS program and the site contributes no edge — it is
+/// not an unknown that must fail closed. Context INSENSITIVITY gives the safety
+/// direction: when the same parameter is passed distinct closures on distinct
+/// calls, the slot's set is their union, which only ever ADDS edges (and so
+/// only ever seals more cycles). This is the SINGLE derivation shared by the
+/// recursion lattice, the native-depth gate, and the wasm heap-budget gate.
+class ClosurePointsTo {
+  public:
+    /// Run the fixed point over one whole Core program.
+    [[nodiscard]] static ClosurePointsTo analyze(const CoreProgram &program);
+
+    /// The possible runtime targets of one `CoreCallClosureExpr`: the closure
+    /// set of its callee SSA slot within `caller_storage` (a fn body or a
+    /// flow/workflow root storage). Sorted and de-duplicated `CoreFnId` body
+    /// indices. An empty result means no trackable closure reaches the site.
+    [[nodiscard]] std::vector<std::uint32_t> targets_of(
+        const CoreBodyStorage &caller_storage,
+        const CoreCallClosureExpr &call) const;
+
+    /// The closure set of one storage-local slot (empty when untracked).
+    [[nodiscard]] const std::vector<std::uint32_t> &slot_set(
+        const CoreBodyStorage &storage, CoreValueId slot) const;
+
+  private:
+    // storage identity -> per-SSA-slot closure set.
+    std::unordered_map<const CoreBodyStorage *, std::vector<std::vector<std::uint32_t>>>
+        sets_;
 };
 
 /// Derive the recursion-depth lattice for one lowered Core program. Pure and
