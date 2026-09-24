@@ -3574,6 +3574,24 @@ class Verifier {
                 }
             }
 
+            // The declared capture signature is the trust anchor every
+            // CoreClosureExpr env check resolves against ("a wire artifact
+            // cannot forge a self-consistent capture pair"), so each
+            // program-global capture value-type id is validated on the fn
+            // declaration itself — not only incidentally via an env-binding
+            // cross-check or a construction site that happens to reference it.
+            // An unreferenced fn with a kInvalid / out-of-range / `Never`
+            // capture slot must fail on its own.
+            for (std::size_t i = 0; i < fn.captures.size(); ++i) {
+                if (!value_type_slot_ok(fn.captures[i])) {
+                    error(verify::kClosureCaptureType,
+                          "fn '" + fn.name + "' declared capture slot #" + std::to_string(i) +
+                              " does not name a valid, materialized program-global value type "
+                              "(out-of-range id, kInvalid, or a `Never`)",
+                          fn.source_range);
+                }
+            }
+
             // FB-3a2 (§3.1.1 D-LIFT): the env capture slots are ALSO pre-bound
             // body SSA values — one per declared capture, parallel to it, distinct
             // from every logical parameter and from each other. They carry the
@@ -3947,10 +3965,22 @@ class Verifier {
                       expr.source_range);
             }
         }
+        // Bounds-check BEFORE indexing program_.value_types: the field-shape
+        // pass (verify_expr_arena) only records a diagnostic, it does not stop
+        // this program-wide pass, so a kInvalid / out-of-range result type (e.g.
+        // round-tripped from a tampered wire doc) would otherwise dereference
+        // off the end of the value-type arena.
+        if (expr.result_type.value == CoreValueTypeId::kInvalid ||
+            expr.result_type.value >= program_.value_types.size()) {
+            error(verify::kClosureResultTypeInvalid,
+                  "closure construction in body '" + label +
+                      "' result type is not an interned closure value type",
+                  expr.source_range);
+            return;
+        }
         const auto *closure =
             std::get_if<CoreVtClosure>(&program_.value_types[expr.result_type.value].node);
-        if (expr.result_type.value == CoreValueTypeId::kInvalid ||
-            expr.result_type.value >= program_.value_types.size() || closure == nullptr) {
+        if (closure == nullptr) {
             error(verify::kClosureResultTypeInvalid,
                   "closure construction in body '" + label +
                       "' result type is not an interned closure value type",
@@ -4044,7 +4074,13 @@ class Verifier {
             if (arg.value >= storage.value_types.size()) {
                 continue; // out-of-range arg reported by the field pass
             }
-            if (!(storage.value_types[arg.value] == signature->params[i])) {
+            // D-FNREP (design §3.1.1 / §8.1 #5): exactly as on the direct
+            // CoreCallExpr path, a constructed CoreVtClosure{S,_} widens for
+            // free to the bare signature S at a callable parameter slot
+            // (identical layout, env ignored). Raw-id equality alone would
+            // reject a lambda passed to a map-like whose parameter is callable.
+            if (!(storage.value_types[arg.value] == signature->params[i]) &&
+                !callable_argument_widens(storage.value_types[arg.value], signature->params[i])) {
                 error(verify::kClosureDispatchArgumentType,
                       "closure call in body '" + label + "' argument #" + std::to_string(i) +
                           " type does not match the callable signature parameter type",

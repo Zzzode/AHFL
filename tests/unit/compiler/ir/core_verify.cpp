@@ -3237,6 +3237,202 @@ TEST_CASE("FB-3a1 verifier: a closure call with the wrong result type fails") {
     CHECK(has_code(result, verify::kClosureDispatchResultType));
 }
 
+// FB-3a1 fix-forward P0: verify_closure_construction dereferenced
+// program_.value_types[expr.result_type.value] BEFORE bounds/kInvalid checking.
+// The field-shape pass (verify_expr_arena) only records a diagnostic — it does
+// not stop the later program-wide verify_closures pass — so a kInvalid /
+// out-of-range result type (the exact shape a tampered wire doc round-trips)
+// read off the end of the value-type arena and SEGVed. Both malformed ids must
+// produce CLOSURE_RESULT_TYPE_INVALID instead of a crash.
+TEST_CASE(
+    "FB-3a1 verifier: a closure construction with a kInvalid result type fails without a crash") {
+    ClosureProgram c = make_good_closure_program();
+    c.program.fns[1].storage.exprs[kClosureExprIndex].result_type =
+        CoreValueTypeId{CoreValueTypeId::kInvalid};
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureResultTypeInvalid));
+}
+
+TEST_CASE("FB-3a1 verifier: a closure construction with an out-of-range result type fails") {
+    ClosureProgram c = make_good_closure_program();
+    c.program.fns[1].storage.exprs[kClosureExprIndex].result_type = CoreValueTypeId{9999};
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureResultTypeInvalid));
+}
+
+// FB-3a1 fix-forward P1: D-FNREP (design §3.1.1 / §8.1 #5) must be honored at
+// CoreCallClosureExpr argument slots exactly as it is on the direct
+// CoreCallExpr path — a constructed CoreVtClosure{S,_} is accepted where the
+// bare signature S is demanded, and the reverse narrowing is rejected. The
+// fixture is a higher-order shape: h(Fn(Int)->Int) -> Int is invoked
+// indirectly on a zero-capture closure {h}, passing the one-capture closure
+// {g0} whose shared signature is Fn(Int)->Int.
+namespace {
+
+struct CallableParamProgram {
+    CoreProgram program;
+    CoreValueTypeId vt_int{};
+    CoreValueTypeId vt_g_sig{};     // Fn(Int) -> Int
+    CoreValueTypeId vt_g_closure{}; // Closure{vt_g_sig, [Int ByValue]}
+    CoreValueTypeId vt_h_sig{};     // Fn(param) -> Int, param depends on mode
+    CoreValueTypeId vt_h_closure{}; // Closure{vt_h_sig, []}
+};
+
+// demand_capturing=false (the D-FNREP positive): h demands the BARE signature
+// and mk passes the one-capture g0 closure.
+// demand_capturing=true  (the one-directional negative): h demands the
+// one-capture closure type and mk passes a value of the bare Fn type.
+[[nodiscard]] CallableParamProgram make_callable_param_program(bool demand_capturing) {
+    CallableParamProgram c;
+    CoreProgram &p = c.program;
+    c.vt_int = intern_program_vt(p, CoreValueType{CoreVtInt{}});
+    c.vt_g_sig = intern_program_vt(p, CoreValueType{CoreVtFn{{c.vt_int}, c.vt_int}});
+    c.vt_g_closure = intern_program_vt(
+        p,
+        CoreValueType{
+            CoreVtClosure{c.vt_g_sig, {CoreClosureCapture{c.vt_int, CoreCaptureMode::ByValue}}}});
+
+    // fn 0: g0(Int) -> Int, one declared Int env capture slot (same lifted
+    // shape as make_good_closure_program).
+    CoreInstanceDecl inst0;
+    inst0.id = CoreInstanceId{0};
+    inst0.instance_key = "_inst_g0";
+    inst0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    inst0.payload = CoreFnInstance{CoreFnId{0}};
+    p.instances.push_back(std::move(inst0));
+
+    CoreFnDecl g0;
+    g0.id = CoreFnId{0};
+    g0.instance = CoreInstanceId{0};
+    g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    g0.params = {CoreValueId{0}};
+    g0.captures = {c.vt_int};
+    g0.env_bindings = {CoreValueId{1}};
+    g0.name = "_inst_g0";
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {c.vt_int, c.vt_int};
+    g0.storage.exprs.push_back(CoreExpr{CoreValueRefExpr{CoreValueId{0}}, std::nullopt, c.vt_int});
+    g0.body.statements.push_back(CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    p.fns.push_back(std::move(g0));
+
+    // fn 1: h(callable) -> Int. Its single parameter carries the bare signature
+    // in D-FNREP mode and the capturing closure type in narrowing mode.
+    const CoreValueTypeId h_param_type = demand_capturing ? c.vt_g_closure : c.vt_g_sig;
+    c.vt_h_sig = intern_program_vt(p, CoreValueType{CoreVtFn{{h_param_type}, c.vt_int}});
+    c.vt_h_closure = intern_program_vt(p, CoreValueType{CoreVtClosure{c.vt_h_sig, {}}});
+
+    CoreInstanceDecl inst1;
+    inst1.id = CoreInstanceId{1};
+    inst1.instance_key = "_inst_h";
+    inst1.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "h", "h", "", 701};
+    inst1.payload = CoreFnInstance{CoreFnId{1}};
+    p.instances.push_back(std::move(inst1));
+
+    CoreFnDecl h;
+    h.id = CoreFnId{1};
+    h.instance = CoreInstanceId{1};
+    h.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "h", "h", "", 701};
+    h.params = {CoreValueId{0}};
+    h.name = "_inst_h";
+    // v0 = callable param, v1 = integer literal the body returns.
+    h.storage.value_count = 2;
+    h.storage.value_types = {h_param_type, c.vt_int};
+    const CoreExprId h_lit{static_cast<std::uint32_t>(h.storage.exprs.size())};
+    h.storage.exprs.push_back(
+        CoreExpr{CoreLiteralExpr{CoreLiteralKind::Integer, "0"}, std::nullopt, c.vt_int});
+    h.body.statements.push_back(CoreStmt{CoreLetStmt{CoreValueId{1}, h_lit}, std::nullopt});
+    h.body.statements.push_back(CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    p.fns.push_back(std::move(h));
+
+    // fn 2: mk — builds the closures and invokes h indirectly.
+    CoreInstanceDecl inst2;
+    inst2.id = CoreInstanceId{2};
+    inst2.instance_key = "_inst_mk";
+    inst2.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "mk", "mk", "", 702};
+    inst2.payload = CoreFnInstance{CoreFnId{2}};
+    p.instances.push_back(std::move(inst2));
+
+    CoreFnDecl mk;
+    mk.id = CoreFnId{2};
+    mk.instance = CoreInstanceId{2};
+    mk.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "mk", "mk", "", 702};
+    mk.name = "_inst_mk";
+    if (!demand_capturing) {
+        // v0 = Int param, v1 = {g0,[v0]} capturing closure, v2 = {h} closure.
+        mk.params = {CoreValueId{0}};
+        mk.storage.value_count = 3;
+        mk.storage.value_types = {c.vt_int, c.vt_g_closure, c.vt_h_closure};
+        mk.storage.exprs.push_back(
+            CoreExpr{CoreClosureExpr{CoreFnId{0}, {CoreValueId{0}}}, std::nullopt, c.vt_g_closure});
+        mk.storage.exprs.push_back(
+            CoreExpr{CoreClosureExpr{CoreFnId{1}, {}}, std::nullopt, c.vt_h_closure});
+        mk.storage.exprs.push_back(CoreExpr{
+            CoreCallClosureExpr{CoreValueId{2}, {CoreValueId{1}}}, std::nullopt, c.vt_int});
+    } else {
+        // v0 = Int param, v1 = bare-Fn param (the narrowing operand),
+        // v2 = {h} closure demanding the capturing type.
+        mk.params = {CoreValueId{0}, CoreValueId{1}};
+        mk.storage.value_count = 3;
+        mk.storage.value_types = {c.vt_int, c.vt_g_sig, c.vt_h_closure};
+        mk.storage.exprs.push_back(
+            CoreExpr{CoreClosureExpr{CoreFnId{1}, {}}, std::nullopt, c.vt_h_closure});
+        mk.storage.exprs.push_back(CoreExpr{
+            CoreCallClosureExpr{CoreValueId{2}, {CoreValueId{1}}}, std::nullopt, c.vt_int});
+    }
+    mk.body.statements.push_back(CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    p.fns.push_back(std::move(mk));
+
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("FB-3a1 verifier: D-FNREP widens a constructed closure to a bare fn parameter on a "
+          "closure call") {
+    CallableParamProgram c = make_callable_param_program(/*demand_capturing=*/false);
+    const auto result = verify_core_program(c.program);
+    for (const auto &d : result.diagnostics) {
+        INFO("unexpected: " << d.code << " - " << d.message);
+        CHECK(false);
+    }
+    CHECK(result.ok());
+}
+
+TEST_CASE("FB-3a1 verifier: a bare fn value does not narrow to a demanded capture closure on a "
+          "closure call") {
+    CallableParamProgram c = make_callable_param_program(/*demand_capturing=*/true);
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureDispatchArgumentType));
+}
+
+// FB-3a1 fix-forward P2: the DECLARED CoreFnDecl::captures signature is the
+// trust anchor every construction/env check resolves against, but its
+// program-global ids were never bounds-checked on the fn itself — a bogus slot
+// surfaced only as a misleading arity error (or was accepted when the
+// incidental cross-checks happened to line up). A standalone, unreferenced fn
+// with a kInvalid / out-of-range capture slot must fail with the dedicated
+// capture-type code on its own.
+TEST_CASE("FB-3a1 verifier: an out-of-range declared capture slot on an unreferenced fn fails") {
+    ClosureProgram c = make_good_closure_program();
+    c.program.fns[0].captures = {CoreValueTypeId{999999}};
+    c.program.fns[0].env_bindings.clear();
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureCaptureType));
+}
+
+TEST_CASE("FB-3a1 verifier: a kInvalid declared capture slot on an unreferenced fn fails") {
+    ClosureProgram c = make_good_closure_program();
+    c.program.fns[0].captures = {CoreValueTypeId{CoreValueTypeId::kInvalid}};
+    c.program.fns[0].env_bindings.clear();
+    const auto result = verify_core_program(c.program);
+    CHECK_FALSE(result.ok());
+    CHECK(has_code(result, verify::kClosureCaptureType));
+}
+
 // ===========================================================================
 // RFC 0026 FB-2 (CORE-FNBODY-DESIGN §8.1 rule 6): the compile-time recursion
 // depth lattice. These fixtures build Core fn bodies directly in ANF and drive

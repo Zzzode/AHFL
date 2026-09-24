@@ -1405,3 +1405,90 @@ TEST_CASE("Core-IR JSON reader rejects an unknown field on a closure expression"
     doc.insert(line_start, indent + "\"bogus\": 1,\n");
     require_rejected_with(doc, "core.json.UNKNOWN_FIELD");
 }
+
+namespace {
+
+// Build the single-fn closure fixture the unknown-field test uses, print it,
+// and replace the closure CONSTRUCTION expr's own "result_type" number with
+// `tampered`. The construction expr is the only expr carrying a "fn" member,
+// and the printer emits "result_type" immediately before that member inside the
+// same object, so a backwards rfind locates exactly the right field.
+[[nodiscard]] std::string tampered_closure_result_type_doc(std::uint32_t tampered) {
+    using namespace ir::core;
+    CoreProgram program;
+    program.value_types.push_back(CoreValueType{CoreVtInt{}});
+    program.value_types.push_back(
+        CoreValueType{CoreVtFn{{CoreValueTypeId{0}}, CoreValueTypeId{0}}});
+    program.value_types.push_back(CoreValueType{CoreVtClosure{
+        CoreValueTypeId{1}, {CoreClosureCapture{CoreValueTypeId{0}, CoreCaptureMode::ByValue}}}});
+
+    CoreInstanceDecl inst;
+    inst.id = CoreInstanceId{0};
+    inst.instance_key = "_inst_g0";
+    inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    inst.payload = CoreFnInstance{CoreFnId{0}};
+    program.instances.push_back(std::move(inst));
+
+    CoreFnDecl g0;
+    g0.id = CoreFnId{0};
+    g0.instance = CoreInstanceId{0};
+    g0.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "g0", "g0", "", 700};
+    g0.params = {CoreValueId{0}};
+    g0.captures = {CoreValueTypeId{0}};
+    g0.env_bindings = {CoreValueId{1}};
+    g0.name = "_inst_g0";
+    g0.storage.value_count = 2;
+    g0.storage.value_types = {CoreValueTypeId{0}, CoreValueTypeId{0}};
+    g0.storage.exprs.push_back(
+        CoreExpr{CoreClosureExpr{CoreFnId{0}, {CoreValueId{0}}}, std::nullopt, CoreValueTypeId{2}});
+    g0.body.statements.push_back(CoreStmt{CoreReturnStmt{true, CoreValueId{0}}, std::nullopt});
+    program.fns.push_back(std::move(g0));
+
+    std::string doc = print(program);
+    REQUIRE_FALSE(doc.empty());
+
+    const std::string fn_anchor = "\"fn\": 0,";
+    const auto fn_pos = doc.find(fn_anchor);
+    REQUIRE(fn_pos != std::string::npos);
+    const std::string rt_key = "\"result_type\": ";
+    const auto rt_pos = doc.rfind(rt_key, fn_pos);
+    REQUIRE(rt_pos != std::string::npos);
+    const auto num_begin = rt_pos + rt_key.size();
+    const auto num_end = doc.find(',', num_begin);
+    REQUIRE(num_end != std::string::npos);
+    doc.replace(num_begin, num_end - num_begin, std::to_string(tampered));
+    return doc;
+}
+
+} // namespace
+
+// FB-3a1 fix-forward P0 (wire path): the JSON reader maps the 4294967295
+// sentinel to a kInvalid CoreValueTypeId (map_value_type_id), so a tampered
+// closure expr "result_type" reaches the final verify_core_program gate. Before
+// the fix that dereferenced program_.value_types[kInvalid] and SEGVed inside
+// parse_core_ir_json; it must now be a typed core.json.VERIFY_FAILED rejection
+// naming CLOSURE_RESULT_TYPE_INVALID instead of a crash.
+TEST_CASE("Core-IR JSON reader rejects a kInvalid closure result_type without crashing") {
+    const std::string doc = tampered_closure_result_type_doc(ir::core::CoreValueTypeId::kInvalid);
+    const auto result = ir::core::parse_core_ir_json(doc);
+    REQUIRE_FALSE(result.ok());
+    REQUIRE_FALSE(result.diagnostics.empty());
+    bool verify_code = false;
+    for (const auto &diagnostic : result.diagnostics) {
+        INFO("diagnostic: " << diagnostic.code << " - " << diagnostic.message);
+        CHECK(diagnostic.code == "core.json.VERIFY_FAILED");
+        if (diagnostic.message.find("core.verify.CLOSURE_RESULT_TYPE_INVALID") !=
+            std::string::npos) {
+            verify_code = true;
+        }
+    }
+    CHECK(verify_code);
+}
+
+// A numerically out-of-range (non-sentinel) closure result_type is caught one
+// layer earlier, by the reader's value-type remap, as core.json.OUT_OF_RANGE —
+// it must likewise be a clean rejection, never a crash.
+TEST_CASE("Core-IR JSON reader rejects an out-of-range numeric closure result_type") {
+    const std::string doc = tampered_closure_result_type_doc(9999);
+    require_rejected_with(doc, "core.json.OUT_OF_RANGE");
+}
