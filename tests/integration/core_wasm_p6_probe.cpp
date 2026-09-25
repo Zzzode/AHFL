@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -134,12 +135,23 @@ nominal_value_type(const ir::core::CoreProgram &program, ir::core::CoreTypeId ty
 } // namespace
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        std::cerr << "usage: ahfl_core_wasm_p6_probe <source.ahfl> <output.wasm>\n";
+    if (argc != 3 && argc != 4) {
+        std::cerr << "usage: ahfl_core_wasm_p6_probe <source.ahfl> <output.wasm> [agent_index]\n";
         return 2;
     }
     const char *source_path = argv[1];
     const char *output_path = argv[2];
+    // Optional explicit Core agent ordinal to compile. The default (0) keeps
+    // the historical single-agent native-differential path; an explicit index
+    // skips the single-agent native run and emits + reports that ONE agent's
+    // module imports (used by the multi-agent least-privilege regression,
+    // where compiling one agent must not plan another agent's capabilities).
+    bool multi_agent_inspect = false;
+    std::uint32_t target_agent_index = 0;
+    if (argc == 4) {
+        multi_agent_inspect = true;
+        target_agent_index = static_cast<std::uint32_t>(std::strtoul(argv[3], nullptr, 10));
+    }
 
     auto program = compile_fixture(source_path);
     if (!program.has_value()) {
@@ -148,20 +160,27 @@ int main(int argc, char **argv) {
 
     const ir::AgentDecl *agent = nullptr;
     const ir::FlowDecl *flow = nullptr;
+    std::vector<const ir::AgentDecl *> all_agents;
+    std::vector<const ir::FlowDecl *> all_flows;
     for (const auto &decl : program->declarations) {
         if (const auto *candidate = std::get_if<ir::AgentDecl>(&decl)) {
-            if (agent != nullptr) {
-                std::cerr << "expected exactly one agent\n";
-                return 1;
-            }
-            agent = candidate;
+            all_agents.push_back(candidate);
         } else if (const auto *candidate = std::get_if<ir::FlowDecl>(&decl)) {
-            if (flow != nullptr) {
-                std::cerr << "expected exactly one flow\n";
-                return 1;
-            }
-            flow = candidate;
+            all_flows.push_back(candidate);
         }
+    }
+    if (target_agent_index >= all_agents.size() || target_agent_index >= all_flows.size()) {
+        std::cerr << "requested agent index " << target_agent_index
+                  << " is out of range for " << all_agents.size() << " agent(s)/"
+                  << all_flows.size() << " flow(s)\n";
+        return 1;
+    }
+    agent = all_agents[target_agent_index];
+    flow = all_flows[target_agent_index];
+    if (!multi_agent_inspect && (all_agents.size() != 1 || all_flows.size() != 1)) {
+        std::cerr << "expected exactly one agent (pass an explicit agent index for multi-agent "
+                     "fixtures)\n";
+        return 1;
     }
     if (agent == nullptr || flow == nullptr) {
         std::cerr << "fixture does not contain one agent and flow\n";
@@ -190,8 +209,15 @@ int main(int argc, char **argv) {
         input_struct->fields.front().name == "items";
 
     // Native observation: collect every entered state NAME in order. The
-    // observer requires a valid invocation agent id to fire.
+    // observer requires a valid invocation agent id to fire. In multi-agent
+    // inspection mode the single-agent native differential is not meaningful
+    // for the selected index, so it is skipped.
     std::vector<std::string> entered_names;
+    std::vector<std::uint32_t> entered_ids;
+    std::size_t native_transitions = 0;
+    const char *native_status = "skipped";
+    std::int64_t final_id = -1;
+    if (!multi_agent_inspect) {
     auto input = aggregate_fixture ? aggregate_input()
                                    : (collection_fixture ? collection_input() : fixture_input());
     runtime::AgentRuntime native(*agent, *flow);
@@ -204,7 +230,6 @@ int main(int argc, char **argv) {
             return runtime::AgentStateId{entered_names.size() - 1};
         });
     const auto native_result = native.run(std::move(input));
-    const char *native_status = "unknown";
     switch (native_result.status) {
     case runtime::AgentStatus::Completed:
         native_status = "completed";
@@ -219,7 +244,6 @@ int main(int argc, char **argv) {
 
     // Resolve entered state names to dense ids (the same index identity Core
     // and the wasm globals use; names are display-only).
-    std::vector<std::uint32_t> entered_ids;
     for (const auto &name : entered_names) {
         const auto it = std::find(agent->states.begin(), agent->states.end(), name);
         if (it == agent->states.end()) {
@@ -230,9 +254,11 @@ int main(int argc, char **argv) {
     }
     const auto final_it =
         std::find(agent->states.begin(), agent->states.end(), native_result.current_state);
-    const std::int64_t final_id = final_it == agent->states.end()
-                                      ? -1
-                                      : static_cast<std::int64_t>(final_it - agent->states.begin());
+    final_id = final_it == agent->states.end()
+                   ? -1
+                   : static_cast<std::int64_t>(final_it - agent->states.begin());
+    native_transitions = native_result.stats.state_transitions;
+    }
 
     const auto core = ir::core::lower_ahfl_to_core(*program);
     if (!core.ok()) {
@@ -249,7 +275,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     const auto emitted = backends::emit_core_wasm(
-        core.program, *layouts.table, {ir::core::CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+        core.program, *layouts.table,
+        {ir::core::CoreAgentId{target_agent_index}, backends::WasmProfileKind::Wasi});
     if (!emitted.ok()) {
         std::cerr << emitted.diagnostics.front().code << ": " << emitted.diagnostics.front().message
                   << "\n";
@@ -265,12 +292,24 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (multi_agent_inspect) {
+        // Least-privilege regression: report ONLY the capability imports the
+        // selected agent's module plans. A pure agent must import none even
+        // when another agent in the same program reaches an effectful fn.
+        std::cout << "agent=" << target_agent_index << " imports=";
+        for (std::size_t i = 0; i < emitted.artifact->imports.size(); ++i) {
+            std::cout << (i == 0 ? "" : ",") << emitted.artifact->imports[i];
+        }
+        std::cout << "\n";
+        return 0;
+    }
+
     std::cout << "native_status=" << native_status << " entered_ids=";
     for (std::size_t i = 0; i < entered_ids.size(); ++i) {
         std::cout << (i == 0 ? "" : ",") << entered_ids[i];
     }
     std::cout << " final_state_id=" << final_id
-              << " transition_count=" << native_result.stats.state_transitions
+              << " transition_count=" << native_transitions
               << " initial_state_id="
               << (std::find(agent->states.begin(), agent->states.end(), agent->initial_state) -
                   agent->states.begin())

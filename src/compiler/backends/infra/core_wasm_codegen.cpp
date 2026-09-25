@@ -2671,6 +2671,32 @@ class P6ComputationHandlerBuilder {
     // indices are unchanged, exactly like the bump temporaries.
     void ensure_capability_scratch() { capability_scratch_needed_ = true; }
 
+    // Whether one P6 scalar kind is a single i32 word that matches the FIXED
+    // capability tuple functype (i32,i32)->(i32,i32,i32). An aggregate
+    // ADDRESS (Ptr), bounded-collection handle (Collection), Bool, bounded
+    // Int (IntI32) and tag-only enum (Index) all cross as one i32 word. An
+    // unbounded Int (IntI64) and f64 do NOT (64-bit), and a closure is a
+    // two-word pair — those fail the ABI rather than emitting an invalid
+    // module. A non-P6 type (nullopt: String PtrLen / bytes / f64) fails too.
+    [[nodiscard]] static bool
+    capability_abi_word_kind(std::optional<P6ScalarKind> kind) {
+        if (kind == std::nullopt) {
+            return false;
+        }
+        switch (*kind) {
+        case P6ScalarKind::Bool:
+        case P6ScalarKind::IntI32:
+        case P6ScalarKind::Index:
+        case P6ScalarKind::Ptr:
+        case P6ScalarKind::Collection:
+            return true;
+        case P6ScalarKind::IntI64:
+        case P6ScalarKind::Closure:
+            return false;
+        }
+        return false;
+    }
+
     // RFC 0026 FB-4 (design §5.3): plan a capability invocation INSIDE an
     // outlined fn body. Only fn mode admits it (a handler capability call keeps
     // its KR6.5 canonical-final shape). The opaque capability ABI is
@@ -2702,18 +2728,40 @@ class P6ComputationHandlerBuilder {
         if (arg.value >= storage_.value_types.size()) {
             return reject("in-fn capability argument id is out of range", range);
         }
-        if (p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]) == std::nullopt) {
-            return reject("in-fn capability argument is not a representable opaque frame word "
-                          "(String / f64 / multi-word types are rejected)",
-                          range);
-        }
-        if (s.result.value >= storage_.value_types.size() ||
-            p6_scalar_kind(program_, layouts_, storage_.value_types[s.result.value]) ==
-                std::nullopt) {
-            return reject("in-fn capability result is not a single-word opaque frame", range);
+        // The capability import has the FIXED functype
+        // kTypeCapabilityTuple = (i32,i32) -> (i32,i32,i32): an opaque frame
+        // address + length in, status + opaque frame ptr + length out. Every
+        // crossing word is therefore a single i32 word. An Int64 scalar
+        // (unbounded Int) / f64 would be read or bound as a 64-bit local and
+        // produce an invalid module (local.get i64 where the import expects
+        // i32), and a closure is a two-word pair — reject all of those here
+        // with a diagnostic rather than emitting a module that fails wasm
+        // validation.
+        const auto arg_kind =
+            p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]);
+        if (!capability_abi_word_kind(arg_kind)) {
+            return reject_with_code(
+                core_wasm_diag::kUnsupportedCapabilityFrame,
+                "in-fn capability argument is not a single i32-word opaque frame "
+                "(an unbounded Int / Int64, f64, String or multi-word scalar cannot match the "
+                "fixed (i32,i32) capability ABI; route the value through the agent's opaque "
+                "frame type instead)",
+                range);
         }
         const auto result_kind =
-            p6_scalar_kind(program_, layouts_, storage_.value_types[s.result.value]);
+            p6_scalar_kind(program_, layouts_,
+                           s.result.value < storage_.value_types.size()
+                               ? storage_.value_types[s.result.value]
+                               : CoreValueTypeId{});
+        if (s.result.value >= storage_.value_types.size() ||
+            !capability_abi_word_kind(result_kind)) {
+            return reject_with_code(
+                core_wasm_diag::kUnsupportedCapabilityFrame,
+                "in-fn capability result is not a single i32-word opaque frame "
+                "(an unbounded Int / Int64 or f64 result cannot match the fixed "
+                "(i32,i32,i32) capability ABI)",
+                range);
+        }
         if (!bind_value(s.result, *result_kind)) {
             return reject("in-fn capability result SSA value is bound more than once", range);
         }
@@ -2724,8 +2772,9 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
-    // Shared callee-link / single-word boundary validation for a direct Records the callee instance for
-    // the reachability fixed point and rejects String/f64/multi-word
+    // Shared callee-link / single-word boundary validation for a direct fn call
+    // (CoreCallExpr or CoreCallStmt): records the callee instance for the
+    // reachability fixed point and rejects String/f64/multi-word
     // arguments/results and a closure RESULT (one-word functype limit).
     [[nodiscard]] bool plan_call_operands(CoreInstanceId callee,
                                           const std::vector<CoreValueId> &args,
@@ -5953,7 +6002,8 @@ compute_fn_construct_heap_budget(const CoreProgram &program,
 [[nodiscard]] std::vector<CoreFnId>
 compute_reachable_fn_ids(const CoreProgram &program,
                          std::span<const CoreBodyStorage *const> entry_storages,
-                         std::span<const std::vector<CoreInstanceId>> planned_entry_callees) {
+                         std::span<const std::vector<CoreInstanceId>> planned_entry_callees,
+                         const CoreFlowDecl *target_flow = nullptr) {
     std::vector<CoreInstanceId> worklist;
     std::vector<bool> queued(program.instances.size(), false);
     const auto enqueue = [&](CoreInstanceId id) {
@@ -5987,8 +6037,16 @@ compute_reachable_fn_ids(const CoreProgram &program,
             }
         }
     }
-    for (const CoreFlowDecl &flow : program.flows) {
-        for (const CoreFlowState &state : flow.states) {
+    // Seed ordered CoreCallStmt roots from ONLY the compiled target flow's
+    // handler regions. Iterating every flow here pulled effect fns reachable
+    // from a DIFFERENT agent's handlers into this agent's import plan,
+    // over-declaring capabilities the target agent never reaches (least
+    // privilege / E2 manifest drift). entry_storages already scopes the pure
+    // arena roots to the single compiled flow; this keeps statement roots in
+    // the same scope. A null target_flow (workflow / non-agent entries) has no
+    // per-flow handler statements to seed from.
+    if (target_flow != nullptr) {
+        for (const CoreFlowState &state : target_flow->states) {
             enqueue_region(state.body);
         }
     }
@@ -6918,7 +6976,8 @@ capabilities_of_reachable_fns(const CoreProgram &program,
         const std::vector<CoreFnId> reachable_fn_ids = compute_reachable_fn_ids(
             program,
             std::vector<const CoreBodyStorage *>{&flow->storage},
-            planned_entry_callees);
+            planned_entry_callees,
+            flow);
         for (const CoreCapabilityId cap : capabilities_of_reachable_fns(program, reachable_fn_ids)) {
             plan.imports.push_back(cap);
         }

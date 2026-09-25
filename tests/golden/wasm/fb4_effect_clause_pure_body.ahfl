@@ -1,0 +1,45 @@
+module wasm::fb4_effect_clause_pure_body;
+
+// RFC 0026 FB-4 fix-forward: an effect clause is an UPPER BOUND of the body
+// effect, not a forced classification. `declared_effect` spells `effect Ping`
+// but its body performs no capability (and calls no effectful fn), so the
+// structural Core derivation classifies it PURE. The lowerer must agree: the
+// handler's call is a pure CoreCallExpr, not an ordered CoreCallStmt, so the
+// Core verifier's FN_CALL_EFFECT_KIND discipline does not reject a legal
+// program. Before the fix the source FnEffectScanner seeded the clause
+// directly, emitted an ordered statement, and the verifier rejected it.
+
+capability Ping(x: Int) -> Int;
+
+fn declared_effect(n: Int) -> Int effect Ping {
+    return n + 1;
+}
+
+pub struct Frame {
+    n: Int;
+}
+
+pub agent DeclEffectAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for DeclEffectAgent {
+    state Init {
+        let r: Int = declared_effect(input.n);
+        if (r == input.n + 1) {
+            goto Done;
+        } else {
+            goto Done;
+        }
+    }
+    state Done {
+        return input;
+    }
+}

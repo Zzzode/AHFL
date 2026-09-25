@@ -1,0 +1,53 @@
+module wasm::fb4_closure_unauthorized;
+
+// RFC 0026 FB-4 fix-forward: an effectful fn reached ONLY through a closure /
+// call_indirect lane used to evade the transitive capability-whitelist
+// authorization. Agent EmptyCapAgent declares capabilities: [] yet the
+// handler routes an effectful fn through a FnT parameter:
+//
+//   do_cap(n)  -> Bump(Frame{n})            effectful outlined fn
+//   apply(f,x) -> f(x)                      calls f via CoreCallClosureExpr
+//   Init       -> apply(\x -> do_cap(x), n) closure -> do_cap, indirect call
+//
+// The closure-aware structural effect analysis (ClosurePointsTo feeding the
+// invocation graph) must classify apply as reaching Bump, and the agent
+// whitelist pass must fail with FN_EFFECT_CAPABILITY_UNAUTHORIZED, emitting
+// NO wasm. Before the fix the effect fixed point walked only direct edges, so
+// do_cap stayed reachable only via call_indirect, the capability was never
+// authorized, and the module still imported/invoked ahfl_cap.
+
+pub struct Frame {
+    n: Int;
+}
+
+capability Bump(request: Frame) -> Frame;
+
+fn do_cap(n: Int) -> Frame effect Bump {
+    let f: Frame = Frame { n: n };
+    return Bump(f);
+}
+
+fn apply(f: Fn(Int) -> Frame, x: Int) -> Frame {
+    return f(x);
+}
+
+pub agent EmptyCapAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for EmptyCapAgent {
+    state Init {
+        let answered: Frame = apply(\x -> do_cap(x), input.n);
+        goto Done;
+    }
+    state Done {
+        return input;
+    }
+}

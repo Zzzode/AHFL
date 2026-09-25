@@ -16,6 +16,7 @@
 #include "ahfl/compiler/ir/core_ir.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/ir/core_recursion.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/expr_child_edges.hpp"
 #include "ahfl/compiler/ir/mangling.hpp" // mangle_instance (fn-instance guarantee)
@@ -1610,13 +1611,17 @@ class FnCallResolver {
 // ---------------------------------------------------------------------------
 // RFC 0026 FB-4 (CORE-FNBODY-DESIGN §5.3): source-level transitive effect
 // classification. The published FnCallResolver entry of a fn instance carries
-// the fn's EFFECT so an effectful callee is ordered as a CoreCallStmt instead
-// of a pure CoreCallExpr. That effect is computed here as a least fixed point
-// over the AHFL-IR fn bodies — an fn is capability-effectful when its declared
-// clause says so OR its body directly invokes a capability OR it (transitively)
-// calls another capability-effectful fn; the same for Nondet. This never trusts
-// a single declaration spelling: an fn that only WRAPS an effectful callee is
-// classified by the body call graph, exactly as the design demands.
+// the fn's EFFECT, used only to reject a Nondet callee on the pure wasm lane;
+// the final pure-vs-ordered Core call SHAPE is no longer chosen here — the
+// lowerer over-emits ordered CoreCallStmts and reconcile_fn_call_shapes
+// downgrades pure callees against the closure-aware structural
+// analyze_fn_effects (the only authority that follows call_indirect edges).
+// This scan is still a least fixed point over the AHFL-IR fn bodies for the
+// Nondet / capability fact: a Capability clause is NOT seeded (it is an upper
+// bound, not a forced classification — an fn declaring `effect C` with a pure
+// body stays pure), Nondet IS seeded (it has no body-level marker), and a
+// LambdaExpr body is treated as a separate lifted node (constructing a
+// closure is not an effect, matching the Core closure/lift graph).
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -1642,11 +1647,19 @@ class FnEffectScanner {
 
         for (std::size_t i = 0; i < n; ++i) {
             const FnDecl &fn = *bodies_[i];
-            if (fn.effect.kind == ir::FnEffectKind::Capability) {
-                has_cap[i] = true;
-            } else if (fn.effect.kind == ir::FnEffectKind::Nondet) {
+            // Nondet has NO body-level marker: `fn f() -> Int effect Nondet {
+            // return 0; }` is a declaration-only promise, so the clause is the
+            // only source of the nondet fact (and it propagates through the
+            // body call graph below).
+            if (fn.effect.kind == ir::FnEffectKind::Nondet) {
                 has_nondet[i] = true;
             }
+            // A Capability clause is deliberately NOT seeded: an effect clause
+            // is an UPPER BOUND, and the structural Core derivation the call
+            // shape must agree with classifies an fn ONLY from its body call
+            // graph. `fn f() -> Int effect Ping { return n + 1; }` is pure
+            // regardless of the clause; seeding the spelling made the lowerer
+            // emit an ordered CoreCallStmt the Core verifier then rejected.
             if (fn.has_body && fn.body != nullptr) {
                 ExprCallFacts facts = scan_block(*fn.body);
                 has_cap[i] = has_cap[i] || facts.capability;
@@ -1721,6 +1734,15 @@ class FnEffectScanner {
     }
 
     void scan_expr(const Expr &expr, ExprCallFacts &facts) const {
+        // A LambdaExpr body is a SEPARATE node after lambda lifting (it becomes
+        // an outlined fn reached only through the closure / points-to graph),
+        // the exact model the Core derivation uses. Constructing a closure
+        // invokes nothing, so merely building an effectful lambda must not make
+        // the enclosing fn effectful. Do NOT walk the lambda body edge; the
+        // lifted fn's own body is scanned as its own FnDecl when reachable.
+        if (std::holds_alternative<LambdaExpr>(expr.node)) {
+            return;
+        }
         if (const auto *call = std::get_if<CallExpr>(&expr.node)) {
             if (call->callee_ref.kind == SymbolRefKind::Capability) {
                 facts.capability = true;
@@ -3731,17 +3753,17 @@ template <class RootPolicy> class ExprLowerer {
 
     // --- RFC 0026 FB-1 (CORE-FNBODY-DESIGN §4/§5.1): static direct fn calls ---
 
-    // Lower a resolved direct fn/method call to CoreCallExpr. `callee_ref` is
-    // the resolved Fn symbol, `args` are the already-lowered ANF operands
+    // Lower a resolved direct fn/method call (pure OR effectful). `callee_ref`
+    // is the resolved Fn symbol, `args` are the already-lowered ANF operands
     // (method calls pass receiver as args[0]), and `result_ty` is the call's
     // interned result type. Returns false (no diagnostic) when the callee is
     // unknown/bodyless so the caller keeps its legacy fail-closed path.
-    // RFC 0026 FB-4 (design §5.3): a CALLEE whose transitive effect is
-    // Capability is an ordered statement, not a pure expression — it lowers to
-    // CoreCallStmt (the statement twin of CoreCallExpr), never a CoreCallExpr,
-    // so the effect orders / can pending-suspend exactly like a capability
-    // statement. A Nondet callee stays fail-closed (no value-level nondet on the
-    // wasm computation lane yet).
+    // RFC 0026 FB-4 (design §5.3): every call is emitted as an ordered
+    // CoreCallStmt first; the source scanner cannot see an effect routed
+    // through a FnT parameter, and reconcile_fn_call_shapes canonicalizes the
+    // pure callees back to CoreCallExpr against the closure-aware structural
+    // authority. A Nondet callee stays fail-closed here (no value-level nondet
+    // on the wasm computation lane yet).
     [[nodiscard]] bool emit_direct_call(const SymbolRef &callee_ref,
                                         std::string_view callee_name,
                                         std::vector<CoreValueId> args,
@@ -3763,22 +3785,24 @@ template <class RootPolicy> class ExprLowerer {
             out_value = fresh_value(result_ty);
             return true;
         }
-        if (entry->resolution.effect == ir::FnEffectKind::Capability) {
-            // FB-4: ordered effectful call. The result is a fresh SSA value;
-            // the call is a statement appended AFTER its (already-lowered,
-            // left-to-right) argument statements, preserving evaluation order.
-            CoreCallStmt stmt;
-            stmt.callee = entry->resolution.instance;
-            stmt.args = std::move(args);
-            stmt.result = fresh_value(result_ty);
-            out_value = stmt.result;
-            region.statements.push_back(CoreStmt{std::move(stmt), range});
-            return true;
-        }
-        const CoreExprId expr_id = push_expr(
-            CoreCallExpr{entry->resolution.instance, std::move(args)}, range, result_ty);
-        out_value = fresh_value(result_ty);
-        region.statements.push_back(CoreStmt{CoreLetStmt{out_value, expr_id}, range});
+        // FB-4: EVERY resolvable body fn call is lowered as an ordered
+        // CoreCallStmt first. The source-level FnEffectScanner cannot see an
+        // effect routed through a FnT parameter / closure value (that fact
+        // exists only in the post-lift Core ClosurePointsTo lattice), so an
+        // expr-vs-statement choice made here would disagree with the
+        // structural authority. A final reconciliation pass
+        // (reconcile_call_shapes, after every body incl. lifted lambdas is
+        // lowered) downgrades exactly the statements whose callee the
+        // closure-aware analyze_fn_effects classifies PURE back to a
+        // CoreCallExpr, leaving genuinely effectful callees ordered. The
+        // result is a fresh SSA value and the statement follows its
+        // already-lowered left-to-right argument statements.
+        CoreCallStmt stmt;
+        stmt.callee = entry->resolution.instance;
+        stmt.args = std::move(args);
+        stmt.result = fresh_value(result_ty);
+        out_value = stmt.result;
+        region.statements.push_back(CoreStmt{std::move(stmt), range});
         return true;
     }
 
@@ -4986,6 +5010,110 @@ class LambdaLifter final : public LambdaLiftBridge {
 
 } // namespace
 
+// RFC 0026 FB-4 fix-forward: reconcile the ordered-vs-pure shape of every DIRECT
+// fn call with the closure-aware structural authority. Lowering emits every
+// resolved direct fn call as an ordered CoreCallStmt (the source scanner
+// cannot see an effect routed through a FnT parameter / closure value). This
+// pass downgrades exactly the statements whose callee analyze_fn_effects —
+// which DOES follow CoreCallClosureExpr points-to edges — classifies PURE back
+// to a CoreLetStmt-bound CoreCallExpr, leaving genuinely effectful callees
+// ordered. The choice is shape-independent (both nodes are invocation edges),
+// so one pass suffices; running it BEFORE verify_core_program guarantees the
+// pure-vs-effectful call-site discipline always sees the authoritative shape.
+[[nodiscard]] static std::optional<std::uint32_t>
+call_stmt_body_fn(const CoreProgram &program, CoreInstanceId instance) {
+    if (instance.value == CoreInstanceId::kInvalid ||
+        instance.value >= program.instances.size()) {
+        return std::nullopt;
+    }
+    const auto *payload = std::get_if<CoreFnInstance>(&program.instances[instance.value].payload);
+    if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
+        payload->body.value >= program.fns.size()) {
+        return std::nullopt;
+    }
+    return payload->body.value;
+}
+
+static void reconcile_region_call_shapes(const CoreProgram &program,
+                                         const std::vector<bool> &effectful,
+                                         const CoreRegion &region,
+                                         CoreBodyStorage &storage) {
+    std::vector<CoreRegion *> pending{const_cast<CoreRegion *>(&region)};
+    while (!pending.empty()) {
+        CoreRegion *r = pending.back();
+        pending.pop_back();
+        for (CoreStmt &stmt : r->statements) {
+            if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                const std::optional<std::uint32_t> body =
+                    call_stmt_body_fn(program, call->callee);
+                const bool is_effectful = body.has_value() && *body < effectful.size() &&
+                                          effectful[*body];
+                if (!is_effectful) {
+                    // Pure callee: lower the ordered statement to a pure
+                    // CoreCallExpr bound by the SAME SSA result value.
+                    const CoreValueTypeId result_ty =
+                        call->result.value < storage.value_types.size()
+                            ? storage.value_types[call->result.value]
+                            : CoreValueTypeId{};
+                    const CoreExprId expr_id{static_cast<std::uint32_t>(storage.exprs.size())};
+                    storage.exprs.push_back(
+                        CoreExpr{CoreCallExpr{call->callee, call->args},
+                                 stmt.source_range, result_ty});
+                    stmt.node = CoreLetStmt{call->result, expr_id};
+                }
+            }
+            if (auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
+                if (branch->then_region != nullptr) {
+                    pending.push_back(branch->then_region.get());
+                }
+                if (branch->else_region != nullptr) {
+                    pending.push_back(branch->else_region.get());
+                }
+            } else if (auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
+                for (const CoreMatchArm &arm : match->arms) {
+                    if (arm.guard_region != nullptr) {
+                        pending.push_back(arm.guard_region.get());
+                    }
+                    if (arm.body != nullptr) {
+                        pending.push_back(arm.body.get());
+                    }
+                }
+                if (match->fallback_region != nullptr) {
+                    pending.push_back(match->fallback_region.get());
+                }
+            }
+        }
+    }
+}
+
+static void reconcile_fn_call_shapes(CoreProgram &program) {
+    if (program.fns.empty()) {
+        return;
+    }
+    const FnEffectAnalysis effects = analyze_fn_effects(program);
+    for (CoreFnDecl &fn : program.fns) {
+        reconcile_region_call_shapes(program, effects.effectful, fn.body, fn.storage);
+    }
+    for (CoreFlowDecl &flow : program.flows) {
+        for (CoreFlowState &state : flow.states) {
+            reconcile_region_call_shapes(program, effects.effectful, state.body, flow.storage);
+        }
+    }
+    for (CoreWorkflowDecl &wf : program.workflows) {
+        for (CoreWorkflowNode &node : wf.nodes) {
+            if (node.input_region != nullptr) {
+                reconcile_region_call_shapes(program, effects.effectful, *node.input_region,
+                                             wf.storage);
+            }
+        }
+        if (wf.return_region != nullptr) {
+            reconcile_region_call_shapes(program, effects.effectful, *wf.return_region,
+                                         wf.storage);
+        }
+    }
+}
+
+
 // RFC 0026 KR6.5 E4-B0-C2: the shared type-table pass. Registers every
 // struct/enum + builtin stdlib nominal (source order), resolves field-nav
 // nominal ids, and finalizes the P4-C declaration member templates into the
@@ -5725,6 +5853,15 @@ CoreLowerResult lower_ahfl_to_core(const AhflIr &ahfl_ir) {
                 node.target_instance = it->second.front();
             }
         }
+    }
+
+    // FB-4 fix-forward: canonicalize direct-call shape against the
+    // closure-aware structural effect authority (lowering over-emits ordered
+    // statements; this downgrades pure callees) BEFORE the verifier enforces the
+    // pure-vs-effectful discipline, so closure-routed effects and pure bodies
+    // agree with analyze_fn_effects exactly.
+    if (!result.has_errors()) {
+        reconcile_fn_call_shapes(core);
     }
 
     // Auto-verify the candidate program at the lowering boundary. When the

@@ -301,36 +301,93 @@ struct LetBinding {
     CoreExprId expr{};
 };
 
-void collect_let_bindings_impl(const CoreRegion &region, const CoreBodyStorage &storage,
-                               std::vector<LetBinding> &out) {
+// One ORDERED CoreCallStmt observed in a region (recursing into if / match).
+// It is the statement-position twin of a direct CoreCallExpr let, so the
+// closure-flow engine must propagate its closure ARGUMENTS into the target
+// fn's parameters and merge the target return set into its RESULT slot —
+// otherwise a closure passed to a callee through an ordered effect call never
+// reaches that callee's FnT parameter points-to set.
+struct OrderedCallBinding {
+    CoreValueId result{};
+    CoreInstanceId callee{};
+    std::vector<CoreValueId> args;
+};
+
+void collect_region_edges_impl(const CoreRegion &region, const CoreBodyStorage &storage,
+                               std::vector<LetBinding> &lets,
+                               std::vector<OrderedCallBinding> &ordered) {
     for (const CoreStmt &stmt : region.statements) {
         if (const auto *let = std::get_if<CoreLetStmt>(&stmt.node)) {
             if (let->expr.value < storage.exprs.size()) {
-                out.push_back({let->result, let->expr});
+                lets.push_back({let->result, let->expr});
             }
+        } else if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+            ordered.push_back(OrderedCallBinding{call->result, call->callee, call->args});
         }
         if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
             if (branch->then_region) {
-                collect_let_bindings_impl(*branch->then_region, storage, out);
+                collect_region_edges_impl(*branch->then_region, storage, lets, ordered);
             }
             if (branch->else_region) {
-                collect_let_bindings_impl(*branch->else_region, storage, out);
+                collect_region_edges_impl(*branch->else_region, storage, lets, ordered);
             }
         }
         if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
             for (const CoreMatchArm &arm : match->arms) {
                 if (arm.guard_region) {
-                    collect_let_bindings_impl(*arm.guard_region, storage, out);
+                    collect_region_edges_impl(*arm.guard_region, storage, lets, ordered);
                 }
                 if (arm.body) {
-                    collect_let_bindings_impl(*arm.body, storage, out);
+                    collect_region_edges_impl(*arm.body, storage, lets, ordered);
                 }
             }
             if (match->fallback_region) {
-                collect_let_bindings_impl(*match->fallback_region, storage, out);
+                collect_region_edges_impl(*match->fallback_region, storage, lets, ordered);
             }
         }
     }
+}
+
+void collect_let_bindings_impl(const CoreRegion &region, const CoreBodyStorage &storage,
+                               std::vector<LetBinding> &out) {
+    std::vector<OrderedCallBinding> ignored;
+    collect_region_edges_impl(region, storage, out, ignored);
+}
+
+// The ordered CoreCallStmts and let bindings of every region sharing one body
+// storage (fn body / flow handler bodies / workflow node + return regions).
+[[nodiscard]] std::vector<OrderedCallBinding>
+storage_ordered_calls(const CoreProgram &program, const CoreBodyStorage &storage) {
+    std::vector<OrderedCallBinding> out;
+    std::vector<LetBinding> lets;
+    const auto feed = [&](const CoreRegion &region) {
+        collect_region_edges_impl(region, storage, lets, out);
+    };
+    for (const CoreFnDecl &fn : program.fns) {
+        if (&fn.storage == &storage) {
+            feed(fn.body);
+        }
+    }
+    for (const CoreFlowDecl &flow : program.flows) {
+        if (&flow.storage == &storage) {
+            for (const CoreFlowState &state : flow.states) {
+                feed(state.body);
+            }
+        }
+    }
+    for (const CoreWorkflowDecl &wf : program.workflows) {
+        if (&wf.storage == &storage) {
+            for (const CoreWorkflowNode &node : wf.nodes) {
+                if (node.input_region) {
+                    feed(*node.input_region);
+                }
+            }
+            if (wf.return_region) {
+                feed(*wf.return_region);
+            }
+        }
+    }
+    return out;
 }
 
 // The let bindings of one fn body (rooted at its single region) and of every
@@ -419,6 +476,10 @@ struct ClosureFlowEngine {
     std::unordered_map<const CoreBodyStorage *, std::vector<std::vector<std::uint32_t>>> sets;
     // storage identity -> its let bindings (collected once, reused every pass).
     std::unordered_map<const CoreBodyStorage *, std::vector<LetBinding>> bindings;
+    // storage identity -> its ordered CoreCallStmt bindings (the statement
+    // twin of a direct-call let), collected once.
+    std::unordered_map<const CoreBodyStorage *, std::vector<OrderedCallBinding>>
+        ordered_calls;
     std::vector<std::uint32_t> dead; // returned for an out-of-range/foreign slot
     std::vector<std::vector<CoreValueId>> return_values; // per fn
 
@@ -427,6 +488,7 @@ struct ClosureFlowEngine {
             sets.emplace(&storage,
                          std::vector<std::vector<std::uint32_t>>(storage.value_count));
             bindings.emplace(&storage, storage_let_bindings(program, storage));
+            ordered_calls.emplace(&storage, storage_ordered_calls(program, storage));
         };
         for (const CoreFlowDecl &flow : program.flows) {
             allocate(flow.storage);
@@ -541,6 +603,19 @@ struct ClosureFlowEngine {
                             merge_into(slot(storage, b.result), return_set(target)) || changed;
                     }
                 }
+            }
+            // Ordered CoreCallStmt: same closure-flow as a direct CoreCallExpr
+            // let, but the call binds its result SSA slot directly (no arena
+            // expr). A closure passed as an ordered-call argument must still
+            // flow into the target fn's parameter, and a closure the target
+            // returns flows into the ordered result slot.
+            for (const OrderedCallBinding &oc : ordered_calls.at(&storage)) {
+                const auto target = resolve_instance_body(program, oc.callee);
+                if (!target.has_value()) {
+                    continue;
+                }
+                changed = propagate_args(storage, oc.args, *target) || changed;
+                changed = merge_into(slot(storage, oc.result), return_set(*target)) || changed;
             }
         };
         for (const CoreFlowDecl &flow : program.flows) {
@@ -1741,48 +1816,108 @@ void for_each_region_statement(const CoreRegion &root, Fn &&visit) {
 
 } // namespace
 
+std::vector<std::vector<std::uint32_t>>
+fn_invocation_graph(const CoreProgram &program, const ClosurePointsTo &points_to) {
+    const std::size_t n = program.fns.size();
+    std::vector<std::vector<std::uint32_t>> graph(n);
+    for (std::uint32_t fi = 0; fi < n; ++fi) {
+        const CoreFnDecl &fn = program.fns[fi];
+        // Ordered CoreCallStmt edges.
+        for_each_region_statement(fn.body, [&](const CoreStmt &stmt) {
+            if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
+                if (auto callee = resolve_instance_body(program, call->callee)) {
+                    graph[fi].push_back(*callee);
+                }
+            }
+        });
+        // Pure CoreCallExpr edges and indirect CoreCallClosureExpr
+        // (call_indirect) edges — one per points-to target. Construction-only
+        // CoreClosureExpr contributes NO edge (building a closure invokes
+        // nothing); the points-to lattice already connects a constructed
+        // closure to every indirect site it can flow to.
+        for (const CoreExpr &expr : fn.storage.exprs) {
+            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+                if (auto callee = resolve_instance_body(program, call->callee)) {
+                    graph[fi].push_back(*callee);
+                }
+            } else if (const auto *icall =
+                           std::get_if<CoreCallClosureExpr>(&expr.node)) {
+                for (const std::uint32_t target :
+                     points_to.targets_of(fn.storage, *icall)) {
+                    graph[fi].push_back(target);
+                }
+            }
+        }
+        std::sort(graph[fi].begin(), graph[fi].end());
+        graph[fi].erase(std::unique(graph[fi].begin(), graph[fi].end()), graph[fi].end());
+    }
+    return graph;
+}
+
+void append_region_invoked_fns(const CoreProgram &program,
+                               const ClosurePointsTo &points_to,
+                               const CoreRegion &region,
+                               const CoreBodyStorage &storage,
+                               std::vector<std::uint32_t> &out) {
+    // Collect this region's OWN statements (ordered CoreCallStmt) and its OWN
+    // pure arena lets (recursing into nested if / match regions). A workflow
+    // storage is shared across nodes that target DIFFERENT agents, so the
+    // shared arena must NOT be scanned wholesale — only the exprs this
+    // specific region binds are roots for its node's target agent.
+    std::vector<LetBinding> lets;
+    std::vector<OrderedCallBinding> ordered;
+    collect_region_edges_impl(region, storage, lets, ordered);
+    for (const OrderedCallBinding &oc : ordered) {
+        if (auto fn = resolve_instance_body(program, oc.callee)) {
+            out.push_back(*fn);
+        }
+    }
+    for (const LetBinding &b : lets) {
+        if (b.expr.value >= storage.exprs.size()) {
+            continue;
+        }
+        const CoreExpr &expr = storage.exprs[b.expr.value];
+        if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
+            if (auto fn = resolve_instance_body(program, call->callee)) {
+                out.push_back(*fn);
+            }
+        } else if (const auto *icall = std::get_if<CoreCallClosureExpr>(&expr.node)) {
+            for (const std::uint32_t target : points_to.targets_of(storage, *icall)) {
+                out.push_back(target);
+            }
+        }
+    }
+}
+
 FnEffectAnalysis analyze_fn_effects(const CoreProgram &program) {
     const std::size_t n = program.fns.size();
     FnEffectAnalysis out;
     out.effectful.assign(n, false);
     out.capabilities.resize(n);
 
-    // Per-fn direct capabilities (a CoreCapabilityCallStmt in the body) and the
-    // set of fn bodies it invokes (both the ordered CoreCallStmt and the pure
-    // CoreCallExpr edges — walking the pure edge too makes the classification
-    // immune to a misclassified intermediate fn).
+    // Per-fn direct capabilities (a CoreCapabilityCallStmt in the body).
     std::vector<std::unordered_set<std::uint32_t>> direct_caps(n);
-    std::vector<std::vector<std::uint32_t>> callees(n);
-
     for (std::uint32_t fi = 0; fi < n; ++fi) {
-        const CoreFnDecl &fn = program.fns[fi];
-
-        for_each_region_statement(fn.body, [&](const CoreStmt &stmt) {
+        for_each_region_statement(program.fns[fi].body, [&](const CoreStmt &stmt) {
             if (const auto *cap = std::get_if<CoreCapabilityCallStmt>(&stmt.node)) {
                 direct_caps[fi].insert(cap->capability.value);
-            } else if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
-                if (auto callee = resolve_instance_body(program, call->callee)) {
-                    callees[fi].push_back(*callee);
-                }
             }
         });
-
-        for (const CoreExpr &expr : fn.storage.exprs) {
-            if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
-                if (auto callee = resolve_instance_body(program, call->callee)) {
-                    callees[fi].push_back(*callee);
-                }
-            }
-        }
     }
 
+    // The SINGLE invocation graph: direct CoreCallExpr, ordered CoreCallStmt,
+    // and indirect CoreCallClosureExpr (points-to) edges. Walking the closure
+    // lane closes the fix-forward where an effectful fn was reached only via a
+    // callable parameter / closure value.
+    const ClosurePointsTo points_to = ClosurePointsTo::analyze(program);
+    const std::vector<std::vector<std::uint32_t>> callees =
+        fn_invocation_graph(program, points_to);
+
     // Least fixed point: an fn is effectful iff it directly invokes a capability
-    // or calls an effectful fn; its capability set is the union over both.
+    // or invokes an effectful fn; its capability set is the union over both.
     std::vector<std::unordered_set<std::uint32_t>> cap_set(n);
     for (std::uint32_t fi = 0; fi < n; ++fi) {
         cap_set[fi] = direct_caps[fi];
-        std::sort(callees[fi].begin(), callees[fi].end());
-        callees[fi].erase(std::unique(callees[fi].begin(), callees[fi].end()), callees[fi].end());
     }
 
     bool changed = true;

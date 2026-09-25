@@ -2322,6 +2322,66 @@ TEST_CASE("workflow verifier: a self-dependency edge is fail-closed") {
     CHECK(has_code(result, verify::kWorkflowEdgeInvalid));
 }
 
+// RFC 0026 FB-4 fix-forward: an ordered CoreCallStmt emitted into a WORKFLOW
+// NODE input region used to escape both the fn-call-site checks and the
+// capability-whitelist authorization (those passes scanned flow/fn regions
+// only). The node invokes agent First (capabilities: []); its input region
+// calls an outlined fn that reaches capability C. The node-region statements
+// must now be scanned as call sites (effect kind / arity / types) and the
+// reached capability must be authorized against the node's target agent.
+TEST_CASE("workflow verifier authorizes an effectful CoreCallStmt in a node region") {
+    GoodWorkflow g = make_good_workflow();
+    CoreProgram &p = g.program;
+    const CoreValueTypeId wvt = g.wf->storage.value_types[0];
+
+    // Capability C, absent from every agent whitelist.
+    CoreCapabilityDecl cap;
+    cap.name = "C";
+    cap.symbol_ref = {ir::SymbolRefKind::Capability, "app::C", "C", "app", 920};
+    cap.param_types = {wvt};
+    cap.return_type = wvt;
+    p.capabilities.push_back(std::move(cap));
+
+    // Instance 2 / fn 0: an outlined effectful fn %1 = C(%0); return %1.
+    CoreInstanceDecl fn_inst;
+    fn_inst.id = CoreInstanceId{2};
+    fn_inst.instance_key = "_inst_wf_eff";
+    fn_inst.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "wf_eff", "wf_eff", "", 921};
+    fn_inst.payload = CoreFnInstance{CoreFnId{0}};
+    p.instances.push_back(std::move(fn_inst));
+
+    CoreFnDecl eff;
+    eff.id = CoreFnId{0};
+    eff.instance = CoreInstanceId{2};
+    eff.origin = ir::SymbolRef{ir::SymbolRefKind::Function, "wf_eff", "wf_eff", "", 921};
+    eff.name = "_inst_wf_eff";
+    eff.params = {CoreValueId{0}};
+    eff.storage.value_count = 2;
+    eff.storage.value_types = {wvt, wvt};
+    eff.body.statements.push_back(CoreStmt{
+        CoreCapabilityCallStmt{CoreValueId{1}, CoreCapabilityId{0}, "C", {CoreValueId{0}}},
+        std::nullopt});
+    eff.body.statements.push_back(
+        CoreStmt{CoreReturnStmt{true, CoreValueId{1}}, std::nullopt});
+    p.fns.push_back(std::move(eff));
+
+    // Insert an ordered CoreCallStmt to the effectful fn into node 0's input
+    // region: `%3 = call wf_eff(%0)` (then the existing yield of %0).
+    g.wf->storage.value_count = 4;
+    g.wf->storage.value_types = {wvt, wvt, wvt, wvt};
+    auto &node0_stmts = g.wf->nodes[0].input_region->statements;
+    node0_stmts.insert(node0_stmts.begin() + 1,
+                       CoreStmt{CoreCallStmt{CoreValueId{3}, CoreInstanceId{2},
+                                             {CoreValueId{0}}},
+                                 std::nullopt});
+
+    const auto result = verify_core_program(p);
+    CHECK_FALSE(result.ok());
+    // The node's target agent First whitelists nothing, so the closure/direct
+    // effect reached from the node region is unauthorized.
+    CHECK(has_code(result, verify::kFnEffectCapabilityUnauthorized));
+}
+
 TEST_CASE("workflow verifier: a duplicate dependency edge is fail-closed") {
     GoodWorkflow g = make_good_workflow();
     g.wf->nodes[1].after.push_back(CoreWorkflowNodeId{0}); // second after [first, first]

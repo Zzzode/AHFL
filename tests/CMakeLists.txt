@@ -257,6 +257,74 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 FB-4 fix-forward: an effectful fn reached ONLY through a closure /
+    # call_indirect lane must still be authorized against the target agent's
+    # capability whitelist. An agent with capabilities: [] routing the effectful
+    # fn through an FnT parameter fails with FN_EFFECT_CAPABILITY_UNAUTHORIZED
+    # and emits no wasm. Engine-independent (the gate is the compile rejection).
+    add_test(NAME ahfl.wasm.fb4_closure_unauthorized_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_closure_unauthorized_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_closure_unauthorized.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb4_closure_unauthorized_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "FB-4 closure-routed capability whitelist compile-reject lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # RFC 0026 FB-4 fix-forward: an Int -> Int (Int64) in-fn capability cannot
+    # match the fixed (i32,i32)->(i32,i32,i32) capability tuple functype. It must
+    # be rejected at plan time with UNSUPPORTED_CAPABILITY_FRAME and emit no
+    # module (previously an invalid module was emitted with no diagnostic).
+    add_test(NAME ahfl.wasm.fb4_int64_capability_abi_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_int64_capability_abi_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_int64_capability_abi.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb4_int64_capability_abi_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "FB-4 Int64 in-fn capability ABI compile-reject lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # RFC 0026 FB-4 fix-forward: capability import planning is scoped to the one
+    # compiled agent. A pure agent in a multi-agent program must plan zero
+    # ahfl_cap imports even when another agent reaches an effectful fn, while
+    # the effectful agent keeps its legitimate import. Engine-independent.
+    add_test(NAME ahfl.wasm.fb4_cross_agent_capability_leak
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_cross_agent_capability_leak.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_cross_agent_capability_leak.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb4_cross_agent_capability_leak PROPERTIES
+        PASS_REGULAR_EXPRESSION "FB-4 per-agent capability import scoping least-privilege lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # RFC 0026 FB-4 fix-forward: the lowerer's call shape must agree with the
+    # closure-aware structural effect classification. An effect clause with a
+    # pure body and a construct-only-closure fn both compile clean (the clause
+    # is an upper bound; constructing a closure is not an effect). Node (when
+    # available) additionally validates the emitted module.
+    add_test(NAME ahfl.wasm.fb4_effect_classification_compile
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_fb4_effect_classification_compile.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_effect_clause_pure_body.ahfl"
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/fb4_construct_only_closure.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.fb4_effect_classification_compile PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "FB-4 source/Core effect-classification agreement compile lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;node"
+    )
+
     # RFC 0026 FB-3b (§8 / §6.3): a recursive fn over a BOUNDED collection
     # constructs a fresh lifted lambda each activation and invokes it
     # indirectly, respecting the FB-2 depth sealed by the list length word.

@@ -1,0 +1,47 @@
+module wasm::fb4_int64_capability_abi;
+
+// RFC 0026 FB-4 fix-forward: the capability import has the FIXED functype
+// (i32,i32) -> (i32,i32,i32) (opaque frame ptr + length in, status + frame ptr
+// + length out). An unbounded Int is Int64 in the P6 layout, so an
+// Int -> Int capability called from an outlined fn would emit local.get of an
+// i64 argument (and bind an i32 result into an i64 local), producing an
+// invalid wasm module with no diagnostic (fail-open). The in-fn capability
+// planner must reject the Int64 scalar at plan time with
+// wasm.UNSUPPORTED_CAPABILITY_FRAME and write no module. Bool (i32) and the
+// agent's opaque frame (Ptr) still cross; only 64-bit / multi-word scalars are
+// rejected.
+
+capability Ping(x: Int) -> Int;
+
+fn call_ping(n: Int) -> Int effect Ping {
+    return Ping(n);
+}
+
+pub struct Frame {
+    n: Int;
+}
+
+pub agent PingAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Ping];
+    transition Init -> Done;
+}
+
+flow for PingAgent {
+    state Init {
+        let r: Int = call_ping(input.n);
+        if (r == 42) {
+            goto Done;
+        } else {
+            goto Done;
+        }
+    }
+    state Done {
+        return input;
+    }
+}

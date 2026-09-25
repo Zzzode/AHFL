@@ -1,0 +1,51 @@
+module wasm::fb4_construct_only_closure;
+
+// RFC 0026 FB-4 fix-forward: merely CONSTRUCTING an effectful closure is not an
+// effect. `outer` spells `effect Bump` (which satisfies the source effect
+// checker, whose body inference descends the lambda) but structurally its body
+// only builds the closure `\x -> eff(x)` and passes it to the PURE fn `ignore`,
+// which never invokes it. The Core structural derivation ignores closure
+// CONSTRUCTION edges, so outer is PURE; the lowerer's reconciliation therefore
+// downgrades the handler call to a pure CoreCallExpr and the program compiles
+// clean. Before the fix the source FnEffectScanner walked the lambda body and
+// classified outer effectful, emitting an ordered CoreCallStmt the Core
+// verifier rejected with FN_CALL_EFFECT_KIND.
+
+capability Bump(x: Bool) -> Bool;
+
+fn eff(n: Bool) -> Bool effect Bump {
+    return Bump(n);
+}
+
+fn ignore(f: Fn(Bool) -> Bool) -> Int {
+    return 7;
+}
+
+fn outer() -> Int effect Bump {
+    return ignore(\x -> eff(x));
+}
+
+pub struct Frame {
+    n: Int;
+}
+
+pub agent ConstructAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Bump];
+    transition Init -> Done;
+}
+
+flow for ConstructAgent {
+    state Init {
+        let r: Int = outer();
+        goto Done;
+    }
+    state Done {
+        return input;
+    }
+}

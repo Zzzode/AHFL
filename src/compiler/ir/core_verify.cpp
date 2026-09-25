@@ -3830,6 +3830,22 @@ class Verifier {
         }
         for (const CoreWorkflowDecl &wf : program_.workflows) {
             scan_storage_exprs(wf.storage, "workflow '" + wf.name + "'", sites);
+            // P2 fix-forward: the shared workflow arena's NODE INPUT and
+            // RETURN region STATEMENTS are call sites too (the
+            // WorkflowRootPolicy ExprLowerer appends a CoreCallStmt there).
+            // Without this walk an ordered effectful call in a node region
+            // received no callee effect-kind / arity / type check.
+            for (const CoreWorkflowNode &node : wf.nodes) {
+                if (node.input_region != nullptr) {
+                    scan_region_stmts(*node.input_region, wf.storage,
+                                      "workflow '" + wf.name + "' node '" + node.node_name + "'",
+                                      sites);
+                }
+            }
+            if (wf.return_region != nullptr) {
+                scan_region_stmts(*wf.return_region, wf.storage,
+                                  "workflow '" + wf.name + "' return", sites);
+            }
         }
         for (const CoreFnDecl &fn : program_.fns) {
             scan_storage_exprs(fn.storage, "fn '" + fn.name + "'", sites);
@@ -3977,143 +3993,47 @@ class Verifier {
     // effect fixed point the call-site discipline uses), independent of the
     // per-fn whitelist an fn itself carries (an fn is not bound to one agent).
     void verify_fn_effect_authorization() {
-        if (program_.flows.empty() || program_.fns.empty()) {
+        if (program_.fns.empty()) {
             return;
         }
         const FnEffectAnalysis effects = analyze_fn_effects(program_);
-        // Resolve a Fn instance id to its CoreFnId body, or nullopt.
-        const auto resolve_fn = [&](CoreInstanceId id) -> std::optional<std::uint32_t> {
-            if (id.value == CoreInstanceId::kInvalid || id.value >= program_.instances.size()) {
-                return std::nullopt;
-            }
-            const auto *payload =
-                std::get_if<CoreFnInstance>(&program_.instances[id.value].payload);
-            if (payload == nullptr || payload->body.value == CoreFnId::kInvalid ||
-                payload->body.value >= program_.fns.size()) {
-                return std::nullopt;
-            }
-            return payload->body.value;
-        };
-        // Collect every fn a region STATEMENT invokes (CoreCallStmt) and every
-        // fn the region's pure expr arena invokes (CoreCallExpr).
-        const auto region_fn_calls = [&](const CoreRegion &region,
-                                         const CoreBodyStorage &storage,
-                                         std::vector<std::uint32_t> &out) {
-            std::vector<const CoreRegion *> pending{&region};
-            while (!pending.empty()) {
-                const CoreRegion *r = pending.back();
-                pending.pop_back();
-                for (const CoreStmt &stmt : r->statements) {
-                    if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
-                        if (auto fn = resolve_fn(call->callee)) {
-                            out.push_back(*fn);
-                        }
-                    }
-                    if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
-                        if (branch->then_region != nullptr) {
-                            pending.push_back(branch->then_region.get());
-                        }
-                        if (branch->else_region != nullptr) {
-                            pending.push_back(branch->else_region.get());
-                        }
-                    } else if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
-                        for (const CoreMatchArm &arm : match->arms) {
-                            if (arm.guard_region != nullptr) {
-                                pending.push_back(arm.guard_region.get());
-                            }
-                            if (arm.body != nullptr) {
-                                pending.push_back(arm.body.get());
-                            }
-                        }
-                        if (match->fallback_region != nullptr) {
-                            pending.push_back(match->fallback_region.get());
-                        }
-                    }
-                }
-            }
-            for (const CoreExpr &expr : storage.exprs) {
-                if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
-                    if (auto fn = resolve_fn(call->callee)) {
-                        out.push_back(*fn);
-                    }
-                }
-            }
-        };
-        // One fn's outgoing fn calls (statement + expr edges).
-        const auto fn_outgoing = [&](std::uint32_t fi,
-                                     std::vector<std::uint32_t> &out) {
-            const CoreFnDecl &fn = program_.fns[fi];
-            for (const CoreExpr &expr : fn.storage.exprs) {
-                if (const auto *call = std::get_if<CoreCallExpr>(&expr.node)) {
-                    if (auto c = resolve_fn(call->callee)) {
-                        out.push_back(*c);
-                    }
-                }
-            }
-            std::vector<const CoreRegion *> pending{&fn.body};
-            while (!pending.empty()) {
-                const CoreRegion *r = pending.back();
-                pending.pop_back();
-                for (const CoreStmt &stmt : r->statements) {
-                    if (const auto *call = std::get_if<CoreCallStmt>(&stmt.node)) {
-                        if (auto c = resolve_fn(call->callee)) {
-                            out.push_back(*c);
-                        }
-                    }
-                    if (const auto *branch = std::get_if<CoreIfStmt>(&stmt.node)) {
-                        if (branch->then_region != nullptr) {
-                            pending.push_back(branch->then_region.get());
-                        }
-                        if (branch->else_region != nullptr) {
-                            pending.push_back(branch->else_region.get());
-                        }
-                    } else if (const auto *match = std::get_if<CoreMatchStmt>(&stmt.node)) {
-                        for (const CoreMatchArm &arm : match->arms) {
-                            if (arm.guard_region != nullptr) {
-                                pending.push_back(arm.guard_region.get());
-                            }
-                            if (arm.body != nullptr) {
-                                pending.push_back(arm.body.get());
-                            }
-                        }
-                        if (match->fallback_region != nullptr) {
-                            pending.push_back(match->fallback_region.get());
-                        }
-                    }
-                }
-            }
-        };
+        const ClosurePointsTo points_to = ClosurePointsTo::analyze(program_);
+        // The SINGLE closure-aware invocation graph (direct CoreCallExpr,
+        // ordered CoreCallStmt and indirect CoreCallClosureExpr points-to
+        // edges), so authorization follows exactly the effects a body can reach
+        // at run time — including an effect routed through a callable
+        // parameter / closure value.
+        const std::vector<std::vector<std::uint32_t>> graph =
+            fn_invocation_graph(program_, points_to);
 
-        for (const CoreFlowDecl &flow : program_.flows) {
-            if (flow.target.value >= program_.agents.size()) {
-                continue;
-            }
-            const CoreAgentDecl &agent = program_.agents[flow.target.value];
-            std::unordered_set<std::uint32_t> allowed;
-            for (const CoreCapabilityId id : agent.capabilities) {
-                if (id.value < program_.capabilities.size()) {
-                    allowed.insert(id.value);
-                }
-            }
-            // Reachability fixed point from every handler.
-            std::vector<std::uint32_t> roots;
-            for (const CoreFlowState &state : flow.states) {
-                region_fn_calls(state.body, flow.storage, roots);
-            }
+        // Grow the set of fn bodies reachable from one set of region roots.
+        const auto reachable_from = [&](const std::vector<std::uint32_t> &roots) {
             std::unordered_set<std::uint32_t> seen;
             std::vector<std::uint32_t> worklist = roots;
             while (!worklist.empty()) {
                 const std::uint32_t fi = worklist.back();
                 worklist.pop_back();
-                if (!seen.insert(fi).second) {
+                if (!seen.insert(fi).second || fi >= graph.size()) {
                     continue;
                 }
-                std::vector<std::uint32_t> next;
-                fn_outgoing(fi, next);
-                for (const std::uint32_t c : next) {
+                for (const std::uint32_t c : graph[fi]) {
                     if (!seen.contains(c)) {
                         worklist.push_back(c);
                     }
+                }
+            }
+            return seen;
+        };
+        // Authorize every capability each reachable effectful fn reaches
+        // against one agent whitelist.
+        const auto authorize_agent = [&](const CoreAgentDecl &agent,
+                                         const std::unordered_set<std::uint32_t> &seen,
+                                         const std::string &owner_label,
+                                         SourceRangeOpt range) {
+            std::unordered_set<std::uint32_t> allowed;
+            for (const CoreCapabilityId id : agent.capabilities) {
+                if (id.value < program_.capabilities.size()) {
+                    allowed.insert(id.value);
                 }
             }
             for (const std::uint32_t fi : seen) {
@@ -4121,16 +4041,50 @@ class Verifier {
                     if (!allowed.contains(cap.value)) {
                         error(verify::kFnEffectCapabilityUnauthorized,
                               "effectful fn '" + program_.fns[fi].name +
-                                  "' reachable from flow '" + flow.agent_name +
-                                  "' invokes capability '" +
+                                  "' reachable from " + owner_label + " invokes capability '" +
                                   (cap.value < program_.capabilities.size()
                                        ? program_.capabilities[cap.value].name
                                        : std::to_string(cap.value)) +
                                   "' which is not in target agent '" + agent.name +
                                   "' whitelist",
-                              program_.fns[fi].source_range);
+                              range ? range : program_.fns[fi].source_range);
                     }
                 }
+            }
+        };
+
+        // Flow handler roots: one agent whitelist per flow.
+        for (const CoreFlowDecl &flow : program_.flows) {
+            if (flow.target.value >= program_.agents.size()) {
+                continue;
+            }
+            std::vector<std::uint32_t> roots;
+            for (const CoreFlowState &state : flow.states) {
+                append_region_invoked_fns(program_, points_to, state.body, flow.storage, roots);
+            }
+            authorize_agent(program_.agents[flow.target.value], reachable_from(roots),
+                            "flow '" + flow.agent_name + "'", std::nullopt);
+        }
+
+        // Workflow node roots: each node invokes a packaged agent instance, so
+        // an effectful fn reached from the node input region must be whitelisted
+        // on THAT node's target agent. The workflow return region has no
+        // invoked agent and only forwards node outputs, so it contributes no
+        // authorization root.
+        for (const CoreWorkflowDecl &wf : program_.workflows) {
+            for (const CoreWorkflowNode &node : wf.nodes) {
+                const CoreAgentInstance *instance = agent_instance_of(node.target_instance);
+                if (instance == nullptr ||
+                    instance->base.value >= program_.agents.size() ||
+                    node.input_region == nullptr) {
+                    continue;
+                }
+                std::vector<std::uint32_t> roots;
+                append_region_invoked_fns(program_, points_to, *node.input_region,
+                                          wf.storage, roots);
+                authorize_agent(program_.agents[instance->base.value], reachable_from(roots),
+                                "workflow '" + wf.name + "' node '" + node.node_name + "'",
+                                std::nullopt);
             }
         }
     }

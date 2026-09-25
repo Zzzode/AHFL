@@ -1,0 +1,63 @@
+module wasm::fb4_cross_agent_capability_leak;
+
+// RFC 0026 FB-4 fix-forward: capability import planning is scoped to the ONE
+// agent being compiled. PureAgent reaches no capability, while EffectAgent's
+// handler calls an effectful fn that invokes Bump. The import pre-pass used to
+// seed ordered-call roots from EVERY flow in the Core program, so compiling
+// PureAgent pulled EffectAgent's effect fn into PureAgent's import table,
+// over-declaring a capability PureAgent never invokes (least privilege / E2
+// manifest drift). The least-privilege regression compiles PureAgent (agent
+// index 0) and asserts its module has zero ahfl_cap imports; EffectAgent
+// (index 1) must still import Bump.
+
+pub struct Frame {
+    n: Int;
+}
+
+capability Bump(request: Frame) -> Frame;
+
+fn call_cap(n: Int) -> Frame effect Bump {
+    let f: Frame = Frame { n: n };
+    return Bump(f);
+}
+
+pub agent PureAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for PureAgent {
+    state Init {
+        goto Done;
+    }
+    state Done {
+        return input;
+    }
+}
+
+pub agent EffectAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Bump];
+    transition Init -> Done;
+}
+
+flow for EffectAgent {
+    state Init {
+        let answered: Frame = call_cap(input.n);
+        goto Done;
+    }
+    state Done {
+        return input;
+    }
+}

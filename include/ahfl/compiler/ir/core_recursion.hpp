@@ -221,15 +221,18 @@ class ClosurePointsTo {
 // Effectful-fn transitivity (RFC 0026 FB-4 / CORE-FNBODY-DESIGN §5.3).
 // ---------------------------------------------------------------------------
 //
-// A fn is EFFECTFUL when its body can reach a capability invocation — either a
-// direct `CoreCapabilityCallStmt` or an ordered `CoreCallStmt` (FB-4) to
-// another effectful fn. The set is computed as a structural least fixed point
-// over Core-ANF, NEVER from a spelling: pure `CoreCallExpr` edges are walked
-// too so the classification cannot be fooled by how the source annotated (or
-// failed to annotate) an intermediate fn. This is the SINGLE derivation the
-// lowerer, the verifier (pure-vs-effectful call-site discipline and the
-// capability-whitelist transitive check), and the wasm backend (reachability +
-// import planning) share.
+// A fn is EFFECTFUL when its body can reach a capability invocation — a
+// direct `CoreCapabilityCallStmt`, an ordered `CoreCallStmt` / pure
+// `CoreCallExpr` to another effectful fn, or an INDIRECT
+// `CoreCallClosureExpr` (`call_indirect`) whose closure slot points (via the
+// FB-3b 0-CFA `ClosurePointsTo` lattice) at an effectful fn. A closure
+// CONSTRUCTION (`CoreClosureExpr`) is NOT an edge — merely building a closure
+// invokes nothing — so an fn that only constructs an effectful closure stays
+// pure. The set is computed as a structural least fixed point over Core-ANF,
+// NEVER from a spelling. This is the SINGLE derivation the lowerer (final
+// call-shape reconciliation), the verifier (pure-vs-effectful call-site
+// discipline and the capability-whitelist transitive check), and the wasm
+// backend (reachability + import planning) share.
 struct FnEffectAnalysis {
     /// Per CoreFnId: true iff the fn body reaches a capability invocation.
     std::vector<bool> effectful;
@@ -242,6 +245,36 @@ struct FnEffectAnalysis {
 /// Compute the effectful-fn fixed point for one Core program. Pure and
 /// deterministic (capability sets are sorted by id).
 [[nodiscard]] FnEffectAnalysis analyze_fn_effects(const CoreProgram &program);
+
+/// RFC 0026 FB-4 fix-forward: the fn INVOCATION graph shared by every
+/// effect / reachability authority. An edge `caller -> callee` exists when
+/// `caller`'s body can transfer control to `callee` through ANY of:
+///   * a direct `CoreCallExpr` (plain wasm `call`),
+///   * an ordered `CoreCallStmt` (the effect-lane twin),
+///   * a `CoreCallClosureExpr` (`call_indirect`) — one edge per fn the
+///     callee closure slot's points-to set resolves to (FB-3b 0-CFA).
+/// A `CoreClosureExpr` CONSTRUCTION is deliberately NOT an edge: merely
+/// building a closure invokes nothing (a fn that only constructs an
+/// effectful closure stays pure). The points-to lane is sound under the
+/// closed-world invariant every closure value originates at a
+/// `CoreClosureExpr` and the lattice flows it through parameters and
+/// returns, so an effect reached only via a callable parameter is still
+/// seen. Each outgoing list is sorted and de-duplicated. Indexed by
+/// CoreFnId.
+[[nodiscard]] std::vector<std::vector<std::uint32_t>>
+fn_invocation_graph(const CoreProgram &program, const ClosurePointsTo &points_to);
+
+/// Append every fn body a region (paired with the storage whose arena it
+/// shares) can transfer control to: ordered `CoreCallStmt` targets, pure
+/// `CoreCallExpr` targets, and every points-to target of a
+/// `CoreCallClosureExpr`. This is the ROOT set an agent-whitelist
+/// authorization pass grows from (flow handler regions and workflow node
+/// input / return regions). Nested if / match regions are walked.
+void append_region_invoked_fns(const CoreProgram &program,
+                               const ClosurePointsTo &points_to,
+                               const CoreRegion &region,
+                               const CoreBodyStorage &storage,
+                               std::vector<std::uint32_t> &out);
 
 /// The worst-case NATIVE wasm call-stack depth the direct-call graph can
 /// reach, given a sealed analysis: the condensation DAG is weighted with each
