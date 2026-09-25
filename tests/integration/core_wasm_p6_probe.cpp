@@ -16,6 +16,8 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "common/project_input_support.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/evaluator/value.hpp"
 
@@ -24,9 +26,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -60,6 +64,68 @@ constexpr std::uint32_t kCollectionInputLen = 2;
 
 [[nodiscard]] std::optional<ir::Program> compile_fixture(const std::filesystem::path &path) {
     const Frontend frontend;
+    // CORE-GAPS: a fixture whose first line is `// @repo-std` compiles through
+    // a project parse with the REPO std module root. This is the only way a
+    // single fixture can declare a bounded `std::collections::Map<K,V>` frame:
+    // the standalone parse does not see the std package, and the builtin
+    // descriptor SSOT pins Map's (Invariant K, Covariant V) variance, which a
+    // single-file fieldless declaration cannot satisfy through the exact
+    // metadata-drift gate. Every other fixture keeps the plain file parse.
+    bool use_repo_std = false;
+    {
+        std::ifstream marker(path, std::ios::binary);
+        std::string first_line;
+        if (marker.good()) {
+            std::getline(marker, first_line);
+            static constexpr std::string_view kMarker = "// @repo-std";
+            if (first_line.compare(0, kMarker.size(), kMarker) == 0) {
+                use_repo_std = true;
+            }
+        }
+    }
+
+    if (use_repo_std) {
+        namespace fs = std::filesystem;
+        const auto repo_root = test_support::repo_root_from_source_file(path);
+        const auto root = fs::temp_directory_path() /
+                          ("ahfl_p6_probe_repo_std_" + path.stem().string());
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        const auto main_path = root / "app" / "main.ahfl";
+        fs::create_directories(main_path.parent_path(), ec);
+        {
+            std::ifstream in(path, std::ios::binary);
+            std::ofstream out(main_path, std::ios::binary | std::ios::trunc);
+            out << in.rdbuf();
+        }
+        const auto parse = parse_project(
+            frontend,
+            test_support::project_input_with_repo_std_for_test_file(main_path, root, main_path));
+        if (parse.has_errors()) {
+            parse.diagnostics.render(std::cerr);
+            return std::nullopt;
+        }
+        const Resolver resolver;
+        const auto resolve = resolver.resolve(parse.graph);
+        if (resolve.has_errors()) {
+            resolve.diagnostics.render(std::cerr);
+            return std::nullopt;
+        }
+        const TypeChecker checker;
+        const auto typecheck = checker.check(parse.graph, resolve);
+        if (typecheck.has_errors()) {
+            typecheck.diagnostics.render(std::cerr);
+            return std::nullopt;
+        }
+        const Validator validator;
+        const auto validation = validator.validate(parse.graph, resolve, typecheck);
+        if (validation.has_errors()) {
+            validation.diagnostics.render(std::cerr);
+            return std::nullopt;
+        }
+        return lower_program_ir(parse.graph, resolve, typecheck);
+    }
+
     const auto parse = frontend.parse_file(path);
     if (parse.has_errors() || parse.program == nullptr) {
         parse.diagnostics.render(std::cerr);
@@ -117,6 +183,21 @@ constexpr std::uint32_t kCollectionInputLen = 2;
     fields.set("items",
                std::make_unique<evaluator::Value>(evaluator::make_list(std::move(items))));
     return evaluator::Value{evaluator::StructValue{"wasm::p6::Frame", std::move(fields)}};
+}
+
+// CORE-GAPS: the bounded-Map keyed-lookup fixture's input frame. The struct is
+// `{ table: Map<Int, Int>(4) }` with two live entries (3 -> 9, 7 -> 42); only
+// the keyed lookup of 7 is used by the fixture. Entries are positional in the
+// value model (the host lays them out one stride apart in key order).
+[[nodiscard]] evaluator::Value map_input() {
+    evaluator::FieldMap fields;
+    std::vector<std::pair<evaluator::Value, evaluator::Value>> entries;
+    entries.emplace_back(evaluator::make_int(3), evaluator::make_int(9));
+    entries.emplace_back(evaluator::make_int(7), evaluator::make_int(42));
+    fields.set(
+        "table",
+        std::make_unique<evaluator::Value>(evaluator::make_map(std::move(entries))));
+    return evaluator::Value{evaluator::StructValue{"app::main::Frame", std::move(fields)}};
 }
 
 // The single argument-less nominal value type naming core type `type` (index
@@ -207,6 +288,11 @@ int main(int argc, char **argv) {
     const bool collection_fixture =
         input_struct != nullptr && !input_struct->fields.empty() &&
         input_struct->fields.front().name == "items";
+    // CORE-GAPS: an input struct whose leading field is `table` selects the
+    // bounded-Map keyed-lookup frame (Map<Int, Int>(4), two live entries).
+    const bool map_fixture =
+        input_struct != nullptr && !input_struct->fields.empty() &&
+        input_struct->fields.front().name == "table";
 
     // Native observation: collect every entered state NAME in order. The
     // observer requires a valid invocation agent id to fire. In multi-agent
@@ -218,8 +304,11 @@ int main(int argc, char **argv) {
     const char *native_status = "skipped";
     std::int64_t final_id = -1;
     if (!multi_agent_inspect) {
-    auto input = aggregate_fixture ? aggregate_input()
-                                   : (collection_fixture ? collection_input() : fixture_input());
+    auto input = aggregate_fixture
+                    ? aggregate_input()
+                    : (collection_fixture
+                           ? collection_input()
+                           : (map_fixture ? map_input() : fixture_input()));
     runtime::AgentRuntime native(*agent, *flow);
     runtime::CapabilityInvocationContext context;
     context.agent_id = runtime::AgentId{0};
@@ -403,6 +492,65 @@ int main(int argc, char **argv) {
                                  : (i == 1 ? kCollectionInputLow : std::int64_t{0}));
         }
         std::cout << "\n";
+    }
+
+    // CORE-GAPS: for the bounded-Map keyed-lookup fixture, report the P4-D
+    // facts the Node host needs: the frame field offset of the inline
+    // (ptr,len) header, the backing base, entry stride / value_offset /
+    // capacity, and each entry's key and value in slot order. The host mirrors
+    // every fact from this report; it never re-derives a layout.
+    if (map_fixture && input_struct != nullptr) {
+        const auto value_type =
+            nominal_value_type(core.program, core.program.agents.front().input_type);
+        if (!value_type.has_value() || value_type->value >= layouts.table->value_layouts.size()) {
+            std::cerr << "map fixture input struct has no interned value type\n";
+            return 1;
+        }
+        const auto &input_layout =
+            layouts.table->layouts[layouts.table->value_layouts[value_type->value].value];
+        const auto *structure = std::get_if<ir::core::CoreLayoutStruct>(&input_layout.shape);
+        if (structure == nullptr || structure->field_offsets.empty()) {
+            std::cerr << "map fixture input layout is not a matching struct\n";
+            return 1;
+        }
+        const ir::core::CoreLayoutContainer *container = nullptr;
+        if (structure->field_layouts.front().value < layouts.table->layouts.size()) {
+            container = std::get_if<ir::core::CoreLayoutContainer>(
+                &layouts.table->layouts[structure->field_layouts.front().value].shape);
+        }
+        if (container == nullptr || !container->value.has_value()) {
+            std::cerr << "map fixture input field has no Map container layout\n";
+            return 1;
+        }
+        std::int64_t key_wide = 0;
+        if (container->element.value < layouts.table->layouts.size()) {
+            const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(
+                &layouts.table->layouts[container->element.value].shape);
+            if (scalar != nullptr && scalar->repr == ir::core::CoreScalarRepr::I64) {
+                key_wide = 1;
+            }
+        }
+        std::int64_t value_wide = 0;
+        if (container->value->value < layouts.table->layouts.size()) {
+            const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(
+                &layouts.table->layouts[container->value->value].shape);
+            if (scalar != nullptr && scalar->repr == ir::core::CoreScalarRepr::I64) {
+                value_wide = 1;
+            }
+        }
+        constexpr std::uint32_t kMapInputLen = 2;
+        std::cout << "map_base=" << ir::core::kP6AggregateInputBase
+                  << " backing_base=" << ir::core::kP6CollectionBackingBase << " header_offset="
+                  << structure->field_offsets.front() << " ptr_offset="
+                  << ir::core::kP6CollectionHeaderPtrOffset << " len_offset="
+                  << ir::core::kP6CollectionHeaderLenOffset << " len=" << kMapInputLen
+                  << " stride=" << container->stride
+                  << " value_offset=" << container->value_offset
+                  << " capacity=" << container->capacity
+                  << " backing_size=" << container->backing_size
+                  << " key_wide=" << key_wide << " value_wide=" << value_wide
+                  << " keys=3,7"
+                  << " values=9,42\n";
     }
     return 0;
 }

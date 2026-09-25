@@ -1603,9 +1603,11 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     target_link_libraries(ahfl_core_wasm_p6_probe
         PRIVATE
             ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_package_graph
             ahfl_runtime_engine
     )
     target_include_directories(ahfl_core_wasm_p6_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_include_directories(ahfl_core_wasm_p6_probe PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     ahfl_apply_project_warnings(ahfl_core_wasm_p6_probe)
 
     add_executable(ahfl_core_wasm_e3_probe

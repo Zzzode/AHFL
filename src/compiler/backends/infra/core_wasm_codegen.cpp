@@ -1732,7 +1732,10 @@ class P6ComputationHandlerBuilder {
         // after the bump temporaries.
         const std::uint32_t cap_scratch = (fn_mode_ && capability_scratch_needed_) ? 3u : 0u;
         const std::uint32_t temp_count = (dynamic ? 2u : 0u) + cap_scratch;
-        if (temp_count != 0) {
+        // CORE-GAPS: the three Map-KeyGet scan scratch i32s, appended after the
+        // bump/capability temporaries (absent when no KeyGet is planned).
+        const std::uint32_t keyget_count = keyget_scratch_needed_ ? 3u : 0u;
+        if (temp_count != 0 || keyget_count != 0) {
             // The bump temporaries are placed AFTER the i64 group (a second
             // i32 local group) so they do not shift the SSA/scratch i64 pool
             // indices pool_local derives from i32_group_size(). Fn bodies have
@@ -1751,6 +1754,12 @@ class P6ComputationHandlerBuilder {
                 cap_status_local_ = base;
                 cap_ptr_local_ = base + 1u;
                 cap_len_local_ = base + 2u;
+            }
+            if (keyget_count != 0) {
+                const std::uint32_t base = after_groups + temp_count;
+                keyget_cursor_local_ = base;
+                keyget_found_local_ = base + 1u;
+                keyget_addr_local_ = base + 2u;
             }
         }
         // Handler mode, aggregate/closure heap enabled: reset the per-activation
@@ -1809,8 +1818,9 @@ class P6ComputationHandlerBuilder {
             ++local_groups;
         }
         // The fn-mode bump temporaries form a SECOND i32 group after the i64
-        // group, keeping the pool index spaces stable.
-        const std::uint32_t temp_i32 = temp_count;
+        // group, keeping the pool index spaces stable. The KeyGet scan scratch
+        // joins that trailing i32 group (it exists in either body mode).
+        const std::uint32_t temp_i32 = temp_count + keyget_count;
         if (temp_i32 != 0) {
             ++local_groups;
         }
@@ -1925,6 +1935,17 @@ class P6ComputationHandlerBuilder {
     std::vector<LocalInfo> match_result_locals_;
     std::uint32_t scratch_i32_count_{0};
     std::uint32_t scratch_i64_count_{0};
+
+    // CORE-GAPS: set when a Map KeyGet scan is planned. The keyed-scan codegen
+    // needs four module-level i32 scratch locals (cursor, found flag, matched
+    // entry address, key-width dummy) and one result local of the VALUE slot
+    // width, appended after every SSA/scratch pool so the pool index spaces are
+    // unchanged. The loop bounds the cursor by the container's header len
+    // clamped to capacity, so the scan is always finite.
+    bool keyget_scratch_needed_{false};
+    std::uint32_t keyget_cursor_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t keyget_found_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t keyget_addr_local_{std::numeric_limits<std::uint32_t>::max()};
 
     // --- P6-4 aggregate memory state ---
     //
@@ -3424,6 +3445,9 @@ class P6ComputationHandlerBuilder {
             }
             return true;
         }
+        if (collection.op == CoreCollectionOpKind::KeyGet) {
+            return emit_collection_key_get(collection, container, range);
+        }
         const auto index_kind = readable_kind(collection.index);
         const auto element_slot = container->element;
         const bool element_wide = place_kind_of_layout(element_slot) == P6ScalarKind::IntI64;
@@ -3511,6 +3535,159 @@ class P6ComputationHandlerBuilder {
         }
         // The result is the base handle itself, so an element write chains.
         return emit_value_read(collection.base, std::move(range));
+    }
+
+    // CORE-GAPS: emit a bounded Map KEYED lookup. Leaves the matched VALUE word
+    // on the stack; no match is a runtime trap (the wasm counterpart of the
+    // evaluator's "key not found"). A linear scan walks the live entries:
+    //
+    //   cursor in [0, min(header_len, capacity)); entry i is at
+    //   [ptr@0] + cursor*stride; its key is the first word and its value is at
+    //   the P4-D value_offset.
+    //
+    // Three i32 scratch locals (cursor / found / current-entry address) are
+    // shared by every KeyGet in a body: each scan completes and its result word
+    // is consumed by the enclosing let before another can begin, so sequential
+    // reuse never aliases a still-live scan. All facts come from the
+    // CoreLayoutContainer; the loop is therefore structurally finite.
+    [[nodiscard]] bool
+    emit_collection_key_get(const CoreCollectionExpr &collection,
+                            const ir::core::CoreLayoutContainer *container,
+                            ir::SourceRangeOpt range) {
+        const bool key_wide = place_kind_of_layout(container->element) == P6ScalarKind::IntI64;
+        const bool value_wide =
+            place_kind_of_layout(*container->value) == P6ScalarKind::IntI64;
+
+        const auto emit_header_ptr = [&]() -> bool {
+            if (!emit_value_read(collection.base, range)) {
+                return false;
+            }
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(ir::core::kP6CollectionHeaderPtrOffset);
+            return true;
+        };
+        const auto emit_header_len = [&]() -> bool {
+            if (!emit_value_read(collection.base, range)) {
+                return false;
+            }
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(ir::core::kP6CollectionHeaderLenOffset);
+            return true;
+        };
+
+        // Initialize the scan scratch: found=0, cursor=0.
+        emit_const_i32(0);
+        body_.byte(kOpLocalSet);
+        body_.u32(keyget_found_local_);
+        emit_const_i32(0);
+        body_.byte(kOpLocalSet);
+        body_.u32(keyget_cursor_local_);
+
+        // B: the exit block. L: the scan loop. `br 1` from inside L leaves B.
+        body_.byte(kOpBlock);
+        body_.byte(kEmptyBlock);
+        ++label_depth_;
+        body_.byte(kOpLoop);
+        body_.byte(kEmptyBlock);
+        ++label_depth_;
+
+        // if (found || cursor >=u min(len, capacity)) br 1
+        body_.byte(kOpLocalGet);
+        body_.u32(keyget_found_local_);
+        body_.byte(kOpLocalGet);
+        body_.u32(keyget_cursor_local_);
+        // bound = min(header_len, capacity), one block (result i32). The clamp
+        // is the same unsigned ladder Len uses in fn mode; it keeps a hostile
+        // length word from driving the scan past the reserved backing region.
+        body_.byte(kOpBlock);
+        body_.byte(kI32);
+        if (!emit_header_len()) {
+            return false;
+        }
+        emit_const_i32(static_cast<std::int32_t>(container->capacity));
+        body_.byte(kOpI32GtU);
+        body_.byte(kOpIf);
+        body_.byte(kI32);
+        emit_const_i32(static_cast<std::int32_t>(container->capacity));
+        body_.byte(kOpElse);
+        if (!emit_header_len()) {
+            return false;
+        }
+        body_.byte(kOpEnd);
+        body_.byte(kOpEnd); // bound block
+        body_.byte(kOpI32GeU);
+        body_.byte(kOpI32Or);
+        body_.byte(kOpBrIf);
+        body_.u32(1); // leave B
+
+        // entry = ptr + cursor*stride (held in the addr scratch; also the match
+        // address when the key compares equal).
+        if (!emit_header_ptr()) {
+            return false;
+        }
+        body_.byte(kOpLocalGet);
+        body_.u32(keyget_cursor_local_);
+        if (container->stride != 1) {
+            emit_const_i32(static_cast<std::int32_t>(container->stride));
+            body_.byte(kOpI32Mul);
+        }
+        body_.byte(kOpI32Add);
+        body_.byte(kOpLocalTee);
+        body_.u32(keyget_addr_local_);
+
+        // Compare the key word at entry+0 with the search key operand.
+        body_.byte(kOpLocalGet);
+        body_.u32(keyget_addr_local_);
+        body_.byte(key_wide ? kOpI64Load : kOpI32Load);
+        body_.u32(key_wide ? kAlignI64 : kAlignI32);
+        body_.u32(0);
+        if (!emit_value_read(collection.index, range)) {
+            return false;
+        }
+        body_.byte(key_wide ? kOpI64Eq : kOpI32Eq);
+        body_.byte(kOpIf);
+        body_.byte(kEmptyBlock);
+        ++label_depth_;
+        emit_const_i32(1);
+        body_.byte(kOpLocalSet);
+        body_.u32(keyget_found_local_);
+        body_.byte(kOpEnd);
+        --label_depth_;
+
+        // cursor += 1; continue L.
+        body_.byte(kOpLocalGet);
+        body_.u32(keyget_cursor_local_);
+        emit_const_i32(1);
+        body_.byte(kOpI32Add);
+        body_.byte(kOpLocalSet);
+        body_.u32(keyget_cursor_local_);
+        body_.byte(kOpBr);
+        body_.u32(0); // continue L
+        body_.byte(kOpEnd); // L
+        --label_depth_;
+        body_.byte(kOpEnd); // B
+        --label_depth_;
+
+        // No match -> trap.
+        body_.byte(kOpLocalGet);
+        body_.u32(keyget_found_local_);
+        body_.byte(kOpI32Eqz);
+        body_.byte(kOpIf);
+        body_.byte(kEmptyBlock);
+        ++label_depth_;
+        body_.byte(kOpUnreachable);
+        body_.byte(kOpEnd);
+        --label_depth_;
+
+        // Matched value word at entry + value_offset; leave it on the stack.
+        body_.byte(kOpLocalGet);
+        body_.u32(keyget_addr_local_);
+        body_.byte(value_wide ? kOpI64Load : kOpI32Load);
+        body_.u32(value_wide ? kAlignI64 : kAlignI32);
+        body_.u32(static_cast<std::uint32_t>(container->value_offset));
+        return true;
     }
 
     // Emit the element-index bounds test as a single i32 flag, leaving the `if`
@@ -3685,6 +3862,69 @@ class P6ComputationHandlerBuilder {
                 return reject("collection backing region exceeds the reserved linear-memory budget",
                               range);
             }
+        }
+        if (collection.op == CoreCollectionOpKind::KeyGet) {
+            // Bounded KEYED scan over a Map. The second operand is a SEARCH KEY;
+            // the KEY slot and the VALUE slot must both be single-word scalar
+            // P6 values (Int/Bool/tag-only enum, i32 or i64) and the operand /
+            // result widths must match them. Structural equality on String /
+            // aggregate / collection keys has no single-word wasm compare and
+            // stays fail-closed (P6-7 PtrLen frame work). The scan is emitted as
+            // a bounded loop whose cursor is clamped by min(header_len,
+            // capacity), so it is structurally finite.
+            const CoreTypeDecl *base_decl = nullptr;
+            if (base_type.value < program_.value_types.size()) {
+                if (const auto *nom =
+                        std::get_if<CoreVtNominal>(&program_.value_types[base_type.value].node)) {
+                    if (nom->base.value < program_.types.size()) {
+                        base_decl = &program_.types[nom->base.value];
+                    }
+                }
+            }
+            if (base_decl == nullptr ||
+                base_decl->role != ir::core::CoreNominalRole::Map) {
+                return reject("keyed collection lookup requires a Map base", range);
+            }
+            if (!container->value.has_value()) {
+                return reject("Map container layout has no value edge", range);
+            }
+            if (!place_is_p6_value(container->element) ||
+                !place_is_p6_value(*container->value)) {
+                return reject(
+                    "Map keyed lookup key and value must be single-word scalar P6 values", range);
+            }
+            const auto key_kind = readable_kind(collection.index);
+            if (key_kind == std::nullopt || *key_kind == P6ScalarKind::Ptr ||
+                *key_kind == P6ScalarKind::Collection || *key_kind == P6ScalarKind::Closure) {
+                return reject("Map keyed lookup key is not a scalar Int/Bool/enum value", range);
+            }
+            if (*key_kind != place_kind_of_layout(container->element)) {
+                return reject("Map keyed lookup key width does not match the key slot layout",
+                              range);
+            }
+            const auto value_kind_opt = scalar_kind(storage_.exprs[id.value].result_type);
+            if (value_kind_opt == std::nullopt || *value_kind_opt == P6ScalarKind::Ptr ||
+                *value_kind_opt == P6ScalarKind::Collection) {
+                return reject("Map keyed lookup result is not a scalar P6 value", range);
+            }
+            if (*value_kind_opt != place_kind_of_layout(*container->value)) {
+                return reject("Map keyed lookup result width does not match the value slot layout",
+                              range);
+            }
+            // KeyGet reads BOTH words of the last live entry (key @0, value @
+            // value_offset), so the whole `capacity * stride` backing must fit
+            // (the positional proof above bounds only one element slot).
+            if (capacity != 0) {
+                if (stride == 0 ||
+                    capacity > std::numeric_limits<std::uint64_t>::max() / stride ||
+                    capacity * stride > region) {
+                    return reject("Map backing region exceeds the reserved linear-memory budget",
+                                  range);
+                }
+            }
+            used_values_[collection.index.value] = true;
+            keyget_scratch_needed_ = true;
+            return true;
         }
         // An element slot must be ONE word the P6 memory model can load/store: a
         // scalar, a tag-only enum, or an address-shaped leaf (the element's own

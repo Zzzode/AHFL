@@ -1,0 +1,62 @@
+// @repo-std
+//
+// RFC 0026 P6 (CORE-GAPS 2) bounded-Map keyed-lookup fixture. The marker
+// above makes the probe compile this file through a PROJECT parse with the
+// repo std module root (a standalone parse cannot declare
+// std::collections::Map with its SSOT (Invariant K, Covariant V) variance).
+//
+// `input.table[7]` desugars (typed_hir_lower) to the map_raw_get hook, which
+// lowers to the Core KeyGet collection op: a bounded KEYED scan over the
+// backing entries [key@0, value@value_offset], not a positional slot read.
+//
+// The host materializes a Map<Int, Int>(4) frame: inline (ptr,len) header,
+// backing entries one P4-D stride apart. The live entries are (3 -> 9) and
+// (7 -> 42); only the keyed lookup of 7 returns 42. A positional miscompile
+// (returning entry 0's value), a wrong value_offset, a wrong stride, or a
+// missing-key non-trap all change the observed state-id path. Observable
+// purely through state ids, no frame encoding.
+module app::main;
+
+import std::collections as c;
+
+pub struct Frame {
+    table: c::Map<Int, Int>(4);
+}
+
+pub agent MapGetAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MapGetAgent {
+    state Decide {
+        // Keyed lookup of a PRESENT key that is NOT at slot 0.
+        let answer: Int = input.table[7];
+        if (answer == 42) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

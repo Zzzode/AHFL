@@ -5723,3 +5723,63 @@ TEST_CASE("CORE-GAPS: member access on a parenthesized aggregate base lowers to 
     CHECK(saw_local_projection);
     CHECK_FALSE(saw_unsupported);
 }
+
+// ============================================================================
+// CORE-GAPS (RFC 0026 P6): map_raw_get lowers to a typed KeyGet collection op
+// (a bounded keyed scan), distinct from a List's positional ElementGet.
+// ============================================================================
+
+namespace {
+
+const std::string kMapKeyGetSource = R"AHFL(
+module app::main;
+
+import std::collections as c;
+
+struct Request { table: c::Map<Int, Int>(4); }
+struct Context { }
+struct Response { v: Int; }
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let v: Int = input.table[7];
+        return Response { v: v };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("CORE-GAPS: map_raw_get lowers to a Map KeyGet, not a positional get") {
+    const auto ahfl_ir = lower_sysroot_source_to_ahfl_ir("map_keyget", kMapKeyGetSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const ir::core::CoreFlowDecl &flow = result.program.flows.front();
+    bool saw_key_get = false;
+    bool saw_positional_get = false;
+    for (const auto &expr : flow.storage.exprs) {
+        if (const auto *c = std::get_if<ir::core::CoreCollectionExpr>(&expr.node)) {
+            if (c->op == ir::core::CoreCollectionOpKind::KeyGet) {
+                saw_key_get = true;
+            }
+            if (c->op == ir::core::CoreCollectionOpKind::ElementGet) {
+                saw_positional_get = true;
+            }
+        }
+    }
+    CHECK(saw_key_get);
+    CHECK_FALSE(saw_positional_get);
+}

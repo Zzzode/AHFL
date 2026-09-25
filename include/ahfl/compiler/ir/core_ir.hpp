@@ -569,11 +569,19 @@ struct CoreCoerceExpr {
 ///                    entry for a Map base, offset by `value_offset`).
 ///   * `ElementSet` : `index` + `value`; the result is the base address (so the
 ///                    operation can be chained), and the element slot is written.
+///   * `KeyGet`     : Map-only KEYED lookup. `index` holds the SEARCH KEY (not a
+///                    positional slot); a bounded linear scan compares it against
+///                    each live entry's key and yields the matching VALUE (Map
+///                    type argument #1, read at the container's P4-D
+///                    `value_offset`). No match is a runtime trap (the wasm
+///                    counterpart of the evaluator's "key not found" error).
+///                    Distinct from the positional `ElementGet`: a Map never
+///                    accepts a positional read.
 ///
 /// This is a typed node, never a string-keyed builtin call: the op is an enum and
 /// the collection identity is the base value's interned `CoreValueTypeId`, so a
 /// backend can never mistake one container for another.
-enum class CoreCollectionOpKind { Len, ElementGet, ElementSet };
+enum class CoreCollectionOpKind { Len, ElementGet, ElementSet, KeyGet };
 
 struct CoreCollectionExpr {
     CoreCollectionOpKind op{CoreCollectionOpKind::Len};

@@ -1901,11 +1901,11 @@ class Verifier {
         }
         const CoreTypeDecl &decl = program_.types[base_nominal->base.value];
         const bool is_map = decl.role == CoreNominalRole::Map;
-        // A Map's element read yields the VALUE type (arg #1); a List / Set yields
-        // the single element/key type. Reading an ABSENT Map value would need an
-        // Option wrapper this node does not model, so a Map's element op is
-        // rejected here — the caller (lowerer) is the one that decides whether a
-        // Map surface is in the subset at all.
+        // A Map's POSITIONAL element read/write is rejected: Map entries are
+        // keyed, so the positional ElementGet/ElementSet (List/Set only) can
+        // never express map semantics. A Map IS reachable through KeyGet, the
+        // bounded keyed-scan op: its `index` operand is the search key and the
+        // result is the Map VALUE type (arg #1).
         if (c.op == CoreCollectionOpKind::ElementGet || c.op == CoreCollectionOpKind::ElementSet) {
             if (is_map) {
                 error(verify::kCollectionOpInvalid,
@@ -1929,6 +1929,36 @@ class Verifier {
                       "collection element index is not an Int in '" + flow.label + "'", range);
             }
         }
+        if (c.op == CoreCollectionOpKind::KeyGet) {
+            if (!is_map) {
+                error(verify::kCollectionOpInvalid,
+                      "keyed collection lookup requires a Map base in '" + flow.label + "'",
+                      range);
+                return;
+            }
+            if (base_nominal->args.size() < 2) {
+                error(verify::kCollectionOpInvalid,
+                      "Map keyed lookup base must carry key and value type arguments in '" +
+                          flow.label + "'",
+                      range);
+                return;
+            }
+            if (c.index.value >= flow.value_count) {
+                return; // out-of-range operand already reported
+            }
+            // The search key must EQUAL the Map's declared key type (arg #0):
+            // Int, Bool, or a tag-only enum (the scalar P6 keys a bounded scan
+            // can compare). A String / aggregate / collection key fails closed —
+            // structural equality on those shapes has no single-word P6 compare.
+            const CoreValueTypeId key_vt = body_value_type(flow, c.index);
+            const CoreValueTypeId expected_key = base_nominal->args[0];
+            if (!(key_vt == expected_key)) {
+                error(verify::kCollectionOpInvalid,
+                      "Map keyed lookup key does not equal the Map key type in '" + flow.label +
+                          "'",
+                      range);
+            }
+        }
         switch (c.op) {
         case CoreCollectionOpKind::Len: {
             const CoreValueTypeId result_vt = expr.result_type;
@@ -1941,6 +1971,15 @@ class Verifier {
             }
             return;
         }
+        case CoreCollectionOpKind::KeyGet:
+            // The keyed lookup yields the Map VALUE type (type argument #1).
+            if (!(expr.result_type == base_nominal->args[1])) {
+                error(verify::kCollectionOpInvalid,
+                      "Map keyed lookup result does not equal the Map value type in '" +
+                          flow.label + "'",
+                      range);
+            }
+            return;
         case CoreCollectionOpKind::ElementGet: {
             if (!(expr.result_type == base_nominal->args.front())) {
                 error(verify::kCollectionOpInvalid,

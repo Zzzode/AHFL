@@ -4156,6 +4156,12 @@ template <class RootPolicy> class ExprLowerer {
         if (hook == "list_raw_length") {
             return CoreCollectionOpKind::Len;
         }
+        // Map-only KEYED lookup. Distinct from list_raw_get's positional
+        // ElementGet: the second operand is a search key and the codegen scans
+        // the bounded entry array rather than indexing a slot.
+        if (hook == "map_raw_get") {
+            return CoreCollectionOpKind::KeyGet;
+        }
         return std::nullopt;
     }
 
@@ -4209,7 +4215,10 @@ template <class RootPolicy> class ExprLowerer {
                       range);
                 return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
             }
-            if (op == CoreCollectionOpKind::ElementGet) {
+            if (op == CoreCollectionOpKind::ElementGet ||
+                op == CoreCollectionOpKind::KeyGet) {
+                // ElementGet: positional slot index. KeyGet: the search key
+                // (also carried on `index`; the op kind distinguishes them).
                 node.index = lower_value(call.arguments[1], region);
             }
         }
