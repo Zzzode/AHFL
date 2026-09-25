@@ -1,0 +1,43 @@
+module std::option;
+
+// RFC 0026 P6 (CORE-GAPS 1) unwrap trap fixture. The well-known Option nominal
+// is declared at its canonical std path (same single-file probe convention as
+// p6_collection.ahfl); `Option::None` is a unit variant.
+//
+// The Boom handler constructs Option::None and unwraps it. The lowering emits
+// an expression match with only the `Some(x) => x` arm and an explicit
+// UnwrapFailed trap fallback, so at runtime step() raises a real
+// WebAssembly.RuntimeError through `unreachable` in the fallback region — the
+// wasm counterpart of the evaluator's ExecAssertFailed on unwrap(None). The
+// Node host asserts state and transition_count are unchanged by the trap.
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct Frame {
+    value: String;
+}
+
+pub agent UnwrapTrapAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Boom];
+    initial: Boom;
+    final: [Done];
+    capabilities: [];
+    transition Boom -> Done;
+}
+
+flow for UnwrapTrapAgent {
+    state Boom {
+        let opt: Option<Int> = Option::None;
+        let v: Int = unwrap(opt);
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

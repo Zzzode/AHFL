@@ -1,0 +1,59 @@
+module std::option;
+
+// RFC 0026 P6 (CORE-GAPS 1) real-frontend unwrap fixture. The probe compiles
+// ONE file with no sysroot, so the well-known Option nominal is declared here
+// at its canonical std path; the declaration role is stamped `Option` from the
+// builtin descriptor SSOT, exactly as p6_collection.ahfl does for List.
+//
+// `unwrap` has no Core node: it lowers to an expression match whose sole
+// success arm is `Some(x) => x` and whose fallback is an explicit
+// UnwrapFailed trap. This handler constructs Option::Some(41) and unwraps it;
+// the payload value flows out of the match arm binding and drives the
+// computed goto. A lowering that failed to read the payload slot would branch
+// Low (or fail the wasm type check).
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct Frame {
+    value: String;
+}
+
+pub agent UnwrapAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for UnwrapAgent {
+    state Decide {
+        let opt: Option<Int> = Option::Some(41);
+        let v: Int = unwrap(opt);
+        if (v == 41) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

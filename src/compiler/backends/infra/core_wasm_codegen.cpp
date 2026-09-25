@@ -1177,6 +1177,34 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
     return std::get_if<ir::core::CoreLayoutEnum>(&layout->shape);
 }
 
+// The P4-D enum layout of a CONCRETE enum value type (a generic instantiation
+// such as `Option<Int>` / `Result<Int, String>`), or null. Generic enums have
+// no args-empty representative that carries the instantiated payload slot
+// layout, so a variant constructor / pattern must resolve the layout through
+// the concrete scrutinee / result value type rather than the bare nominal
+// declaration. The finalized layout for every used instantiation lives in
+// `value_layouts` (P4-D finalizes all interned value types).
+[[nodiscard]] const ir::core::CoreLayoutEnum *p6_enum_value_layout(
+    const CoreProgram &program, const ir::core::CoreLayoutTable &layouts,
+    CoreValueTypeId value_type, CoreTypeId expected_base) {
+    const ir::core::CoreLayout *layout = p6_value_layout(program, layouts, value_type);
+    if (layout == nullptr) {
+        return nullptr;
+    }
+    const auto *shape = std::get_if<ir::core::CoreLayoutEnum>(&layout->shape);
+    if (shape == nullptr) {
+        return nullptr;
+    }
+    if (value_type.value >= program.value_types.size()) {
+        return nullptr;
+    }
+    const auto *nominal = std::get_if<CoreVtNominal>(&program.value_types[value_type.value].node);
+    if (nominal == nullptr || nominal->base != expected_base) {
+        return nullptr;
+    }
+    return shape;
+}
+
 // The P4-D byte size of a (non-generic) nominal type, or nullopt when the type
 // has no interned value type / finalized layout. ONE size query, shared by the
 // constructor scratch allocator and the fixed-frame capacity gate.
@@ -3137,10 +3165,15 @@ class P6ComputationHandlerBuilder {
                                   range);
                 }
             }
-            const auto *tagged = p6_nominal_enum_layout(program_, layouts_, construct.type_id);
+            const CoreValueTypeId construct_vt = storage_.exprs[id.value].result_type;
+            const auto *tagged =
+                p6_enum_value_layout(program_, layouts_, construct_vt, construct.type_id);
+            if (tagged == nullptr) {
+                return reject("enum variant constructor has no finalized instantiated layout",
+                              range);
+            }
             const CoreLayoutId payload_layout =
-                tagged != nullptr &&
-                        construct.variant.value < tagged->variant_payload_layouts.size()
+                construct.variant.value < tagged->variant_payload_layouts.size()
                     ? tagged->variant_payload_layouts[construct.variant.value]
                     : CoreLayoutId{};
             const ir::core::CoreLayoutStruct *payload = nullptr;
@@ -3821,6 +3854,9 @@ class P6ComputationHandlerBuilder {
         // The scrutinee's ROOT site: a scalar sits in its local; an aggregate is
         // addressed (offset 0 of its own address).
         const P6PatternSite root_site{*scrutinee_kind, *scrutinee_kind == P6ScalarKind::Ptr, 0};
+        // The scrutinee's CONCRETE value type (e.g. `Option<Int>`): a generic
+        // enum's instantiated payload layout is reachable only through it.
+        const CoreValueTypeId scrutinee_vt = storage_.value_types[match.scrutinee.value];
 
         for (const CoreMatchArm &arm : match.arms) {
             for (const CorePatternBinding &binding : arm.bindings) {
@@ -3840,7 +3876,8 @@ class P6ComputationHandlerBuilder {
                                   root_site,
                                   arm.bindings,
                                   /*allow_payload_bindings=*/true,
-                                  range)) {
+                                  range,
+                                  scrutinee_vt)) {
                 return false;
             }
             // A guard region is present iff the source arm wrote `if <guard>`.
@@ -3913,7 +3950,9 @@ class P6ComputationHandlerBuilder {
                                         P6PatternSite site,
                                         const std::vector<CorePatternBinding> &bindings,
                                         bool allow_payload_bindings,
-                                        ir::SourceRangeOpt range) {
+                                        ir::SourceRangeOpt range,
+                                        std::optional<CoreValueTypeId> concrete_enum =
+                                            std::nullopt) {
         if (id.value >= storage_.patterns.size()) {
             return reject("pattern id is out of range for this flow", range);
         }
@@ -3938,7 +3977,8 @@ class P6ComputationHandlerBuilder {
                     binding_sites_[value.value] = site;
                     return !b.has_nested ||
                            plan_arm_pattern(
-                               b.nested, site, bindings, allow_payload_bindings, range);
+                               b.nested, site, bindings, allow_payload_bindings, range,
+                               std::nullopt);
                 },
                 [&](const CoreLiteralPat &lit) {
                     if (site.in_memory) {
@@ -3960,7 +4000,7 @@ class P6ComputationHandlerBuilder {
                 },
                 [&](const CoreVariantPat &v) {
                     return plan_variant_pattern_site(
-                        v, site, bindings, allow_payload_bindings, range);
+                        v, site, bindings, allow_payload_bindings, range, concrete_enum);
                 },
                 [&](const CoreOrPat &o) {
                     if (o.alternatives.size() < 2) {
@@ -3971,7 +4011,8 @@ class P6ComputationHandlerBuilder {
                                                 site,
                                                 bindings,
                                                 /*allow_payload_bindings=*/false,
-                                                range);
+                                                range,
+                                                concrete_enum);
                     });
                 },
                 [&](const CoreTuplePat &t) { return plan_tuple_pattern_site(t, site, range); },
@@ -3986,7 +4027,8 @@ class P6ComputationHandlerBuilder {
                                                  P6PatternSite site,
                                                  const std::vector<CorePatternBinding> &bindings,
                                                  bool allow_payload_bindings,
-                                                 ir::SourceRangeOpt range) {
+                                                 ir::SourceRangeOpt range,
+                                                 std::optional<CoreValueTypeId> concrete_enum) {
         if (v.owner_enum.value >= program_.types.size()) {
             return reject("variant pattern owner type id is out of range", range);
         }
@@ -4010,7 +4052,10 @@ class P6ComputationHandlerBuilder {
         if (site.kind != P6ScalarKind::Ptr) {
             return reject("variant pattern requires an enum scrutinee", range);
         }
-        const auto *tagged = p6_nominal_enum_layout(program_, layouts_, v.owner_enum);
+        const auto *tagged = concrete_enum.has_value()
+                                 ? p6_enum_value_layout(program_, layouts_, *concrete_enum,
+                                                        v.owner_enum)
+                                 : p6_nominal_enum_layout(program_, layouts_, v.owner_enum);
         if (tagged == nullptr || v.variant.value >= tagged->variant_payload_layouts.size()) {
             return reject("variant pattern owner has no finalized enum layout", range);
         }
@@ -4033,7 +4078,8 @@ class P6ComputationHandlerBuilder {
                 return false;
             }
             if (!plan_arm_pattern(
-                    v.tuple_subpatterns[i], *sub, bindings, allow_payload_bindings, range)) {
+                    v.tuple_subpatterns[i], *sub, bindings, allow_payload_bindings, range,
+                    std::nullopt)) {
                 return false;
             }
         }
@@ -4042,7 +4088,8 @@ class P6ComputationHandlerBuilder {
             if (sub == std::nullopt) {
                 return false;
             }
-            if (!plan_arm_pattern(field.pattern, *sub, bindings, allow_payload_bindings, range)) {
+            if (!plan_arm_pattern(field.pattern, *sub, bindings, allow_payload_bindings, range,
+                                  std::nullopt)) {
                 return false;
             }
         }
@@ -4754,7 +4801,9 @@ class P6ComputationHandlerBuilder {
                 }
             }
         } else {
-            const auto *tagged = p6_nominal_enum_layout(program_, layouts_, construct.type_id);
+            const CoreValueTypeId construct_vt = storage_.exprs[id.value].result_type;
+            const auto *tagged =
+                p6_enum_value_layout(program_, layouts_, construct_vt, construct.type_id);
             if (tagged == nullptr ||
                 construct.variant.value >= tagged->variant_payload_sizes.size()) {
                 return reject("enum constructor has no finalized layout", std::move(range));
@@ -5110,7 +5159,9 @@ class P6ComputationHandlerBuilder {
     [[nodiscard]] bool emit_pattern_test(CorePatternId id,
                                          std::uint32_t scrutinee_local,
                                          P6PatternSite site,
-                                         ir::SourceRangeOpt range) {
+                                         ir::SourceRangeOpt range,
+                                         std::optional<CoreValueTypeId> concrete_enum =
+                                             std::nullopt) {
         if (id.value >= storage_.patterns.size()) {
             return reject("pattern id is out of range for this flow", std::move(range));
         }
@@ -5125,7 +5176,8 @@ class P6ComputationHandlerBuilder {
                 },
                 [&](const CoreBindingPat &b) {
                     if (b.has_nested) {
-                        return emit_pattern_test(b.nested, scrutinee_local, site, std::move(range));
+                        return emit_pattern_test(b.nested, scrutinee_local, site, std::move(range),
+                                                 std::nullopt);
                     }
                     emit_const_i32(1);
                     return true;
@@ -5137,7 +5189,8 @@ class P6ComputationHandlerBuilder {
                     return emit_int_range_test(r, scrutinee_local, site, std::move(range));
                 },
                 [&](const CoreVariantPat &v) {
-                    return emit_variant_test(v, scrutinee_local, site, std::move(range));
+                    return emit_variant_test(
+                        v, scrutinee_local, site, std::move(range), concrete_enum);
                 },
                 [&](const CoreOrPat &o) {
                     // Any alternative matching => the pattern matches. Each
@@ -5146,7 +5199,8 @@ class P6ComputationHandlerBuilder {
                     // operands.
                     emit_const_i32(0);
                     for (const CorePatternId alt : o.alternatives) {
-                        if (!emit_pattern_test(alt, scrutinee_local, site, range)) {
+                        if (!emit_pattern_test(
+                                alt, scrutinee_local, site, range, concrete_enum)) {
                             return false;
                         }
                         body_.byte(kOpI32Or);
@@ -5204,7 +5258,8 @@ class P6ComputationHandlerBuilder {
     [[nodiscard]] bool emit_variant_test(const CoreVariantPat &v,
                                          std::uint32_t scrutinee_local,
                                          const P6PatternSite &site,
-                                         ir::SourceRangeOpt range) {
+                                         ir::SourceRangeOpt range,
+                                         std::optional<CoreValueTypeId> concrete_enum) {
         if (v.owner_enum.value >= program_.types.size() ||
             v.variant.value >= program_.types[v.owner_enum.value].variants.size()) {
             return reject("variant pattern identity is out of range", std::move(range));
@@ -5231,7 +5286,10 @@ class P6ComputationHandlerBuilder {
         }
         // Tag AND every payload sub-pattern. The tag test is already on the stack;
         // each sub-pattern leaves its own i32 and `i32.and` folds them.
-        const auto *tagged = p6_nominal_enum_layout(program_, layouts_, v.owner_enum);
+        const auto *tagged = concrete_enum.has_value()
+                                 ? p6_enum_value_layout(program_, layouts_, *concrete_enum,
+                                                        v.owner_enum)
+                                 : p6_nominal_enum_layout(program_, layouts_, v.owner_enum);
         if (tagged == nullptr || v.variant.value >= tagged->variant_payload_layouts.size()) {
             return reject("variant pattern owner has no finalized enum layout", std::move(range));
         }
@@ -5251,7 +5309,8 @@ class P6ComputationHandlerBuilder {
                 return false;
             }
             if (!emit_pattern_test(
-                    v.tuple_subpatterns[i], scrutinee_local, *sub, std::move(range))) {
+                    v.tuple_subpatterns[i], scrutinee_local, *sub, std::move(range),
+                    std::nullopt)) {
                 return false;
             }
             body_.byte(kOpI32And);
@@ -5261,7 +5320,8 @@ class P6ComputationHandlerBuilder {
             if (sub == std::nullopt) {
                 return false;
             }
-            if (!emit_pattern_test(field.pattern, scrutinee_local, *sub, std::move(range))) {
+            if (!emit_pattern_test(field.pattern, scrutinee_local, *sub, std::move(range),
+                                   std::nullopt)) {
                 return false;
             }
             body_.byte(kOpI32And);
@@ -5477,7 +5537,8 @@ class P6ComputationHandlerBuilder {
                     return false;
                 }
             }
-            if (!emit_pattern_test(arm.pattern, *scrutinee_local, root_site, range)) {
+            if (!emit_pattern_test(arm.pattern, *scrutinee_local, root_site, range,
+                                   storage_.value_types[match.scrutinee.value])) {
                 return false;
             }
             // A pattern test leaves "matched" as a nonzero i32; `br_if` branches

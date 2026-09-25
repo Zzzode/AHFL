@@ -5567,3 +5567,85 @@ TEST_CASE("CORE-GAPS: Implies lowers to Not(lhs) Or rhs, not an unsupported node
     CHECK(saw_not);
     CHECK_FALSE(saw_unsupported);
 }
+
+// ============================================================================
+// CORE-GAPS (RFC 0026 P6): `unwrap(e)` introduces no Core node. It lowers to
+// an expression match with ONE success variant arm (Option::Some /
+// Result::Ok binds and yields the payload) and an explicit
+// CoreTrapKind::UnwrapFailed fallback.
+// ============================================================================
+
+namespace {
+
+const std::string kUnwrapSource = R"AHFL(
+module std::option;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+struct Request { x: Int; }
+struct Context { }
+struct Response { v: Int; }
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let opt: Option<Int> = Option::Some(input.x);
+        let v: Int = unwrap(opt);
+        return Response { v: v };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("CORE-GAPS: unwrap lowers to a Some-arm match with an UnwrapFailed fallback") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("unwrap_shape", kUnwrapSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const ir::core::CoreFlowDecl &flow = result.program.flows.front();
+    const ir::core::CoreMatchStmt *match = nullptr;
+    for (const auto &fs : flow.states) {
+        for (const auto &stmt : fs.body.statements) {
+            if (const auto *m = std::get_if<ir::core::CoreMatchStmt>(&stmt.node)) {
+                match = m;
+            }
+        }
+    }
+    REQUIRE(match != nullptr);
+    CHECK(match->has_result);
+    REQUIRE(match->arms.size() == 1);
+    CHECK_FALSE(match->arms.front().bindings.empty());
+    REQUIRE(match->fallback_region != nullptr);
+
+    bool saw_unwrap_trap = false;
+    for (const auto &stmt : match->fallback_region->statements) {
+        if (const auto *trap = std::get_if<ir::core::CoreTrapStmt>(&stmt.node)) {
+            CHECK(trap->kind == ir::core::CoreTrapKind::UnwrapFailed);
+            saw_unwrap_trap = true;
+        }
+    }
+    CHECK(saw_unwrap_trap);
+
+    bool saw_unsupported = false;
+    for (const auto &expr : flow.storage.exprs) {
+        if (std::get_if<ir::core::CoreUnsupportedExpr>(&expr.node) != nullptr) {
+            saw_unsupported = true;
+        }
+    }
+    CHECK_FALSE(saw_unsupported);
+}

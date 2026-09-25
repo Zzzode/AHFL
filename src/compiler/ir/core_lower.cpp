@@ -2480,6 +2480,9 @@ template <class RootPolicy> class ExprLowerer {
                     return lower_struct_value(e, result_ty, range, region);
                 },
                 [&](const MatchExpr &e) { return lower_match_value(e, result_ty, range, region); },
+                [&](const UnwrapExpr &e) {
+                    return lower_unwrap_value(e, expr, result_ty, range, region);
+                },
                 [&](const LambdaExpr &e) { return lower_lambda_value(e, expr, range, region); },
                 // Effectful-or-complex shapes not yet lowered. CRITICAL: if the
                 // subtree contains a capability call we MUST fail closed (never
@@ -3297,6 +3300,117 @@ template <class RootPolicy> class ExprLowerer {
         region.statements.push_back(CoreStmt{std::move(stmt), range});
         static_cast<void>(ok); // per-arm errors already recorded; program marked non-executable
         return result;
+    }
+
+    // `unwrap(operand)` (CORE-GAPS 1): no new Core node is introduced. The
+    // evaluator semantics are:
+    //   * Option::Some(x) / Result::Ok(x) -> x
+    //   * Option::None / Result::Err      -> runtime failure (trap)
+    //   * anything else                   -> type error (Sema already rejects)
+    // Lower to the existing match machinery: an expression match with ONE
+    // success variant arm that binds the payload and yields it, plus an
+    // UnwrapFailed trap fallback (a wildcard second arm would let an exotic
+    // enum value silently yield an unbound slot, so the trap is structural —
+    // only the declared success variant completes). The operand's Option /
+    // Result identity is read from its interned nominal ROLE (index, never
+    // name); the payload value type comes from the instantiated nominal's
+    // first type argument (the B1 bridge), which hash-conses to the exact
+    // CoreValueTypeId the expression result carries.
+    [[nodiscard]] CoreValueId lower_unwrap_value(const UnwrapExpr &u, const ExprRef &expr,
+                                                 CoreValueTypeId result_ty,
+                                                 SourceRangeOpt range, CoreRegion &region) {
+        const CoreValueId operand_val = lower_value(u.operand, region);
+        const CoreValueTypeId operand_vt = value_type_of(operand_val);
+        const CoreTypeId nominal = nominal_base_of(operand_vt);
+        const CoreNominalRole role = types_.role_of(nominal);
+        const char *success_name = nullptr;
+        if (role == CoreNominalRole::Option) {
+            success_name = "Some";
+        } else if (role == CoreNominalRole::Result) {
+            success_name = "Ok";
+        } else {
+            return lower_unsupported_value(expr, "UnwrapExpr", result_ty, range, region);
+        }
+        const auto *nom_node =
+            std::get_if<CoreVtNominal>(&value_type_pool_[operand_vt.value].node);
+        if (nom_node == nullptr || nom_node->args.empty()) {
+            error(diag::kUnloweredExpression,
+                  "unwrap operand's nominal type carries no payload type argument", range);
+            return fresh_value(result_ty);
+        }
+        const std::optional<std::uint32_t> variant_idx =
+            types_.variant_index(nominal, success_name);
+        if (!variant_idx.has_value()) {
+            error(diag::kUnresolvedEnumVariant,
+                  "unwrap operand enum declares no '" + std::string(success_name) +
+                      "' variant (identity table mismatch)",
+                  range);
+            return fresh_value(result_ty);
+        }
+        const CoreValueTypeId payload_vt = nom_node->args.front();
+
+        // Build the success pattern `Success(p)` by hand from the SAME identity
+        // facts a source match arm would carry (owner enum CoreTypeId + declared
+        // variant index + tuple payload), so lower_variant_pattern / codegen see
+        // a first-class variant pattern rather than a special case.
+        ArmBindings bindings;
+        {
+            const auto id = bindings.add("__unwrap_payload", fresh_value(payload_vt), payload_vt);
+            static_cast<void>(id);
+        }
+        ir::VariantPattern source_variant;
+        source_variant.kind = ir::VariantPatternKind::Tuple;
+        source_variant.variant_name = success_name;
+        source_variant.owner_enum = u.operand.ptr->resolved_type.nominal_ref;
+        {
+            auto binding = std::make_unique<ir::MatchPattern>();
+            binding->node = ir::BindingPattern{std::string{"__unwrap_payload"}, false, nullptr};
+            binding->matched_type_ref = payload_type_ref(u);
+            source_variant.subpatterns.push_back(std::move(binding));
+        }
+        ir::MatchPattern pattern;
+        pattern.node = std::move(source_variant);
+        pattern.matched_enum = u.operand.ptr->resolved_type.nominal_ref;
+        pattern.matched_type_ref = clone_type_ref(u.operand.ptr->resolved_type);
+
+        CoreMatchStmt stmt;
+        stmt.scrutinee = operand_val;
+        stmt.has_result = true;
+        stmt.result = fresh_value(result_ty);
+        bool ok = true;
+        {
+            CoreMatchArm arm;
+            arm.pattern = lower_pattern(pattern, bindings, range, ok);
+            const auto outer = scope_;
+            for (std::uint32_t i = 0; i < bindings.names.size(); ++i) {
+                scope_[bindings.names[i]] =
+                    LocalBinding{bindings.values[i].value, bindings.value_types[i]};
+            }
+            arm.body = std::make_unique<CoreRegion>();
+            arm.body->statements.push_back(
+                CoreStmt{CoreYieldStmt{true, bindings.values.front().value}, range});
+            scope_ = outer;
+            arm.bindings = std::move(bindings.values);
+            stmt.arms.push_back(std::move(arm));
+        }
+        stmt.fallback_region = std::make_unique<CoreRegion>();
+        stmt.fallback_region->statements.push_back(
+            CoreStmt{CoreTrapStmt{CoreTrapKind::UnwrapFailed}, range});
+        const CoreValueId result = stmt.result;
+        region.statements.push_back(CoreStmt{std::move(stmt), range});
+        static_cast<void>(ok); // errors already recorded; the candidate is non-executable
+        return result;
+    }
+
+    // The Sema TypeRef of an unwrap operand's payload slot (the Option::Some /
+    // Result::Ok type argument). Used only to stamp the synthetic binding's
+    // matched_type_ref exactly the way a source-level `match` arm would.
+    TypeRef payload_type_ref(const UnwrapExpr &u) {
+        const TypeRef &operand = u.operand.ptr->resolved_type;
+        if (!operand.params.empty() && operand.params.front() != nullptr) {
+            return clone_type_ref(*operand.params.front());
+        }
+        return TypeRef{};
     }
 
     // Build a CoreMatchArm for the expression or statement position. The arm's

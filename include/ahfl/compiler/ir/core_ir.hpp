@@ -960,7 +960,13 @@ struct CoreYieldStmt {
 };
 
 /// The kind of an unconditional runtime trap.
-enum class CoreTrapKind { NonExhaustiveMatch };
+enum class CoreTrapKind {
+    /// A match with no matching arm (structural totality fallback).
+    NonExhaustiveMatch,
+    /// `unwrap(v)` hit the nullary failure variant (`Option::None` /
+    /// `Result::Err`). Mirrors the evaluator's ExecAssertFailed on unwrap.
+    UnwrapFailed,
+};
 
 /// An unconditional runtime trap — a diverging terminator. Used as a match's
 /// explicit fallback so a non-exhaustive match cannot structurally "fall

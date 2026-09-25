@@ -483,6 +483,8 @@ using ahfl::json::JsonValue;
     switch (kind) {
     case CoreTrapKind::NonExhaustiveMatch:
         return "non_exhaustive_match";
+    case CoreTrapKind::UnwrapFailed:
+        return "unwrap_failed";
     }
     return "non_exhaustive_match";
 }
@@ -490,6 +492,10 @@ using ahfl::json::JsonValue;
 [[nodiscard]] bool parse_trap_kind(std::string_view s, CoreTrapKind &out) {
     if (s == "non_exhaustive_match") {
         out = CoreTrapKind::NonExhaustiveMatch;
+        return true;
+    }
+    if (s == "unwrap_failed") {
+        out = CoreTrapKind::UnwrapFailed;
         return true;
     }
     return false;

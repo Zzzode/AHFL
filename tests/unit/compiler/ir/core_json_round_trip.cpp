@@ -586,6 +586,8 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/p6_nested_taken_high.ahfl",
         "wasm/p6_scalar_cond.ahfl",
         "wasm/p6_scalar_trap.ahfl",
+        "wasm/p6_unwrap_none_trap.ahfl",
+        "wasm/p6_unwrap_some.ahfl",
     };
 }
 

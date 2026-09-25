@@ -161,6 +161,36 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6 (CORE-GAPS): `unwrap(Some(x))` extracts the payload through
+    # an expression match (Some(v) => v) with an explicit UnwrapFailed trap
+    # fallback; `unwrap(None)` traps at runtime via unreachable. Real Node
+    # embedded-engine evidence plus a structural producer probe for the Some
+    # path; the None path natively fails with zero transitions.
+    add_test(NAME ahfl.wasm.p6_unwrap_some_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_unwrap_some.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_unwrap_some.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_unwrap_some_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_unwrap_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_unwrap_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_unwrap_some.ahfl"
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_unwrap_none_trap.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.p6_unwrap_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "unwrap Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 FB-1 (CORE-FNBODY-DESIGN): a real-frontend PURE direct call
     # (non-generic fn, a monomorphized generic fn, and an fn calling another
     # fn) reaches WASM as outlined functions invoked by a plain `call` with
