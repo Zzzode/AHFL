@@ -2483,6 +2483,9 @@ template <class RootPolicy> class ExprLowerer {
                 [&](const UnwrapExpr &e) {
                     return lower_unwrap_value(e, expr, result_ty, range, region);
                 },
+                [&](const MemberAccessExpr &e) {
+                    return lower_member_access_value(e, expr, result_ty, range, region);
+                },
                 [&](const LambdaExpr &e) { return lower_lambda_value(e, expr, range, region); },
                 // Effectful-or-complex shapes not yet lowered. CRITICAL: if the
                 // subtree contains a capability call we MUST fail closed (never
@@ -2752,6 +2755,44 @@ template <class RootPolicy> class ExprLowerer {
             out_steps.push_back(out);
             current = step->next_type;
         }
+    }
+
+    // Arbitrary-base member access (`(expr).member`, `fn().x`,
+    // `match ... { }.x`, `Pair{...}.x`): a MemberAccessExpr wraps a NON-PATH
+    // primary (a dotted identifier is one PathExpr, so ordinary
+    // `local.field` / `input.x` never reach here). The base is any
+    // aggregate-typed VALUE already lowered to a bound SSA local; the member
+    // chain is resolved from the base's nominal type and read as ONE
+    // CorePathExpr rooted at that local — reusing the existing P4-D
+    // projection read, no new codegen node. A non-aggregate base or an
+    // unknown field fails closed.
+    [[nodiscard]] CoreValueId lower_member_access_value(const MemberAccessExpr &m,
+                                                        const ExprRef &expr,
+                                                        CoreValueTypeId result_ty,
+                                                        SourceRangeOpt range,
+                                                        CoreRegion &region) {
+        const CoreValueId base_val = lower_value(m.base, region);
+        const CoreTypeId root_type = nominal_base_of(value_type_of(base_val));
+        if (root_type.value == CoreTypeId::kInvalid) {
+            return lower_unsupported_value(
+                expr, "MemberAccessExpr", result_ty, range, region);
+        }
+        const CoreValueTypeId path_result_ty =
+            intern_value_type(expr.ptr->resolved_type, range);
+        CorePathExpr node;
+        node.root = CorePathRoot::Local;
+        // The base is an arbitrary SSA value, not a named path root; the member
+        // name reaches the codegen only through the projection step.
+        node.root_name = {};
+        node.has_local = true;
+        node.local = base_val;
+        node.root_type = root_type;
+        resolve_member_chain(root_type, {m.member}, "<member-access>", range, node.projection,
+                             node.projection_resolved);
+        if (!node.projection_resolved) {
+            return fresh_value(result_ty);
+        }
+        return bind_pure(std::move(node), path_result_ty, range, region);
     }
 
     [[nodiscard]] CoreValueId lower_unary_value(const UnaryExpr &e, CoreValueTypeId result_ty,

@@ -191,6 +191,25 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6 (CORE-GAPS): member access on an ARBITRARY aggregate base.
+    # A dotted identifier is one PathExpr, so `pair.x` / `input.a` already
+    # lowered; MemberAccessExpr wraps only non-path primaries. The fixture
+    # reads fields off a parenthesized aggregate local, a struct-constructor
+    # result, a pure-fn call result, and a tag-only-enum match result. Node
+    # embedded-engine evidence pins the reached state-id path.
+    add_test(NAME ahfl.wasm.p6_member_base_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_member_base_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_member_base.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.p6_member_base_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "arbitrary-base member access Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 FB-1 (CORE-FNBODY-DESIGN): a real-frontend PURE direct call
     # (non-generic fn, a monomorphized generic fn, and an fn calling another
     # fn) reaches WASM as outlined functions invoked by a plain `call` with

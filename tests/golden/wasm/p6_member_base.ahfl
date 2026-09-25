@@ -1,0 +1,92 @@
+module wasm::p6_member_base;
+
+// RFC 0026 P6 (CORE-GAPS 4) arbitrary-base member-access fixture. The grammar
+// makes a dotted IDENTIFIER one PathExpr, so `pair.x` / `input.a` were already
+// lowerable; MemberAccessExpr only wraps a NON-PATH primary. This handler
+// exercises every such base the P6 aggregate subset admits:
+//
+//   (pair).x        — parenthesized aggregate-typed local
+//   (Pair{...}).y   — struct-constructor result, read directly via projection
+//
+// Both reads reuse the existing P4-D local-root projection; there is no new
+// codegen node. The constructed Pair has y=60 (above the threshold) and x=1;
+// reading the WRONG field or failing to lower the parenthesized base routes
+// Low. Observable purely through state ids.
+pub struct Frame {
+    value: String;
+}
+
+pub struct Pair {
+    x: Int;
+    y: Int;
+}
+
+pub enum Flag {
+    On,
+    Off,
+}
+
+fn make_pair(a: Int) -> Pair {
+    return Pair { x: a, y: a + 100 };
+}
+
+pub agent MemberBaseAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MemberBaseAgent {
+    state Decide {
+        let pair: Pair = Pair {
+            x: 1,
+            y: 1,
+        };
+        // Parenthesized aggregate LOCAL base: not a PathExpr primary.
+        let px: Int = (pair).x;
+        // Aggregate CONSTRUCTOR-RESULT base: the Pair value never binds a named
+        // local before the field is projected out of its scratch address.
+        let cy: Int = (Pair {
+            x: 0,
+            y: 60,
+        }).y;
+        // PURE-FN CALL-RESULT base: the outlined fn returns an aggregate whose
+        // field is read directly off the per-activation scratch address.
+        let fy: Int = make_pair(5).y;
+        // MATCH-RESULT base: the match yields an aggregate (Pair) from each arm
+        // and the field is read off the match result, which never binds a named
+        // local. The scrutinee is a tag-only enum; the per-arm Pair comes from a
+        // constructor (a payload-bearing enum scrutinee copying a Ptr binding
+        // into the match-result scratch is a separate pre-existing P6 gap).
+        let f: Flag = Flag::On;
+        let my: Int = (match f {
+            On => Pair { x: 0, y: 70 },
+            Off => Pair { x: 0, y: 0 },
+        }).y;
+        if (px == 1 && cy > 50 && fy == 105 && my > 50) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

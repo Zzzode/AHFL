@@ -576,6 +576,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/p6_match_guard.ahfl",
         "wasm/p6_match_or.ahfl",
         "wasm/p6_match_result_i64.ahfl",
+        "wasm/p6_member_base.ahfl",
         "wasm/p6_neg_compare.ahfl",
         "wasm/p6_nested_depth3.ahfl",
         "wasm/p6_nested_depth3_taken.ahfl",

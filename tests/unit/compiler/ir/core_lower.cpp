@@ -5649,3 +5649,77 @@ TEST_CASE("CORE-GAPS: unwrap lowers to a Some-arm match with an UnwrapFailed fal
     }
     CHECK_FALSE(saw_unsupported);
 }
+
+// ============================================================================
+// CORE-GAPS (RFC 0026 P6): MemberAccessExpr on an arbitrary aggregate base.
+// `(pair).x` is a MemberAccessExpr wrapping a parenthesized primary (a dotted
+// identifier alone is one PathExpr). It must lower to a local-rooted
+// CorePathExpr projection, not a CoreUnsupportedExpr.
+// ============================================================================
+
+namespace {
+
+const std::string kMemberBaseSource = R"AHFL(
+module app::main;
+
+struct Pair { x: Int; y: Int; }
+struct Request { a: Int; }
+struct Context { }
+struct Response { v: Int; }
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let pair: Pair = Pair { x: input.a, y: 0 };
+        let v: Int = (pair).x;
+        return Response { v: v };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("CORE-GAPS: member access on a parenthesized aggregate base lowers to a projection") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("member_base", kMemberBaseSource);
+    REQUIRE(ahfl_ir.has_value());
+
+    // Non-vacuity: the source really produced a MemberAccessExpr (not a
+    // PathExpr, which a bare `pair.x` identifier would have become).
+    bool saw_member_access = false;
+    for (const ir::Expr *expr : ahfl_ir->all_exprs()) {
+        if (expr != nullptr && std::holds_alternative<ir::MemberAccessExpr>(expr->node)) {
+            saw_member_access = true;
+        }
+    }
+    CHECK(saw_member_access);
+
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const ir::core::CoreFlowDecl &flow = result.program.flows.front();
+    bool saw_local_projection = false;
+    bool saw_unsupported = false;
+    for (const auto &expr : flow.storage.exprs) {
+        if (const auto *path = std::get_if<ir::core::CorePathExpr>(&expr.node)) {
+            if (path->has_local && path->projection_resolved &&
+                path->projection.size() == 1) {
+                saw_local_projection = true;
+            }
+        }
+        if (std::get_if<ir::core::CoreUnsupportedExpr>(&expr.node) != nullptr) {
+            saw_unsupported = true;
+        }
+    }
+    CHECK(saw_local_projection);
+    CHECK_FALSE(saw_unsupported);
+}
