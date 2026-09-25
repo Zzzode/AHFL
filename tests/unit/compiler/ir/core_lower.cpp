@@ -5481,3 +5481,89 @@ TEST_CASE("FB-1 e2e: a forward-referenced callee lowers regardless of declaratio
     CHECK(saw_first);
     CHECK(saw_second);
 }
+
+// ============================================================================
+// CORE-GAPS (RFC 0026 P6): `a => b` has no Core opcode and must lower to the
+// Sema truth shape `!a || b` — eagerly (both operands lowered, effects hoisted
+// by A-normalization), never to a CoreUnsupportedExpr.
+// ============================================================================
+
+namespace {
+
+const std::string kImpliesSource = R"AHFL(
+module app::main;
+
+struct Request { x: Int; }
+struct Context { }
+struct Response { ok: Bool; }
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let p: Bool = (input.x > 0) => (input.x < 10);
+        return Response { ok: p };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("CORE-GAPS: Implies lowers to Not(lhs) Or rhs, not an unsupported node") {
+    const auto ahfl_ir = lower_source_to_ahfl_ir("implies_shape", kImpliesSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const ir::core::CoreFlowDecl *only_flow = nullptr;
+    REQUIRE(result.program.flows.size() == 1);
+    only_flow = &result.program.flows.front();
+
+    // A-normal form binds the Not to its own let; the Or references it through
+    // a CoreValueRefExpr. Build the value -> defining-expr map from lets.
+    std::unordered_map<int, int> def_of_value;
+    for (const auto &fs : only_flow->states) {
+        for (const auto &stmt : fs.body.statements) {
+            if (const auto *let = std::get_if<ir::core::CoreLetStmt>(&stmt.node)) {
+                def_of_value.emplace(let->result.value, let->expr.value);
+            }
+        }
+    }
+
+    bool saw_or = false;
+    bool saw_not = false;
+    bool saw_unsupported = false;
+    for (const auto &expr : only_flow->storage.exprs) {
+        if (const auto *bin = std::get_if<ir::core::CoreBinaryExpr>(&expr.node)) {
+            if (bin->op == ir::core::CoreBinaryOp::Or) {
+                saw_or = true;
+                // The Or's lhs must be the let-bound Not over the implies lhs.
+                const auto &lhs_expr = only_flow->storage.exprs[bin->lhs.value];
+                const auto *ref = std::get_if<ir::core::CoreValueRefExpr>(&lhs_expr.node);
+                REQUIRE(ref != nullptr);
+                const auto found = def_of_value.find(ref->value.value);
+                REQUIRE(found != def_of_value.end());
+                const auto &def = only_flow->storage.exprs[found->second];
+                const auto *un = std::get_if<ir::core::CoreUnaryExpr>(&def.node);
+                REQUIRE(un != nullptr);
+                CHECK(un->op == ir::core::CoreUnaryOp::Not);
+                saw_not = true;
+            }
+        }
+        if (std::get_if<ir::core::CoreUnsupportedExpr>(&expr.node) != nullptr) {
+            saw_unsupported = true;
+        }
+    }
+    CHECK(saw_or);
+    CHECK(saw_not);
+    CHECK_FALSE(saw_unsupported);
+}

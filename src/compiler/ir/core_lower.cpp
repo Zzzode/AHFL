@@ -2768,8 +2768,29 @@ template <class RootPolicy> class ExprLowerer {
                                                  SourceRangeOpt range, CoreRegion &region) {
         const auto op = map_binary_op(e.op);
         if (!op.has_value()) {
-            // Only `Implies` reaches here. Fail closed either way: an effectful
-            // operand is a dropped effect, a pure one is an unexecutable node.
+            // `Implies` (a => b) is the sole binary op without a direct Core op.
+            // Sema defines it as `!a || b`; lower to exactly that shape. Both
+            // operands are lowered first (left-to-right), so any effect they
+            // carry is hoisted into statements before the pure boolean chain.
+            if (e.op == ExprBinaryOp::Implies) {
+                const CoreValueId lhs_val = lower_value(e.lhs, region);
+                const CoreValueId rhs_val = lower_value(e.rhs, region);
+                const CoreExprId lhs_ref = push_expr(
+                    CoreValueRefExpr{lhs_val},
+                    e.lhs.ptr ? e.lhs.ptr->source_range : std::nullopt, value_type_of(lhs_val));
+                const CoreValueTypeId bool_ty = value_type_of(lhs_val);
+                const CoreValueId not_lhs =
+                    bind_pure(CoreUnaryExpr{CoreUnaryOp::Not, lhs_ref}, bool_ty, range, region);
+                const CoreExprId not_lhs_ref =
+                    push_expr(CoreValueRefExpr{not_lhs}, range, bool_ty);
+                const CoreExprId rhs_ref = push_expr(
+                    CoreValueRefExpr{rhs_val},
+                    e.rhs.ptr ? e.rhs.ptr->source_range : std::nullopt, value_type_of(rhs_val));
+                return bind_pure(CoreBinaryExpr{CoreBinaryOp::Or, not_lhs_ref, rhs_ref}, result_ty,
+                                 range, region);
+            }
+            // Any other unmapped op fails closed: an effectful operand is a
+            // dropped effect, a pure one is an unexecutable node.
             if (expr_has_capability_call(e.lhs) || expr_has_capability_call(e.rhs)) {
                 error(diag::kEffectfulUnsupported,
                       "binary operator carries a capability effect but is not yet "

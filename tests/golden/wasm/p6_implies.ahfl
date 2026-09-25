@@ -1,0 +1,55 @@
+module wasm::p6_implies;
+
+// RFC 0026 P6 (CORE-GAPS) real-frontend boolean implication fixture. Sema
+// defines `a => b` as `!a || b`; Core has no Implies opcode, so the lowerer
+// synthesizes exactly that shape (Not(lhs) Or rhs). This fixture pins the two
+// truth-table rows that distinguish the correct lowering from every plausible
+// miscompile:
+//
+//   false => false = true   (a miscompile to `&&` or `||` would yield false)
+//   true  => false = false  (a miscompile that drops the rhs, or lowers to
+//                            `!a` alone, would yield true)
+//
+// Both operands are comparison results (not literal booleans), so the chain
+// genuinely executes Not/Or in wasm. Observable purely through state ids.
+pub struct Frame {
+    value: String;
+}
+
+pub agent ImpliesAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for ImpliesAgent {
+    state Decide {
+        let false_then_false = (3 > 10) => (5 > 20);
+        let true_then_false = (10 > 3) => (5 > 20);
+        if (false_then_false && !true_then_false) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}
