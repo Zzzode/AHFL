@@ -3445,7 +3445,8 @@ class P6ComputationHandlerBuilder {
             }
             return true;
         }
-        if (collection.op == CoreCollectionOpKind::KeyGet) {
+        if (collection.op == CoreCollectionOpKind::KeyGet ||
+            collection.op == CoreCollectionOpKind::Contains) {
             return emit_collection_key_get(collection, container, range);
         }
         const auto index_kind = readable_kind(collection.index);
@@ -3554,8 +3555,12 @@ class P6ComputationHandlerBuilder {
     emit_collection_key_get(const CoreCollectionExpr &collection,
                             const ir::core::CoreLayoutContainer *container,
                             ir::SourceRangeOpt range) {
+        const bool is_contains = collection.op == CoreCollectionOpKind::Contains;
         const bool key_wide = place_kind_of_layout(container->element) == P6ScalarKind::IntI64;
+        // A membership test never reads the value slot; a Set container has no
+        // value edge at all. A KeyGet on a Map reads the value at value_offset.
         const bool value_wide =
+            container->value.has_value() &&
             place_kind_of_layout(*container->value) == P6ScalarKind::IntI64;
 
         const auto emit_header_ptr = [&]() -> bool {
@@ -3670,23 +3675,30 @@ class P6ComputationHandlerBuilder {
         body_.byte(kOpEnd); // B
         --label_depth_;
 
-        // No match -> trap.
-        body_.byte(kOpLocalGet);
-        body_.u32(keyget_found_local_);
-        body_.byte(kOpI32Eqz);
-        body_.byte(kOpIf);
-        body_.byte(kEmptyBlock);
-        ++label_depth_;
-        body_.byte(kOpUnreachable);
-        body_.byte(kOpEnd);
-        --label_depth_;
+        // No match -> KeyGet TRAPS (the evaluator returns "key not found"); a
+        // membership test is total and falls through to the found flag below.
+        if (!is_contains) {
+            body_.byte(kOpLocalGet);
+            body_.u32(keyget_found_local_);
+            body_.byte(kOpI32Eqz);
+            body_.byte(kOpIf);
+            body_.byte(kEmptyBlock);
+            ++label_depth_;
+            body_.byte(kOpUnreachable);
+            body_.byte(kOpEnd);
+            --label_depth_;
 
-        // Matched value word at entry + value_offset; leave it on the stack.
-        body_.byte(kOpLocalGet);
-        body_.u32(keyget_addr_local_);
-        body_.byte(value_wide ? kOpI64Load : kOpI32Load);
-        body_.u32(value_wide ? kAlignI64 : kAlignI32);
-        body_.u32(static_cast<std::uint32_t>(container->value_offset));
+            // Matched value word at entry + value_offset; leave it on the stack.
+            body_.byte(kOpLocalGet);
+            body_.u32(keyget_addr_local_);
+            body_.byte(value_wide ? kOpI64Load : kOpI32Load);
+            body_.u32(value_wide ? kAlignI64 : kAlignI32);
+            body_.u32(static_cast<std::uint32_t>(container->value_offset));
+        } else {
+            // Membership: leave the found flag (i32 0/1) on the stack.
+            body_.byte(kOpLocalGet);
+            body_.u32(keyget_found_local_);
+        }
         return true;
     }
 
@@ -3863,15 +3875,17 @@ class P6ComputationHandlerBuilder {
                               range);
             }
         }
-        if (collection.op == CoreCollectionOpKind::KeyGet) {
-            // Bounded KEYED scan over a Map. The second operand is a SEARCH KEY;
-            // the KEY slot and the VALUE slot must both be single-word scalar
-            // P6 values (Int/Bool/tag-only enum, i32 or i64) and the operand /
-            // result widths must match them. Structural equality on String /
-            // aggregate / collection keys has no single-word wasm compare and
-            // stays fail-closed (P6-7 PtrLen frame work). The scan is emitted as
-            // a bounded loop whose cursor is clamped by min(header_len,
-            // capacity), so it is structurally finite.
+        if (collection.op == CoreCollectionOpKind::KeyGet ||
+            collection.op == CoreCollectionOpKind::Contains) {
+            // Bounded KEYED scan over a Map (KeyGet / Contains) or a Set
+            // (Contains only). The second operand is a SEARCH KEY; the KEY slot
+            // must be a single-word scalar P6 value (Int/Bool/tag-only enum,
+            // i32 or i64). A KeyGet additionally requires the VALUE slot to be
+            // one word and checks its result width. Structural equality on
+            // String / aggregate / collection keys has no single-word wasm
+            // compare and stays fail-closed (P6-7 PtrLen frame work). The scan
+            // is emitted as a bounded loop whose cursor is clamped by
+            // min(header_len, capacity), so it is structurally finite.
             const CoreTypeDecl *base_decl = nullptr;
             if (base_type.value < program_.value_types.size()) {
                 if (const auto *nom =
@@ -3881,44 +3895,55 @@ class P6ComputationHandlerBuilder {
                     }
                 }
             }
+            const bool is_map = base_decl != nullptr &&
+                                base_decl->role == ir::core::CoreNominalRole::Map;
             if (base_decl == nullptr ||
-                base_decl->role != ir::core::CoreNominalRole::Map) {
-                return reject("keyed collection lookup requires a Map base", range);
+                (collection.op == CoreCollectionOpKind::KeyGet && !is_map) ||
+                !(base_decl->role == ir::core::CoreNominalRole::Map ||
+                  base_decl->role == ir::core::CoreNominalRole::Set)) {
+                return reject(
+                    "keyed scan requires a Map (KeyGet) or Set/Map (Contains) base", range);
             }
-            if (!container->value.has_value()) {
+            // A Set carries no value edge; a KeyGet requires one.
+            if (collection.op == CoreCollectionOpKind::KeyGet &&
+                !container->value.has_value()) {
                 return reject("Map container layout has no value edge", range);
             }
-            if (!place_is_p6_value(container->element) ||
+            if (!place_is_p6_value(container->element)) {
+                return reject("keyed scan key must be a single-word scalar P6 value", range);
+            }
+            if (collection.op == CoreCollectionOpKind::KeyGet &&
                 !place_is_p6_value(*container->value)) {
                 return reject(
-                    "Map keyed lookup key and value must be single-word scalar P6 values", range);
+                    "Map keyed lookup value must be a single-word scalar P6 value", range);
             }
             const auto key_kind = readable_kind(collection.index);
             if (key_kind == std::nullopt || *key_kind == P6ScalarKind::Ptr ||
                 *key_kind == P6ScalarKind::Collection || *key_kind == P6ScalarKind::Closure) {
-                return reject("Map keyed lookup key is not a scalar Int/Bool/enum value", range);
+                return reject("keyed scan key is not a scalar Int/Bool/enum value", range);
             }
             if (*key_kind != place_kind_of_layout(container->element)) {
-                return reject("Map keyed lookup key width does not match the key slot layout",
-                              range);
+                return reject("keyed scan key width does not match the key slot layout", range);
             }
-            const auto value_kind_opt = scalar_kind(storage_.exprs[id.value].result_type);
-            if (value_kind_opt == std::nullopt || *value_kind_opt == P6ScalarKind::Ptr ||
-                *value_kind_opt == P6ScalarKind::Collection) {
-                return reject("Map keyed lookup result is not a scalar P6 value", range);
+            if (collection.op == CoreCollectionOpKind::KeyGet) {
+                const auto value_kind_opt = scalar_kind(storage_.exprs[id.value].result_type);
+                if (value_kind_opt == std::nullopt || *value_kind_opt == P6ScalarKind::Ptr ||
+                    *value_kind_opt == P6ScalarKind::Collection) {
+                    return reject("Map keyed lookup result is not a scalar P6 value", range);
+                }
+                if (*value_kind_opt != place_kind_of_layout(*container->value)) {
+                    return reject(
+                        "Map keyed lookup result width does not match the value slot layout",
+                        range);
+                }
             }
-            if (*value_kind_opt != place_kind_of_layout(*container->value)) {
-                return reject("Map keyed lookup result width does not match the value slot layout",
-                              range);
-            }
-            // KeyGet reads BOTH words of the last live entry (key @0, value @
-            // value_offset), so the whole `capacity * stride` backing must fit
-            // (the positional proof above bounds only one element slot).
+            // The scan walks the full entry span; it must fit the reserved
+            // backing region for both container shapes.
             if (capacity != 0) {
                 if (stride == 0 ||
                     capacity > std::numeric_limits<std::uint64_t>::max() / stride ||
                     capacity * stride > region) {
-                    return reject("Map backing region exceeds the reserved linear-memory budget",
+                    return reject("container backing region exceeds the reserved memory budget",
                                   range);
                 }
             }

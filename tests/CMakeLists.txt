@@ -239,6 +239,32 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6 (CORE-GAPS): bounded enum-constructor builtins
+    # (option_some/result_ok/result_err -> CoreConstructExpr).
+    add_test(NAME ahfl.wasm.p6_builtins_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_builtins.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_builtins.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_builtins_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_builtins_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_builtins_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_builtins.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.p6_builtins_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "bounded constructor builtins Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 FB-1 (CORE-FNBODY-DESIGN): a real-frontend PURE direct call
     # (non-generic fn, a monomorphized generic fn, and an fn calling another
     # fn) reaches WASM as outlined functions invoked by a plain `call` with

@@ -4049,6 +4049,17 @@ template <class RootPolicy> class ExprLowerer {
         if (const auto op = collection_op_of_hook(call.callee)) {
             return lower_collection_builtin(call, *op, expr, range, region);
         }
+        // CORE-GAPS: the identity-based enum-VARIANT CONSTRUCTOR hooks
+        // option_some / result_ok / result_err. The bodyless @builtin fn is the
+        // Sema surface, but at Core lowering the call is exactly the enum
+        // constructor `Option::Some(x)` / `Result::Ok(x)` / `Result::Err(x)`:
+        // a payload-bearing CoreConstructExpr. The mapping is identity-based —
+        // the hook spelling names the nominal from the builtin descriptor SSOT,
+        // and the variant is resolved by declared index. This shares the generic
+        // enum payload codegen that item 1 enabled.
+        if (auto construct = variant_construct_hook(call, expr, range, region)) {
+            return *construct;
+        }
         // RFC 0026 FB-3a2 (design §4 rule 5 / §5.2): a call whose callee is a
         // first-class callable VALUE — a FnT parameter, a callable local, or a
         // constructed closure — lowers to an indirect CoreCallClosureExpr
@@ -4138,6 +4149,63 @@ template <class RootPolicy> class ExprLowerer {
         return last == std::string::npos ? callee : callee.substr(last + 2);
     }
 
+    /// The enum-variant constructor a bodyless builtin hook names, or nullopt
+    /// when the callee is not one of option_some / result_ok / result_err.
+    /// Identity is read from the builtin nominal descriptor SSOT (canonical
+    /// name + declared variant index), never from the callee symbol; these
+    /// hooks resolve to bodyless fns, not enum symbols. Returns a
+    /// payload-bearing CoreConstructExpr exactly like a source constructor.
+    [[nodiscard]] std::optional<CoreValueId>
+    variant_construct_hook(const CallExpr &call, const ExprRef &expr,
+                           SourceRangeOpt range, CoreRegion &region) {
+        const char *nominal_canonical = nullptr;
+        const char *variant = nullptr;
+        if (call.callee == "option_some") {
+            nominal_canonical = "std::option::Option";
+            variant = "Some";
+        } else if (call.callee == "result_ok") {
+            nominal_canonical = "std::result::Result";
+            variant = "Ok";
+        } else if (call.callee == "result_err") {
+            nominal_canonical = "std::result::Result";
+            variant = "Err";
+        } else {
+            return std::nullopt;
+        }
+        if (call.arguments.size() != 1) {
+            error(diag::kUnloweredExpression,
+                  "enum constructor hook '" + call.callee + "' expects exactly one payload",
+                  range);
+            return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
+        }
+        const auto type_id = types_.resolve_by_name(nominal_canonical);
+        if (!type_id.has_value()) {
+            error(diag::kUnresolvedType,
+                  std::string("enum constructor hook '") + call.callee +
+                      "' nominal '" + nominal_canonical + "' is not in the Core type table",
+                  range);
+            return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
+        }
+        const auto variant_idx = types_.variant_index(*type_id, variant);
+        if (!variant_idx.has_value()) {
+            error(diag::kUnresolvedEnumVariant,
+                  std::string("enum constructor hook '") + call.callee + "' variant '" +
+                      variant + "' is not declared by '" + nominal_canonical + "'",
+                  range);
+            return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
+        }
+        CoreConstructExpr node;
+        node.type_name = nominal_canonical;
+        node.variant_name = variant;
+        node.is_enum_variant = true;
+        node.type_id = *type_id;
+        node.variant = CoreVariantId{*variant_idx};
+        node.resolved = true;
+        node.args.push_back(CoreConstructArg{CoreFieldId{0}, lower_value(call.arguments[0], region)});
+        const CoreValueTypeId result_ty = intern_value_type(expr.ptr->resolved_type, range);
+        return bind_pure(std::move(node), result_ty, range, region);
+    }
+
     /// The bounded-collection operation an internal builtin hook names, or
     /// nullopt when the hook is not a collection accessor. The hook spelling is
     /// matched against the compile-time `known_builtin_hooks()` SSOT, NOT parsed:
@@ -4145,6 +4213,11 @@ template <class RootPolicy> class ExprLowerer {
     /// maps it to a typed `CoreCollectionOpKind`. The container's own identity
     /// (its interned `CoreValueTypeId`) is what the verifier and codegen read —
     /// never this string.
+    ///
+    /// CORE-GAPS: the table ALSO covers the role-symmetric scalar hooks
+    /// set_raw_size / map_raw_size (Len) and map_raw_contains_key /
+    /// set_raw_contains (Contains). Those are keyed scans with no value read,
+    /// sharing the bounded Map/Set backing layout.
     [[nodiscard]] static std::optional<CoreCollectionOpKind>
     collection_op_of_hook(std::string_view hook) {
         if (hook == "list_raw_get") {
@@ -4153,7 +4226,8 @@ template <class RootPolicy> class ExprLowerer {
         if (hook == "list_raw_set") {
             return CoreCollectionOpKind::ElementSet;
         }
-        if (hook == "list_raw_length") {
+        if (hook == "list_raw_length" || hook == "set_raw_size" ||
+            hook == "map_raw_size") {
             return CoreCollectionOpKind::Len;
         }
         // Map-only KEYED lookup. Distinct from list_raw_get's positional
@@ -4161,6 +4235,10 @@ template <class RootPolicy> class ExprLowerer {
         // the bounded entry array rather than indexing a slot.
         if (hook == "map_raw_get") {
             return CoreCollectionOpKind::KeyGet;
+        }
+        // Keyed membership scan (Set / Map), yields a Bool.
+        if (hook == "set_raw_contains" || hook == "map_raw_contains_key") {
+            return CoreCollectionOpKind::Contains;
         }
         return std::nullopt;
     }
@@ -4216,9 +4294,11 @@ template <class RootPolicy> class ExprLowerer {
                 return fresh_value(intern_value_type(expr.ptr->resolved_type, range));
             }
             if (op == CoreCollectionOpKind::ElementGet ||
-                op == CoreCollectionOpKind::KeyGet) {
-                // ElementGet: positional slot index. KeyGet: the search key
-                // (also carried on `index`; the op kind distinguishes them).
+                op == CoreCollectionOpKind::KeyGet ||
+                op == CoreCollectionOpKind::Contains) {
+                // ElementGet: positional slot index. KeyGet: the search key;
+                // Contains: the membership search key (carried on `index`; the
+                // op kind distinguishes them).
                 node.index = lower_value(call.arguments[1], region);
             }
         }

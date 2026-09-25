@@ -1959,6 +1959,27 @@ class Verifier {
                       range);
             }
         }
+        if (c.op == CoreCollectionOpKind::Contains) {
+            if (!(decl.role == CoreNominalRole::Set || is_map)) {
+                error(verify::kCollectionOpInvalid,
+                      "keyed membership test requires a Set or Map base in '" + flow.label + "'",
+                      range);
+                return;
+            }
+            if (c.index.value >= flow.value_count) {
+                return; // out-of-range operand already reported
+            }
+            // A Set's key is its single element type (arg #0); a Map's key is
+            // also arg #0 (the value type #1 is never touched by a membership
+            // test).
+            const CoreValueTypeId key_vt = body_value_type(flow, c.index);
+            if (!(key_vt == base_nominal->args.front())) {
+                error(verify::kCollectionOpInvalid,
+                      "collection membership key does not equal the element/key type in '" +
+                          flow.label + "'",
+                      range);
+            }
+        }
         switch (c.op) {
         case CoreCollectionOpKind::Len: {
             const CoreValueTypeId result_vt = expr.result_type;
@@ -1980,6 +2001,18 @@ class Verifier {
                       range);
             }
             return;
+        case CoreCollectionOpKind::Contains: {
+            // A membership test yields Bool.
+            const bool result_is_bool =
+                expr.result_type.value < program_.value_types.size() &&
+                std::holds_alternative<CoreVtBool>(program_.value_types[expr.result_type.value].node);
+            if (!result_is_bool) {
+                error(verify::kCollectionOpInvalid,
+                      "collection membership test result is not a Bool in '" + flow.label + "'",
+                      range);
+            }
+            return;
+        }
         case CoreCollectionOpKind::ElementGet: {
             if (!(expr.result_type == base_nominal->args.front())) {
                 error(verify::kCollectionOpInvalid,

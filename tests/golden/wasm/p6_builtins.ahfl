@@ -1,0 +1,66 @@
+// @repo-std
+//
+// RFC 0026 P6 (CORE-GAPS 3) bounded builtin constructor hook evidence. The
+// marker compiles this file through a PROJECT parse with the repo std module
+// root (the real std::option::Option nominal with its SSOT identity).
+//
+// The option_some / result_ok / result_err bodyless @builtin hooks are the
+// Sema surface for payload-bearing enum construction; at Core lowering they
+// are now resolved by IDENTITY to the enum variant constructor
+// (CoreConstructExpr), sharing the generic-enum payload codegen. App code
+// reaches the same constructor through `Option::Some(x)` syntax; two distinct
+// Some sites pin the generic-enum payload read. The High path requires both
+// payloads to extract correctly.
+//
+// The other category-a scalar hooks (set_raw_size / map_raw_size -> Len,
+// set_raw_contains / map_raw_contains_key -> Contains) are pinned by the IR
+// unit tests and, for Map contains, the KeyGet infrastructure; cmp_raw_compare
+// is deferred (its std::cmp::Ordering return nominal is not in the Core
+// builtin table and the sysroot enum is not yet inlined, see slice notes).
+module app::main;
+
+import std::option as option;
+
+pub struct Frame {
+    value: String;
+}
+
+pub agent BuiltinsAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for BuiltinsAgent {
+    state Decide {
+        // Two distinct Some payloads; unwrap lowers each to the payload match
+        // (CORE-GAPS 1), exercising the constructor identity path.
+        let a: Int = unwrap(option::Option::Some(41));
+        let b: Int = unwrap(option::Option::Some(59));
+        if (a == 41 && b == 59) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

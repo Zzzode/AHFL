@@ -577,11 +577,14 @@ struct CoreCoerceExpr {
 ///                    counterpart of the evaluator's "key not found" error).
 ///                    Distinct from the positional `ElementGet`: a Map never
 ///                    accepts a positional read.
+///   * `Contains`   : Set/Map KEYED membership test. `index` holds the search
+///                    key; a bounded linear scan yields Bool (found or not),
+///                    never trapping.
 ///
 /// This is a typed node, never a string-keyed builtin call: the op is an enum and
 /// the collection identity is the base value's interned `CoreValueTypeId`, so a
 /// backend can never mistake one container for another.
-enum class CoreCollectionOpKind { Len, ElementGet, ElementSet, KeyGet };
+enum class CoreCollectionOpKind { Len, ElementGet, ElementSet, KeyGet, Contains };
 
 struct CoreCollectionExpr {
     CoreCollectionOpKind op{CoreCollectionOpKind::Len};

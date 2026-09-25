@@ -461,6 +461,8 @@ using ahfl::json::JsonValue;
         return "element_set";
     case CoreCollectionOpKind::KeyGet:
         return "key_get";
+    case CoreCollectionOpKind::Contains:
+        return "contains";
     }
     return "len";
 }
@@ -480,6 +482,10 @@ using ahfl::json::JsonValue;
     }
     if (s == "key_get") {
         out = CoreCollectionOpKind::KeyGet;
+        return true;
+    }
+    if (s == "contains") {
+        out = CoreCollectionOpKind::Contains;
         return true;
     }
     return false;

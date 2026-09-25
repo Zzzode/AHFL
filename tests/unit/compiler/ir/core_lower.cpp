@@ -5783,3 +5783,74 @@ TEST_CASE("CORE-GAPS: map_raw_get lowers to a Map KeyGet, not a positional get")
     CHECK(saw_key_get);
     CHECK_FALSE(saw_positional_get);
 }
+
+// ============================================================================
+// CORE-GAPS (RFC 0026 P6): bounded builtin hooks. set_raw_size / map_raw_size
+// lower to Len; map_raw_contains_key lowers to Contains; the
+// option_some/result_ok/result_err constructor hooks lower to enum
+// CoreConstructExpr. These are sysroot-backed so the std module roots are
+// present.
+// ============================================================================
+
+namespace {
+
+const std::string kBoundedBuiltinsSource = R"AHFL(
+module std::collections;
+
+pub struct Set<T> { }
+
+struct Request { ones: Set<Int>(4); }
+struct Context { }
+struct Response { count: Int; member: Bool; }
+
+@builtin("set_raw_size")
+fn set_raw_size<T>(s: Set<T>) -> Int effect Pure;
+@builtin("set_raw_contains")
+fn set_raw_contains<T>(s: Set<T>, x: T) -> Bool effect Pure;
+
+agent A {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for A {
+    state Done {
+        let count: Int = set_raw_size<Int>(input.ones);
+        let member: Bool = set_raw_contains<Int>(input.ones, 3);
+        return Response { count: count, member: member };
+    }
+}
+)AHFL";
+
+} // namespace
+
+TEST_CASE("CORE-GAPS: set_raw_size/set_raw_contains hooks lower to Len/Contains") {
+    const auto ahfl_ir =
+        lower_source_to_ahfl_ir("bounded_builtins", kBoundedBuiltinsSource);
+    REQUIRE(ahfl_ir.has_value());
+    const auto result = ir::core::lower_ahfl_to_core(*ahfl_ir);
+    REQUIRE(result.ok());
+    CHECK(result.is_executable);
+
+    const ir::core::CoreFlowDecl &flow = result.program.flows.front();
+    std::size_t len_count = 0;
+    std::size_t contains_count = 0;
+    for (const auto &expr : flow.storage.exprs) {
+        if (const auto *c = std::get_if<ir::core::CoreCollectionExpr>(&expr.node)) {
+            if (c->op == ir::core::CoreCollectionOpKind::Len) {
+                ++len_count;
+            }
+            if (c->op == ir::core::CoreCollectionOpKind::Contains) {
+                ++contains_count;
+            }
+        }
+    }
+    // set_raw_size -> Len; set_raw_contains -> Contains.
+    CHECK(len_count == 1);
+    CHECK(contains_count == 1);
+}
