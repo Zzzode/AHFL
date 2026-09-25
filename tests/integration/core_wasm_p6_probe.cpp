@@ -26,11 +26,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -186,14 +184,61 @@ constexpr std::uint32_t kCollectionInputLen = 2;
 }
 
 // CORE-GAPS: the bounded-Map keyed-lookup fixture's input frame. The struct is
-// `{ table: Map<Int, Int>(4) }` with two live entries (3 -> 9, 7 -> 42); only
-// the keyed lookup of 7 is used by the fixture. Entries are positional in the
-// value model (the host lays them out one stride apart in key order).
-[[nodiscard]] evaluator::Value map_input() {
+// `{ table: Map<K, V>(4) }` with two live entries; only the second entry's
+// keyed lookup is used by the fixture. Entries are positional in the value
+// model (the host lays them out one stride apart in key order). The exact
+// keys/values are chosen by `MapSpec` from the field's K/V TypeRefs so the
+// same lane covers Int/Int and Bool keys/values.
+struct MapSpec {
+    bool key_is_bool{false};
+    bool value_is_bool{false};
+    std::vector<std::int64_t> keys;
+    std::vector<std::int64_t> values;
+};
+
+// Derive the two live Map entries from the input struct's leading (Map) field
+// TypeRef: a Bool K or V is encoded as the i32 words 1/0 the wasm scan
+// compares against, an Int K or V keeps the 3 -> 9 / 7 -> 42 evidence shape.
+// Defaults to Int/Int when the TypeRef is not structurally available.
+[[nodiscard]] MapSpec map_spec_for(const ir::StructDecl *input_struct) {
+    MapSpec spec;
+    if (input_struct != nullptr && !input_struct->fields.empty()) {
+        const ir::TypeRef &map = input_struct->fields.front().type_ref;
+        if (map.params.size() >= 2) {
+            spec.key_is_bool = map.params[0] != nullptr &&
+                               map.params[0]->kind == ir::TypeRefKind::Bool;
+            spec.value_is_bool = map.params[1] != nullptr &&
+                                 map.params[1]->kind == ir::TypeRefKind::Bool;
+        }
+    }
+    if (spec.key_is_bool) {
+        // slot 0: false -> 9, slot 1: true -> 42. The fixture looks up the
+        // PRESENT key at slot 1 (true), so a positional miscompile that
+        // returned slot 0 would route Low — the same evidence the Int map pins.
+        spec.keys = {0, 1};
+    } else {
+        spec.keys = {3, 7};
+    }
+    if (spec.value_is_bool) {
+        // 3 -> false (slot 0), 7 -> true (slot 1); the lookup of 7 yields true.
+        spec.values = {0, 1};
+    } else {
+        spec.values = {9, 42};
+    }
+    return spec;
+}
+
+[[nodiscard]] evaluator::Value map_input(const MapSpec &spec) {
     evaluator::FieldMap fields;
     std::vector<std::pair<evaluator::Value, evaluator::Value>> entries;
-    entries.emplace_back(evaluator::make_int(3), evaluator::make_int(9));
-    entries.emplace_back(evaluator::make_int(7), evaluator::make_int(42));
+    for (std::size_t i = 0; i < spec.keys.size(); ++i) {
+        auto key = spec.key_is_bool ? evaluator::make_bool(spec.keys[i] != 0)
+                                    : evaluator::make_int(spec.keys[i]);
+        auto value = spec.value_is_bool
+                         ? evaluator::make_bool(spec.values[i] != 0)
+                         : evaluator::make_int(spec.values[i]);
+        entries.emplace_back(std::move(key), std::move(value));
+    }
     fields.set(
         "table",
         std::make_unique<evaluator::Value>(evaluator::make_map(std::move(entries))));
@@ -289,10 +334,13 @@ int main(int argc, char **argv) {
         input_struct != nullptr && !input_struct->fields.empty() &&
         input_struct->fields.front().name == "items";
     // CORE-GAPS: an input struct whose leading field is `table` selects the
-    // bounded-Map keyed-lookup frame (Map<Int, Int>(4), two live entries).
+    // bounded-Map keyed-lookup frame (Map<K, V>(4), two live entries). The K/V
+    // scalar types come from the field's TypeRef so one lane covers Int and
+    // Bool keys/values.
     const bool map_fixture =
         input_struct != nullptr && !input_struct->fields.empty() &&
         input_struct->fields.front().name == "table";
+    const MapSpec map_spec = map_fixture ? map_spec_for(input_struct) : MapSpec{};
 
     // Native observation: collect every entered state NAME in order. The
     // observer requires a valid invocation agent id to fire. In multi-agent
@@ -308,7 +356,7 @@ int main(int argc, char **argv) {
                     ? aggregate_input()
                     : (collection_fixture
                            ? collection_input()
-                           : (map_fixture ? map_input() : fixture_input()));
+                           : (map_fixture ? map_input(map_spec) : fixture_input()));
     runtime::AgentRuntime native(*agent, *flow);
     runtime::CapabilityInvocationContext context;
     context.agent_id = runtime::AgentId{0};
@@ -539,6 +587,11 @@ int main(int argc, char **argv) {
             }
         }
         constexpr std::uint32_t kMapInputLen = 2;
+        auto emit_word_list = [&](const std::vector<std::int64_t> &words) {
+            for (std::size_t i = 0; i < words.size(); ++i) {
+                std::cout << (i == 0 ? "" : ",") << words[i];
+            }
+        };
         std::cout << "map_base=" << ir::core::kP6AggregateInputBase
                   << " backing_base=" << ir::core::kP6CollectionBackingBase << " header_offset="
                   << structure->field_offsets.front() << " ptr_offset="
@@ -549,8 +602,11 @@ int main(int argc, char **argv) {
                   << " capacity=" << container->capacity
                   << " backing_size=" << container->backing_size
                   << " key_wide=" << key_wide << " value_wide=" << value_wide
-                  << " keys=3,7"
-                  << " values=9,42\n";
+                  << " keys=";
+        emit_word_list(map_spec.keys);
+        std::cout << " values=";
+        emit_word_list(map_spec.values);
+        std::cout << "\n";
     }
     return 0;
 }

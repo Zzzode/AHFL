@@ -568,6 +568,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/p6_elseless_fallthrough.ahfl",
         "wasm/p6_elseless_taken.ahfl",
         "wasm/p6_implies.ahfl",
+        "wasm/p6_match_aggregate_payload_reject.ahfl",
         "wasm/p6_match_arm_trap.ahfl",
         "wasm/p6_match_binding_payload.ahfl",
         "wasm/p6_match_enum.ahfl",

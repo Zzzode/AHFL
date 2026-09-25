@@ -1,0 +1,66 @@
+module std::option;
+
+// RFC 0026 P6 (CORE-GAPS 1 fix-forward) NEGATIVE fixture: unwrap of an
+// AGGREGATE payload must FAIL CLOSED at lowering (core.UNLOWERED_EXPRESSION)
+// and emit no wasm, never a silently wrong module.
+//
+// e21d7281 made generic Option<T> constructible AND pattern-matchable. The
+// expression-match arm copy can route only a single-word scalar (Bool/Int)
+// payload: an aggregate payload is a child ADDRESS the one-word latch cannot
+// carry, so pre-fix the producer emitted a well-formed module whose payload
+// binding copied the payload SLOT's own address; a later `p.y` projection
+// read the wrong scratch and the wasm path branched Low while the native
+// evaluator branched High (a wrong-code agent decision with no trap). The
+// lowerer now rejects this shape until the expression-match aggregate arm-copy
+// lands. Option<Int>/Option<Bool> stay executable (see p6_unwrap_some.ahfl).
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct Pair {
+    x: Int;
+    y: Int;
+}
+
+pub struct Frame {
+    value: String;
+}
+
+pub agent UnwrapAggregateRejectAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for UnwrapAggregateRejectAgent {
+    state Decide {
+        let opt: Option<Pair> = Option::Some(Pair { x: 1, y: 60 });
+        let p: Pair = unwrap(opt);
+        if (p.y > 50) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

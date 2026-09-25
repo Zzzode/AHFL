@@ -2678,6 +2678,52 @@ template <class RootPolicy> class ExprLowerer {
                capacity_allowed(types_.role_of(nominal->base));
     }
 
+    /// Whether a logical value type is the single-word SCALAR payload subset an
+    /// `unwrap` (Option::Some / Result::Ok) can route through the expression-
+    /// match arm copy in this slice: a Bool or an Int (narrow -> i32, unbounded
+    /// -> i64). This mirrors the wasm P6 boundary EXACTLY (`p6_scalar_kind`
+    /// yields Bool / IntI32 / IntI64 for precisely these two nodes and the
+    /// expression-match result gate rejects every other kind): a struct /
+    /// payload-bearing enum is an aggregate ADDRESS, a bounded collection a
+    /// collection handle, a String a two-word PtrLen, Float an f64, Decimal /
+    /// Duration / Timestamp have i64 bytes but no scalar P6 kind, and a
+    /// tag-only enum payload is the match-only `Index` kind. Binding any of
+    /// those through the synthetic payload match would route an aggregate
+    /// payload slot's OWN ADDRESS (the arm-copy hole) instead of the child
+    /// value, so the program fails closed at lowering until the expression-
+    /// match aggregate arm-copy lands.
+    [[nodiscard]] bool unwrap_payload_is_scalar_word(CoreValueTypeId ty) const {
+        if (ty.value >= value_type_pool_.size()) {
+            return false;
+        }
+        const CoreValueTypeNode &node = value_type_pool_[ty.value].node;
+        return std::holds_alternative<CoreVtBool>(node) ||
+               std::holds_alternative<CoreVtInt>(node);
+    }
+
+    /// Stable, diagnostic-only name of a Core value-type node (identity in the
+    /// IR is the interned index, never this string — this is user-facing text).
+    [[nodiscard]] static std::string_view value_type_node_name(const CoreValueTypeNode &node) {
+        return std::visit(
+            Overloaded{
+                [](const CoreVtBool &) -> std::string_view { return "Bool"; },
+                [](const CoreVtInt &) -> std::string_view { return "Int"; },
+                [](const CoreVtFloat &) -> std::string_view { return "Float"; },
+                [](const CoreVtString &) -> std::string_view { return "String"; },
+                [](const CoreVtUnit &) -> std::string_view { return "Unit"; },
+                [](const CoreVtNever &) -> std::string_view { return "Never"; },
+                [](const CoreVtDecimal &) -> std::string_view { return "Decimal"; },
+                [](const CoreVtDuration &) -> std::string_view { return "Duration"; },
+                [](const CoreVtTimestamp &) -> std::string_view { return "Timestamp"; },
+                [](const CoreVtUuid &) -> std::string_view { return "Uuid"; },
+                [](const CoreVtNominal &) -> std::string_view { return "nominal"; },
+                [](const CoreVtTuple &) -> std::string_view { return "tuple"; },
+                [](const CoreVtFn &) -> std::string_view { return "fn"; },
+                [](const CoreVtClosure &) -> std::string_view { return "closure"; },
+            },
+            node);
+    }
+
     /// A path root resolved to its Core-IR root kind + type + optional local /
     /// workflow-node identity, ALL AT ONCE. A local shadows an external root only
     /// when the policy allows it (a flow's input/ctx are never local); the
@@ -3390,6 +3436,30 @@ template <class RootPolicy> class ExprLowerer {
         }
         const CoreValueTypeId payload_vt = nom_node->args.front();
 
+        // Fail closed unless the payload is a single-word scalar the wasm P6
+        // expression-match can copy through its arm binding (Bool / Int). The
+        // arm-copy path latches a payload slot into a one-word match scratch
+        // and the match RESULT is likewise one word: an aggregate payload (a
+        // struct / payload-bearing enum / collection, reached through a
+        // GENERIC Option/Result since e21d7281 made those constructible) is a
+        // child ADDRESS that this copy cannot carry, so without this gate the
+        // module emits and a later projection reads the payload slot's own
+        // address word — a silently WRONG branch with no trap. Route it through
+        // the ordinary unsupported-expression lane until the aggregate arm-copy
+        // lands; Option/Result<Int|Bool> (including narrow bounded Ints) stay
+        // executable.
+        if (!unwrap_payload_is_scalar_word(payload_vt)) {
+            error(diag::kUnloweredExpression,
+                  std::string("unwrap payload type '") +
+                      std::string(value_type_node_name(
+                          value_type_pool_[payload_vt.value].node)) +
+                      "' is not a single-word scalar (Bool/Int); an aggregate or "
+                      "collection payload cannot be copied through the expression-match "
+                      "arm in this slice",
+                  range);
+            return fresh_value(result_ty);
+        }
+
         // Build the success pattern `Success(p)` by hand from the SAME identity
         // facts a source match arm would carry (owner enum CoreTypeId + declared
         // variant index + tuple payload), so lower_variant_pattern / codegen see
@@ -4049,14 +4119,16 @@ template <class RootPolicy> class ExprLowerer {
         if (const auto op = collection_op_of_hook(call.callee)) {
             return lower_collection_builtin(call, *op, expr, range, region);
         }
-        // CORE-GAPS: the identity-based enum-VARIANT CONSTRUCTOR hooks
-        // option_some / result_ok / result_err. The bodyless @builtin fn is the
-        // Sema surface, but at Core lowering the call is exactly the enum
-        // constructor `Option::Some(x)` / `Result::Ok(x)` / `Result::Err(x)`:
-        // a payload-bearing CoreConstructExpr. The mapping is identity-based —
-        // the hook spelling names the nominal from the builtin descriptor SSOT,
-        // and the variant is resolved by declared index. This shares the generic
-        // enum payload codegen that item 1 enabled.
+        // CORE-GAPS: the enum-VARIANT CONSTRUCTOR hooks option_some /
+        // result_ok / result_err. The bodyless @builtin fn is the Sema surface,
+        // but at Core lowering the call is exactly the enum constructor
+        // `Option::Some(x)` / `Result::Ok(x)` / `Result::Err(x)`: a
+        // payload-bearing CoreConstructExpr. The hook SPELLING selects the
+        // internal hook descriptor (SSOT-validated at Sema, which restricts
+        // these names to std modules); ALL subsequent identity — the nominal
+        // and the variant — is index-based: the nominal is resolved from the
+        // descriptor table and the variant by declared index. This shares the
+        // generic enum payload codegen that item 1 enabled.
         if (auto construct = variant_construct_hook(call, expr, range, region)) {
             return *construct;
         }

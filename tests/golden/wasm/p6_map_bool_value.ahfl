@@ -1,0 +1,62 @@
+// @repo-std
+//
+// RFC 0026 P6 (CORE-GAPS 2 fix-forward) bounded-Map BOOL-VALUE keyed-lookup
+// fixture. The marker compiles this file through a PROJECT parse with the repo
+// std module root.
+//
+// `input.table[7]` desugars to map_raw_get -> Core KeyGet; the Map VALUE slot
+// is an i32 Bool. The verifier admits Bool values (result equals Map arg #1),
+// and the emitter's result-width gate now treats P6ScalarKind::Bool as
+// width-compatible with an I32 slot (the pre-fix gate compared Bool != IntI32
+// and rejected the exact Bool shape the typed contract promised). The loaded
+// word is a Bool 0/1 consumed directly by the computed-goto condition.
+//
+// The host materializes a Map<Int, Bool>(4) frame: 3 -> false (slot 0) and
+// 7 -> true (slot 1). The keyed lookup of 7 (at slot 1) yields true, routing
+// High; a positional miscompile (slot 0 -> false) or a width mismatch that
+// dropped the value routes Low. Observable purely through state ids.
+module app::main;
+
+import std::collections as c;
+
+pub struct Frame {
+    table: c::Map<Int, Bool>(4);
+}
+
+pub agent MapBoolValueAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MapBoolValueAgent {
+    state Decide {
+        // Keyed lookup of the PRESENT Int key at slot 1; the value is a Bool.
+        let answer: Bool = input.table[7];
+        if (answer) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

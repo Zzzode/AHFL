@@ -239,6 +239,67 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6 (CORE-GAPS 2 fix-forward): the typed verifier admits Int/Bool/
+    # tag-only-enum Map keys and scalar Bool values, but the emitter's width
+    # gate compared P6ScalarKind::Bool against the slot's IntI32 and rejected
+    # the exact Bool shapes the contract promised. Bool shares the i32
+    # compare/load ladder, so the gate now treats Bool as width-compatible with
+    # an I32 slot. Structural producer probes for both Bool shapes.
+    add_test(NAME ahfl.wasm.p6_map_bool_key_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_bool_key.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_map_bool_key.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_map_bool_key_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_map_bool_value_probe
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_bool_value.ahfl"
+                "${CMAKE_CURRENT_BINARY_DIR}/p6_map_bool_value.wasm"
+    )
+    set_tests_properties(ahfl.wasm.p6_map_bool_value_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "native_status=completed entered_ids=3,1,0 final_state_id=0 transition_count=2"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    add_test(NAME ahfl.wasm.p6_map_bool_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_map_bool_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_bool_key.ahfl"
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm/p6_map_bool_value.ahfl"
+    )
+    set_tests_properties(ahfl.wasm.p6_map_bool_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "bounded-Map Bool key/value keyed lookup Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
+    # RFC 0026 P6 (CORE-GAPS 1 fix-forward): an aggregate (Pair) payload routed
+    # through the expression-match arm copy (unwrap, or a source match binding
+    # it) pre-fix emitted a well-formed module whose payload latch copied the
+    # payload slot's OWN address, so a field projection read the wrong scratch
+    # and the wasm branched opposite to the native evaluator with no trap. It
+    # now fails closed: unwrap at Core lowering (core.UNLOWERED_EXPRESSION), a
+    # source-level match at wasm planning (wasm.UNSUPPORTED_ORCHESTRATION), and
+    # no wasm artifact is written. Engine-independent (the gate is the reject).
+    add_test(NAME ahfl.wasm.p6_aggregate_payload_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_p6_aggregate_payload_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.p6_aggregate_payload_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "aggregate enum payload fail-closed compile-reject lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
     # RFC 0026 P6 (CORE-GAPS): bounded enum-constructor builtins
     # (option_some/result_ok/result_err -> CoreConstructExpr).
     add_test(NAME ahfl.wasm.p6_builtins_probe

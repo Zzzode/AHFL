@@ -1937,11 +1937,13 @@ class P6ComputationHandlerBuilder {
     std::uint32_t scratch_i64_count_{0};
 
     // CORE-GAPS: set when a Map KeyGet scan is planned. The keyed-scan codegen
-    // needs four module-level i32 scratch locals (cursor, found flag, matched
-    // entry address, key-width dummy) and one result local of the VALUE slot
-    // width, appended after every SSA/scratch pool so the pool index spaces are
-    // unchanged. The loop bounds the cursor by the container's header len
-    // clamped to capacity, so the scan is always finite.
+    // needs three trailing module-level i32 scratch locals (cursor, found flag,
+    // current-entry address), appended after every SSA/scratch pool so the pool
+    // index spaces are unchanged. There is NO key-width dummy and NO result
+    // local: the matched value word is selected by the value_wide immediate
+    // load and left on the operand stack (the enclosing let consumes it). The
+    // loop bounds the cursor by the container's header len clamped to capacity,
+    // so the scan is always finite.
     bool keyget_scratch_needed_{false};
     std::uint32_t keyget_cursor_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t keyget_found_local_{std::numeric_limits<std::uint32_t>::max()};
@@ -2404,6 +2406,25 @@ class P6ComputationHandlerBuilder {
     // closed rather than reading its first word. The two-word size is deliberately
     // NOT papered over by a scalar mapping — that would let a projection read half
     // a closure.
+    // Whether a VALUE kind and a P4-D SLOT kind agree on PHYSICAL WIDTH. A slot
+    // edge never carries its own Bool kind (every CoreScalarRepr::I32 edge maps
+    // to IntI32 in `place_kind_of_layout`), while a Bool VALUE is P6ScalarKind::
+    // Bool: the two share one i32 word with identical compare/load/store
+    // opcodes, so Bool is width-compatible with an I32 slot. Every other pair
+    // matches kind-for-kind — an i64 word never matches an i32 slot, and a Ptr
+    // / Collection / Closure handle never matches a scalar (and vice versa).
+    // This is the single width predicate the collection gates use, so the
+    // typed verifier (which admits Bool keys/values) and the emitter can never
+    // disagree about what the bounded scan can realize.
+    [[nodiscard]] static bool same_word_width(P6ScalarKind value, P6ScalarKind slot) {
+        if (value == slot) {
+            return true;
+        }
+        const bool value_is_i32 =
+            value == P6ScalarKind::Bool || value == P6ScalarKind::IntI32;
+        return value_is_i32 && slot == P6ScalarKind::IntI32;
+    }
+
     [[nodiscard]] P6ScalarKind place_kind_of_layout(CoreLayoutId layout_id) const {
         if (layout_id.value < layouts_.layouts.size()) {
             const ir::core::CoreLayout &layout = layouts_.layouts[layout_id.value];
@@ -3922,7 +3943,7 @@ class P6ComputationHandlerBuilder {
                 *key_kind == P6ScalarKind::Collection || *key_kind == P6ScalarKind::Closure) {
                 return reject("keyed scan key is not a scalar Int/Bool/enum value", range);
             }
-            if (*key_kind != place_kind_of_layout(container->element)) {
+            if (!same_word_width(*key_kind, place_kind_of_layout(container->element))) {
                 return reject("keyed scan key width does not match the key slot layout", range);
             }
             if (collection.op == CoreCollectionOpKind::KeyGet) {
@@ -3931,7 +3952,8 @@ class P6ComputationHandlerBuilder {
                     *value_kind_opt == P6ScalarKind::Collection) {
                     return reject("Map keyed lookup result is not a scalar P6 value", range);
                 }
-                if (*value_kind_opt != place_kind_of_layout(*container->value)) {
+                if (!same_word_width(*value_kind_opt,
+                                     place_kind_of_layout(*container->value))) {
                     return reject(
                         "Map keyed lookup result width does not match the value slot layout",
                         range);
@@ -3984,7 +4006,8 @@ class P6ComputationHandlerBuilder {
             if (*value_kind != place_kind_of_layout(container->element)) {
                 return reject("collection element write value is not the element's address", range);
             }
-        } else if (place_kind_of_layout(container->element) != *value_kind) {
+        } else if (!same_word_width(*value_kind,
+                                     place_kind_of_layout(container->element))) {
             return reject("collection element write value kind does not match the element slot",
                           range);
         }
@@ -4231,6 +4254,30 @@ class P6ComputationHandlerBuilder {
                     // the same site.
                     if (!allow_payload_bindings && (site.in_memory || site.offset != 0)) {
                         return reject("or-pattern alternatives may not bind a payload slot", range);
+                    }
+                    // An AGGREGATE PAYLOAD SLOT (a struct / payload-bearing
+                    // enum slot inside an addressed enum's payload, necessarily
+                    // at a nonzero in-memory offset) holds the CHILD aggregate's
+                    // ADDRESS as one stored i32 word (the ONE-representation
+                    // rule `emit_construct_store` writes). The Ptr latch
+                    // (`emit_site_value`) computes the SLOT's own address
+                    // instead of loading that word, so the binding aliases the
+                    // payload slot and a later field projection reads the wrong
+                    // scratch — a silently wrong branch with no trap (the
+                    // expression-match aggregate arm-copy gap). A Collection
+                    // slot is different: its latch LOADS the stored one-word
+                    // handle, so it is not gated here. The ROOT enum address
+                    // (offset 0) is also sound: it IS the scrutinee value, so a
+                    // whole-enum binding stays allowed. Fail closed until the
+                    // aggregate payload arm-copy lands; the lowerer rejects this
+                    // same shape for unwrap and this is the typed backstop for a
+                    // hand-built match.
+                    if (site.in_memory && site.offset != 0 &&
+                        site.kind == P6ScalarKind::Ptr) {
+                        return reject(
+                            "binding an aggregate enum payload slot is not in the P6 match "
+                            "subset (expression-match aggregate arm-copy is not yet supported)",
+                            range);
                     }
                     if (b.binding.value >= bindings.size()) {
                         return reject("pattern binding id is out of range for this arm", range);

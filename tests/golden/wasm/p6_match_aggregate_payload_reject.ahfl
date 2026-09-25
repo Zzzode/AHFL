@@ -1,0 +1,70 @@
+module std::option;
+
+// RFC 0026 P6 (CORE-GAPS 1 fix-forward) NEGATIVE fixture (codegen backstop):
+// a SOURCE-LEVEL expression match that BINDS an aggregate enum payload slot
+// must fail closed at wasm planning and emit no module.
+//
+// The lowering gate seals `unwrap(Option<Aggregate>)`; this fixture reaches the
+// same expression-match arm-copy hole through a hand-written `match` instead.
+// The payload binding `Some(pair)` latches the slot at a nonzero in-memory
+// site; that slot holds the child Pair's ADDRESS (one i32 word), and the Ptr
+// latch computed the slot's own address instead of loading the word, so
+// pre-fix `pair.y` read the wrong scratch and the wasm path branched Low while
+// native branched High. The P6 plan pass now rejects binding an aggregate
+// enum payload slot until the expression-match aggregate arm-copy lands
+// (wasm.UNSUPPORTED_ORCHESTRATION). A scalar payload binding remains
+// executable (see p6_match_binding_payload.ahfl).
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct Pair {
+    x: Int;
+    y: Int;
+}
+
+pub struct Frame {
+    value: String;
+}
+
+pub agent MatchAggregatePayloadRejectAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MatchAggregatePayloadRejectAgent {
+    state Decide {
+        let opt: Option<Pair> = Option::Some(Pair { x: 1, y: 60 });
+        let p: Pair = match opt {
+            Some(pair) => pair,
+            None => Pair { x: 0, y: 0 },
+        };
+        if (p.y > 50) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

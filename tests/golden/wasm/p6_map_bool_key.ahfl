@@ -1,0 +1,65 @@
+// @repo-std
+//
+// RFC 0026 P6 (CORE-GAPS 2 fix-forward) bounded-Map BOOL-KEY keyed-lookup
+// fixture. The marker compiles this file through a PROJECT parse with the repo
+// std module root (a standalone parse cannot declare std::collections::Map with
+// its SSOT (Invariant K, Covariant V) variance).
+//
+// `input.table[true]` desugars (typed_hir_lower) to map_raw_get -> the Core
+// KeyGet collection op: a bounded KEYED scan whose key slot is an i32 Bool.
+// The verifier admits Bool keys (they share the i32 compare ladder), and the
+// emitter's width gate now treats P6ScalarKind::Bool as width-compatible with
+// an I32 slot (place_kind_of_layout maps every I32 edge to IntI32 and has no
+// Bool case, so the pre-fix gate rejected the exact Bool shape the typed
+// contract promised).
+//
+// The host materializes a Map<Bool, Int>(4) frame. The live entries are
+// false -> 9 (slot 0) and true -> 42 (slot 1); only the keyed lookup of
+// `true` (at slot 1, never slot 0) returns 42, so a positional miscompile
+// (returning slot 0), an i64-vs-i32 compare, or a missing-key non-trap all
+// change the observed state-id path. Observable purely through state ids.
+module app::main;
+
+import std::collections as c;
+
+pub struct Frame {
+    table: c::Map<Bool, Int>(4);
+}
+
+pub agent MapBoolKeyAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for MapBoolKeyAgent {
+    state Decide {
+        // Keyed lookup of the PRESENT Bool key at slot 1.
+        let answer: Int = input.table[true];
+        if (answer == 42) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}
