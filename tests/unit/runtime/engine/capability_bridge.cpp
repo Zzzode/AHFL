@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -1144,6 +1145,69 @@ void test_eval_with_capability_call() {
           "eval_cap.ranged_failure_preserves_call_site");
 }
 
+// ============================================================================
+// Bare @builtin hooks under the capability-bridged dispatcher.
+//
+// The frontend lowers stdlib collection intrinsics (`xs.length`, `xs[i]`) to
+// UNQUALIFIED CallExpr callees -- "list_raw_length" / "list_raw_get" -- which
+// the default evaluator dispatcher serves from the global builtin table. The
+// capability-bridged dispatcher (AgentRuntime/WorkflowRuntime always install
+// one) used to route ONLY "std::"-prefixed callees to that table, so a bare
+// hook fell through to the capability registry and failed with "unknown
+// capability" for capability-free agents (the P6 conformance p6_collection
+// failure). Bare hooks must resolve through the builtin table regardless of
+// the "std::" prefix, both through a registry and through a plain invoker.
+// ============================================================================
+void test_eval_bare_builtin_hook_under_capability_dispatch() {
+    evaluator::EvalContext eval_ctx;
+    {
+        std::vector<Value> xs;
+        xs.push_back(make_int(90));
+        xs.push_back(make_int(1));
+        eval_ctx.bind_local("xs", make_list(std::move(xs)));
+    }
+
+    auto call_with_path_arg = [](std::string callee, std::string local,
+                                 std::optional<int64_t> index) {
+        CallExpr call;
+        call.callee = std::move(callee);
+        PathExpr path_node;
+        path_node.path.root_name = std::move(local);
+        call.arguments.push_back(make_expr_ptr(std::move(path_node)));
+        if (index.has_value()) {
+            call.arguments.push_back(
+                make_expr_ptr(IntegerLiteralExpr{std::to_string(*index)}));
+        }
+        Expr root;
+        root.node = std::move(call);
+        return root;
+    };
+
+    CapabilityRegistry empty_registry;
+
+    Expr length_expr = call_with_path_arg("list_raw_length", "xs", std::nullopt);
+    auto length_result = eval_expr_with_capabilities(length_expr, eval_ctx, &empty_registry);
+    check(!length_result.has_errors(), "bare_hook.length_no_errors");
+    auto *length_int = std::get_if<IntValue>(&length_result.value.node);
+    check(length_int != nullptr && length_int->value == 2, "bare_hook.length_is_2");
+
+    Expr get_expr = call_with_path_arg("list_raw_get", "xs", int64_t{0});
+    auto get_result = eval_expr_with_capabilities(get_expr, eval_ctx, empty_registry.as_invoker());
+    check(!get_result.has_errors(), "bare_hook.get_no_errors");
+    auto *get_int = std::get_if<IntValue>(&get_result.value.node);
+    check(get_int != nullptr && get_int->value == 90, "bare_hook.get0_is_90");
+
+    // A genuinely unknown bare callee still fails through the registry; the
+    // builtin shortcut must not swallow non-builtin names.
+    Expr unknown_expr;
+    CallExpr unknown_call;
+    unknown_call.callee = "not_a_capability_or_builtin";
+    unknown_expr.node = std::move(unknown_call);
+    auto unknown_result =
+        eval_expr_with_capabilities(unknown_expr, eval_ctx, &empty_registry);
+    check(unknown_result.has_errors(), "bare_hook.unknown_still_errors");
+}
+
 } // anonymous namespace
 
 namespace {
@@ -1937,6 +2001,7 @@ int main() {
     test_circuit_breaker_state_transitions();
     test_multiple_capabilities();
     test_eval_with_capability_call();
+    test_eval_bare_builtin_hook_under_capability_dispatch();
     test_http_poison_conflict_fails_closed_pre_transport();
     test_grpc_poison_conflict_fails_closed_pre_transport();
     test_http_four_state_neither_and_binding_only();

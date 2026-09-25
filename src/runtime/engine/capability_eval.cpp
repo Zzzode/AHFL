@@ -1,5 +1,7 @@
 #include "runtime/engine/capability_eval.hpp"
 
+#include "runtime/evaluator/builtins.hpp"
+
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -54,6 +56,31 @@ namespace {
         .code(error_codes::typecheck::UnknownCapability)
         .emit();
     return result;
+}
+
+// Resolves a BARE @builtin hook callee (e.g. "list_raw_get", "map_raw_get",
+// "list_raw_length" -- the unqualified names the frontend lowers stdlib
+// collection/decimal intrinsics into, typed_hir_lower.cpp) through the
+// evaluator's global builtin table, using PRE-EVALUATED arguments. The default
+// evaluator dispatcher reaches this table as the final arm of
+// `eval_intrinsic_call` (evaluator.cpp), but the capability-bridged dispatcher
+// below replaced that fallback wholesale: only "std::"-namespaced callees kept
+// the intrinsic path, so a bare hook under an installed capability invoker was
+// misrouted to the capability registry (empty for capability-free P6
+// conformance agents -> "unknown capability" failure). User-declared
+// capability names can never collide with a registered builtin hook, so
+// builtin precedence is unconditional. Writes the result and returns true when
+// the callee is a registered builtin hook; otherwise returns false.
+[[nodiscard]] bool try_eval_builtin_hook(std::string_view callee,
+                                         const std::vector<evaluator::Value> &args,
+                                         const evaluator::EvalContext &current_ctx,
+                                         evaluator::EvalResult &hook_result) {
+    const evaluator::BuiltinFn *fn = evaluator::BuiltinTable::instance().find(callee);
+    if (fn == nullptr) {
+        return false;
+    }
+    hook_result = (*fn)(args, current_ctx);
+    return true;
 }
 
 [[nodiscard]] evaluator::EvalResult
@@ -127,6 +154,22 @@ template <typename InvokeCall>
 
         // Step 2: dispatch the call itself.
         //
+        // Bare @builtin hooks (list_raw_get, map_raw_get, list_raw_length,
+        // decimal_raw_*, ...) are intrinsics, not capabilities: the frontend
+        // lowers them to UNQUALIFIED CallExpr callees (typed_hir_lower.cpp),
+        // and the default evaluator dispatcher serves them from the global
+        // builtin table as the final arm of eval_intrinsic_call. Resolve them
+        // here BEFORE the capability registry, so a capability-bridged path
+        // (AgentRuntime/WorkflowRuntime always install a call_eval) has the
+        // same semantics as the bare evaluator; otherwise a capability-free P6
+        // agent's bare hook is misrouted to the (empty) mock registry and the
+        // run fails with "unknown capability". A user-declared capability can
+        // never share a registered builtin-hook name, so the precedence is
+        // unconditional.
+        evaluator::EvalResult hook_result;
+        if (try_eval_builtin_hook(call.callee, arg_values, current_ctx, hook_result)) {
+            return hook_result;
+        }
         // Stdlib-namespaced callees (e.g. std::option::Option::Some,
         // std::collections::list_from_array) are serviced by the evaluator's
         // intrinsic path / builtin table, not by the runtime capability

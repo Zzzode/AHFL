@@ -143,11 +143,11 @@ directions (`wasm_eligibility.cpp:206-250`).
 | --- | --- |
 | D1 | **The host, not the module, owns the output frame.** After `runv` returns, host-side code walks the output value's P4-D bytes (verified `CoreLayoutTable` + verified boundary wire binding), builds an `evaluator::Value`, and renders canonical bytes with `value_to_json`. The module never serializes. |
 | D2 | Canonical encode = P4-D bytes + `CoreLayoutTable` + verified wire binding -> `evaluator::Value` -> `value_to_json`, with the same fail-closed family as `decode_json`. A deterministic `CoreLayoutTable` custom section is added so the host never re-derives layout. |
-| D3 | Add a new additive export **`runv() -> (status:i32, value_ptr:i32)`**, present ONLY in a module that has a raw-frame input or a computed final. A computed value lives at the fixed output frame base; an identity final names the input frame base. `run2` is untouched; identity/capability/closure-free modules stay byte-identical. |
+| D3 | Add a new additive export **`runv() -> (status:i32, value_ptr:i32)`**, present ONLY in a module that has a raw-frame input or a computed final. A computed value lives at the fixed output frame base; an identity final names the input frame base. `run2` is untouched; every module whose descriptor frame contract is not the new p6_frame (identity, capability, workflow, and closure-using FB modules) stays byte-identical. |
 | D4 | Input is the exact inverse: canonical JSON -> `decode_json` -> `Value` -> P4-D regions (`pack_input_frame`). Variable-length input payloads (String bytes) get one bounded frame-payload arena; bounded collections keep the backing region. Workflow node packaging consumes this packer unchanged on the next slice. |
-| D5 | One fixed new reserved region: `kP6AggregateOutputBase = 12288` (8-aligned), capacity `16384 - 12288 = 4096`, carved out of the current scratch window (scratch shrinks 9216 -> 5120). One frame-payload arena is co-located above the collection-backing high-water and below the relocated construct heap; every extent is compile-time gated with the existing RESOURCE family. |
-| D6 | Frame boundaries carry inline shapes: scalars (4/8), PtrLen (8 inline words naming the payload arena/backing), Bytes16 (16), aggregate/enum/container addresses (one i32). Across **fn** boundaries every multi-word value passes by i32 address (Ptr to its frame/arena slot), including PtrLen -- lifting the FB-design's "multi-word fn args await P6-7" reservation. |
-| D7 | The two `raw_p6_frame_awaits_p67` cases move skip -> differential-agree; the census pins move 14/7 -> 16/5 in the exact commit that flips the descriptor contract. `raw_p6_frame` is renamed `p6_frame` and gains both real directions. |
+| D5 | One fixed new reserved region: `kP6AggregateOutputBase = 12288` (8-aligned), capacity `16384 - 12288 = 4096`, carved out of the current scratch window (scratch shrinks 9216 -> 5120). Input-reached containers get disjoint per-container backing placements (sum, not max); one frame-payload arena is co-located above the packed backing high-water and below the relocated construct heap; every extent is compile-time gated with the existing RESOURCE family. |
+| D6 | Frame boundaries carry inline shapes: scalars (4/8), PtrLen (8 inline bytes = two i32 words naming the payload arena/backing), Bytes16 (16), aggregate/enum/container addresses (one i32). Across **fn** boundaries every multi-word value passes by i32 address (Ptr to its frame/arena slot), including PtrLen -- lifting the FB-design's "multi-word fn args await P6-7" reservation. |
+| D7 | The two `raw_p6_frame_awaits_p67` cases leave the Node skip in rung E; the Node-vs-evaluator differential agrees only AFTER the wasm producer stops classifying them `RawP6FrameAwaitsP67` (the runv/pack/encode rungs A-E land). Rung E required evaluator-engine/manifest groundwork -- the capability-bridged dispatcher resolving bare builtin hooks (`list_raw_get`/`list_raw_length`/`map_raw_get`) via the builtin table, `engines.evaluator` flag flips, and evaluator-runner blessings -- which landed in the fix-forward revision of this gate (§9). The census pins move 14/7 -> 16/5 in the exact commit that flips the descriptor contract. `raw_p6_frame` is renamed `p6_frame` and gains both real directions. |
 
 ## 2. D1 -- Frame ownership and lifetime
 
@@ -334,9 +334,18 @@ Reusing decode's discipline (`core_wire_codec.cpp:141-557`):
   layout requires padding (write side zeroes padding; a non-zero word on read
   indicates tampering), and a layout/wire structural disagreement all fail
   with no partial bytes;
-* the root pointer runv returns must lie inside the declared output frame
-  region; the resume host's out-of-page tuple check
-  (`core_wasm_resume_host.cpp:407-412`) is the existing pattern.
+* the root pointer runv returns is authorized against the region the ADMITTED
+  DESCRIPTOR declares for this module's final kind -- runv returns only
+  `(status, value_ptr)` with no identity/computed discriminator, so the
+  descriptor is the sole source of the authorized root set: a descriptor-
+  declared identity final authorizes exactly `kP6AggregateInputBase` (1024),
+  and a descriptor-declared computed final authorizes exactly
+  `kP6AggregateOutputBase` (12288). A value naming any other address, or the
+  wrong fixed base for the declared kind, fails closed. The final-kind
+  discriminator is a descriptor field (§8), not inferred from the pointer
+  value; the resume host's out-of-page tuple check
+  (`core_wasm_resume_host.cpp:407-412`) is the existing region-membership
+  pattern.
 
 A computed run has no PENDING/ERROR result: any non-OK is either this
 fail-closed rejection on the host side or a genuine Wasm trap classified as
@@ -355,8 +364,11 @@ principles. Instead:
   `encode/decode_core_wire_schema_table` with canonical re-encode equality and
   a local verifier), plus the boundary root mapping
   `{input_layout_id, output_layout_id}` and, for every input-reached
-  container, its planner-assigned backing placement, and the frame-payload
-  arena span.
+  container, its DISJOINT planner-assigned backing placement
+  (`{container_edge_index, base, extent}` packed in layout-enumeration order
+  at the sum-of-prior-backing rule of §6.2 -- every placement names a
+  distinct extent; a section whose placements overlap is rejected), and the
+  frame-payload arena span.
 * The section is emitted iff the module is a P6-frame module (raw input
   projection or computed final), immediately before the wire-schema section;
   section order stays deterministic and identity modules carry neither new
@@ -385,11 +397,13 @@ runv() -> (status:i32, value_ptr:i32)
 ```
 
 * Present **only** in a P6-frame module -- one whose descriptor frame
-  contract is the new `p6_frame` (a raw-input projection OR a computed final).
-  Pure E1-E3 identity, capability, and workflow modules do not export it; their
-  function/export/code sections are byte-identical to today (exports count
-  stays 9 for agents, `core_wasm_codegen.cpp:8000`; 11 for workflows,
-  `:8773`).
+  contract is the new `p6_frame` (a raw-input projection OR a computed final);
+  the predicate is purely the frame contract, unrelated to closure presence.
+  Pure E1-E3 identity, capability, and workflow modules -- and the
+  closure-using FB-1..FB-4 modules that neither project a raw frame nor return
+  a computed final -- do not export it; their function/export/code sections are
+  byte-identical to today (exports count stays 9 for agents,
+  `core_wasm_codegen.cpp:8000`; 11 for workflows, `:8773`).
 * New additive functype appended after the existing fixed and per-fn types;
   the function body is appended in the same additive position family as the
   P6-2 handler functions and FB-1 fns. No existing index moves.
@@ -399,12 +413,14 @@ runv() -> (status:i32, value_ptr:i32)
   run2 (`core_wasm_codegen.cpp:7858`).
 * `value_ptr` names the root value's fixed frame home: the output frame base
   (`kP6AggregateOutputBase`) for a computed result, or the input frame base
-  (`kP6AggregateInputBase`) for an identity final (no copy). At that address:
+  (`kP6AggregateInputBase`) for an identity final (no copy). Which of the two
+  is authorized is fixed by the admitted descriptor's final-kind
+  discriminator, not by the pointer itself (§3.4, §8). At that address:
   * scalar/string/collection-header/enum root: the inline word(s)/tag at the
     base;
   * struct/tuple root: the struct's shaped bytes at the base;
-  so the host has one walk rule (read at `value_ptr` under the output region
-  check, or the input region for the identity case), independent of the output
+  so the host has one walk rule -- read at `value_ptr` inside the one region
+  the descriptor declares for the final kind -- independent of the output
   type.
 * Inputs are not parameters: the packed input already lives at the fixed
   input region (§6), and no current or planned caller needs to name an
@@ -457,8 +473,8 @@ emits the result into the output frame:
 * collection result -> copy of the 8-byte inline header; the backing words
   already name the shared backing region, which is stable for the run;
 * String result can only be a frame-reached PtrLen (the subset cannot
-  construct strings): the 8 words are copied and still name the frame-
-  payload arena the packer wrote;
+  construct strings): the 8 inline bytes (two i32 words) are copied and still
+  name the frame-payload arena the packer wrote;
 * padding words are stored zero.
 
 A final region containing a capability effect, closure value return, or any
@@ -483,8 +499,9 @@ pack_input_frame(Value, layout binding + wire binding, page writer)
    * root struct/enum/scalar into `[kP6AggregateInputBase, +input_size)`,
      gated by `kP6AggregateInputCapacity` as today;
    * each input-reached bounded collection: 8-byte header at its inline field
-     slot, elements at the planner-assigned backing placement (carried in the
-     layout section), `ptr/len` words set, `len <= capacity`;
+     slot, elements at that container's DISJOINT planner-assigned backing
+     placement (§6.2; carried in the layout section), `ptr/len` words set,
+     `len <= capacity`;
    * String PtrLen fields: 8-byte `(ptr,len)` inline, payload copied into the
      frame-payload arena (§6.2), payload extent bounded by the schema
      length_bounds (UTF-8 bytes) and the arena budget;
@@ -536,7 +553,7 @@ field `x` of node A's output" -- need no in-module JSON:
 [ 4096, 7168)  context frame      (0-init; existing)
 [ 7168,12288)  constructor scratch (existing; capacity 9216 -> 5120)
 [12288,16384)  OUTPUT frame (new)  (kP6AggregateOutputBase; cap 4096)
-[16384,  B1 )  collection backing  (existing; per-value placements)
+[16384,  B1 )  collection backing  (existing region; disjoint per-container placements, §6.2 sum rule)
 [   B1,  B2 )  frame-payload arena (new; input String payloads)
 [   B2,  ...)  per-activation construct/closure heap (existing relocation)
 ...           <= 65536 hard ceiling
@@ -548,20 +565,47 @@ field `x` of node A's output" -- need no in-module JSON:
   the other frame constants (`core_wasm_abi_constants.hpp:94-106`). The
   scratch planner already fail-closes on overflow, so the reduction is a
   compile-time RESOURCE gate, never a silent alias.
-* Output capacity (4096) matches/exceeds input capacity (3072): a frame that
-  can be read can be written. Collection backings and string payloads are
-  outside these windows, so the frame only ever holds root struct bytes and
-  inline 8-byte headers.
+* The OUTPUT frame gets its own compile-time fit gate, symmetric to the
+  existing input gate
+  (`fits_frame_region(program, layouts, agent.input_type,
+  kP6AggregateInputCapacity, "input", result)`,
+  `core_wasm_codegen.cpp:6994-6997`): a computed final requires
+  `fits_frame_region(program, layouts, agent.output_type,
+  kP6AggregateOutputCapacity, "output", result)` -- the materialized output
+  root's P4-D inline bytes plus inline headers must fit the 4096-byte window
+  (collection backing and string payloads live OUTSIDE the frame and are not
+  counted). A computed result whose output nominal is larger than the input
+  is therefore rejected with the same RESOURCE family before any handler byte
+  is emitted. "Output capacity (4096) exceeds input capacity (3072)" does NOT
+  by itself justify omitting this gate: that argument only covers identity
+  finals, whose output type equals the input type; a computed final can have a
+  different, larger output nominal, and the planner's constant-sized copy loop
+  (§4.4) must never overrun the output window into the backing region.
 * Addresses below 1024 stay unused; no Data section is introduced.
 
 ### 6.2 Frame-payload arena and construct heap
 
 * The backing high-water already drives the construct-heap relocation
-  (`core_wasm_codegen.cpp:6497-6520`). The frame-payload arena for packed
-  input String bytes is appended to the same accounting: `B1 =
-  align_up(16384 + max backing_size of every input-reached container, 8)`;
-  `B2 = align_up(B1 + total bounded input string payload, 8)`; the
-  per-activation construct/closure heap begins at `B2`.
+  (`core_wasm_codegen.cpp:6497-6520`). Every input-reached container receives a
+  DETERMINISTIC DISJOINT backing placement, packed in the stable order the
+  layout table enumerates its boundary edges (depth-first, declaration
+  order): placement 0 starts at `kP6CollectionBackingBase` (16384), placement
+  k starts at `align_up(16384 + sum of backing_size over placements 0..k-1,
+  8)`, and each placement has exactly its layout's aligned `backing_size`
+  extent. Two simultaneously-live input containers therefore never overlap --
+  using the MAX backing size would alias every container onto 16384 (today
+  every container layout names the same region-relative base and the emit-
+  time extent check at `core_wasm_codegen.cpp:3832-3876` is region-relative),
+  which is only sound while at most one container is packed. The frame-
+  payload arena for packed input String bytes begins after the packed
+  placements: `B1 = align_up(16384 + sum of every input-reached container's
+  aligned backing_size, 8)`; `B2 = align_up(B1 + total bounded input string
+  payload, 8)`; the per-activation construct/closure heap begins at `B2`.
+  The existing construct-heap high-water accounting
+  (`core_wasm_codegen.cpp:6825-6846`), which today takes the max() of one
+  `base + backing_size` per storage, switches to the same SUM over placed
+  containers when the packer lands, so its relocation base matches the
+  packer's disjoint placements rather than the single-container shortcut.
 * Every input string payload bound comes from the schema `length_bounds` and
   the max-canonical-size graph discipline (`core_wire_canonical_size.hpp`):
   the arena extent is a compile-time constant of the verified schema, never a
@@ -613,11 +657,15 @@ field `x` of node A's output" -- need no in-module JSON:
   boundary roots) and `ahfl.core-layout.v1` (new), each with deterministic
   encode, decode-with-re-encode-equality, and local verification; admission
   additionally verifies their structural consistency and root identity
-  against the descriptor.
+  against the descriptor, the pairwise-DISJOINTNESS of every declared backing
+  placement (§6.2), and the final-kind discriminator against the emitted
+  runv/descriptor contract.
 * The descriptor (`CoreWasmExecutionDescriptor`) gains, for a `p6_frame`
-  module: input/output layout root ids and sizes, per input-reached container
-  backing placements, the payload-arena span, and the output frame base. The
-  descriptor remains derived solely from the plan that emitted the bytes
+  module: the **final-kind discriminator** (identity vs computed -- the sole
+  authority for runv's authorized `value_ptr` base, §3.4), input/output
+  layout root ids and sizes, per input-reached container backing placements,
+  the payload-arena span, and the output frame base. The descriptor remains
+  derived solely from the plan that emitted the bytes
   (`core_wasm_codegen.hpp:60-77`).
 * Host walks are read-only over the post-run page and write-only into a fresh
   page before the run; the artifact never gains a host callback for
@@ -627,21 +675,75 @@ field `x` of node A's output" -- need no in-module JSON:
 
 ## 9. Conformance and census implications
 
-* `p6_aggregate` and `p6_collection` (one scenario each) move from
-  `RawP6FrameAwaitsP67` skip to full Node-vs-evaluator differential agree:
-  the packer writes their input regions (struct fields; the bounded list's
-  header plus backing elements), runv returns the input frame base because
-  both fixtures' finals are the literal identity `return input;`, and the
-  encoder walks that frame (struct + collection header/backing) to render the
-  manifest's blessed canonical `output_json`. These two rungs therefore prove
-  D4 + the runv identity arm + D1-D2; the computed-return arm is exercised by
-  a new fixture added in rung B (a computed final that materializes into the
-  output frame).
-* Census pins move, in the SAME commit that renames the descriptor contract:
+* `p6_aggregate` and `p6_collection` (one scenario each) CANNOT move from
+  `RawP6FrameAwaitsP67` skip to full Node-vs-evaluator differential agree by
+  merely dropping `node_observation_skip`: the differential agree happens only
+  in the rung-E commit where the wasm producer stops classifying them
+  `RawP6FrameAwaitsP67` (packer writes their input regions -- struct fields;
+  the bounded list's header plus backing elements; runv returns the input
+  frame base because both fixtures' finals are the literal identity `return
+  input;`; the encoder walks that frame -- struct + collection
+  header/backing -- to render the manifest's blessed canonical `output_json`).
+  These two rungs prove D4 + the runv identity arm + D1-D2; the
+  computed-return arm is exercised by a new fixture added in rung B (a
+  computed final that materializes into the output frame).
+* The rung-E differential also depends on EVALUATOR-ENGINE and manifest/test
+  prerequisites that are independent of the packer/runv work and were missing
+  at the original design time (verified empirically on `develop`); all three
+  landed in the fix-forward commit that revised this gate:
+  1. **Bare-builtin-hook dispatch.** The conformance evaluator path
+     (`run_evaluator_scenario` -> `run_agent`,
+     `tests/conformance/evaluator_engine.cpp`) always installs the capability
+     wrapper; its dispatcher
+     (`src/runtime/engine/capability_eval.cpp`,
+     `eval_expr_with_capability_call_handler`) routed only `std::`-prefixed
+     callees to the intrinsic/builtin table, so the bare hooks
+     `xs.length`/`xs[0]`/`xs[1]` lower to (`list_raw_get` /
+     `list_raw_length`, `src/compiler/ir/typed_hir_lower.cpp:2546`) fell
+     through to the empty mock capability registry and failed the run in
+     `Decide` with `capability_sequence=['list_raw_get']`. A direct
+     `runtime::AgentRuntime` without the wrapper completes, proving the gap is
+     the conformance dispatch path, not evaluator semantics. The fix-forward
+     commit made the capability-bridged dispatcher resolve bare builtin hooks
+     via the builtin table regardless of a `std::` prefix (the default
+     evaluator path already reaches the builtin table as the final arm of
+     `eval_intrinsic_call`), with a regression test in
+     `tests/unit/runtime/engine/capability_bridge.cpp`.
+  2. **Manifest flag flips.** Both cases set `engines.evaluator: false` at
+     the original gate; the fix-forward commit flipped both to `true` (the
+     evaluator runner skips cases with the flag false,
+     `conformance_evaluator_runner.cpp:113`, and the Node runner invokes the
+     evaluator observation for every non-node-only case
+     `conformance_wasm_node_runner.cpp:419-427` regardless of the flag, so the
+     flag is what gates the evaluator blessing lane).
+  3. **Two evaluator blessings.**
+     `tests/conformance/observations/p6_aggregate.high.json` and
+     `p6_collection.high.json` did not exist at the original gate; the fix-
+     forward commit added both. The evaluator runner's verify mode byte-
+     compares each observation against that file and fails when it is
+     missing. Both bytes were generated by the runner's `bless` mode and
+     byte-match the manifest `expect` block.
+
+  All three groundwork items landed in the fix-forward commit that revised
+  this design gate: the capability-bridged dispatcher now resolves bare
+  builtin hooks via the builtin table, both manifests carry
+  `engines.evaluator: true`, and both blessings exist. The Node census stays
+  14/7 and both manifests keep `node_observation_skip=raw_p6_frame_awaits_p67`
+  until rung E, because the wasm producer still classifies both cases
+  `RawP6FrameAwaitsP67`; only the Node lane and census move in rung E.
+* Census pins move, in the SAME commit that renames the descriptor contract
+  AND removes the producer's p6-7 classification:
   `kExpectedAgreed 14 -> 16`, `kExpectedSkipped 7 -> 5`
   (`conformance_wasm_node_runner.cpp:63-64`); the two manifests drop
-  `node_observation_skip` while keeping `eligible: orchestration`. The
-  existing both-directions enforcement
+  `node_observation_skip` while keeping `eligible: orchestration`. Until that
+  commit both cases keep `node_observation_skip=raw_p6_frame_awaits_p67` (the
+  compiler still computes the skip, so the both-directions enforcement
+  requires the declaration), stay counted in the skip census at 14/7, and the
+  two items above can land independently as evaluator-lane groundwork --
+  flipping `engines.evaluator` and adding the blessings changes neither the
+  Node skip count nor the manifest skip declaration, which the wasm
+  eligibility gate pins off `engines.wasm` only
+  (`wasm_eligibility.cpp:206-250`). The existing both-directions enforcement
   (`conformance_wasm_node_runner.cpp:353-357`, `wasm_eligibility.cpp:211-250`)
   is unchanged in shape: a compiler-computed `p6_frame` without a runnable
   packed observation, or a stale manifest declaration, still fails.
@@ -664,31 +766,49 @@ and no rung changes identity-module bytes.
    codec + local verifier (mirror the wire-schema codec pair); extend the wire
    projection with agent input/output boundary roots and a sibling frame-root
    binding selector; emit/consume `ahfl.core-layout.v1`; layout/wire
-   consistency admission; descriptor fields for roots, placements, arena.
+   consistency admission; DESCRIPTOR CARRIES THE FINAL-KIND DISCRIMINATOR and
+   pairwise-DISJOINT per-container backing placements (§6.2 sum rule; the
+   local verifier rejects overlapping placements); descriptor fields for
+   roots, placements, arena.
    Host-side unit tests: codec round trip, tamper/re-encode rejection,
-   disagreement rejection. No runv yet. Identity/capability/workflow modules
-   are byte-identical (they carry neither new section); today's two raw-frame
-   modules are the only artifacts whose bytes change in this rung (they gain
-   the two sections), and every golden/binary probe that pins them moves in
-   the same commit.
+   disagreement rejection, overlapping-placement rejection. No runv yet.
+   Identity/capability/workflow modules are byte-identical (they carry
+   neither new section); today's two raw-frame modules are the only artifacts
+   whose bytes change in this rung (they gain the two sections), and every
+   golden/binary probe that pins them moves in the same commit.
 2. **P6-7-B computed-final emission.** `ComputedReturn` planning action;
    final-region materialization (scalar spill, bounded aggregate copy, header
    copy, zero padding); additive `runv` export and functype; output frame
-   constants + capacity gate; reject capability/raw-mixed finals and
-   non-subset returns with today's codes. Binary/byte-identity probes.
+   constants + capacity gate INCLUDING the output-side
+   `fits_frame_region(..., kP6AggregateOutputCapacity, "output", ...)`
+   rejection for a computed final (§6.1); reject capability/raw-mixed finals
+   and non-subset returns with today's codes. Binary/byte-identity probes.
 3. **P6-7-C frame walks.** Host `Value <-> P4-D regions` walk pair
    (`encode_value_json` via `value_to_json`, `pack_input_frame` via
-   `decode_json`), region/bounds checks, String arena, Set/Map canonical
-   duplicates fail-closed, Decimal/Duration spelling rules, f64 finiteness.
+   `decode_json`), region/bounds checks, DISJOINT per-container backing
+   placements per the §6.2 sum-of-prior-backing rule (the packer materializes
+   the layout section's `{base,extent}` records, never a shared base), String
+   arena, Set/Map canonical duplicates fail-closed, Decimal/Duration spelling
+   rules, f64 finiteness.
    Pure engine unit tests over hand-built verified pages (FakeResumeEngine
-   style), no Node dependency.
+   style; include a two-input-container overlap regression page), no Node
+   dependency.
 4. **P6-7-D multi-word fn ABI.** By-address PtrLen/Bytes16 fn arguments and
    destination-address returns (§7); layout/verifier updates; recursion/heap
    budget unchanged (addresses add no bytes).
 5. **P6-7-E Node lane and census.** Node host pack/runv/encode path and
-   descriptor bump; unblock the two pinned cases; move 14/7 -> 16/5 and
-   manifests in the same commit; rename `raw_p6_frame` -> `p6_frame`; keep the
-   Python raw-frame hosts as memory witnesses.
+   descriptor bump; unblock the two pinned cases at the WASM-PRODUCER level
+   (the descriptor contract flip is what removes the producer's
+   `RawP6FrameAwaitsP67` classification); move 14/7 -> 16/5 and drop both
+   `node_observation_skip` declarations in the same commit; rename
+   `raw_p6_frame` -> `p6_frame`; keep the Python raw-frame hosts as memory
+   witnesses. The evaluator-engine/manifest groundwork in §9 (bare-hook
+   dispatch through the builtin table on the capability-bridged path, the two
+   `engines.evaluator: false -> true` flips, and the two
+   `tests/conformance/observations/p6_*.high.json` blessings) already landed
+   in the fix-forward revision of this design gate, so rung E changes only
+   the Node side and the census -- it must not land as "drop the skip and
+   hope the differential is green".
 6. **P6-7-F workflow node packaging** (next slice, tracked separately):
    consume packer + boundary bindings for projected/constructed node inputs
    (§5.3).

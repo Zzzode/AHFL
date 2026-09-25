@@ -228,15 +228,16 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::p6_nested_fallthrough::NestedFallthroughAgent",
             0, 1, WasmEligibility::Orchestration,
         },
-        // Raw P4-D input-frame handlers: emit on the wasm lane but their inline
-        // raw frame is not materializable from wire JSON by the evaluator
-        // adapter, and canonical output observation is P6-7 gated.
+        // Raw P4-D input-frame handlers: the in-process evaluator runs them
+        // (engines.evaluator=true, blessed observations exist), but the Node
+        // canonical output observation is P6-7 gated, so the Node lane keeps
+        // the RawP6FrameAwaitsP67 skip until the runv/pack/encode rungs land.
         {
             "p6_aggregate.case.json",
             "tests/golden/wasm/p6_aggregate.ahfl",
             CaseKind::Agent,
             "wasm::p6_aggregate::AggregateAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
             WasmNodeObservationSkip::RawP6FrameAwaitsP67,
         },
         {
@@ -244,7 +245,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "tests/golden/wasm/p6_collection.ahfl",
             CaseKind::Agent,
             "std::collections::CollectionAgent",
-            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
             WasmNodeObservationSkip::RawP6FrameAwaitsP67,
         },
         // RFC 0026 FB-3b: higher-order lambda / call_indirect. Emits on the
