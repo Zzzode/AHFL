@@ -228,17 +228,17 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::p6_nested_fallthrough::NestedFallthroughAgent",
             0, 1, WasmEligibility::Orchestration,
         },
-        // Raw P4-D input-frame handlers: the in-process evaluator runs them
-        // (engines.evaluator=true, blessed observations exist), but the Node
-        // canonical output observation is P6-7 gated, so the Node lane keeps
-        // the RawP6FrameAwaitsP67 skip until the runv/pack/encode rungs land.
+        // P4-D input-frame handlers: rung E packs their input frame, calls
+        // runv, and encodes the output, so the Node lane now DIFFERENTIALLY
+        // COMPARES them (engines.evaluator=true and blessed observations
+        // exist); no node_observation_skip.
         {
             "p6_aggregate.case.json",
             "tests/golden/wasm/p6_aggregate.ahfl",
             CaseKind::Agent,
             "wasm::p6_aggregate::AggregateAgent",
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
-            WasmNodeObservationSkip::RawP6FrameAwaitsP67,
+            WasmNodeObservationSkip::None,
         },
         {
             "p6_collection.case.json",
@@ -246,7 +246,7 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             CaseKind::Agent,
             "std::collections::CollectionAgent",
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
-            WasmNodeObservationSkip::RawP6FrameAwaitsP67,
+            WasmNodeObservationSkip::None,
         },
         // RFC 0026 FB-3b: higher-order lambda / call_indirect. Emits on the
         // orchestration lane with the funcref table; the in-process evaluator
@@ -682,23 +682,10 @@ void test_malformed_manifests() {
 })",
                     "engines.wasm.node_observation_skip' must be 'none'");
 
-    expect_rejected("raw p6 skip on a non-orchestration lane",
-                    R"({
-  "format_version": "ahfl.conformance-case.v1",
-  "source": "tests/golden/wasm/e1_identity_agent.ahfl",
-  "kind": "agent",
-  "entry": "x",
-  "scenarios": [
-    {"name": "s", "input": {},
-     "expect": {"run_status": "completed", "state_sequence": ["Start"],
-                "capability_sequence": []}}
-  ],
-  "capabilities": [],
-  "engines": {"evaluator": true,
-              "wasm": {"eligible": "computation", "reason": "r",
-                       "node_observation_skip": "raw_p6_frame_awaits_p67"}}
-})",
-                    "engines.wasm.eligible 'orchestration'");
+    // RFC 0026 P6-7 rung E removed the raw_p6_frame_awaits_p67 skip (a p6-frame
+    // module now packs/runs runv/encodes with differential agreement), so the
+    // spelling is rejected as an unknown node_observation_skip value by the
+    // generic "must be 'none'" gate above.
 
     expect_rejected("blocked kr66 skip on an orchestration lane",
                     R"({

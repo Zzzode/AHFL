@@ -21,7 +21,7 @@
     "wasm": {
       "eligible": "computation",
       "node_observation_skip": "blocked_kr66",
-      "reason": "match on a struct-payload enum inside the agent body needs in-wasm expression evaluation (KR6.6 computation lane); P5 orchestration subset skips it"
+      "reason": "final handler matches a struct-payload enum and constructs a response with a String owner; P6-7 v1 forbids in-module String construction (computed string outputs are input-reachable only, design section 11); the match arena on a computed final plus a projected workflow return await rung B/F"
     }
   }
 }

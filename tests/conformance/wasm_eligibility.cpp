@@ -210,9 +210,9 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
     using Skip = WasmNodeObservationSkip;
     const Skip required_skip = [&] {
         if (verdict == WasmEligibilityVerdict::RunnableOrchestration) {
-            return computed.frame_contract == ahfl::backends::CoreWasmFrameContract::RawP6Frame
-                       ? Skip::RawP6FrameAwaitsP67
-                       : Skip::None;
+            // RFC 0026 P6-7 rung E: a p6-frame module now has a real packed
+            // input + runv + frame-encode observation, so it requires NO skip.
+            return Skip::None;
         }
         if (verdict == WasmEligibilityVerdict::BlockedComputation) {
             return Skip::BlockedOnKr66;
@@ -243,8 +243,8 @@ wasm_eligibility_divergence(const ConformanceCase &manifest,
         return "manifest's engines.wasm.node_observation_skip declaration does not match the "
                "computed emit outcome (verdict " +
                std::string{wasm_eligibility_verdict_name(verdict)} + ", frame_contract " +
-               (computed.frame_contract == ahfl::backends::CoreWasmFrameContract::RawP6Frame
-                    ? "raw_p6_frame"
+               (computed.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame
+                    ? "p6_frame"
                     : "wire_json") +
                ") -- the Node differential skip set is pinned by this declaration";
     }

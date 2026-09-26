@@ -1,9 +1,11 @@
 #include "conformance/wasm_engine.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
@@ -16,6 +18,7 @@ namespace {
 
 namespace json = ahfl::json;
 using ahfl::backends::CoreWasmFrameContract;
+namespace irc = ahfl::ir::core;
 
 [[nodiscard]] std::unique_ptr<json::JsonValue> jstr(std::string value) {
     return json::JsonValue::make_string(std::move(value));
@@ -41,8 +44,8 @@ using ahfl::backends::CoreWasmFrameContract;
     switch (contract) {
     case CoreWasmFrameContract::WireJson:
         return "wire_json";
-    case CoreWasmFrameContract::RawP6Frame:
-        return "raw_p6_frame";
+    case CoreWasmFrameContract::P6Frame:
+        return "p6_frame";
     }
     return "wire_json";
 }
@@ -135,8 +138,7 @@ build_agent_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
 }
 
 [[nodiscard]] std::unique_ptr<json::JsonValue>
-build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
-    auto lane = json::JsonValue::make_object();
+build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {    auto lane = json::JsonValue::make_object();
 
     auto agents = json::JsonValue::make_array();
     for (const auto &walk : descriptor.agents) {
@@ -166,6 +168,248 @@ build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descripto
     return lane;
 }
 
+// --- RFC 0026 P6-7 rung E: descriptor rendering of the verified P4-D layout
+// table and the boundary wire-schema table. These mirror, value-for-value, the
+// module's `ahfl.core-layout.v1` / `ahfl.wire-schema.v1` custom sections (the
+// same in-memory tables used to canonically emit those sections), so the Node
+// embedded host packs input and encodes output from descriptor facts with no
+// second trust channel. Layout / schema node identity is a dense array index.
+
+[[nodiscard]] std::unique_ptr<json::JsonValue> jlayout(const irc::CoreLayoutTable &table,
+                                                       irc::CoreLayoutId id) {
+    if (id.value >= table.layouts.size()) {
+        return nullptr;
+    }
+    const auto &layout = table.layouts[id.value];
+    auto node = json::JsonValue::make_object();
+    node->set("size", juint(layout.size));
+    node->set("align", juint(layout.align));
+    node->set("zero_sized", json::JsonValue::make_bool(layout.is_zero_sized));
+    std::visit(
+        ahfl::Overloaded{
+            [&](const irc::CoreLayoutScalar &s) {
+                node->set("t", jstr("scalar"));
+                node->set("repr",
+                          jstr(s.repr == irc::CoreScalarRepr::I32
+                                   ? "i32"
+                                   : s.repr == irc::CoreScalarRepr::I64 ? "i64" : "f64"));
+            },
+            [&](const irc::CoreLayoutBytes &b) {
+                node->set("t", jstr("bytes"));
+                node->set("n", juint(b.byte_count));
+            },
+            [&](const irc::CoreLayoutPtrLen &) { node->set("t", jstr("ptrlen")); },
+            [&](const irc::CoreLayoutFnRef &) { node->set("t", jstr("fnref")); },
+            [&](const irc::CoreLayoutClosure &c) {
+                node->set("t", jstr("closure"));
+                if (c.environment.has_value()) {
+                    node->set("env", juint(c.environment->value));
+                } else {
+                    node->set("env", json::JsonValue::make_null());
+                }
+            },
+            [&](const irc::CoreLayoutStruct &s) {
+                node->set("t", jstr("struct"));
+                auto fields = json::JsonValue::make_array();
+                for (std::size_t i = 0; i < s.field_offsets.size(); ++i) {
+                    auto field = json::JsonValue::make_object();
+                    field->set("off", juint(s.field_offsets[i]));
+                    field->set("lay", juint(s.field_layouts[i].value));
+                    fields->push(std::move(field));
+                }
+                node->set("fields", std::move(fields));
+            },
+            [&](const irc::CoreLayoutEnum &e) {
+                node->set("t", jstr("enum"));
+                node->set("tag_size", juint(e.tag_size));
+                node->set("payload_offset", juint(e.payload_offset));
+                auto variants = json::JsonValue::make_array();
+                for (std::size_t i = 0; i < e.variant_payload_layouts.size(); ++i) {
+                    auto variant = json::JsonValue::make_object();
+                    variant->set("lay", juint(e.variant_payload_layouts[i].value));
+                    variant->set("size", juint(i < e.variant_payload_sizes.size()
+                                                   ? e.variant_payload_sizes[i]
+                                                   : std::uint64_t{0}));
+                    variants->push(std::move(variant));
+                }
+                node->set("variants", std::move(variants));
+            },
+            [&](const irc::CoreLayoutContainer &c) {
+                node->set("t", jstr("container"));
+                node->set("element", juint(c.element.value));
+                if (c.value.has_value()) {
+                    node->set("value", juint(c.value->value));
+                } else {
+                    node->set("value", json::JsonValue::make_null());
+                }
+                node->set("capacity", juint(c.capacity));
+                node->set("stride", juint(c.stride));
+                node->set("value_offset", juint(c.value_offset));
+                node->set("backing_size", juint(c.backing_size));
+            },
+            [&](const irc::CoreLayoutUninhabited &) { node->set("t", jstr("uninhabited")); },
+            [&](const irc::CoreLayoutPending &) { node->set("t", jstr("pending")); },
+        },
+        layout.shape);
+    return node;
+}
+
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+jwire_field(const irc::CoreWireSchemaField &field) {
+    auto node = json::JsonValue::make_object();
+    node->set("name", jstr(field.wire_name));
+    node->set("type", juint(field.type.value));
+    return node;
+}
+
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+jwire_variant(const irc::CoreWireSchemaVariant &variant) {
+    auto node = json::JsonValue::make_object();
+    node->set("name", jstr(variant.wire_name));
+    node->set("kind",
+              jstr(variant.payload_kind == irc::CoreWirePayloadKind::Unit
+                       ? "unit"
+                       : variant.payload_kind == irc::CoreWirePayloadKind::Tuple ? "tuple"
+                                                                                  : "struct"));
+    auto slots = json::JsonValue::make_array();
+    for (const auto &slot : variant.slots) {
+        slots->push(jwire_field(slot));
+    }
+    node->set("slots", std::move(slots));
+    return node;
+}
+
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+jwire_node(const irc::CoreWireSchemaNode &wire_node) {
+    auto node = json::JsonValue::make_object();
+    std::visit(
+        ahfl::Overloaded{
+            [&](const irc::CoreWireSchemaUnit &) { node->set("t", jstr("unit")); },
+            [&](const irc::CoreWireSchemaBool &) { node->set("t", jstr("bool")); },
+            [&](const irc::CoreWireSchemaInt &i) {
+                node->set("t", jstr("int"));
+                if (i.bounds.has_value()) {
+                    node->set("lo", json::JsonValue::make_int(i.bounds->first));
+                    node->set("hi", json::JsonValue::make_int(i.bounds->second));
+                }
+            },
+            [&](const irc::CoreWireSchemaFloat &) { node->set("t", jstr("float")); },
+            [&](const irc::CoreWireSchemaString &s) {
+                node->set("t", jstr("string"));
+                if (s.length_bounds.has_value()) {
+                    node->set("lo", json::JsonValue::make_int(s.length_bounds->first));
+                    node->set("hi", json::JsonValue::make_int(s.length_bounds->second));
+                }
+            },
+            [&](const irc::CoreWireSchemaDecimal &d) {
+                node->set("t", jstr("decimal"));
+                node->set("scale", json::JsonValue::make_int(d.scale));
+            },
+            [&](const irc::CoreWireSchemaDuration &) { node->set("t", jstr("duration")); },
+            [&](const irc::CoreWireSchemaTimestamp &) { node->set("t", jstr("timestamp")); },
+            [&](const irc::CoreWireSchemaUuid &) { node->set("t", jstr("uuid")); },
+            [&](const irc::CoreWireSchemaOption &o) {
+                node->set("t", jstr("option"));
+                node->set("value", juint(o.value.value));
+            },
+            [&](const irc::CoreWireSchemaSequence &s) {
+                node->set("t", jstr("sequence"));
+                node->set("kind", jstr(s.kind == irc::CoreWireSequenceKind::List ? "list"
+                                                                                  : "set"));
+                node->set("element", juint(s.element.value));
+                if (s.capacity.has_value()) {
+                    node->set("capacity", juint(*s.capacity));
+                }
+            },
+            [&](const irc::CoreWireSchemaMap &m) {
+                node->set("t", jstr("map"));
+                node->set("key", juint(m.key.value));
+                node->set("value", juint(m.value.value));
+                if (m.capacity.has_value()) {
+                    node->set("capacity", juint(*m.capacity));
+                }
+            },
+            [&](const irc::CoreWireSchemaStruct &s) {
+                node->set("t", jstr("struct"));
+                node->set("name", jstr(s.wire_name));
+                auto fields = json::JsonValue::make_array();
+                for (const auto &field : s.fields) {
+                    fields->push(jwire_field(field));
+                }
+                node->set("fields", std::move(fields));
+            },
+            [&](const irc::CoreWireSchemaEnum &e) {
+                node->set("t", jstr("enum"));
+                node->set("name", jstr(e.wire_name));
+                auto variants = json::JsonValue::make_array();
+                for (const auto &variant : e.variants) {
+                    variants->push(jwire_variant(variant));
+                }
+                node->set("variants", std::move(variants));
+            },
+            [&](const irc::CoreWireSchemaTuple &t) {
+                node->set("t", jstr("tuple"));
+                auto elements = json::JsonValue::make_array();
+                for (const auto element : t.elements) {
+                    elements->push(juint(element.value));
+                }
+                node->set("elements", std::move(elements));
+            },
+        },
+        wire_node.shape);
+    return node;
+}
+
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
+    const auto &lane = *descriptor.frame;
+    auto node = json::JsonValue::make_object();
+    node->set("final_kind", jstr(lane.final_kind));
+    node->set("input_base", juint(lane.input_base));
+    node->set("input_size", juint(lane.input_size));
+    node->set("output_base", juint(lane.output_base));
+    node->set("output_size", juint(lane.output_size));
+    node->set("payload_arena_base", juint(lane.payload_arena_base));
+    node->set("payload_arena_capacity", juint(lane.payload_arena_capacity));
+    const auto &section = *descriptor.frame_section;
+    auto placements = json::JsonValue::make_array();
+    for (const auto &placement : section.placements) {
+        auto p = json::JsonValue::make_object();
+        p->set("edge", juint(placement.edge_index));
+        p->set("lay", juint(placement.container_layout.value));
+        p->set("base", juint(placement.base));
+        p->set("extent", juint(placement.extent));
+        placements->push(std::move(p));
+    }
+    node->set("placements", std::move(placements));
+
+    node->set("input_layout", juint(section.input_layout.value));
+    node->set("output_layout", juint(section.output_layout.value));
+    auto layouts = json::JsonValue::make_array();
+    for (std::uint32_t i = 0; i < section.table.layouts.size(); ++i) {
+        layouts->push(jlayout(section.table, irc::CoreLayoutId{i}));
+    }
+    node->set("layouts", std::move(layouts));
+    return node;
+}
+
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+build_wire_schema(const irc::CoreWireSchemaTable &schema) {
+    auto node = json::JsonValue::make_object();
+    auto nodes = json::JsonValue::make_array();
+    for (const auto &wire_node : schema.nodes) {
+        nodes->push(jwire_node(wire_node));
+    }
+    node->set("nodes", std::move(nodes));
+    if (schema.frame_roots.has_value()) {
+        auto roots = json::JsonValue::make_object();
+        roots->set("input", juint(schema.frame_roots->input.value));
+        roots->set("output", juint(schema.frame_roots->output.value));
+        node->set("roots", std::move(roots));
+    }
+    return node;
+}
+
 [[nodiscard]] std::string
 render_descriptor(const ConformanceCase &manifest,
                   const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
@@ -185,6 +429,15 @@ render_descriptor(const ConformanceCase &manifest,
     root->set("event_buffer", std::move(event));
     root->set("heap_base", juint(descriptor.heap_base));
     root->set("workflow_node_count", juint(descriptor.workflow_node_count));
+
+    // RFC 0026 P6-7 rung E: a p6-frame module carries the verified layout lane
+    // and boundary wire schema the Node host packs/encodes from.
+    if (descriptor.frame.has_value() && descriptor.frame_section.has_value()) {
+        root->set("frame_lane", build_frame_lane(descriptor));
+    }
+    if (descriptor.wire_schema.has_value()) {
+        root->set("wire_schema", build_wire_schema(*descriptor.wire_schema));
+    }
 
     if (descriptor.is_workflow) {
         root->set("workflow_lane", build_workflow_lane(descriptor));
@@ -269,12 +522,8 @@ WasmProduceResult produce_conformance_wasm(const LoadedConformanceCase &loaded,
         return result;
     }
 
-    if (emitted.descriptor->frame_contract == CoreWasmFrameContract::RawP6Frame) {
-        result.skip = WasmProduceSkip::RawP6FrameAwaitsP67;
-        result.code = "p6-7";
-        result.reason = "module projects raw P4-D input-frame bytes; canonical wire-JSON output "
-                        "observation awaits the P6-7 output-frame decision";
-        return result;
+    if (emitted.descriptor->frame_contract == CoreWasmFrameContract::P6Frame) {
+        result.p6_frame = true;
     }
 
     // RFC 0026 FB-3b: a case the in-process evaluator cannot execute (the

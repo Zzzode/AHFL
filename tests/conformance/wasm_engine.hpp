@@ -37,9 +37,6 @@ enum class WasmProduceSkip {
     /// The emit path rejects the case on the orchestration lane (KR6.6
     /// computation seam / layout / out-of-contract).
     Blocked,
-    /// The module emits, but a handler projects the raw P4-D input frame; a
-    /// canonical wire-JSON output observation awaits the P6-7 frame decision.
-    RawP6FrameAwaitsP67,
     /// The module emits and runs, but the surfaced construct (user-defined
     /// pure fn calls / first-class closures) has no in-process evaluator
     /// reference yet; the Node run is authoritative (evaluator retires KR6.8).
@@ -53,6 +50,10 @@ struct WasmProduceResult {
     std::vector<std::uint8_t> artifact_bytes;
     /// Canonical descriptor document bytes (populated iff ok).
     std::string descriptor_json;
+    /// True iff the emitted module is a P6-7 p6-frame module that exports runv
+    /// and carries the core-layout + boundary wire-schema sections; the Node
+    /// host packs the input frame, calls runv, and encodes the output frame.
+    bool p6_frame{false};
     /// Structured skip verdict when the case must not run the differential.
     WasmProduceSkip skip{WasmProduceSkip::None};
     /// Stable skip/error code ("kr6.6", "p6-7", a wasm/core diagnostic code).

@@ -8240,11 +8240,58 @@ void append_capability_return(ByteBuffer &body,
     return body;
 }
 
+// RFC 0026 P6-7 D3: runv() -> (status:i32, value_ptr:i32). It drives the same
+// deterministic state walk run2 performs, then returns the root value's FIXED
+// frame home. Rung E admits only IDENTITY p6-frame finals (the final is the
+// literal `return input;`), so value_ptr is the borrowed input frame base with
+// no copy; a computed-final arm (the output frame base) lands in a later rung,
+// and any other terminal traps, exactly like run2's fallthrough.
+[[nodiscard]] std::optional<ByteBuffer>
+make_runv_body(const AgentPlan &plan, const FunctionTable &functions) {
+    ByteBuffer body;
+    body.u32(1);
+    body.u32(1);
+    body.byte(kI32); // local 0 = fuel (runv is parameter-free)
+
+    append_run_to_final(body, plan, functions, 0);
+    bool has_identity_arm = false;
+    for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
+        if (!is_final_action(plan.actions[state])) {
+            continue;
+        }
+        if (!std::holds_alternative<IdentityAction>(plan.actions[state])) {
+            // A capability final is forbidden on the p6-frame lane by planning;
+            // a computed final materializes into the output frame in a later
+            // rung. Neither has a runv arm yet, so reaching that state traps.
+            continue;
+        }
+        has_identity_arm = true;
+        append_indexed_op(body, kOpGlobalGet, kGlobalCurrentState);
+        append_const(body, state);
+        body.byte(kOpI32Eq);
+        body.byte(kOpIf);
+        body.byte(kEmptyBlock);
+        append_const(body, AHFL_CAP_OK);
+        append_const(body, kP6AggregateInputBase);
+        body.byte(kOpReturn);
+        body.byte(kOpEnd);
+    }
+    if (!has_identity_arm) {
+        // A p6-frame module is emitted only when the planner admits an identity
+        // final; guarding keeps the body fail-closed if that invariant shifts.
+        return std::nullopt;
+    }
+    body.byte(kOpUnreachable);
+    body.byte(kOpEnd);
+    return body;
+}
+
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
 encode_module(const CoreProgram &program,
               const AgentPlan &plan,
               std::span<const std::uint8_t> wire_schema_payload,
-              std::span<const std::uint8_t> frame_layout_payload) {
+              std::span<const std::uint8_t> frame_layout_payload,
+              bool p6_frame) {
     const FunctionTable functions{static_cast<std::uint32_t>(plan.imports.size()),
                                   static_cast<std::uint32_t>(plan.handlers.size())};
     ByteBuffer module;
@@ -8252,12 +8299,18 @@ encode_module(const CoreProgram &program,
 
     ByteBuffer types;
     types.u32(5 + static_cast<std::uint32_t>(plan.fns.size()) +
-                  static_cast<std::uint32_t>(plan.closure_signatures.size()));
+                  static_cast<std::uint32_t>(plan.closure_signatures.size()) +
+                  (p6_frame ? 1u : 0u));
     append_func_type(types, {}, {kI32});
     append_func_type(types, {kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {});
     append_func_type(types, {kI32, kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {kI32, kI32, kI32});
+    // RFC 0026 P6-7 D3: the additive runv functype index follows every fixed,
+    // per-fn, and closure type so no existing index moves.
+    const std::uint32_t runv_type_index =
+        5u + static_cast<std::uint32_t>(plan.fns.size()) +
+        static_cast<std::uint32_t>(plan.closure_signatures.size());
     // RFC 0026 FB-1: one functype per outlined fn, in ordinal order, appended
     // beyond the five fixed types. Wasm permits structurally duplicate
     // functypes, so each fn gets its own type index (5 + ordinal) even when
@@ -8290,6 +8343,11 @@ encode_module(const CoreProgram &program,
         types.u32(1);
         types.byte(signature.result);
     }
+    // RFC 0026 P6-7 D3: runv `() -> (status:i32, value_ptr:i32)` is the LAST
+    // additive functype, appended after every existing type so no index moves.
+    if (p6_frame) {
+        append_func_type(types, {}, {kI32, kI32});
+    }
     if (!append_section(module, kSectionType, types)) {
         return std::nullopt;
     }
@@ -8312,7 +8370,8 @@ encode_module(const CoreProgram &program,
 
     ByteBuffer functions_section;
     functions_section.u32(functions.defined_count() +
-                          static_cast<std::uint32_t>(plan.fns.size()));
+                          static_cast<std::uint32_t>(plan.fns.size()) +
+                          (p6_frame ? 1u : 0u));
     functions_section.u32(kTypeI32ToI32);
     functions_section.u32(kTypeTwoI32ToVoid);
     functions_section.u32(kTypeNoArgsI32);
@@ -8330,6 +8389,11 @@ encode_module(const CoreProgram &program,
     // functype (5 + ordinal).
     for (std::uint32_t index = 0; index < plan.fns.size(); ++index) {
         functions_section.u32(5u + index);
+    }
+    // RFC 0026 P6-7: runv is the last defined function, using the additive
+    // runv functype appended after every per-fn/closure type.
+    if (p6_frame) {
+        functions_section.u32(runv_type_index);
     }
     if (!append_section(module, kSectionFunction, functions_section)) {
         return std::nullopt;
@@ -8378,7 +8442,10 @@ encode_module(const CoreProgram &program,
     }
 
     ByteBuffer exports;
-    exports.u32(9);
+    exports.u32(p6_frame ? 10u : 9u);
+    const std::uint32_t runv_index =
+        functions.import_count + functions.defined_count() +
+        static_cast<std::uint32_t>(plan.fns.size());
     const bool exports_ok =
         append_export(exports, "memory", kExportMemory, 0) &&
         append_export(exports, "alloc", kExportFunction, functions.alloc()) &&
@@ -8388,7 +8455,8 @@ encode_module(const CoreProgram &program,
         append_export(exports, "step", kExportFunction, functions.step()) &&
         append_export(exports, "current_state", kExportFunction, functions.current_state()) &&
         append_export(exports, "transition_count", kExportGlobal, kGlobalTransitionCount) &&
-        append_export(exports, "ahfl_abi_version", kExportGlobal, kGlobalAbiVersion);
+        append_export(exports, "ahfl_abi_version", kExportGlobal, kGlobalAbiVersion) &&
+        (!p6_frame || append_export(exports, "runv", kExportFunction, runv_index));
     if (!exports_ok || !append_section(module, kSectionExport, exports)) {
         return std::nullopt;
     }
@@ -8425,7 +8493,7 @@ encode_module(const CoreProgram &program,
 
     ByteBuffer code;
     code.u32(functions.defined_count() +
-             static_cast<std::uint32_t>(plan.fns.size()));
+             static_cast<std::uint32_t>(plan.fns.size()) + (p6_frame ? 1u : 0u));
     const auto alloc = make_alloc_body();
     const auto dealloc = make_dealloc_body();
     const auto current = make_current_state_body();
@@ -8448,6 +8516,13 @@ encode_module(const CoreProgram &program,
     // order (the function-index order the type/function sections declared).
     for (const auto &fn : plan.fns) {
         if (!code.sized(fn.body)) {
+            return std::nullopt;
+        }
+    }
+    // RFC 0026 P6-7 D3: runv is the final code entry on a p6-frame module.
+    if (p6_frame) {
+        const auto runv = make_runv_body(plan, functions);
+        if (!runv.has_value() || !code.sized(*runv)) {
             return std::nullopt;
         }
     }
@@ -9635,15 +9710,23 @@ build_frame_section_plan(const CoreProgram &program,
 
 [[nodiscard]] CoreWasmExecutionDescriptor build_agent_descriptor(const CoreProgram &program,
                                                                  const AgentPlan &plan,
-                                                                 const FrameSectionPlan *frame_plan) {
+                                                                 const FrameSectionPlan *frame_plan,
+                                                                 const ir::core::CoreWireSchemaTable
+                                                                     *frame_wire_schema) {
     CoreWasmExecutionDescriptor descriptor;
     descriptor.is_workflow = false;
-    descriptor.frame_contract = plan.reads_raw_input_frame ? CoreWasmFrameContract::RawP6Frame
-                                                           : CoreWasmFrameContract::WireJson;
+    // RFC 0026 P6-7 D7: a frame-section-eligible module is the real `p6_frame`
+    // contract (runv + both boundary sections); every other agent is opaque
+    // wire-JSON on the run2 lane. A raw-frame agent whose boundary is not yet
+    // wire-representable emits the rung-A sectionless fallback and is not given
+    // the p6-frame descriptor.
+    descriptor.frame_contract = frame_plan != nullptr ? CoreWasmFrameContract::P6Frame
+                                                      : CoreWasmFrameContract::WireJson;
     if (frame_plan != nullptr) {
         CoreWasmFrameLane lane;
-        // Rung A emits only identity-final P6-frame modules (both pinned
-        // fixtures end in `return input;`). The computed arm arrives in rung B.
+        // Rung E emits identity-final P6-frame modules (both pinned fixtures end
+        // in `return input;`); runv returns the borrowed input base. The
+        // computed-final arm (output base) arrives with computed-final emission.
         lane.final_kind = "identity";
         lane.input_base = ir::core::kP6AggregateInputBase;
         lane.input_size = frame_plan->input_size;
@@ -9657,6 +9740,20 @@ build_frame_section_plan(const CoreProgram &program,
         lane.payload_arena_base = frame_plan->payload_arena_base;
         lane.payload_arena_capacity = frame_plan->payload_arena_capacity;
         descriptor.frame = std::move(lane);
+        // Carry the exact boundary tables the sections encode so a generic host
+        // can pack/encode without a second projection. Both are the same values
+        // used to emit the module's verified custom sections.
+        ir::core::CoreFrameLayoutSection section;
+        section.table = frame_plan->table;
+        section.input_layout = frame_plan->input_layout;
+        section.output_layout = frame_plan->output_layout;
+        section.placements = frame_plan->placements;
+        section.payload_arena_base = frame_plan->payload_arena_base;
+        section.payload_arena_capacity = frame_plan->payload_arena_capacity;
+        descriptor.frame_section = std::move(section);
+        if (frame_wire_schema != nullptr) {
+            descriptor.wire_schema = *frame_wire_schema;
+        }
     }
     descriptor.agent_name = program.agents[plan.agent.value].symbol_ref.canonical_name;
     descriptor.states = program.agents[plan.agent.value].states;
@@ -9906,6 +10003,7 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     // boundary roots extend the projection. Any projection or encode failure
     // fails closed: no partial artifact, no silent section drop.
     std::vector<std::uint8_t> wire_schema_payload;
+    std::optional<ir::core::CoreWireSchemaTable> frame_wire_table;
     if (!plan->imports.empty() || frame_boundary.has_value()) {
         auto projection = ir::core::project_core_wire_schema(program, plan->imports,
                                                              frame_boundary);
@@ -9944,6 +10042,9 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
             return result;
         }
         wire_schema_payload = std::move(*encoded.bytes);
+        if (frame_plan.has_value()) {
+            frame_wire_table = *projection.table;
+        }
     }
 
     // RFC 0026 P6-7 rung A: build + canonically encode the core-layout section
@@ -9974,7 +10075,8 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         frame_layout_payload = std::move(*layout_encoded.bytes);
     }
 
-    auto bytes = encode_module(program, *plan, wire_schema_payload, frame_layout_payload);
+    auto bytes = encode_module(program, *plan, wire_schema_payload, frame_layout_payload,
+                               frame_plan.has_value());
     if (!bytes.has_value()) {
         add_diag(result,
                  core_wasm_diag::kBinaryOverflow,
@@ -9994,12 +10096,18 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
                         "current_state",
                         "transition_count",
                         "ahfl_abi_version"};
+    if (frame_plan.has_value()) {
+        artifact.exports.push_back("runv");
+    }
     for (const auto id : plan->imports) {
         artifact.imports.push_back("ahfl_cap.cap_" +
                                    std::to_string(*program.capabilities[id.value].symbol_ref.id));
     }
     result.descriptor = build_agent_descriptor(program, *plan,
-                                               frame_plan.has_value() ? &*frame_plan : nullptr);
+                                               frame_plan.has_value() ? &*frame_plan : nullptr,
+                                               frame_wire_table.has_value()
+                                                   ? &*frame_wire_table
+                                                   : nullptr);
     result.artifact = std::move(artifact);
     return result;
 }

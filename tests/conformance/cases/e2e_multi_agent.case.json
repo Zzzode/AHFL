@@ -60,7 +60,7 @@
     "wasm": {
       "eligible": "computation",
       "node_observation_skip": "blocked_kr66",
-      "reason": "enum-equality state branching, capability result projection, and a three-node capability chain need in-wasm expression evaluation (KR6.6 computation lane); P5 orchestration subset skips it"
+      "reason": "capability-bearing non-final handlers project input fields into multi-argument capability calls, store projected capability results in context, and a node takes a constructed SummaryInput; P6-7 v1 keeps capability frames on opaque wire-JSON and forbids raw-P4-D/capability mixing pending an explicit frame-bridge design (design section 11); enum-equality routing and projected node inputs await rung F"
     }
   }
 }

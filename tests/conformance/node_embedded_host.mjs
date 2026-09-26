@@ -209,6 +209,8 @@ async function makeInstance(compiled, mode) {
     new Uint8Array(instance.exports.memory.buffer, ptr, inputBytes.length).set(inputBytes);
     return [ptr, inputBytes.length];
   };
+  // RFC 0026 P6-7: the canonical input JSON a p6-frame host packs into P4-D.
+  state.scenarioInput = scenario.input_wire;
   return state;
 }
 
@@ -251,6 +253,389 @@ function expectTraps(fn, label) {
   if (!trapped) fail(`${label} did not trap`);
 }
 
+// ---- RFC 0026 P6-7 p6-frame lane ---------------------------------------------
+//
+// A p6-frame module does NOT carry canonical wire JSON over run2. The host
+// (1) packs the scenario's canonical input JSON into the fixed P4-D input
+// regions using the descriptor's verified layout + wire-schema tables, (2)
+// invokes runv() -> (status, value_ptr), and (3) walks the returned frame's
+// P4-D bytes back to JSON. The descriptor tables mirror the module's
+// `ahfl.core-layout.v1` / `ahfl.wire-schema.v1` sections value-for-value, so
+// every offset/stride/capacity comes from the module's own layout, never a
+// host re-derivation. The C++ comparator canonicalizes the resulting JSON
+// (key order, escaping), so the host only needs a structurally faithful DOM.
+//
+// Only the shapes the verified boundary reaches are walked; an unrecognized
+// shape fails closed. Every access is bounds-checked against the fixed page.
+
+const kPageSize = 65536;
+
+function frameFail(message) {
+  fail(`p6-frame: ${message}`);
+}
+
+function dataView(e) { return new DataView(e.memory.buffer); }
+
+function checkRange(addr, len) {
+  if (!Number.isInteger(addr) || !Number.isInteger(len) || addr < 0 || len < 0 ||
+      addr + len > kPageSize) {
+    frameFail(`out-of-page access @${addr}+${len}`);
+  }
+}
+function writeI32(e, addr, value) {
+  checkRange(addr, 4);
+  dataView(e).setInt32(addr, value | 0, true);
+}
+function writeI64(e, addr, value) {
+  checkRange(addr, 8);
+  dataView(e).setBigInt64(addr, BigInt(value), true);
+}
+function readI32(e, addr) {
+  checkRange(addr, 4);
+  return dataView(e).getInt32(addr, true);
+}
+function readI64(e, addr) {
+  checkRange(addr, 8);
+  return dataView(e).getBigInt64(addr, true);
+}
+function writeRaw(e, addr, bytes) {
+  checkRange(addr, bytes.length);
+  new Uint8Array(e.memory.buffer, addr, bytes.length).set(bytes);
+}
+function readRaw(e, addr, len) {
+  checkRange(addr, len);
+  return new Uint8Array(e.memory.buffer, addr, len);
+}
+
+// Wire layout-id -> its disjoint backing placement {base,extent}.
+function backingByLayout(lane) {
+  const map = new Map();
+  for (const placement of lane.placements) {
+    if (map.has(placement.lay)) frameFail("duplicate backing placement for one container");
+    map.set(placement.lay, placement);
+  }
+  return map;
+}
+
+function fieldLayoutOf(structLayout, index) {
+  const field = structLayout.fields[index];
+  if (field === undefined) frameFail("struct field/layout arity mismatch");
+  return field;
+}
+
+// Pack `value` into the absolute frame slot `addr`. Scalars are stored inline
+// at addr; aggregates occupy the whole struct/enum bytes rooted at addr (the
+// slot is the root); a bounded container's inline (ptr,len) header is at addr
+// and its elements live in the placement-backed backing region.
+function packValue(e, lane, W, L, value, wId, lId, addr, backing, arena) {
+  const w = W[wId];
+  const l = L[lId];
+  if (w === undefined || l === undefined) frameFail("pack node id out of range");
+  switch (w.t) {
+    case "unit":
+      return;
+    case "bool":
+      if (typeof value !== "boolean") frameFail("bool slot got a non-bool value");
+      writeI32(e, addr, value ? 1 : 0);
+      return;
+    case "int":
+      if (typeof value !== "number" || !Number.isInteger(value)) {
+        frameFail("int slot got a non-integer value");
+      }
+      if (l.t === "scalar" && l.repr === "i64") writeI64(e, addr, value);
+      else writeI32(e, addr, value);
+      return;
+    case "float":
+    case "decimal":
+    case "duration":
+    case "timestamp":
+    case "uuid":
+    case "map":
+      frameFail(`pack shape '${w.t}' is outside the P6-7 rung-E frame subset`);
+      return;
+    case "string": {
+      if (typeof value !== "string") frameFail("string slot got a non-string value");
+      const bytes = new TextEncoder().encode(value);
+      if (arena.cursor + bytes.length > lane.payload_arena_base + lane.payload_arena_capacity) {
+        frameFail("frame-payload arena exhausted");
+      }
+      writeRaw(e, arena.cursor, bytes);
+      writeI32(e, addr + 0, arena.cursor);
+      writeI32(e, addr + 4, bytes.length);
+      arena.cursor += bytes.length;
+      return;
+    }
+    case "struct": {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        frameFail("struct slot got a non-object value");
+      }
+      if (l.t !== "struct") frameFail(`wire struct '${w.name}' maps to a non-struct layout`);
+      for (let i = 0; i < w.fields.length; ++i) {
+        const field = w.fields[i];
+        const slot = fieldLayoutOf(l, i);
+        if (!Object.prototype.hasOwnProperty.call(value, field.name)) {
+          frameFail(`struct input is missing field '${field.name}'`);
+        }
+        packValue(e, lane, W, L, value[field.name], field.type, slot.lay,
+                  addr + Number(slot.off), backing, arena);
+      }
+      return;
+    }
+    case "option": {
+      if (l.t !== "enum") frameFail("wire option maps to a non-enum layout");
+      if (value === null) {
+        writeI32(e, addr, 0);
+        return;
+      }
+      writeI32(e, addr, 1);
+      const variant = l.variants[1];
+      if (variant === undefined) frameFail("option Some variant has no payload layout");
+      packValue(e, lane, W, L, value, w.value, variant.lay,
+                addr + Number(l.payload_offset), backing, arena);
+      return;
+    }
+    case "enum": {
+      if (l.t !== "enum") frameFail("wire enum maps to a non-enum layout");
+      if (value === null || typeof value !== "object") frameFail("enum slot got a non-object");
+      const ordinal = w.variants.findIndex((variant) => variant.name === value._variant);
+      if (ordinal < 0) frameFail(`enum value names an unknown variant '${value._variant}'`);
+      writeI32(e, addr, ordinal);
+      const wireVariant = w.variants[ordinal];
+      const layoutVariant = l.variants[ordinal];
+      if (wireVariant.kind !== "unit") {
+        if (layoutVariant === undefined) frameFail("enum variant has no payload layout");
+        const payloadAddr = addr + Number(l.payload_offset);
+        if (wireVariant.kind === "tuple") {
+          const arr = Array.isArray(value._payload) ? value._payload : null;
+          if (arr === null) frameFail("tuple enum variant is missing its _payload array");
+          packSlots(e, lane, W, L, arr, wireVariant.slots,
+                    L[layoutVariant.lay], payloadAddr, backing, arena,
+                    /*named=*/false);
+        } else {
+          const obj = (value._named_payload !== undefined ? value._named_payload
+                                                           : value._payload) ?? null;
+          if (obj === null || typeof obj !== "object") {
+            frameFail("struct enum variant is missing its named payload object");
+          }
+          packSlots(e, lane, W, L, obj, wireVariant.slots,
+                    L[layoutVariant.lay], payloadAddr, backing, arena,
+                    /*named=*/true);
+        }
+      }
+      return;
+    }
+    case "sequence": {
+      if (l.t !== "container") frameFail("wire sequence maps to a non-container layout");
+      if (!Array.isArray(value)) frameFail("sequence slot got a non-array value");
+      const capacity = Number(w.capacity ?? l.capacity);
+      if (value.length > capacity) frameFail("packed collection length exceeds its capacity");
+      const placement = backing.get(lId);
+      if (placement === undefined) frameFail("input container has no backing placement");
+      const stride = Number(l.stride);
+      if (value.length * stride > placement.extent) {
+        frameFail("packed collection overruns its backing placement");
+      }
+      for (let i = 0; i < value.length; ++i) {
+        packValue(e, lane, W, L, value[i], w.element, l.element,
+                  placement.base + i * stride, backing, arena);
+      }
+      writeI32(e, addr + 0, placement.base);
+      writeI32(e, addr + 4, value.length);
+      return;
+    }
+    case "tuple": {
+      if (l.t !== "struct") frameFail("wire tuple maps to a non-struct layout");
+      if (!Array.isArray(value)) frameFail("tuple slot got a non-array value");
+      packSlots(e, lane, W, L, value,
+                w.elements.map((type, index) => ({name: `${index}`, type})),
+                l, addr, backing, arena, /*named=*/false);
+      return;
+    }
+  }
+  frameFail(`unhandled pack shape '${w.t}'`);
+}
+
+function packSlots(e, lane, W, L, source, wireSlots, payloadLayout, payloadAddr,
+                   backing, arena, named) {
+  if (payloadLayout === undefined || payloadLayout.t !== "struct") {
+    frameFail("aggregate payload has no struct layout");
+  }
+  for (let i = 0; i < wireSlots.length; ++i) {
+    const slot = fieldLayoutOf(payloadLayout, i);
+    const child = named ? source[wireSlots[i].name] : source[i];
+    packValue(e, lane, W, L, child, wireSlots[i].type, slot.lay,
+              payloadAddr + Number(slot.off), backing, arena);
+  }
+}
+
+// Read a packed frame back to a JSON-friendly JS value.
+function readValue(e, W, L, wId, lId, addr, backing) {
+  const w = W[wId];
+  const l = L[lId];
+  if (w === undefined || l === undefined) frameFail("read node id out of range");
+  switch (w.t) {
+    case "unit":
+      return null;
+    case "bool": {
+      const word = readI32(e, addr);
+      if (word !== 0 && word !== 1) frameFail("bool word is not in {0,1}");
+      return word === 1;
+    }
+    case "int":
+      if (l.t === "scalar" && l.repr === "i64") {
+        const big = readI64(e, addr);
+        if (big > BigInt(Number.MAX_SAFE_INTEGER) || big < BigInt(Number.MIN_SAFE_INTEGER)) {
+          frameFail("i64 frame value is not exactly representable as a JS number");
+        }
+        return Number(big);
+      }
+      return readI32(e, addr);
+    case "float":
+    case "decimal":
+    case "duration":
+    case "timestamp":
+    case "uuid":
+    case "map":
+      frameFail(`read shape '${w.t}' is outside the P6-7 rung-E frame subset`);
+      return undefined;
+    case "string": {
+      const ptr = readI32(e, addr + 0);
+      const len = readI32(e, addr + 4);
+      if (len < 0) frameFail("string length is negative");
+      return new TextDecoder().decode(readRaw(e, ptr, len));
+    }
+    case "struct": {
+      if (l.t !== "struct") frameFail("wire struct maps to a non-struct layout");
+      const out = {_type: w.name};
+      for (let i = 0; i < w.fields.length; ++i) {
+        const field = w.fields[i];
+        const slot = fieldLayoutOf(l, i);
+        out[field.name] = readValue(e, W, L, field.type, slot.lay,
+                                    addr + Number(slot.off), backing);
+      }
+      return out;
+    }
+    case "option": {
+      if (l.t !== "enum") frameFail("wire option maps to a non-enum layout");
+      const tag = readI32(e, addr);
+      if (tag === 0) return null;
+      if (tag !== 1) frameFail("option tag is not in {0,1}");
+      const variant = l.variants[1];
+      if (variant === undefined) frameFail("option Some variant has no payload layout");
+      return readValue(e, W, L, w.value, variant.lay,
+                       addr + Number(l.payload_offset), backing);
+    }
+    case "enum": {
+      if (l.t !== "enum") frameFail("wire enum maps to a non-enum layout");
+      const ordinal = readI32(e, addr);
+      if (ordinal < 0 || ordinal >= w.variants.length) {
+        frameFail("enum tag is out of the declared variant range");
+      }
+      const wireVariant = w.variants[ordinal];
+      const out = {_enum: w.name, _variant: wireVariant.name};
+      if (wireVariant.kind !== "unit") {
+        const layoutVariant = l.variants[ordinal];
+        if (layoutVariant === undefined) frameFail("enum variant has no payload layout");
+        const payloadAddr = addr + Number(l.payload_offset);
+        if (wireVariant.kind === "tuple") {
+          const payloadLayout = L[layoutVariant.lay];
+          const arr = [];
+          for (let i = 0; i < wireVariant.slots.length; ++i) {
+            const slot = fieldLayoutOf(payloadLayout, i);
+            arr.push(readValue(e, W, L, wireVariant.slots[i].type, slot.lay,
+                               payloadAddr + Number(slot.off), backing));
+          }
+          out._payload = arr;
+        } else {
+          const payloadLayout = L[layoutVariant.lay];
+          const named = {};
+          for (let i = 0; i < wireVariant.slots.length; ++i) {
+            const slot = fieldLayoutOf(payloadLayout, i);
+            named[wireVariant.slots[i].name] =
+              readValue(e, W, L, wireVariant.slots[i].type, slot.lay,
+                        payloadAddr + Number(slot.off), backing);
+          }
+          out._named_payload = named;
+        }
+      }
+      return out;
+    }
+    case "sequence": {
+      if (l.t !== "container") frameFail("wire sequence maps to a non-container layout");
+      const len = readI32(e, addr + 4);
+      const capacity = Number(w.capacity ?? l.capacity);
+      if (len < 0 || len > capacity) frameFail("container length is out of capacity");
+      let base = readI32(e, addr + 0);
+      const placement = backing.get(lId);
+      if (placement !== undefined) {
+        // The packed input container's elements live in its fixed placement.
+        base = placement.base;
+        if (len * Number(l.stride) > placement.extent) frameFail("container overruns placement");
+      }
+      const stride = Number(l.stride);
+      const out = [];
+      for (let i = 0; i < len; ++i) {
+        out.push(readValue(e, W, L, w.element, l.element, base + i * stride, backing));
+      }
+      if (w.kind === "set") {
+        const canonical = out.map((v) => JSON.stringify(v));
+        canonical.sort();
+        for (let i = 1; i < canonical.length; ++i) {
+          if (canonical[i] === canonical[i - 1]) frameFail("set carries a duplicate element");
+        }
+      }
+      return out;
+    }
+    case "tuple": {
+      if (l.t !== "struct") frameFail("wire tuple maps to a non-struct layout");
+      const out = [];
+      for (let i = 0; i < w.elements.length; ++i) {
+        const slot = fieldLayoutOf(l, i);
+        out.push(readValue(e, W, L, w.elements[i], slot.lay,
+                           addr + Number(slot.off), backing));
+      }
+      return out;
+    }
+  }
+  frameFail(`unhandled read shape '${w.t}'`);
+  return undefined;
+}
+
+// Packs the canonical input frame for a p6-frame agent. Must run BEFORE the
+// step() walk because non-final computed handlers read the packed input frame
+// to decide their goto.
+function packP6Input(probe) {
+  const lane = descriptor.frame_lane;
+  const W = descriptor.wire_schema.nodes;
+  const L = lane.layouts;
+  const backing = backingByLayout(lane);
+  const arena = {cursor: lane.payload_arena_base};
+  const e = probe.exports;
+  // Zero every reserved region the packer may name, so padding words are 0.
+  new Uint8Array(e.memory.buffer, 1024, 16384 - 1024).fill(0);
+  packValue(e, lane, W, L, JSON.parse(probe.scenarioInput),
+            descriptor.wire_schema.roots.input, lane.input_layout,
+            lane.input_base, backing, arena);
+  return {lane, W, L, backing};
+}
+
+// Encodes the runv result frame after the run.
+function encodeP6Output(probe, packed) {
+  const e = probe.exports;
+  const {lane, W, L, backing} = packed;
+  const tuple = e.runv();
+  if (tuple[0] !== 0) frameFail(`runv returned non-OK status ${tuple[0]}`);
+  const authorizedBase =
+      lane.final_kind === "computed" ? lane.output_base : lane.input_base;
+  if (tuple[1] !== authorizedBase) {
+    frameFail(`runv value_ptr ${tuple[1]} is not the authorized base ${authorizedBase} ` +
+              `for a '${lane.final_kind}' final`);
+  }
+  const output = readValue(e, W, L, descriptor.wire_schema.roots.output,
+                           lane.output_layout, tuple[1], backing);
+  return JSON.stringify(output);
+}
+
 // ---- agent lane --------------------------------------------------------------
 async function runAgent(compiled) {
   const lane = descriptor.agent_lane;
@@ -260,6 +645,10 @@ async function runAgent(compiled) {
   if (e.current_state() !== lane.initial_state) {
     fail(`agent initial state ${e.current_state()} != ${lane.initial_state}`);
   }
+
+  // RFC 0026 P6-7: pack the canonical input into the P4-D frame BEFORE the
+  // step() walk, since non-final computed handlers branch on packed input.
+  const p6 = descriptor.frame_contract === "p6_frame" ? packP6Input(probe) : null;
 
   // step() drives the state walk to its stable final state WITHOUT invoking a
   // terminal capability (a capability final reports its state on step, it does
@@ -287,6 +676,20 @@ async function runAgent(compiled) {
   if (!stabilized) {
     fail(`step() bounded walk guard (${lane.states.length + 2}) expired without a stable ` +
          `final state for ${lane.agent}; last state ${previous}`);
+  }
+
+  // RFC 0026 P6-7: a p6-frame agent invokes runv on the packed frame and
+  // encodes the output instead of exchanging opaque JSON over run2.
+  if (p6 !== null) {
+    const outputRaw = encodeP6Output(probe, p6);
+    return {
+      status: "completed",
+      states: walked.map((state) => ({agent: lane.agent, state})),
+      capabilities: probe.events.map((event) => event.name),
+      outputRaw,
+      transitions: e.transition_count.value,
+      completedNodes: null,
+    };
   }
 
   // run2 resets and performs the terminal identity/capability action.
@@ -530,6 +933,22 @@ async function runAbiProbes(compiled) {
         if (p.calls !== 0) fail("legacy agent run() reached the capability");
       }
     } else {
+      // RFC 0026 P6-7: a p6-frame agent has no run2/run opaque-JSON identity
+      // path; its input lives in the fixed P4-D frame and runv is the value
+      // entry. Pack the frame on a FRESH instance and assert runv returns OK
+      // with the authorized root, and that run2/run on a host-heap pointer are
+      // not treated as a JSON frame (run2 traps on the raw computed walk because
+      // the borrowed pointer is not the fixed input base).
+      if (descriptor.frame_contract === "p6_frame") {
+        const p = await makeInstance(compiled, "ok");
+        const packed = packP6Input(p);
+        const tuple = p.exports.runv();
+        if (tuple[0] !== 0) fail("p6-frame runv did not return OK");
+        const authorized = packed.lane.final_kind === "computed"
+            ? packed.lane.output_base : packed.lane.input_base;
+        if (tuple[1] !== authorized) fail("p6-frame runv returned an unauthorized value_ptr");
+        return;
+      }
       // Identity agent: legacy run() executes the same schedule and returns the
       // borrowed input pointer.
       const p = await makeInstance(compiled, "ok");

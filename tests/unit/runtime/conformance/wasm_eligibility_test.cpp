@@ -164,8 +164,8 @@ struct CaseVerdict {
     std::string_view code; // empty for runnable
     std::string_view reason_substring;
     // The exact frame contract the emitted descriptor must carry. Pins the
-    // p6-7 skip SET independently of the Node runner: only the raw P4-D frame
-    // handlers (aggregate/collection) may be RawP6Frame; every other runnable
+    // p6-frame SET independently of the Node runner: only the raw P4-D frame
+    // handlers (aggregate/collection) may be P6Frame; every other runnable
     // case must be WireJson.
     CoreWasmFrameContract frame_contract{CoreWasmFrameContract::WireJson};
 };
@@ -191,16 +191,17 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"p6_coerce_bounds.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_nested_depth3.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_nested_fallthrough.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
-        // Raw P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
-        // cleanly; their canonical OUTPUT observation is the separate P6-7
-        // output-frame gate, which the Node differential enforces as a skip.
-        // Their descriptor MUST carry RawP6Frame -- this exact-set pin means a
-        // codegen change that drops (or adds) the raw-frame projection is caught
+        // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
+        // cleanly as P6-7 p6-frame modules: they carry the core-layout +
+        // boundary wire-schema sections and export runv, so their canonical
+        // output is observed by packing input, running runv, and encoding the
+        // frame. Their descriptor MUST carry P6Frame -- this exact-set pin means
+        // a codegen change that drops (or adds) the frame sections is caught
         // here even without Node installed.
         {"p6_aggregate.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::RawP6Frame},
+         CoreWasmFrameContract::P6Frame},
         {"p6_collection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
-         CoreWasmFrameContract::RawP6Frame},
+         CoreWasmFrameContract::P6Frame},
         // RFC 0026 FB-3b: a higher-order lambda / call_indirect program emits
         // cleanly on the orchestration lane (funcref table + closure env). Its
         // node-only observation (no evaluator reference until KR6.8) is a
@@ -219,7 +220,7 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         check(!classification.reason.empty(),
               std::string{"runnable carries a reason: "} + std::string{expectation.sidecar});
         check(classification.frame_contract == expectation.frame_contract,
-              std::string{"runnable frame_contract pin (WireJson vs RawP6Frame): "} +
+              std::string{"runnable frame_contract pin (WireJson vs P6Frame): "} +
                   std::string{expectation.sidecar});
     }
 

@@ -31,7 +31,7 @@
     "wasm": {
       "eligible": "computation",
       "node_observation_skip": "blocked_kr66",
-      "reason": "if-let pattern destructuring of a generic enum payload and branch-local return need in-wasm expression evaluation (KR6.6 computation lane); P5 orchestration subset skips it"
+      "reason": "computed final materializes a response with a constructed String branch; P6-7 v1 forbids in-module String construction (computed string outputs are input-reachable only, design section 11); the if-let pattern arena on a computed final plus a projected workflow return await rung B/F"
     }
   }
 }

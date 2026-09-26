@@ -9,7 +9,9 @@
 #include <vector>
 
 #include "ahfl/compiler/handoff/package.hpp"
+#include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "compiler/backends/infra/wasm_backend.hpp"
 
 namespace ahfl::backends {
@@ -129,13 +131,14 @@ enum class CoreWasmFrameContract {
     /// verbatim (identity passthrough or a forwarded capability result). The
     /// canonical observation is fully reconstructable.
     WireJson,
-    /// A P6 computation handler projects a field out of the raw P4-D input
-    /// frame (the fixed reserved regions) or reads a raw backing store. From
-    /// RFC 0026 P6-7 rung A such a module additionally carries the
-    /// `ahfl.core-layout.v1` and boundary-root wire-schema sections; the
-    /// runv/pack/encode execution lane lands in later rungs, so canonical
-    /// observation still awaits and differential conformance keeps its skip.
-    RawP6Frame,
+    /// A P6-frame module (RFC 0026 P6-7): a computation handler projects raw
+    /// P4-D input-frame bytes or returns a computed final. It carries the
+    /// `ahfl.core-layout.v1` and boundary-root wire-schema sections and exports
+    /// `runv() -> (status, value_ptr)`. The host packs canonical input JSON
+    /// into the fixed P4-D regions, calls runv, and walks the returned frame
+    /// with the verified layout + wire binding to render canonical output.
+    /// (Descriptor spelling: "p6_frame".)
+    P6Frame,
 };
 
 struct CoreWasmExecutionDescriptor {
@@ -156,6 +159,15 @@ struct CoreWasmExecutionDescriptor {
 
     // RFC 0026 P6-7: populated iff frame_contract == P6Frame.
     std::optional<CoreWasmFrameLane> frame;
+    // RFC 0026 P6-7: the verified boundary tables a generic embedded host packs
+    // input from and encodes output against, populated iff frame_contract ==
+    // P6Frame. They mirror the module's `ahfl.core-layout.v1` /
+    // `ahfl.wire-schema.v1` custom sections (same bytes the sections encode), so
+    // the descriptor needs no separate trust channel; the host may re-admit the
+    // sections independently. These are descriptor-rendering inputs, not part of
+    // the wire ABI proper.
+    std::optional<ir::core::CoreFrameLayoutSection> frame_section;
+    std::optional<ir::core::CoreWireSchemaTable> wire_schema;
 
     // Node-event buffer layout (identity for both lanes; the ABI SSOT).
     std::uint32_t event_log_base{0};

@@ -60,8 +60,16 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // skip set is manifest-declared per case AND counted here, so neither a
 // codegen flag flip nor a manifest-only drift can silently move a case between
 // the compared and skipped sets while ctest stays green.
-constexpr int kExpectedAgreed = 14;
-constexpr int kExpectedSkipped = 7;
+// RFC 0026 P6-7 rung E: the two raw P4-D frame cases (p6_aggregate /
+// p6_collection) now pack input, invoke runv, and encode the output frame with
+// real differential agreement, so the census moved 14/7 -> 16/5. The five
+// remaining skips are the KR6.6 workflow-computation cases (if_let_e2e x2,
+// enum_variant_e2e, e2e_multi_agent x2): their packaging needs the deferred
+// in-module String construction and raw-P4-D/capability frame bridge (design
+// section 11), each manifest still declaring blocked_kr66 with its precise
+// reason.
+constexpr int kExpectedAgreed = 16;
+constexpr int kExpectedSkipped = 5;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
 // engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
@@ -350,22 +358,7 @@ int run_one(const CaseEntry &entry,
     // wire output to diff, so it skips before any engine reference is needed.
     WasmProduceResult produced = produce_conformance_wasm(entry.loaded, scenario);
     if (!produced.ok) {
-        if (produced.skip == WasmProduceSkip::RawP6FrameAwaitsP67) {
-            if (declared_skip != WasmNodeObservationSkip::RawP6FrameAwaitsP67) {
-                std::cerr << "FAIL: " << label
-                          << " projects a raw P6-FRAME (p6-7 skip) but its manifest does not "
-                             "declare engines.wasm.node_observation_skip="
-                             "'raw_p6_frame_awaits_p67'; an unpinned skip is forbidden\n";
-                ++g_failures;
-                return 1;
-            }
-            ++g_skipped;
-            std::cout << "SKIP[77] " << label << ": " << produced.code << " -- " << produced.reason
-                      << "\n";
-            return 77;
-        }
-        // The eligibility classifier cross-checks the manifest lane already; a
-        // case that does not emit here is a KR6.6/blocked skip, not a failure,
+        // A case that does not emit here is a KR6.6/blocked skip, not a failure,
         // when the manifest itself declares a non-orchestration lane.
         if (manifest.engines.wasm.eligibility !=
             ahfl::conformance::WasmEligibility::Orchestration) {

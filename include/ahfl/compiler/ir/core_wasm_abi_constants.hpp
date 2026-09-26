@@ -54,6 +54,13 @@ static_assert(kCoreWasmFixedLinearMemoryCapacityBytes == 65536,
 inline constexpr std::uint32_t kP6AggregateInputBase = 1024;
 inline constexpr std::uint32_t kP6AggregateContextBase = 4096;
 inline constexpr std::uint32_t kP6AggregateScratchBase = 7168;
+// RFC 0026 P6-7 (D5): the computed OUTPUT frame splits the old scratch window:
+// [7168,12288) stays constructor scratch (capacity 9216 -> 5120) and
+// [12288,16384) is the fixed output frame a computed final materializes into
+// (capacity 4096). A pure identity/capability module never emits runv and never
+// names the output base, so these constants change no module byte on those
+// lanes; they are gates and the runv root authority only.
+inline constexpr std::uint32_t kP6AggregateOutputBase = 12288;
 
 // RFC 0026 P6-5 (KR6.6): the element BACKING STORE region — a fourth reserved
 // region for BOUNDED-collection element storage, immediately after the
@@ -73,12 +80,19 @@ inline constexpr std::uint32_t kP6CollectionBackingBase = 16384;
 inline constexpr std::uint32_t kP6CollectionBackingCapacity =
     kCoreWasmFixedLinearMemoryCapacityBytes - kP6CollectionBackingBase;
 
-// The scratch arena is every byte from its base up to the collection backing
-// region. A plan whose constructors need more fails closed (RESOURCE-class
-// rejection), so the arena can never overflow into the collection region or any
-// other reserved bytes.
+// The scratch arena is every byte from its base up to the computed OUTPUT frame
+// (RFC 0026 P6-7 D5): 7168..12288, capacity 5120. Before P6-7 the scratch
+// window ran to the backing base (9216 bytes); the output frame carves the upper
+// 4096 bytes out. The scratch planner already fail-closes on overflow, so this
+// is a compile-time RESOURCE gate. A module with zero scratch slots (the
+// identity/capability E1-E3 lanes) emits no scratch-referencing byte, so the
+// reduction is byte-invisible on those lanes.
 inline constexpr std::uint32_t kP6AggregateScratchCapacity =
-    kP6CollectionBackingBase - kP6AggregateScratchBase;
+    kP6AggregateOutputBase - kP6AggregateScratchBase;
+// The computed output frame owns [12288,16384): exactly 4096 bytes, up to the
+// collection backing base.
+inline constexpr std::uint32_t kP6AggregateOutputCapacity =
+    kP6CollectionBackingBase - kP6AggregateOutputBase;
 
 // The input frame owns every byte from its base up to the context base, and the
 // context frame every byte up to the scratch arena. Each frame is a FIXED region
@@ -92,17 +106,22 @@ inline constexpr std::uint32_t kP6AggregateContextCapacity =
     kP6AggregateScratchBase - kP6AggregateContextBase;
 
 static_assert(kP6AggregateInputBase % 8 == 0 && kP6AggregateContextBase % 8 == 0 &&
-                  kP6AggregateScratchBase % 8 == 0 && kP6CollectionBackingBase % 8 == 0,
+                  kP6AggregateScratchBase % 8 == 0 && kP6AggregateOutputBase % 8 == 0 &&
+                  kP6CollectionBackingBase % 8 == 0,
               "P6 frame / backing bases are 8-byte aligned (the widest P4-D scalar)");
 static_assert(kP6AggregateContextBase >= kP6AggregateInputBase &&
                   kP6AggregateScratchBase >= kP6AggregateContextBase &&
-                  kP6CollectionBackingBase >= kP6AggregateScratchBase,
+                  kP6AggregateOutputBase >= kP6AggregateScratchBase &&
+                  kP6CollectionBackingBase >= kP6AggregateOutputBase,
               "P6 reserved regions are ordered and non-overlapping");
 static_assert(kP6CollectionBackingBase < kCoreWasmFixedLinearMemoryCapacityBytes,
               "the P6 collection backing region starts inside the fixed single page");
 static_assert(kP6CollectionBackingCapacity > 0,
               "the P6 collection backing region reserves at least one byte");
-static_assert(kP6AggregateInputCapacity > 0 && kP6AggregateContextCapacity > 0,
+static_assert(kP6AggregateScratchCapacity == 5120 && kP6AggregateOutputCapacity == 4096,
+              "the output frame splits the old scratch window into 5120 scratch + 4096 output");
+static_assert(kP6AggregateInputCapacity > 0 && kP6AggregateContextCapacity > 0 &&
+                  kP6AggregateScratchCapacity > 0 && kP6AggregateOutputCapacity > 0,
               "each P6 aggregate frame region reserves at least one byte");
 
 // RFC 0026 P6-5 (KR6.6): the internal bounded-collection HANDLE convention — the

@@ -124,12 +124,9 @@ struct ConformanceScenario {
 /// the declared one, so a codegen change can never silently turn a compared
 /// case into a skip (or vice versa).
 enum class WasmNodeObservationSkip {
-    /// The module emits a canonical wire-JSON frame and the observation is
-    /// compared. The default; the manifest field is absent.
+    /// The module emits a canonical wire-JSON (or p6-frame) observation and it
+    /// is compared. The default; the manifest field is absent.
     None,
-    /// The module emits, but a handler projects the raw P4-D input frame; the
-    /// canonical OUTPUT observation awaits the P6-7 output-frame decision.
-    RawP6FrameAwaitsP67,
     /// The emit path rejects the case at a KR6.6 computation-lane seam, so no
     /// Node module exists to observe.
     BlockedOnKr66,
@@ -504,18 +501,9 @@ class ConformanceCaseReader {
             }
         }
 
-        // A Node-observation skip must agree with the declared wasm lane: the
-        // raw P4-D frame skip applies only to a case the orchestration lane
-        // actually EMITS, and a KR6.6 blocked case never produces a module.
+        // A Node-observation skip must agree with the declared wasm lane: a
+        // KR6.6 blocked case never produces a module.
         const WasmEngineEligibility &wasm = engines->wasm;
-        if (wasm.node_observation_skip == WasmNodeObservationSkip::RawP6FrameAwaitsP67 &&
-            wasm.eligibility != WasmEligibility::Orchestration) {
-            error("engines.wasm.node_observation_skip 'raw_p6_frame_awaits_p67' requires "
-                  "engines.wasm.eligible 'orchestration' (the module emits; only its output "
-                  "observation is gated)",
-                  std::nullopt);
-            return std::nullopt;
-        }
         if (wasm.node_observation_skip == WasmNodeObservationSkip::BlockedOnKr66 &&
             wasm.eligibility != WasmEligibility::Computation) {
             error("engines.wasm.node_observation_skip 'blocked_kr66' requires "
@@ -1074,9 +1062,6 @@ class ConformanceCaseReader {
         if (*value == "none") {
             return WasmNodeObservationSkip::None;
         }
-        if (*value == "raw_p6_frame_awaits_p67") {
-            return WasmNodeObservationSkip::RawP6FrameAwaitsP67;
-        }
         if (*value == "blocked_kr66") {
             return WasmNodeObservationSkip::BlockedOnKr66;
         }
@@ -1084,8 +1069,7 @@ class ConformanceCaseReader {
             return WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68;
         }
         error("conformance case field 'engines.wasm.node_observation_skip' must be 'none', "
-              "'raw_p6_frame_awaits_p67', 'blocked_kr66', or "
-              "'evaluator_surface_awaits_kr68', got '" +
+              "'blocked_kr66', or 'evaluator_surface_awaits_kr68', got '" +
                   *value + "'",
               range_of(node));
         return std::nullopt;
