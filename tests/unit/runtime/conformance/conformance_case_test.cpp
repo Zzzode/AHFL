@@ -248,6 +248,17 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
             WasmNodeObservationSkip::None,
         },
+        // RFC 0026 P6-7: two same-typed bounded lists in one input struct.
+        // Each fixed-edge occurrence gets its own disjoint backing placement;
+        // the Node lane packs and round-trips both lists independently.
+        {
+            "p6_frame_two_containers.case.json",
+            "tests/golden/wasm/p6_frame_two_containers.ahfl",
+            CaseKind::Agent,
+            "std::collections::TwoContainersAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/true,
+            WasmNodeObservationSkip::None,
+        },
         // RFC 0026 FB-3b: higher-order lambda / call_indirect. Emits on the
         // orchestration lane with the funcref table; the in-process evaluator
         // has no user-fn / closure surface yet (node-only until KR6.8).

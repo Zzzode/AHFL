@@ -50,10 +50,6 @@ struct WasmProduceResult {
     std::vector<std::uint8_t> artifact_bytes;
     /// Canonical descriptor document bytes (populated iff ok).
     std::string descriptor_json;
-    /// True iff the emitted module is a P6-7 p6-frame module that exports runv
-    /// and carries the core-layout + boundary wire-schema sections; the Node
-    /// host packs the input frame, calls runv, and encodes the output frame.
-    bool p6_frame{false};
     /// Structured skip verdict when the case must not run the differential.
     WasmProduceSkip skip{WasmProduceSkip::None};
     /// Stable skip/error code ("kr6.6", "p6-7", a wasm/core diagnostic code).

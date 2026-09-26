@@ -62,20 +62,23 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // the compared and skipped sets while ctest stays green.
 // RFC 0026 P6-7 rung E: the two raw P4-D frame cases (p6_aggregate /
 // p6_collection) now pack input, invoke runv, and encode the output frame with
-// real differential agreement, so the census moved 14/7 -> 16/5. The five
+// real differential agreement, so the census moved 14/7 -> 16/5. The fix-forward
+// two-container overlap regression (p6_frame_two_containers) drives the generic
+// Node pack/runv/encode walker through TWO same-typed input containers with
+// distinct live elements and moved 16/5 -> 17/5. The five
 // remaining skips are the KR6.6 workflow-computation cases (if_let_e2e x2,
 // enum_variant_e2e, e2e_multi_agent x2): their packaging needs the deferred
 // in-module String construction and raw-P4-D/capability frame bridge (design
 // section 11), each manifest still declaring blocked_kr66 with its precise
 // reason.
-constexpr int kExpectedAgreed = 16;
+constexpr int kExpectedAgreed = 17;
 constexpr int kExpectedSkipped = 5;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
 // engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the
 // FB-3b node-only lane). A manifest edit that moves a comparable differential
 // case onto the node-only lane (dropping its evaluator reference) while adding
-// another comparable case would keep the 14/7 totals green; this exact-set pin
+// another comparable case would keep the 17/5 totals green; this exact-set pin
 // catches that. The pin moves deliberately when the KR6.8 evaluator surface
 // retires or a reviewed node-only case lands. Keep sorted; the runner compares
 // the sorted observed set against it.
@@ -354,8 +357,12 @@ int run_one(const CaseEntry &entry,
     const std::string label = stem + "/" + scenario.name;
     const WasmNodeObservationSkip declared_skip = manifest.engines.wasm.node_observation_skip;
 
-    // Produce first: a raw P4-D frame (P6-7 output-frame gate) has no canonical
-    // wire output to diff, so it skips before any engine reference is needed.
+    // Produce first. A p6-frame module carries its P4-D core-layout section;
+    // the Node host packs the canonical input into the fixed frame, drives
+    // runv, and encodes the output frame, so it produces a comparable
+    // observation just like every other emitted case below. Only cases that do
+    // not emit at all (the KR6.6 blocked lane) skip before an engine reference
+    // is needed.
     WasmProduceResult produced = produce_conformance_wasm(entry.loaded, scenario);
     if (!produced.ok) {
         // A case that does not emit here is a KR6.6/blocked skip, not a failure,

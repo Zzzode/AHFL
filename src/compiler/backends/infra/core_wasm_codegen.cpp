@@ -6495,6 +6495,419 @@ capabilities_of_reachable_fns(const CoreProgram &program,
     return out;
 }
 
+// The boundary table is a FIXED-EDGE TREE of value slots: a struct field or an
+// enum payload slot is a distinct, simultaneously-live position even when two
+// such positions hash-cons to one source layout id. A bounded CONTAINER reached
+// at one slot owns an 8-byte inline header and its own disjoint backing
+// placement; collapsing two same-typed container slots onto one placement would
+// alias their elements (design section 6.2: "Two simultaneously-live input
+// containers therefore never overlap"). We therefore:
+//   * unfold every FIXED aggregate slot that bears a container descendant into
+//     its own dense occurrence node (two `List<Int>(4)` fields become two dense
+//     container nodes, each with its own placement);
+//   * intern pure-data fixed subtrees (no container descendant) and every
+//     BACKING subtree (a container's element/map-value edges) by source id,
+//     since those nodes name no per-slot placement;
+//   * reject a container nested inside BACKING storage (a collection whose
+//     element/value is itself a container, or a backing aggregate bearing a
+//     container field): such headers would need a placement per capacity slot,
+//     which is outside the P6-7 rung-E frame lane and must never alias.
+struct FrameContainerOccurrence {
+    ir::core::CoreLayoutId dense_layout;
+    bool from_input{false};
+};
+
+class BoundaryTableBuilder {
+  public:
+    explicit BoundaryTableBuilder(const ir::core::CoreLayoutTable &source) : source_(source) {
+        shared_.assign(source_.layouts.size(), ir::core::CoreLayoutId{});
+        backing_.assign(source_.layouts.size(), ir::core::CoreLayoutId{});
+        shared_seen_.assign(source_.layouts.size(), false);
+        shared_pending_.assign(source_.layouts.size(), false);
+        backing_seen_.assign(source_.layouts.size(), false);
+        backing_pending_.assign(source_.layouts.size(), false);
+        dense_.target = source_.target;
+    }
+
+    // True when a FIXED-edge descent from `id` (struct fields, enum payload
+    // slots) reaches a bounded container. Container backing edges do not count:
+    // they open the separate backing realm.
+    [[nodiscard]] bool bears_fixed_container(ir::core::CoreLayoutId id) {
+        if (id.value >= source_.layouts.size()) {
+            return false;
+        }
+        const auto cached = bears_.find(id.value);
+        if (cached != bears_.end()) {
+            return cached->second;
+        }
+        if (bear_active_.contains(id.value)) {
+            return false; // defensive: fixed-edge graphs are acyclic
+        }
+        bear_active_.insert(id.value);
+        bool bears = false;
+        std::visit(
+            Overloaded{
+                [&](const ir::core::CoreLayoutStruct &shape) {
+                    for (const auto child : shape.field_layouts) {
+                        if (bears_fixed_container(child)) {
+                            bears = true;
+                        }
+                    }
+                },
+                [&](const ir::core::CoreLayoutEnum &shape) {
+                    for (const auto payload : shape.variant_payload_layouts) {
+                        if (bears_fixed_container(payload)) {
+                            bears = true;
+                        }
+                    }
+                },
+                [&](const ir::core::CoreLayoutContainer &) { bears = true; },
+                [](const auto &) {},
+            },
+            source_.layouts[id.value].shape);
+        bear_active_.erase(id.value);
+        bears_[id.value] = bears;
+        return bears;
+    }
+
+    // Emit a node reached through a FIXED frame slot (struct field / enum
+    // payload slot / a boundary root). A container here is a new per-SLOT
+    // occurrence with its own backing placement: two fixed slots that hash-cons
+    // to one source aggregate/container id are deliberately UNFOLDED into
+    // distinct dense nodes (design section 6.2 disjoint-placement rule).
+    // Children are emitted FIRST and the node appended last (post-order), so
+    // the dense vector never reallocates under a live reference to an entry.
+    ir::core::CoreLayoutId emit_fixed(ir::core::CoreLayoutId src, bool from_input) {
+        if (src.value >= source_.layouts.size()) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        if (std::holds_alternative<ir::core::CoreLayoutContainer>(
+                source_.layouts[src.value].shape)) {
+            return emit_container_occurrence(src, from_input);
+        }
+        if (!bears_fixed_container(src)) {
+            return emit_shared(src);
+        }
+        // Fixed aggregate inline graphs are acyclic (the producer layout
+        // verifier rejects inline-only cycles); an active edge nonetheless
+        // means a layout table we should never have received.
+        if (!fixed_active_.insert(src.value).second) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        ir::core::CoreLayout copy = source_.layouts[src.value];
+        const bool local_ok = rewrite_fixed(copy, src, from_input);
+        fixed_active_.erase(src.value);
+        if (!local_ok || failed_) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
+        dense_.layouts.push_back(std::move(copy));
+        return dense;
+    }
+
+    // Emit a node reached through a container's BACKING storage (element or
+    // map value). This realm never carries a live container header in the
+    // rung-E frame lane, so it is interned by source id and fails closed if a
+    // container (or a container-bearing aggregate) appears.
+    ir::core::CoreLayoutId emit_backing(ir::core::CoreLayoutId src) {
+        if (src.value >= source_.layouts.size()) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        if (std::holds_alternative<ir::core::CoreLayoutContainer>(
+                source_.layouts[src.value].shape) ||
+            bears_fixed_container(src)) {
+            nested_container_ = true;
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        if (backing_seen_[src.value]) {
+            return backing_[src.value];
+        }
+        if (backing_pending_[src.value]) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        backing_pending_[src.value] = true;
+        ir::core::CoreLayout copy = source_.layouts[src.value];
+        if (!rewrite_backing(copy, src)) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
+        backing_[src.value] = dense;
+        backing_seen_[src.value] = true;
+        dense_.layouts.push_back(std::move(copy));
+        backing_pending_[src.value] = false;
+        return dense;
+    }
+
+    [[nodiscard]] bool failed() const noexcept { return failed_; }
+    [[nodiscard]] bool nested_container() const noexcept { return nested_container_; }
+    [[nodiscard]] const std::vector<FrameContainerOccurrence> &occurrences() const noexcept {
+        return occurrences_;
+    }
+    [[nodiscard]] ir::core::CoreLayoutTable take_table() { return std::move(dense_); }
+
+  private:
+    const ir::core::CoreLayoutTable &source_;
+    ir::core::CoreLayoutTable dense_;
+    // Active fixed-aggregate source ids on the current unfold path (cycle
+    // termination only; it never dedups two distinct edge occurrences).
+    std::unordered_set<std::uint32_t> fixed_active_;
+    // Pure-data fixed subtree interning.
+    std::vector<ir::core::CoreLayoutId> shared_;
+    std::vector<bool> shared_pending_;
+    std::vector<bool> shared_seen_;
+    // Backing-realm interning.
+    std::vector<ir::core::CoreLayoutId> backing_;
+    std::vector<bool> backing_pending_;
+    std::vector<bool> backing_seen_;
+    std::unordered_map<std::uint32_t, bool> bears_;
+    std::unordered_set<std::uint32_t> bear_active_;
+    std::vector<FrameContainerOccurrence> occurrences_;
+    bool failed_{false};
+    bool nested_container_{false};
+
+    ir::core::CoreLayoutId emit_container_occurrence(ir::core::CoreLayoutId src,
+                                                     bool from_input) {
+        const auto &source_container =
+            std::get<ir::core::CoreLayoutContainer>(source_.layouts[src.value].shape);
+        // Backing children first (post-order).
+        const ir::core::CoreLayoutId element = emit_backing(source_container.element);
+        std::optional<ir::core::CoreLayoutId> value;
+        if (source_container.value.has_value()) {
+            value = emit_backing(*source_container.value);
+        }
+        if (failed_) {
+            return ir::core::CoreLayoutId{};
+        }
+        ir::core::CoreLayout copy = source_.layouts[src.value];
+        auto &container = std::get<ir::core::CoreLayoutContainer>(copy.shape);
+        container.element = element;
+        container.value = value;
+        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
+        dense_.layouts.push_back(std::move(copy));
+        // Recorded in boundary DFS order: backing nodes are never occurrences.
+        occurrences_.push_back(FrameContainerOccurrence{dense, from_input});
+        return dense;
+    }
+
+    // Rewrite the fixed-edge children of a LOCAL copy (no dense_ reference
+    // held across the recursive appends).
+    [[nodiscard]] bool rewrite_fixed(ir::core::CoreLayout &dense,
+                                     ir::core::CoreLayoutId src,
+                                     bool from_input) {
+        std::visit(
+            Overloaded{
+                [&](ir::core::CoreLayoutStruct &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
+                        shape.field_layouts[i] =
+                            emit_fixed(source_shape.field_layouts[i], from_input);
+                    }
+                },
+                [&](ir::core::CoreLayoutEnum &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
+                        shape.variant_payload_layouts[i] =
+                            emit_fixed(source_shape.variant_payload_layouts[i], from_input);
+                    }
+                },
+                [&](ir::core::CoreLayoutClosure &shape) {
+                    if (shape.environment.has_value()) {
+                        shape.environment = emit_backing(*shape.environment);
+                    }
+                },
+                [](auto &) {},
+            },
+            dense.shape);
+        return !failed_;
+    }
+
+    // Rewrite a backing-realm LOCAL copy's children (struct/enum fields stay in
+    // the backing realm; a container there has already been rejected up front).
+    [[nodiscard]] bool rewrite_backing(ir::core::CoreLayout &dense,
+                                       ir::core::CoreLayoutId src) {
+        std::visit(
+            Overloaded{
+                [&](ir::core::CoreLayoutStruct &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
+                        shape.field_layouts[i] = emit_backing(source_shape.field_layouts[i]);
+                    }
+                },
+                [&](ir::core::CoreLayoutEnum &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
+                        shape.variant_payload_layouts[i] =
+                            emit_backing(source_shape.variant_payload_layouts[i]);
+                    }
+                },
+                [&](ir::core::CoreLayoutClosure &shape) {
+                    if (shape.environment.has_value()) {
+                        shape.environment = emit_backing(*shape.environment);
+                    }
+                },
+                [](auto &) {},
+            },
+            dense.shape);
+        return !failed_;
+    }
+
+    // Intern a pure-data (container-free) fixed subtree by source id.
+    ir::core::CoreLayoutId emit_shared(ir::core::CoreLayoutId src) {
+        if (shared_seen_[src.value]) {
+            return shared_[src.value];
+        }
+        if (shared_pending_[src.value]) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        shared_pending_[src.value] = true;
+        ir::core::CoreLayout copy = source_.layouts[src.value];
+        if (!rewrite_shared(copy, src)) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
+        shared_[src.value] = dense;
+        shared_seen_[src.value] = true;
+        dense_.layouts.push_back(std::move(copy));
+        shared_pending_[src.value] = false;
+        return dense;
+    }
+
+    [[nodiscard]] bool rewrite_shared(ir::core::CoreLayout &dense,
+                                      ir::core::CoreLayoutId src) {
+        std::visit(
+            Overloaded{
+                [&](ir::core::CoreLayoutStruct &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
+                        shape.field_layouts[i] = emit_shared(source_shape.field_layouts[i]);
+                    }
+                },
+                [&](ir::core::CoreLayoutEnum &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
+                        shape.variant_payload_layouts[i] =
+                            emit_shared(source_shape.variant_payload_layouts[i]);
+                    }
+                },
+                [&](ir::core::CoreLayoutContainer &) {
+                    // A "pure" node never reaches a container via fixed edges.
+                    failed_ = true;
+                },
+                [&](ir::core::CoreLayoutClosure &shape) {
+                    if (shape.environment.has_value()) {
+                        shape.environment = emit_backing(*shape.environment);
+                    }
+                },
+                [](auto &) {},
+            },
+            dense.shape);
+        return !failed_;
+    }
+};
+
+// Why an input-reached container placement can fail.
+enum class FramePlacementFailure {
+    InvalidBacking,
+    PageOverflow,
+};
+
+struct AssignedFramePlacements {
+    std::vector<ir::core::CoreFrameBackingPlacement> placements;
+    std::uint32_t payload_arena_base{0};
+};
+
+// Design section 6.2 sum-of-prior-backing rule, the single SSOT for both the
+// emitted `ahfl.core-layout.v1` placements and the construct/closure heap
+// relocation: every INPUT-REACHED fixed container occurrence, in boundary DFS
+// order, receives its own placement at
+// align_up(kP6CollectionBackingBase + sum of prior aligned backing extents,
+// 8), and the frame-payload arena begins at the aligned high-water. Two
+// simultaneously-live input containers therefore never share a base. Failure
+// distinguishes an invalid (zero) backing layout from the fixed-page overflow.
+[[nodiscard]] std::optional<AssignedFramePlacements>
+assign_input_container_placements(const ir::core::CoreLayoutTable &dense,
+                                  const std::vector<FrameContainerOccurrence> &occurrences,
+                                  FramePlacementFailure &failure) {
+    AssignedFramePlacements assigned;
+    std::uint64_t cursor = ir::core::kP6CollectionBackingBase;
+    std::uint32_t edge = 0;
+    for (const FrameContainerOccurrence &occurrence : occurrences) {
+        if (!occurrence.from_input) {
+            continue;
+        }
+        const auto &container = std::get<ir::core::CoreLayoutContainer>(
+            dense.layouts[occurrence.dense_layout.value].shape);
+        if (container.backing_size == 0) {
+            failure = FramePlacementFailure::InvalidBacking;
+            return std::nullopt;
+        }
+        const std::uint64_t extent =
+            (static_cast<std::uint64_t>(container.backing_size) + 7u) & ~std::uint64_t{7u};
+        if (cursor + extent > ir::core::kCoreWasmFixedLinearMemoryCapacityBytes) {
+            failure = FramePlacementFailure::PageOverflow;
+            return std::nullopt;
+        }
+        assigned.placements.push_back(ir::core::CoreFrameBackingPlacement{
+            edge,
+            occurrence.dense_layout,
+            static_cast<std::uint32_t>(cursor),
+            static_cast<std::uint32_t>(extent),
+        });
+        cursor += extent;
+        ++edge;
+    }
+    assigned.payload_arena_base =
+        static_cast<std::uint32_t>((cursor + 7u) & ~std::uint64_t{7u});
+    return assigned;
+}
+
+// Diagnostic-free design-6.2 input backing high-water (the frame-payload arena
+// base) for an agent's input boundary: the aligned base just past every
+// disjoint per-edge input-container placement. The per-activation
+// construct/closure heap uses this same number as a floor so it can never be
+// relocated inside a packed container's backing (design section 6.2). Returns
+// the backing region base for a boundary that does not finalize into the P6
+// frame lane (no P6 value/layout, nested containers, fixed-page overflow);
+// build_frame_section_plan remains the authority that reports those conditions
+// as diagnostics at frame eligibility time.
+[[nodiscard]] std::uint32_t
+input_frame_backing_high_water(const CoreProgram &program,
+                               const ir::core::CoreLayoutTable &layouts,
+                               CoreTypeId input_nominal) {
+    const auto input_vt = p6_nominal_value_type(program, input_nominal);
+    if (!input_vt.has_value() || input_vt->value >= layouts.value_layouts.size()) {
+        return ir::core::kP6CollectionBackingBase;
+    }
+    BoundaryTableBuilder builder(layouts);
+    (void)builder.emit_fixed(layouts.value_layouts[input_vt->value], /*from_input=*/true);
+    if (builder.failed()) {
+        return ir::core::kP6CollectionBackingBase;
+    }
+    const ir::core::CoreLayoutTable dense = builder.take_table();
+    FramePlacementFailure failure = FramePlacementFailure::InvalidBacking;
+    const auto assigned =
+        assign_input_container_placements(dense, builder.occurrences(), failure);
+    if (!assigned.has_value()) {
+        return ir::core::kP6CollectionBackingBase;
+    }
+    return assigned->payload_arena_base;
+}
+
 [[nodiscard]] bool compile_reachable_fn_bodies(
     const CoreProgram &program,
     const ir::core::CoreLayoutTable &layouts,
@@ -6509,6 +6922,7 @@ capabilities_of_reachable_fns(const CoreProgram &program,
     std::vector<CoreFnId> &closure_table_out,
     std::vector<ClosureCallType> &closure_signatures_out,
     std::uint32_t &entry_closure_env_bytes_out,
+    std::optional<CoreTypeId> frame_input_nominal,
     const std::vector<CoreCapabilityId> *imports = nullptr) {
     construct_heap_enabled_out = false;
     construct_heap_base_out = ir::core::kNodeEventLogBase;
@@ -6877,25 +7291,54 @@ capabilities_of_reachable_fns(const CoreProgram &program,
     }
     std::uint32_t construct_heap_base = ir::core::kNodeEventLogBase;
     if (construct_heap_enabled) {
+        // Design section 6.2: the heap base must also clear the packed input
+        // containers' DISJOINT per-edge backing placements and the frame-payload
+        // arena, because input containers stay live for the whole run. The floor
+        // is the same sum-of-prior-backing high-water the emitted
+        // ahfl.core-layout.v1 section carries (single SSOT); the legacy
+        // max(base + backing_size) shortcut would relocate the heap into a
+        // second simultaneously-live input container's backing. The predicate
+        // mirrors frame-lane eligibility in emit_core_wasm: no capability
+        // import, no outlined fn, no closure, and an entry handler that
+        // projects the raw input frame. At rung E that predicate implies the
+        // heap stays disabled (frame agents carry no fns/closures), so this is
+        // byte-neutral today and becomes load-bearing if a frame agent is ever
+        // allowed outlined-fn constructs.
+        const bool frame_packed_input =
+            (imports == nullptr || imports->empty()) && planned_fns.empty() &&
+            closure_table_out.empty() && frame_input_nominal.has_value() &&
+            std::any_of(entry_builders.begin(),
+                        entry_builders.end(),
+                        [](const P6ComputationHandlerBuilder *builder) {
+                            return builder != nullptr && builder->reads_raw_input_frame();
+                        });
         std::uint64_t backing_high = ir::core::kP6CollectionBackingBase;
-        const auto account_storage = [&](const CoreBodyStorage &storage) {
-            for (const CoreValueTypeId vt : storage.value_types) {
-                const auto *container = p6_container_layout(program, layouts, vt);
-                if (container == nullptr) {
-                    continue;
+        if (frame_packed_input) {
+            backing_high =
+                input_frame_backing_high_water(program, layouts, *frame_input_nominal);
+        } else {
+            // Legacy lane (identity/capability/FB): every container layout
+            // names the same region-relative base, so the high-water is the
+            // max(base + backing_size) over the storages reachable in a step.
+            const auto account_storage = [&](const CoreBodyStorage &storage) {
+                for (const CoreValueTypeId vt : storage.value_types) {
+                    const auto *container = p6_container_layout(program, layouts, vt);
+                    if (container == nullptr) {
+                        continue;
+                    }
+                    backing_high = std::max<std::uint64_t>(
+                        backing_high,
+                        ir::core::kP6CollectionBackingBase + container->backing_size);
                 }
-                backing_high = std::max<std::uint64_t>(
-                    backing_high,
-                    ir::core::kP6CollectionBackingBase + container->backing_size);
+            };
+            for (const CoreBodyStorage *storage : entry_storages) {
+                if (storage != nullptr) {
+                    account_storage(*storage);
+                }
             }
-        };
-        for (const CoreBodyStorage *storage : entry_storages) {
-            if (storage != nullptr) {
-                account_storage(*storage);
+            for (const PlannedFn &planned : planned_fns) {
+                account_storage(program.fns[planned.id.value].storage);
             }
-        }
-        for (const PlannedFn &planned : planned_fns) {
-            account_storage(program.fns[planned.id.value].storage);
         }
         construct_heap_base =
             static_cast<std::uint32_t>((backing_high + 7u) & ~static_cast<std::uint64_t>(7u));
@@ -7413,6 +7856,7 @@ capabilities_of_reachable_fns(const CoreProgram &program,
                                      plan.closure_table,
                                      plan.closure_signatures,
                                      entry_closure_env_bytes,
+                                     agent.input_type,
                                      &plan.imports)) {
         return std::nullopt;
     }
@@ -9469,334 +9913,6 @@ frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
     return p6_nominal_value_type(program, nominal);
 }
 
-// The boundary table is a FIXED-EDGE TREE of value slots: a struct field or an
-// enum payload slot is a distinct, simultaneously-live position even when two
-// such positions hash-cons to one source layout id. A bounded CONTAINER reached
-// at one slot owns an 8-byte inline header and its own disjoint backing
-// placement; collapsing two same-typed container slots onto one placement would
-// alias their elements (design section 6.2: "Two simultaneously-live input
-// containers therefore never overlap"). We therefore:
-//   * unfold every FIXED aggregate slot that bears a container descendant into
-//     its own dense occurrence node (two `List<Int>(4)` fields become two dense
-//     container nodes, each with its own placement);
-//   * intern pure-data fixed subtrees (no container descendant) and every
-//     BACKING subtree (a container's element/map-value edges) by source id,
-//     since those nodes name no per-slot placement;
-//   * reject a container nested inside BACKING storage (a collection whose
-//     element/value is itself a container, or a backing aggregate bearing a
-//     container field): such headers would need a placement per capacity slot,
-//     which is outside the P6-7 rung-E frame lane and must never alias.
-namespace {
-
-struct FrameContainerOccurrence {
-    ir::core::CoreLayoutId dense_layout;
-    bool from_input{false};
-};
-
-class BoundaryTableBuilder {
-  public:
-    explicit BoundaryTableBuilder(const ir::core::CoreLayoutTable &source) : source_(source) {
-        shared_.assign(source_.layouts.size(), ir::core::CoreLayoutId{});
-        backing_.assign(source_.layouts.size(), ir::core::CoreLayoutId{});
-        shared_seen_.assign(source_.layouts.size(), false);
-        shared_pending_.assign(source_.layouts.size(), false);
-        backing_seen_.assign(source_.layouts.size(), false);
-        backing_pending_.assign(source_.layouts.size(), false);
-        dense_.target = source_.target;
-    }
-
-    // True when a FIXED-edge descent from `id` (struct fields, enum payload
-    // slots) reaches a bounded container. Container backing edges do not count:
-    // they open the separate backing realm.
-    [[nodiscard]] bool bears_fixed_container(ir::core::CoreLayoutId id) {
-        if (id.value >= source_.layouts.size()) {
-            return false;
-        }
-        const auto cached = bears_.find(id.value);
-        if (cached != bears_.end()) {
-            return cached->second;
-        }
-        if (bear_active_.contains(id.value)) {
-            return false; // defensive: fixed-edge graphs are acyclic
-        }
-        bear_active_.insert(id.value);
-        bool bears = false;
-        std::visit(
-            Overloaded{
-                [&](const ir::core::CoreLayoutStruct &shape) {
-                    for (const auto child : shape.field_layouts) {
-                        if (bears_fixed_container(child)) {
-                            bears = true;
-                        }
-                    }
-                },
-                [&](const ir::core::CoreLayoutEnum &shape) {
-                    for (const auto payload : shape.variant_payload_layouts) {
-                        if (bears_fixed_container(payload)) {
-                            bears = true;
-                        }
-                    }
-                },
-                [&](const ir::core::CoreLayoutContainer &) { bears = true; },
-                [](const auto &) {},
-            },
-            source_.layouts[id.value].shape);
-        bear_active_.erase(id.value);
-        bears_[id.value] = bears;
-        return bears;
-    }
-
-    // Emit a node reached through a FIXED frame slot (struct field / enum
-    // payload slot / a boundary root). A container here is a new per-SLOT
-    // occurrence with its own backing placement: two fixed slots that hash-cons
-    // to one source aggregate/container id are deliberately UNFOLDED into
-    // distinct dense nodes (design section 6.2 disjoint-placement rule).
-    // Children are emitted FIRST and the node appended last (post-order), so
-    // the dense vector never reallocates under a live reference to an entry.
-    ir::core::CoreLayoutId emit_fixed(ir::core::CoreLayoutId src, bool from_input) {
-        if (src.value >= source_.layouts.size()) {
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        if (std::holds_alternative<ir::core::CoreLayoutContainer>(
-                source_.layouts[src.value].shape)) {
-            return emit_container_occurrence(src, from_input);
-        }
-        if (!bears_fixed_container(src)) {
-            return emit_shared(src);
-        }
-        // Fixed aggregate inline graphs are acyclic (the producer layout
-        // verifier rejects inline-only cycles); an active edge nonetheless
-        // means a layout table we should never have received.
-        if (!fixed_active_.insert(src.value).second) {
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        ir::core::CoreLayout copy = source_.layouts[src.value];
-        const bool local_ok = rewrite_fixed(copy, src, from_input);
-        fixed_active_.erase(src.value);
-        if (!local_ok || failed_) {
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
-        dense_.layouts.push_back(std::move(copy));
-        return dense;
-    }
-
-    // Emit a node reached through a container's BACKING storage (element or
-    // map value). This realm never carries a live container header in the
-    // rung-E frame lane, so it is interned by source id and fails closed if a
-    // container (or a container-bearing aggregate) appears.
-    ir::core::CoreLayoutId emit_backing(ir::core::CoreLayoutId src) {
-        if (src.value >= source_.layouts.size()) {
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        if (std::holds_alternative<ir::core::CoreLayoutContainer>(
-                source_.layouts[src.value].shape) ||
-            bears_fixed_container(src)) {
-            nested_container_ = true;
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        if (backing_seen_[src.value]) {
-            return backing_[src.value];
-        }
-        if (backing_pending_[src.value]) {
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        backing_pending_[src.value] = true;
-        ir::core::CoreLayout copy = source_.layouts[src.value];
-        if (!rewrite_backing(copy, src)) {
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
-        backing_[src.value] = dense;
-        backing_seen_[src.value] = true;
-        dense_.layouts.push_back(std::move(copy));
-        backing_pending_[src.value] = false;
-        return dense;
-    }
-
-    [[nodiscard]] bool failed() const noexcept { return failed_; }
-    [[nodiscard]] bool nested_container() const noexcept { return nested_container_; }
-    [[nodiscard]] const std::vector<FrameContainerOccurrence> &occurrences() const noexcept {
-        return occurrences_;
-    }
-    [[nodiscard]] ir::core::CoreLayoutTable take_table() { return std::move(dense_); }
-
-  private:
-    const ir::core::CoreLayoutTable &source_;
-    ir::core::CoreLayoutTable dense_;
-    // Active fixed-aggregate source ids on the current unfold path (cycle
-    // termination only; it never dedups two distinct edge occurrences).
-    std::unordered_set<std::uint32_t> fixed_active_;
-    // Pure-data fixed subtree interning.
-    std::vector<ir::core::CoreLayoutId> shared_;
-    std::vector<bool> shared_pending_;
-    std::vector<bool> shared_seen_;
-    // Backing-realm interning.
-    std::vector<ir::core::CoreLayoutId> backing_;
-    std::vector<bool> backing_pending_;
-    std::vector<bool> backing_seen_;
-    std::unordered_map<std::uint32_t, bool> bears_;
-    std::unordered_set<std::uint32_t> bear_active_;
-    std::vector<FrameContainerOccurrence> occurrences_;
-    bool failed_{false};
-    bool nested_container_{false};
-
-    ir::core::CoreLayoutId emit_container_occurrence(ir::core::CoreLayoutId src,
-                                                     bool from_input) {
-        const auto &source_container =
-            std::get<ir::core::CoreLayoutContainer>(source_.layouts[src.value].shape);
-        // Backing children first (post-order).
-        const ir::core::CoreLayoutId element = emit_backing(source_container.element);
-        std::optional<ir::core::CoreLayoutId> value;
-        if (source_container.value.has_value()) {
-            value = emit_backing(*source_container.value);
-        }
-        if (failed_) {
-            return ir::core::CoreLayoutId{};
-        }
-        ir::core::CoreLayout copy = source_.layouts[src.value];
-        auto &container = std::get<ir::core::CoreLayoutContainer>(copy.shape);
-        container.element = element;
-        container.value = value;
-        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
-        dense_.layouts.push_back(std::move(copy));
-        // Recorded in boundary DFS order: backing nodes are never occurrences.
-        occurrences_.push_back(FrameContainerOccurrence{dense, from_input});
-        return dense;
-    }
-
-    // Rewrite the fixed-edge children of a LOCAL copy (no dense_ reference
-    // held across the recursive appends).
-    [[nodiscard]] bool rewrite_fixed(ir::core::CoreLayout &dense,
-                                     ir::core::CoreLayoutId src,
-                                     bool from_input) {
-        std::visit(
-            Overloaded{
-                [&](ir::core::CoreLayoutStruct &shape) {
-                    const auto &source_shape =
-                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
-                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
-                        shape.field_layouts[i] =
-                            emit_fixed(source_shape.field_layouts[i], from_input);
-                    }
-                },
-                [&](ir::core::CoreLayoutEnum &shape) {
-                    const auto &source_shape =
-                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
-                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
-                        shape.variant_payload_layouts[i] =
-                            emit_fixed(source_shape.variant_payload_layouts[i], from_input);
-                    }
-                },
-                [&](ir::core::CoreLayoutClosure &shape) {
-                    if (shape.environment.has_value()) {
-                        shape.environment = emit_backing(*shape.environment);
-                    }
-                },
-                [](auto &) {},
-            },
-            dense.shape);
-        return !failed_;
-    }
-
-    // Rewrite a backing-realm LOCAL copy's children (struct/enum fields stay in
-    // the backing realm; a container there has already been rejected up front).
-    [[nodiscard]] bool rewrite_backing(ir::core::CoreLayout &dense,
-                                       ir::core::CoreLayoutId src) {
-        std::visit(
-            Overloaded{
-                [&](ir::core::CoreLayoutStruct &shape) {
-                    const auto &source_shape =
-                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
-                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
-                        shape.field_layouts[i] = emit_backing(source_shape.field_layouts[i]);
-                    }
-                },
-                [&](ir::core::CoreLayoutEnum &shape) {
-                    const auto &source_shape =
-                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
-                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
-                        shape.variant_payload_layouts[i] =
-                            emit_backing(source_shape.variant_payload_layouts[i]);
-                    }
-                },
-                [&](ir::core::CoreLayoutClosure &shape) {
-                    if (shape.environment.has_value()) {
-                        shape.environment = emit_backing(*shape.environment);
-                    }
-                },
-                [](auto &) {},
-            },
-            dense.shape);
-        return !failed_;
-    }
-
-    // Intern a pure-data (container-free) fixed subtree by source id.
-    ir::core::CoreLayoutId emit_shared(ir::core::CoreLayoutId src) {
-        if (shared_seen_[src.value]) {
-            return shared_[src.value];
-        }
-        if (shared_pending_[src.value]) {
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        shared_pending_[src.value] = true;
-        ir::core::CoreLayout copy = source_.layouts[src.value];
-        if (!rewrite_shared(copy, src)) {
-            failed_ = true;
-            return ir::core::CoreLayoutId{};
-        }
-        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
-        shared_[src.value] = dense;
-        shared_seen_[src.value] = true;
-        dense_.layouts.push_back(std::move(copy));
-        shared_pending_[src.value] = false;
-        return dense;
-    }
-
-    [[nodiscard]] bool rewrite_shared(ir::core::CoreLayout &dense,
-                                      ir::core::CoreLayoutId src) {
-        std::visit(
-            Overloaded{
-                [&](ir::core::CoreLayoutStruct &shape) {
-                    const auto &source_shape =
-                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
-                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
-                        shape.field_layouts[i] = emit_shared(source_shape.field_layouts[i]);
-                    }
-                },
-                [&](ir::core::CoreLayoutEnum &shape) {
-                    const auto &source_shape =
-                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
-                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
-                        shape.variant_payload_layouts[i] =
-                            emit_shared(source_shape.variant_payload_layouts[i]);
-                    }
-                },
-                [&](ir::core::CoreLayoutContainer &) {
-                    // A "pure" node never reaches a container via fixed edges.
-                    failed_ = true;
-                },
-                [&](ir::core::CoreLayoutClosure &shape) {
-                    if (shape.environment.has_value()) {
-                        shape.environment = emit_backing(*shape.environment);
-                    }
-                },
-                [](auto &) {},
-            },
-            dense.shape);
-        return !failed_;
-    }
-};
-
-} // namespace
 
 [[nodiscard]] std::optional<FrameSectionPlan>
 build_frame_section_plan(const CoreProgram &program,
@@ -9878,36 +9994,25 @@ build_frame_section_plan(const CoreProgram &program,
     plan.output_layout = output_dense;
 
     // Every INPUT-REACHED fixed container occurrence, in boundary DFS order,
-    // gets a DISJOINT sum-of-prior-backing placement. Output-only occurrences
-    // (a distinct computed-output nominal) name no input placement at rung E.
-    std::uint64_t cursor = ir::core::kP6CollectionBackingBase;
-    std::uint32_t edge = 0;
-    for (const FrameContainerOccurrence &occurrence : builder.occurrences()) {
-        if (!occurrence.from_input) {
-            continue;
-        }
-        const auto &container = std::get<ir::core::CoreLayoutContainer>(
-            plan.table.layouts[occurrence.dense_layout.value].shape);
-        if (container.backing_size == 0) {
+    // gets a DISJOINT sum-of-prior-backing placement (the same SSOT the
+    // construct-heap relocation uses). Output-only occurrences (a distinct
+    // computed-output nominal) name no input placement at rung E.
+    FramePlacementFailure placement_failure = FramePlacementFailure::InvalidBacking;
+    const auto assigned =
+        assign_input_container_placements(plan.table, builder.occurrences(), placement_failure);
+    if (!assigned.has_value()) {
+        if (placement_failure == FramePlacementFailure::InvalidBacking) {
             add_diag(result, core_wasm_diag::kInvalidLayout,
                      "a P6-frame input container has an invalid backing layout");
-            return std::nullopt;
-        }
-        const std::uint64_t extent =
-            (container.backing_size + 7u) & ~std::uint64_t{7u};
-        if (cursor + extent > ir::core::kCoreWasmFixedLinearMemoryCapacityBytes) {
+        } else {
             add_diag(result,
                      core_wasm_diag::kResourceExhausted,
                      "P6 frame backing placements exceed the fixed 64 KiB linear-memory page");
-            return std::nullopt;
         }
-        plan.placements.push_back(ir::core::CoreFrameBackingPlacement{
-            edge, occurrence.dense_layout, static_cast<std::uint32_t>(cursor),
-            static_cast<std::uint32_t>(extent)});
-        cursor += extent;
-        ++edge;
+        return std::nullopt;
     }
-    plan.payload_arena_base = static_cast<std::uint32_t>((cursor + 7u) & ~std::uint64_t{7u});
+    plan.placements = assigned->placements;
+    plan.payload_arena_base = assigned->payload_arena_base;
     plan.payload_arena_capacity = 0; // rung C packs String payloads into this arena
     return plan;
 }

@@ -202,6 +202,13 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          CoreWasmFrameContract::P6Frame},
         {"p6_collection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", "",
          CoreWasmFrameContract::P6Frame},
+        // Two same-typed input lists: the per-edge placement regression is a
+        // p6-frame module like p6_collection (two disjoint backing placements).
+        {"p6_frame_two_containers.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
         // RFC 0026 FB-3b: a higher-order lambda / call_indirect program emits
         // cleanly on the orchestration lane (funcref table + closure env). Its
         // node-only observation (no evaluator reference until KR6.8) is a

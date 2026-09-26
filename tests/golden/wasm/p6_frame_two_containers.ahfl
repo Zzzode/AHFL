@@ -2,12 +2,22 @@
 // of the SAME value type reached from the input boundary. Because the two
 // fields hash-cons to one CoreLayout container node, the frame-section planner
 // must still assign each fixed-edge occurrence its OWN DISJOINT backing
-// placement (design section 6.2). Collapsing them onto a single placement would
-// make field b's packed elements overwrite field a's. The host admission test
-// asserts the emitted section carries two placements and the descriptor names
-// distinct container layout ids. The final is the literal identity
-// `return input;`, like p6_collection; this fixture is not a conformance census
-// case (it exists to pin the per-edge placement rule at the emitter).
+// placement (design section 6.2). Collapsing them onto a single placement
+// would make field b's packed elements overwrite field a's.
+//
+// The emitter KAT asserts the section carries two placements
+// (tests/unit/runtime/engine/core_wasm_frame_module.cpp), and the Node
+// differential packs DISTINCT live elements into both lists and round-trips
+// them through the generic pack/runv/encode walker
+// (tests/conformance/cases/p6_frame_two_containers.case.json): a single shared
+// placement would make the walker read a's backing for b and the observed
+// output would collapse to `[90, 1]` (last-write-wins). Each guard below reads
+// through BOTH list headers, so a wrong (aliased) backing also changes the
+// branch the module takes.
+//
+// The final is the literal identity `return input;`, like p6_collection; the
+// probe compiles one file with no sysroot, so the well-known collection
+// nominal is declared here at its canonical std path.
 module std::collections;
 
 pub struct List<T> { }
@@ -30,11 +40,19 @@ pub agent TwoContainersAgent {
 
 flow for TwoContainersAgent {
     state Go {
+        // Two containers of the SAME interned layout. Their live elements are
+        // deliberately different AND ordered differently (a: 90 > 1; b: 2 <
+        // 8), so aliasing the two backing placements onto one base cannot
+        // satisfy both comparisons.
         let xs: List<Int>(4) = input.a;
         let ys: List<Int>(4) = input.b;
-        let x0: Int = xs[0];
-        let y0: Int = ys[0];
-        if (x0 == y0) {
+        let n_a: Int = xs.length;
+        let n_b: Int = ys.length;
+        let a0: Int = xs[0];
+        let a1: Int = xs[1];
+        let b0: Int = ys[0];
+        let b1: Int = ys[1];
+        if (n_a == 2 && n_b == 2 && a0 > a1 && b0 < b1) {
             goto Done;
         } else {
             goto Done;

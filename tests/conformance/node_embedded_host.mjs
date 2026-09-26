@@ -342,7 +342,24 @@ function packValue(e, lane, W, L, value, wId, lId, addr, backing, arena) {
       if (typeof value !== "number" || !Number.isInteger(value)) {
         frameFail("int slot got a non-integer value");
       }
-      if (l.t === "scalar" && l.repr === "i64") writeI64(e, addr, value);
+      // Fail closed instead of relying on writeI32's `value | 0`: a JSON value
+      // the descriptor's schema bounds or the physical i32 word cannot hold
+      // would otherwise be silently truncated and the module would branch on a
+      // different word (design section 3.4 fail-closed family).
+      if (Math.abs(value) > Number.MAX_SAFE_INTEGER) {
+        frameFail("int value exceeds the JavaScript exact-integer domain");
+      }
+      const wideInt = l.t === "scalar" && l.repr === "i64";
+      if (w.lo !== undefined && value < Number(w.lo)) {
+        frameFail("int value is below the schema lower bound");
+      }
+      if (w.hi !== undefined && value > Number(w.hi)) {
+        frameFail("int value is above the schema upper bound");
+      }
+      if (!wideInt && (value < -2147483648 || value > 2147483647)) {
+        frameFail("narrow int value does not fit its physical i32 word (refusing truncation)");
+      }
+      if (wideInt) writeI64(e, addr, value);
       else writeI32(e, addr, value);
       return;
     case "float":
@@ -356,6 +373,12 @@ function packValue(e, lane, W, L, value, wId, lId, addr, backing, arena) {
     case "string": {
       if (typeof value !== "string") frameFail("string slot got a non-string value");
       const bytes = new TextEncoder().encode(value);
+      if (w.lo !== undefined && bytes.length < Number(w.lo)) {
+        frameFail("string payload is shorter than the schema length lower bound");
+      }
+      if (w.hi !== undefined && bytes.length > Number(w.hi)) {
+        frameFail("string payload exceeds the schema length upper bound");
+      }
       if (arena.cursor + bytes.length > lane.payload_arena_base + lane.payload_arena_capacity) {
         frameFail("frame-payload arena exhausted");
       }
@@ -468,8 +491,11 @@ function packSlots(e, lane, W, L, source, wireSlots, payloadLayout, payloadAddr,
   }
 }
 
-// Read a packed frame back to a JSON-friendly JS value.
-function readValue(e, W, L, wId, lId, addr, backing) {
+// Read a packed frame back to a JSON-friendly JS value. `lane` supplies the
+// frame-payload arena span: a module-written PtrLen is untrusted evidence, so a
+// string payload must name that exact region (and satisfy the schema length
+// bounds), never an arbitrary in-page address (design sections 3.2/3.4).
+function readValue(e, lane, W, L, wId, lId, addr, backing) {
   const w = W[wId];
   const l = L[lId];
   if (w === undefined || l === undefined) frameFail("read node id out of range");
@@ -481,15 +507,28 @@ function readValue(e, W, L, wId, lId, addr, backing) {
       if (word !== 0 && word !== 1) frameFail("bool word is not in {0,1}");
       return word === 1;
     }
-    case "int":
+    case "int": {
+      let word;
       if (l.t === "scalar" && l.repr === "i64") {
         const big = readI64(e, addr);
         if (big > BigInt(Number.MAX_SAFE_INTEGER) || big < BigInt(Number.MIN_SAFE_INTEGER)) {
           frameFail("i64 frame value is not exactly representable as a JS number");
         }
-        return Number(big);
+        word = Number(big);
+      } else {
+        word = readI32(e, addr);
       }
-      return readI32(e, addr);
+      // The module's bytes are untrusted evidence: a word outside the schema's
+      // declared Int bounds is a tampered/inconsistent frame, not an accepted
+      // value (design section 3.4).
+      if (w.lo !== undefined && word < Number(w.lo)) {
+        frameFail("frame int word is below the schema lower bound");
+      }
+      if (w.hi !== undefined && word > Number(w.hi)) {
+        frameFail("frame int word is above the schema upper bound");
+      }
+      return word;
+    }
     case "float":
     case "decimal":
     case "duration":
@@ -502,6 +541,19 @@ function readValue(e, W, L, wId, lId, addr, backing) {
       const ptr = readI32(e, addr + 0);
       const len = readI32(e, addr + 4);
       if (len < 0) frameFail("string length is negative");
+      if (w.lo !== undefined && len < Number(w.lo)) {
+        frameFail("frame string length is below the schema length lower bound");
+      }
+      if (w.hi !== undefined && len > Number(w.hi)) {
+        frameFail("frame string length exceeds the schema length upper bound");
+      }
+      // Region membership: the PtrLen the module wrote must name the packed
+      // frame-payload arena exactly, never any other in-page address.
+      const arenaLo = Number(lane.payload_arena_base);
+      const arenaHi = arenaLo + Number(lane.payload_arena_capacity);
+      if (ptr < arenaLo || len > arenaHi - ptr) {
+        frameFail("frame string payload lies outside the frame-payload arena");
+      }
       return new TextDecoder().decode(readRaw(e, ptr, len));
     }
     case "struct": {
@@ -510,7 +562,7 @@ function readValue(e, W, L, wId, lId, addr, backing) {
       for (let i = 0; i < w.fields.length; ++i) {
         const field = w.fields[i];
         const slot = fieldLayoutOf(l, i);
-        out[field.name] = readValue(e, W, L, field.type, slot.lay,
+        out[field.name] = readValue(e, lane, W, L, field.type, slot.lay,
                                     addr + Number(slot.off), backing);
       }
       return out;
@@ -522,7 +574,7 @@ function readValue(e, W, L, wId, lId, addr, backing) {
       if (tag !== 1) frameFail("option tag is not in {0,1}");
       const variant = l.variants[1];
       if (variant === undefined) frameFail("option Some variant has no payload layout");
-      return readValue(e, W, L, w.value, variant.lay,
+      return readValue(e, lane, W, L, w.value, variant.lay,
                        addr + Number(l.payload_offset), backing);
     }
     case "enum": {
@@ -542,7 +594,7 @@ function readValue(e, W, L, wId, lId, addr, backing) {
           const arr = [];
           for (let i = 0; i < wireVariant.slots.length; ++i) {
             const slot = fieldLayoutOf(payloadLayout, i);
-            arr.push(readValue(e, W, L, wireVariant.slots[i].type, slot.lay,
+            arr.push(readValue(e, lane, W, L, wireVariant.slots[i].type, slot.lay,
                                payloadAddr + Number(slot.off), backing));
           }
           out._payload = arr;
@@ -552,7 +604,7 @@ function readValue(e, W, L, wId, lId, addr, backing) {
           for (let i = 0; i < wireVariant.slots.length; ++i) {
             const slot = fieldLayoutOf(payloadLayout, i);
             named[wireVariant.slots[i].name] =
-              readValue(e, W, L, wireVariant.slots[i].type, slot.lay,
+              readValue(e, lane, W, L, wireVariant.slots[i].type, slot.lay,
                         payloadAddr + Number(slot.off), backing);
           }
           out._named_payload = named;
@@ -575,7 +627,7 @@ function readValue(e, W, L, wId, lId, addr, backing) {
       const stride = Number(l.stride);
       const out = [];
       for (let i = 0; i < len; ++i) {
-        out.push(readValue(e, W, L, w.element, l.element, base + i * stride, backing));
+        out.push(readValue(e, lane, W, L, w.element, l.element, base + i * stride, backing));
       }
       if (w.kind === "set") {
         const canonical = out.map((v) => JSON.stringify(v));
@@ -591,7 +643,7 @@ function readValue(e, W, L, wId, lId, addr, backing) {
       const out = [];
       for (let i = 0; i < w.elements.length; ++i) {
         const slot = fieldLayoutOf(l, i);
-        out.push(readValue(e, W, L, w.elements[i], slot.lay,
+        out.push(readValue(e, lane, W, L, w.elements[i], slot.lay,
                            addr + Number(slot.off), backing));
       }
       return out;
@@ -631,7 +683,7 @@ function encodeP6Output(probe, packed) {
     frameFail(`runv value_ptr ${tuple[1]} is not the authorized base ${authorizedBase} ` +
               `for a '${lane.final_kind}' final`);
   }
-  const output = readValue(e, W, L, descriptor.wire_schema.roots.output,
+  const output = readValue(e, lane, W, L, descriptor.wire_schema.roots.output,
                            lane.output_layout, tuple[1], backing);
   return JSON.stringify(output);
 }
@@ -933,12 +985,24 @@ async function runAbiProbes(compiled) {
         if (p.calls !== 0) fail("legacy agent run() reached the capability");
       }
     } else {
-      // RFC 0026 P6-7: a p6-frame agent has no run2/run opaque-JSON identity
-      // path; its input lives in the fixed P4-D frame and runv is the value
-      // entry. Pack the frame on a FRESH instance and assert runv returns OK
-      // with the authorized root, and that run2/run on a host-heap pointer are
-      // not treated as a JSON frame (run2 traps on the raw computed walk because
-      // the borrowed pointer is not the fixed input base).
+      // RFC 0026 P6-7: runv is the SOLE defined observation entry for a
+      // p6-frame agent. Only it is probed here: pack the P4-D frame on a FRESH
+      // instance and assert runv returns OK with the descriptor-authorized
+      // root (the input base for an identity final, the output base for a
+      // computed final).
+      //
+      // The legacy pointer exports run()/run2() are deliberately NOT exercised
+      // on this lane, because they have no defined p6-frame contract and the
+      // outcome is frame-shape dependent. Both share the E1 identity arm: the
+      // walk runs and run2 returns (OK, borrowed host ptr, len), run() echoes
+      // the host ptr. But a p6-frame agent's canonical input lives in the
+      // fixed P4-D regions, and the host bump allocator starts at the input
+      // frame base (1024), so a legacy writeInput() overwrites the packed
+      // header with JSON bytes: a scalar-only frame's walk still completes and
+      // returns the borrowed (arbitrary) span, while a frame whose walk
+      // dereferences a collection pointer traps Wasm OOB. Neither result is a
+      // value observation -- only runv's value_ptr is -- so asserting either
+      // would pin incidental behavior, not a contract.
       if (descriptor.frame_contract === "p6_frame") {
         const p = await makeInstance(compiled, "ok");
         const packed = packP6Input(p);

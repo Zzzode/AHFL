@@ -138,7 +138,8 @@ build_agent_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
 }
 
 [[nodiscard]] std::unique_ptr<json::JsonValue>
-build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {    auto lane = json::JsonValue::make_object();
+build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
+    auto lane = json::JsonValue::make_object();
 
     auto agents = json::JsonValue::make_array();
     for (const auto &walk : descriptor.agents) {
@@ -520,10 +521,6 @@ WasmProduceResult produce_conformance_wasm(const LoadedConformanceCase &loaded,
         result.code = "wasm.INTERNAL_INVALID";
         result.reason = "emitted artifact carries no execution descriptor";
         return result;
-    }
-
-    if (emitted.descriptor->frame_contract == CoreWasmFrameContract::P6Frame) {
-        result.p6_frame = true;
     }
 
     // RFC 0026 FB-3b: a case the in-process evaluator cannot execute (the
