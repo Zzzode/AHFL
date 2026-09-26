@@ -1,0 +1,42 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A: computed SCALAR final.
+//
+// The final region is a P6-subset computed final (not the canonical
+// identity `return input;`): it constructs an output struct from a
+// scalar expression over the packed input frame. The emitter must
+// materialize the i64 result word into the fixed output frame at
+// kP6AggregateOutputBase (12288) and runv must return
+// (OK, 12288). A scalar root needs no aggregate copy; this is the
+// simplest runv computed arm. Input/output nominals differ, so the
+// identity lane never applies.
+module wasm::v2a::computed_scalar;
+
+pub struct In {
+    v: Int;
+}
+
+pub struct Out {
+    doubled: Int;
+}
+
+agent ComputedScalarAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for ComputedScalarAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Out {
+            doubled: input.v * 2,
+        };
+    }
+}

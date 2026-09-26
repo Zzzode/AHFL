@@ -1,0 +1,33 @@
+// rfc 0026 p6-7 frame-bridge v2 rung v2-a negative: a computed final whose
+// output carries a String (a PtrLen pair) stays OUTSIDE the v1 output-frame
+// subset and must fail closed at emission with no artifact. Module-internal
+// String construction (rodata + Data section) is the V2-B rung; until then a
+// scalar/aggregate/string mixed frame never silently downgrades.
+module wasm::v2a::string_final;
+
+pub struct Frame {
+    label: String;
+}
+
+agent StringFinalAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for StringFinalAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Frame {
+            label: input.label,
+        };
+    }
+}

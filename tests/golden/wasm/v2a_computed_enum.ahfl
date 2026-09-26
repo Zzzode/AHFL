@@ -1,0 +1,49 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A: computed final chosen
+// through an IF. Each return branch is a P6-subset computed final
+// materializing a tag-only enum word into the output frame. This
+// exercises value-bearing returns on BOTH sides of a structured if
+// (the planner's all-paths-return gate and the emitter's two
+// materializing terminators).
+module wasm::v2a::computed_enum;
+
+pub struct In {
+    v: Int;
+}
+
+pub enum Level {
+    High,
+    Low,
+}
+
+pub struct Out {
+    level: Level;
+}
+
+agent ComputedEnumAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for ComputedEnumAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        if (input.v > 10) {
+            return Out {
+                level: Level::High,
+            };
+        } else {
+            return Out {
+                level: Level::Low,
+            };
+        }
+    }
+}

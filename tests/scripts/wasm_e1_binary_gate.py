@@ -172,7 +172,15 @@ def main(argv: list[str]) -> int:
     if any(0x28 <= byte <= 0x3E for byte in run):
         fail("identity run contains a frame load/store opcode")
 
-    expect_unsupported(ahflc, tests_dir / "golden" / "formal" / "ok_smt_encoding.ahfl")
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-A: the old SMT fixture
+    # (ok_smt_encoding.ahfl) is now a LEGAL computed final (a scalar
+    # struct materialized into the output frame), so it no longer fails
+    # closed. The still-unsupported shape is a computed final whose output
+    # carries a String (PtrLen): module-internal String construction is
+    # the V2-B rung and must keep failing closed with no artifact here.
+    expect_unsupported(
+        ahflc, tests_dir / "golden" / "wasm" / "v2a_string_final_unsupported.ahfl"
+    )
     expect_unsupported(ahflc, tests_dir / "golden" / "ir" / "ok_workflow_value_flow.ahfl")
 
     print("all KR6.5 E1 binary/structural gates passed (not execution evidence)")

@@ -115,6 +115,8 @@ using ir::core::kP6AggregateContextBase;
 using ir::core::kP6AggregateContextCapacity;
 using ir::core::kP6AggregateInputBase;
 using ir::core::kP6AggregateInputCapacity;
+using ir::core::kP6AggregateOutputBase;
+using ir::core::kP6AggregateOutputCapacity;
 using ir::core::kP6AggregateScratchBase;
 using ir::core::kP6AggregateScratchCapacity;
 using ir::core::kP6CollectionBackingCapacity;
@@ -314,7 +316,20 @@ struct CapabilityAction {
     CoreCapabilityId capability{};
     [[nodiscard]] friend bool operator==(CapabilityAction, CapabilityAction) noexcept = default;
 };
-using StateAction = std::variant<GotoAction, ComputedGotoAction, IdentityAction, CapabilityAction>;
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL. The state's
+// handler is a real `() -> (i32,i32)` wasm function (status, value_ptr) in the
+// P6 subset; it materializes its result into the fixed output frame
+// (kP6AggregateOutputBase) and runv returns (AHFL_CAP_OK, output_base). Like
+// ComputedGotoAction, `function` is the handler ordinal in the module's
+// compiled-handler table (FunctionTable::handler).
+struct ComputedReturnAction {
+    std::uint32_t function{0};
+    [[nodiscard]] friend bool operator==(ComputedReturnAction,
+                                         ComputedReturnAction) noexcept = default;
+};
+using StateAction =
+    std::variant<GotoAction, ComputedGotoAction, IdentityAction, CapabilityAction,
+                 ComputedReturnAction>;
 
 // RFC 0026 P6-2 (KR6.6): one compiled non-final handler FUNCTION. The body is
 // the complete wasm function body (local declarations + a `block (result i32)`
@@ -365,6 +380,11 @@ struct AgentPlan {
     // run2 boundary does not carry canonical wire-JSON output and canonical
     // observation conformance awaits the P6-7 frame decision.
     bool reads_raw_input_frame{false};
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: true when at least one final
+    // state is a ComputedReturnAction. Such an agent is a P6-frame module whose
+    // runv returns the fixed output base; mixing it with capability finals (or a
+    // second final kind in one agent) is rejected by build_agent_plan.
+    bool has_computed_final{false};
     // RFC 0026 P6-2: compiled handler functions in ascending function-index
     // order. Empty for a pure E1-E3 agent, so its function/code sections keep
     // their byte-identical 7-entry shape.
@@ -555,7 +575,8 @@ void add_diag(CoreWasmCodegenResult &result,
 
 [[nodiscard]] bool is_final_action(const StateAction &action) {
     return std::holds_alternative<IdentityAction>(action) ||
-           std::holds_alternative<CapabilityAction>(action);
+           std::holds_alternative<CapabilityAction>(action) ||
+           std::holds_alternative<ComputedReturnAction>(action);
 }
 
 [[nodiscard]] bool is_final_state(const CoreAgentDecl &agent, std::uint32_t state) {
@@ -776,6 +797,38 @@ validate_canonical_input_let(const CoreProgram &program,
     return true;
 }
 
+// Pure, side-effect-free twin of the identity-final shape check: is this final the
+// canonical `let in = input; return in;` passthrough (with matching input/output
+// nominals)? Used to route a capability-free final between the v1 identity lane
+// and the V2-A computed-final lane WITHOUT emitting diagnostics or marking the
+// used-expr/value arenas (those belong to validate_identity_final on whichever
+// path actually runs).
+[[nodiscard]] bool is_identity_final_shape(const CoreAgentDecl &agent,
+                                           const CoreFlowDecl &flow,
+                                           const ir::core::CoreRegion &region) {
+    if (region.statements.size() != 2) {
+        return false;
+    }
+    const auto *let = std::get_if<CoreLetStmt>(&region.statements[0].node);
+    const auto *ret = std::get_if<CoreReturnStmt>(&region.statements[1].node);
+    if (let == nullptr || ret == nullptr || !ret->has_value ||
+        ret->value != let->result ||
+        let->expr.value >= flow.storage.exprs.size() ||
+        let->result.value >= flow.storage.value_types.size()) {
+        return false;
+    }
+    const CoreExpr &expr = flow.storage.exprs[let->expr.value];
+    const auto *path = std::get_if<CorePathExpr>(&expr.node);
+    // The identity final is `let in = input; return in;`: a bare input
+    // frame read (root == Input, no members/projection, not a local).
+    if (path == nullptr || path->root != ir::core::CorePathRoot::Input ||
+        path->has_local || !path->projection.empty() || !path->members.empty() ||
+        !path->projection_resolved || path->root_type != agent.input_type) {
+        return false;
+    }
+    return agent.input_type == agent.output_type;
+}
+
 [[nodiscard]] std::optional<CapabilityAction>
 validate_capability_final(const CoreProgram &program,
                           const ir::core::CoreLayoutTable &layouts,
@@ -943,6 +996,71 @@ validate_capability_final(const CoreProgram &program,
 
 [[nodiscard]] bool is_p6_computation_region(const CoreRegion &region) {
     return is_p6_subset_region(region);
+}
+
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL region is the P6
+// subset (scalar lets, structured if, match, ctx store, ordered pure-fn calls)
+// whose terminator is a value-bearing CoreReturnStmt instead of a goto/trap.
+// A match stays structurally admitted; its arms/fallback consume returns the
+// same way the computed-goto lane consumes gotos (per-arm fail-closed planning
+// in the builder). A capability effect keeps the region off this lane (the
+// capability final has its own opaque E2 shape; in-handler bridging is V2-C).
+[[nodiscard]] bool is_p6_computed_final_region(const CoreRegion &region) {
+    for (const CoreStmt &statement : region.statements) {
+        const bool in_subset = std::visit(
+            Overloaded{
+                [](const CoreLetStmt &) { return true; },
+                [](const CoreGotoStmt &) { return false; },
+                [](const CoreTrapStmt &) { return true; },
+                [](const CoreYieldStmt &) { return false; },
+                [](const CoreIfStmt &s) {
+                    return (s.then_region == nullptr ||
+                            is_p6_computed_final_region(*s.then_region)) &&
+                           (s.else_region == nullptr ||
+                            is_p6_computed_final_region(*s.else_region));
+                },
+                [](const CoreMatchStmt &) { return true; },
+                [](const CoreStoreStmt &) { return true; },
+                [](const CoreCapabilityCallStmt &) { return false; },
+                [](const CoreReturnStmt &) { return true; },
+                [](const CoreCallStmt &) { return true; },
+            },
+            statement.node);
+        if (!in_subset) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Structural all-paths termination predicate for a computed-final region:
+// EVERY path must end in a value-bearing CoreReturnStmt (a final handler
+// materializes an output on every path). Mirrors p6_region_always_diverges:
+// only the last statement matters (everything after a terminator is
+// unreachable), a trailing if requires both branches to return, and a trailing
+// match requires every arm and the fallback to return.
+[[nodiscard]] bool p6_region_always_returns(const CoreRegion &region) {
+    if (region.statements.empty()) {
+        return false;
+    }
+    const CoreStmt &last = region.statements.back();
+    if (const auto *ret = std::get_if<CoreReturnStmt>(&last.node)) {
+        return ret->has_value;
+    }
+    if (const auto *branch = std::get_if<CoreIfStmt>(&last.node)) {
+        return branch->then_region && branch->else_region &&
+               p6_region_always_returns(*branch->then_region) &&
+               p6_region_always_returns(*branch->else_region);
+    }
+    if (const auto *match = std::get_if<CoreMatchStmt>(&last.node)) {
+        if (!match->fallback_region || !p6_region_always_returns(*match->fallback_region)) {
+            return false;
+        }
+        return std::ranges::all_of(match->arms, [](const CoreMatchArm &arm) {
+            return arm.body && p6_region_always_returns(*arm.body);
+        });
+    }
+    return false;
 }
 
 // The scalar kind of a value type for the P6 ladder, with the physical repr
@@ -1567,11 +1685,36 @@ class P6ComputationHandlerBuilder {
           instance_to_fn_ordinal_(instance_to_fn_ordinal),
           fn_function_base_(fn_function_base) {}
 
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: put this HANDLER builder in
+    // computed-final mode. A computed-final handler is a `() -> i32` function
+    // like a computed-goto handler (step() calls it and it yields the stable
+    // final state id), but every path ends in a value-bearing CoreReturnStmt
+    // that MATERIALIZES the result into the fixed output frame
+    // (kP6AggregateOutputBase). The output value type drives the materializer's
+    // shape walk. Two scratch i32 locals are reserved here (source-address
+    // holder for an aggregate/enum root, copy-loop cursor for a collection
+    // header), before plan() assigns the SSA pools.
+    void enable_computed_final(CoreValueTypeId output_value_type, std::uint32_t final_state_id) {
+        final_return_mode_ = true;
+        final_return_type_ = output_value_type;
+        final_state_id_ = final_state_id;
+    }
+
     // Validate the handler is in the scalar subset and assign every bound SSA
     // value a per-repr pool slot (i32 group first, then i64 — a real function
     // needs one fixed type per local index), recording the goto target set.
     [[nodiscard]] bool plan() {
-        if (!fn_mode_ && !p6_region_always_diverges(region_)) {
+        if (fn_mode_) {
+            // FB-1 outlined fn: the Core verifier proves every path value-returns;
+            // no structural divergence/return gate here.
+        } else if (final_return_mode_) {
+            if (!p6_region_always_returns(region_)) {
+                return reject("a computed final must return a value on every path",
+                              region_.statements.empty()
+                                  ? ir::SourceRangeOpt{}
+                                  : region_.statements.front().source_range);
+            }
+        } else if (!p6_region_always_diverges(region_)) {
             return reject("non-final scalar handler must goto or trap on every path",
                           region_.statements.empty()
                               ? ir::SourceRangeOpt{}
@@ -1743,7 +1886,11 @@ class P6ComputationHandlerBuilder {
         // CORE-GAPS: the three Map-KeyGet scan scratch i32s, appended after the
         // bump/capability temporaries (absent when no KeyGet is planned).
         const std::uint32_t keyget_count = keyget_scratch_needed_ ? 3u : 0u;
-        if (temp_count != 0 || keyget_count != 0) {
+        // V2-A: the computed-final materializer's one source-address scratch
+        // i32, appended after the KeyGet temps (absent outside a computed
+        // final).
+        const std::uint32_t final_count = final_return_mode_ ? final_src_count_ : 0u;
+        if (temp_count != 0 || keyget_count != 0 || final_count != 0) {
             // The bump temporaries are placed AFTER the i64 group (a second
             // i32 local group) so they do not shift the SSA/scratch i64 pool
             // indices pool_local derives from i32_group_size(). Fn bodies have
@@ -1768,6 +1915,9 @@ class P6ComputationHandlerBuilder {
                 keyget_cursor_local_ = base;
                 keyget_found_local_ = base + 1u;
                 keyget_addr_local_ = base + 2u;
+            }
+            if (final_count != 0) {
+                final_src_local_ = after_groups + temp_count + keyget_count;
             }
         }
         // Handler mode, aggregate/closure heap enabled: reset the per-activation
@@ -1828,7 +1978,7 @@ class P6ComputationHandlerBuilder {
         // The fn-mode bump temporaries form a SECOND i32 group after the i64
         // group, keeping the pool index spaces stable. The KeyGet scan scratch
         // joins that trailing i32 group (it exists in either body mode).
-        const std::uint32_t temp_i32 = temp_count + keyget_count;
+        const std::uint32_t temp_i32 = temp_count + keyget_count + final_count;
         if (temp_i32 != 0) {
             ++local_groups;
         }
@@ -1886,6 +2036,11 @@ class P6ComputationHandlerBuilder {
     const CoreRegion &region_;
     std::string_view state_name_;
     bool fn_mode_{false};
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: handler-mode computed final.
+    // Every path ends in a value-bearing CoreReturnStmt materialized into the
+    // fixed output frame; `final_return_type_` is the agent's output value type.
+    bool final_return_mode_{false};
+    CoreValueTypeId final_return_type_{};
     std::string_view unsupported_code_;
     std::vector<bool> &used_exprs_;
     std::vector<bool> &used_values_;
@@ -1956,6 +2111,24 @@ class P6ComputationHandlerBuilder {
     std::uint32_t keyget_cursor_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t keyget_found_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t keyget_addr_local_{std::numeric_limits<std::uint32_t>::max()};
+
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a computed-final aggregate /
+    // collection materialization needs ONE trailing i32 scratch local holding
+    // the root value's source address (a scratch-constructed aggregate or an
+    // input-reached collection header). Scalar roots materialize straight from
+    // their SSA local and need no scratch slot. Like the bump/keyget
+    // temporaries it lives in the SECOND i32 local group after the i64 group so
+    // every SSA/scratch pool index is unchanged.
+    // Emit-time absolute local index of the FIRST source-address scratch
+    // local; nested aggregate dereferences use final_src_local_ + level.
+    std::uint32_t final_src_local_{std::numeric_limits<std::uint32_t>::max()};
+    // Number of source-address scratch locals this computed final needs:
+    // one for the root aggregate/collection plus one per nested aggregate
+    // dereference depth. 0 for a scalar root.
+    std::uint32_t final_src_count_{0};
+    // The final state's own dense id; the materializing terminator yields it
+    // through the handler's result-i32 block.
+    std::uint32_t final_state_id_{0};
 
     // --- P6-4 aggregate memory state ---
     //
@@ -4503,6 +4676,9 @@ class P6ComputationHandlerBuilder {
                         }
                         return true;
                     }
+                    if (final_return_mode_) {
+                        return plan_final_return(s, statement.source_range);
+                    }
                     return reject("value-returning handlers are a later P6 slice",
                                   statement.source_range);
                 },
@@ -5312,6 +5488,445 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
+    // --- RFC 0026 P6-7 frame-bridge v2 rung V2-A: computed-final materialization
+    //
+    // A final handler ends in `return v`; the planner validates v against the
+    // agent output nominal and the emitter materializes it into the fixed output
+    // frame (kP6AggregateOutputBase) before yielding the final state id:
+    //
+    //   * a scalar root (Bool / i32 / i64 / tag-only enum) -> one width-exact
+    //     store at the frame base;
+    //   * an aggregate root (struct / payload-bearing enum) -> the whole output
+    //     region is zeroed first (padding words are provably zero), then every
+    //     inline slot is copied from the scratch/frame aggregate the value names;
+    //   * a bounded-collection root -> its 8-byte inline (ptr,len) header is
+    //     copied; the backing elements stay in the stable input-backed placement.
+    //
+    // String (PtrLen), Bytes16 (Uuid), f64, closures, and uninhabited slots are
+    // NOT representable by the v1 frame walker and fail closed; module-internal
+    // String construction is the V2-B rung.
+
+    // Validate one P4-D layout edge is entirely in the v1 output-frame walk
+    // subset (scalars i32/i64, inline structs/enums, bounded containers).
+    [[nodiscard]] bool
+    validate_final_layout_shape(CoreLayoutId id, ir::SourceRangeOpt range) {
+        if (id.value >= layouts_.layouts.size()) {
+            return reject("computed final references an out-of-range P4-D layout", range);
+        }
+        const ir::core::CoreLayout &layout = layouts_.layouts[id.value];
+        const bool ok = std::visit(
+            Overloaded{
+                [](const ir::core::CoreLayoutPending &) { return false; },
+                [](const ir::core::CoreLayoutScalar &s) {
+                    return s.repr != ir::core::CoreScalarRepr::F64;
+                },
+                [](const ir::core::CoreLayoutBytes &) { return false; },
+                [](const ir::core::CoreLayoutPtrLen &) { return false; },
+                [](const ir::core::CoreLayoutFnRef &) { return false; },
+                [](const ir::core::CoreLayoutClosure &) { return false; },
+                [&](const ir::core::CoreLayoutStruct &s) {
+                    return std::ranges::all_of(s.field_layouts, [&](CoreLayoutId field) {
+                        return validate_final_layout_shape(field, range);
+                    });
+                },
+                [&](const ir::core::CoreLayoutEnum &e) {
+                    return std::ranges::all_of(e.variant_payload_layouts,
+                                              [&](CoreLayoutId payload) {
+                                                  return validate_final_layout_shape(
+                                                      payload, range);
+                                              });
+                },
+                [&](const ir::core::CoreLayoutContainer &c) {
+                    if (!validate_final_layout_shape(c.element, range)) {
+                        return false;
+                    }
+                    return !c.value.has_value() ||
+                           validate_final_layout_shape(*c.value, range);
+                },
+                [](const ir::core::CoreLayoutUninhabited &) { return false; },
+            },
+            layout.shape);
+        if (!ok) {
+            return reject(
+                "computed final carries a shape the P6-7 v1 output frame cannot represent "
+                "(only Bool/Int scalars, tag enums, inline structs/enums, and bounded "
+                "collections; String/f64/Uuid/closure slots arrive with later rungs)",
+                range);
+        }
+        return true;
+    }
+
+    // Plan a computed-final return: the value must match the agent output
+    // nominal and every physical word it materializes must be in the v1 subset.
+    // Reserves the one source-address scratch local for an aggregate/collection
+    // root.
+    [[nodiscard]] bool plan_final_return(const CoreReturnStmt &s, ir::SourceRangeOpt range) {
+        if (!s.has_value) {
+            return reject("a computed final must return a value", range);
+        }
+        if (s.value.value >= storage_.value_types.size()) {
+            return reject("final return value id is out of range for this flow", range);
+        }
+        const CoreValueTypeId value_type = storage_.value_types[s.value.value];
+        if (value_type != final_return_type_) {
+            return reject(
+                "final return value type does not match the agent output nominal",
+                range);
+        }
+        used_values_[s.value.value] = true;
+        const auto kind = p6_scalar_kind(program_, layouts_, value_type);
+        if (kind == std::nullopt) {
+            return reject(
+                "computed final value is not a single-word P6 value on the frame lane",
+                range);
+        }
+        switch (*kind) {
+        case P6ScalarKind::Bool:
+        case P6ScalarKind::IntI32:
+        case P6ScalarKind::IntI64:
+        case P6ScalarKind::Index:
+            return true;
+        case P6ScalarKind::Closure:
+            return reject("a closure value cannot cross the computed-final frame boundary",
+                          range);
+        case P6ScalarKind::Collection:
+            final_src_count_ = std::max(final_src_count_, 1u);
+            return true;
+        case P6ScalarKind::Ptr: {
+            if (value_type.value >= layouts_.value_layouts.size()) {
+                return reject("computed final aggregate has no finalized layout", range);
+            }
+            const CoreLayoutId root = layouts_.value_layouts[value_type.value];
+            if (!validate_final_layout_shape(root, range)) {
+                return false;
+            }
+            // One address-stack local for the root, plus one per nested
+            // aggregate-field dereference.
+            final_src_count_ =
+                std::max(final_src_count_, final_copy_depth(root) + 1u);
+            return true;
+        }
+        }
+        return reject("computed final value has an unclassified P6 kind", range);
+    }
+
+    // Emit one width-exact word copy: [dst_base + dst_off] := *(src_local +
+    // src_off). All offsets are compile-time constants of a frame whose size is
+    // page-gated.
+    void emit_copy_word(bool wide,
+                        std::uint32_t src_local,
+                        std::uint64_t src_off,
+                        std::uint32_t dst_base,
+                        std::uint64_t dst_off) {
+        emit_const_i32(static_cast<std::int32_t>(dst_base + dst_off));
+        emit_local_get(src_local);
+        if (src_off != 0) {
+            emit_const_i32(static_cast<std::int32_t>(src_off));
+            body_.byte(kOpI32Add);
+        }
+        body_.byte(wide ? kOpI64Load : kOpI32Load);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(0);
+        body_.byte(wide ? kOpI64Store : kOpI32Store);
+        body_.u32(wide ? kAlignI64 : kAlignI32);
+        body_.u32(0);
+    }
+
+    // Copy every named INLINE slot of one struct (or an enum variant's payload
+    // struct) from the aggregate named by scratch-local `level` into the output
+    // frame at `dst_base + dst_off`.
+    //
+    // The module's runtime representation stores an aggregate-typed FIELD as the
+    // child's ADDRESS (the ONE-representation rule `emit_construct_store` and
+    // `emit_projection_slot` obey): scalar children live inline at
+    // field_offsets, a struct/enum child is reached by dereferencing the i32
+    // word stored at the field slot, and a bounded-collection field names its
+    // inline (ptr,len) header through the same one-word handle. The P4-D frame
+    // layout INLINES those children instead, so the materializer EXPANDS the
+    // pointer tree into the inline frame: a nested child is copied from the
+    // address its parent slot holds into the frame at the child's inline offset,
+    // using one scratch address local per nesting depth. Padding is never touched
+    // (the caller zeroed the whole region first).
+    // Whether a layout edge is copied as one inline word (a scalar, or a
+    // TAG-ONLY enum whose whole representation is the i32 discriminant), vs an
+    // aggregate child reached through the i32 address its parent field stores.
+    [[nodiscard]] bool final_leaf_is_word(const ir::core::CoreLayout &layout) const {
+        if (const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(&layout.shape)) {
+            return scalar->repr != ir::core::CoreScalarRepr::F64;
+        }
+        if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
+            return std::ranges::all_of(tagged->variant_payload_sizes,
+                                      [](std::uint64_t size) { return size == 0; });
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool emit_copy_struct_fields(const ir::core::CoreLayoutStruct &structure,
+                                              std::uint32_t level,
+                                              std::uint64_t src_off,
+                                              std::uint32_t dst_base,
+                                              std::uint64_t dst_off,
+                                              ir::SourceRangeOpt range) {
+        for (std::uint32_t i = 0; i < structure.field_layouts.size(); ++i) {
+            const CoreLayoutId edge = structure.field_layouts[i];
+            const std::uint64_t off = structure.field_offsets[i];
+            if (edge.value >= layouts_.layouts.size()) {
+                return reject("computed final copy walks an out-of-range field layout", range);
+            }
+            const ir::core::CoreLayout &field = layouts_.layouts[edge.value];
+            if (final_leaf_is_word(field)) {
+                const bool wide =
+                    std::holds_alternative<ir::core::CoreLayoutScalar>(field.shape) &&
+                    std::get_if<ir::core::CoreLayoutScalar>(&field.shape)->repr ==
+                        ir::core::CoreScalarRepr::I64;
+                emit_copy_word(wide, final_src_local_ + level, src_off + off,
+                              dst_base, dst_off + off);
+                continue;
+            }
+            if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(field.shape) ||
+                std::holds_alternative<ir::core::CoreLayoutBytes>(field.shape) ||
+                std::holds_alternative<ir::core::CoreLayoutClosure>(field.shape)) {
+                return reject("computed final copies a String/Uuid/closure field", range);
+            }
+            if (std::holds_alternative<ir::core::CoreLayoutStruct>(field.shape) ||
+                std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape) ||
+                std::holds_alternative<ir::core::CoreLayoutEnum>(field.shape)) {
+                if (level + 1u >= final_src_count_) {
+                    return reject("computed final aggregate nesting exceeded its scratch stack",
+                                  range);
+                }
+                // Latch the child handle from the parent's field slot into the
+                // next address-stack local, then expand that child inline.
+                emit_local_get(final_src_local_ + level);
+                if (src_off + off != 0) {
+                    emit_const_i32(static_cast<std::int32_t>(src_off + off));
+                    body_.byte(kOpI32Add);
+                }
+                body_.byte(kOpI32Load);
+                body_.u32(kAlignI32);
+                body_.u32(0);
+                body_.byte(kOpLocalSet);
+                body_.u32(final_src_local_ + level + 1u);
+                if (!emit_copy_aggregate_at(edge, level + 1u,
+                                           dst_base, dst_off + off, range)) {
+                    return false;
+                }
+                continue;
+            }
+            if (std::holds_alternative<ir::core::CoreLayoutUninhabited>(field.shape) ||
+                std::holds_alternative<ir::core::CoreLayoutPending>(field.shape)) {
+                return reject("computed final copies a pending/uninhabited field", range);
+            }
+            return reject("computed final copies a non-v1 frame field", range);
+        }
+        return true;
+    }
+
+    // Copy one child AGGREGATE named by scratch-local `level` into the frame at
+    // `dst_base + dst_off`.
+    [[nodiscard]] bool emit_copy_aggregate_at(CoreLayoutId id,
+                                             std::uint32_t level,
+                                             std::uint32_t dst_base,
+                                             std::uint64_t dst_off,
+                                             ir::SourceRangeOpt range) {
+        if (id.value >= layouts_.layouts.size()) {
+            return reject("computed final copy walks an out-of-range aggregate layout", range);
+        }
+        const ir::core::CoreLayout &layout = layouts_.layouts[id.value];
+        if (const auto *structure = std::get_if<ir::core::CoreLayoutStruct>(&layout.shape)) {
+            return emit_copy_struct_fields(*structure, level, 0, dst_base, dst_off, range);
+        }
+        if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
+            // Discriminant at offset 0 of the enum.
+            emit_copy_word(false, final_src_local_ + level, 0, dst_base, dst_off);
+            // Copy EVERY variant payload's slots into the payload union; inactive
+            // variants' source bytes are never observed by the host (it walks
+            // only the active variant), and overlapping union stores are
+            // idempotent. Payload slots are relative to the enum base, so they
+            // share this address level.
+            for (const CoreLayoutId payload : tagged->variant_payload_layouts) {
+                if (payload.value >= layouts_.layouts.size()) {
+                    return reject("computed final enum payload layout is out of range", range);
+                }
+                const auto *payload_struct =
+                    std::get_if<ir::core::CoreLayoutStruct>(
+                        &layouts_.layouts[payload.value].shape);
+                if (payload_struct == nullptr) {
+                    return reject("computed final enum payload is not a struct layout", range);
+                }
+                if (!emit_copy_struct_fields(*payload_struct, level, tagged->payload_offset,
+                                           dst_base, dst_off + tagged->payload_offset,
+                                           range)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (std::holds_alternative<ir::core::CoreLayoutContainer>(layout.shape)) {
+            // The inline (ptr,len) header only; the backing placement is shared
+            // and its elements are never copied.
+            emit_copy_word(false, final_src_local_ + level, 0, dst_base, dst_off);
+            emit_copy_word(false, final_src_local_ + level, 4, dst_base, dst_off + 4);
+            return true;
+        }
+        return reject("computed final copy reaches a non-aggregate frame shape", range);
+    }
+
+    // Deepest aggregate nesting of a frame layout (the address-stack size the
+    // materializer needs): one level per aggregate/container edge reached from
+    // the root.
+    [[nodiscard]] std::uint32_t final_copy_depth(CoreLayoutId id) const {
+        if (id.value >= layouts_.layouts.size()) {
+            return 0;
+        }
+        const ir::core::CoreLayout &layout = layouts_.layouts[id.value];
+        std::uint32_t deepest = 0;
+        if (const auto *s = std::get_if<ir::core::CoreLayoutStruct>(&layout.shape)) {
+            for (const CoreLayoutId child : s->field_layouts) {
+                if (child.value >= layouts_.layouts.size()) {
+                    continue;
+                }
+                const ir::core::CoreLayout &child_layout =
+                    layouts_.layouts[child.value];
+                // A scalar / tag-only-enum leaf is an inline word on THIS
+                // level; a payload-bearing enum / struct / container edge
+                // descends one address level.
+                if (!final_leaf_is_word(child_layout) &&
+                    (std::holds_alternative<ir::core::CoreLayoutStruct>(child_layout.shape) ||
+                     std::holds_alternative<ir::core::CoreLayoutContainer>(child_layout.shape) ||
+                     std::holds_alternative<ir::core::CoreLayoutEnum>(child_layout.shape))) {
+                    deepest = std::max(deepest, 1u + final_copy_depth(child));
+                }
+            }
+        } else if (const auto *e = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
+            for (const CoreLayoutId payload : e->variant_payload_layouts) {
+                // Payload slots are relative to the enum base (same level),
+                // but a nested aggregate field inside one descends.
+                deepest = std::max(deepest, final_copy_depth(payload));
+            }
+        }
+        return deepest;
+    }
+
+    // Emit the computed-final terminator: materialize the result into the output
+    // frame, then leave the handler's result-i32 block yielding the final state
+    // id (runv invokes this handler explicitly and discards the word).
+    [[nodiscard]] bool emit_final_return(const CoreReturnStmt &s, ir::SourceRangeOpt range) {
+        const auto kind = s.value.value < storage_.value_types.size()
+                              ? p6_scalar_kind(program_, layouts_,
+                                               storage_.value_types[s.value.value])
+                              : std::nullopt;
+        if (kind == std::nullopt) {
+            return reject("computed final value has no P6 kind at emit time", range);
+        }
+        switch (*kind) {
+        case P6ScalarKind::Bool:
+        case P6ScalarKind::IntI32:
+        case P6ScalarKind::Index:
+            emit_const_i32(static_cast<std::int32_t>(kP6AggregateOutputBase));
+            if (!emit_value_read(s.value, range)) {
+                return false;
+            }
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+            break;
+        case P6ScalarKind::IntI64:
+            emit_const_i32(static_cast<std::int32_t>(kP6AggregateOutputBase));
+            if (!emit_value_read(s.value, range)) {
+                return false;
+            }
+            body_.byte(kOpI64Store);
+            body_.u32(kAlignI64);
+            body_.u32(0);
+            break;
+        case P6ScalarKind::Closure:
+            return reject("a closure value cannot cross the computed-final frame boundary",
+                          range);
+        case P6ScalarKind::Collection: {
+            // Copy the 8-byte inline header; the backing placement is shared.
+            if (!emit_value_read(s.value, range)) {
+                return false;
+            }
+            body_.byte(kOpLocalSet);
+            body_.u32(final_src_local_);
+            emit_copy_word(false, final_src_local_, 0, kP6AggregateOutputBase, 0);
+            emit_copy_word(false, final_src_local_, 4, kP6AggregateOutputBase, 4);
+            break;
+        }
+        case P6ScalarKind::Ptr: {
+            const CoreValueTypeId value_type = storage_.value_types[s.value.value];
+            if (value_type.value >= layouts_.value_layouts.size()) {
+                return reject("computed final aggregate has no finalized layout", range);
+            }
+            const CoreLayoutId root = layouts_.value_layouts[value_type.value];
+            if (root.value >= layouts_.layouts.size()) {
+                return reject("computed final aggregate root layout is out of range", range);
+            }
+            const std::uint64_t size = layouts_.layouts[root.value].size;
+            if (size == 0 || size > kP6AggregateOutputCapacity ||
+                size % 4 != 0) {
+                return reject("computed final aggregate has an invalid output-frame size", range);
+            }
+            // 1) Zero the whole output region with a bounded cursor loop. The
+            // cursor reuses the source scratch local (the source address is
+            // captured only after zeroing completes).
+            emit_const_i32(0);
+            body_.byte(kOpLocalSet);
+            body_.u32(final_src_local_);
+            body_.byte(kOpBlock);
+            body_.byte(kEmptyBlock);
+            ++label_depth_;
+            body_.byte(kOpLoop);
+            body_.byte(kEmptyBlock);
+            ++label_depth_;
+            emit_local_get(final_src_local_);
+            emit_const_i32(static_cast<std::int32_t>(size));
+            body_.byte(kOpI32GeU);
+            body_.byte(kOpBrIf);
+            body_.u32(1); // cursor >=u size -> leave loop
+            emit_const_i32(static_cast<std::int32_t>(kP6AggregateOutputBase));
+            emit_local_get(final_src_local_);
+            body_.byte(kOpI32Add);
+            emit_const_i32(0);
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+            emit_local_get(final_src_local_);
+            emit_const_i32(4);
+            body_.byte(kOpI32Add);
+            body_.byte(kOpLocalSet);
+            body_.u32(final_src_local_);
+            body_.byte(kOpBr);
+            body_.u32(0);
+            body_.byte(kOpEnd); // loop
+            --label_depth_;
+            body_.byte(kOpEnd); // block
+            --label_depth_;
+            // 2) Capture the source aggregate address.
+            if (!emit_value_read(s.value, range)) {
+                return false;
+            }
+            body_.byte(kOpLocalSet);
+            body_.u32(final_src_local_);
+            // 3) Copy every named slot (padding stays zero), expanding the
+            //    module's aggregate-pointer tree into the inline frame layout.
+            if (!emit_copy_aggregate_at(root, /*level=*/0,
+                                       kP6AggregateOutputBase, 0, range)) {
+                return false;
+            }
+            break;
+        }
+        }
+        // The handler was invoked explicitly by runv; yield the stable final
+        // state id through its result-i32 block (no global latch, no transition
+        // bump: current_state already names this final state).
+        emit_const_i32(static_cast<std::int32_t>(final_state_id_));
+        body_.byte(kOpBr);
+        body_.u32(label_depth_);
+        return true;
+    }
+
     [[nodiscard]] bool emit_unary(const CoreUnaryExpr &u, ir::SourceRangeOpt range) {
         if (u.operand.value >= storage_.exprs.size()) {
             return reject("unary operand id is out of range for this flow", std::move(range));
@@ -5775,7 +6390,18 @@ class P6ComputationHandlerBuilder {
                 return false;
             }
         }
-        if (!p6_region_always_diverges(region)) {
+        // A computed-final arm/fallback ends in a value return; its terminator
+        // branches past the match to the handler's result block, so it diverges
+        // from this region the same way a goto/trap arm does.
+        const bool final_return =
+            final_return_mode_ && !region.statements.empty() &&
+            std::visit(
+                Overloaded{
+                    [](const CoreReturnStmt &r) { return r.has_value; },
+                    [](const auto &) { return false; },
+                },
+                region.statements.back().node);
+        if (!final_return && !p6_region_always_diverges(region)) {
             return reject("match region must yield or diverge on every path", default_range);
         }
         return true;
@@ -5995,6 +6621,9 @@ class P6ComputationHandlerBuilder {
                         }
                         body_.byte(kOpReturn);
                         return true;
+                    }
+                    if (final_return_mode_) {
+                        return emit_final_return(s, statement.source_range);
                     }
                     return reject("value-returning handlers are a later P6 slice",
                                   statement.source_range);
@@ -7446,10 +8075,16 @@ input_frame_backing_high_water(const CoreProgram &program,
     // artifacts keep the exact legacy rejection. The admitted flow still fails
     // closed per-handler below for any pattern kind or expression node outside
     // the landed subset.
+    //
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL region (if-let
+    // lowers to a match ending in a value return) is the second region kind that
+    // legitimately owns a non-empty pattern arena.
     if (!flow->storage.patterns.empty() &&
         !std::any_of(
             flow->states.begin(), flow->states.end(), [](const ir::core::CoreFlowState &state) {
-                return region_contains_match(state.body) && is_p6_computation_region(state.body);
+                return region_contains_match(state.body) &&
+                       (is_p6_computation_region(state.body) ||
+                        is_p6_computed_final_region(state.body));
             })) {
         const bool contains_capability = std::any_of(
             flow->states.begin(), flow->states.end(), [](const ir::core::CoreFlowState &state) {
@@ -7514,6 +8149,9 @@ input_frame_backing_high_water(const CoreProgram &program,
         std::unique_ptr<P6ComputationHandlerBuilder> builder;
         std::vector<CoreStateId> targets;
         bool reads_raw_input_frame{false};
+        // V2-A: a COMPUTED FINAL handler materializes into the output frame and
+        // is published as ComputedReturnAction rather than ComputedGotoAction.
+        bool is_final_return{false};
     };
     std::vector<PlannedComputedHandler> planned_handlers;
 
@@ -7530,20 +8168,7 @@ input_frame_backing_high_water(const CoreProgram &program,
         const auto &statements = handler->body.statements;
         if (is_final_state(agent, state)) {
             const bool contains_capability = region_contains_capability(handler->body);
-            if (!contains_capability) {
-                if (!validate_identity_final(program,
-                                             layouts,
-                                             agent,
-                                             *flow,
-                                             *handler,
-                                             used_exprs,
-                                             used_values,
-                                             policy.unsupported_code,
-                                             result)) {
-                    return std::nullopt;
-                }
-                plan.actions[state] = IdentityAction{};
-            } else {
+            if (contains_capability) {
                 if (!policy.allow_capability) {
                     add_diag(result,
                              policy.unsupported_code,
@@ -7560,7 +8185,82 @@ input_frame_backing_high_water(const CoreProgram &program,
                     return std::nullopt;
                 }
                 plan.actions[state] = *action;
+                continue;
             }
+            // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a capability-free final
+            // is either the canonical identity passthrough (v1) or a COMPUTED
+            // FINAL — a P6-subset region ending in a value-bearing return that
+            // materializes into the fixed output frame. The exact identity
+            // shape is routed first so the v1 byte path and diagnostic survive;
+            // every other return-bearing region takes the computed-final lane.
+            const bool identity_shape =
+                is_identity_final_shape(agent, *flow, handler->body);
+            const bool computed_final_shape =
+                !identity_shape &&
+                is_p6_computed_final_region(handler->body) &&
+                p6_region_always_returns(handler->body);
+            const std::optional<CoreValueTypeId> output_vt =
+                p6_nominal_value_type(program, agent.output_type);
+            const bool output_layout_ready =
+                output_vt.has_value() && has_finalized_layout(layouts, *output_vt);
+            if (computed_final_shape && output_layout_ready) {
+                if (!policy.allow_computed_goto) {
+                    add_diag(result,
+                             policy.unsupported_code,
+                             "KR6.5 " + std::string(policy.slice) +
+                                 " does not yet package a P6 computed-final handler",
+                             statements.front().source_range);
+                    return std::nullopt;
+                }
+                // Design D5 output fit gate: a computed final materializes the
+                // output nominal into its OWN fixed region
+                // (kP6AggregateOutputBase 12288, cap 4096). The output nominal
+                // may be larger than the input, so it is gated independently of
+                // the 3072-byte input region before any handler byte is emitted.
+                if (!fits_frame_region(program,
+                                       layouts,
+                                       agent.output_type,
+                                       kP6AggregateOutputCapacity,
+                                       "output",
+                                       result)) {
+                    return std::nullopt;
+                }
+                auto builder =
+                    std::make_unique<P6ComputationHandlerBuilder>(program,
+                                                                  layouts,
+                                                                  *flow,
+                                                                  *handler,
+                                                                  policy.unsupported_code,
+                                                                  used_exprs,
+                                                                  used_values,
+                                                                  result);
+                builder->enable_computed_final(*output_vt, state);
+                if (!builder->plan()) {
+                    return std::nullopt;
+                }
+                // A computed final never goto-branches: it yields its own state
+                // id after materializing the output. The successor table is
+                // therefore empty. Read the raw-frame fact BEFORE moving the
+                // builder (aggregate-initializer evaluation order is
+                // unspecified relative to the move).
+                const bool final_reads_raw = builder->reads_raw_input_frame();
+                planned_handlers.push_back(PlannedComputedHandler{
+                    state, std::move(builder), {}, final_reads_raw,
+                    /*is_final_return=*/true});
+                continue;
+            }
+            if (!validate_identity_final(program,
+                                         layouts,
+                                         agent,
+                                         *flow,
+                                         *handler,
+                                         used_exprs,
+                                         used_values,
+                                         policy.unsupported_code,
+                                         result)) {
+                return std::nullopt;
+            }
+            plan.actions[state] = IdentityAction{};
             continue;
         }
 
@@ -7686,6 +8386,9 @@ input_frame_backing_high_water(const CoreProgram &program,
                               },
                               [](const IdentityAction &) { return std::vector<std::uint32_t>{}; },
                               [](const CapabilityAction &) { return std::vector<std::uint32_t>{}; },
+                              [](const ComputedReturnAction &) {
+                                  return std::vector<std::uint32_t>{};
+                              },
                           },
                           plan.actions[state]);
     };
@@ -7718,6 +8421,38 @@ input_frame_backing_high_water(const CoreProgram &program,
                      "KR6.5 " + std::string(policy.slice) +
                          " goto graph contains a reachable cycle");
             return std::nullopt;
+        }
+    }
+
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a computed final is a P6-frame
+    // contract. The runv descriptor names exactly ONE authorized value_ptr base
+    // (input for identity finals, output for computed finals), so one agent
+    // cannot mix the two final kinds; a capability final likewise stays on the
+    // opaque run2 lane and cannot share an agent with a computed final (the raw
+    // P4-D and wire-JSON lanes never mix; in-handler bridging is the V2-C rung).
+    const bool has_planned_computed_final =
+        std::any_of(planned_handlers.begin(), planned_handlers.end(),
+                    [](const PlannedComputedHandler &planned) {
+                        return planned.is_final_return;
+                    });
+    if (has_planned_computed_final) {
+        // Computed-final actions are published only after the fn fixed point, so
+        // identify them from the planned-handler state set; any other declared
+        // final took the identity or capability path and mixing is illegal.
+        std::vector<std::uint8_t> computed_final_states(plan.actions.size(), 0);
+        for (const PlannedComputedHandler &planned : planned_handlers) {
+            if (planned.is_final_return) {
+                computed_final_states[planned.state] = 1;
+            }
+        }
+        for (const CoreStateId final : agent.finals) {
+            if (!computed_final_states[final.value]) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedCapabilityFrame,
+                         "a computed final cannot share an agent with an identity or capability "
+                         "final (the P6-7 frame lane has one final kind per module)");
+                return std::nullopt;
+            }
         }
     }
 
@@ -7830,6 +8565,19 @@ input_frame_backing_high_water(const CoreProgram &program,
         }
     }
 
+    // V2-A fail-closed gate: a computed final is a raw-P4-D frame module and
+    // must carry ZERO capability imports (the v1 §4.4 mix rejection, narrowed
+    // for the frame bridge — an in-handler bridge call is the V2-C rung). This
+    // catches both a capability FINAL (already excluded above) and a capability
+    // reached through an effectful outlined fn in a non-final handler.
+    if (has_planned_computed_final && !plan.imports.empty()) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedCapabilityFrame,
+                 "a computed-final agent cannot reach a capability on the P6-7 frame lane "
+                 "(raw P4-D finals and wire-JSON capabilities never mix in one agent)");
+        return std::nullopt;
+    }
+
     const std::uint32_t agent_fn_base =
         static_cast<std::uint32_t>(plan.imports.size()) + kDefinedHandlerBase +
         static_cast<std::uint32_t>(planned_handlers.size());
@@ -7894,6 +8642,7 @@ input_frame_backing_high_water(const CoreProgram &program,
     for (std::uint32_t index = 0; index < planned_handlers.size(); ++index) {
         PlannedComputedHandler &planned = planned_handlers[index];
         const std::uint32_t state = planned.state;
+        const bool is_final_return = planned.is_final_return;
         std::vector<CoreStateId> targets = planned.targets;
         std::unique_ptr<P6ComputationHandlerBuilder> builder = std::move(planned.builder);
         builder->set_fn_call_tables(&instance_to_ordinal, &handler_fn_base);
@@ -7909,7 +8658,14 @@ input_frame_backing_high_water(const CoreProgram &program,
         // projection emits a fixed-region load), so read it after emit().
         const bool reads_raw = builder->reads_raw_input_frame();
         plan.handlers[index] = CompiledHandler{std::move(*body)};
-        plan.actions[state] = ComputedGotoAction{index, std::move(targets)};
+        if (is_final_return) {
+            // V2-A: the handler materialized the output frame; runv invokes it
+            // directly and returns the output base. It never goto-branches.
+            plan.actions[state] = ComputedReturnAction{index};
+            plan.has_computed_final = true;
+        } else {
+            plan.actions[state] = ComputedGotoAction{index, std::move(targets)};
+        }
         if (reads_raw) {
             plan.reads_raw_input_frame = true;
         }
@@ -8675,6 +9431,15 @@ void append_capability_return(ByteBuffer &body,
             append_indexed_op(body, kOpLocalGet, 0);
             append_indexed_op(body, kOpLocalGet, 1);
             body.byte(kOpReturn);
+        } else if (const auto *computed =
+                       std::get_if<ComputedReturnAction>(&plan.actions[state])) {
+            // V2-A: run2 carries opaque wire-JSON and has no P4-D computed-final
+            // contract; a computed final is observable only through runv. Its
+            // handler materializes into the output frame, so drop the yielded
+            // state id and trap here rather than return an undefined tuple.
+            append_indexed_op(body, kOpCall, functions.handler(computed->function));
+            body.byte(kOpDrop);
+            body.byte(kOpUnreachable);
         } else {
             append_capability_return(body, plan, std::get<CapabilityAction>(plan.actions[state]));
         }
@@ -8685,12 +9450,15 @@ void append_capability_return(ByteBuffer &body,
     return body;
 }
 
-// RFC 0026 P6-7 D3: runv() -> (status:i32, value_ptr:i32). It drives the same
-// deterministic state walk run2 performs, then returns the root value's FIXED
-// frame home. Rung E admits only IDENTITY p6-frame finals (the final is the
-// literal `return input;`), so value_ptr is the borrowed input frame base with
-// no copy; a computed-final arm (the output frame base) lands in a later rung,
-// and any other terminal traps, exactly like run2's fallthrough.
+// RFC 0026 P6-7 D3 + frame-bridge v2 rung V2-A: runv() ->
+// (status:i32, value_ptr:i32). It drives the same deterministic state walk
+// run2 performs, then switches on the reached final:
+//   * an IDENTITY final returns (OK, kP6AggregateInputBase) — the borrowed
+//     input frame, no copy;
+//   * a COMPUTED final invokes its materializing handler and returns
+//     (OK, kP6AggregateOutputBase);
+//   * a capability final is forbidden on the p6-frame lane by planning, so
+//     reaching one traps (the fallthrough unreachable).
 [[nodiscard]] std::optional<ByteBuffer>
 make_runv_body(const AgentPlan &plan, const FunctionTable &functions) {
     ByteBuffer body;
@@ -8699,31 +9467,39 @@ make_runv_body(const AgentPlan &plan, const FunctionTable &functions) {
     body.byte(kI32); // local 0 = fuel (runv is parameter-free)
 
     append_run_to_final(body, plan, functions, 0);
-    bool has_identity_arm = false;
+    bool has_arm = false;
     for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
-        if (!is_final_action(plan.actions[state])) {
+        const auto &action = plan.actions[state];
+        const bool is_identity = std::holds_alternative<IdentityAction>(action);
+        const auto *computed = std::get_if<ComputedReturnAction>(&action);
+        if (!is_identity && computed == nullptr) {
+            // A capability final has no runv arm; reaching it traps.
             continue;
         }
-        if (!std::holds_alternative<IdentityAction>(plan.actions[state])) {
-            // A capability final is forbidden on the p6-frame lane by planning;
-            // a computed final materializes into the output frame in a later
-            // rung. Neither has a runv arm yet, so reaching that state traps.
-            continue;
-        }
-        has_identity_arm = true;
+        has_arm = true;
         append_indexed_op(body, kOpGlobalGet, kGlobalCurrentState);
         append_const(body, state);
         body.byte(kOpI32Eq);
         body.byte(kOpIf);
         body.byte(kEmptyBlock);
-        append_const(body, AHFL_CAP_OK);
-        append_const(body, kP6AggregateInputBase);
-        body.byte(kOpReturn);
+        if (is_identity) {
+            append_const(body, AHFL_CAP_OK);
+            append_const(body, kP6AggregateInputBase);
+            body.byte(kOpReturn);
+        } else {
+            // Materialize the output frame, then return its fixed base.
+            append_indexed_op(body, kOpCall, functions.handler(computed->function));
+            body.byte(kOpDrop);
+            append_const(body, AHFL_CAP_OK);
+            append_const(body, kP6AggregateOutputBase);
+            body.byte(kOpReturn);
+        }
         body.byte(kOpEnd);
     }
-    if (!has_identity_arm) {
-        // A p6-frame module is emitted only when the planner admits an identity
-        // final; guarding keeps the body fail-closed if that invariant shifts.
+    if (!has_arm) {
+        // A p6-frame module is emitted only when the planner admits at least
+        // one identity or computed final; guarding keeps the body fail-closed
+        // if that invariant shifts.
         return std::nullopt;
     }
     body.byte(kOpUnreachable);
@@ -10033,13 +10809,16 @@ build_frame_section_plan(const CoreProgram &program,
                                                       : CoreWasmFrameContract::WireJson;
     if (frame_plan != nullptr) {
         CoreWasmFrameLane lane;
-        // Rung E emits identity-final P6-frame modules (both pinned fixtures end
-        // in `return input;`); runv returns the borrowed input base. The
-        // computed-final arm (output base) arrives with computed-final emission.
-        lane.final_kind = "identity";
+        // RFC 0026 P6-7 frame-bridge v2 rung V2-A: the final-kind discriminator
+        // is the sole authority for runv's authorized value_ptr base. An
+        // identity final returns the borrowed input base (1024); a computed
+        // final materializes into the fixed output base (12288).
+        const bool computed_final = plan.has_computed_final;
+        lane.final_kind = computed_final ? "computed" : "identity";
         lane.input_base = ir::core::kP6AggregateInputBase;
         lane.input_size = frame_plan->input_size;
-        lane.output_base = ir::core::kP6AggregateInputBase;
+        lane.output_base = computed_final ? ir::core::kP6AggregateOutputBase
+                                          : ir::core::kP6AggregateInputBase;
         lane.output_size = frame_plan->output_size;
         lane.placements.reserve(frame_plan->placements.size());
         for (const auto &placement : frame_plan->placements) {
@@ -10274,13 +11053,18 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     // non-design-pinned modules (including appending a frame-root block to a
     // capability module's wire-schema section, the raw+capability hybrid
     // section 11 forbids).
+    //
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL is the second
+    // frame-module predicate (design §7.3 emission disjunction): such an agent
+    // may never project its raw input (its handlers only construct the output)
+    // but still carries the layout/wire sections and runv.
     const CoreAgentDecl &agent_decl = program.agents[agent->value];
     std::optional<FrameSectionPlan> frame_plan;
     std::optional<std::pair<ir::core::CoreValueTypeId, ir::core::CoreValueTypeId>>
         frame_boundary;
     const bool frame_lane_eligible = plan->imports.empty() && plan->fns.empty() &&
                                      plan->closure_table.empty();
-    if (plan->reads_raw_input_frame && frame_lane_eligible) {
+    if ((plan->reads_raw_input_frame || plan->has_computed_final) && frame_lane_eligible) {
         // Build into the PRIMARY result: a genuine hard failure (unfinalized
         // boundary layout, backing/frame RESOURCE overflow) must reject the
         // build with its diagnostic rather than be discarded into a throwaway
@@ -10311,8 +11095,20 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         if (projectable) {
             frame_plan = std::move(candidate);
             frame_boundary = std::move(candidate_boundary);
+        } else if (plan->has_computed_final) {
+            // A computed final REQUIRES the runv + frame sections: there is no
+            // legacy sectionless observation for a module that materializes an
+            // output frame. Unlike a raw-projecting module (which keeps its
+            // pre-P6-7 skip until its boundary is wire-representable), fail the
+            // build rather than emit a computed-final module with no frame lane.
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedCapabilityFrame,
+                     "a computed-final agent boundary is not representable on the P6-7 frame "
+                     "lane (the input/output nominal must project to a v1 wire-schema frame root)");
+            return result;
         }
-        // Not projectable: legacy sectionless raw-frame module (no diagnostic).
+        // Not projectable and raw-input-only: legacy sectionless raw-frame
+        // module (no diagnostic).
     }
 
     // RFC 0026 E4-B1: project the deterministic logical wire schema for exactly

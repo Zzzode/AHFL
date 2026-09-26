@@ -737,6 +737,27 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-A: COMPUTED FINALS on the
+    # agent lane. A capability-free final that is not the canonical
+    # `return input;` passthrough materializes a scalar / nested
+    # aggregate / if-selected tag enum result into the fixed output frame
+    # (12288), and runv returns (OK, output_base). Node-only
+    # fixtures (NOT census cases): real Node v22 packs the raw input
+    # words, drives runv, and walks the output frame including zero
+    # padding. SKIPs (77) when node is unavailable.
+    add_test(NAME ahfl.wasm.v2a_computed_final_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2a_computed_final_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.v2a_computed_final_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "V2-A computed-final Node embedded-engine execution passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 P6-6 (KR6.6): coercion physical effects. The KR6.5
     # `coercion_plans` arena gate is lifted; a CoreCoerceExpr lowers to a real
     # effect derived from the P4-D layout table. The producer emits a real

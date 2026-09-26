@@ -26,11 +26,21 @@ from pathlib import Path
 
 # The ONLY fixtures allowed to carry the ahfl.core-layout.v1 frame section.
 # Anything else emitting one is a byte-identity / lane-mixing regression.
+# RFC 0026 P6-7 frame-bridge v2 rung V2-A adds the three node-only
+# computed-final fixtures (scalar / nested aggregate / if-selected tag
+# enum): they materialize the output frame, so they are p6-frame
+# modules even though no handler projects the raw input. The
+# v2a_string_final_unsupported fixture compiles-REJECTS (String
+# output needs rung V2-B), so it never emits an artifact and is
+# absent from this set by construction.
 FRAME_FIXTURES = frozenset(
     {
         "p6_aggregate",
         "p6_collection",
         "p6_frame_two_containers",
+        "v2a_computed_scalar",
+        "v2a_computed_aggregate",
+        "v2a_computed_enum",
     }
 )
 

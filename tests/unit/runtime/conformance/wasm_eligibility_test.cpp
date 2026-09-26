@@ -236,20 +236,23 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
     // classifier honest about WHY a case is skipped instead of hand-curating a
     // skip list.
     const std::vector<CaseVerdict> blocked = {
-        // A match over a struct-payload enum in the agent body: the flow
-        // carries a real pattern arena, so the orchestration lane bails before
-        // it ever reaches the handler.
+        // A workflow whose node agent carries a computed final (the if-let
+        // match over a struct/string payload, in a region that
+        // materializes an output): RFC 0026 P6-7 frame-bridge v2
+        // rung V2-A lands the DIRECT-agent computed final, but the
+        // workflow PACKAGING of such a node (computed runner, node
+        // input/return construction) is rung V2-D, and the String
+        // output itself needs rung V2-B. The workflow policy
+        // (allow_computed_goto=false) therefore still fails closed
+        // with the workflow-frame code, naming the deferred packaging.
         {"enum_variant_e2e.case.json",
          WasmEligibilityVerdict::BlockedComputation,
          "wasm.UNSUPPORTED_WORKFLOW_FRAME",
-         "hidden pattern arena"},
-        // An if-let over a generic enum payload: the handler's first statement
-        // is not the canonical unprojected input let the orchestration line
-        // forwards.
+         "does not yet package a P6 computed-final handler"},
         {"if_let_e2e.case.json",
          WasmEligibilityVerdict::BlockedComputation,
          "wasm.UNSUPPORTED_WORKFLOW_FRAME",
-         "unprojected canonical input frame"},
+         "does not yet package a P6 computed-final handler"},
         // A multi-agent DAG whose non-final handlers carry context stores and
         // an enum-equality branch: neither is a single bare goto.
         {"e2e_multi_agent.case.json",

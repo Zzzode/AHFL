@@ -592,6 +592,10 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/p6_scalar_trap.ahfl",
         "wasm/p6_unwrap_none_trap.ahfl",
         "wasm/p6_unwrap_some.ahfl",
+        "wasm/v2a_computed_aggregate.ahfl",
+        "wasm/v2a_computed_enum.ahfl",
+        "wasm/v2a_computed_scalar.ahfl",
+        "wasm/v2a_string_final_unsupported.ahfl",
     };
 }
 

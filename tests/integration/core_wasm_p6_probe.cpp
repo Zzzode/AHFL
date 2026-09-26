@@ -441,6 +441,75 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-A: for a COMPUTED FINAL
+    // fixture, report the exact P4-D frame facts the Node host needs to
+    // pack an input and validate the runv output frame: the runv root
+    // bases/root sizes, and every scalar leaf word `@offset:width`
+    // (width 32/64) of the input and output nominals. The host mirrors
+    // these facts instead of re-deriving offsets; it pins the expected
+    // semantic values itself (a node-only lane, NOT a census case).
+    if (emitted.descriptor.has_value() && emitted.descriptor->frame.has_value() &&
+        emitted.descriptor->frame->final_kind == "computed") {
+        const auto &frame = *emitted.descriptor->frame;
+        auto emit_leaves = [&](auto &&self, ir::core::CoreLayoutId id,
+                               std::uint64_t base, std::string &acc,
+                               bool &first) -> void {
+            const auto &lay = layouts.table->layouts[id.value];
+            if (const auto *s = std::get_if<ir::core::CoreLayoutStruct>(&lay.shape)) {
+                for (std::uint32_t i = 0; i < s->field_layouts.size(); ++i) {
+                    self(self, s->field_layouts[i], base + s->field_offsets[i],
+                         acc, first);
+                }
+                return;
+            }
+            if (const auto *e = std::get_if<ir::core::CoreLayoutEnum>(&lay.shape)) {
+                // Discriminant at offset 0.
+                if (!first) acc += ",";
+                acc += "@" + std::to_string(base) + ":32";
+                first = false;
+                // Every variant payload's leaf words, at payload_offset.
+                for (const ir::core::CoreLayoutId payload : e->variant_payload_layouts) {
+                    self(self, payload, base + e->payload_offset, acc, first);
+                }
+                return;
+            }
+            if (const auto *sc =
+                    std::get_if<ir::core::CoreLayoutScalar>(&lay.shape)) {
+                if (!first) acc += ",";
+                acc += "@" + std::to_string(base) + ":" +
+                        (sc->repr == ir::core::CoreScalarRepr::I64 ? "64" : "32");
+                first = false;
+            }
+        };
+        auto nominal_layout = [&](ir::core::CoreTypeId type)
+                                  -> std::optional<ir::core::CoreLayoutId> {
+            const auto vt = nominal_value_type(core.program, type);
+            if (!vt.has_value() || vt->value >= layouts.table->value_layouts.size()) {
+                return std::nullopt;
+            }
+            return layouts.table->value_layouts[vt->value];
+        };
+        const auto in_id = nominal_layout(core.program.agents.front().input_type);
+        const auto out_id = nominal_layout(core.program.agents.front().output_type);
+        std::cout << "computed_final=1 input_base=" << frame.input_base
+                  << " output_base=" << frame.output_base
+                  << " input_size=" << frame.input_size
+                  << " output_size=" << frame.output_size;
+        if (in_id.has_value()) {
+            std::string leaves;
+            bool first = true;
+            emit_leaves(emit_leaves, *in_id, 0, leaves, first);
+            std::cout << " inputs=" << leaves;
+        }
+        if (out_id.has_value()) {
+            std::string leaves;
+            bool first = true;
+            emit_leaves(emit_leaves, *out_id, 0, leaves, first);
+            std::cout << " outputs=" << leaves;
+        }
+        std::cout << "\n";
+    }
+
     std::cout << "native_status=" << native_status << " entered_ids=";
     for (std::size_t i = 0; i < entered_ids.size(); ++i) {
         std::cout << (i == 0 ? "" : ",") << entered_ids[i];

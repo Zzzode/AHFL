@@ -1,0 +1,54 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A: computed AGGREGATE final.
+//
+// The final constructs a nested struct whose child aggregate is
+// itself a constructor. In the module's runtime model a nested
+// aggregate field holds the CHILD's address (the P6 one-word
+// pointer rule), while the P4-D frame layout INLINES that
+// child. The runv materializer must therefore EXPAND the
+// pointer tree into the output frame: copy the nested struct's
+// inline words from the scratch aggregate the parent field
+// names, and leave every padding word zero. This pins the
+// dereference/expand path end to end over real Node memory.
+module wasm::v2a::computed_aggregate;
+
+pub struct In {
+    a: Int;
+    b: Int;
+}
+
+pub struct Inner {
+    doubled: Int;
+    sum: Int;
+}
+
+pub struct Out {
+    x: Inner;
+    flag: Bool;
+}
+
+agent ComputedAggregateAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for ComputedAggregateAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Out {
+            x: Inner {
+                doubled: input.a * 2,
+                sum: input.a + input.b,
+            },
+            flag: true,
+        };
+    }
+}
