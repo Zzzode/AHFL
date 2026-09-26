@@ -143,10 +143,27 @@ struct CoreWireCapabilitySchema {
                                          const CoreWireCapabilitySchema &) noexcept = default;
 };
 
+// RFC 0026 P6-7: the agent BOUNDARY roots of a P6-frame module. A capability
+// table has no frame roots (its roots are capability params/results); a
+// P6-frame agent table carries exactly one input and one output root naming the
+// agent's boundary nominals. The nodes these name are reachability roots of the
+// local verifier, and the frame binding factory derives its binding root from
+// them (never from a caller-supplied node id).
+struct CoreWireFrameRoots {
+    CoreWireSchemaNodeId input{};
+    CoreWireSchemaNodeId output{};
+    [[nodiscard]] friend bool operator==(const CoreWireFrameRoots &,
+                                         const CoreWireFrameRoots &) noexcept = default;
+};
+
 struct CoreWireSchemaTable {
     std::uint32_t format_version{1};
     std::vector<CoreWireSchemaNode> nodes;
     std::vector<CoreWireCapabilitySchema> capabilities;
+    /// Present iff the table projects a P6-frame agent's boundary roots. The
+    /// encoded section carries a trailing frame-root block exactly in that case,
+    /// so a capability-only section stays byte-identical to the pre-P6-7 format.
+    std::optional<CoreWireFrameRoots> frame_roots;
     [[nodiscard]] friend bool operator==(const CoreWireSchemaTable &,
                                          const CoreWireSchemaTable &) noexcept = default;
 };
@@ -188,16 +205,28 @@ struct CoreWireSchemaDecodeResult {
 /// The selection must be strictly increasing and duplicate-free. Pure: the
 /// verified CoreProgram is never mutated; P4-C member instantiation uses a
 /// private value-type arena seeded from `program.value_types`.
+///
+/// RFC 0026 P6-7: `frame_boundary` optionally names a P6-frame agent's
+/// input/output boundary value types. When present, their projections become
+/// the table's frame roots (`CoreWireSchemaTable::frame_roots`) and reachability
+/// roots of the local verifier, so a capability-free P6-frame agent gets a
+/// schema section covering its boundary nominals. The capability selection may
+/// be empty in that case.
 [[nodiscard]] CoreWireSchemaBuildResult
 project_core_wire_schema(const CoreProgram &program,
-                         const std::vector<CoreCapabilityId> &selected_capabilities);
+                         const std::vector<CoreCapabilityId> &selected_capabilities,
+                         std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
+                             frame_boundary = std::nullopt);
 
 /// Verify both local graph invariants and exact deterministic reprojection from
-/// the selected Core capability signatures.
+/// the selected Core capability signatures. When `frame_boundary` is given the
+/// reprojection includes the P6-frame agent boundary roots.
 [[nodiscard]] std::vector<CoreLowerDiagnostic>
 verify_core_wire_schema_table(const CoreProgram &program,
                               const std::vector<CoreCapabilityId> &selected_capabilities,
-                              const CoreWireSchemaTable &table);
+                              const CoreWireSchemaTable &table,
+                              std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
+                                  frame_boundary = std::nullopt);
 
 /// Verify ONLY the local graph invariants of a wire-schema table (format version,
 /// 32-bit id space, strictly-ordered/unique capability roots, per-node structural

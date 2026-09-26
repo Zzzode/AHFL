@@ -94,6 +94,34 @@ struct CoreWasmCapabilityImport {
     std::string canonical_name; // canonical capability name
 };
 
+/// RFC 0026 P6-7: one input-reached bounded container's disjoint backing
+/// placement, mirrored into the descriptor so a generic host packs collection
+/// headers/elements without parsing the layout section itself.
+struct CoreWasmFramePlacement {
+    std::uint32_t edge_index{0};
+    std::uint32_t base{0};
+    std::uint32_t extent{0};
+};
+
+/// RFC 0026 P6-7: the P6-frame facts an embedded host needs to pack input and
+/// read output. Populated iff `frame_contract == P6Frame`. The layout table and
+/// wire schema themselves ride in the module's custom sections; this carries
+/// only the fixed-region coordinates and final-kind discriminator the host
+/// cross-checks against them.
+struct CoreWasmFrameLane {
+    /// "identity" finals return the borrowed input base; "computed" finals
+    /// materialize into the output base. The sole authority for which base
+    /// runv's value_ptr may name.
+    std::string final_kind; // "identity" / "computed"
+    std::uint32_t input_base{0};
+    std::uint32_t input_size{0};
+    std::uint32_t output_base{0};
+    std::uint32_t output_size{0};
+    std::vector<CoreWasmFramePlacement> placements;
+    std::uint32_t payload_arena_base{0};
+    std::uint32_t payload_arena_capacity{0};
+};
+
 /// The input/output frame contract an embedded host must honor.
 enum class CoreWasmFrameContract {
     /// The run2 boundary carries opaque canonical value_json BYTES: the host
@@ -102,9 +130,11 @@ enum class CoreWasmFrameContract {
     /// canonical observation is fully reconstructable.
     WireJson,
     /// A P6 computation handler projects a field out of the raw P4-D input
-    /// frame (the fixed reserved regions) or reads a raw backing store. No
-    /// wire-JSON frame crosses run2, so a canonical output observation awaits
-    /// the P6-7 frame decision; differential conformance SKIPs (p6-7).
+    /// frame (the fixed reserved regions) or reads a raw backing store. From
+    /// RFC 0026 P6-7 rung A such a module additionally carries the
+    /// `ahfl.core-layout.v1` and boundary-root wire-schema sections; the
+    /// runv/pack/encode execution lane lands in later rungs, so canonical
+    /// observation still awaits and differential conformance keeps its skip.
     RawP6Frame,
 };
 
@@ -123,6 +153,9 @@ struct CoreWasmExecutionDescriptor {
 
     // Both lanes: reachable capability imports in ordinal order.
     std::vector<CoreWasmCapabilityImport> imports;
+
+    // RFC 0026 P6-7: populated iff frame_contract == P6Frame.
+    std::optional<CoreWasmFrameLane> frame;
 
     // Node-event buffer layout (identity for both lanes; the ABI SSOT).
     std::uint32_t event_log_base{0};

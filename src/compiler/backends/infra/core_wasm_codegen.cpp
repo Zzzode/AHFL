@@ -1,6 +1,7 @@
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_recursion.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
@@ -148,6 +149,12 @@ constexpr std::uint8_t kFuncRefType = 0x70;
 // agents and E3 no-capability identity workflows never carry it; E2 agents and
 // B2-C capability workflows carry the EOF AHFLWS section.
 constexpr std::string_view kWireSchemaSectionName = "ahfl.wire-schema.v1";
+
+// RFC 0026 P6-7 rung A: a P6-frame module (one whose handler projects the raw
+// P4-D input frame) carries, immediately BEFORE the EOF wire-schema section, the
+// deterministic P4-D layout table plus the boundary roots and the disjoint
+// backing placements / payload-arena span. The host physical-layout authority.
+constexpr std::string_view kCoreLayoutSectionName = "ahfl.core-layout.v1";
 
 // RFC 0026 E4-B2-C capability-workflow (seam doc §4.4): a capability-bearing
 // workflow module carries a compiler-emitted execution manifest custom section
@@ -8236,7 +8243,8 @@ void append_capability_return(ByteBuffer &body,
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
 encode_module(const CoreProgram &program,
               const AgentPlan &plan,
-              std::span<const std::uint8_t> wire_schema_payload) {
+              std::span<const std::uint8_t> wire_schema_payload,
+              std::span<const std::uint8_t> frame_layout_payload) {
     const FunctionTable functions{static_cast<std::uint32_t>(plan.imports.size()),
                                   static_cast<std::uint32_t>(plan.handlers.size())};
     ByteBuffer module;
@@ -8452,6 +8460,21 @@ encode_module(const CoreProgram &program,
     // caller passes an empty payload otherwise). The custom payload is the
     // canonical Wasm custom-section framing (name-length LEB + name) followed by
     // the encoded table bytes (`AHFLWS...`) verbatim; no re-projection here.
+    // RFC 0026 P6-7 rung A: a P6-frame module carries the deterministic
+    // core-layout custom section immediately BEFORE the EOF wire-schema
+    // section. Identity/capability agents pass an empty payload and gain
+    // neither section, staying byte-identical.
+    if (!frame_layout_payload.empty()) {
+        ByteBuffer frame_custom;
+        if (!frame_custom.name(kCoreLayoutSectionName)) {
+            return std::nullopt;
+        }
+        frame_custom.raw_span(frame_layout_payload);
+        if (!append_section(module, kSectionCustom, frame_custom)) {
+            return std::nullopt;
+        }
+    }
+
     if (!wire_schema_payload.empty()) {
         ByteBuffer custom;
         if (!custom.name(kWireSchemaSectionName)) {
@@ -9335,12 +9358,306 @@ build_import_descriptors(const CoreProgram &program,
     return walk;
 }
 
+// ---------------------------------------------------------------------------
+// RFC 0026 P6-7 rung A: the `ahfl.core-layout.v1` section plan.
+//
+// A P6-frame agent's boundary roots are its input/output value types. The plan
+// enumerates every input-reached bounded CONTAINER in a depth-first,
+// declaration-order boundary walk and assigns each a DISJOINT backing placement
+// by the sum-of-prior-backing rule (design section 6.2), then derives the
+// frame-payload arena span (0-capacity at rung A: input String packing arrives
+// with the packer in rung C; the arena address is still pinned deterministically
+// so no later rung can move it). Every coordinate is compile-time constant.
+// ---------------------------------------------------------------------------
+
+struct FrameSectionPlan {
+    ir::core::CoreValueTypeId input_vt{};
+    ir::core::CoreValueTypeId output_vt{};
+    /// Roots / placement container ids are already REMAPPED into the dense
+    /// `table` id space below (they are NOT ids into the full program layout
+    /// table).
+    ir::core::CoreLayoutId input_layout{};
+    ir::core::CoreLayoutId output_layout{};
+    std::uint32_t input_size{0};
+    std::uint32_t output_size{0};
+    std::vector<ir::core::CoreFrameBackingPlacement> placements;
+    std::uint32_t payload_arena_base{0};
+    std::uint32_t payload_arena_capacity{0};
+    /// The self-contained boundary table: exactly the layouts reachable from
+    /// the two roots, with all edges remapped into this dense table.
+    ir::core::CoreLayoutTable table;
+};
+
+[[nodiscard]] std::optional<ir::core::CoreValueTypeId>
+frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
+    return p6_nominal_value_type(program, nominal);
+}
+
+// Collect the layout ids reachable from `root` through every physical edge
+// (struct/enum fields, container element/value, closure environment).
+void collect_reachable_layouts(const ir::core::CoreLayoutTable &layouts,
+                               ir::core::CoreLayoutId root,
+                               std::vector<bool> &reachable) {
+    if (root.value >= layouts.layouts.size() || reachable[root.value]) {
+        return;
+    }
+    reachable[root.value] = true;
+    const auto visit = [&](ir::core::CoreLayoutId child) {
+        collect_reachable_layouts(layouts, child, reachable);
+    };
+    std::visit(
+        Overloaded{
+            [&](const ir::core::CoreLayoutStruct &shape) {
+                for (auto child : shape.field_layouts) {
+                    visit(child);
+                }
+            },
+            [&](const ir::core::CoreLayoutEnum &shape) {
+                for (auto child : shape.variant_payload_layouts) {
+                    visit(child);
+                }
+            },
+            [&](const ir::core::CoreLayoutContainer &shape) {
+                visit(shape.element);
+                if (shape.value.has_value()) {
+                    visit(*shape.value);
+                }
+            },
+            [&](const ir::core::CoreLayoutClosure &shape) {
+                if (shape.environment.has_value()) {
+                    visit(*shape.environment);
+                }
+            },
+            [](const auto &) {},
+        },
+        layouts.layouts[root.value].shape);
+}
+
+// Build the self-contained boundary table: exactly the layout closure reachable
+// from both roots, in ascending original-id order, with every edge remapped to
+// the dense new id space. The full program table also holds layouts for
+// nominals the boundary never reaches (some still Pending/unfinalized); those
+// never cross the trust boundary. The returned vector maps an old id to its new
+// id (kInvalid when not boundary-reachable).
+[[nodiscard]] std::pair<ir::core::CoreLayoutTable, std::vector<ir::core::CoreLayoutId>>
+prune_boundary_layouts(const ir::core::CoreLayoutTable &layouts,
+                       ir::core::CoreLayoutId input_root,
+                       ir::core::CoreLayoutId output_root) {
+    std::vector<bool> reachable(layouts.layouts.size(), false);
+    collect_reachable_layouts(layouts, input_root, reachable);
+    collect_reachable_layouts(layouts, output_root, reachable);
+
+    std::vector<ir::core::CoreLayoutId> remap(layouts.layouts.size(),
+                                              ir::core::CoreLayoutId{});
+    ir::core::CoreLayoutTable pruned;
+    pruned.target = layouts.target;
+    // The boundary roots are carried explicitly; the full value-type -> layout
+    // index map is a program-side concern and is not shipped.
+    pruned.value_layouts.clear();
+    for (std::uint32_t old = 0; old < layouts.layouts.size(); ++old) {
+        if (!reachable[old]) {
+            remap[old] = ir::core::CoreLayoutId{ir::core::CoreLayoutId::kInvalid};
+            continue;
+        }
+        remap[old] = ir::core::CoreLayoutId{static_cast<std::uint32_t>(pruned.layouts.size())};
+        pruned.layouts.push_back(layouts.layouts[old]);
+    }
+    const auto map_id = [&](ir::core::CoreLayoutId id) {
+        return id.value < remap.size()
+                   ? remap[id.value]
+                   : ir::core::CoreLayoutId{ir::core::CoreLayoutId::kInvalid};
+    };
+    for (ir::core::CoreLayout &layout : pruned.layouts) {
+        std::visit(
+            Overloaded{
+                [&](ir::core::CoreLayoutStruct &shape) {
+                    for (auto &child : shape.field_layouts) {
+                        child = map_id(child);
+                    }
+                },
+                [&](ir::core::CoreLayoutEnum &shape) {
+                    for (auto &child : shape.variant_payload_layouts) {
+                        child = map_id(child);
+                    }
+                },
+                [&](ir::core::CoreLayoutContainer &shape) {
+                    shape.element = map_id(shape.element);
+                    if (shape.value.has_value()) {
+                        shape.value = map_id(*shape.value);
+                    }
+                },
+                [&](ir::core::CoreLayoutClosure &shape) {
+                    if (shape.environment.has_value()) {
+                        shape.environment = map_id(*shape.environment);
+                    }
+                },
+                [](auto &) {},
+            },
+            layout.shape);
+    }
+    return {std::move(pruned), std::move(remap)};
+}
+
+// Depth-first, declaration-order enumeration of every bounded CONTAINER reachable
+// from the input boundary root. A container is recorded exactly once (by layout
+// id); its backing placement index is its discovery order here.
+[[nodiscard]] bool enumerate_input_containers(
+    const CoreProgram &program,
+    const ir::core::CoreLayoutTable &layouts,
+    ir::core::CoreLayoutId root,
+    std::vector<ir::core::CoreLayoutId> &container_layouts,
+    std::vector<bool> &visited) {
+    if (root.value >= layouts.layouts.size() || visited[root.value]) {
+        return root.value < layouts.layouts.size();
+    }
+    visited[root.value] = true;
+    const ir::core::CoreLayout &layout = layouts.layouts[root.value];
+    return std::visit(
+        Overloaded{
+            [&](const ir::core::CoreLayoutStruct &shape) {
+                return std::ranges::all_of(shape.field_layouts, [&](ir::core::CoreLayoutId child) {
+                    return enumerate_input_containers(program, layouts, child, container_layouts,
+                                                      visited);
+                });
+            },
+            [&](const ir::core::CoreLayoutEnum &shape) {
+                return std::ranges::all_of(shape.variant_payload_layouts,
+                                           [&](ir::core::CoreLayoutId payload) {
+                                               return enumerate_input_containers(
+                                                   program, layouts, payload, container_layouts,
+                                                   visited);
+                                           });
+            },
+            [&](const ir::core::CoreLayoutContainer &shape) {
+                if (shape.backing_size == 0) {
+                    return false;
+                }
+                container_layouts.push_back(root);
+                // The backing element edge and the map-value edge describe stored
+                // slots; recurse so nested aggregate/container elements also get
+                // disjoint placements.
+                if (!enumerate_input_containers(program, layouts, shape.element, container_layouts,
+                                                visited)) {
+                    return false;
+                }
+                if (shape.value.has_value() &&
+                    !enumerate_input_containers(program, layouts, *shape.value, container_layouts,
+                                                visited)) {
+                    return false;
+                }
+                return true;
+            },
+            [](const auto &) { return true; },
+        },
+        layout.shape);
+}
+
+[[nodiscard]] std::optional<FrameSectionPlan>
+build_frame_section_plan(const CoreProgram &program,
+                         const ir::core::CoreLayoutTable &layouts,
+                         const CoreAgentDecl &agent,
+                         CoreWasmCodegenResult &result) {
+    const auto input_vt = frame_boundary_value_type(program, agent.input_type);
+    const auto output_vt = frame_boundary_value_type(program, agent.output_type);
+    if (!input_vt.has_value() || !output_vt.has_value()) {
+        add_diag(result, core_wasm_diag::kInvalidLayout,
+                 "a P6-frame agent boundary nominal has no finalized argument-less value type");
+        return std::nullopt;
+    }
+    const ir::core::CoreLayout *input_layout =
+        p6_value_layout(program, layouts, *input_vt);
+    const ir::core::CoreLayout *output_layout =
+        p6_value_layout(program, layouts, *output_vt);
+    if (input_layout == nullptr || output_layout == nullptr) {
+        add_diag(result, core_wasm_diag::kInvalidLayout,
+                 "a P6-frame agent boundary nominal has no finalized P4-D layout");
+        return std::nullopt;
+    }
+
+    FrameSectionPlan plan;
+    plan.input_vt = *input_vt;
+    plan.output_vt = *output_vt;
+    const ir::core::CoreLayoutId full_input_layout =
+        layouts.value_layouts[input_vt->value];
+    const ir::core::CoreLayoutId full_output_layout =
+        layouts.value_layouts[output_vt->value];
+    plan.input_size = static_cast<std::uint32_t>(input_layout->size);
+    plan.output_size = static_cast<std::uint32_t>(output_layout->size);
+
+    std::vector<ir::core::CoreLayoutId> container_layouts;
+    std::vector<bool> visited(layouts.layouts.size(), false);
+    if (!enumerate_input_containers(program, layouts, full_input_layout, container_layouts,
+                                    visited)) {
+        add_diag(result, core_wasm_diag::kInvalidLayout,
+                 "a P6-frame input container has an invalid backing layout");
+        return std::nullopt;
+    }
+
+    // Disjoint sum-of-prior-backing placements, each aligned to 8. The
+    // container id is remapped into the pruned table after pruning below.
+    std::uint64_t cursor = ir::core::kP6CollectionBackingBase;
+    plan.placements.reserve(container_layouts.size());
+    for (std::uint32_t edge = 0; edge < container_layouts.size(); ++edge) {
+        const ir::core::CoreLayoutId container_layout_id = container_layouts[edge];
+        const auto &container =
+            std::get<ir::core::CoreLayoutContainer>(
+                layouts.layouts[container_layout_id.value].shape);
+        const std::uint64_t extent = (container.backing_size + 7u) & ~std::uint64_t{7u};
+        if (cursor + extent > ir::core::kCoreWasmFixedLinearMemoryCapacityBytes) {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "P6 frame backing placements exceed the fixed 64 KiB linear-memory page");
+            return std::nullopt;
+        }
+        plan.placements.push_back(ir::core::CoreFrameBackingPlacement{
+            edge, container_layout_id, static_cast<std::uint32_t>(cursor),
+            static_cast<std::uint32_t>(extent)});
+        cursor += extent;
+    }
+    plan.payload_arena_base = static_cast<std::uint32_t>((cursor + 7u) & ~std::uint64_t{7u});
+    plan.payload_arena_capacity = 0; // rung C packs String payloads into this arena
+
+    // Prune to the boundary-reachable closure and remap every id the section
+    // names (roots + placement container ids) into the dense table.
+    auto [pruned, remap] =
+        prune_boundary_layouts(layouts, full_input_layout, full_output_layout);
+    const auto map_id = [&](ir::core::CoreLayoutId id) {
+        return remap[id.value];
+    };
+    plan.table = std::move(pruned);
+    plan.input_layout = map_id(full_input_layout);
+    plan.output_layout = map_id(full_output_layout);
+    for (auto &placement : plan.placements) {
+        placement.container_layout = map_id(placement.container_layout);
+    }
+    return plan;
+}
+
 [[nodiscard]] CoreWasmExecutionDescriptor build_agent_descriptor(const CoreProgram &program,
-                                                                 const AgentPlan &plan) {
+                                                                 const AgentPlan &plan,
+                                                                 const FrameSectionPlan *frame_plan) {
     CoreWasmExecutionDescriptor descriptor;
     descriptor.is_workflow = false;
     descriptor.frame_contract = plan.reads_raw_input_frame ? CoreWasmFrameContract::RawP6Frame
                                                            : CoreWasmFrameContract::WireJson;
+    if (frame_plan != nullptr) {
+        CoreWasmFrameLane lane;
+        // Rung A emits only identity-final P6-frame modules (both pinned
+        // fixtures end in `return input;`). The computed arm arrives in rung B.
+        lane.final_kind = "identity";
+        lane.input_base = ir::core::kP6AggregateInputBase;
+        lane.input_size = frame_plan->input_size;
+        lane.output_base = ir::core::kP6AggregateInputBase;
+        lane.output_size = frame_plan->output_size;
+        lane.placements.reserve(frame_plan->placements.size());
+        for (const auto &placement : frame_plan->placements) {
+            lane.placements.push_back(CoreWasmFramePlacement{
+                placement.edge_index, placement.base, placement.extent});
+        }
+        lane.payload_arena_base = frame_plan->payload_arena_base;
+        lane.payload_arena_capacity = frame_plan->payload_arena_capacity;
+        descriptor.frame = std::move(lane);
+    }
     descriptor.agent_name = program.agents[plan.agent.value].symbol_ref.canonical_name;
     descriptor.states = program.agents[plan.agent.value].states;
     descriptor.initial_state = plan.initial.value;
@@ -9536,14 +9853,62 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         return result;
     }
 
+    // RFC 0026 P6-7 rung A: a raw-input-frame agent CAN become a P6-frame
+    // module carrying (1) a deterministic `ahfl.core-layout.v1` section (P4-D
+    // table + boundary roots + disjoint backing placements) and (2) a
+    // boundary-root extension of the wire-schema projection. Eligibility is
+    // gated on the boundary nominals being WIRE-PROJECTABLE and on the layout
+    // and projected schema agreeing at both roots. A raw-frame agent whose
+    // boundary is not yet wire-representable (e.g. a `Map<Bool,...>` frame; the
+    // map-key/raw-get surface stays on a later ladder per design section 11)
+    // falls back to the legacy SECTIONLESS raw module and its existing skip, so
+    // only the design-pinned identity fixtures change bytes in this rung.
+    const CoreAgentDecl &agent_decl = program.agents[agent->value];
+    std::optional<FrameSectionPlan> frame_plan;
+    std::optional<std::pair<ir::core::CoreValueTypeId, ir::core::CoreValueTypeId>>
+        frame_boundary;
+    if (plan->reads_raw_input_frame) {
+        // The eligibility probe is isolated: a boundary that cannot yet carry
+        // the P6-7 sections must leave the primary result untouched so the
+        // legacy sectionless raw module still emits.
+        CoreWasmCodegenResult probe_result;
+        auto candidate = build_frame_section_plan(program, layouts, agent_decl, probe_result);
+        if (candidate.has_value()) {
+            auto candidate_boundary = std::pair{candidate->input_vt, candidate->output_vt};
+            auto trial = ir::core::project_core_wire_schema(program, {}, candidate_boundary);
+            bool eligible = trial.ok() && trial.table->frame_roots.has_value();
+            if (eligible) {
+                const auto &roots = *trial.table->frame_roots;
+                eligible =
+                    ir::core::verify_frame_layout_wire_consistency(
+                        candidate->table, candidate->input_layout, *trial.table, roots.input)
+                        .empty() &&
+                    ir::core::verify_frame_layout_wire_consistency(
+                        candidate->table, candidate->output_layout, *trial.table, roots.output)
+                        .empty();
+            }
+            if (eligible) {
+                frame_plan = std::move(candidate);
+                frame_boundary = std::move(candidate_boundary);
+            }
+            // Non-eligible: legacy sectionless raw-frame module (no diagnostic;
+            // the boundary is simply not P6-7 representable yet).
+        }
+        // A build_frame_section_plan hard failure (no finalized layout / backing
+        // overflow) still rejects below via the normal emission path; the
+        // candidate's diagnostics have already been added only on a hard gate.
+    }
+
     // RFC 0026 E4-B1: project the deterministic logical wire schema for exactly
     // the reachable capability imports (already sorted/unique in the plan), then
     // encode it to its canonical section payload. E1 no-import agents skip this
-    // entirely and stay byte-identical. Any projection or encode failure fails
-    // closed: no partial artifact, no silent section drop.
+    // entirely and stay byte-identical, EXCEPT an eligible P6-frame agent, whose
+    // boundary roots extend the projection. Any projection or encode failure
+    // fails closed: no partial artifact, no silent section drop.
     std::vector<std::uint8_t> wire_schema_payload;
-    if (!plan->imports.empty()) {
-        auto projection = ir::core::project_core_wire_schema(program, plan->imports);
+    if (!plan->imports.empty() || frame_boundary.has_value()) {
+        auto projection = ir::core::project_core_wire_schema(program, plan->imports,
+                                                             frame_boundary);
         if (!projection.ok()) {
             // Fail-closed seam: never assume a diagnostic is present. A future or
             // defensive empty-diagnostics result must still reject with a fixed
@@ -9556,6 +9921,14 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
                 range = first.source_range;
             }
             add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message), range);
+            return result;
+        }
+        // RFC 0026 P6-7 rung A: the eligibility trial already established
+        // layout/wire consistency; re-assert the frame roots are present so a
+        // future projection change can never silently drop them.
+        if (frame_plan.has_value() && !projection.table->frame_roots.has_value()) {
+            add_diag(result, core_wasm_diag::kInvalidLayout,
+                     "a P6-frame agent wire projection carries no boundary roots");
             return result;
         }
         auto encoded = ir::core::encode_core_wire_schema_table(*projection.table);
@@ -9573,7 +9946,35 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         wire_schema_payload = std::move(*encoded.bytes);
     }
 
-    auto bytes = encode_module(program, *plan, wire_schema_payload);
+    // RFC 0026 P6-7 rung A: build + canonically encode the core-layout section
+    // for a P6-frame agent. The layout/wire consistency is verified once here
+    // (compile-side admission): the same table the wire projection was built
+    // from must agree on arity/order/width/capacity.
+    std::vector<std::uint8_t> frame_layout_payload;
+    if (frame_plan.has_value()) {
+        ir::core::CoreFrameLayoutSection section;
+        section.table = frame_plan->table;
+        section.input_layout = frame_plan->input_layout;
+        section.output_layout = frame_plan->output_layout;
+        section.placements = frame_plan->placements;
+        section.payload_arena_base = frame_plan->payload_arena_base;
+        section.payload_arena_capacity = frame_plan->payload_arena_capacity;
+        auto layout_encoded = ir::core::encode_core_frame_layout_section(section);
+        if (!layout_encoded.ok()) {
+            std::string message = "core-layout section payload is not encodable";
+            ir::SourceRangeOpt range;
+            if (!layout_encoded.diagnostics.empty()) {
+                const auto &first = layout_encoded.diagnostics.front();
+                message += " (" + first.code + ")";
+                range = first.source_range;
+            }
+            add_diag(result, core_wasm_diag::kBinaryOverflow, std::move(message), range);
+            return result;
+        }
+        frame_layout_payload = std::move(*layout_encoded.bytes);
+    }
+
+    auto bytes = encode_module(program, *plan, wire_schema_payload, frame_layout_payload);
     if (!bytes.has_value()) {
         add_diag(result,
                  core_wasm_diag::kBinaryOverflow,
@@ -9597,7 +9998,8 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         artifact.imports.push_back("ahfl_cap.cap_" +
                                    std::to_string(*program.capabilities[id.value].symbol_ref.id));
     }
-    result.descriptor = build_agent_descriptor(program, *plan);
+    result.descriptor = build_agent_descriptor(program, *plan,
+                                               frame_plan.has_value() ? &*frame_plan : nullptr);
     result.artifact = std::move(artifact);
     return result;
 }

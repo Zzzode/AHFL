@@ -31,6 +31,11 @@ namespace ahfl::ir::core {
 /// ALWAYS a capability param or result — never a mere reachable descendant.
 enum class CoreWireRootKind { Param, Result };
 
+/// RFC 0026 P6-7: which agent boundary a frame-root selector names. A frame
+/// binding root is always the admitted P6-frame module's own input or output
+/// boundary nominal — never a capability slot.
+enum class CoreWireFrameRootKind { Input, Output };
+
 /// A typed selector that names EXACTLY one capability signature slot. The binding
 /// factory takes this instead of a raw `CoreWireSchemaNodeId`, so a caller cannot
 /// point a binding at an arbitrary in-range node (e.g. another capability's root,
@@ -43,6 +48,16 @@ struct CoreWireRootSelector {
     std::uint64_t expected_source_symbol{0};
     CoreWireRootKind kind{CoreWireRootKind::Result};
     std::uint32_t param_index{0};
+};
+
+/// RFC 0026 P6-7: a typed selector naming ONE agent boundary root of a
+/// frame-root schema table. The factory verifies the table carries a frame-root
+/// block and derives the binding root from it, so a caller cannot point a frame
+/// binding at a capability root or an arbitrary descendant node. This is a
+/// SIBLING selector: it does not weaken the capability-slot-only invariant of
+/// `CoreWireRootSelector`.
+struct CoreWireFrameRootSelector {
+    CoreWireFrameRootKind kind{CoreWireFrameRootKind::Input};
 };
 
 /// An opaque, immutable, copy-only authority proving that ONE `CoreWireSchemaTable`
@@ -203,5 +218,15 @@ make_wire_binding_from_transported_table(CoreWireSchemaTable table,
 make_wire_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
                                       const CoreWireRootSelector &selector,
                                       std::vector<CoreLowerDiagnostic> &diagnostics);
+
+/// RFC 0026 P6-7: mint a binding for a P6-frame agent boundary root (input or
+/// output) from a verified table that CARRIES the frame-root block. The root is
+/// derived from the typed frame selector, so a table without frame roots (a
+/// capability-only table) cannot produce a frame binding and no raw NodeId can
+/// be supplied by the caller.
+[[nodiscard]] std::optional<VerifiedWireSchemaBinding>
+make_frame_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
+                                       const CoreWireFrameRootSelector &selector,
+                                       std::vector<CoreLowerDiagnostic> &diagnostics);
 
 } // namespace ahfl::ir::core

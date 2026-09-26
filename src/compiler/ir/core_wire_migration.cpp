@@ -69,6 +69,30 @@ struct WireSchemaBindingFactory {
         return mint_from_verified(*admitted.table, selector, diagnostics);
     }
 
+    [[nodiscard]] static std::optional<VerifiedWireSchemaBinding>
+    mint_frame_from_verified(const VerifiedWireSchemaTable &verified,
+                             const CoreWireFrameRootSelector &selector,
+                             std::vector<CoreLowerDiagnostic> &diagnostics) {
+        diagnostics.clear();
+        const auto &table = *verified.table_;
+        if (!table.frame_roots.has_value()) {
+            fail(diagnostics, "wire-schema table carries no agent frame-root block");
+            return std::nullopt;
+        }
+        const CoreWireSchemaNodeId root = selector.kind == CoreWireFrameRootKind::Input
+                                              ? table.frame_roots->input
+                                              : table.frame_roots->output;
+        // A frame binding pins the frame sibling selector; the codec consumes
+        // only table()/root(), never selector().
+        CoreWireRootSelector frame_selector;
+        frame_selector.kind = CoreWireRootKind::Result;
+        auto payload = std::make_shared<VerifiedWireSchemaBinding::Payload>();
+        payload->table = verified.table_;
+        payload->selector = frame_selector;
+        payload->root = root;
+        return VerifiedWireSchemaBinding(std::move(payload));
+    }
+
   private:
     static void fail(std::vector<CoreLowerDiagnostic> &diagnostics, std::string message) {
         diagnostics.push_back(CoreLowerDiagnostic{CoreDiagnosticSeverity::Error,
@@ -253,6 +277,16 @@ make_wire_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
     // B2-A-pre shared-authority mint: derive the root through the sole SSOT and mint
     // a binding sharing `verified`'s immutable backing. No table re-verification.
     return WireSchemaBindingFactory::mint_from_verified(verified, selector, diagnostics);
+}
+
+std::optional<VerifiedWireSchemaBinding>
+make_frame_binding_from_verified_table(const VerifiedWireSchemaTable &verified,
+                                       const CoreWireFrameRootSelector &selector,
+                                       std::vector<CoreLowerDiagnostic> &diagnostics) {
+    // RFC 0026 P6-7: the frame-root sibling mint. No table re-verification (the
+    // authority is verified-once/immutable); the root is derived from the typed
+    // frame selector against the admitted frame-root block.
+    return WireSchemaBindingFactory::mint_frame_from_verified(verified, selector, diagnostics);
 }
 
 } // namespace ahfl::ir::core

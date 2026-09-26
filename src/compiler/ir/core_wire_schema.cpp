@@ -44,8 +44,13 @@ wire_payload_kind(CoreTypeDecl::VariantPayload::Kind kind) {
 class SchemaBuilder {
   public:
     SchemaBuilder(const CoreProgram &program,
-                  const std::vector<CoreCapabilityId> &selected_capabilities)
-        : program_(program), selected_(selected_capabilities), scratch_types_(program.value_types) {
+                  const std::vector<CoreCapabilityId> &selected_capabilities,
+                  std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary =
+                      std::nullopt)
+        : program_(program),
+          selected_(selected_capabilities),
+          frame_boundary_(std::move(frame_boundary)),
+          scratch_types_(program.value_types) {
         schema_ids_.resize(scratch_types_.size());
     }
 
@@ -87,7 +92,27 @@ class SchemaBuilder {
             projected.result = *result;
             table_.capabilities.push_back(std::move(projected));
         }
+        if (frame_boundary_.has_value()) {
+            if (frame_boundary_->first.value >= scratch_types_.size() ||
+                frame_boundary_->second.value >= scratch_types_.size()) {
+                fail(wire_schema::kInvalid, "frame boundary root value type is out of range");
+                return std::nullopt;
+            }
+            const auto input = project_type(frame_boundary_->first, std::nullopt);
+            const auto output = project_type(frame_boundary_->second, std::nullopt);
+            if (!input.has_value() || !output.has_value()) {
+                return std::nullopt;
+            }
+            frame_input_node_ = *input;
+            frame_output_node_ = *output;
+        }
         canonicalize();
+        if (frame_input_node_.has_value()) {
+            CoreWireFrameRoots roots;
+            roots.input = *frame_input_node_;
+            roots.output = *frame_output_node_;
+            table_.frame_roots = roots;
+        }
         return std::move(table_);
     }
 
@@ -511,10 +536,17 @@ class SchemaBuilder {
             }
             capability.result = remap[capability.result.value];
         }
+        if (frame_input_node_.has_value()) {
+            frame_input_node_ = remap[frame_input_node_->value];
+            frame_output_node_ = remap[frame_output_node_->value];
+        }
     }
 
     const CoreProgram &program_;
     const std::vector<CoreCapabilityId> &selected_;
+    std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary_;
+    std::optional<CoreWireSchemaNodeId> frame_input_node_;
+    std::optional<CoreWireSchemaNodeId> frame_output_node_;
     std::vector<CoreValueType> scratch_types_;
     std::vector<std::optional<CoreWireSchemaNodeId>> schema_ids_;
     // Parallel to `table_.nodes` during projection: the program-global scratch
@@ -528,8 +560,9 @@ class SchemaBuilder {
 [[nodiscard]] std::optional<CoreWireSchemaTable>
 build_raw(const CoreProgram &program,
           const std::vector<CoreCapabilityId> &selected,
+          std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary,
           std::vector<CoreLowerDiagnostic> &diagnostics) {
-    SchemaBuilder builder(program, selected);
+    SchemaBuilder builder(program, selected, std::move(frame_boundary));
     auto table = builder.run();
     diagnostics = builder.take_diagnostics();
     return table;
@@ -567,6 +600,17 @@ class LocalSchemaVerifier {
                 }
             }
             if (!mark(capability.result)) {
+                return std::move(diagnostics_);
+            }
+        }
+        // RFC 0026 P6-7: a frame-root table carries two additional reachability
+        // roots (the agent's input/output boundary nominals), so a
+        // capability-free frame table is locally legal. The capability-empty
+        // gate for a NON-frame table is intentionally left to the downstream
+        // admission (it distinguishes "no capability imports" cases with its own
+        // diagnostics), so local verification stays unchanged for such tables.
+        if (table_.frame_roots.has_value()) {
+            if (!mark(table_.frame_roots->input) || !mark(table_.frame_roots->output)) {
                 return std::move(diagnostics_);
             }
         }
@@ -922,6 +966,13 @@ class SchemaEncoder {
                 return std::nullopt;
             }
         }
+        // RFC 0026 P6-7: the frame-root block is a trailing, presence-gated
+        // extension, so a capability-only section keeps its pre-P6-7 bytes.
+        if (table.frame_roots.has_value()) {
+            byte(1);
+            u32(table.frame_roots->input.value);
+            u32(table.frame_roots->output.value);
+        }
         return std::move(bytes_);
     }
 
@@ -1151,6 +1202,34 @@ class SchemaDecoder {
             }
             table.capabilities.push_back(std::move(capability));
         }
+        // RFC 0026 P6-7: optional trailing frame-root block.
+        if (pos_ == data_.size()) {
+            return table;
+        }
+        const std::uint8_t frame_present = byte();
+        if (failed()) {
+            return std::nullopt;
+        }
+        if (frame_present == 0) {
+            if (pos_ != data_.size()) {
+                fail("wire-schema payload has trailing bytes");
+                return std::nullopt;
+            }
+            return table;
+        }
+        if (frame_present != 1) {
+            fail("wire-schema payload has a non-canonical frame-root tag");
+            return std::nullopt;
+        }
+        const std::uint32_t frame_input = u32();
+        const std::uint32_t frame_output = u32();
+        if (failed()) {
+            return std::nullopt;
+        }
+        CoreWireFrameRoots roots;
+        roots.input = CoreWireSchemaNodeId{frame_input};
+        roots.output = CoreWireSchemaNodeId{frame_output};
+        table.frame_roots = roots;
         if (failed()) {
             return std::nullopt;
         }
@@ -1539,9 +1618,12 @@ bool CoreWireSchemaDecodeResult::has_errors() const noexcept {
 
 CoreWireSchemaBuildResult
 project_core_wire_schema(const CoreProgram &program,
-                         const std::vector<CoreCapabilityId> &selected_capabilities) {
+                         const std::vector<CoreCapabilityId> &selected_capabilities,
+                         std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
+                             frame_boundary) {
     CoreWireSchemaBuildResult result;
-    result.table = build_raw(program, selected_capabilities, result.diagnostics);
+    result.table = build_raw(program, selected_capabilities, std::move(frame_boundary),
+                             result.diagnostics);
     if (!result.table.has_value()) {
         return result;
     }
@@ -1563,13 +1645,16 @@ verify_core_wire_schema_table_local(const CoreWireSchemaTable &table) {
 std::vector<CoreLowerDiagnostic>
 verify_core_wire_schema_table(const CoreProgram &program,
                               const std::vector<CoreCapabilityId> &selected_capabilities,
-                              const CoreWireSchemaTable &table) {
+                              const CoreWireSchemaTable &table,
+                              std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
+                                  frame_boundary) {
     auto local = verify_local(table);
     if (!local.empty()) {
         return local;
     }
     std::vector<CoreLowerDiagnostic> projection_diagnostics;
-    const auto expected = build_raw(program, selected_capabilities, projection_diagnostics);
+    const auto expected =
+        build_raw(program, selected_capabilities, std::move(frame_boundary), projection_diagnostics);
     if (!expected.has_value()) {
         return projection_diagnostics;
     }
