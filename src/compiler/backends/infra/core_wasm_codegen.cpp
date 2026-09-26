@@ -20,6 +20,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -9468,164 +9469,334 @@ frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
     return p6_nominal_value_type(program, nominal);
 }
 
-// Collect the layout ids reachable from `root` through every physical edge
-// (struct/enum fields, container element/value, closure environment).
-void collect_reachable_layouts(const ir::core::CoreLayoutTable &layouts,
-                               ir::core::CoreLayoutId root,
-                               std::vector<bool> &reachable) {
-    if (root.value >= layouts.layouts.size() || reachable[root.value]) {
-        return;
+// The boundary table is a FIXED-EDGE TREE of value slots: a struct field or an
+// enum payload slot is a distinct, simultaneously-live position even when two
+// such positions hash-cons to one source layout id. A bounded CONTAINER reached
+// at one slot owns an 8-byte inline header and its own disjoint backing
+// placement; collapsing two same-typed container slots onto one placement would
+// alias their elements (design section 6.2: "Two simultaneously-live input
+// containers therefore never overlap"). We therefore:
+//   * unfold every FIXED aggregate slot that bears a container descendant into
+//     its own dense occurrence node (two `List<Int>(4)` fields become two dense
+//     container nodes, each with its own placement);
+//   * intern pure-data fixed subtrees (no container descendant) and every
+//     BACKING subtree (a container's element/map-value edges) by source id,
+//     since those nodes name no per-slot placement;
+//   * reject a container nested inside BACKING storage (a collection whose
+//     element/value is itself a container, or a backing aggregate bearing a
+//     container field): such headers would need a placement per capacity slot,
+//     which is outside the P6-7 rung-E frame lane and must never alias.
+namespace {
+
+struct FrameContainerOccurrence {
+    ir::core::CoreLayoutId dense_layout;
+    bool from_input{false};
+};
+
+class BoundaryTableBuilder {
+  public:
+    explicit BoundaryTableBuilder(const ir::core::CoreLayoutTable &source) : source_(source) {
+        shared_.assign(source_.layouts.size(), ir::core::CoreLayoutId{});
+        backing_.assign(source_.layouts.size(), ir::core::CoreLayoutId{});
+        shared_seen_.assign(source_.layouts.size(), false);
+        shared_pending_.assign(source_.layouts.size(), false);
+        backing_seen_.assign(source_.layouts.size(), false);
+        backing_pending_.assign(source_.layouts.size(), false);
+        dense_.target = source_.target;
     }
-    reachable[root.value] = true;
-    const auto visit = [&](ir::core::CoreLayoutId child) {
-        collect_reachable_layouts(layouts, child, reachable);
-    };
-    std::visit(
-        Overloaded{
-            [&](const ir::core::CoreLayoutStruct &shape) {
-                for (auto child : shape.field_layouts) {
-                    visit(child);
-                }
-            },
-            [&](const ir::core::CoreLayoutEnum &shape) {
-                for (auto child : shape.variant_payload_layouts) {
-                    visit(child);
-                }
-            },
-            [&](const ir::core::CoreLayoutContainer &shape) {
-                visit(shape.element);
-                if (shape.value.has_value()) {
-                    visit(*shape.value);
-                }
-            },
-            [&](const ir::core::CoreLayoutClosure &shape) {
-                if (shape.environment.has_value()) {
-                    visit(*shape.environment);
-                }
-            },
-            [](const auto &) {},
-        },
-        layouts.layouts[root.value].shape);
-}
 
-// Build the self-contained boundary table: exactly the layout closure reachable
-// from both roots, in ascending original-id order, with every edge remapped to
-// the dense new id space. The full program table also holds layouts for
-// nominals the boundary never reaches (some still Pending/unfinalized); those
-// never cross the trust boundary. The returned vector maps an old id to its new
-// id (kInvalid when not boundary-reachable).
-[[nodiscard]] std::pair<ir::core::CoreLayoutTable, std::vector<ir::core::CoreLayoutId>>
-prune_boundary_layouts(const ir::core::CoreLayoutTable &layouts,
-                       ir::core::CoreLayoutId input_root,
-                       ir::core::CoreLayoutId output_root) {
-    std::vector<bool> reachable(layouts.layouts.size(), false);
-    collect_reachable_layouts(layouts, input_root, reachable);
-    collect_reachable_layouts(layouts, output_root, reachable);
-
-    std::vector<ir::core::CoreLayoutId> remap(layouts.layouts.size(),
-                                              ir::core::CoreLayoutId{});
-    ir::core::CoreLayoutTable pruned;
-    pruned.target = layouts.target;
-    // The boundary roots are carried explicitly; the full value-type -> layout
-    // index map is a program-side concern and is not shipped.
-    pruned.value_layouts.clear();
-    for (std::uint32_t old = 0; old < layouts.layouts.size(); ++old) {
-        if (!reachable[old]) {
-            remap[old] = ir::core::CoreLayoutId{ir::core::CoreLayoutId::kInvalid};
-            continue;
+    // True when a FIXED-edge descent from `id` (struct fields, enum payload
+    // slots) reaches a bounded container. Container backing edges do not count:
+    // they open the separate backing realm.
+    [[nodiscard]] bool bears_fixed_container(ir::core::CoreLayoutId id) {
+        if (id.value >= source_.layouts.size()) {
+            return false;
         }
-        remap[old] = ir::core::CoreLayoutId{static_cast<std::uint32_t>(pruned.layouts.size())};
-        pruned.layouts.push_back(layouts.layouts[old]);
+        const auto cached = bears_.find(id.value);
+        if (cached != bears_.end()) {
+            return cached->second;
+        }
+        if (bear_active_.contains(id.value)) {
+            return false; // defensive: fixed-edge graphs are acyclic
+        }
+        bear_active_.insert(id.value);
+        bool bears = false;
+        std::visit(
+            Overloaded{
+                [&](const ir::core::CoreLayoutStruct &shape) {
+                    for (const auto child : shape.field_layouts) {
+                        if (bears_fixed_container(child)) {
+                            bears = true;
+                        }
+                    }
+                },
+                [&](const ir::core::CoreLayoutEnum &shape) {
+                    for (const auto payload : shape.variant_payload_layouts) {
+                        if (bears_fixed_container(payload)) {
+                            bears = true;
+                        }
+                    }
+                },
+                [&](const ir::core::CoreLayoutContainer &) { bears = true; },
+                [](const auto &) {},
+            },
+            source_.layouts[id.value].shape);
+        bear_active_.erase(id.value);
+        bears_[id.value] = bears;
+        return bears;
     }
-    const auto map_id = [&](ir::core::CoreLayoutId id) {
-        return id.value < remap.size()
-                   ? remap[id.value]
-                   : ir::core::CoreLayoutId{ir::core::CoreLayoutId::kInvalid};
-    };
-    for (ir::core::CoreLayout &layout : pruned.layouts) {
+
+    // Emit a node reached through a FIXED frame slot (struct field / enum
+    // payload slot / a boundary root). A container here is a new per-SLOT
+    // occurrence with its own backing placement: two fixed slots that hash-cons
+    // to one source aggregate/container id are deliberately UNFOLDED into
+    // distinct dense nodes (design section 6.2 disjoint-placement rule).
+    // Children are emitted FIRST and the node appended last (post-order), so
+    // the dense vector never reallocates under a live reference to an entry.
+    ir::core::CoreLayoutId emit_fixed(ir::core::CoreLayoutId src, bool from_input) {
+        if (src.value >= source_.layouts.size()) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        if (std::holds_alternative<ir::core::CoreLayoutContainer>(
+                source_.layouts[src.value].shape)) {
+            return emit_container_occurrence(src, from_input);
+        }
+        if (!bears_fixed_container(src)) {
+            return emit_shared(src);
+        }
+        // Fixed aggregate inline graphs are acyclic (the producer layout
+        // verifier rejects inline-only cycles); an active edge nonetheless
+        // means a layout table we should never have received.
+        if (!fixed_active_.insert(src.value).second) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        ir::core::CoreLayout copy = source_.layouts[src.value];
+        const bool local_ok = rewrite_fixed(copy, src, from_input);
+        fixed_active_.erase(src.value);
+        if (!local_ok || failed_) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
+        dense_.layouts.push_back(std::move(copy));
+        return dense;
+    }
+
+    // Emit a node reached through a container's BACKING storage (element or
+    // map value). This realm never carries a live container header in the
+    // rung-E frame lane, so it is interned by source id and fails closed if a
+    // container (or a container-bearing aggregate) appears.
+    ir::core::CoreLayoutId emit_backing(ir::core::CoreLayoutId src) {
+        if (src.value >= source_.layouts.size()) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        if (std::holds_alternative<ir::core::CoreLayoutContainer>(
+                source_.layouts[src.value].shape) ||
+            bears_fixed_container(src)) {
+            nested_container_ = true;
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        if (backing_seen_[src.value]) {
+            return backing_[src.value];
+        }
+        if (backing_pending_[src.value]) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        backing_pending_[src.value] = true;
+        ir::core::CoreLayout copy = source_.layouts[src.value];
+        if (!rewrite_backing(copy, src)) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
+        backing_[src.value] = dense;
+        backing_seen_[src.value] = true;
+        dense_.layouts.push_back(std::move(copy));
+        backing_pending_[src.value] = false;
+        return dense;
+    }
+
+    [[nodiscard]] bool failed() const noexcept { return failed_; }
+    [[nodiscard]] bool nested_container() const noexcept { return nested_container_; }
+    [[nodiscard]] const std::vector<FrameContainerOccurrence> &occurrences() const noexcept {
+        return occurrences_;
+    }
+    [[nodiscard]] ir::core::CoreLayoutTable take_table() { return std::move(dense_); }
+
+  private:
+    const ir::core::CoreLayoutTable &source_;
+    ir::core::CoreLayoutTable dense_;
+    // Active fixed-aggregate source ids on the current unfold path (cycle
+    // termination only; it never dedups two distinct edge occurrences).
+    std::unordered_set<std::uint32_t> fixed_active_;
+    // Pure-data fixed subtree interning.
+    std::vector<ir::core::CoreLayoutId> shared_;
+    std::vector<bool> shared_pending_;
+    std::vector<bool> shared_seen_;
+    // Backing-realm interning.
+    std::vector<ir::core::CoreLayoutId> backing_;
+    std::vector<bool> backing_pending_;
+    std::vector<bool> backing_seen_;
+    std::unordered_map<std::uint32_t, bool> bears_;
+    std::unordered_set<std::uint32_t> bear_active_;
+    std::vector<FrameContainerOccurrence> occurrences_;
+    bool failed_{false};
+    bool nested_container_{false};
+
+    ir::core::CoreLayoutId emit_container_occurrence(ir::core::CoreLayoutId src,
+                                                     bool from_input) {
+        const auto &source_container =
+            std::get<ir::core::CoreLayoutContainer>(source_.layouts[src.value].shape);
+        // Backing children first (post-order).
+        const ir::core::CoreLayoutId element = emit_backing(source_container.element);
+        std::optional<ir::core::CoreLayoutId> value;
+        if (source_container.value.has_value()) {
+            value = emit_backing(*source_container.value);
+        }
+        if (failed_) {
+            return ir::core::CoreLayoutId{};
+        }
+        ir::core::CoreLayout copy = source_.layouts[src.value];
+        auto &container = std::get<ir::core::CoreLayoutContainer>(copy.shape);
+        container.element = element;
+        container.value = value;
+        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
+        dense_.layouts.push_back(std::move(copy));
+        // Recorded in boundary DFS order: backing nodes are never occurrences.
+        occurrences_.push_back(FrameContainerOccurrence{dense, from_input});
+        return dense;
+    }
+
+    // Rewrite the fixed-edge children of a LOCAL copy (no dense_ reference
+    // held across the recursive appends).
+    [[nodiscard]] bool rewrite_fixed(ir::core::CoreLayout &dense,
+                                     ir::core::CoreLayoutId src,
+                                     bool from_input) {
         std::visit(
             Overloaded{
                 [&](ir::core::CoreLayoutStruct &shape) {
-                    for (auto &child : shape.field_layouts) {
-                        child = map_id(child);
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
+                        shape.field_layouts[i] =
+                            emit_fixed(source_shape.field_layouts[i], from_input);
                     }
                 },
                 [&](ir::core::CoreLayoutEnum &shape) {
-                    for (auto &child : shape.variant_payload_layouts) {
-                        child = map_id(child);
-                    }
-                },
-                [&](ir::core::CoreLayoutContainer &shape) {
-                    shape.element = map_id(shape.element);
-                    if (shape.value.has_value()) {
-                        shape.value = map_id(*shape.value);
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
+                        shape.variant_payload_layouts[i] =
+                            emit_fixed(source_shape.variant_payload_layouts[i], from_input);
                     }
                 },
                 [&](ir::core::CoreLayoutClosure &shape) {
                     if (shape.environment.has_value()) {
-                        shape.environment = map_id(*shape.environment);
+                        shape.environment = emit_backing(*shape.environment);
                     }
                 },
                 [](auto &) {},
             },
-            layout.shape);
+            dense.shape);
+        return !failed_;
     }
-    return {std::move(pruned), std::move(remap)};
-}
 
-// Depth-first, declaration-order enumeration of every bounded CONTAINER reachable
-// from the input boundary root. A container is recorded exactly once (by layout
-// id); its backing placement index is its discovery order here.
-[[nodiscard]] bool enumerate_input_containers(
-    const CoreProgram &program,
-    const ir::core::CoreLayoutTable &layouts,
-    ir::core::CoreLayoutId root,
-    std::vector<ir::core::CoreLayoutId> &container_layouts,
-    std::vector<bool> &visited) {
-    if (root.value >= layouts.layouts.size() || visited[root.value]) {
-        return root.value < layouts.layouts.size();
+    // Rewrite a backing-realm LOCAL copy's children (struct/enum fields stay in
+    // the backing realm; a container there has already been rejected up front).
+    [[nodiscard]] bool rewrite_backing(ir::core::CoreLayout &dense,
+                                       ir::core::CoreLayoutId src) {
+        std::visit(
+            Overloaded{
+                [&](ir::core::CoreLayoutStruct &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
+                        shape.field_layouts[i] = emit_backing(source_shape.field_layouts[i]);
+                    }
+                },
+                [&](ir::core::CoreLayoutEnum &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
+                        shape.variant_payload_layouts[i] =
+                            emit_backing(source_shape.variant_payload_layouts[i]);
+                    }
+                },
+                [&](ir::core::CoreLayoutClosure &shape) {
+                    if (shape.environment.has_value()) {
+                        shape.environment = emit_backing(*shape.environment);
+                    }
+                },
+                [](auto &) {},
+            },
+            dense.shape);
+        return !failed_;
     }
-    visited[root.value] = true;
-    const ir::core::CoreLayout &layout = layouts.layouts[root.value];
-    return std::visit(
-        Overloaded{
-            [&](const ir::core::CoreLayoutStruct &shape) {
-                return std::ranges::all_of(shape.field_layouts, [&](ir::core::CoreLayoutId child) {
-                    return enumerate_input_containers(program, layouts, child, container_layouts,
-                                                      visited);
-                });
+
+    // Intern a pure-data (container-free) fixed subtree by source id.
+    ir::core::CoreLayoutId emit_shared(ir::core::CoreLayoutId src) {
+        if (shared_seen_[src.value]) {
+            return shared_[src.value];
+        }
+        if (shared_pending_[src.value]) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        shared_pending_[src.value] = true;
+        ir::core::CoreLayout copy = source_.layouts[src.value];
+        if (!rewrite_shared(copy, src)) {
+            failed_ = true;
+            return ir::core::CoreLayoutId{};
+        }
+        const ir::core::CoreLayoutId dense{static_cast<std::uint32_t>(dense_.layouts.size())};
+        shared_[src.value] = dense;
+        shared_seen_[src.value] = true;
+        dense_.layouts.push_back(std::move(copy));
+        shared_pending_[src.value] = false;
+        return dense;
+    }
+
+    [[nodiscard]] bool rewrite_shared(ir::core::CoreLayout &dense,
+                                      ir::core::CoreLayoutId src) {
+        std::visit(
+            Overloaded{
+                [&](ir::core::CoreLayoutStruct &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutStruct>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.field_layouts.size(); ++i) {
+                        shape.field_layouts[i] = emit_shared(source_shape.field_layouts[i]);
+                    }
+                },
+                [&](ir::core::CoreLayoutEnum &shape) {
+                    const auto &source_shape =
+                        std::get<ir::core::CoreLayoutEnum>(source_.layouts[src.value].shape);
+                    for (std::uint32_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
+                        shape.variant_payload_layouts[i] =
+                            emit_shared(source_shape.variant_payload_layouts[i]);
+                    }
+                },
+                [&](ir::core::CoreLayoutContainer &) {
+                    // A "pure" node never reaches a container via fixed edges.
+                    failed_ = true;
+                },
+                [&](ir::core::CoreLayoutClosure &shape) {
+                    if (shape.environment.has_value()) {
+                        shape.environment = emit_backing(*shape.environment);
+                    }
+                },
+                [](auto &) {},
             },
-            [&](const ir::core::CoreLayoutEnum &shape) {
-                return std::ranges::all_of(shape.variant_payload_layouts,
-                                           [&](ir::core::CoreLayoutId payload) {
-                                               return enumerate_input_containers(
-                                                   program, layouts, payload, container_layouts,
-                                                   visited);
-                                           });
-            },
-            [&](const ir::core::CoreLayoutContainer &shape) {
-                if (shape.backing_size == 0) {
-                    return false;
-                }
-                container_layouts.push_back(root);
-                // The backing element edge and the map-value edge describe stored
-                // slots; recurse so nested aggregate/container elements also get
-                // disjoint placements.
-                if (!enumerate_input_containers(program, layouts, shape.element, container_layouts,
-                                                visited)) {
-                    return false;
-                }
-                if (shape.value.has_value() &&
-                    !enumerate_input_containers(program, layouts, *shape.value, container_layouts,
-                                                visited)) {
-                    return false;
-                }
-                return true;
-            },
-            [](const auto &) { return true; },
-        },
-        layout.shape);
-}
+            dense.shape);
+        return !failed_;
+    }
+};
+
+} // namespace
 
 [[nodiscard]] std::optional<FrameSectionPlan>
 build_frame_section_plan(const CoreProgram &program,
@@ -9656,28 +9827,74 @@ build_frame_section_plan(const CoreProgram &program,
         layouts.value_layouts[input_vt->value];
     const ir::core::CoreLayoutId full_output_layout =
         layouts.value_layouts[output_vt->value];
+    // Bound the descriptor's u32 frame sizes explicitly instead of narrowing a
+    // u64 layout size with an unchecked static_cast, and enforce the design
+    // section 6.1 frame-region capacities here too (input <= 3072; an identity
+    // final's output equals its input and a computed-final output <= 4096 is
+    // gated again when computed emission lands). Today's 64 KiB RESOURCE gates
+    // keep these unreachable, but the descriptor is the authority the host
+    // cross-checks against the u64-encoded section.
+    constexpr std::uint64_t kU32Max = std::numeric_limits<std::uint32_t>::max();
+    if (input_layout->size > kU32Max ||
+        input_layout->size > ir::core::kP6AggregateInputCapacity) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "P6 frame input boundary exceeds the input frame region of the fixed 64 KiB "
+                 "linear-memory page");
+        return std::nullopt;
+    }
+    if (output_layout->size > kU32Max ||
+        output_layout->size > ir::core::kP6AggregateOutputCapacity) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "P6 frame output boundary exceeds the output frame region of the fixed 64 KiB "
+                 "linear-memory page");
+        return std::nullopt;
+    }
     plan.input_size = static_cast<std::uint32_t>(input_layout->size);
     plan.output_size = static_cast<std::uint32_t>(output_layout->size);
 
-    std::vector<ir::core::CoreLayoutId> container_layouts;
-    std::vector<bool> visited(layouts.layouts.size(), false);
-    if (!enumerate_input_containers(program, layouts, full_input_layout, container_layouts,
-                                    visited)) {
-        add_diag(result, core_wasm_diag::kInvalidLayout,
-                 "a P6-frame input container has an invalid backing layout");
+    BoundaryTableBuilder builder(layouts);
+    const ir::core::CoreLayoutId input_dense =
+        builder.emit_fixed(full_input_layout, /*from_input=*/true);
+    ir::core::CoreLayoutId output_dense = input_dense;
+    if (full_output_layout.value != full_input_layout.value) {
+        output_dense = builder.emit_fixed(full_output_layout, /*from_input=*/false);
+    }
+    if (builder.failed()) {
+        if (builder.nested_container()) {
+            add_diag(result, core_wasm_diag::kUnsupportedOrchestration,
+                     "a P6-frame bounded collection nests another container in its backing "
+                     "storage; nested bounded collections are outside the P6-7 frame lane");
+        } else {
+            add_diag(result, core_wasm_diag::kInvalidLayout,
+                     "a P6-frame boundary layout is not finalizable into a self-contained frame "
+                     "table");
+        }
         return std::nullopt;
     }
+    plan.table = builder.take_table();
+    plan.input_layout = input_dense;
+    plan.output_layout = output_dense;
 
-    // Disjoint sum-of-prior-backing placements, each aligned to 8. The
-    // container id is remapped into the pruned table after pruning below.
+    // Every INPUT-REACHED fixed container occurrence, in boundary DFS order,
+    // gets a DISJOINT sum-of-prior-backing placement. Output-only occurrences
+    // (a distinct computed-output nominal) name no input placement at rung E.
     std::uint64_t cursor = ir::core::kP6CollectionBackingBase;
-    plan.placements.reserve(container_layouts.size());
-    for (std::uint32_t edge = 0; edge < container_layouts.size(); ++edge) {
-        const ir::core::CoreLayoutId container_layout_id = container_layouts[edge];
-        const auto &container =
-            std::get<ir::core::CoreLayoutContainer>(
-                layouts.layouts[container_layout_id.value].shape);
-        const std::uint64_t extent = (container.backing_size + 7u) & ~std::uint64_t{7u};
+    std::uint32_t edge = 0;
+    for (const FrameContainerOccurrence &occurrence : builder.occurrences()) {
+        if (!occurrence.from_input) {
+            continue;
+        }
+        const auto &container = std::get<ir::core::CoreLayoutContainer>(
+            plan.table.layouts[occurrence.dense_layout.value].shape);
+        if (container.backing_size == 0) {
+            add_diag(result, core_wasm_diag::kInvalidLayout,
+                     "a P6-frame input container has an invalid backing layout");
+            return std::nullopt;
+        }
+        const std::uint64_t extent =
+            (container.backing_size + 7u) & ~std::uint64_t{7u};
         if (cursor + extent > ir::core::kCoreWasmFixedLinearMemoryCapacityBytes) {
             add_diag(result,
                      core_wasm_diag::kResourceExhausted,
@@ -9685,26 +9902,13 @@ build_frame_section_plan(const CoreProgram &program,
             return std::nullopt;
         }
         plan.placements.push_back(ir::core::CoreFrameBackingPlacement{
-            edge, container_layout_id, static_cast<std::uint32_t>(cursor),
+            edge, occurrence.dense_layout, static_cast<std::uint32_t>(cursor),
             static_cast<std::uint32_t>(extent)});
         cursor += extent;
+        ++edge;
     }
     plan.payload_arena_base = static_cast<std::uint32_t>((cursor + 7u) & ~std::uint64_t{7u});
     plan.payload_arena_capacity = 0; // rung C packs String payloads into this arena
-
-    // Prune to the boundary-reachable closure and remap every id the section
-    // names (roots + placement container ids) into the dense table.
-    auto [pruned, remap] =
-        prune_boundary_layouts(layouts, full_input_layout, full_output_layout);
-    const auto map_id = [&](ir::core::CoreLayoutId id) {
-        return remap[id.value];
-    };
-    plan.table = std::move(pruned);
-    plan.input_layout = map_id(full_input_layout);
-    plan.output_layout = map_id(full_output_layout);
-    for (auto &placement : plan.placements) {
-        placement.container_layout = map_id(placement.container_layout);
-    }
     return plan;
 }
 
@@ -9953,47 +10157,57 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     // RFC 0026 P6-7 rung A: a raw-input-frame agent CAN become a P6-frame
     // module carrying (1) a deterministic `ahfl.core-layout.v1` section (P4-D
     // table + boundary roots + disjoint backing placements) and (2) a
-    // boundary-root extension of the wire-schema projection. Eligibility is
-    // gated on the boundary nominals being WIRE-PROJECTABLE and on the layout
-    // and projected schema agreeing at both roots. A raw-frame agent whose
-    // boundary is not yet wire-representable (e.g. a `Map<Bool,...>` frame; the
-    // map-key/raw-get surface stays on a later ladder per design section 11)
-    // falls back to the legacy SECTIONLESS raw module and its existing skip, so
-    // only the design-pinned identity fixtures change bytes in this rung.
+    // boundary-root extension of the wire-schema projection.
+    //
+    // Eligibility is deliberately NARROW (design sections 3.4/4.1/11): the P4-D
+    // frame lane and the wire-JSON capability lane never mix, and the
+    // closure/outlined-fn ABI is an FB-lane concern. A frame module therefore
+    // has NO capability imports and NO outlined fn / closure — exactly the
+    // predicate that separates the two real `p6_frame` census cases from the
+    // FB-1..FB-4 outlined-fn/closure set. Keying off reads_raw_input_frame
+    // alone latched for those FB agents too and mutated the bytes of
+    // non-design-pinned modules (including appending a frame-root block to a
+    // capability module's wire-schema section, the raw+capability hybrid
+    // section 11 forbids).
     const CoreAgentDecl &agent_decl = program.agents[agent->value];
     std::optional<FrameSectionPlan> frame_plan;
     std::optional<std::pair<ir::core::CoreValueTypeId, ir::core::CoreValueTypeId>>
         frame_boundary;
-    if (plan->reads_raw_input_frame) {
-        // The eligibility probe is isolated: a boundary that cannot yet carry
-        // the P6-7 sections must leave the primary result untouched so the
-        // legacy sectionless raw module still emits.
-        CoreWasmCodegenResult probe_result;
-        auto candidate = build_frame_section_plan(program, layouts, agent_decl, probe_result);
-        if (candidate.has_value()) {
-            auto candidate_boundary = std::pair{candidate->input_vt, candidate->output_vt};
-            auto trial = ir::core::project_core_wire_schema(program, {}, candidate_boundary);
-            bool eligible = trial.ok() && trial.table->frame_roots.has_value();
-            if (eligible) {
-                const auto &roots = *trial.table->frame_roots;
-                eligible =
-                    ir::core::verify_frame_layout_wire_consistency(
-                        candidate->table, candidate->input_layout, *trial.table, roots.input)
-                        .empty() &&
-                    ir::core::verify_frame_layout_wire_consistency(
-                        candidate->table, candidate->output_layout, *trial.table, roots.output)
-                        .empty();
-            }
-            if (eligible) {
-                frame_plan = std::move(candidate);
-                frame_boundary = std::move(candidate_boundary);
-            }
-            // Non-eligible: legacy sectionless raw-frame module (no diagnostic;
-            // the boundary is simply not P6-7 representable yet).
+    const bool frame_lane_eligible = plan->imports.empty() && plan->fns.empty() &&
+                                     plan->closure_table.empty();
+    if (plan->reads_raw_input_frame && frame_lane_eligible) {
+        // Build into the PRIMARY result: a genuine hard failure (unfinalized
+        // boundary layout, backing/frame RESOURCE overflow) must reject the
+        // build with its diagnostic rather than be discarded into a throwaway
+        // result and silently downgraded to the sectionless legacy module.
+        auto candidate = build_frame_section_plan(program, layouts, agent_decl, result);
+        if (!candidate.has_value()) {
+            return result;
         }
-        // A build_frame_section_plan hard failure (no finalized layout / backing
-        // overflow) still rejects below via the normal emission path; the
-        // candidate's diagnostics have already been added only on a hard gate.
+        auto candidate_boundary = std::pair{candidate->input_vt, candidate->output_vt};
+        // The plan is sound; only WIRE-PROJECTABILITY (a logical-schema concern
+        // the physical plan does not encode) can still decline the section. A
+        // boundary that is not yet wire-representable (e.g. a `Map<Bool,...>`
+        // frame; the map-key/raw-get surface stays on a later ladder per design
+        // section 11) falls back to the legacy SECTIONLESS raw module and its
+        // existing skip, with NO diagnostic.
+        auto trial = ir::core::project_core_wire_schema(program, {}, candidate_boundary);
+        bool projectable = trial.ok() && trial.table->frame_roots.has_value();
+        if (projectable) {
+            const auto &roots = *trial.table->frame_roots;
+            projectable =
+                ir::core::verify_frame_layout_wire_consistency(
+                    candidate->table, candidate->input_layout, *trial.table, roots.input)
+                    .empty() &&
+                ir::core::verify_frame_layout_wire_consistency(
+                    candidate->table, candidate->output_layout, *trial.table, roots.output)
+                    .empty();
+        }
+        if (projectable) {
+            frame_plan = std::move(candidate);
+            frame_boundary = std::move(candidate_boundary);
+        }
+        // Not projectable: legacy sectionless raw-frame module (no diagnostic).
     }
 
     // RFC 0026 E4-B1: project the deterministic logical wire schema for exactly

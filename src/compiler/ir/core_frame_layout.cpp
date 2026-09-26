@@ -1,6 +1,7 @@
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/ir/core_layout_geometry.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -362,11 +364,32 @@ class Decoder {
         return id.value < table.layouts.size();
     }
 
+    // Mirror the wire-schema decoder's bounded_count: a decoded count can never
+    // name the reserved 32-bit sentinel and can never exceed the bytes still
+    // available (each element costs at least one). This MUST run before any
+    // reserve(): an attacker-inflated count would otherwise force a multi-GB
+    // allocation and terminate the embedding host with std::bad_alloc instead
+    // of returning a failed decode result.
+    [[nodiscard]] bool bounded_count(std::uint32_t count) {
+        if (count >= CoreLayoutId::kInvalid) {
+            bad("frame-layout payload declares a count at the reserved 32-bit sentinel");
+            return false;
+        }
+        if (static_cast<std::uint64_t>(count) > cursor_.remaining()) {
+            bad("frame-layout payload declares more elements than remaining bytes");
+            return false;
+        }
+        return true;
+    }
+
     [[nodiscard]] bool decode_table(CoreLayoutTable &table) {
         table.target = TargetDataLayout{};
         const auto layout_count = cursor_.u32();
         if (!layout_count.has_value()) {
             bad("frame-layout layout table count is malformed");
+            return false;
+        }
+        if (!bounded_count(*layout_count)) {
             return false;
         }
         table.layouts.reserve(*layout_count);
@@ -380,6 +403,9 @@ class Decoder {
         const auto value_count = cursor_.u32();
         if (!value_count.has_value()) {
             bad("frame-layout value-layout mapping count is malformed");
+            return false;
+        }
+        if (!bounded_count(*value_count)) {
             return false;
         }
         table.value_layouts.reserve(*value_count);
@@ -482,6 +508,9 @@ class Decoder {
                 bad("frame-layout struct field counts are malformed or disagree");
                 return std::nullopt;
             }
+            if (!bounded_count(*offset_count)) {
+                return std::nullopt;
+            }
             CoreLayoutStruct shape;
             shape.field_offsets.reserve(*offset_count);
             for (std::uint32_t i = 0; i < *offset_count; ++i) {
@@ -521,6 +550,9 @@ class Decoder {
             if (!layout_count.has_value() || !size_count.has_value() ||
                 *layout_count != *size_count) {
                 bad("frame-layout enum variant counts are malformed or disagree");
+                return std::nullopt;
+            }
+            if (!bounded_count(*layout_count)) {
                 return std::nullopt;
             }
             shape.variant_payload_layouts.reserve(*layout_count);
@@ -593,6 +625,9 @@ class Decoder {
             bad("frame-layout backing-placement count is malformed");
             return false;
         }
+        if (!bounded_count(*count)) {
+            return false;
+        }
         section.placements.reserve(*count);
         for (std::uint32_t i = 0; i < *count; ++i) {
             const auto edge = cursor_.u32();
@@ -629,11 +664,17 @@ class Decoder {
             const bool ok_shape = std::visit(
                 Overloaded{
                     [](const CoreLayoutPending &) { return false; },
-                    [&](const CoreLayoutScalar &) {
-                        return layout.size == 4 || layout.size == 8;
+                    [&](const CoreLayoutScalar &shape) {
+                        const bool i32 = shape.repr == CoreScalarRepr::I32;
+                        const bool wide = shape.repr == CoreScalarRepr::I64 ||
+                                          shape.repr == CoreScalarRepr::F64;
+                        return (i32 || wide) &&
+                               (i32 ? (layout.size == 4 && layout.align == 4)
+                                    : (layout.size == 8 && layout.align == 8));
                     },
                     [&](const CoreLayoutBytes &shape) {
-                        return shape.byte_count == layout.size && shape.byte_count > 0;
+                        return shape.byte_count == layout.size && shape.byte_count > 0 &&
+                               layout.align == 1;
                     },
                     [&](const CoreLayoutPtrLen &) { return layout.size == 8 && layout.align == 4; },
                     [](const CoreLayoutFnRef &) { return true; },
@@ -645,27 +686,48 @@ class Decoder {
                         if (shape.field_offsets.size() != shape.field_layouts.size()) {
                             return false;
                         }
-                        for (std::uint32_t f = 0; f < shape.field_layouts.size(); ++f) {
-                            if (!valid_id(table, shape.field_layouts[f])) {
-                                return false;
-                            }
-                            if (shape.field_offsets[f] >= layout.size && layout.size != 0) {
+                        for (const CoreLayoutId field : shape.field_layouts) {
+                            if (!valid_id(table, field)) {
                                 return false;
                             }
                         }
-                        return true;
+                        // Re-derive canonical offsets/size from the child layouts;
+                        // a transported section must not ship its own.
+                        const auto expected = layout_geometry::expected_struct(table, shape);
+                        return expected.has_value() &&
+                               shape.field_offsets == expected->field_offsets &&
+                               layout.size == expected->size && layout.align == expected->align;
                     },
                     [&](const CoreLayoutEnum &shape) {
-                        return shape.tag_size == 4 &&
-                               shape.variant_payload_layouts.size() ==
-                                   shape.variant_payload_sizes.size() &&
-                               std::ranges::all_of(shape.variant_payload_layouts,
-                                                   [&](CoreLayoutId id) { return valid_id(table, id); });
+                        if (shape.tag_size != 4 ||
+                            shape.variant_payload_layouts.size() !=
+                                shape.variant_payload_sizes.size()) {
+                            return false;
+                        }
+                        for (const CoreLayoutId payload : shape.variant_payload_layouts) {
+                            if (!valid_id(table, payload)) {
+                                return false;
+                            }
+                        }
+                        // Re-derive the tag/payload gap and record size.
+                        const auto expected = layout_geometry::expected_enum(table, shape);
+                        return expected.has_value() &&
+                               shape.payload_offset == expected->payload_offset &&
+                               layout.size == expected->size && layout.align == expected->align;
                     },
                     [&](const CoreLayoutContainer &shape) {
-                        return layout.size == 8 && layout.align == 4 &&
-                               valid_id(table, shape.element) &&
-                               (!shape.value.has_value() || valid_id(table, *shape.value));
+                        if (layout.size != 8 || layout.align != 4 ||
+                            !valid_id(table, shape.element) ||
+                            (shape.value.has_value() && !valid_id(table, *shape.value))) {
+                            return false;
+                        }
+                        // Recompute stride/value-offset/backing extent from the
+                        // element (+map value) layouts and require stride*capacity.
+                        const auto expected = layout_geometry::expected_container(table, shape);
+                        return expected.has_value() &&
+                               shape.value_offset == expected->value_offset &&
+                               shape.stride == expected->stride &&
+                               shape.backing_size == expected->backing_size;
                     },
                     [](const CoreLayoutUninhabited &) { return true; },
                 },
@@ -676,8 +738,9 @@ class Decoder {
             }
         }
 
-        // Placements: dense edge indices, container nodes, aligned extents, and
-        // pairwise-disjoint fixed-page extents.
+        // Placements: dense edge indices, container nodes, extents that match the
+        // RE-DERIVED aligned backing (== stride*capacity), and pairwise-disjoint
+        // fixed-page extents on the sum-of-prior-backing rule.
         constexpr std::uint64_t kBackingBase = kP6CollectionBackingBase;
         constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
         std::uint64_t expected_cursor = kBackingBase;
@@ -698,10 +761,21 @@ class Decoder {
                 fail_local("frame-layout backing placement does not name a container layout");
                 return diags;
             }
-            const std::uint64_t aligned_extent = (container->backing_size + 7u) & ~std::uint64_t{7u};
-            if (placement.extent != aligned_extent || placement.extent == 0) {
-                fail_local("frame-layout backing placement extent does not match its container's "
-                           "aligned backing size");
+            const auto geometry = layout_geometry::expected_container(table, *container);
+            if (!geometry.has_value() || geometry->stride == 0) {
+                fail_local("frame-layout backing placement names a container with invalid backing "
+                           "geometry");
+                return diags;
+            }
+            const std::uint64_t aligned_extent =
+                (geometry->backing_size + 7u) & ~std::uint64_t{7u};
+            // extent must equal the aligned re-derived backing and cover the
+            // full stride*capacity store, so a shrink cannot pass with capacity
+            // left intact.
+            if (placement.extent != aligned_extent || placement.extent == 0 ||
+                placement.extent < geometry->backing_size) {
+                fail_local("frame-layout backing placement extent does not cover its container's "
+                           "stride * capacity backing");
                 return diags;
             }
             if (placement.base != expected_cursor) {
@@ -746,7 +820,7 @@ class ConsistencyChecker {
 
     [[nodiscard]] std::vector<CoreLowerDiagnostic> run(CoreLayoutId layout_root,
                                                        CoreWireSchemaNodeId wire_root) {
-        if (!check_pair(layout_root, wire_root)) {
+        if (!check_iterative(layout_root, wire_root)) {
             return std::vector<CoreLowerDiagnostic>{fail(message_)};
         }
         return {};
@@ -756,9 +830,17 @@ class ConsistencyChecker {
     const CoreLayoutTable &layouts_;
     const CoreWireSchemaTable &wire_;
     std::string message_;
-    // (layout id, wire node id) pairs already accepted on the current DFS path;
-    // revisiting a pair terminates recursion over a recursive nominal.
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> in_progress_;
+
+    using Pair = std::pair<CoreLayoutId, CoreWireSchemaNodeId>;
+
+    // One DFS worklist entry. `exiting` closes the pair's path scope once its
+    // children have all been checked, emulating the recursive enter/leave
+    // without any C++ recursion (a deep acyclic graph is untrusted input).
+    struct Frame {
+        CoreLayoutId layout;
+        CoreWireSchemaNodeId wire;
+        bool exiting{false};
+    };
 
     [[nodiscard]] bool reject(std::string message) {
         message_ = std::move(message);
@@ -772,20 +854,19 @@ class ConsistencyChecker {
         return id.value < layouts_.layouts.size();
     }
 
-    [[nodiscard]] bool check_pair(CoreLayoutId layout_id, CoreWireSchemaNodeId wire_id) {
-        if (!layout_valid(layout_id) || !wire_id_valid(wire_id)) {
-            return reject("frame layout/wire root id is out of range");
-        }
-        const std::pair key{layout_id.value, wire_id.value};
-        if (std::ranges::find(in_progress_, key) != in_progress_.end()) {
-            return true; // recursive nominal pair
-        }
-        in_progress_.push_back(key);
-        const bool ok = check_shapes(layouts_.layouts[layout_id.value],
-                                     wire_.nodes[wire_id.value].shape);
-        in_progress_.pop_back();
-        return ok;
+    [[nodiscard]] static std::uint64_t pair_key(CoreLayoutId l, CoreWireSchemaNodeId w) noexcept {
+        return (static_cast<std::uint64_t>(l.value) << 32U) |
+               static_cast<std::uint64_t>(w.value);
     }
+
+    // Local-shape verdict for one pair plus the child pairs that still have to
+    // agree. This replaces the recursive `check_shapes`: every arm validates
+    // ONLY its own node and enumerates children; the worklist drives descent.
+    struct Analysis {
+        bool valid{false};
+        std::string message; // populated when a fixed reject reason applies
+        std::vector<Pair> children;
+    };
 
     [[nodiscard]] bool check_scalar_repr(CoreScalarRepr repr,
                                          const CoreWireSchemaInt &schema) {
@@ -797,144 +878,212 @@ class ConsistencyChecker {
         return repr == expected;
     }
 
-    [[nodiscard]] bool check_shapes(const CoreLayout &layout,
-                                    const CoreWireSchemaShape &shape) {
-        return std::visit(
+    [[nodiscard]] Analysis analyze(CoreLayoutId layout_id, CoreWireSchemaNodeId wire_id) {
+        Analysis result;
+        const CoreLayout &layout = layouts_.layouts[layout_id.value];
+        const auto ok = [&](bool valid, std::string message = {}) {
+            result.valid = valid;
+            result.message = std::move(message);
+            return result;
+        };
+        std::visit(
             Overloaded{
                 [&](const CoreWireSchemaUnit &) {
-                    // Unit loweres to a zero-sized empty struct layout.
                     const auto *s = std::get_if<CoreLayoutStruct>(&layout.shape);
-                    return s != nullptr && layout.is_zero_sized && s->field_layouts.empty();
+                    ok(s != nullptr && layout.is_zero_sized && s->field_layouts.empty());
                 },
                 [&](const CoreWireSchemaBool &) {
                     const auto *s = std::get_if<CoreLayoutScalar>(&layout.shape);
-                    return s != nullptr && s->repr == CoreScalarRepr::I32;
+                    ok(s != nullptr && s->repr == CoreScalarRepr::I32);
                 },
                 [&](const CoreWireSchemaInt &schema) {
                     const auto *s = std::get_if<CoreLayoutScalar>(&layout.shape);
-                    return s != nullptr && check_scalar_repr(s->repr, schema);
+                    ok(s != nullptr && check_scalar_repr(s->repr, schema));
                 },
                 [&](const CoreWireSchemaFloat &) {
                     const auto *s = std::get_if<CoreLayoutScalar>(&layout.shape);
-                    return s != nullptr && s->repr == CoreScalarRepr::F64;
+                    ok(s != nullptr && s->repr == CoreScalarRepr::F64);
                 },
                 [&](const CoreWireSchemaString &) {
-                    return std::holds_alternative<CoreLayoutPtrLen>(layout.shape);
+                    ok(std::holds_alternative<CoreLayoutPtrLen>(layout.shape));
                 },
                 [&](const CoreWireSchemaDecimal &) {
                     const auto *s = std::get_if<CoreLayoutScalar>(&layout.shape);
-                    return s != nullptr && s->repr == CoreScalarRepr::I64;
+                    ok(s != nullptr && s->repr == CoreScalarRepr::I64);
                 },
                 [&](const CoreWireSchemaDuration &) {
                     const auto *s = std::get_if<CoreLayoutScalar>(&layout.shape);
-                    return s != nullptr && s->repr == CoreScalarRepr::I64;
+                    ok(s != nullptr && s->repr == CoreScalarRepr::I64);
                 },
                 [&](const CoreWireSchemaTimestamp &) {
                     const auto *s = std::get_if<CoreLayoutScalar>(&layout.shape);
-                    return s != nullptr && s->repr == CoreScalarRepr::I64;
+                    ok(s != nullptr && s->repr == CoreScalarRepr::I64);
                 },
                 [&](const CoreWireSchemaUuid &) {
                     const auto *s = std::get_if<CoreLayoutBytes>(&layout.shape);
-                    return s != nullptr && s->byte_count == 16;
+                    ok(s != nullptr && s->byte_count == 16);
                 },
                 [&](const CoreWireSchemaOption &schema) {
                     const auto *e = std::get_if<CoreLayoutEnum>(&layout.shape);
                     if (e == nullptr || e->variant_payload_layouts.size() != 2 ||
                         e->variant_payload_sizes[0] != 0) {
-                        return reject("frame layout/wire disagree on Option enum shape");
+                        ok(false, "frame layout/wire disagree on Option enum shape");
+                        return;
                     }
                     const CoreLayoutId some_payload = e->variant_payload_layouts[1];
                     if (!layout_valid(some_payload)) {
-                        return reject("frame layout/wire Option payload edge is out of range");
+                        ok(false, "frame layout/wire Option payload edge is out of range");
+                        return;
                     }
                     const auto *payload =
                         std::get_if<CoreLayoutStruct>(&layouts_.layouts[some_payload.value].shape);
                     if (payload == nullptr || payload->field_layouts.size() != 1) {
-                        return reject("frame layout/wire Option::Some payload is not one slot");
+                        ok(false, "frame layout/wire Option::Some payload is not one slot");
+                        return;
                     }
-                    return check_pair(payload->field_layouts[0], schema.value);
+                    result.valid = true;
+                    result.children.emplace_back(payload->field_layouts[0], schema.value);
                 },
                 [&](const CoreWireSchemaSequence &schema) {
                     const auto *c = std::get_if<CoreLayoutContainer>(&layout.shape);
                     if (c == nullptr || c->value.has_value()) {
-                        return reject("frame layout/wire disagree on sequence container shape");
+                        ok(false, "frame layout/wire disagree on sequence container shape");
+                        return;
                     }
                     const std::uint64_t expected_capacity =
                         schema.capacity.value_or(c->capacity);
                     if (c->capacity != expected_capacity) {
-                        return reject("frame layout/wire sequence capacities disagree");
+                        ok(false, "frame layout/wire sequence capacities disagree");
+                        return;
                     }
-                    return check_pair(c->element, schema.element);
+                    result.valid = true;
+                    result.children.emplace_back(c->element, schema.element);
                 },
                 [&](const CoreWireSchemaMap &schema) {
                     const auto *c = std::get_if<CoreLayoutContainer>(&layout.shape);
                     if (c == nullptr || !c->value.has_value()) {
-                        return reject("frame layout/wire disagree on map container shape");
+                        ok(false, "frame layout/wire disagree on map container shape");
+                        return;
                     }
                     const std::uint64_t expected_capacity =
                         schema.capacity.value_or(c->capacity);
                     if (c->capacity != expected_capacity) {
-                        return reject("frame layout/wire map capacities disagree");
+                        ok(false, "frame layout/wire map capacities disagree");
+                        return;
                     }
                     if (!std::holds_alternative<CoreLayoutPtrLen>(
                             layouts_.layouts[c->element.value].shape)) {
-                        return reject("frame layout/wire map key is not a String PtrLen");
+                        ok(false, "frame layout/wire map key is not a String PtrLen");
+                        return;
                     }
-                    return check_pair(c->element, schema.key) &&
-                           check_pair(*c->value, schema.value);
+                    result.valid = true;
+                    // Push value before key so key is popped first (left-to-right).
+                    result.children.emplace_back(*c->value, schema.value);
+                    result.children.emplace_back(c->element, schema.key);
                 },
                 [&](const CoreWireSchemaStruct &schema) {
                     const auto *s = std::get_if<CoreLayoutStruct>(&layout.shape);
                     if (s == nullptr || s->field_layouts.size() != schema.fields.size()) {
-                        return reject("frame layout/wire struct field arity disagrees");
+                        ok(false, "frame layout/wire struct field arity disagrees");
+                        return;
                     }
+                    result.valid = true;
+                    result.children.reserve(schema.fields.size());
                     for (std::uint32_t i = 0; i < schema.fields.size(); ++i) {
-                        if (!check_pair(s->field_layouts[i], schema.fields[i].type)) {
-                            return false;
-                        }
+                        result.children.emplace_back(s->field_layouts[i], schema.fields[i].type);
                     }
-                    return true;
                 },
                 [&](const CoreWireSchemaEnum &schema) {
                     const auto *e = std::get_if<CoreLayoutEnum>(&layout.shape);
-                    if (e == nullptr || e->variant_payload_layouts.size() != schema.variants.size()) {
-                        return reject("frame layout/wire enum variant arity disagrees");
+                    if (e == nullptr ||
+                        e->variant_payload_layouts.size() != schema.variants.size()) {
+                        ok(false, "frame layout/wire enum variant arity disagrees");
+                        return;
                     }
                     for (std::uint32_t i = 0; i < schema.variants.size(); ++i) {
                         const CoreLayoutId payload_id = e->variant_payload_layouts[i];
                         if (!layout_valid(payload_id)) {
-                            return reject("frame layout/wire enum payload edge is out of range");
+                            ok(false, "frame layout/wire enum payload edge is out of range");
+                            return;
                         }
-                        const auto *payload =
-                            std::get_if<CoreLayoutStruct>(&layouts_.layouts[payload_id.value].shape);
+                        const auto *payload = std::get_if<CoreLayoutStruct>(
+                            &layouts_.layouts[payload_id.value].shape);
                         const std::uint32_t slot_count =
                             static_cast<std::uint32_t>(schema.variants[i].slots.size());
                         if (payload == nullptr || payload->field_layouts.size() != slot_count) {
-                            return reject("frame layout/wire enum payload slot arity disagrees");
+                            ok(false, "frame layout/wire enum payload slot arity disagrees");
+                            return;
                         }
                         for (std::uint32_t slot = 0; slot < slot_count; ++slot) {
-                            if (!check_pair(payload->field_layouts[slot],
-                                            schema.variants[i].slots[slot].type)) {
-                                return false;
-                            }
+                            result.children.emplace_back(payload->field_layouts[slot],
+                                                        schema.variants[i].slots[slot].type);
                         }
                     }
-                    return true;
+                    result.valid = true;
                 },
                 [&](const CoreWireSchemaTuple &schema) {
                     const auto *s = std::get_if<CoreLayoutStruct>(&layout.shape);
                     if (s == nullptr || s->field_layouts.size() != schema.elements.size()) {
-                        return reject("frame layout/wire tuple arity disagrees");
+                        ok(false, "frame layout/wire tuple arity disagrees");
+                        return;
                     }
+                    result.valid = true;
+                    result.children.reserve(schema.elements.size());
                     for (std::uint32_t i = 0; i < schema.elements.size(); ++i) {
-                        if (!check_pair(s->field_layouts[i], schema.elements[i])) {
-                            return false;
-                        }
+                        result.children.emplace_back(s->field_layouts[i], schema.elements[i]);
                     }
-                    return true;
                 },
             },
-            shape);
+            wire_.nodes[wire_id.value].shape);
+        return result;
+    }
+
+    // Iterative DFS: an explicit enter/exit worklist with a path set for
+    // recursive-nominal cycle termination and a memo set for shared-subtree
+    // diamonds. A decoder feeds this checker untrusted transported payloads, so
+    // a legal but very deep acyclic Struct/Tuple chain must never recurse on the
+    // C++ stack. Children are pushed in reverse so they pop left-to-right,
+    // matching the former recursion's first-error order.
+    [[nodiscard]] bool check_iterative(CoreLayoutId layout_root,
+                                       CoreWireSchemaNodeId wire_root) {
+        if (!layout_valid(layout_root) || !wire_id_valid(wire_root)) {
+            return reject("frame layout/wire root id is out of range");
+        }
+        std::vector<Frame> stack;
+        stack.push_back(Frame{layout_root, wire_root, false});
+        std::unordered_set<std::uint64_t> on_path;
+        std::unordered_set<std::uint64_t> accepted;
+        while (!stack.empty()) {
+            const Frame frame = stack.back();
+            stack.pop_back();
+            if (frame.exiting) {
+                on_path.erase(pair_key(frame.layout, frame.wire));
+                accepted.insert(pair_key(frame.layout, frame.wire));
+                continue;
+            }
+            if (!layout_valid(frame.layout) || !wire_id_valid(frame.wire)) {
+                return reject("frame layout/wire child id is out of range");
+            }
+            const std::uint64_t key = pair_key(frame.layout, frame.wire);
+            if (on_path.find(key) != on_path.end()) {
+                continue; // back edge over a recursive nominal pair
+            }
+            if (accepted.find(key) != accepted.end()) {
+                continue; // shared subtree already fully verified
+            }
+            Analysis analysis = analyze(frame.layout, frame.wire);
+            if (!analysis.valid) {
+                return reject(analysis.message.empty()
+                                  ? "frame layout and wire schema disagree at a node"
+                                  : std::move(analysis.message));
+            }
+            on_path.insert(key);
+            stack.push_back(Frame{frame.layout, frame.wire, true});
+            for (auto it = analysis.children.rbegin(); it != analysis.children.rend(); ++it) {
+                stack.push_back(Frame{it->first, it->second, false});
+            }
+        }
+        return true;
     }
 };
 

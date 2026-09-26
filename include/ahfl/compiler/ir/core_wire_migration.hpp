@@ -119,16 +119,27 @@ class VerifiedWireSchemaBinding {
 
     [[nodiscard]] const CoreWireSchemaTable &table() const noexcept { return *payload_->table; }
     [[nodiscard]] CoreWireSchemaNodeId root() const noexcept { return payload_->root; }
+    /// The capability-slot selector that PINNED this binding root. Valid only
+    /// for a capability binding (`frame_kind() == nullopt`); a frame binding is
+    /// never described by a capability selector (its provenance is
+    /// `frame_kind()`), so authorization must branch on `frame_kind()` first.
     [[nodiscard]] const CoreWireRootSelector &selector() const noexcept {
         return payload_->selector;
+    }
+    /// Set for an agent-boundary (input/output) frame binding; nullopt for a
+    /// capability param/result binding. This is the sole provenance a frame
+    /// binding reports -- it never masquerades as a capability Result root.
+    [[nodiscard]] std::optional<CoreWireFrameRootKind> frame_kind() const noexcept {
+        return payload_->frame_kind;
     }
 
   private:
     friend struct WireSchemaBindingFactory;
     struct Payload {
         std::shared_ptr<const CoreWireSchemaTable> table; // shared verified backing
-        CoreWireRootSelector selector;
-        CoreWireSchemaNodeId root; // derived from selector; pinned with it
+        CoreWireRootSelector selector;                    // capability slot; valid iff !frame_kind
+        std::optional<CoreWireFrameRootKind> frame_kind;  // set iff this is a frame binding
+        CoreWireSchemaNodeId root; // derived from the true selector; pinned with it
     };
     explicit VerifiedWireSchemaBinding(std::shared_ptr<const Payload> payload)
         : payload_(std::move(payload)) {}

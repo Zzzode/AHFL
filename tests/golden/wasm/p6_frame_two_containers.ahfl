@@ -1,0 +1,47 @@
+// RFC 0026 P6-7 regression fixture: TWO independently-live bounded containers
+// of the SAME value type reached from the input boundary. Because the two
+// fields hash-cons to one CoreLayout container node, the frame-section planner
+// must still assign each fixed-edge occurrence its OWN DISJOINT backing
+// placement (design section 6.2). Collapsing them onto a single placement would
+// make field b's packed elements overwrite field a's. The host admission test
+// asserts the emitted section carries two placements and the descriptor names
+// distinct container layout ids. The final is the literal identity
+// `return input;`, like p6_collection; this fixture is not a conformance census
+// case (it exists to pin the per-edge placement rule at the emitter).
+module std::collections;
+
+pub struct List<T> { }
+
+pub struct Frame {
+    a: List<Int>(4);
+    b: List<Int>(4);
+}
+
+pub agent TwoContainersAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Go];
+    initial: Go;
+    final: [Done];
+    capabilities: [];
+    transition Go -> Done;
+}
+
+flow for TwoContainersAgent {
+    state Go {
+        let xs: List<Int>(4) = input.a;
+        let ys: List<Int>(4) = input.b;
+        let x0: Int = xs[0];
+        let y0: Int = ys[0];
+        if (x0 == y0) {
+            goto Done;
+        } else {
+            goto Done;
+        }
+    }
+
+    state Done {
+        return input;
+    }
+}

@@ -1,0 +1,55 @@
+// RFC 0026 P6-7 regression fixture: a LENGTH-ONLY read of a bounded collection
+// whose single disjoint backing placement cannot fit the fixed 64 KiB page.
+// The handler reads only the header length word (no element addressing, so the
+// per-element backing gate cannot fire), but the frame-section planner must
+// still reject the module with wasm.RESOURCE_EXHAUSTED: the one placement would
+// span 16384 + 9000 * 8 = 88384 bytes, past the 65536 ceiling. Before the fix
+// the eligibility probe swallowed this hard failure into a throwaway result
+// and the build silently downgraded to the sectionless legacy module. This is a
+// deliberate compile-failure fixture (the CLI exits non-zero), like
+// fb2_too_deep_recursion.
+module std::collections;
+
+pub struct List<T> { }
+
+pub struct Frame {
+    items: List<Int>(9000);
+}
+
+pub agent OversizedBackingAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for OversizedBackingAgent {
+    state Decide {
+        let xs: List<Int>(9000) = input.items;
+        let n: Int = xs.length;
+        if (n == 2) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return input;
+    }
+}

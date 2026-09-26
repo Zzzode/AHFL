@@ -54,6 +54,24 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;target;structural"
     )
 
+    # RFC 0026 P6-7 rung A fix-forward: the core-layout frame section is
+    # eligible ONLY for the pinned frame-lane agents (no capability import, no
+    # outlined fn/closure). Emits every golden fixture and fails if any
+    # non-pinned module gains (or any pinned module loses) the frame section, or
+    # if an emission is non-deterministic. Locks the rung-A byte-identity
+    # invariant across the whole corpus, not just the e1 fixture.
+    add_test(NAME ahflc.emit_wasm.p67_frame_section_eligibility_gate
+        COMMAND ${Python3_EXECUTABLE}
+                "${AHFL_TESTS_DIR}/scripts/wasm_frame_section_eligibility_gate.py"
+                $<TARGET_FILE:ahflc>
+                "${AHFL_TESTS_DIR}"
+    )
+    set_tests_properties(ahflc.emit_wasm.p67_frame_section_eligibility_gate PROPERTIES
+        PASS_REGULAR_EXPRESSION "all P6-7 frame-section eligibility gates passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC"
+        LABELS "wasm;backend;target;structural"
+    )
+
     add_test(NAME ahflc.emit_wasm.profile_unknown
         COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile bogus
                 "${AHFL_TESTS_DIR}/golden/wasm/e1_identity_agent.ahfl"

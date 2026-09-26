@@ -48,7 +48,7 @@ struct WireSchemaBindingFactory {
             return std::nullopt;
         }
         auto payload = std::make_shared<const VerifiedWireSchemaBinding::Payload>(
-            VerifiedWireSchemaBinding::Payload{verified.table_, selector, *root});
+            VerifiedWireSchemaBinding::Payload{verified.table_, selector, std::nullopt, *root});
         return VerifiedWireSchemaBinding(std::move(payload));
     }
 
@@ -82,13 +82,14 @@ struct WireSchemaBindingFactory {
         const CoreWireSchemaNodeId root = selector.kind == CoreWireFrameRootKind::Input
                                               ? table.frame_roots->input
                                               : table.frame_roots->output;
-        // A frame binding pins the frame sibling selector; the codec consumes
-        // only table()/root(), never selector().
-        CoreWireRootSelector frame_selector;
-        frame_selector.kind = CoreWireRootKind::Result;
+        // A frame binding records its true boundary provenance and NO
+        // capability selector: it must never be indistinguishable from a
+        // capability Result root. The codec consumes only table()/root();
+        // any authorization logic branches on frame_kind() before selector().
         auto payload = std::make_shared<VerifiedWireSchemaBinding::Payload>();
         payload->table = verified.table_;
-        payload->selector = frame_selector;
+        payload->selector = CoreWireRootSelector{}; // not a capability slot
+        payload->frame_kind = selector.kind;
         payload->root = root;
         return VerifiedWireSchemaBinding(std::move(payload));
     }

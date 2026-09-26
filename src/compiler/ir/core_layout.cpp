@@ -1,6 +1,7 @@
 #include "ahfl/compiler/ir/core_layout.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/ir/core_layout_geometry.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -27,38 +28,15 @@ enum class LayoutEdge { Inline, Indirect };
            target.function_index_align == 4;
 }
 
-[[nodiscard]] bool is_power_of_two(std::uint32_t value) noexcept {
-    return value != 0 && (value & (value - 1)) == 0;
-}
+// Overflow-checked aggregate/backing arithmetic and canonical geometry live in
+// the shared layout_geometry SSOT so the builder, the producer verifier, and
+// the host-side frame-layout admission can never disagree.
+namespace lg = layout_geometry;
 
-[[nodiscard]] std::optional<std::uint64_t> checked_add(std::uint64_t lhs,
-                                                       std::uint64_t rhs) noexcept {
-    if (lhs > std::numeric_limits<std::uint64_t>::max() - rhs) {
-        return std::nullopt;
-    }
-    return lhs + rhs;
-}
-
-[[nodiscard]] std::optional<std::uint64_t> checked_mul(std::uint64_t lhs,
-                                                       std::uint64_t rhs) noexcept {
-    if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
-        return std::nullopt;
-    }
-    return lhs * rhs;
-}
-
-[[nodiscard]] std::optional<std::uint64_t> checked_align_up(std::uint64_t value,
-                                                            std::uint32_t align) noexcept {
-    if (!is_power_of_two(align)) {
-        return std::nullopt;
-    }
-    const std::uint64_t mask = static_cast<std::uint64_t>(align) - 1;
-    const auto sum = checked_add(value, mask);
-    if (!sum) {
-        return std::nullopt;
-    }
-    return *sum & ~mask;
-}
+using lg::checked_add;
+using lg::checked_align_up;
+using lg::checked_mul;
+using lg::is_power_of_two;
 
 [[nodiscard]] CoreLayout scalar_layout(CoreScalarRepr repr) {
     switch (repr) {
@@ -367,8 +345,6 @@ class LayoutBuilder {
         std::vector<std::uint64_t> payload_sizes;
         payload_layouts.reserve(decl.variant_payloads.size());
         payload_sizes.reserve(decl.variant_payloads.size());
-        std::uint32_t payload_align = 1;
-        std::uint64_t payload_size = 0;
         for (const auto &payload : decl.variant_payloads) {
             const auto aggregate_id = reserve_internal_layout();
             if (!aggregate_id) {
@@ -390,25 +366,25 @@ class LayoutBuilder {
             table_.layouts[aggregate_id->value] = *aggregate;
             payload_layouts.push_back(*aggregate_id);
             payload_sizes.push_back(aggregate->size);
-            payload_size = std::max(payload_size, aggregate->size);
-            payload_align = std::max(payload_align, aggregate->align);
         }
-        const auto payload_offset = checked_align_up(4, payload_align);
-        const auto unaligned_size = payload_offset ? checked_add(*payload_offset, payload_size)
-                                                   : std::nullopt;
-        const auto total_align = std::max<std::uint32_t>(4, payload_align);
-        const auto total_size = unaligned_size ? checked_align_up(*unaligned_size, total_align)
-                                               : std::nullopt;
-        if (!payload_offset || !unaligned_size || !total_size) {
+        // Re-derive the tag/payload record geometry through the shared SSOT the
+        // producer verifier and host admission also use.
+        CoreLayoutEnum provisional;
+        provisional.tag_size = 4;
+        provisional.variant_payload_layouts = payload_layouts;
+        provisional.variant_payload_sizes = payload_sizes;
+        const auto geometry = layout_geometry::expected_enum(table_, provisional);
+        if (!geometry.has_value()) {
             fail(layout::kOverflow, "enum layout arithmetic overflow", decl.source_range);
             return std::nullopt;
         }
         CoreLayoutEnum shape;
         shape.tag_size = 4;
-        shape.payload_offset = *payload_offset;
+        shape.payload_offset = geometry->payload_offset;
         shape.variant_payload_layouts = std::move(payload_layouts);
         shape.variant_payload_sizes = std::move(payload_sizes);
-        return CoreLayout{*total_size, total_align, *total_size == 0, std::move(shape)};
+        return CoreLayout{geometry->size, geometry->align, geometry->size == 0,
+                          std::move(shape)};
     }
 
     [[nodiscard]] std::optional<CoreLayout> build_container(CoreValueTypeId type,
@@ -539,9 +515,6 @@ class LayoutBuilder {
                      "container element placeholder was not finalized", pending.range);
                 return false;
             }
-            std::uint64_t raw_size = element.size;
-            std::uint32_t entry_align = element.align;
-            container->value_offset = 0;
             if (container->value.has_value()) {
                 if (container->value->value >= table_.layouts.size()) {
                     fail(layout::kInvalid, "Map value layout id is out of range", pending.range);
@@ -553,27 +526,17 @@ class LayoutBuilder {
                          "Map value placeholder was not finalized", pending.range);
                     return false;
                 }
-                const auto value_offset = checked_align_up(element.size, value_layout.align);
-                const auto entry_size = value_offset
-                                            ? checked_add(*value_offset, value_layout.size)
-                                            : std::nullopt;
-                if (!value_offset || !entry_size) {
-                    fail(layout::kOverflow, "Map entry layout arithmetic overflow", pending.range);
-                    return false;
-                }
-                container->value_offset = *value_offset;
-                raw_size = *entry_size;
-                entry_align = std::max(entry_align, value_layout.align);
             }
-            const auto stride = checked_align_up(raw_size, entry_align);
-            const auto backing = stride ? checked_mul(*stride, container->capacity) : std::nullopt;
-            if (!stride || !backing) {
+            // The stride/value-offset/backing extent come from the shared SSOT.
+            const auto geometry = layout_geometry::expected_container(table_, *container);
+            if (!geometry.has_value()) {
                 fail(layout::kOverflow,
                      "collection backing stride * capacity overflows uint64", pending.range);
                 return false;
             }
-            container->stride = *stride;
-            container->backing_size = *backing;
+            container->value_offset = geometry->value_offset;
+            container->stride = geometry->stride;
+            container->backing_size = geometry->backing_size;
         }
         return true;
     }
@@ -766,28 +729,22 @@ class LayoutVerifier {
             error("struct field offsets/layout ids are not parallel");
             return;
         }
-        std::uint64_t size = 0;
-        std::uint32_t align = 1;
-        for (std::size_t i = 0; i < shape.field_layouts.size(); ++i) {
-            const CoreLayoutId member_id = shape.field_layouts[i];
+        for (const CoreLayoutId member_id : shape.field_layouts) {
             if (!child(member_id, "struct field")) {
-                continue;
-            }
-            const CoreLayout &member = table_.layouts[member_id.value];
-            const auto offset = checked_align_up(size, member.align);
-            const auto next = offset ? checked_add(*offset, member.size) : std::nullopt;
-            if (!offset || !next) {
-                error("struct layout arithmetic overflows");
                 return;
             }
-            if (shape.field_offsets[i] != *offset) {
+        }
+        const auto expected = layout_geometry::expected_struct(table_, shape);
+        if (!expected.has_value()) {
+            error("struct layout arithmetic overflows");
+            return;
+        }
+        for (std::size_t i = 0; i < shape.field_layouts.size(); ++i) {
+            if (shape.field_offsets[i] != expected->field_offsets[i]) {
                 error("struct field offset is not canonical");
             }
-            size = *next;
-            align = std::max(align, member.align);
         }
-        const auto padded = checked_align_up(size, align);
-        if (!padded || entry.size != *padded || entry.align != align) {
+        if (entry.size != expected->size || entry.align != expected->align) {
             error("struct aggregate size/alignment is inconsistent");
         }
     }
@@ -820,26 +777,18 @@ class LayoutVerifier {
             error("enum tag or parallel payload metadata is invalid");
             return;
         }
-        std::uint64_t payload_size = 0;
-        std::uint32_t payload_align = 1;
-        for (std::size_t i = 0; i < shape.variant_payload_layouts.size(); ++i) {
-            const CoreLayoutId payload_id = shape.variant_payload_layouts[i];
+        for (const CoreLayoutId payload_id : shape.variant_payload_layouts) {
             if (!child(payload_id, "enum payload")) {
-                continue;
+                return;
             }
-            const CoreLayout &payload = table_.layouts[payload_id.value];
-            if (shape.variant_payload_sizes[i] != payload.size) {
-                error("enum variant payload size disagrees with its aggregate");
-            }
-            payload_size = std::max(payload_size, payload.size);
-            payload_align = std::max(payload_align, payload.align);
         }
-        const auto payload_offset = checked_align_up(4, payload_align);
-        const auto raw = payload_offset ? checked_add(*payload_offset, payload_size) : std::nullopt;
-        const auto align = std::max<std::uint32_t>(4, payload_align);
-        const auto size = raw ? checked_align_up(*raw, align) : std::nullopt;
-        if (!payload_offset || !raw || !size || shape.payload_offset != *payload_offset ||
-            entry.size != *size || entry.align != align) {
+        const auto expected = layout_geometry::expected_enum(table_, shape);
+        if (!expected.has_value()) {
+            error("enum variant payload size or aggregate geometry is inconsistent");
+            return;
+        }
+        if (shape.payload_offset != expected->payload_offset || entry.size != expected->size ||
+            entry.align != expected->align) {
             error("enum aggregate size/alignment is inconsistent");
         }
     }
@@ -849,29 +798,17 @@ class LayoutVerifier {
             error("container header or element edge is invalid");
             return;
         }
-        const CoreLayout &element = table_.layouts[shape.element.value];
-        std::uint64_t raw_size = element.size;
-        std::uint32_t align = element.align;
-        std::uint64_t value_offset = 0;
-        if (shape.value) {
-            if (!child(*shape.value, "Map value")) {
-                return;
-            }
-            const CoreLayout &value = table_.layouts[shape.value->value];
-            const auto offset = checked_align_up(element.size, value.align);
-            const auto raw = offset ? checked_add(*offset, value.size) : std::nullopt;
-            if (!offset || !raw) {
-                error("Map entry layout arithmetic overflows");
-                return;
-            }
-            value_offset = *offset;
-            raw_size = *raw;
-            align = std::max(align, value.align);
+        if (shape.value.has_value() && !child(*shape.value, "container map value")) {
+            error("container map-value edge is invalid");
+            return;
         }
-        const auto stride = checked_align_up(raw_size, align);
-        const auto backing = stride ? checked_mul(*stride, shape.capacity) : std::nullopt;
-        if (!stride || !backing || shape.value_offset != value_offset ||
-            shape.stride != *stride || shape.backing_size != *backing) {
+        const auto expected = layout_geometry::expected_container(table_, shape);
+        if (!expected.has_value()) {
+            error("container backing layout arithmetic overflows");
+            return;
+        }
+        if (shape.value_offset != expected->value_offset || shape.stride != expected->stride ||
+            shape.backing_size != expected->backing_size) {
             error("container backing stride/capacity metadata is inconsistent");
         }
     }
