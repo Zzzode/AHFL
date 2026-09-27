@@ -758,6 +758,23 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-A fix-forward: a computed
+    # final that copies a nested aggregate / payload-enum field off the
+    # host-packed INPUT frame must fail closed (the inline-input-frame
+    # expansion is a later rung) instead of dereferencing the inline
+    # words as a module child address. Engine-independent: the gate is
+    # the compile rejection and NO wasm artifact.
+    add_test(NAME ahfl.wasm.v2a_input_inline_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2a_input_inline_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.v2a_input_inline_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "V2-A input-inline aggregate fail-closed compile-reject lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
     # RFC 0026 P6-7 frame-bridge v2 rung V2-B: in-module String(PtrLen)
     # construction. The computed-final module emits ONE additive Data(11)
     # section initializing the rodata region with the hash-consed literal

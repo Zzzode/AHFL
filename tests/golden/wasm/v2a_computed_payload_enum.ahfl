@@ -1,0 +1,61 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A fix-forward: a computed final
+// materializing a PAYLOAD-BEARING enum whose variant payload layouts
+// place DIFFERENT field kinds at the same union offset: A carries a
+// nested struct (whose `a` slot is a module child ADDRESS that the
+// materializer expands), B carries a flat scalar. Copying EVERY
+// variant's payload into the union (the old straight-line path)
+// overwrote A's expanded words with B's scalar read of A's pointer
+// slot and leaked the scratch address (7168) into the host frame. The
+// materializer now copies ONLY the ACTIVE variant behind a runtime
+// discriminant ladder; both tag values are driven through real Node
+// memory here.
+module wasm::v2a::computed_payload_enum;
+
+pub struct In {
+    pick: Int;
+}
+
+pub struct Inner {
+    a: Int;
+    b: Int;
+}
+
+pub enum E {
+    A { p: Inner },
+    B { z: Int },
+}
+
+pub struct Out {
+    r: E;
+}
+
+agent ComputedPayloadEnumAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for ComputedPayloadEnumAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        if (input.pick > 0) {
+            return Out {
+                r: E::A {
+                    p: Inner { a: 111, b: 222 },
+                },
+            };
+        } else {
+            return Out {
+                r: E::B { z: 555 },
+            };
+        }
+    }
+}

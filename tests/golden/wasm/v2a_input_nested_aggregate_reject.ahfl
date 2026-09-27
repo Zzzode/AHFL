@@ -1,0 +1,47 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A fix-forward: a computed final
+// must fail closed when it copies a NESTED AGGREGATE field straight off
+// the host-packed INPUT frame. The host packs the input with the P4-D
+// INLINE graph (every field in place, no child-address slots), while the
+// module runtime stores an aggregate field as the child's i32 ADDRESS;
+// the output materializer expands that pointer tree. Feeding it the
+// inline input words made it dereference a host-influenced inline word
+// as an address (silent zero/garbage output, or an in-page OOB trap).
+// The inline-input-frame expansion is a later rung; this fixture pins
+// the fail-closed rejection (wasm.UNSUPPORTED_ORCHESTRATION).
+module wasm::v2a::input_nested_aggregate_reject;
+
+pub struct Inner {
+    a: Int;
+    b: Int;
+}
+
+pub struct In {
+    inner: Inner;
+}
+
+pub struct Out {
+    x: Inner;
+}
+
+agent NestedInputRejectAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for NestedInputRejectAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Out {
+            x: input.inner,
+        };
+    }
+}

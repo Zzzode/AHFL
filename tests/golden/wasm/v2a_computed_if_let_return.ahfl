@@ -1,0 +1,53 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A fix-forward: an if-let arm
+// whose body ends in a structured `if` returning on BOTH branches. The
+// match region must recognize this with the same structural
+// all-paths-return predicate the handler-level plan gate uses
+// (p6_region_always_returns), rather than accepting only a trailing
+// CoreReturnStmt; otherwise a semantically valid final was rejected
+// with the internal "match region must yield or diverge on every path"
+// diagnostic. The implicit else (tag mismatch) falls through to the
+// outer return. All three observable results are driven through real
+// Node memory.
+module wasm::v2a::computed_if_let_return;
+
+pub enum Level {
+    High,
+    Low,
+}
+
+pub struct In {
+    level: Level;
+    w: Int;
+}
+
+pub struct Out {
+    r: Int;
+}
+
+agent IfLetReturnAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for IfLetReturnAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        if let High = input.level {
+            if (input.w > 10) {
+                return Out { r: 1 };
+            } else {
+                return Out { r: 2 };
+            }
+        }
+        return Out { r: 3 };
+    }
+}

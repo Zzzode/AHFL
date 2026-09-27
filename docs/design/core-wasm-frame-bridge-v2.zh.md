@@ -287,6 +287,28 @@ v1 §4.4 与第 10 节第 2 档已设计、未实现。本修正案按 v1 原文
 4. capability 终态与 raw-P4-D 终态在同一 agent 的混用仍拒(v1 §4.4),但
    理由从"永久"收窄为"能力终态走 opaque/run2;能力出现在**非终态有序语
    句**里由 D3 桥接"。
+5. **fix-forward 边界(V2-A 落地后的三处收口)**。
+   - 宿主按 P4-D **inline 图**打包 INPUT frame(每个字段就位于偏移处,没有
+     子地址槽);模块运行时则把 aggregate 字段存为子对象的 i32 地址,物化器
+     展开的是这条模块指针树。因此 computed final 从 `input` 投影出的非标量
+     边 —— 跨过任一中间 aggregate 边的投影,或落在 struct/payload-bearing
+     enum 叶上的读取 —— 在 **inline-input-frame 扩展**(frame-base +
+     累加 P4-D 偏移、无 i32.load 解引用)落地之前一律 fail-closed:出生点在
+     `plan_path`,constructor aggregate operand 与物化根两处再做一次同不变
+     量的边界复查。顶层 scalar / tag-only enum / String PtrLen / collection
+     inline header 字段无子边解引用,继续放行;canonical identity 透传
+     不变。非终态 goto lane 既有的 inline/指针投影错配仍是独立遗留缺口,
+     不在本收口内。
+   - enum 物化只拷贝 **ACTIVE variant** 的 payload:运行时读源 discriminant,
+     以 i32.eq if 梯选中对应 variant 的 payload struct(单元 variant 不写
+     payload 词),越界 tag trap。不再向同一个 payload union 直线覆盖拷贝
+     全部 variant —— 当不同 variant 在同一 union 偏移放置不同 field kind
+     (子 aggregate 地址槽 vs inline 标量词)时,非活跃 variant 的拷贝会覆盖
+     活跃 variant 已展开的词,并把模块 scratch 地址泄漏进宿主可见 frame。
+   - match arm / fallback 的"终态返回"判定改用与 `plan()` 相同的结构化谓词
+     `p6_region_always_returns`(trailing return,或 trailing if/match 每个
+     分支都返回,递归判定);此前只认最后一条语句本身是 `CoreReturnStmt`,
+     会把 if-let arm 内 trailing if 双分支返回的合法终态误判为内部错误。
 
 ## 4. D3 -- raw-P4-D 计算 <-> wire-JSON 能力终值的帧桥接
 

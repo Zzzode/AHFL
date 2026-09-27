@@ -1,0 +1,44 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-A fix-forward: a computed final
+// must fail closed when it copies a PAYLOAD-BEARING ENUM field straight
+// off the host-packed INPUT frame. As with a nested struct, the enum's
+// inline bytes (tag + payload words) carry no module child address, so
+// the pointer-tree materializer read the payload words as an address.
+// Pins the fail-closed rejection until the inline-input-frame expansion
+// lands (wasm.UNSUPPORTED_ORCHESTRATION).
+module wasm::v2a::input_payload_enum_reject;
+
+pub enum E {
+    A { x: Int, y: Int },
+    B { z: Int },
+}
+
+pub struct In {
+    e: E;
+}
+
+pub struct Out {
+    r: E;
+}
+
+agent PayloadEnumInputRejectAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for PayloadEnumInputRejectAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Out {
+            r: input.e,
+        };
+    }
+}

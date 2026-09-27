@@ -2698,6 +2698,58 @@ class P6ComputationHandlerBuilder {
     // the expr that defines it.
     std::unordered_map<std::uint32_t, std::uint32_t> let_value_exprs_;
 
+    // RFC 0026 P6-7 frame-bridge v2 V2-A fix-forward: the computed-final
+    // materializer expands the MODULE aggregate pointer tree, so it must never
+    // be handed an aggregate that names the host-packed INLINE input frame
+    // (whose fields are in place with no child-address slots). The birth-site
+    // gate in `plan_path` rejects such reads when they are planned; the
+    // constructor-operand and materializer-root checks below re-assert the same
+    // invariant at the exact dereference boundary (defense in depth at a
+    // host-trust boundary).
+    //
+    // Whether an aggregate-typed (`Ptr`) value lives in the host-packed INLINE
+    // input frame rather than in module pointer-tree scratch. ANF SSA locals
+    // form a DAG of let/value-ref/coerce chains rooted at one path, so the walk
+    // terminates; `seen` guards defensively. A scalar or bounded collection is
+    // never held by an aggregate field as a child ADDRESS and returns false.
+    [[nodiscard]] bool
+    value_names_input_inline_aggregate(CoreValueId value,
+                                       std::vector<std::uint32_t> &seen) const {
+        if (std::find(seen.begin(), seen.end(), value.value) != seen.end()) {
+            return false;
+        }
+        seen.push_back(value.value);
+        if (value.value >= storage_.value_types.size()) {
+            return false;
+        }
+        if (scalar_kind(storage_.value_types[value.value]) != P6ScalarKind::Ptr) {
+            return false;
+        }
+        const auto def = let_value_exprs_.find(value.value);
+        if (def == let_value_exprs_.end() || def->second >= storage_.exprs.size()) {
+            // A statement-produced aggregate (call result) is always
+            // module-side; only a let-bound path can name the input frame.
+            return false;
+        }
+        const CoreExpr &expr = storage_.exprs[def->second];
+        if (const auto *ref = std::get_if<CoreValueRefExpr>(&expr.node)) {
+            return value_names_input_inline_aggregate(ref->value, seen);
+        }
+        if (const auto *coerce = std::get_if<CoreCoerceExpr>(&expr.node)) {
+            return value_names_input_inline_aggregate(coerce->operand, seen);
+        }
+        if (const auto *path = std::get_if<CorePathExpr>(&expr.node)) {
+            return !path->has_local &&
+                   path->root == ir::core::CorePathRoot::Input;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool value_names_input_inline_aggregate(CoreValueId value) const {
+        std::vector<std::uint32_t> seen;
+        return value_names_input_inline_aggregate(value, seen);
+    }
+
     // V2-C provenance: true when `root` is itself a bridge result, or a path
     // projection whose root local (transitively) is one. A String PtrLen read
     // out of such an aggregate names a host-packed, disjoint result placement
@@ -4129,6 +4181,14 @@ class P6ComputationHandlerBuilder {
             }
             return reject("a bare input/context root is not a memory read in the P6 subset", range);
         }
+        // Resolve the final slot once; the edge and the intermediate
+        // dereference chain decide both the V2-B PtrLen gate and the
+        // computed-final input-inline provenance gate below.
+        const auto leaf =
+            resolve_projection_slot(path.projection, path.root_type, range);
+        if (leaf == std::nullopt) {
+            return false;
+        }
         // V2-B: a leaf that lands on a String PtrLen slot is read as the two
         // inline words. A two-word String pair is realizable inside a computed
         // final materializer (the output-frame lane that carries rodata) or,
@@ -4137,9 +4197,7 @@ class P6ComputationHandlerBuilder {
         // and walked by the host). A pure goto handler without either lane
         // still fails closed here rather than emitting an orphaned two-word
         // load.
-        if (const auto leaf =
-                resolve_projection_slot(path.projection, path.root_type, range);
-            leaf.has_value() && edge_is_ptr_len(leaf->edge)) {
+        if (edge_is_ptr_len(leaf->edge)) {
             if (!final_return_mode_ && bridge_registry_ == nullptr) {
                 return reject(
                     "a String (PtrLen) field is readable only inside a P6-7 frame-bridge v2 "
@@ -4149,6 +4207,39 @@ class P6ComputationHandlerBuilder {
                     range);
             }
             ptrlen_read_needed_ = true;
+        }
+        // V2-A fix-forward: the projection address walk DEREFERENCES every
+        // intermediate aggregate field (an i32.load chain) and reads an
+        // aggregate LEAF as the child address its slot stores. That is the
+        // MODULE runtime representation, but the host packs the INPUT frame
+        // with the P4-D INLINE graph (every field in place, no child-address
+        // slots). A projection off `input` therefore diverges from the frame as
+        // soon as it crosses an aggregate edge (the load reads an inline value
+        // word as an address) or lands on a struct/payload-enum leaf (the slot
+        // words ARE the inline value, not a pointer). Until the input walk
+        // becomes inline-aware, a computed final fails closed on both shapes;
+        // a top-level scalar / tag-enum / inline-String / collection-header
+        // field needs no child dereference and stays admitted.
+        if (final_return_mode_ && !path.has_local &&
+            path.root == ir::core::CorePathRoot::Input) {
+            if (!leaf->deref_offsets.empty()) {
+                return reject(
+                    "a computed final projects through a nested aggregate of the host-packed "
+                    "INPUT frame; the inline-input-frame walk (frame-base + P4-D offset, no "
+                    "child-address dereference) is a later frame-bridge rung, so a nested "
+                    "input projection cannot be read on this lane yet",
+                    range);
+            }
+            if (place_is_aggregate_leaf(leaf->edge) &&
+                place_kind_of_layout(leaf->edge) == P6ScalarKind::Ptr) {
+                return reject(
+                    "a computed final reads a struct/enum field directly off the host-packed "
+                    "INPUT frame, whose aggregate bytes are packed inline rather than stored as "
+                    "a child address; materializing that value awaits the inline-input-frame "
+                    "expansion of the frame-bridge v2 (construct the aggregate in-module on "
+                    "this rung instead)",
+                    range);
+            }
         }
         // V2-C: latch the raw-frame fact at PLAN time too, so the frame section
         // (which must be built before handler emission for the bridge
@@ -4312,6 +4403,20 @@ class P6ComputationHandlerBuilder {
             if (*kind != P6ScalarKind::Ptr) {
                 return reject("constructor operand is not an aggregate for its aggregate slot",
                               range);
+            }
+            // V2-A fix-forward: an aggregate field is stored as the child's
+            // i32 ADDRESS in the module representation, but an operand sourced
+            // from the host-packed INPUT frame names inline bytes with no such
+            // address. Fail closed until the inline-input-frame expansion lands
+            // (the materializer would otherwise store an inline value word as a
+            // handle and later dereference it).
+            if (final_return_mode_ && value_names_input_inline_aggregate(value)) {
+                return reject(
+                    "a computed final stores an aggregate/enum field sourced from the host-packed "
+                    "INPUT frame; input aggregates are packed inline and carry no module child "
+                    "address, so the inline-input-frame expansion (a later frame-bridge rung) "
+                    "must land before such a field can be copied into a constructed output",
+                    range);
             }
             return true;
         }
@@ -6869,6 +6974,17 @@ class P6ComputationHandlerBuilder {
             final_src_count_ = std::max(final_src_count_, 1u);
             return true;
         case P6ScalarKind::Ptr: {
+            // Boundary of the materializer: an aggregate root that names the
+            // host-packed INLINE input frame has no module pointer tree to
+            // expand (the birth-site gate in plan_path normally catches this
+            // earlier; this keeps the boundary fail-closed on its own).
+            if (value_names_input_inline_aggregate(s.value)) {
+                return reject(
+                    "a computed final cannot materialize an aggregate rooted in the host-packed "
+                    "INPUT frame: its fields are packed inline with no module child-address "
+                    "tree; the inline-input-frame expansion is a later frame-bridge rung",
+                    range);
+            }
             if (value_type.value >= layouts_.value_layouts.size()) {
                 return reject("computed final aggregate has no finalized layout", range);
             }
@@ -7025,12 +7141,20 @@ class P6ComputationHandlerBuilder {
         if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
             // Discriminant at offset 0 of the enum.
             emit_copy_word(false, final_src_local_ + level, 0, dst_base, dst_off);
-            // Copy EVERY variant payload's slots into the payload union; inactive
-            // variants' source bytes are never observed by the host (it walks
-            // only the active variant), and overlapping union stores are
-            // idempotent. Payload slots are relative to the enum base, so they
-            // share this address level.
-            for (const CoreLayoutId payload : tagged->variant_payload_layouts) {
+            // Copy ONLY the ACTIVE variant's payload. Every variant shares the
+            // one payload union at `payload_offset`, and the variants' layouts
+            // may place different field KINDS at the same union offset (an
+            // aggregate child's address slot vs an inline scalar word), so a
+            // straight-line copy of EVERY payload overwrote the active
+            // variant's already-expanded inline words with an inactive
+            // variant's module-representation pointer (and leaked a scratch
+            // address into the host-visible frame). Read the source
+            // discriminant at run time and copy just the matching payload; an
+            // out-of-range tag traps instead of leaving stale union bytes.
+            const std::uint32_t src = final_src_local_ + level;
+            for (std::uint32_t ordinal = 0;
+                 ordinal < tagged->variant_payload_layouts.size(); ++ordinal) {
+                const CoreLayoutId payload = tagged->variant_payload_layouts[ordinal];
                 if (payload.value >= layouts_.layouts.size()) {
                     return reject("computed final enum payload layout is out of range", range);
                 }
@@ -7040,12 +7164,42 @@ class P6ComputationHandlerBuilder {
                 if (payload_struct == nullptr) {
                     return reject("computed final enum payload is not a struct layout", range);
                 }
-                if (!emit_copy_struct_fields(*payload_struct, level, tagged->payload_offset,
-                                           dst_base, dst_off + tagged->payload_offset,
-                                           range)) {
+                // A unit variant stores no payload words; it still participates
+                // in the discriminant range check below.
+                if (payload_struct->field_layouts.empty()) {
+                    continue;
+                }
+                emit_local_get(src);
+                body_.byte(kOpI32Load);
+                body_.u32(kAlignI32);
+                body_.u32(0);
+                emit_const_i32(static_cast<std::int32_t>(ordinal));
+                body_.byte(kOpI32Eq);
+                body_.byte(kOpIf);
+                body_.byte(kEmptyBlock);
+                ++label_depth_;
+                const bool payload_ok =
+                    emit_copy_struct_fields(*payload_struct, level, tagged->payload_offset,
+                                            dst_base, dst_off + tagged->payload_offset, range);
+                --label_depth_;
+                body_.byte(kOpEnd);
+                if (!payload_ok) {
                     return false;
                 }
             }
+            // Defensive fail-closed: a corrupt discriminant names no payload.
+            emit_local_get(src);
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+            emit_const_i32(static_cast<std::int32_t>(tagged->variant_payload_layouts.size()));
+            body_.byte(kOpI32GeU);
+            body_.byte(kOpIf);
+            body_.byte(kEmptyBlock);
+            ++label_depth_;
+            body_.byte(kOpUnreachable);
+            --label_depth_;
+            body_.byte(kOpEnd);
             return true;
         }
         if (std::holds_alternative<ir::core::CoreLayoutContainer>(layout.shape)) {
@@ -7706,15 +7860,14 @@ class P6ComputationHandlerBuilder {
         }
         // A computed-final arm/fallback ends in a value return; its terminator
         // branches past the match to the handler's result block, so it diverges
-        // from this region the same way a goto/trap arm does.
+        // from this region the same way a goto/trap arm does. Use the SAME
+        // structural all-paths predicate the handler-level plan gate uses
+        // (`p6_region_always_returns`): a trailing return OR a trailing if/match
+        // whose every branch returns — a bare `statements.back()` test wrongly
+        // rejected an if-let arm whose final `if` returned on both branches
+        // even though the whole region provably returns.
         const bool final_return =
-            final_return_mode_ && !region.statements.empty() &&
-            std::visit(
-                Overloaded{
-                    [](const CoreReturnStmt &r) { return r.has_value; },
-                    [](const auto &) { return false; },
-                },
-                region.statements.back().node);
+            final_return_mode_ && p6_region_always_returns(region);
         if (!final_return && !p6_region_always_diverges(region)) {
             return reject("match region must yield or diverge on every path", default_range);
         }

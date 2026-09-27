@@ -29,7 +29,11 @@ from pathlib import Path
 # RFC 0026 P6-7 frame-bridge v2 rung V2-A adds the three node-only
 # computed-final fixtures (scalar / nested aggregate / if-selected tag
 # enum): they materialize the output frame, so they are p6-frame
-# modules even though no handler projects the raw input. V2-B adds the
+# modules even though no handler projects the raw input. The V2-A
+# fix-forward adds two more computed-final fixtures: the
+# active-variant-only payload-enum materialization (runtime
+# discriminant ladder over the payload union) and an if-let arm whose
+# trailing if returns on both branches. V2-B adds the
 # String-literal computed final, the bounded-String variant, and the
 # input-String passthrough (no Data section, but still a p6-frame
 # module with runv + both frame sections). V2-C adds the first
@@ -43,6 +47,8 @@ FRAME_FIXTURES = frozenset(
         "v2a_computed_scalar",
         "v2a_computed_aggregate",
         "v2a_computed_enum",
+        "v2a_computed_payload_enum",
+        "v2a_computed_if_let_return",
         "v2b_computed_string",
         "v2b_bounded_string",
         "v2b_string_passthrough",

@@ -85,6 +85,26 @@ PLANS: dict[str, dict[str, object]] = {
             {"in": [1], "out": [1]},
         ],
     },
+    "v2a_computed_payload_enum": {
+        # Out.r: A{ p: Inner{a,b} } (tag 0) vs B{ z } (tag 1); the payload
+        # union overlaps (A.a and B.z share @8). The reported leaf order is
+        # tag@0, A.a@8, A.b@16, B.z@8, so the A run repeats @8's active word
+        # and the B run expects A's inactive tail @16 to stay zero.
+        "runs": [
+            {"in": [1], "out": [0, 111, 222, 111]},
+            {"in": [0], "out": [1, 555, 0, 555]},
+        ],
+    },
+    "v2a_computed_if_let_return": {
+        # if-let High arm ends in a two-branch value-returning if; the
+        # implicit else (Low) falls through to the outer return.
+        # inputs: level tag @0 (High=0, Low=1), w @8.
+        "runs": [
+            {"in": [0, 50], "out": [1]},
+            {"in": [0, 5], "out": [2]},
+            {"in": [1, 50], "out": [3]},
+        ],
+    },
 }
 
 
