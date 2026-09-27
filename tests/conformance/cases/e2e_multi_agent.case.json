@@ -60,7 +60,7 @@
     "wasm": {
       "eligible": "computation",
       "node_observation_skip": "blocked_kr66",
-      "reason": "capability-bearing non-final handlers project input fields into multi-argument capability calls, store projected capability results in context, and a node takes a constructed SummaryInput; P6-7 v1 keeps capability frames on opaque wire-JSON and forbids raw-P4-D/capability mixing pending an explicit frame-bridge design (design section 11); enum-equality routing and projected node inputs await rung F"
+      "reason": "capability-bearing non-final handlers project input fields into multi-argument capability calls, store projected capability results in context, and a node takes a constructed SummaryInput; V2-A/V2-B/V2-C land the direct-agent computed/String/multi-arg bridge lanes and the V2-D packager admits these agents through the same per-handler gates (including bridge) and plans the D6 capacity family; the V2-D packager runs these agents through the same per-handler gates a standalone agent passes and plans the D6 capacity family, but the first gate this DAG does not clear is the P6 scalar context-store check (a projected capability-result field stored into a context field whose P6 scalar kind disagrees: store value kind does not match its destination field); the V2-D emission slice (scalar-result context stores, in-module P4-D scheduler construction, hybrid opaque+P6 computed runner, Node workflow P6 host lane) remains pending"
     }
   }
 }

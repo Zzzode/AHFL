@@ -249,26 +249,30 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         // A workflow whose node agent carries a computed final (the if-let
         // match over a struct/string payload, in a region that
         // materializes an output): RFC 0026 P6-7 frame-bridge v2
-        // rung V2-A lands the DIRECT-agent computed final, but the
-        // workflow PACKAGING of such a node (computed runner, node
-        // input/return construction) is rung V2-D, and the String
-        // output itself needs rung V2-B. The workflow policy
-        // (allow_computed_goto=false) therefore still fails closed
-        // with the workflow-frame code, naming the deferred packaging.
+        // rungs V2-A/V2-B land the DIRECT-agent computed final and the
+        // in-module String PtrLen/rodata, and the V2-D packager now builds
+        // the packaged agent through the SAME per-handler gates and plans
+        // the D6 capacity family. The first workflow-level seam these cases
+        // reach is the projected/constructed RETURN frame the in-module
+        // scheduler must materialize; its emission is still pending.
         {"enum_variant_e2e.case.json",
          WasmEligibilityVerdict::BlockedComputation,
          "wasm.UNSUPPORTED_WORKFLOW_FRAME",
-         "does not yet package a P6 computed-final handler"},
+         "a projected or constructed workflow return frame"},
         {"if_let_e2e.case.json",
          WasmEligibilityVerdict::BlockedComputation,
          "wasm.UNSUPPORTED_WORKFLOW_FRAME",
-         "does not yet package a P6 computed-final handler"},
-        // A multi-agent DAG whose non-final handlers carry context stores and
-        // an enum-equality branch: neither is a single bare goto.
+         "a projected or constructed workflow return frame"},
+        // A multi-agent DAG whose non-final handlers carry context stores, an
+        // enum-routing branch and a multi-argument capability bridge. Under
+        // V2-D the packaged agents now run through the SAME per-handler gates a
+        // standalone agent passes, and the first gate this DAG does not clear
+        // is a precise scalar-codegen one (a projected capability-result field
+        // stored into a context field whose P6 scalar kind disagrees).
         {"e2e_multi_agent.case.json",
          WasmEligibilityVerdict::BlockedComputation,
-         "wasm.UNSUPPORTED_CAPABILITY_FRAME",
-         "non-final handler to contain exactly one goto"},
+         "wasm.UNSUPPORTED_WORKFLOW_FRAME",
+         "store value kind does not match its destination field"},
     };
     for (const auto &expectation : blocked) {
         const auto classification = classify_case(repo_root, expectation.sidecar);

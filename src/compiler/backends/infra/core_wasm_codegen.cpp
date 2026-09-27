@@ -568,6 +568,10 @@ struct AgentPlan {
     // section and stay byte-identical.
     RodataLiteralPool rodata;
     std::uint32_t rodata_extent{0};
+    // RFC 0026 P6-7 frame-bridge v2 D5/D6 (rung V2-D): maximum construct-scratch
+    // high-water across this agent's planned handlers (relative bytes). A
+    // workflow packager sizes the per-instance scratch node sub-block from it.
+    std::uint32_t p6_scratch_high{0};
     // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the dense, ANF-ordered
     // capability bridge call sites planned from non-final handlers. Empty on
     // every non-bridge module, whose bytes stay identical. The physical
@@ -645,16 +649,20 @@ class BridgeCallRegistry {
 struct AgentPlanPolicy {
     std::string_view unsupported_code{core_wasm_diag::kUnsupportedOrchestration};
     bool allow_capability{true};
-    // Workflow node packaging runs its agents' handlers through a linear,
-    // single-target runner body; a P6 computed-goto handler cannot be inlined
-    // there yet, so the workflow lane fails closed on it. Direct agent
-    // emission accepts it.
+    // Workflow node packaging (frame-bridge v2 D5, rung V2-D) flips both gates
+    // to true: a packaged agent passes the SAME per-handler region/SSA/safety
+    // gates a direct agent passes, with no weakened second subset.
     bool allow_computed_goto{true};
     // RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): direct-agent emission
     // admits an ORDERED capability bridge statement in a non-final frame
-    // computation region. Workflow packaging keeps this false until V2-D.
+    // computation region.
     bool allow_bridge{true};
     std::string_view slice{"E2"};
+    // V2-D: true for a packaged agent: do not build the agent-level frame
+    // section (the workflow packager owns the module-level section) and gather
+    // the per-agent facts (scratch high-water, rodata extent, bridge sites) the
+    // workflow D6 capacity family needs.
+    bool skip_frame_section{false};
 };
 
 enum class WorkflowFrameSourceKind {
@@ -682,6 +690,34 @@ struct WorkflowNodePlan {
     std::uint64_t source_symbol{0};
 };
 
+// V2-D fact-gathering facts per packaged instance (agent-lane coordinates;
+// the workflow relocation is applied during module emission).
+struct WorkflowP6GatherFacts {
+    bool p6{false};
+    std::uint32_t scratch_high{0};
+    std::uint32_t rodata_extent{0};
+    std::uint32_t bridge_site_count{0};
+    std::uint32_t bridge_max_arity{0};
+    std::uint32_t bridge_spill_extent{0};
+    std::uint32_t bridge_result_extent{0};
+};
+
+// V2-D: one packaged instance's fixed node-frame block coordinates.
+struct WorkflowNodeBlock {
+    CoreInstanceId instance{};
+    std::uint32_t input_layout{0};
+    std::uint32_t context_layout{0};
+    std::uint32_t output_layout{0};
+    std::uint32_t input_size{0};
+    std::uint32_t context_size{0};
+    std::uint32_t output_size{0};
+    std::uint32_t input_base{0};
+    std::uint32_t context_base{0};
+    std::uint32_t scratch_base{0};
+    std::uint32_t scratch_size{0};
+    std::uint32_t output_base{0};
+};
+
 struct WorkflowPlan {
     CoreWorkflowId workflow{};
     std::vector<CoreWorkflowNodeId> schedule;
@@ -694,6 +730,29 @@ struct WorkflowPlan {
     // capability-workflow baseline (import section, manifest, event buffer, latch,
     // checked alloc).
     std::vector<CoreCapabilityId> imports;
+    // V2-D: true when at least one scheduled node runs on the P6 frame lane.
+    // Gates the computed runners, node blocks, frame sections and the Data
+    // section; an all-opaque workflow stays byte-identical.
+    bool has_p6_nodes{false};
+    // V2-D: per-packaged-instance node blocks, indexed parallel to
+    // agent_plans / packaged_instances.
+    std::vector<WorkflowNodeBlock> node_blocks;
+    // V2-D module-level physical coordinates (all compile-time constants).
+    std::uint32_t bridge_control_base{0};
+    std::uint32_t bridge_block_stride{0};
+    std::uint32_t bridge_control_extent{0};
+    std::uint32_t bridge_spill_base{0};
+    std::uint32_t bridge_spill_extent{0};
+    std::uint32_t node_blocks_base{0};
+    std::uint32_t node_blocks_extent{0};
+    std::uint32_t entry_payload_base{0};
+    std::uint32_t entry_payload_capacity{0};
+    std::uint32_t wf_output_base{0};
+    std::uint32_t wf_output_size{0};
+    std::uint32_t wf_heap_base{0};
+    // V2-D workflow output boundary value type (sizes the workflow output
+    // slot in the D6 capacity family).
+    CoreValueTypeId wf_output_vt{};
 };
 
 struct FunctionTable {
@@ -1977,6 +2036,13 @@ class P6ComputationHandlerBuilder {
     // String literals keep failing closed (no rodata region is planned there).
     void install_rodata_pool(RodataLiteralPool *pool) { rodata_pool_ = pool; }
 
+    // V2-D: the construct-scratch high-water this builder planned (relative
+    // bytes; the workflow packager sizes the per-instance scratch sub-block
+    // from the maximum across an agent's handlers).
+    [[nodiscard]] std::uint32_t scratch_high_water() const noexcept {
+        return scratch_addr_cursor_;
+    }
+
     // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): install the module-wide
     // bridge call-site registry. Null on every non-frame builder, where an
     // in-handler capability call keeps its canonical KR6.5 final shape and is
@@ -2583,6 +2649,37 @@ class P6ComputationHandlerBuilder {
     // (null outside a P6-frame agent). A String literal SSA value is the PtrLen
     // immediate pair naming this pool; the pool is frozen between plan and emit.
     RodataLiteralPool *rodata_pool_{nullptr};
+
+    // Fixed P6 frame regions (single named authority for every emit/plan site).
+    // The V2-D workflow packaging relocates these onto per-instance node blocks
+    // in the module-emission slice; until then only the canonical agent-lane
+    // constants exist, so an agent emission and an opaque workflow stay
+    // byte-identical.
+    [[nodiscard]] std::uint32_t input_base() const noexcept {
+        return kP6AggregateInputBase;
+    }
+    [[nodiscard]] std::uint32_t input_capacity() const noexcept {
+        return kP6AggregateInputCapacity;
+    }
+    [[nodiscard]] std::uint32_t context_base() const noexcept {
+        return kP6AggregateContextBase;
+    }
+    [[nodiscard]] std::uint32_t context_capacity() const noexcept {
+        return kP6AggregateContextCapacity;
+    }
+    [[nodiscard]] std::uint32_t scratch_base() const noexcept {
+        return kP6AggregateScratchBase;
+    }
+    [[nodiscard]] std::uint32_t scratch_capacity() const noexcept {
+        return kP6AggregateScratchCapacity;
+    }
+    [[nodiscard]] std::uint32_t output_base() const noexcept {
+        return kP6AggregateOutputBase;
+    }
+    [[nodiscard]] std::uint32_t output_capacity() const noexcept {
+        return kP6AggregateOutputCapacity;
+    }
+    [[nodiscard]] std::uint32_t rodata_base() const noexcept { return kP6RodataBase; };
 
     // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the module-wide bridge
     // call-site registry (null outside a frame-lane handler). A planned bridge
@@ -3234,9 +3331,9 @@ class P6ComputationHandlerBuilder {
         }
         switch (path.root) {
         case ir::core::CorePathRoot::Input:
-            return ProjectionRoot{false, 0, kP6AggregateInputBase};
+            return ProjectionRoot{false, 0, input_base()};
         case ir::core::CorePathRoot::Context:
-            return ProjectionRoot{false, 0, kP6AggregateContextBase};
+            return ProjectionRoot{false, 0, context_base()};
         default:
             return std::nullopt;
         }
@@ -3250,7 +3347,7 @@ class P6ComputationHandlerBuilder {
         if (place.root != ir::core::CorePathRoot::Context) {
             return std::nullopt;
         }
-        return ProjectionRoot{false, 0, kP6AggregateContextBase};
+        return ProjectionRoot{false, 0, context_base()};
     }
 
     [[nodiscard]] static bool is_two_word_kind(P6ScalarKind kind) {
@@ -4179,11 +4276,11 @@ class P6ComputationHandlerBuilder {
             return true;
         }
         const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
-        if (start + size > kP6AggregateScratchCapacity ||
+        if (start + size > scratch_capacity() ||
             start + size > std::numeric_limits<std::uint32_t>::max()) {
             return reject("constructor scratch arena is exhausted", range);
         }
-        construct_addrs_[id.value] = static_cast<std::uint32_t>(kP6AggregateScratchBase + start);
+        construct_addrs_[id.value] = static_cast<std::uint32_t>(start);
         scratch_addr_cursor_ = static_cast<std::uint32_t>(start + size);
         return true;
     }
@@ -5042,11 +5139,11 @@ class P6ComputationHandlerBuilder {
             return true;
         }
         const std::uint64_t start = align_up(scratch_addr_cursor_, 8);
-        if (start + size > kP6AggregateScratchCapacity ||
+        if (start + size > scratch_capacity() ||
             start + size > std::numeric_limits<std::uint32_t>::max()) {
             return reject("constructor scratch arena is exhausted", range);
         }
-        construct_addrs_[id.value] = static_cast<std::uint32_t>(kP6AggregateScratchBase + start);
+        construct_addrs_[id.value] = static_cast<std::uint32_t>(start);
         scratch_addr_cursor_ = static_cast<std::uint32_t>(start + size);
         return true;
     }
@@ -5565,7 +5662,7 @@ class P6ComputationHandlerBuilder {
                 return reject("string literal was not interned into the rodata pool",
                               std::move(range));
             }
-            emit_const_i32(static_cast<std::int32_t>(kP6RodataBase + *offset));
+            emit_const_i32(static_cast<std::int32_t>(rodata_base() + *offset));
             emit_const_i32(static_cast<std::int32_t>(bytes.size()));
             return true;
         }
@@ -6163,7 +6260,7 @@ class P6ComputationHandlerBuilder {
                             P6ScalarKind::Ptr) {
                         reads_raw_input_frame_ = true;
                         emit_const_i32(
-                            static_cast<std::int32_t>(ir::core::kP6AggregateInputBase));
+                            static_cast<std::int32_t>(input_base()));
                         return true;
                     }
                 }
@@ -6258,7 +6355,7 @@ class P6ComputationHandlerBuilder {
         }
         const std::uint64_t size = aggregate_size(q.type_id);
         const std::uint32_t address =
-            dynamic ? 0u : *construct_addrs_[id.value];
+            dynamic ? 0u : scratch_base() + *construct_addrs_[id.value];
         if (dynamic) {
             emit_dynamic_construct_alloc(static_cast<std::uint32_t>(size));
             emit_local_get(alloc_temp_local_);
@@ -6350,7 +6447,7 @@ class P6ComputationHandlerBuilder {
         }
         const std::uint64_t dyn_size = aggregate_size(construct.type_id);
         const std::uint32_t static_address =
-            dynamic ? 0u : *construct_addrs_[id.value];
+            dynamic ? 0u : scratch_base() + *construct_addrs_[id.value];
         if (dynamic) {
             // Allocate a fresh per-activation aggregate; its base is held in the
             // allocation temp local while the fields are written.
@@ -7012,7 +7109,7 @@ class P6ComputationHandlerBuilder {
         case P6ScalarKind::Bool:
         case P6ScalarKind::IntI32:
         case P6ScalarKind::Index:
-            emit_const_i32(static_cast<std::int32_t>(kP6AggregateOutputBase));
+            emit_const_i32(static_cast<std::int32_t>(output_base()));
             if (!emit_value_read(s.value, range)) {
                 return false;
             }
@@ -7021,7 +7118,7 @@ class P6ComputationHandlerBuilder {
             body_.u32(0);
             break;
         case P6ScalarKind::IntI64:
-            emit_const_i32(static_cast<std::int32_t>(kP6AggregateOutputBase));
+            emit_const_i32(static_cast<std::int32_t>(output_base()));
             if (!emit_value_read(s.value, range)) {
                 return false;
             }
@@ -7040,8 +7137,8 @@ class P6ComputationHandlerBuilder {
             }
             body_.byte(kOpLocalSet);
             body_.u32(final_src_local_);
-            emit_copy_word(false, final_src_local_, 0, kP6AggregateOutputBase, 0);
-            emit_copy_word(false, final_src_local_, 4, kP6AggregateOutputBase, 4);
+            emit_copy_word(false, final_src_local_, 0, output_base(), 0);
+            emit_copy_word(false, final_src_local_, 4, output_base(), 4);
             break;
         }
         case P6ScalarKind::Ptr: {
@@ -7054,7 +7151,7 @@ class P6ComputationHandlerBuilder {
                 return reject("computed final aggregate root layout is out of range", range);
             }
             const std::uint64_t size = layouts_.layouts[root.value].size;
-            if (size == 0 || size > kP6AggregateOutputCapacity ||
+            if (size == 0 || size > output_capacity() ||
                 size % 4 != 0) {
                 return reject("computed final aggregate has an invalid output-frame size", range);
             }
@@ -7075,7 +7172,7 @@ class P6ComputationHandlerBuilder {
             body_.byte(kOpI32GeU);
             body_.byte(kOpBrIf);
             body_.u32(1); // cursor >=u size -> leave loop
-            emit_const_i32(static_cast<std::int32_t>(kP6AggregateOutputBase));
+            emit_const_i32(static_cast<std::int32_t>(output_base()));
             emit_local_get(final_src_local_);
             body_.byte(kOpI32Add);
             emit_const_i32(0);
@@ -7102,7 +7199,7 @@ class P6ComputationHandlerBuilder {
             // 3) Copy every named slot (padding stays zero), expanding the
             //    module's aggregate-pointer tree into the inline frame layout.
             if (!emit_copy_aggregate_at(root, /*level=*/0,
-                                       kP6AggregateOutputBase, 0, range)) {
+                                       output_base(), 0, range)) {
                 return false;
             }
             break;
@@ -10507,6 +10604,11 @@ build_frame_section_plan(const CoreProgram &program,
         planned_computed_final || !bridge_registry.empty();
     const bool frame_lane_eligible =
         plan.fns.empty() && plan.closure_table.empty();
+    // V2-D: a packaged agent keeps the same per-handler subset gates but the
+    // WORKFLOW packager builds the module-level core-layout section; the agent
+    // plan itself must not carry one. A packaged computed/bridge agent still
+    // fails the fn/closure mix gate below.
+    const bool build_agent_frame_section = !policy.skip_frame_section;
     if (needs_frame_section) {
         if (!frame_lane_eligible) {
             // An FB-lane agent (outlined fn / closure) may still project an
@@ -10520,7 +10622,7 @@ build_frame_section_plan(const CoreProgram &program,
                          "closures");
                 return std::nullopt;
             }
-        } else {
+        } else if (build_agent_frame_section) {
         const CoreAgentDecl &agent_decl = program.agents[target.value];
         auto candidate_boundary = [&]()
             -> std::optional<std::pair<ir::core::CoreValueTypeId,
@@ -10659,6 +10761,10 @@ build_frame_section_plan(const CoreProgram &program,
         // reads_raw_input_frame_ is latched during EMIT (an input-frame
         // projection emits a fixed-region load), so read it after emit().
         const bool reads_raw = builder->reads_raw_input_frame();
+        // V2-D: the workflow packager sizes the per-instance scratch node block
+        // from the maximum construct-scratch high-water across handlers.
+        plan.p6_scratch_high =
+            std::max(plan.p6_scratch_high, builder->scratch_high_water());
         plan.handlers[index] = CompiledHandler{std::move(*body)};
         if (is_final_return) {
             // V2-A: the handler materialized the output frame; runv invokes it
@@ -10721,126 +10827,522 @@ build_frame_section_plan(const CoreProgram &program,
     return false;
 }
 
-[[nodiscard]] std::optional<WorkflowFrameSource>
-validate_workflow_frame_region(const CoreProgram &program,
-                               const CoreWorkflowDecl &workflow,
-                               const ir::core::CoreRegion *region,
-                               CoreValueTypeId expected_type,
-                               std::optional<CoreWorkflowNodeId> owner_node,
-                               const std::vector<std::uint32_t> &schedule_position,
-                               std::vector<bool> &used_exprs,
-                               std::vector<bool> &used_values,
-                               CoreWasmCodegenResult &result) {
-    if (region == nullptr || region->statements.size() != 2) {
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "KR6.5 E3 workflow frame region must contain one path let and one yield");
-        return std::nullopt;
-    }
-    const auto &let_statement = region->statements[0];
-    const auto &yield_statement = region->statements[1];
-    const auto *let = std::get_if<CoreLetStmt>(&let_statement.node);
-    const auto *yield = std::get_if<CoreYieldStmt>(&yield_statement.node);
-    if (let == nullptr || yield == nullptr || !yield->has_value || yield->value != let->result ||
-        let->expr.value >= workflow.storage.exprs.size() ||
-        let->result.value >= workflow.storage.value_types.size() ||
-        let->result.value >= used_values.size()) {
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "KR6.5 E3 workflow frame region is not canonical path-let/yield ANF",
-                 let_statement.source_range);
-        return std::nullopt;
-    }
-    if (used_exprs[let->expr.value] || used_values[let->result.value]) {
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "KR6.5 E3 workflow frame expression/value is reused across regions",
-                 let_statement.source_range);
-        return std::nullopt;
-    }
-
-    const auto &expr = workflow.storage.exprs[let->expr.value];
-    const auto *path = std::get_if<CorePathExpr>(&expr.node);
-    if (path == nullptr || !path->members.empty() || !path->projection.empty() ||
-        !path->projection_resolved || path->has_local ||
-        expr.result_type.value >= program.value_types.size() ||
-        workflow.storage.value_types[let->result.value] != expr.result_type ||
-        expr.result_type != expected_type) {
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "KR6.5 E3 accepts only an exact unprojected opaque workflow frame",
-                 expr.source_range);
-        return std::nullopt;
-    }
-
+struct WorkflowRegionPlan {
+    // The frame source the region yields (workflow input or an upstream node
+    // output).
     WorkflowFrameSource source;
-    source.type = expr.result_type;
-    if (path->root == ir::core::CorePathRoot::WorkflowInput) {
-        if (path->root_type != workflow.input_type) {
+    // True for a V2-D projected/constructed P4-D region the scheduler must
+    // materialize with in-module word copies (a field projection, or an
+    // aggregate construct such as a two-upstream node input). False for the
+    // legacy E3 exact bare-frame forwarding shape (one let + one yield of an
+    // unprojected input/node-output path), which forwards the source verbatim.
+    bool constructed{false};
+};
+
+[[nodiscard]] std::optional<WorkflowRegionPlan>
+validate_workflow_region(const CoreProgram &program,
+                         const CoreWorkflowDecl &workflow,
+                         const ir::core::CoreLayoutTable &layouts,
+                         const ir::core::CoreRegion *region,
+                         CoreValueTypeId expected_type,
+                         std::optional<CoreWorkflowNodeId> owner_node,
+                         const std::vector<std::uint32_t> &schedule_position,
+                         CoreWasmCodegenResult &result) {
+    if (region == nullptr || region->statements.size() < 2) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "KR6.5 E3 workflow frame region must contain at least one path let and a yield");
+        return std::nullopt;
+    }
+    const CoreStmt &yield_statement = region->statements.back();
+    const auto *yield = std::get_if<CoreYieldStmt>(&yield_statement.node);
+    if (yield == nullptr || !yield->has_value) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "a workflow frame region must end in a value yield",
+                 yield_statement.source_range);
+        return std::nullopt;
+    }
+    // Every preceding statement must be one value-binding let.
+    std::vector<const CoreLetStmt *> lets;
+    lets.reserve(region->statements.size() - 1);
+    for (std::size_t i = 0; i + 1 < region->statements.size(); ++i) {
+        const auto *let = std::get_if<CoreLetStmt>(&region->statements[i].node);
+        if (let == nullptr) {
             add_diag(result,
                      core_wasm_diag::kUnsupportedWorkflowFrame,
-                     "workflow input path does not identify the declared workflow input shell",
-                     expr.source_range);
+                     "a workflow frame region must be straight-line ANF lets followed by one yield",
+                     region->statements[i].source_range);
             return std::nullopt;
         }
-        const auto *nominal =
-            std::get_if<CoreVtNominal>(&program.value_types[expr.result_type.value].node);
-        if (nominal == nullptr || nominal->base != workflow.input_type) {
-            add_diag(result,
-                     core_wasm_diag::kUnsupportedWorkflowFrame,
-                     "workflow input frame is not the exact input nominal value type",
-                     expr.source_range);
-            return std::nullopt;
-        }
-        source.kind = WorkflowFrameSourceKind::Input;
-    } else if (path->root == ir::core::CorePathRoot::WorkflowNodeOutput) {
-        if (path->workflow_node.value >= workflow.nodes.size()) {
+        lets.push_back(let);
+    }
+    // Map each bound value id to its let (single static definition in the
+    // workflow storage) and mark statement order for dependency checks.
+    std::unordered_map<std::uint32_t, const CoreLetStmt *> let_by_value;
+    std::unordered_map<std::uint32_t, std::size_t> let_order;
+    for (std::size_t i = 0; i < lets.size(); ++i) {
+        if (lets[i]->expr.value >= workflow.storage.exprs.size() ||
+            lets[i]->result.value >= workflow.storage.value_types.size()) {
             add_diag(result,
                      core_wasm_diag::kInvalidCore,
-                     "workflow frame references an out-of-range node output",
-                     expr.source_range);
+                     "a workflow frame region let is out of the workflow storage range");
             return std::nullopt;
         }
-        const auto &source_node = workflow.nodes[path->workflow_node.value];
-        const auto *source_instance = agent_instance(program, source_node.target_instance);
-        const auto *source_payload = agent_instance_payload(program, source_node.target_instance);
-        if (source_instance == nullptr || source_payload == nullptr ||
-            source_instance->dispatch_types.size() != 3 ||
-            path->root_type != source_payload->output_type ||
-            expr.result_type != source_instance->dispatch_types[2]) {
+        if (!let_by_value.emplace(lets[i]->result.value, lets[i]).second) {
             add_diag(result,
                      core_wasm_diag::kUnsupportedWorkflowFrame,
-                     "workflow node-output frame does not match its target instance output",
-                     expr.source_range);
+                     "a workflow frame value is bound more than once in one region");
             return std::nullopt;
         }
-        if (owner_node.has_value() &&
-            (!workflow_node_is_ancestor(workflow, *owner_node, path->workflow_node) ||
-             schedule_position[path->workflow_node.value] >=
-                 schedule_position[owner_node->value])) {
-            add_diag(result,
-                     core_wasm_diag::kUnsupportedWorkflowFrame,
-                     "workflow node input reads an output that is not a scheduled ancestor",
-                     expr.source_range);
-            return std::nullopt;
-        }
-        source.kind = WorkflowFrameSourceKind::NodeOutput;
-        source.node = path->workflow_node;
-    } else {
+        let_order.emplace(lets[i]->result.value, i);
+    }
+    const auto yield_let_it = let_by_value.find(yield->value.value);
+    if (yield_let_it == let_by_value.end()) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "workflow frame root is neither workflow input nor node output",
+                 "the workflow frame yield value is not bound by a region let");
+        return std::nullopt;
+    }
+    if (workflow.storage.value_types[yield->value.value] != expected_type) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "the workflow frame yield type does not match its declared boundary type");
+        return std::nullopt;
+    }
+
+    // Validate one let expression: an exact bare path, a projected node-output
+    // path, or a flat aggregate construct whose operands are already bound.
+    auto check_path = [&](const CorePathExpr &path,
+                          CoreValueTypeId result_vt) -> std::optional<WorkflowFrameSource> {
+        if (!path.projection_resolved || path.has_local) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedWorkflowFrame,
+                     "a workflow frame path is unresolved or names a local");
+            return std::nullopt;
+        }
+        if (path.root == ir::core::CorePathRoot::WorkflowInput) {
+            if (!path.projection.empty()) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "a projected workflow-input field is outside the P6-7 V2-D frame subset");
+                return std::nullopt;
+            }
+            if (path.root_type != workflow.input_type) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "a workflow input path does not identify the declared input shell");
+                return std::nullopt;
+            }
+            return WorkflowFrameSource{WorkflowFrameSourceKind::Input, {}, result_vt};
+        }
+        if (path.root == ir::core::CorePathRoot::WorkflowNodeOutput) {
+            if (path.workflow_node.value >= workflow.nodes.size()) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCore,
+                         "a workflow frame path references an out-of-range node output");
+                return std::nullopt;
+            }
+            const auto &source_node = workflow.nodes[path.workflow_node.value];
+            const auto *source_instance = agent_instance(program, source_node.target_instance);
+            const auto *source_payload =
+                agent_instance_payload(program, source_node.target_instance);
+            if (source_instance == nullptr || source_payload == nullptr ||
+                source_instance->dispatch_types.size() != 3) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "a workflow node-output path has no packaged target instance");
+                return std::nullopt;
+            }
+            if (path.root_type != source_payload->output_type) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "a workflow node-output frame does not match its target instance output");
+                return std::nullopt;
+            }
+            if (owner_node.has_value() &&
+                (!workflow_node_is_ancestor(workflow, *owner_node, path.workflow_node) ||
+                 schedule_position[path.workflow_node.value] >=
+                     schedule_position[owner_node->value])) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "a workflow frame node input reads an output that is not a scheduled ancestor");
+                return std::nullopt;
+            }
+            if (path.projection.empty() &&
+                result_vt != source_instance->dispatch_types[2]) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "a workflow node-output frame does not match its target instance output");
+                return std::nullopt;
+            }
+            return WorkflowFrameSource{
+                WorkflowFrameSourceKind::NodeOutput, path.workflow_node, result_vt};
+        }
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "a workflow frame path root is neither workflow input nor a node output");
+        return std::nullopt;
+    };
+
+    for (std::size_t i = 0; i < lets.size(); ++i) {
+        const CoreLetStmt &let = *lets[i];
+        const CoreExpr &expr = workflow.storage.exprs[let.expr.value];
+        const CoreValueTypeId value_type = workflow.storage.value_types[let.result.value];
+        if (expr.result_type != value_type) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "a workflow frame let result type disagrees with its expression type");
+            return std::nullopt;
+        }
+        if (!has_finalized_layout(layouts, value_type)) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidLayout,
+                     "a workflow frame value has no finalized P4-D layout");
+            return std::nullopt;
+        }
+        if (const auto *path = std::get_if<CorePathExpr>(&expr.node)) {
+            auto source = check_path(*path, value_type);
+            if (!source.has_value()) {
+                return std::nullopt;
+            }
+            continue;
+        }
+        if (const auto *construct = std::get_if<CoreConstructExpr>(&expr.node)) {
+            if (!construct->resolved) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "a workflow frame constructor is not type-resolved");
+                return std::nullopt;
+            }
+            // Operands must be bound by an EARLIER let.
+            for (const CoreConstructArg &arg : construct->args) {
+                const auto dep = let_order.find(arg.value.value);
+                if (dep == let_order.end() || dep->second >= i) {
+                    add_diag(result,
+                             core_wasm_diag::kUnsupportedWorkflowFrame,
+                             "a workflow frame constructor operand is not bound by an earlier let");
+                    return std::nullopt;
+                }
+            }
+            continue;
+        }
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "a workflow frame region accepts only path reads and flat aggregate constructors "
+                 "(no effects, match, coercion or computation nodes)",
                  expr.source_range);
         return std::nullopt;
     }
 
-    used_exprs[let->expr.value] = true;
-    used_values[let->result.value] = true;
-    return source;
+    // Reachability: every let must be used (transitively from the yield value).
+    std::vector<bool> reachable(lets.size(), false);
+    std::vector<std::uint32_t> work{yield->value.value};
+    while (!work.empty()) {
+        const std::uint32_t value = work.back();
+        work.pop_back();
+        const auto order_it = let_order.find(value);
+        if (order_it == let_order.end()) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "a workflow frame value reference is unbound");
+            return std::nullopt;
+        }
+        const std::size_t order = order_it->second;
+        if (reachable[order]) {
+            continue;
+        }
+        reachable[order] = true;
+        const CoreExpr &expr = workflow.storage.exprs[lets[order]->expr.value];
+        if (const auto *construct = std::get_if<CoreConstructExpr>(&expr.node)) {
+            for (const CoreConstructArg &arg : construct->args) {
+                work.push_back(arg.value.value);
+            }
+        }
+    }
+    if (std::any_of(reachable.begin(), reachable.end(), [](bool r) { return !r; })) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedWorkflowFrame,
+                 "a workflow frame region binds an orphan value its yield does not reach");
+        return std::nullopt;
+    }
+
+    WorkflowRegionPlan plan;
+    const CoreLetStmt &yield_let = *yield_let_it->second;
+    const CoreExpr &yield_expr = workflow.storage.exprs[yield_let.expr.value];
+    if (const auto *path = std::get_if<CorePathExpr>(&yield_expr.node)) {
+        // A bare path in a single-let region is the exact opaque forwarding
+        // shape; a projected path is a P4-D region the V2-D scheduler
+        // materializes.
+        if (path->projection.empty() && lets.size() == 1) {
+            auto source =
+                check_path(*path, workflow.storage.value_types[yield->value.value]);
+            if (!source.has_value()) {
+                return std::nullopt;
+            }
+            plan.source = *source;
+            return plan;
+        }
+        auto source =
+            check_path(*path, workflow.storage.value_types[yield->value.value]);
+        if (!source.has_value()) {
+            return std::nullopt;
+        }
+        plan.source = *source;
+    }
+    // A projected path, a flat construct or a multi-let region is a P4-D frame
+    // the in-module scheduler constructs word-by-word (V2-D).
+    plan.constructed = true;
+    return plan;
 }
 
 [[nodiscard]] std::optional<std::uint32_t> workflow_runner_index(const WorkflowPlan &plan,
                                                                  CoreInstanceId instance);
+
+// V2-D D6: the compile-time single-page capacity family for a workflow that
+// contains at least one P6-frame node. Every extent is a compile-time constant;
+// nothing here is runtime-growable. Layout order (frame-bridge v2 design
+// section 6.1), cursor starting just above the (capability-workflow-only)
+// node-event region:
+//
+//   bridge control-block page frame + scalar/PtrLen spill slots
+//   per-packaged-p6-instance node blocks: I / C / scratch / O
+//   host-packed entry payload arena
+//   per-bridge-call-site result placements + their payload shares
+//   workflow output slot
+//
+// The rodata image is checked separately against the fixed [256,1024) pool.
+// String payload accounting uses the shared kP6FrameStringPoolBytes pool share
+// for the entry and one share per bridge result placement (exact bounded-slot
+// metering arrives with the merged boundary wire projection in the module
+// emission slice; the pool shares make this a conservative upper bound).
+[[nodiscard]] bool plan_workflow_p6_capacity_family(
+    const CoreProgram &program,
+    const ir::core::CoreLayoutTable &layouts,
+    const CoreWorkflowDecl &workflow,
+    WorkflowPlan &plan,
+    const std::vector<WorkflowP6GatherFacts> &gathered,
+    CoreWasmCodegenResult &result) {
+    constexpr std::uint64_t kPage = kCoreWasmFixedLinearMemoryCapacityBytes;
+    const auto align8 = [](std::uint64_t value) {
+        return (value + 7u) & ~std::uint64_t{7u};
+    };
+    auto overflow = [&](std::string_view region) {
+        add_diag(result,
+                 core_wasm_diag::kBinaryOverflow,
+                 std::string("the workflow ") + std::string(region) +
+                     " extent overflows the wasm32 address domain");
+    };
+    auto exhausted = [&](std::string_view region, std::uint64_t extent) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "the workflow " + std::string(region) + " (" +
+                     std::to_string(extent) +
+                     " bytes, with the per-instance node blocks, bridge control page, entry "
+                     "payload arena and result placements) exceeds the fixed 64 KiB linear-memory "
+                     "page; split the workflow or shrink the boundary/container capacities");
+    };
+
+    // Merged rodata image: concatenation of the per-agent frozen pools. It must
+    // fit the single fixed [256,1024) pool (cross-agent deduplication is applied
+    // when the image is materialized in the module-emission slice; the sum here
+    // is the conservative pre-dedup bound).
+    std::uint64_t rodata_total = 0;
+    for (const WorkflowP6GatherFacts &g : gathered) {
+        rodata_total += g.rodata_extent;
+        if (rodata_total > std::numeric_limits<std::uint32_t>::max()) {
+            overflow("read-only literal pool");
+            return false;
+        }
+    }
+    if (rodata_total > kP6RodataCapacity) {
+        exhausted("read-only literal pool", rodata_total);
+        return false;
+    }
+
+    // Cursor start: immediately above the node-event region on a capability
+    // workflow (the same two-phase math compute_event_layout performs); the
+    // fixed event base on an identity-shape workflow.
+    std::uint64_t cursor = kNodeEventLogBase;
+    if (!plan.imports.empty()) {
+        const std::uint32_t n = static_cast<std::uint32_t>(workflow.nodes.size());
+        if (n != 0 && n > (std::numeric_limits<std::uint32_t>::max() - kNodeEventHeaderBytes) /
+                              kNodeEventRecordBytes) {
+            overflow("node-event region");
+            return false;
+        }
+        const std::uint64_t event_end =
+            align8(std::uint64_t{kNodeEventLogBase} + kNodeEventHeaderBytes +
+                   std::uint64_t{n} * kNodeEventRecordBytes);
+        if (event_end > std::numeric_limits<std::uint32_t>::max()) {
+            overflow("node-event region");
+            return false;
+        }
+        cursor = event_end;
+    }
+
+    // (1) Merged bridge control-block page frame: dense fixed-stride blocks for
+    // every in-handler bridge call site (agent order, then local ANF order)
+    // followed by the scalar/PtrLen spill slots.
+    std::uint32_t total_sites = 0;
+    std::uint32_t max_arity = 0;
+    std::uint64_t spill_total = 0;
+    for (const WorkflowP6GatherFacts &g : gathered) {
+        if (total_sites > std::numeric_limits<std::uint32_t>::max() - g.bridge_site_count) {
+            overflow("bridge call-site table");
+            return false;
+        }
+        total_sites += g.bridge_site_count;
+        max_arity = std::max(max_arity, g.bridge_max_arity);
+        spill_total += g.bridge_spill_extent;
+        if (spill_total > std::numeric_limits<std::uint32_t>::max()) {
+            overflow("bridge spill region");
+            return false;
+        }
+    }
+    if (total_sites > 0) {
+        const std::uint64_t block_stride = align8(8u + 8u * std::uint64_t{max_arity});
+        const std::uint64_t blocks_extent = block_stride * total_sites;
+        const std::uint64_t control_extent = blocks_extent + spill_total;
+        if (block_stride > std::numeric_limits<std::uint32_t>::max() ||
+            control_extent > std::numeric_limits<std::uint32_t>::max() ||
+            cursor > std::numeric_limits<std::uint32_t>::max() - control_extent) {
+            overflow("bridge control-block page frame");
+            return false;
+        }
+        plan.bridge_control_base = static_cast<std::uint32_t>(cursor);
+        plan.bridge_block_stride = static_cast<std::uint32_t>(block_stride);
+        plan.bridge_control_extent = static_cast<std::uint32_t>(control_extent);
+        plan.bridge_spill_base =
+            static_cast<std::uint32_t>(cursor + blocks_extent);
+        plan.bridge_spill_extent = static_cast<std::uint32_t>(spill_total);
+        cursor += control_extent;
+    }
+
+    // (2) Per-packaged-instance node-frame blocks (only P6 instances occupy a
+    // block; opaque capability-final nodes keep their heap tuple). Each block is
+    // I_k / C_k / scratch_k / O_k, every sub-span 8-aligned and sized from the
+    // finalized boundary layouts + the gathered scratch high-water.
+    plan.node_blocks_base = static_cast<std::uint32_t>(cursor);
+    plan.node_blocks.resize(plan.packaged_instances.size());
+    auto layout_size = [&](CoreValueTypeId vt) -> std::optional<std::uint64_t> {
+        if (vt.value >= layouts.value_layouts.size()) {
+            return std::nullopt;
+        }
+        const ir::core::CoreLayoutId id = layouts.value_layouts[vt.value];
+        if (id.value >= layouts.layouts.size()) {
+            return std::nullopt;
+        }
+        return layouts.layouts[id.value].size;
+    };
+    std::uint64_t node_blocks_extent = 0;
+    for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
+        plan.node_blocks[runner].instance = plan.packaged_instances[runner];
+        if (!gathered[runner].p6) {
+            continue;
+        }
+        const auto *instance = agent_instance(program, plan.packaged_instances[runner]);
+        if (instance == nullptr || instance->dispatch_types.size() != 3) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidCore,
+                     "a packaged workflow instance has no exact input/context/output descriptor");
+            return false;
+        }
+        const auto input_size = layout_size(instance->dispatch_types[0]);
+        const auto context_size = layout_size(instance->dispatch_types[1]);
+        const auto output_size = layout_size(instance->dispatch_types[2]);
+        if (!input_size.has_value() || !context_size.has_value() || !output_size.has_value()) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidLayout,
+                     "a packaged workflow node boundary has no finalized P4-D layout");
+            return false;
+        }
+        const std::uint64_t scratch_size =
+            align8(std::max<std::uint64_t>(gathered[runner].scratch_high, 16u));
+        const std::uint64_t parts[4] = {align8(*input_size), align8(*context_size),
+                                        scratch_size, align8(*output_size)};
+        for (std::uint64_t part : parts) {
+            node_blocks_extent += part;
+            if (node_blocks_extent > std::numeric_limits<std::uint32_t>::max() ||
+                cursor > std::numeric_limits<std::uint32_t>::max() - node_blocks_extent) {
+                overflow("node-frame block region");
+                return false;
+            }
+        }
+        WorkflowNodeBlock &block = plan.node_blocks[runner];
+        const ir::core::CoreLayoutId in_id =
+            layouts.value_layouts[instance->dispatch_types[0].value];
+        const ir::core::CoreLayoutId ctx_id =
+            layouts.value_layouts[instance->dispatch_types[1].value];
+        const ir::core::CoreLayoutId out_id =
+            layouts.value_layouts[instance->dispatch_types[2].value];
+        block.input_layout = in_id.value;
+        block.context_layout = ctx_id.value;
+        block.output_layout = out_id.value;
+        block.input_size = static_cast<std::uint32_t>(*input_size);
+        block.context_size = static_cast<std::uint32_t>(*context_size);
+        block.output_size = static_cast<std::uint32_t>(*output_size);
+        block.input_base = static_cast<std::uint32_t>(cursor);
+        block.context_base = static_cast<std::uint32_t>(cursor + parts[0]);
+        block.scratch_base =
+            static_cast<std::uint32_t>(cursor + parts[0] + parts[1]);
+        block.scratch_size = static_cast<std::uint32_t>(parts[2]);
+        block.output_base = static_cast<std::uint32_t>(
+            cursor + parts[0] + parts[1] + parts[2]);
+        cursor += node_blocks_extent;
+    }
+    plan.node_blocks_extent = static_cast<std::uint32_t>(node_blocks_extent);
+
+    // (3) Host-packed entry payload arena: one shared pool share (the bounded
+    // String slots are metered exactly from the projected entry wire schema in
+    // the emission slice).
+    plan.entry_payload_base = static_cast<std::uint32_t>(cursor);
+    plan.entry_payload_capacity = kP6FrameStringPoolBytes;
+    cursor += align8(kP6FrameStringPoolBytes);
+    if (cursor > std::numeric_limits<std::uint32_t>::max()) {
+        overflow("entry payload arena");
+        return false;
+    }
+
+    // (4) Per-call-site bridge result placements: aligned result structures
+    // plus one pool share each for result String payloads.
+    for (const WorkflowP6GatherFacts &g : gathered) {
+        const std::uint64_t extent =
+            std::uint64_t{g.bridge_result_extent} +
+            std::uint64_t{g.bridge_site_count} * kP6FrameStringPoolBytes;
+        cursor += align8(extent);
+        if (cursor > std::numeric_limits<std::uint32_t>::max()) {
+            overflow("bridge result placement region");
+            return false;
+        }
+    }
+
+    // (5) Workflow output slot (sized from the declared workflow output).
+    const auto wf_output_size = layout_size(plan.wf_output_vt);
+    if (!wf_output_size.has_value()) {
+        add_diag(result,
+                 core_wasm_diag::kInvalidLayout,
+                 "the workflow output boundary has no finalized P4-D layout");
+        return false;
+    }
+    plan.wf_output_size = static_cast<std::uint32_t>(*wf_output_size);
+    plan.wf_output_base = static_cast<std::uint32_t>(cursor);
+    cursor += align8(*wf_output_size);
+
+    if (cursor > std::numeric_limits<std::uint32_t>::max()) {
+        overflow("P6 frame high-water");
+        return false;
+    }
+    if (cursor > kPage) {
+        exhausted("P6 frame high-water", cursor);
+        return false;
+    }
+    // The construct heap shares the same page and starts above this cursor in
+    // the module-emission slice; the checked-alloc gate covers its growth at
+    // runtime. Record the reserved high-water as its planned base.
+    plan.wf_heap_base = static_cast<std::uint32_t>(cursor);
+    return true;
+}
 
 [[nodiscard]] std::optional<WorkflowPlan>
 build_workflow_plan(const CoreProgram &program,
@@ -10936,170 +11438,279 @@ build_workflow_plan(const CoreProgram &program,
         std::unique(plan.packaged_instances.begin(), plan.packaged_instances.end()),
         plan.packaged_instances.end());
 
-    for (const auto instance_id : plan.packaged_instances) {
-        const auto *payload = agent_instance_payload(program, instance_id);
-        if (payload == nullptr) {
-            add_diag(result,
-                     core_wasm_diag::kInvalidCore,
-                     "packaged workflow target is not an agent instance");
-            return std::nullopt;
-        }
-        // RFC 0026 E4-B2-C: a capability-bearing agent instance is now a legal
-        // workflow node. build_agent_plan validates the E2 capability contract
-        // (functional goto graph reaching exactly one terminal action, least-
-        // privilege single reachable import). Non-goto/identity/capability
-        // actions still fail closed inside build_agent_plan.
-        auto agent_plan =
-            build_agent_plan(program,
-                             layouts,
-                             payload->base,
-                             result,
-                             AgentPlanPolicy{core_wasm_diag::kUnsupportedWorkflowFrame,
-                                             /*allow_capability=*/true,
-                                             /*allow_computed_goto=*/false,
-                                             /*allow_bridge=*/false,
-                                             "E3"});
-        if (!agent_plan.has_value()) {
-            return std::nullopt;
-        }
-        plan.agent_plans.push_back(std::move(*agent_plan));
-    }
-
-    std::vector<bool> used_exprs(workflow.storage.exprs.size(), false);
-    std::vector<bool> used_values(workflow.storage.value_count, false);
-    for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
-        const auto &node = workflow.nodes[id];
-        const auto *instance = agent_instance(program, node.target_instance);
-        if (instance == nullptr || instance->dispatch_types.size() != 3) {
-            add_diag(result,
-                     core_wasm_diag::kInvalidCore,
-                     "workflow target instance has no exact input/context/output descriptor");
-            return std::nullopt;
-        }
-        auto source = validate_workflow_frame_region(program,
-                                                     workflow,
-                                                     node.input_region.get(),
-                                                     instance->dispatch_types[0],
-                                                     CoreWorkflowNodeId{id},
-                                                     schedule_position,
-                                                     used_exprs,
-                                                     used_values,
-                                                     result);
-        if (!source.has_value() || !has_finalized_layout(layouts, source->type) ||
-            !has_finalized_layout(layouts, instance->dispatch_types[2])) {
-            if (source.has_value()) {
-                add_diag(result,
-                         core_wasm_diag::kInvalidLayout,
-                         "workflow target boundary has no finalized P4-D layout");
-            }
-            return std::nullopt;
-        }
-        plan.nodes[id] = WorkflowNodePlan{CoreWorkflowNodeId{id}, node.target_instance, *source};
-        plan.nodes[id].schedule_pos = schedule_position[id];
-    }
-
-    // RFC 0026 E4-B2-C: derive each node's capability identity (if any) from its
-    // packaged agent plan and aggregate the sorted-unique reachable capability
-    // set. build_agent_plan already reduced each agent to at most one reachable
-    // import (least privilege); a node carries that capability + its source
-    // SymbolId so the manifest and node-event records can name it. An identity
-    // node leaves has_capability == false. A non-empty plan.imports selects the
-    // capability-workflow baseline.
-    for (std::uint32_t id = 0; id < plan.nodes.size(); ++id) {
-        const auto runner = workflow_runner_index(plan, plan.nodes[id].target_instance);
-        if (!runner.has_value() || *runner >= plan.agent_plans.size()) {
-            add_diag(result,
-                     core_wasm_diag::kInvalidCore,
-                     "workflow node target has no packaged runner plan");
-            return std::nullopt;
-        }
-        const auto &agent_plan = plan.agent_plans[*runner];
-        if (!agent_plan.imports.empty()) {
-            const auto capability = agent_plan.imports.front();
-            if (capability.value >= program.capabilities.size()) {
+    // V2-D: first validate every node input region and the return region with
+    // the layout-aware region gate (exact bare forwarding vs a projected /
+    // constructed P4-D region). These facts decide which nodes run on the P6
+    // frame lane and what the scheduler must materialize before each runner.
+    std::vector<WorkflowRegionPlan> node_regions(workflow.nodes.size());
+    {
+        bool regions_ok = true;
+        for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+            const auto &node = workflow.nodes[id];
+            const auto *instance = agent_instance(program, node.target_instance);
+            if (instance == nullptr || instance->dispatch_types.size() != 3) {
                 add_diag(result,
                          core_wasm_diag::kInvalidCore,
-                         "workflow node capability id is out of range");
-                return std::nullopt;
+                         "workflow target instance has no exact input/context/output descriptor");
+                regions_ok = false;
+                break;
             }
-            const auto &symbol = program.capabilities[capability.value].symbol_ref;
-            if (!symbol.id.has_value()) {
-                add_diag(result,
-                         core_wasm_diag::kInvalidCapabilityAbi,
-                         "workflow node capability has no source SymbolId");
-                return std::nullopt;
+            auto region = validate_workflow_region(program,
+                                                    workflow,
+                                                    layouts,
+                                                    node.input_region.get(),
+                                                    instance->dispatch_types[0],
+                                                    CoreWorkflowNodeId{id},
+                                                    schedule_position,
+                                                    result);
+            if (!region.has_value() ||
+                !has_finalized_layout(layouts, instance->dispatch_types[2])) {
+                regions_ok = false;
+                break;
             }
-            plan.nodes[id].has_capability = true;
-            plan.nodes[id].capability = capability;
-            plan.nodes[id].source_symbol = *symbol.id;
-            plan.imports.push_back(capability);
+            node_regions[id] = *region;
+        }
+        if (workflow.return_region == nullptr || workflow.return_region->statements.empty()) {
+            add_diag(result, core_wasm_diag::kUnsupportedWorkflowFrame,
+                     "workflow return region is absent");
+            regions_ok = false;
+        }
+        CoreValueTypeId wf_output_type{};
+        if (regions_ok) {
+            // The region ends with the value yield; the yielded value's type is
+            // the workflow output frame type.
+            const auto *return_yield =
+                std::get_if<CoreYieldStmt>(&workflow.return_region->statements.back().node);
+            if (return_yield == nullptr ||
+                return_yield->value.value >= workflow.storage.value_types.size()) {
+                add_diag(result, core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "workflow return region must end in one value yield");
+                regions_ok = false;
+            } else {
+                wf_output_type =
+                    workflow.storage.value_types[return_yield->value.value];
+                const auto *nominal =
+                    std::get_if<CoreVtNominal>(&program.value_types[wf_output_type.value].node);
+                if (nominal == nullptr || nominal->base != workflow.output_type) {
+                    add_diag(result, core_wasm_diag::kUnsupportedWorkflowFrame,
+                             "workflow return frame is not the exact declared output nominal type");
+                    regions_ok = false;
+                }
+            }
+        }
+        if (regions_ok) {
+            const auto &yield_stmt =
+                *std::get_if<CoreYieldStmt>(&workflow.return_region->statements.back().node);
+            plan.wf_output_vt =
+                workflow.storage.value_types[yield_stmt.value.value];
+            auto region = validate_workflow_region(program,
+                                                    workflow,
+                                                    layouts,
+                                                    workflow.return_region.get(),
+                                                    plan.wf_output_vt,
+                                                    std::nullopt,
+                                                    schedule_position,
+                                                    result);
+            if (!region.has_value()) {
+                regions_ok = false;
+            } else {
+                plan.output = region->source;
+                if (region->constructed) {
+                    // A projected/constructed workflow return is materialized by
+                    // the in-module V2-D scheduler, whose emission is pending;
+                    // an all-opaque workflow keeps its exact-bare-path rule so
+                    // its run2 bytes never change.
+                    add_diag(result,
+                             core_wasm_diag::kUnsupportedWorkflowFrame,
+                             "a projected or constructed workflow return frame awaits the P6-7 V2-D "
+                             "in-module scheduler (only an exact bare node-output forward is "
+                             "packaged today)");
+                    regions_ok = false;
+                }
+            }
+        }
+        if (!regions_ok) {
+            return std::nullopt;
         }
     }
-    std::sort(plan.imports.begin(), plan.imports.end(), [](auto lhs, auto rhs) {
-        return lhs.value < rhs.value;
-    });
-    plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()), plan.imports.end());
-    if (plan.imports.size() >
-        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 6u)) {
-        add_diag(result,
-                 core_wasm_diag::kInvalidCapabilityAbi,
-                 "reachable capability import table exceeds the wasm32 index domain");
-        return std::nullopt;
-    }
 
-    // The return region's exact logical type is its source type. Its nominal base
-    // must be the declared workflow output shell; no second type reconstruction is
-    // permitted in codegen.
-    if (workflow.return_region == nullptr || workflow.return_region->statements.empty()) {
-        add_diag(
-            result, core_wasm_diag::kUnsupportedWorkflowFrame, "workflow return region is absent");
-        return std::nullopt;
-    }
-    const auto *return_let =
-        std::get_if<CoreLetStmt>(&workflow.return_region->statements.front().node);
-    if (return_let == nullptr || return_let->expr.value >= workflow.storage.exprs.size()) {
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "workflow return is not a canonical path let");
-        return std::nullopt;
-    }
-    const auto output_type = workflow.storage.exprs[return_let->expr.value].result_type;
-    if (output_type.value >= program.value_types.size()) {
-        add_diag(result, core_wasm_diag::kInvalidCore, "workflow return type is out of range");
-        return std::nullopt;
-    }
-    const auto *output_nominal =
-        std::get_if<CoreVtNominal>(&program.value_types[output_type.value].node);
-    if (output_nominal == nullptr || output_nominal->base != workflow.output_type) {
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "workflow return frame is not the exact declared output nominal type");
-        return std::nullopt;
-    }
-    auto output = validate_workflow_frame_region(program,
-                                                 workflow,
-                                                 workflow.return_region.get(),
-                                                 output_type,
-                                                 std::nullopt,
-                                                 schedule_position,
-                                                 used_exprs,
-                                                 used_values,
-                                                 result);
-    if (!output.has_value() || !has_finalized_layout(layouts, output->type)) {
-        if (output.has_value()) {
-            add_diag(result,
-                     core_wasm_diag::kInvalidLayout,
-                     "workflow output has no finalized P4-D layout");
+    // V2-D: build every packaged agent plan in FACT-GATHERING mode (agent-lane
+    // coordinates, no agent frame section). This proves the SAME per-handler
+    // gates the direct agent passes and reveals computed finals, bridge sites,
+    // rodata extent, scratch high-water and imports. A second, relocated build
+    // below produces the workflow-module handler bytes.
+    using GatheredAgent = WorkflowP6GatherFacts;
+    std::vector<GatheredAgent> gathered(plan.packaged_instances.size());
+    {
+        std::vector<AgentPlan> fact_plans;
+        fact_plans.reserve(plan.packaged_instances.size());
+        for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
+            const auto instance_id = plan.packaged_instances[runner];
+            const auto *payload = agent_instance_payload(program, instance_id);
+            if (payload == nullptr) {
+                add_diag(result, core_wasm_diag::kInvalidCore,
+                         "packaged workflow target is not an agent instance");
+                return std::nullopt;
+            }
+            auto agent_plan = build_agent_plan(
+                program, layouts, payload->base, result,
+                AgentPlanPolicy{.unsupported_code =
+                                    core_wasm_diag::kUnsupportedWorkflowFrame,
+                                .allow_capability = true,
+                                // V2-D: a packaged agent passes the SAME
+                                // per-handler region/SSA/safety gates a
+                                // standalone agent passes (computed finals,
+                                // match arenas, ordered bridge calls).
+                                .allow_computed_goto = true,
+                                .allow_bridge = true,
+                                .slice = "E3",
+                                // The workflow packager owns the module-level
+                                // core-layout section; this is fact gathering.
+                                .skip_frame_section = true});
+            if (!agent_plan.has_value()) {
+                return std::nullopt;
+            }
+            gathered[runner].p6 =
+                agent_plan->has_computed_final || !agent_plan->bridge_calls.empty();
+            gathered[runner].scratch_high = agent_plan->p6_scratch_high;
+            gathered[runner].rodata_extent = agent_plan->rodata_extent;
+            gathered[runner].bridge_site_count =
+                static_cast<std::uint32_t>(agent_plan->bridge_calls.size());
+            for (const BridgeCallPlan &site : agent_plan->bridge_calls) {
+                gathered[runner].bridge_max_arity = std::max(
+                    gathered[runner].bridge_max_arity,
+                    static_cast<std::uint32_t>(site.param_vt.size()));
+                gathered[runner].bridge_spill_extent +=
+                    static_cast<std::uint32_t>((std::uint64_t{site.spill_bytes} + 7u) &
+                                               ~std::uint64_t{7u});
+                if (site.result_vt.value < layouts.value_layouts.size()) {
+                    const auto &result_layout =
+                        layouts.layouts[layouts.value_layouts[site.result_vt.value].value];
+                    gathered[runner].bridge_result_extent +=
+                        static_cast<std::uint32_t>((result_layout.size + 7u) &
+                                                   ~std::uint64_t{7u});
+                }
+            }
+            fact_plans.push_back(std::move(*agent_plan));
         }
+        // Merge the module capability import table (sorted unique).
+        for (const AgentPlan &fact : fact_plans) {
+            for (const CoreCapabilityId id : fact.imports) {
+                plan.imports.push_back(id);
+            }
+        }
+        std::sort(plan.imports.begin(), plan.imports.end(),
+                  [](auto lhs, auto rhs) { return lhs.value < rhs.value; });
+        plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()),
+                           plan.imports.end());
+        if (plan.imports.size() >
+            static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() - 6u)) {
+            add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
+                     "reachable capability import table exceeds the wasm32 index domain");
+            return std::nullopt;
+        }
+
+        // A P6 node's input region must be materializable by the scheduler and
+        // a non-P6 (opaque) node may not take a constructed frame; pin the
+        // per-node lane + host-pack facts. Also enforce D5: two nodes may not
+        // reuse one packaged instance in this rung.
+        std::unordered_map<std::uint32_t, std::uint32_t> instance_users;
+        for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+            const ir::core::CoreWorkflowNode &node = workflow.nodes[id];
+            const auto runner = workflow_runner_index(plan, node.target_instance);
+            if (!runner.has_value()) {
+                add_diag(result, core_wasm_diag::kInvalidCore,
+                         "workflow node target has no packaged runner plan");
+                return std::nullopt;
+            }
+            const std::uint32_t runner_id = *runner;
+            instance_users[node.target_instance.value] += 1;
+            const bool p6 = gathered[runner_id].p6;
+            const WorkflowRegionPlan &region = node_regions[id];
+            if (!p6 && region.constructed) {
+                add_diag(result, core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "an opaque capability-final node cannot take a constructed P4-D input "
+                         "(only a P6 computed/bridge node does); add the frame-bridge packaging");
+                return std::nullopt;
+            }
+            WorkflowNodePlan node_plan;
+            node_plan.node = CoreWorkflowNodeId{id};
+            node_plan.target_instance = node.target_instance;
+            node_plan.input = region.source;
+            node_plan.schedule_pos = schedule_position[id];
+            if (!fact_plans[runner_id].imports.empty()) {
+                // The legacy node-event capability identity: the first reachable
+                // import. This keeps an opaque capability-final workflow
+                // byte-identical; an in-handler multi-bridge P6 node records its
+                // dense bridge sites instead in the V2-D module-emission slice
+                // (such a workflow is rejected before encoding until then).
+                const CoreCapabilityId capability = fact_plans[runner_id].imports.front();
+                const auto &symbol = program.capabilities[capability.value].symbol_ref;
+                if (!symbol.id.has_value()) {
+                    add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
+                             "workflow node capability has no source SymbolId");
+                    return std::nullopt;
+                }
+                node_plan.has_capability = true;
+                node_plan.capability = capability;
+                node_plan.source_symbol = *symbol.id;
+            }
+            plan.nodes[id] = std::move(node_plan);
+        }
+        // D5 lifecycle rule: in a P6 workflow two different nodes may NOT reuse
+        // one packaged instance (each needs its own fixed node-frame block; a
+        // re-use analysis without observable overlap is a later slice). An
+        // all-opaque workflow keeps sharing its single deduped runner across any
+        // number of nodes, exactly as the E3/E4 baseline did.
+        plan.has_p6_nodes = std::any_of(
+            gathered.begin(), gathered.end(),
+            [](const GatheredAgent &g) { return g.p6; });
+        if (plan.has_p6_nodes) {
+            for (const auto &[instance_id, users] : instance_users) {
+                (void)instance_id;
+                if (users > 1) {
+                    add_diag(result, core_wasm_diag::kResourceExhausted,
+                             "two workflow nodes reuse one packaged agent instance; V2-D assigns one "
+                             "node-frame block per instance in a P6-frame workflow and rejects reuse "
+                             "(re-use analysis pending)");
+                    return std::nullopt;
+                }
+            }
+        }
+        // The agent-lane fact plans are the plans the workflow module's opaque
+        // runner/manifest emission consumes; a P6 workflow's relocated handler
+        // bodies replace the runner body in the module-emission slice.
+        plan.agent_plans = std::move(fact_plans);
+    }
+
+    // V2-D physical planning: run the D6 compile-time single-page capacity
+    // family over the node-frame blocks, the merged bridge control page frame,
+    // the merged rodata image, the host-packed entry arena and the per-call-site
+    // result placements. The workflow MODULE packaging (relocated handler
+    // emission, computed runners, in-module scheduler sequences, the v2
+    // core-layout section and the descriptor fields) is the following V2-D
+    // codegen slice; until it lands a workflow that actually needs the P6 node
+    // lane is rejected here with a precise diagnostic, while an all-opaque
+    // workflow never enters this path and keeps its byte-identical module.
+    if (plan.has_p6_nodes &&
+        !plan_workflow_p6_capacity_family(program, layouts, workflow, plan, gathered, result)) {
         return std::nullopt;
     }
-    plan.output = *output;
-
-    if (std::any_of(used_exprs.begin(), used_exprs.end(), [](bool used) { return !used; }) ||
-        std::any_of(used_values.begin(), used_values.end(), [](bool used) { return !used; })) {
+    if (plan.has_p6_nodes) {
+        // Honest intermediate seam: the per-handler gates, the same gates a
+        // standalone agent passes, now accept these packaged agents and the
+        // compile-time D6 capacity family is planned, but the workflow MODULE
+        // packaging (computed runner emission, in-module P4-D scheduler
+        // sequences, the v2 core-layout/workflow-wire sections and the Node
+        // workflow P6 host lane) is not emitted yet. The five blocked
+        // conformance scenarios stay skipped with this precise reason until
+        // the V2-D emission slice lands and flips them to agreed.
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "KR6.5 E3 rejects hidden/orphan workflow expressions or SSA values");
+                 "the workflow lane does not yet package a P6 computed-final handler or an "
+                 "in-handler capability bridge into a workflow module (the V2-D computed-runner "
+                 "node-frame packaging is planned through the per-handler gates and the D6 "
+                 "capacity family, but workflow computed-runner module emission is pending)");
         return std::nullopt;
     }
     return plan;

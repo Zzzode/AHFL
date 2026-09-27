@@ -31,7 +31,7 @@
     "wasm": {
       "eligible": "computation",
       "node_observation_skip": "blocked_kr66",
-      "reason": "computed final materializes a response with a constructed String branch; P6-7 v1 forbids in-module String construction (computed string outputs are input-reachable only, design section 11); the if-let pattern arena on a computed final plus a projected workflow return await rung B/F"
+      "reason": "computed final materializes a response with a constructed String branch; the direct-agent lanes are complete (V2-A computed final plus match arena, V2-B in-module String PtrLen/rodata); the V2-D workflow packager admits the packaged agent through the same per-handler gates and plans the D6 capacity family; the workflow return is a projected/constructed P4-D frame the in-module scheduler must materialize (only an exact bare node-output forward is packaged today); the direct-agent computed/String lanes are complete and the V2-D packager plans the D6 capacity family, but in-module scheduler computed-runner emission remains pending"
     }
   }
 }
