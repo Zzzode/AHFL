@@ -2064,8 +2064,6 @@ int main() {
         check(e1_result.ok() && e1_result.artifact->bytes == e1_snapshot,
               "P6-0 scaffold leaves the canonical E1 artifact byte-identical");
 
-        constexpr std::string_view kP6ScaffoldPrefix = "RFC 0026 P6 scalar codegen cannot lower";
-
         // Opcode byte constants pinned here (mirror of the encoder's scalar
         // ladder); byte-pattern assertions prove the right physical instruction
         // was selected for the operand's P4-D scalar repr.
@@ -4031,11 +4029,18 @@ int main() {
             const auto emitted = backends::emit_core_wasm(
                 program, *layout.table,
                 {CoreAgentId{0}, backends::WasmProfileKind::Wasi});
+            // RFC 0026 P6-7 frame-bridge v2 (rung V2-C): an in-handler
+            // capability statement in an opaque (non-frame) agent is still an
+            // effect — but its wire shape is the E2 single-Struct-arg tuple
+            // contract, not the multi/aggregated-arg bridge contract. This
+            // hand-built fixture passes a bare whole-frame aggregate root (the
+            // opaque tuple lane accepts an aggregate i32 ADDRESS only in FB
+            // outlined-fn bodies), so it must fail closed on the capability
+            // ABI rather than silently emit a bridge module.
             check(!emitted.artifact.has_value() &&
                       has_codegen_code(
                           emitted,
-                          backends::core_wasm_diag::kUnsupportedCapabilityFrame) &&
-                      !has_codegen_message(emitted, kP6ScaffoldPrefix),
+                          backends::core_wasm_diag::kUnsupportedCapabilityFrame),
                   "P6 gate classifies an effectful region as orchestration, not computation");
         }
 

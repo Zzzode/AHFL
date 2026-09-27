@@ -599,6 +599,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/v2b_computed_string.ahfl",
         "wasm/v2b_rodata_overflow.ahfl",
         "wasm/v2b_string_passthrough.ahfl",
+        "wasm/v2c_multi_arg_bridge.ahfl",
     };
 }
 

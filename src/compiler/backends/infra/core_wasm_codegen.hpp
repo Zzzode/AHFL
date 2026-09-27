@@ -94,6 +94,11 @@ struct CoreWasmCapabilityImport {
     std::uint32_t ordinal{0};
     std::string field;          // wasm import field, e.g. "cap_7"
     std::string canonical_name; // canonical capability name
+    /// RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): the import's functype
+    /// protocol. "opaque" is the fixed (i32,i32)->(i32,i32,i32) tuple final
+    /// forward; "bridge" is the additive (i32)->(i32,i32) control-block frame
+    /// bridge. One capability has exactly one mode per module.
+    std::string mode{"opaque"};
 };
 
 /// RFC 0026 P6-7: one input-reached bounded container's disjoint backing
@@ -103,6 +108,33 @@ struct CoreWasmFramePlacement {
     std::uint32_t edge_index{0};
     std::uint32_t base{0};
     std::uint32_t extent{0};
+};
+
+/// One per-call-site capability bridge the host callback serves (frame-bridge
+/// v2 D3/D4, rung V2-C). The module writes the control block at
+/// `block_ptr` = control_base + block_offset; the host walks its arity P4-D
+/// argument spans, invokes `capability` (ordinal resolves the import), and
+/// packs the validated result root at `result_base` with String payload bytes
+/// in the disjoint result payload arena.
+struct CoreWasmBridgeCallSite {
+    std::uint32_t call_site_id{0};
+    std::uint32_t import_ordinal{0};
+    std::uint64_t source_symbol{0};
+    std::uint32_t arity{0};
+    std::uint32_t block_offset{0};
+    /// Dense wire-schema node ids for the arguments (declaration order) and the
+    /// result, mirroring the layout roots in the frame section.
+    std::vector<std::uint32_t> param_wire;
+    /// Dense layout ids for the arguments in the frame section's table.
+    std::vector<std::uint32_t> param_layout;
+    std::uint32_t result_wire{0};
+    /// Dense layout id of the result root in the frame section's table (the
+    /// authority the host packs at `result_base`).
+    std::uint32_t result_layout{0};
+    std::uint32_t result_base{0};
+    std::uint32_t result_extent{0};
+    std::uint32_t result_payload_base{0};
+    std::uint32_t result_payload_capacity{0};
 };
 
 /// RFC 0026 P6-7: the P6-frame facts an embedded host needs to pack input and
@@ -128,6 +160,14 @@ struct CoreWasmFrameLane {
     /// emits no Data section and the active segment byte length otherwise.
     std::uint32_t rodata_base{0};
     std::uint32_t rodata_extent{0};
+    /// RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the capability bridge
+    /// control page frame. Empty for a non-bridge module.
+    std::uint32_t bridge_control_base{0};
+    std::uint32_t bridge_block_stride{0};
+    std::uint32_t bridge_control_extent{0};
+    std::uint32_t bridge_spill_base{0};
+    std::uint32_t bridge_spill_extent{0};
+    std::vector<CoreWasmBridgeCallSite> bridge_call_sites;
 };
 
 /// The input/output frame contract an embedded host must honor.

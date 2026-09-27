@@ -8,6 +8,7 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <unordered_set>
@@ -64,9 +65,12 @@ class Encoder {
         // constants with a zero rodata extent (the canonical no-Data-section
         // shape), never a half-upgraded form.
         if (section.format_version == 1 &&
-            (section.rodata_base != 0 || section.rodata_extent != 0)) {
+            (section.rodata_base != 0 || section.rodata_extent != 0 ||
+             section.bridge_control_base != 0 || section.bridge_block_stride != 0 ||
+             section.bridge_control_extent != 0 || section.bridge_spill_base != 0 ||
+             section.bridge_spill_extent != 0 || !section.bridge_call_sites.empty())) {
             diagnostics_.push_back(
-                fail("a v1 frame-layout section cannot carry a rodata span"));
+                fail("a v1 frame-layout section cannot carry a rodata or bridge span"));
             return std::nullopt;
         }
         bytes_.assign(kMagic.begin(), kMagic.end());
@@ -122,6 +126,30 @@ class Encoder {
         if (section.format_version >= 2) {
             u32(section.rodata_base);
             u32(section.rodata_extent);
+            // V2-C: the capability-bridge control-block page frame followed by
+            // the dense per-call-site records (root placement + payload span +
+            // dense param/result layout ids).
+            u32(section.bridge_control_base);
+            u32(section.bridge_block_stride);
+            u32(section.bridge_control_extent);
+            u32(section.bridge_spill_base);
+            u32(section.bridge_spill_extent);
+            u32_size(section.bridge_call_sites.size());
+            for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
+                u32(site.call_site_id);
+                u64(site.source_symbol);
+                u32(site.arity);
+                u32(site.block_offset);
+                u32(site.result_base);
+                u32(site.result_extent);
+                u32(site.result_payload_base);
+                u32(site.result_payload_capacity);
+                id(site.result_layout);
+                u32_size(site.param_layouts.size());
+                for (const CoreLayoutId param : site.param_layouts) {
+                    id(param);
+                }
+            }
         }
         return std::move(bytes_);
     }
@@ -367,19 +395,29 @@ class Decoder {
 
         // V2-B: a v2 payload carries the rodata span after the arena span; a v1
         // payload ends exactly here (its rodata span is absent / zero).
-        if (payload_version >= 2) {
+        if (payload_version < 2) {
+            if (!cursor_.at_end()) {
+                result.diagnostics.push_back(fail("frame-layout v1 section carries trailing bytes"));
+                return result;
+            }
+        } else {
             const auto rodata_base = cursor_.u32();
             const auto rodata_extent = cursor_.u32();
-            if (!rodata_base.has_value() || !rodata_extent.has_value() || !cursor_.at_end()) {
-                result.diagnostics.push_back(fail("frame-layout rodata span is malformed or the "
-                                                  "section carries trailing bytes"));
+            if (!rodata_base.has_value() || !rodata_extent.has_value()) {
+                result.diagnostics.push_back(fail("frame-layout rodata span is malformed"));
                 return result;
             }
             section.rodata_base = *rodata_base;
             section.rodata_extent = *rodata_extent;
-        } else if (!cursor_.at_end()) {
-            result.diagnostics.push_back(fail("frame-layout v1 section carries trailing bytes"));
-            return result;
+            if (!decode_bridge_sites(section)) {
+                result.diagnostics = std::move(diagnostics_);
+                return result;
+            }
+            if (!cursor_.at_end()) {
+                result.diagnostics.push_back(
+                    fail("frame-layout v2 section carries trailing bytes"));
+                return result;
+            }
         }
 
         auto local = verify_local(section);
@@ -660,6 +698,85 @@ class Decoder {
         return layout;
     }
 
+    // V2-C: decode the capability-bridge control-frame span and the dense
+    // per-call-site records.
+    [[nodiscard]] bool decode_bridge_sites(CoreFrameLayoutSection &section) {
+        const auto control_base = cursor_.u32();
+        const auto block_stride = cursor_.u32();
+        const auto control_extent = cursor_.u32();
+        const auto spill_base = cursor_.u32();
+        const auto spill_extent = cursor_.u32();
+        if (!control_base.has_value() || !block_stride.has_value() ||
+            !control_extent.has_value() || !spill_base.has_value() ||
+            !spill_extent.has_value()) {
+            bad("frame-layout bridge control-frame span is malformed");
+            return false;
+        }
+        section.bridge_control_base = *control_base;
+        section.bridge_block_stride = *block_stride;
+        section.bridge_control_extent = *control_extent;
+        section.bridge_spill_base = *spill_base;
+        section.bridge_spill_extent = *spill_extent;
+
+        const auto site_count = cursor_.u32();
+        if (!site_count.has_value()) {
+            bad("frame-layout bridge call-site count is malformed");
+            return false;
+        }
+        if (!bounded_count(*site_count)) {
+            return false;
+        }
+        section.bridge_call_sites.reserve(*site_count);
+        for (std::uint32_t i = 0; i < *site_count; ++i) {
+            CoreFrameBridgeCallSite site;
+            const auto call_site_id = cursor_.u32();
+            const auto source_symbol = cursor_.u64();
+            const auto arity = cursor_.u32();
+            const auto block_offset = cursor_.u32();
+            const auto result_base = cursor_.u32();
+            const auto result_extent = cursor_.u32();
+            const auto payload_base = cursor_.u32();
+            const auto payload_capacity = cursor_.u32();
+            const auto result_layout = cursor_.id();
+            if (!call_site_id.has_value() || !source_symbol.has_value() ||
+                !arity.has_value() || !block_offset.has_value() ||
+                !result_base.has_value() || !result_extent.has_value() ||
+                !payload_base.has_value() || !payload_capacity.has_value() ||
+                !result_layout.has_value()) {
+                bad("frame-layout bridge call-site record is truncated");                return false;
+            }
+            site.call_site_id = *call_site_id;
+            site.source_symbol = *source_symbol;
+            site.arity = *arity;
+            site.block_offset = *block_offset;
+            site.result_base = *result_base;
+            site.result_extent = *result_extent;
+            site.result_payload_base = *payload_base;
+            site.result_payload_capacity = *payload_capacity;
+            site.result_layout = *result_layout;
+            const auto param_count = cursor_.u32();
+            if (!param_count.has_value() || !bounded_count(*param_count)) {
+                bad("frame-layout bridge call-site param count is malformed");
+                return false;
+            }
+            if (*param_count != site.arity) {
+                bad("frame-layout bridge call-site param-layout count disagrees with its arity");
+                return false;
+            }
+            site.param_layouts.reserve(*param_count);
+            for (std::uint32_t p = 0; p < *param_count; ++p) {
+                const auto param = cursor_.id();
+                if (!param.has_value()) {
+                    bad("frame-layout bridge call-site param layout id is truncated");
+                    return false;
+                }
+                site.param_layouts.push_back(*param);
+            }
+            section.bridge_call_sites.push_back(std::move(site));
+        }
+        return true;
+    }
+
     [[nodiscard]] bool decode_placements(CoreFrameLayoutSection &section) {
         const auto count = cursor_.u32();
         if (!count.has_value()) {
@@ -859,8 +976,132 @@ class Decoder {
                 fail_local("frame-layout rodata extent exceeds its fixed [256,1024) region");
                 return diags;
             }
+            if (!verify_bridge_spans(section, fail_local)) {
+                return diags;
+            }
         }
         return diags;
+    }
+
+    // V2-C: validate the capability-bridge control-frame span and the dense
+    // per-call-site result placements. The regions form ONE sum cursor chained
+    // off the frame-payload arena: control blocks, the scalar/PtrLen spill
+    // slots, then per call site the result root and its payload arena. Two sites
+    // can therefore never alias (the e5ef55c sum-of-prior-backing class).
+    [[nodiscard]] bool
+    verify_bridge_spans(const CoreFrameLayoutSection &section,
+                        const std::function<void(std::string)> &fail_local) {
+        constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
+        const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
+        const std::uint32_t site_count =
+            static_cast<std::uint32_t>(section.bridge_call_sites.size());
+        if (site_count == 0) {
+            if (section.bridge_control_base != 0 || section.bridge_block_stride != 0 ||
+                section.bridge_control_extent != 0 || section.bridge_spill_base != 0 ||
+                section.bridge_spill_extent != 0) {
+                fail_local("a frame-layout section without bridge call sites must carry a zero "
+                           "bridge control-frame span");
+                return false;
+            }
+            return true;
+        }
+
+        if (section.bridge_block_stride % 8u != 0 || section.bridge_block_stride < 8u) {
+            fail_local("frame-layout bridge block stride must be a non-zero 8-aligned constant");
+            return false;
+        }
+        const std::uint64_t blocks_extent =
+            static_cast<std::uint64_t>(site_count) * section.bridge_block_stride;
+        if (blocks_extent > kPageEnd) {
+            fail_local("frame-layout bridge control blocks exceed the fixed page");
+            return false;
+        }
+        // The control page frame begins exactly at the aligned end of the
+        // frame-payload arena on the same sum cursor the backing placements use.
+        const std::uint64_t expected_control = align8(
+            static_cast<std::uint64_t>(section.payload_arena_base) +
+            section.payload_arena_capacity);
+        if (section.bridge_control_base != expected_control ||
+            section.bridge_control_base % 8u != 0) {
+            fail_local("frame-layout bridge control frame must begin at the 8-aligned arena "
+                       "high-water");
+            return false;
+        }
+        const std::uint64_t expected_spill = section.bridge_control_base + blocks_extent;
+        if (static_cast<std::uint64_t>(section.bridge_spill_base) != expected_spill) {
+            fail_local("frame-layout bridge spill slots must immediately follow the control blocks");
+            return false;
+        }
+        const std::uint64_t control_extent =
+            blocks_extent + section.bridge_spill_extent;
+        if (section.bridge_control_extent != control_extent ||
+            section.bridge_spill_base + section.bridge_spill_extent > kPageEnd) {
+            fail_local("frame-layout bridge control-frame extent is inconsistent or exceeds the "
+                       "fixed page");
+            return false;
+        }
+
+        std::uint64_t cursor = section.bridge_control_base + section.bridge_control_extent;
+        for (std::uint32_t i = 0; i < site_count; ++i) {
+            const CoreFrameBridgeCallSite &site = section.bridge_call_sites[i];
+            if (site.call_site_id != i) {
+                fail_local("frame-layout bridge call-site ids must be dense starting at zero");
+                return false;
+            }
+            if (site.arity != site.param_layouts.size()) {
+                fail_local("frame-layout bridge call-site arity disagrees with its param roots");
+                return false;
+            }
+            const std::uint64_t block_bytes = 8u + 8u * static_cast<std::uint64_t>(site.arity);
+            if (block_bytes > section.bridge_block_stride) {
+                fail_local("a frame-layout bridge control block exceeds its fixed stride");
+                return false;
+            }
+            if (site.block_offset != i * section.bridge_block_stride) {
+                fail_local("a frame-layout bridge control block is not at its dense fixed-stride "
+                           "offset");
+                return false;
+            }
+            for (const CoreLayoutId param : site.param_layouts) {
+                if (!valid_id(section.table, param)) {
+                    fail_local("frame-layout bridge call-site names an unknown param layout");
+                    return false;
+                }
+            }
+            if (!valid_id(section.table, site.result_layout)) {
+                fail_local("frame-layout bridge call-site names an unknown result layout");
+                return false;
+            }
+            const CoreLayout &result_layout =
+                section.table.layouts[site.result_layout.value];
+            const std::uint64_t aligned_result = align8(result_layout.size);
+            if (aligned_result != site.result_extent || site.result_extent == 0) {
+                fail_local("a frame-layout bridge result placement extent must equal its layout's "
+                           "aligned size");
+                return false;
+            }
+            if (site.result_base != cursor || site.result_base % 8u != 0) {
+                fail_local("frame-layout bridge result placements must be disjoint and follow the "
+                           "sum cursor");
+                return false;
+            }
+            cursor += site.result_extent;
+            if (site.result_payload_base != align8(cursor)) {
+                fail_local("a frame-layout bridge result payload arena must immediately follow its "
+                           "result placement");
+                return false;
+            }
+            cursor = site.result_payload_base;
+            if (static_cast<std::uint64_t>(site.result_payload_base) +
+                        site.result_payload_capacity >
+                    kPageEnd ||
+                cursor + site.result_payload_capacity > kPageEnd) {
+                fail_local("a frame-layout bridge result payload arena exceeds the fixed page");
+                return false;
+            }
+            cursor += site.result_payload_capacity;
+        }
+        return true;
     }
 };
 
@@ -1197,6 +1438,127 @@ verify_frame_layout_wire_consistency(const CoreLayoutTable &layouts,
                                      CoreWireSchemaNodeId wire_root) {
     ConsistencyChecker checker(layouts, wire);
     return checker.run(layout_root, wire_root);
+}
+
+std::vector<CoreLowerDiagnostic>
+verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
+                          const CoreWireSchemaTable &wire) {
+    if (section.bridge_call_sites.empty()) {
+        return {};
+    }
+    // Frame-bridge v2 D4 rung V2-C: every capability argument/result root must
+    // lie inside the frame-WALK wire subset — Unit/Bool/Int/String, struct,
+    // enum, option, tuple, bounded sequence. map / f64 / decimal / duration /
+    // timestamp / uuid stay fail-closed HERE (compile + admission), so the host
+    // walkers never meet a shape they cannot pack/read across the bridge. The
+    // predicate is node-local (no path dependence), so a flat visited set is a
+    // complete cycle-safe traversal of the hash-consed graph.
+    const auto within_frame_walk_subset = [&](CoreWireSchemaNodeId root) {
+        std::vector<std::uint32_t> worklist{root.value};
+        std::vector<std::uint8_t> visited(wire.nodes.size(), 0);
+        while (!worklist.empty()) {
+            const std::uint32_t id = worklist.back();
+            worklist.pop_back();
+            if (id >= wire.nodes.size() || visited[id] != 0) {
+                if (id >= wire.nodes.size()) {
+                    return false;
+                }
+                continue;
+            }
+            visited[id] = 1;
+            const bool rejected = std::visit(
+                Overloaded{
+                    [](const CoreWireSchemaFloat &) { return true; },
+                    [](const CoreWireSchemaDecimal &) { return true; },
+                    [](const CoreWireSchemaDuration &) { return true; },
+                    [](const CoreWireSchemaTimestamp &) { return true; },
+                    [](const CoreWireSchemaUuid &) { return true; },
+                    [](const CoreWireSchemaMap &) { return true; },
+                    [](const CoreWireSchemaUnit &) { return false; },
+                    [](const CoreWireSchemaBool &) { return false; },
+                    [](const CoreWireSchemaInt &) { return false; },
+                    [](const CoreWireSchemaString &) { return false; },
+                    [&](const CoreWireSchemaOption &s) {
+                        worklist.push_back(s.value.value);
+                        return false;
+                    },
+                    [&](const CoreWireSchemaSequence &s) {
+                        worklist.push_back(s.element.value);
+                        return false;
+                    },
+                    [&](const CoreWireSchemaTuple &s) {
+                        for (const CoreWireSchemaNodeId element : s.elements) {
+                            worklist.push_back(element.value);
+                        }
+                        return false;
+                    },
+                    [&](const CoreWireSchemaStruct &s) {
+                        for (const CoreWireSchemaField &field : s.fields) {
+                            worklist.push_back(field.type.value);
+                        }
+                        return false;
+                    },
+                    [&](const CoreWireSchemaEnum &s) {
+                        for (const CoreWireSchemaVariant &variant : s.variants) {
+                            for (const CoreWireSchemaField &slot : variant.slots) {
+                                worklist.push_back(slot.type.value);
+                            }
+                        }
+                        return false;
+                    },
+                },
+                wire.nodes[id].shape);
+            if (rejected) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto fail_local = [](std::string message) {
+        return std::vector<CoreLowerDiagnostic>{fail(std::move(message))};
+    };
+    for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
+        const auto capability_it =
+            std::find_if(wire.capabilities.begin(), wire.capabilities.end(),
+                         [&](const CoreWireCapabilitySchema &schema) {
+                             return schema.source_symbol == site.source_symbol;
+                         });
+        if (capability_it == wire.capabilities.end()) {
+            return fail_local("a frame-layout bridge call site names a capability the wire-schema "
+                              "table does not project");
+        }
+        if (capability_it->params.size() != site.arity ||
+            site.param_layouts.size() != site.arity) {
+            return fail_local("a frame-layout bridge call site arity disagrees with the wire-schema "
+                              "capability parameter count");
+        }
+        for (std::uint32_t i = 0; i < site.arity; ++i) {
+            if (!within_frame_walk_subset(capability_it->params[i])) {
+                return fail_local(
+                    "a frame-layout bridge argument is outside the frame-walk wire subset "
+                    "(map, f64, decimal, duration, timestamp, and uuid shapes cannot cross the "
+                    "capability bridge)");
+            }
+            auto diags = verify_frame_layout_wire_consistency(
+                section.table, site.param_layouts[i], wire, capability_it->params[i]);
+            if (!diags.empty()) {
+                return diags;
+            }
+        }
+        if (!within_frame_walk_subset(capability_it->result)) {
+            return fail_local(
+                "a frame-layout bridge result is outside the frame-walk wire subset "
+                "(map, f64, decimal, duration, timestamp, and uuid shapes cannot cross the "
+                "capability bridge)");
+        }
+        auto diags = verify_frame_layout_wire_consistency(
+            section.table, site.result_layout, wire, capability_it->result);
+        if (!diags.empty()) {
+            return diags;
+        }
+    }
+    return {};
 }
 
 } // namespace ahfl::ir::core

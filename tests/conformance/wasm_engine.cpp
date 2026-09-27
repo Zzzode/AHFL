@@ -119,6 +119,9 @@ build_imports(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) {
         node->set("ordinal", juint(import_descriptor.ordinal));
         node->set("field", jstr(import_descriptor.field));
         node->set("name", jstr(import_descriptor.canonical_name));
+        // V2-C: "bridge" imports use the additive (i32)->(i32,i32)
+        // control-block functype; "opaque" is the E2 tuple forward.
+        node->set("mode", jstr(import_descriptor.mode));
         imports->push(std::move(node));
     }
     return imports;
@@ -376,6 +379,40 @@ build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
     // payloads in addition to the packed input-payload arena.
     node->set("rodata_base", juint(lane.rodata_base));
     node->set("rodata_extent", juint(lane.rodata_extent));
+    // V2-C: the capability bridge control page frame and the dense
+    // per-call-site facts the host callback walks.
+    node->set("bridge_control_base", juint(lane.bridge_control_base));
+    node->set("bridge_block_stride", juint(lane.bridge_block_stride));
+    node->set("bridge_control_extent", juint(lane.bridge_control_extent));
+    node->set("bridge_spill_base", juint(lane.bridge_spill_base));
+    node->set("bridge_spill_extent", juint(lane.bridge_spill_extent));
+    auto bridge_sites = json::JsonValue::make_array();
+    for (const auto &site : lane.bridge_call_sites) {
+        auto s = json::JsonValue::make_object();
+        s->set("call_site_id", juint(site.call_site_id));
+        s->set("import_ordinal", juint(site.import_ordinal));
+        s->set("source_symbol", juint(site.source_symbol));
+        s->set("arity", juint(site.arity));
+        s->set("block_offset", juint(site.block_offset));
+        auto params = json::JsonValue::make_array();
+        for (const auto param : site.param_wire) {
+            params->push(juint(param));
+        }
+        s->set("params", std::move(params));
+        auto param_layouts = json::JsonValue::make_array();
+        for (const auto param_layout : site.param_layout) {
+            param_layouts->push(juint(param_layout));
+        }
+        s->set("param_layout", std::move(param_layouts));
+        s->set("result", juint(site.result_wire));
+        s->set("result_layout", juint(site.result_layout));
+        s->set("result_base", juint(site.result_base));
+        s->set("result_extent", juint(site.result_extent));
+        s->set("result_payload_base", juint(site.result_payload_base));
+        s->set("result_payload_capacity", juint(site.result_payload_capacity));
+        bridge_sites->push(std::move(s));
+    }
+    node->set("bridge_call_sites", std::move(bridge_sites));
     const auto &section = *descriptor.frame_section;
     auto placements = json::JsonValue::make_array();
     for (const auto &placement : section.placements) {

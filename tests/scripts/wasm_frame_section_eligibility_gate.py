@@ -32,7 +32,9 @@ from pathlib import Path
 # modules even though no handler projects the raw input. V2-B adds the
 # String-literal computed final, the bounded-String variant, and the
 # input-String passthrough (no Data section, but still a p6-frame
-# module with runv + both frame sections).
+# module with runv + both frame sections). V2-C adds the first
+# capability-BRIDGE module (multi-arg control block + disjoint result
+# placements), which is likewise a p6-frame module.
 FRAME_FIXTURES = frozenset(
     {
         "p6_aggregate",
@@ -44,6 +46,7 @@ FRAME_FIXTURES = frozenset(
         "v2b_computed_string",
         "v2b_bounded_string",
         "v2b_string_passthrough",
+        "v2c_multi_arg_bridge",
     }
 )
 

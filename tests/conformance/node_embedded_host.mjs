@@ -146,10 +146,176 @@ function assertEventRegionZero(exports, label, includeHeader) {
 // ok / ok-null / ok-zero-len / error / pending / pending-nonnull / unknown /
 // corrupt-count. One instance per mode (the pending-latch and normalization
 // contracts are per-instance).
+// RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the capability BRIDGE lane.
+// A bridge import has functype (block_ptr:i32) -> (status:i32, result_root_ptr).
+// The host walks the dense P4-D argument spans at the control block, builds the
+// SAME wire argument envelope the native transport uses (0 args => {}, one
+// Struct => bare object, one non-Struct => {"value":..}, N => {"args":[...]}),
+// invokes the scenario mock, and packs the validated result JSON into the
+// call site's disjoint result placement (with String payload bytes in its
+// payload arena). Every read/write is bounds-checked against the descriptor;
+// a bad control block or result is a host fail (the module traps regardless).
+
+function findBridgeSite(ordinal) {
+  const lane = descriptor.frame_lane;
+  if (!lane) return undefined;
+  return lane.bridge_call_sites.find((s) => s.import_ordinal === ordinal);
+}
+
+// Read ONE bridge argument P4-D span into a JS value. `wireId`/`layoutId` name
+// the logical shape and dense physical root; the physical span starts at `addr`
+// and is `len` bytes. Only the frame-walk subset is reachable (compile +
+// admission already rejected the rest).
+function readBridgeArgValue(e, lane, W, L, backing, currentSite, wireId, layoutId,
+                            addr, len) {
+  if (addr < 0 || len < 0 || addr + len > kPageSize) {
+    frameFail("bridge argument span lies outside the fixed page");
+  }
+  return readValue(e, lane, W, L, wireId, layoutId, addr, backing,
+                   bridgeStringRegions(lane, currentSite));
+}
+
+// Union of the String-payload regions the read walker may authorize for a
+// BRIDGE argument: the packed input-payload arena, the rodata region, and
+// every OTHER call site's result placement payload. The CURRENT call site's
+// own result region is excluded — its block is this call's output, so before
+// the host packs it that region can never be a valid arg source.
+function bridgeStringRegions(lane, currentSite) {
+  const regions = [];
+  for (const s of lane.bridge_call_sites) {
+    if (s.call_site_id === currentSite.call_site_id) continue;
+    if (s.result_payload_capacity > 0) {
+      regions.push({lo: s.result_payload_base,
+                    hi: s.result_payload_base + s.result_payload_capacity});
+    }
+  }
+  return regions;
+}
+
+// Pack one bridge result value at the call site's result root. String payload
+// bytes are written to the site's disjoint payload arena (one bump cursor).
+function packBridgeResult(e, lane, W, L, site, wireId, value) {
+  if (site.result_base < 0 || site.result_base + site.result_extent > kPageSize) {
+    frameFail("bridge result placement lies outside the fixed page");
+  }
+  // Zero the whole result placement (padding reads back deterministically).
+  new Uint8Array(e.memory.buffer, site.result_base, site.result_extent).fill(0);
+  const arena = {cursor: site.result_payload_base,
+                 base: site.result_payload_base,
+                 capacity: site.result_payload_capacity,
+                 exhausted_message: "bridge result payload arena exhausted"};
+  // A fresh per-call backing map. (A collection RESULT is rejected until a
+  // later ladder gives it its own backing placement, so no sequence reaches
+  // this map today; it stays because packValue's contract is uniform.)
+  const result_backing = backingByLayout(lane);
+  packValue(e, lane, W, L, value, wireId, site.result_layout,
+            site.result_base, result_backing, arena);
+}
+
+function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
+  return (blockPtr) => {
+    const instance = getInstance();
+    const state = getState();
+    const e = instance.exports;
+    const dv = new DataView(e.memory.buffer);
+    const lane = descriptor.frame_lane;
+    const site = findBridgeSite(ordinal);
+    if (site === undefined) {
+      frameFail(`import ${importEntry.field} is invoked on the bridge protocol but has no ` +
+                `descriptor bridge record`);
+    }
+    // Control-block membership: exactly
+    // [bridge_control_base, bridge_control_base + site_count*stride).
+    const blocks_end = lane.bridge_control_base +
+                       lane.bridge_call_sites.length * lane.bridge_block_stride;
+    if (blockPtr < lane.bridge_control_base || blockPtr >= blocks_end) {
+      frameFail("bridge control-block pointer names an address outside the control-block region");
+    }
+    const block_index = Math.floor(
+      (blockPtr - lane.bridge_control_base) / lane.bridge_block_stride);
+    const site_at_block = lane.bridge_call_sites[block_index];
+    if (site_at_block === undefined ||
+        blockPtr !== lane.bridge_control_base + site.block_offset) {
+      frameFail("bridge control-block pointer is not at its dense fixed-stride offset");
+    }
+    const call_site_id = dv.getUint32(blockPtr, true);
+    const arg_count = dv.getUint32(blockPtr + 4, true);
+    if (call_site_id !== site.call_site_id) {
+      frameFail("bridge control-block call_site_id disagrees with its dense block address");
+    }
+    if (arg_count !== site.arity) {
+      frameFail(`bridge control-block arg_count ${arg_count} != descriptor arity ${site.arity}`);
+    }
+
+    // Walk the arguments.
+    const W = descriptor.wire_schema.nodes;
+    const L = lane.layouts;
+    const backing = backingByLayout(lane);
+    const argValues = [];
+    for (let i = 0; i < arg_count; ++i) {
+      const desc = blockPtr + 8 + 8 * i;
+      const ptr = dv.getInt32(desc, true);
+      const len = dv.getUint32(desc + 4, true);
+      argValues.push(readBridgeArgValue(e, lane, W, L, backing, site,
+                                        site.params[i], site.param_layout[i],
+                                        ptr, len));
+    }
+
+    state.calls += 1;
+    state.events.push({name: importEntry.name, argument: bridgeEnvelope(argValues)});
+
+    // ABI-matrix modes for the bridge protocol: a non-OK status makes the module
+    // trap single-run, no result packing needed.
+    if (mode === "error" || mode === "pending" || mode === "unknown") {
+      return [mode === "pending" ? 2 : 1, 0];
+    }
+
+    // Invoke the scenario mock (per-name cursor matches the opaque lane).
+    // "states" is the separate step()-instrumentation instance: it replays the
+    // same scenario mocks but only its state names are evidence.
+    const index = state.perName.get(importEntry.name) ?? 0;
+    state.perName.set(importEntry.name, index + 1);
+    const mocks = scenario.mocks.filter((m) => m.name === importEntry.name);
+    const mock = mocks[index];
+    if (mock === undefined) {
+      frameFail(`scenario '${scenario.name}' has no bridge mock for call ${index} of ` +
+                importEntry.name);
+    }
+    if (mock.status !== "ok") {
+      // Single-run: error AND pending both trap (the module branches on any
+      // non-zero status; the bridge has no pending arm).
+      return [mock.status === "pending" ? 2 : 1, 0];
+    }
+    const resultValue = JSON.parse(mock.result_wire);
+    packBridgeResult(e, lane, W, L, site, site.result, resultValue);
+    return [0, site.result_base];
+  };
+}
+
+// The wire argument envelope SSOT (mirrors serialize_args_for_wire_json).
+function bridgeEnvelope(args) {
+  if (args.length === 0) return "{}";
+  if (args.length === 1) {
+    const only = args[0];
+    if (only && typeof only === "object" && !Array.isArray(only) &&
+        !(only instanceof Boolean)) {
+      return jsonString(only);
+    }
+    return jsonString({value: only});
+  }
+  return jsonString({args});
+}
+
 async function makeInstance(compiled, mode) {
   const state = { calls: 0, events: [], perName: new Map() };
   const imports = {};
   for (const importEntry of descriptor.imports) {
+    if (importEntry.mode === "bridge") {
+      const ordinal = importEntry.ordinal;
+      imports[importEntry.field] = makeBridgeCallback(
+        importEntry, ordinal, () => instance, () => state, mode);
+      continue;
+    }
     imports[importEntry.field] = (ptr, len) => {
       const argument = decoder.decode(
         new Uint8Array(instance.exports.memory.buffer, ptr, len));
@@ -379,8 +545,8 @@ function packValue(e, lane, W, L, value, wId, lId, addr, backing, arena) {
       if (w.hi !== undefined && bytes.length > Number(w.hi)) {
         frameFail("string payload exceeds the schema length upper bound");
       }
-      if (arena.cursor + bytes.length > lane.payload_arena_base + lane.payload_arena_capacity) {
-        frameFail("frame-payload arena exhausted");
+      if (arena.cursor + bytes.length > arena.base + arena.capacity) {
+        frameFail(arena.exhausted_message ?? "frame-payload arena exhausted");
       }
       writeRaw(e, arena.cursor, bytes);
       writeI32(e, addr + 0, arena.cursor);
@@ -495,7 +661,7 @@ function packSlots(e, lane, W, L, source, wireSlots, payloadLayout, payloadAddr,
 // frame-payload arena span: a module-written PtrLen is untrusted evidence, so a
 // string payload must name that exact region (and satisfy the schema length
 // bounds), never an arbitrary in-page address (design sections 3.2/3.4).
-function readValue(e, lane, W, L, wId, lId, addr, backing) {
+function readValue(e, lane, W, L, wId, lId, addr, backing, extraStringRegions = []) {
   const w = W[wId];
   const l = L[lId];
   if (w === undefined || l === undefined) frameFail("read node id out of range");
@@ -561,9 +727,11 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
       const rodataHi = rodataLo + Number(lane.rodata_extent || 0);
       const inRodata =
         rodataLo !== 0 && ptr >= rodataLo && len <= rodataHi - ptr;
-      if (!inArena && !inRodata) {
-        frameFail("frame string payload lies outside the frame-payload arena " +
-                  "or the rodata region");
+      const inExtra = extraStringRegions.some(
+        (r) => ptr >= Number(r.lo) && len <= Number(r.hi) - ptr);
+      if (!inArena && !inRodata && !inExtra) {
+        frameFail("frame string payload lies outside an authorized region " +
+                  "(input-payload arena, rodata, or a bridge result placement)");
       }
       return new TextDecoder().decode(readRaw(e, ptr, len));
     }
@@ -574,7 +742,8 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
         const field = w.fields[i];
         const slot = fieldLayoutOf(l, i);
         out[field.name] = readValue(e, lane, W, L, field.type, slot.lay,
-                                    addr + Number(slot.off), backing);
+                                    addr + Number(slot.off), backing,
+                                    extraStringRegions);
       }
       return out;
     }
@@ -586,7 +755,8 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
       const variant = l.variants[1];
       if (variant === undefined) frameFail("option Some variant has no payload layout");
       return readValue(e, lane, W, L, w.value, variant.lay,
-                       addr + Number(l.payload_offset), backing);
+                       addr + Number(l.payload_offset), backing,
+                       extraStringRegions);
     }
     case "enum": {
       if (l.t !== "enum") frameFail("wire enum maps to a non-enum layout");
@@ -606,7 +776,8 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
           for (let i = 0; i < wireVariant.slots.length; ++i) {
             const slot = fieldLayoutOf(payloadLayout, i);
             arr.push(readValue(e, lane, W, L, wireVariant.slots[i].type, slot.lay,
-                               payloadAddr + Number(slot.off), backing));
+                               payloadAddr + Number(slot.off), backing,
+                               extraStringRegions));
           }
           out._payload = arr;
         } else {
@@ -616,7 +787,8 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
             const slot = fieldLayoutOf(payloadLayout, i);
             named[wireVariant.slots[i].name] =
               readValue(e, lane, W, L, wireVariant.slots[i].type, slot.lay,
-                        payloadAddr + Number(slot.off), backing);
+                        payloadAddr + Number(slot.off), backing,
+                        extraStringRegions);
           }
           out._named_payload = named;
         }
@@ -638,7 +810,8 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
       const stride = Number(l.stride);
       const out = [];
       for (let i = 0; i < len; ++i) {
-        out.push(readValue(e, lane, W, L, w.element, l.element, base + i * stride, backing));
+        out.push(readValue(e, lane, W, L, w.element, l.element, base + i * stride,
+                           backing, extraStringRegions));
       }
       if (w.kind === "set") {
         const canonical = out.map((v) => JSON.stringify(v));
@@ -655,7 +828,8 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
       for (let i = 0; i < w.elements.length; ++i) {
         const slot = fieldLayoutOf(l, i);
         out.push(readValue(e, lane, W, L, w.elements[i], slot.lay,
-                           addr + Number(slot.off), backing));
+                           addr + Number(slot.off), backing,
+                           extraStringRegions));
       }
       return out;
     }
@@ -672,7 +846,9 @@ function packP6Input(probe) {
   const W = descriptor.wire_schema.nodes;
   const L = lane.layouts;
   const backing = backingByLayout(lane);
-  const arena = {cursor: lane.payload_arena_base};
+  const arena = {cursor: lane.payload_arena_base,
+                 base: lane.payload_arena_base,
+                 capacity: lane.payload_arena_capacity};
   const e = probe.exports;
   // Zero every reserved region the packer may name, so padding words are 0.
   new Uint8Array(e.memory.buffer, 1024, 16384 - 1024).fill(0);
@@ -694,9 +870,57 @@ function encodeP6Output(probe, packed) {
     frameFail(`runv value_ptr ${tuple[1]} is not the authorized base ${authorizedBase} ` +
               `for a '${lane.final_kind}' final`);
   }
+  // V2-C: a computed final may materialize a String projected from a capability
+  // bridge result through the context frame; its payload bytes live in that
+  // call site's disjoint result placement. Authorize every bridge result
+  // payload arena for the output-frame walk.
+  const outputStringRegions = (lane.bridge_call_sites ?? [])
+      .filter((s) => s.result_payload_capacity > 0)
+      .map((s) => ({lo: s.result_payload_base,
+                    hi: s.result_payload_base + s.result_payload_capacity}));
   const output = readValue(e, lane, W, L, descriptor.wire_schema.roots.output,
-                           lane.output_layout, tuple[1], backing);
+                           lane.output_layout, tuple[1], backing,
+                           outputStringRegions);
   return JSON.stringify(output);
+}
+
+// V2-C: collect the state sequence on a FRESH instance via step(). A frame
+// bridge puts real effects inside non-final handlers, and runv() walks
+// init->final itself, so an explicit step() walk on the canonical instance
+// would fire every bridge capability a second time (the evaluator runs the
+// flow exactly once). The instrumentation instance's bridge replays are
+// served in "states" mode and its events discarded; only the state names are
+// evidence.
+async function collectStatesViaStep(compiled) {
+  const statesProbe = await makeInstance(compiled, "states");
+  packP6Input(statesProbe);
+  const se = statesProbe.exports;
+  const lane = descriptor.agent_lane;
+  const walked = [lane.states[lane.initial_state]];
+  let previous = lane.initial_state;
+  let guard = lane.states.length + 2;
+  let stabilized = false;
+  while (guard-- > 0) {
+    const before = se.transition_count.value;
+    const next = se.step();
+    if (next !== previous) {
+      if (se.current_state() !== next) fail("current_state does not match step()");
+      if (se.transition_count.value !== before + 1) {
+        fail("transition_count not bumped exactly once per goto");
+      }
+      walked.push(lane.states[next]);
+      previous = next;
+    } else {
+      if (se.current_state() !== next) fail("final state is not stable");
+      stabilized = true;
+      break;
+    }
+  }
+  if (!stabilized) {
+    fail(`step() bounded walk guard (${lane.states.length + 2}) expired without a stable ` +
+         `final state for ${lane.agent}; last state ${previous}`);
+  }
+  return walked;
 }
 
 // ---- agent lane --------------------------------------------------------------
@@ -709,36 +933,48 @@ async function runAgent(compiled) {
     fail(`agent initial state ${e.current_state()} != ${lane.initial_state}`);
   }
 
+  // V2-C: a frame-bridge module invokes capabilities from non-final handlers.
+  // runv() is the one canonical run (it walks init->final on its own); the
+  // state sequence is collected on a separate instrumentation instance so the
+  // bridge effects fire exactly once on the canonical instance.
+  const hasBridge = descriptor.frame_contract === "p6_frame" &&
+                    descriptor.frame_lane.bridge_call_sites.length > 0;
+
   // RFC 0026 P6-7: pack the canonical input into the P4-D frame BEFORE the
   // step() walk, since non-final computed handlers branch on packed input.
   const p6 = descriptor.frame_contract === "p6_frame" ? packP6Input(probe) : null;
 
-  // step() drives the state walk to its stable final state WITHOUT invoking a
-  // terminal capability (a capability final reports its state on step, it does
-  // not call).
-  const walked = [lane.states[lane.initial_state]];
-  let previous = lane.initial_state;
-  let guard = lane.states.length + 2;
-  let stabilized = false;
-  while (guard-- > 0) {
-    const before = e.transition_count.value;
-    const next = e.step();
-    if (next !== previous) {
-      if (e.current_state() !== next) fail("current_state does not match step()");
-      if (e.transition_count.value !== before + 1) {
-        fail("transition_count not bumped exactly once per goto");
+  let walked;
+  if (p6 !== null && hasBridge) {
+    walked = await collectStatesViaStep(compiled);
+  } else {
+    // step() drives the state walk to its stable final state WITHOUT invoking a
+    // terminal capability (a capability final reports its state on step, it does
+    // not call).
+    walked = [lane.states[lane.initial_state]];
+    let previous = lane.initial_state;
+    let guard = lane.states.length + 2;
+    let stabilized = false;
+    while (guard-- > 0) {
+      const before = e.transition_count.value;
+      const next = e.step();
+      if (next !== previous) {
+        if (e.current_state() !== next) fail("current_state does not match step()");
+        if (e.transition_count.value !== before + 1) {
+          fail("transition_count not bumped exactly once per goto");
+        }
+        walked.push(lane.states[next]);
+        previous = next;
+      } else {
+        if (e.current_state() !== next) fail("final state is not stable");
+        stabilized = true;
+        break;
       }
-      walked.push(lane.states[next]);
-      previous = next;
-    } else {
-      if (e.current_state() !== next) fail("final state is not stable");
-      stabilized = true;
-      break;
     }
-  }
-  if (!stabilized) {
-    fail(`step() bounded walk guard (${lane.states.length + 2}) expired without a stable ` +
-         `final state for ${lane.agent}; last state ${previous}`);
+    if (!stabilized) {
+      fail(`step() bounded walk guard (${lane.states.length + 2}) expired without a stable ` +
+           `final state for ${lane.agent}; last state ${previous}`);
+    }
   }
 
   // RFC 0026 P6-7: a p6-frame agent invokes runv on the packed frame and
@@ -950,6 +1186,42 @@ async function runAbiProbes(compiled) {
 
   if (!isWorkflow) {
     // ---- agent lane ----
+    // V2-C: a frame-bridge agent performs its capability in non-final handlers,
+    // behind the (i32)->(i32,i32) protocol. Its normalization probes use the
+    // packed P4-D frame + runv, NEVER the legacy opaque entry points: run2/run
+    // have no defined contract on this lane and writing opaque JSON over the
+    // fixed input frame would corrupt the bridge argument spans.
+    const hasBridge = descriptor.frame_contract === "p6_frame" &&
+                      (descriptor.frame_lane?.bridge_call_sites?.length ?? 0) > 0;
+    if (hasBridge) {
+      // OK path: one bridge invocation, runv returns the computed output base.
+      {
+        const p = await makeInstance(compiled, "scenario");
+        packP6Input(p);
+        const tuple = p.exports.runv();
+        if (tuple[0] !== 0 || p.calls !== 1) {
+          fail(`bridge runv OK normalization mismatch: ${tuple}, calls=${p.calls}`);
+        }
+        if (tuple[1] !== descriptor.frame_lane.output_base) {
+          fail("bridge runv returned a value_ptr other than the computed output base");
+        }
+      }
+      // Every non-OK bridge status (error / pending / unknown) traps single-run;
+      // there is no pending arm. The instance does not latch (durable replay is
+      // the D2b authority), but each probe starts fresh anyway.
+      for (const mode of ["error", "pending", "unknown"]) {
+        const p = await makeInstance(compiled, mode);
+        packP6Input(p);
+        let trapped = false;
+        try { p.exports.runv(); }
+        catch (error) { trapped = error instanceof WebAssembly.RuntimeError; }
+        if (!trapped || p.calls !== 1) {
+          fail(`bridge runv ${mode} did not trap after exactly one call (trapped=${trapped}, ` +
+               `calls=${p.calls})`);
+        }
+      }
+      return;
+    }
     if (hasCapabilities) {
       // Every non-OK / malformed-OK normalization collapses to (ERROR,0,0) with
       // exactly one import call and no state/capability side effect beyond it.

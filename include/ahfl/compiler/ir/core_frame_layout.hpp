@@ -47,6 +47,41 @@ struct CoreFrameBackingPlacement {
                                          const CoreFrameBackingPlacement &) noexcept = default;
 };
 
+/// One per-call-site CAPABILITY BRIDGE result placement (frame-bridge v2 D3/D4,
+/// rung V2-C). The module builds the call's control block at
+/// `bridge_control_base + block_offset`; the host walks the P4-D argument spans
+/// into wire JSON, invokes the capability, validates the result, and packs it
+/// at `result_base` with String payload bytes in the disjoint
+/// `[result_payload_base, +result_payload_capacity)` arena. Every field is a
+/// compile-time constant and the placements are pairwise disjoint (the
+/// sum-of-prior-backing family): two call sites can never alias, regardless of
+/// the acyclic handler walk that reaches them.
+struct CoreFrameBridgeCallSite {
+    /// Dense call-site id (ANF order, module-unique); also the block's word 0.
+    std::uint32_t call_site_id{0};
+    /// The called capability's resolved source SymbolId; admission cross-checks
+    /// it against the wire-schema capability record (index identity never
+    /// trusted from this section alone).
+    std::uint64_t source_symbol{0};
+    /// Must equal the capability's declared parameter count and the number of
+    /// dense param layout roots.
+    std::uint32_t arity{0};
+    /// This call's control-block offset relative to `bridge_control_base`; the
+    /// host checks `block_offset == call_site_id * bridge_block_stride`.
+    std::uint32_t block_offset{0};
+    /// Dense P4-D layout roots for the arguments, in declaration order.
+    std::vector<CoreLayoutId> param_layouts;
+    /// Dense P4-D layout root the host packs the capability result at.
+    CoreLayoutId result_layout{};
+    std::uint32_t result_base{0};
+    std::uint32_t result_extent{0};
+    std::uint32_t result_payload_base{0};
+    std::uint32_t result_payload_capacity{0};
+
+    [[nodiscard]] friend bool operator==(const CoreFrameBridgeCallSite &,
+                                         const CoreFrameBridgeCallSite &) noexcept = default;
+};
+
 /// The decoded `ahfl.core-layout.v1` payload.
 struct CoreFrameLayoutSection {
     std::uint32_t format_version{1};
@@ -65,6 +100,21 @@ struct CoreFrameLayoutSection {
     /// segment's byte length (0 when the module emits no Data section).
     std::uint32_t rodata_base{0};
     std::uint32_t rodata_extent{0};
+
+    /// V2 (frame-bridge v2 D3/D4, rung V2-C): the per-module capability bridge
+    /// control-block page frame. It holds the dense call-site control blocks
+    /// (`[bridge_control_base, +call_site_count * bridge_block_stride)`)
+    /// followed by the private scalar/PtrLen spill slots
+    /// (`[bridge_spill_base, +bridge_spill_extent)`). Every span is zero on a
+    /// module with no bridge calls.
+    std::uint32_t bridge_control_base{0};
+    std::uint32_t bridge_block_stride{0};
+    std::uint32_t bridge_control_extent{0};
+    std::uint32_t bridge_spill_base{0};
+    std::uint32_t bridge_spill_extent{0};
+    /// Per-call-site blocks and disjoint result placements, in dense
+    /// call_site_id order (empty for a non-bridge module).
+    std::vector<CoreFrameBridgeCallSite> bridge_call_sites;
 
     [[nodiscard]] friend bool operator==(const CoreFrameLayoutSection &,
                                          const CoreFrameLayoutSection &) noexcept = default;
@@ -113,5 +163,15 @@ verify_frame_layout_wire_consistency(const CoreLayoutTable &layouts,
                                      CoreLayoutId layout_root,
                                      const CoreWireSchemaTable &wire,
                                      CoreWireSchemaNodeId wire_root);
+
+/// Admission-time cross-check of the V2-C capability bridge records against
+/// the admitted wire-schema table: every call site names a capability the
+/// wire table projects (by source SymbolId), its arity equals the projected
+/// parameter count, and every dense argument/result layout root is structurally
+/// consistent with its wire root. Empty diagnostics means every bridge record
+/// is admissible; a section with no bridge records always passes.
+[[nodiscard]] std::vector<CoreLowerDiagnostic>
+verify_frame_bridge_sites(const CoreFrameLayoutSection &section,
+                          const CoreWireSchemaTable &wire);
 
 } // namespace ahfl::ir::core

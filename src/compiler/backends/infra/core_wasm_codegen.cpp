@@ -297,6 +297,12 @@ constexpr std::uint32_t kTypeI32ToI32 = 1;
 constexpr std::uint32_t kTypeTwoI32ToVoid = 2;
 constexpr std::uint32_t kTypeTwoI32ToI32 = 3;
 constexpr std::uint32_t kTypeCapabilityTuple = 4;
+// RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): the additive capability
+// BRIDGE functype `(block_ptr:i32) -> (status:i32, result_root_ptr:i32)`. It is
+// appended at the very end of the agent module's type table (after every fixed
+// type, per-fn type, closure type, and the runv type), so no existing index
+// moves on a non-bridge module. The host derives its index from the descriptor;
+// an old host that meets the unknown functype fails closed at instantiation.
 
 static_assert(AHFL_CAP_OK == 0u);
 static_assert(AHFL_CAP_ERROR == 1u);
@@ -485,6 +491,32 @@ class RodataLiteralPool {
     std::uint32_t extent_{0};
 };
 
+// Forward-declared: the physical P6-frame section plan is defined after the
+// builder/planning helpers, but AgentPlan must carry an owned instance of it
+// (the single physical planning pass runs before handler emission).
+struct FrameSectionPlan;
+[[nodiscard]] ir::core::CoreFrameLayoutSection
+frame_section_to_layout_section(const FrameSectionPlan &plan);
+
+// RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): one planned capability
+// bridge call site. `param_vt` / `result_vt` are the argument/result value
+// types in the flow-storage arena; the physical planner resolves their P4-D
+// roots. `spill_bytes` is the site's private scalar/PtrLen spill slot size in
+// the control page frame. The remaining fields are installed by the physical
+// frame-region planner before handler emission.
+struct BridgeCallPlan {
+    std::uint32_t call_site_id{0};
+    CoreCapabilityId capability{};
+    /// The handler state this bridge call belongs to (reachability filtering).
+    CoreStateId state{};
+    std::vector<CoreValueTypeId> param_vt;
+    CoreValueTypeId result_vt{};
+    std::uint32_t spill_bytes{0};
+    std::uint32_t block_offset{0};
+    std::uint32_t spill_base{0};
+    std::uint32_t result_base{0};
+};
+
 struct AgentPlan {
     CoreAgentId agent{};
     CoreStateId initial{};
@@ -536,6 +568,78 @@ struct AgentPlan {
     // section and stay byte-identical.
     RodataLiteralPool rodata;
     std::uint32_t rodata_extent{0};
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the dense, ANF-ordered
+    // capability bridge call sites planned from non-final handlers. Empty on
+    // every non-bridge module, whose bytes stay identical. The physical
+    // frame-region planner fills each site's block/result coordinates BEFORE
+    // the handler bodies are emitted.
+    std::vector<BridgeCallPlan> bridge_calls;
+    // The physical P6-frame section plan (boundary table, placements, payload
+    // arena, rodata span, V2-C bridge page frame) populated when this agent
+    // emits on the frame lane; null on the opaque wire-JSON lane. Owned by
+    // the plan so the single physical planning pass runs before handler
+    // emission (the bridge emit needs its coordinates) and the section emitter
+    // / descriptor consume the identical plan. unique_ptr because
+    // FrameSectionPlan is defined later in this translation unit.
+    std::unique_ptr<FrameSectionPlan> frame_section;
+    // The projected wire-schema table paired with `frame_section` (capability
+    // roots + agent boundary roots), needed by the descriptor renderer.
+    std::optional<ir::core::CoreWireSchemaTable> frame_wire_table;
+};
+
+// Module-wide recorder every frame-lane entry-handler builder registers its
+// bridge calls into while PLANNING (dense ids in handler planning order == ANF
+// order). The physical frame-region planner installs the control-block / spill
+// coordinates (which depend on the whole dense layout sum) before handler
+// bodies are EMITTED.
+class BridgeCallRegistry {
+  public:
+    [[nodiscard]] std::uint32_t reserve(CoreCapabilityId capability,
+                                        std::vector<CoreValueTypeId> param_vt,
+                                        CoreValueTypeId result_vt,
+                                        std::uint32_t spill_bytes,
+                                        CoreStateId state) {
+        const auto id = static_cast<std::uint32_t>(sites_.size());
+        BridgeCallPlan site;
+        site.call_site_id = id;
+        site.capability = capability;
+        site.state = state;
+        site.param_vt = std::move(param_vt);
+        site.result_vt = result_vt;
+        site.spill_bytes = spill_bytes;
+        sites_.push_back(std::move(site));
+        return id;
+    }
+
+    [[nodiscard]] bool empty() const noexcept { return sites_.empty(); }
+    [[nodiscard]] std::size_t size() const noexcept { return sites_.size(); }
+    [[nodiscard]] const std::vector<BridgeCallPlan> &sites() const noexcept { return sites_; }
+    [[nodiscard]] std::vector<BridgeCallPlan> &sites() noexcept { return sites_; }
+
+    [[nodiscard]] bool uses_capability(CoreCapabilityId capability) const noexcept {
+        return std::any_of(sites_.begin(), sites_.end(),
+                           [capability](const BridgeCallPlan &site) {
+                               return site.capability == capability;
+                           });
+    }
+
+    void install_coordinates(std::uint32_t control_base,
+                             std::uint32_t block_stride,
+                             std::uint32_t spill_base) noexcept {
+        control_base_ = control_base;
+        block_stride_ = block_stride;
+        spill_base_ = spill_base;
+    }
+
+    [[nodiscard]] std::uint32_t control_base() const noexcept { return control_base_; }
+    [[nodiscard]] std::uint32_t block_stride() const noexcept { return block_stride_; }
+    [[nodiscard]] std::uint32_t spill_base() const noexcept { return spill_base_; }
+
+  private:
+    std::vector<BridgeCallPlan> sites_;
+    std::uint32_t control_base_{0};
+    std::uint32_t block_stride_{0};
+    std::uint32_t spill_base_{0};
 };
 
 struct AgentPlanPolicy {
@@ -546,6 +650,10 @@ struct AgentPlanPolicy {
     // there yet, so the workflow lane fails closed on it. Direct agent
     // emission accepts it.
     bool allow_computed_goto{true};
+    // RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): direct-agent emission
+    // admits an ORDERED capability bridge statement in a non-final frame
+    // computation region. Workflow packaging keeps this false until V2-D.
+    bool allow_bridge{true};
     std::string_view slice{"E2"};
 };
 
@@ -1082,7 +1190,8 @@ validate_capability_final(const CoreProgram &program,
 // property is preserved — a match whose consumed region holds an out-of-subset
 // statement is rejected by the planner, one region deeper than this cheap
 // pre-filter, and never becomes a partial artifact.
-[[nodiscard]] bool is_p6_subset_region(const CoreRegion &region) {
+[[nodiscard]] bool is_p6_subset_region(const CoreRegion &region,
+                                       bool allow_bridge_calls = false) {
     for (const CoreStmt &statement : region.statements) {
         const bool in_subset = std::visit(
             Overloaded{
@@ -1090,9 +1199,11 @@ validate_capability_final(const CoreProgram &program,
                 [](const CoreGotoStmt &) { return true; },
                 [](const CoreTrapStmt &) { return true; },
                 [](const CoreYieldStmt &) { return false; },
-                [](const CoreIfStmt &s) {
-                    return (s.then_region == nullptr || is_p6_subset_region(*s.then_region)) &&
-                           (s.else_region == nullptr || is_p6_subset_region(*s.else_region));
+                [allow_bridge_calls](const CoreIfStmt &s) {
+                    return (s.then_region == nullptr ||
+                            is_p6_subset_region(*s.then_region, allow_bridge_calls)) &&
+                           (s.else_region == nullptr ||
+                            is_p6_subset_region(*s.else_region, allow_bridge_calls));
                 },
                 // A match is structurally in-subset; its consumed regions are
                 // validated by `plan_match_region` (see the header comment).
@@ -1101,7 +1212,13 @@ validate_capability_final(const CoreProgram &program,
                 // computation statement lowered to a memory store. Capability and
                 // return stay on the KR6.5 orchestration lane.
                 [](const CoreStoreStmt &) { return true; },
-                [](const CoreCapabilityCallStmt &) { return false; },
+                [allow_bridge_calls](const CoreCapabilityCallStmt &) {
+                    // RFC 0026 P6-7 frame-bridge v2 D3 (rung V2-C): an ORDERED
+                    // bridge capability call is admitted in a non-final frame
+                    // computation region; an opaque / final capability call keeps
+                    // its canonical KR6.5 E2 shape and stays false.
+                    return allow_bridge_calls;
+                },
                 [](const CoreReturnStmt &) { return false; },
                 // RFC 0026 FB-4: an ordered effectful fn call is a straight-line
                 // statement (like a let); it is in the scalar subset and is
@@ -1116,8 +1233,9 @@ validate_capability_final(const CoreProgram &program,
     return true;
 }
 
-[[nodiscard]] bool is_p6_computation_region(const CoreRegion &region) {
-    return is_p6_subset_region(region);
+[[nodiscard]] bool is_p6_computation_region(const CoreRegion &region,
+                                            bool allow_bridge_calls = false) {
+    return is_p6_subset_region(region, allow_bridge_calls);
 }
 
 // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL region is the P6
@@ -1859,6 +1977,30 @@ class P6ComputationHandlerBuilder {
     // String literals keep failing closed (no rodata region is planned there).
     void install_rodata_pool(RodataLiteralPool *pool) { rodata_pool_ = pool; }
 
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): install the module-wide
+    // bridge call-site registry. Null on every non-frame builder, where an
+    // in-handler capability call keeps its canonical KR6.5 final shape and is
+    // rejected. When installed, a non-final handler may plan ORDERED bridge
+    // calls that the physical frame planner serves with disjoint per-call-site
+    // control blocks and result placements.
+    void install_bridge_registry(BridgeCallRegistry *registry, CoreStateId state) {
+        bridge_registry_ = registry;
+        bridge_state_ = state;
+    }
+
+    // V2-C: renumber this builder's bridge statement ids after unreachable
+    // call sites were filtered out of the dense module table. No-op for a
+    // builder without bridge statements.
+    void remap_bridge_call_ids(
+        const std::unordered_map<std::uint32_t, std::uint32_t> &remap) {
+        for (auto &[statement, id] : bridge_call_ids_) {
+            const auto it = remap.find(id);
+            if (it != remap.end()) {
+                id = it->second;
+            }
+        }
+    }
+
     // Validate the handler is in the scalar subset and assign every bound SSA
     // value a per-repr pool slot (i32 group first, then i64 — a real function
     // needs one fixed type per local index), recording the goto target set.
@@ -2055,8 +2197,12 @@ class P6ComputationHandlerBuilder {
         // V2-B: one temp holding a projection slot address while reading the
         // String PtrLen leaf's two words (absent without such a read).
         const std::uint32_t ptrlen_read_count = ptrlen_read_needed_ ? 1u : 0u;
+        // V2-C: a HANDLER bridge call needs two trailing i32 scratch locals
+        // (status, result_root_ptr) for the (i32)->(i32,i32) import result.
+        const std::uint32_t bridge_count =
+            (!fn_mode_ && bridge_scratch_needed_) ? 2u : 0u;
         if (temp_count != 0 || keyget_count != 0 || final_count != 0 ||
-            ctx_store_count != 0 || ptrlen_read_count != 0) {
+            ctx_store_count != 0 || ptrlen_read_count != 0 || bridge_count != 0) {
             // The bump temporaries are placed AFTER the i64 group (a second
             // i32 local group) so they do not shift the SSA/scratch i64 pool
             // indices pool_local derives from i32_group_size(). Fn bodies have
@@ -2093,6 +2239,13 @@ class P6ComputationHandlerBuilder {
                 ptrlen_read_addr_local_ =
                     after_groups + temp_count + keyget_count + final_count +
                     ctx_store_count;
+            }
+            if (bridge_count != 0) {
+                const std::uint32_t base =
+                    after_groups + temp_count + keyget_count + final_count +
+                    ctx_store_count + ptrlen_read_count;
+                bridge_status_local_ = base;
+                bridge_ptr_local_ = base + 1u;
             }
         }
         // Handler mode, aggregate/closure heap enabled: reset the per-activation
@@ -2155,7 +2308,7 @@ class P6ComputationHandlerBuilder {
         // joins that trailing i32 group (it exists in either body mode).
         const std::uint32_t temp_i32 =
             temp_count + keyget_count + final_count + ctx_store_count +
-            ptrlen_read_count;
+            ptrlen_read_count + bridge_count;
         if (temp_i32 != 0) {
             ++local_groups;
         }
@@ -2376,6 +2529,15 @@ class P6ComputationHandlerBuilder {
     std::uint32_t cap_ptr_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t cap_len_local_{std::numeric_limits<std::uint32_t>::max()};
 
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): set when a HANDLER plans
+    // at least one capability bridge call. emit() reserves two trailing i32
+    // scratch locals (status, result_root_ptr) for the (i32)->(i32,i32) bridge
+    // import result. They share the second i32 local group after the i64 group
+    // and are independent of the FB-4 fn-mode capability scratch.
+    bool bridge_scratch_needed_{false};
+    std::uint32_t bridge_status_local_{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t bridge_ptr_local_{std::numeric_limits<std::uint32_t>::max()};
+
     // --- RFC 0026 FB-3b closures ---
     //
     // A closure value is the eight-byte (func_index, env_ptr) pair; every
@@ -2421,6 +2583,74 @@ class P6ComputationHandlerBuilder {
     // (null outside a P6-frame agent). A String literal SSA value is the PtrLen
     // immediate pair naming this pool; the pool is frozen between plan and emit.
     RodataLiteralPool *rodata_pool_{nullptr};
+
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the module-wide bridge
+    // call-site registry (null outside a frame-lane handler). A planned bridge
+    // statement reserves its dense id here; statement identity is the stable
+    // address of its variant node, so emit maps the same node back to its id.
+    BridgeCallRegistry *bridge_registry_{nullptr};
+    CoreStateId bridge_state_{};
+    std::unordered_map<const CoreCapabilityCallStmt *, std::uint32_t> bridge_call_ids_;
+    // Result SSA value ids produced by bridge calls in this builder (provenance
+    // for the all-run-stable String ctx-store gate).
+    std::vector<CoreValueId> bridge_result_values_;
+    // Flow-global SSA value space and the pure-expression arena are NUMBERED
+    // SEPARATELY: a statement-produced value (e.g. a capability call result) has
+    // no expr at all, and a `let` binds a result value to an arbitrary expr id.
+    // plan_let records that binding here so provenance walks resolve a value to
+    // the expr that defines it.
+    std::unordered_map<std::uint32_t, std::uint32_t> let_value_exprs_;
+
+    // V2-C provenance: true when `root` is itself a bridge result, or a path
+    // projection whose root local (transitively) is one. A String PtrLen read
+    // out of such an aggregate names a host-packed, disjoint result placement
+    // that never aliases and outlives the goto graph, so it is all-run-stable
+    // enough to persist into a context slot. ANF locals form a DAG, so the walk
+    // terminates; `seen` guards defensively.
+    [[nodiscard]] bool value_derives_from_bridge_result(
+        CoreValueId root, std::vector<std::uint32_t> &seen) const {
+        if (bridge_registry_ == nullptr) {
+            return false;
+        }
+        if (std::find(seen.begin(), seen.end(), root.value) != seen.end()) {
+            return false;
+        }
+        seen.push_back(root.value);
+        if (std::any_of(bridge_result_values_.begin(), bridge_result_values_.end(),
+                        [&](CoreValueId value) { return value == root; })) {
+            return true;
+        }
+        if (root.value >= storage_.value_types.size()) {
+            return false;
+        }
+        // A statement-produced value (capability call result) is matched by the
+        // bridge-results check above; only a let-bound value has a defining
+        // expr. A value with neither is not derived from a bridge result.
+        const auto def = let_value_exprs_.find(root.value);
+        if (def == let_value_exprs_.end()) {
+            return false;
+        }
+        if (def->second >= storage_.exprs.size()) {
+            return false;
+        }
+        const CoreExpr &expr = storage_.exprs[def->second];
+        // ANF `let decision = %call_result` introduces a value-ref alias; follow
+        // it so the provenance reaches the capability call's own result value.
+        if (const auto *ref = std::get_if<CoreValueRefExpr>(&expr.node)) {
+            return value_derives_from_bridge_result(ref->value, seen);
+        }
+        const auto *path = std::get_if<CorePathExpr>(&expr.node);
+        if (path == nullptr || !path->has_local ||
+            path->root != ir::core::CorePathRoot::Local) {
+            return false;
+        }
+        return value_derives_from_bridge_result(path->local, seen);
+    }
+
+    [[nodiscard]] bool value_derives_from_bridge_result(CoreValueId root) const {
+        std::vector<std::uint32_t> seen;
+        return value_derives_from_bridge_result(root, seen);
+    }
 
     [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
         body_.byte(kOpUnreachable);
@@ -3315,6 +3545,101 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): plan an ORDERED
+    // capability BRIDGE statement inside a non-final frame computation region.
+    // The module passes a control-block pointer and receives
+    // (status, result_root_ptr); the host walks P4-D -> wire JSON, invokes the
+    // capability, validates, and packs the result into this call site's
+    // disjoint placement. Arity is the declared param_types.size() (multi-arg is
+    // the whole point of D4); every argument/result must be a frame-walkable P6
+    // value. The wire-shape subset (no map/f64/decimal/duration/timestamp/uuid)
+    // is enforced AGAIN by the physical frame planner against the projected
+    // wire schema; here only the physical representability is gated.
+    [[nodiscard]] bool plan_bridge_call(const CoreCapabilityCallStmt &s,
+                                        ir::SourceRangeOpt range) {
+        if (fn_mode_ || bridge_registry_ == nullptr) {
+            return reject("a direct capability invocation is legal only at an agent capability "
+                          "final (or inside an outlined effect fn body)",
+                          range);
+        }
+        if (s.capability.value >= program_.capabilities.size()) {
+            return reject("bridge capability call references an out-of-range capability", range);
+        }
+        const CoreCapabilityDecl &capability = program_.capabilities[s.capability.value];
+        if (s.args.size() != capability.param_types.size()) {
+            return reject_with_code(
+                core_wasm_diag::kInvalidCore,
+                "bridge capability call arity disagrees with its declared parameter count", range);
+        }
+        std::vector<CoreValueTypeId> param_vt;
+        param_vt.reserve(s.args.size());
+        std::uint32_t spill_bytes = 0;
+        for (std::uint32_t i = 0; i < s.args.size(); ++i) {
+            const CoreValueId arg = s.args[i];
+            used_values_[arg.value] = true;
+            if (arg.value >= storage_.value_types.size()) {
+                return reject("bridge capability argument id is out of range", range);
+            }
+            const CoreValueTypeId arg_type = storage_.value_types[arg.value];
+            if (arg_type != capability.param_types[i]) {
+                return reject_with_code(
+                    core_wasm_diag::kInvalidCore,
+                    "bridge capability argument type disagrees with the declared parameter type",
+                    range);
+            }
+            const auto arg_kind = p6_scalar_kind(program_, layouts_, arg_type);
+            if (arg_kind == std::nullopt || *arg_kind == P6ScalarKind::Closure ||
+                *arg_kind == P6ScalarKind::Collection) {
+                return reject_with_code(
+                    core_wasm_diag::kUnsupportedCapabilityFrame,
+                    "a bridge capability argument is not a frame-walkable P6 value in this rung "
+                    "(a bounded collection crosses the frame bridge only with its own backing "
+                    "placement on a later ladder; an unbounded Int, f64, bytes or closure is "
+                    "rejected outright)",
+                    range);
+            }
+            param_vt.push_back(arg_type);
+            // Scalar / PtrLen arguments are spilled into the call site's
+            // private 8-aligned slot in the control page frame; aggregate and
+            // collection arguments stay at their existing stable address and
+            // need no spill.
+            if (*arg_kind == P6ScalarKind::Ptr || *arg_kind == P6ScalarKind::Collection) {
+                continue;
+            }
+            spill_bytes += 8;
+        }
+        if (s.result.value >= storage_.value_types.size()) {
+            return reject("bridge capability result id is out of range", range);
+        }
+        const CoreValueTypeId result_type = storage_.value_types[s.result.value];
+        if (result_type != capability.return_type) {
+            return reject_with_code(
+                core_wasm_diag::kInvalidCore,
+                "bridge capability result type disagrees with the declared return type", range);
+        }
+        const auto result_kind = p6_scalar_kind(program_, layouts_, result_type);
+        if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Closure ||
+            *result_kind == P6ScalarKind::Collection) {
+            return reject_with_code(
+                core_wasm_diag::kUnsupportedCapabilityFrame,
+                "a bridge capability result is not a frame-walkable P6 value in this rung (a "
+                "bounded collection result needs its own backing placement on a later ladder; an "
+                "unbounded Int, f64, bytes or closure is rejected outright)",
+                range);
+        }
+        if (!bind_value(s.result, *result_kind)) {
+            return reject("bridge capability result SSA value is bound more than once", range);
+        }
+        used_values_[s.result.value] = true;
+        const std::uint32_t call_site_id =
+            bridge_registry_->reserve(s.capability, std::move(param_vt), result_type,
+                                      spill_bytes, bridge_state_);
+        bridge_call_ids_.emplace(&s, call_site_id);
+        bridge_result_values_.push_back(s.result);
+        bridge_scratch_needed_ = true;
+        return true;
+    }
+
     // Shared callee-link / single-word boundary validation for a direct fn call
     // (CoreCallExpr or CoreCallStmt): records the callee instance for the
     // reachability fixed point and rejects String/f64/multi-word
@@ -3686,27 +4011,54 @@ class P6ComputationHandlerBuilder {
                 }
                 return true;
             }
+            // V2-C: a bare INPUT frame root in a frame handler is the whole
+            // aggregate's fixed base address (1024) — a legal stable P4-D span
+            // for a capability bridge argument. Only an aggregate root is
+            // admitted (a scalar bare root is never a memory address), and the
+            // raw-frame fact is latched at plan time so the physical frame
+            // section is built.
+            if (path.root == ir::core::CorePathRoot::Input &&
+                bridge_registry_ != nullptr) {
+                const auto root_vt =
+                    p6_nominal_value_type(program_, path.root_type);
+                if (root_vt.has_value()) {
+                    const auto kind =
+                        p6_scalar_kind(program_, layouts_, *root_vt);
+                    if (kind == P6ScalarKind::Ptr) {
+                        reads_raw_input_frame_ = true;
+                        return true;
+                    }
+                }
+            }
             return reject("a bare input/context root is not a memory read in the P6 subset", range);
         }
         // V2-B: a leaf that lands on a String PtrLen slot is read as the two
-        // inline words. A two-word String pair is realizable ONLY on the
-        // computed-final lane that materializes the output frame: a non-final
-        // goto handler can neither construct a String (no rodata pool) nor pass
-        // one across an fn / capability boundary, and it never materializes an
-        // output, so such a read has no legal consumer and fails closed here
-        // rather than emitting an orphaned two-word load.
+        // inline words. A two-word String pair is realizable inside a computed
+        // final materializer (the output-frame lane that carries rodata) or,
+        // from V2-C, inside a non-final HANDLER that serves a capability
+        // bridge (the pair is spilled into the call site's control-block slot
+        // and walked by the host). A pure goto handler without either lane
+        // still fails closed here rather than emitting an orphaned two-word
+        // load.
         if (const auto leaf =
                 resolve_projection_slot(path.projection, path.root_type, range);
             leaf.has_value() && edge_is_ptr_len(leaf->edge)) {
-            if (!final_return_mode_) {
+            if (!final_return_mode_ && bridge_registry_ == nullptr) {
                 return reject(
                     "a String (PtrLen) field is readable only inside a P6-7 frame-bridge v2 "
-                    "computed final; a non-final goto handler cannot carry the two-word String "
-                    "pair (it constructs no rodata, crosses no String boundary, and materializes "
-                    "no output frame)",
+                    "computed final or a capability bridge handler; a non-final goto handler "
+                    "without either lane cannot carry the two-word String pair (it constructs "
+                    "no rodata, crosses no String boundary, and materializes no output frame)",
                     range);
             }
             ptrlen_read_needed_ = true;
+        }
+        // V2-C: latch the raw-frame fact at PLAN time too, so the frame section
+        // (which must be built before handler emission for the bridge
+        // coordinates) knows this handler projects the raw P4-D input frame.
+        // The emit pass re-latches the identical fact from the load bytes.
+        if (path.root == ir::core::CorePathRoot::Input) {
+            reads_raw_input_frame_ = true;
         }
         return true;
     }
@@ -5047,12 +5399,24 @@ class P6ComputationHandlerBuilder {
                     const CoreExpr &bound = storage_.exprs[s.expr.value];
                     const auto kind = scalar_kind(bound.result_type);
                     if (kind == std::nullopt) {
+                        // V2-C: on the frame-bridge lane an unrepresentable let
+                        // value is a capability-FRAME rejection (the expression
+                        // cannot name a bridge argument/result), not the generic
+                        // P6-scalar scaffold classification.
+                        if (bridge_registry_ != nullptr) {
+                            return reject_with_code(
+                                core_wasm_diag::kUnsupportedCapabilityFrame,
+                                "a frame-bridge let value is not a frame-walkable P6 value "
+                                "(f64, bytes or a zero-sized aggregate cannot cross the bridge)",
+                                statement.source_range);
+                        }
                         return reject("let value has a non-scalar or f64 type",
                                       statement.source_range);
                     }
                     if (!bind_value(s.result, *kind)) {
                         return reject("SSA value is bound more than once", statement.source_range);
                     }
+                    let_value_exprs_[s.result.value] = s.expr.value;
                     // Every let result is a real lowered SSA local in the
                     // emitted handler (a bound-but-unread result such as
                     // `let q = one / zero` is frontend-valid and its effect —
@@ -5076,6 +5440,13 @@ class P6ComputationHandlerBuilder {
                 [](const CoreTrapStmt &) { return true; },
                 [&](const CoreMatchStmt &s) { return plan_match(s, statement.source_range); },
                 [&](const CoreCapabilityCallStmt &s) {
+                    // V2-C: a non-final frame-lane HANDLER statement is a
+                    // capability bridge; an outlined fn body keeps the opaque
+                    // tuple call (and a final handler never reaches this
+                    // dispatch).
+                    if (!fn_mode_ && bridge_registry_ != nullptr) {
+                        return plan_bridge_call(s, statement.source_range);
+                    }
                     return plan_capability_call(s, statement.source_range);
                 },
                 // RFC 0026 FB-4: ordered effectful fn call.
@@ -5577,6 +5948,201 @@ class P6ComputationHandlerBuilder {
         return true;
     }
 
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): emit one ORDERED
+    // capability bridge statement in a non-final handler. The module (1) writes
+    // the fixed control block `{call_site_id, arg_count, (ptr,len)[*]}` at its
+    // dense block address, spilling scalar / PtrLen arguments into the call
+    // site's private spill slots; (2) calls the additive
+    // `kTypeCapabilityBridge = (i32)->(i32,i32)` import; (3) traps on any
+    // non-OK status (single-run: no pending arm); (4) binds the result SSA from
+    // the returned result root — a load for inline scalars / PtrLen, the root
+    // address itself for an aggregate / collection.
+    [[nodiscard]] bool emit_bridge_call(const CoreCapabilityCallStmt &s,
+                                        ir::SourceRangeOpt range) {
+        if (imports_ == nullptr || bridge_registry_ == nullptr) {
+            return reject("bridge capability call reached emit without the import table / frame "
+                          "plan",
+                          range);
+        }
+        const auto id_it = bridge_call_ids_.find(&s);
+        if (id_it == bridge_call_ids_.end()) {
+            return reject("bridge capability call has no planned call-site id", range);
+        }
+        const BridgeCallPlan &site = bridge_registry_->sites()[id_it->second];
+        const auto import_it = std::find(imports_->begin(), imports_->end(), s.capability);
+        if (import_it == imports_->end()) {
+            return reject("bridge capability was not planned into the import table", range);
+        }
+        const std::uint32_t import_ordinal =
+            static_cast<std::uint32_t>(std::distance(imports_->begin(), import_it));
+        const std::uint32_t block_ptr =
+            bridge_registry_->control_base() + site.block_offset;
+        std::uint32_t spill_cursor = site.spill_base;
+
+        // Write the 8-byte block header (call_site_id, arg_count).
+        const auto store_i32_word = [&](std::uint32_t address, std::int32_t value) {
+            emit_const_i32(static_cast<std::int32_t>(address));
+            emit_const_i32(value);
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+        };
+        // Store one SSA i32 word (pushed by the caller) into `address`.
+        const auto store_i32_stack_word = [&](std::uint32_t address) {
+            emit_const_i32(static_cast<std::int32_t>(address));
+            body_.byte(kOpI32Store);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+        };
+        store_i32_word(block_ptr, static_cast<std::int32_t>(site.call_site_id));
+        store_i32_word(block_ptr + 4u, static_cast<std::int32_t>(s.args.size()));
+
+        // Write the (ptr,len) argument descriptors and perform any scalar /
+        // PtrLen spill. Aggregate / collection arguments stay at their existing
+        // stable address, so only their address is named.
+        for (std::uint32_t i = 0; i < s.args.size(); ++i) {
+            const CoreValueId arg = s.args[i];
+            const auto kind =
+                p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]);
+            if (kind == std::nullopt) {
+                return reject("bridge capability argument has no representable P6 kind", range);
+            }
+            const std::uint32_t desc_addr = block_ptr + 8u + 8u * i;
+            if (*kind == P6ScalarKind::Ptr || *kind == P6ScalarKind::Collection) {
+                const ir::core::CoreLayout *layout = p6_value_layout(
+                    program_, layouts_, storage_.value_types[arg.value]);
+                if (layout == nullptr) {
+                    return reject("bridge aggregate argument has no finalized P4-D layout", range);
+                }
+                // The value word IS its root address; the span length is the
+                // layout root size (8 for a collection header).
+                if (!emit_value_read(arg, range)) {
+                    return false;
+                }
+                store_i32_stack_word(desc_addr);
+                store_i32_word(desc_addr + 4u,
+                               static_cast<std::int32_t>(layout->size));
+                continue;
+            }
+            // Scalar / PtrLen: spill the physical word(s) into the private
+            // slot, then name (spill_address, physical_width).
+            const std::uint32_t spill_addr = spill_cursor;
+            if (*kind == P6ScalarKind::String) {
+                // A String value binds TWO adjacent i32 locals (payload ptr,
+                // byte len). Copy both into the spill slot: [addr,value] stack
+                // order, len at +4 and ptr at +0. The payload itself is never
+                // copied — the spilled PtrLen keeps naming its original
+                // all-run-stable region (input arena / rodata / another bridge
+                // result placement), which the host re-authorizes.
+                const auto string_local = readable_local(arg);
+                if (string_local == std::nullopt) {
+                    return reject("bridge String argument has no bound PtrLen local", range);
+                }
+                emit_const_i32(static_cast<std::int32_t>(spill_addr + 4u));
+                body_.byte(kOpLocalGet);
+                body_.u32(*string_local + 1u);
+                body_.byte(kOpI32Store);
+                body_.u32(kAlignI32);
+                body_.u32(0);
+                emit_const_i32(static_cast<std::int32_t>(spill_addr));
+                body_.byte(kOpLocalGet);
+                body_.u32(*string_local);
+                body_.byte(kOpI32Store);
+                body_.u32(kAlignI32);
+                body_.u32(0);
+            } else if (*kind == P6ScalarKind::IntI64) {
+                emit_const_i32(static_cast<std::int32_t>(spill_addr));
+                if (!emit_value_read(arg, range)) {
+                    return false;
+                }
+                body_.byte(kOpI64Store);
+                body_.u32(kAlignI64);
+                body_.u32(0);
+            } else {
+                emit_const_i32(static_cast<std::int32_t>(spill_addr));
+                if (!emit_value_read(arg, range)) {
+                    return false;
+                }
+                body_.byte(kOpI32Store);
+                body_.u32(kAlignI32);
+                body_.u32(0);
+            }
+            store_i32_word(desc_addr, static_cast<std::int32_t>(spill_addr));
+            store_i32_word(desc_addr + 4u,
+                           *kind == P6ScalarKind::IntI64 ? 8 : 8);
+            spill_cursor += 8;
+        }
+
+        // call ahfl_cap[ordinal] with the single block pointer.
+        emit_const_i32(static_cast<std::int32_t>(block_ptr));
+        body_.byte(kOpCall);
+        body_.u32(import_ordinal);
+        // Pop (status, result_root_ptr).
+        body_.byte(kOpLocalSet);
+        body_.u32(bridge_ptr_local_);
+        body_.byte(kOpLocalSet);
+        body_.u32(bridge_status_local_);
+        // Single-run contract: any non-OK status traps (durable replay / pending
+        // arm stays the D2b authority).
+        body_.byte(kOpLocalGet);
+        body_.u32(bridge_status_local_);
+        body_.byte(kOpIf);
+        body_.byte(kEmptyBlock);
+        body_.byte(kOpUnreachable);
+        body_.byte(kOpEnd);
+
+        // Bind the result SSA. An aggregate / collection result word is the
+        // packed root address itself; an inline scalar / PtrLen is loaded from
+        // the root.
+        const auto result_kind =
+            p6_scalar_kind(program_, layouts_, storage_.value_types[s.result.value]);
+        if (result_kind == std::nullopt) {
+            return reject("bridge capability result has no representable P6 kind", range);
+        }
+        const auto local = final_local(s.result);
+        if (local == std::nullopt) {
+            return reject("bridge capability result has no SSA local", range);
+        }
+        if (*result_kind == P6ScalarKind::Ptr || *result_kind == P6ScalarKind::Collection) {
+            body_.byte(kOpLocalGet);
+            body_.u32(bridge_ptr_local_);
+            body_.byte(kOpLocalSet);
+            body_.u32(*local);
+            return true;
+        }
+        if (*result_kind == P6ScalarKind::String) {
+            body_.byte(kOpLocalGet);
+            body_.u32(bridge_ptr_local_);
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+            body_.byte(kOpLocalSet);
+            body_.u32(*local);
+            body_.byte(kOpLocalGet);
+            body_.u32(bridge_ptr_local_);
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(4);
+            body_.byte(kOpLocalSet);
+            body_.u32(*local + 1u);
+            return true;
+        }
+        body_.byte(kOpLocalGet);
+        body_.u32(bridge_ptr_local_);
+        if (*result_kind == P6ScalarKind::IntI64) {
+            body_.byte(kOpI64Load);
+            body_.u32(kAlignI64);
+            body_.u32(0);
+        } else {
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(0);
+        }
+        body_.byte(kOpLocalSet);
+        body_.u32(*local);
+        return true;
+    }
+
     // Emit a projection path READ. The plan pass proved the root is input /
     // context / a local aggregate and every step owner is a struct, so this walks
     // the chain accumulating each step's P4-D field offset and leaves the last
@@ -5585,6 +6151,22 @@ class P6ComputationHandlerBuilder {
     [[nodiscard]] bool emit_path(const CorePathExpr &path, ir::SourceRangeOpt range) {
         if (path.projection.empty()) {
             if (!path.has_local) {
+                // V2-C: a bare INPUT aggregate root in a frame handler is the
+                // fixed input-frame base address (a legal bridge argument
+                // span). A context root or a scalar root stays fail-closed.
+                if (path.root == ir::core::CorePathRoot::Input &&
+                    bridge_registry_ != nullptr) {
+                    const auto root_vt =
+                        p6_nominal_value_type(program_, path.root_type);
+                    if (root_vt.has_value() &&
+                        p6_scalar_kind(program_, layouts_, *root_vt) ==
+                            P6ScalarKind::Ptr) {
+                        reads_raw_input_frame_ = true;
+                        emit_const_i32(
+                            static_cast<std::int32_t>(ir::core::kP6AggregateInputBase));
+                        return true;
+                    }
+                }
                 return reject("a bare input/context root is not a memory read in the P6 subset",
                               std::move(range));
             }
@@ -5968,17 +6550,33 @@ class P6ComputationHandlerBuilder {
             if (readable_kind(store.value) != P6ScalarKind::String) {
                 return reject("a context String slot requires a String PtrLen value", range);
             }
-            if (store.value.value >= storage_.exprs.size()) {
+            if (store.value.value >= storage_.value_types.size()) {
                 return reject("a context String store references an out-of-range value", range);
             }
-            const CoreExpr &source = storage_.exprs[store.value.value];
-            const auto *literal = std::get_if<CoreLiteralExpr>(&source.node);
-            if (literal == nullptr || literal->kind != CoreLiteralKind::String) {
+            // The value space and expr space are numbered separately: resolve a
+            // let-bound value to the expr that defines it before testing for a
+            // rodata literal.
+            bool is_rodata_literal = false;
+            if (const auto def = let_value_exprs_.find(store.value.value);
+                def != let_value_exprs_.end() && def->second < storage_.exprs.size()) {
+                const CoreExpr &source = storage_.exprs[def->second];
+                const auto *literal = std::get_if<CoreLiteralExpr>(&source.node);
+                is_rodata_literal =
+                    literal != nullptr && literal->kind == CoreLiteralKind::String;
+            }
+            // V2-C: a String projected out of a CAPABILITY BRIDGE result is
+            // also all-run-stable: the host packed it into that call site's
+            // disjoint result placement, which never aliases and outlives the
+            // goto graph. Prove provenance by following the store value's path
+            // chain to the bound result of a planned bridge call in THIS
+            // builder.
+            if (!is_rodata_literal && !value_derives_from_bridge_result(store.value)) {
                 return reject_with_code(
                     core_wasm_diag::kUnsupportedCapabilityFrame,
-                    "a context String store is admitted in V2-B only for a String literal whose "
-                    "payload pointer names the stable rodata region (a computed or input-borrowed "
-                    "String ctx store arrives with a later frame-bridge rung)",
+                    "a context String store requires an all-run-stable payload: a rodata "
+                    "String literal or a String projected from a capability bridge result "
+                    "(a computed or input-borrowed String ctx store without that provenance "
+                    "arrives with a later frame-bridge rung)",
                     range);
             }
             used_values_[store.value.value] = true;
@@ -7216,6 +7814,12 @@ class P6ComputationHandlerBuilder {
                 // (A handler capability call keeps its canonical KR6.5 final
                 // shape and is rejected here in handler mode.)
                 [&](const CoreCapabilityCallStmt &s) {
+                    // V2-C: a planned HANDLER bridge statement invokes the
+                    // additive bridge functype; an outlined fn body keeps the
+                    // opaque tuple call.
+                    if (!fn_mode_ && bridge_registry_ != nullptr) {
+                        return emit_bridge_call(s, statement.source_range);
+                    }
                     return emit_capability_call(s, statement.source_range);
                 },
                 // RFC 0026 FB-4: ordered effectful fn call (a plain `call` to
@@ -7893,6 +8497,12 @@ class BoundaryTableBuilder {
     [[nodiscard]] const std::vector<FrameContainerOccurrence> &occurrences() const noexcept {
         return occurrences_;
     }
+    // Non-destructive access to the dense table accumulated so far (the
+    // physical planner continues emitting fixed roots after the boundary roots;
+    // call `take_table()` exactly once when planning is complete).
+    [[nodiscard]] const ir::core::CoreLayoutTable &table_ref() const noexcept {
+        return dense_;
+    }
     [[nodiscard]] ir::core::CoreLayoutTable take_table() { return std::move(dense_); }
 
   private:
@@ -8149,6 +8759,518 @@ input_frame_backing_high_water(const CoreProgram &program,
         return ir::core::kP6CollectionBackingBase;
     }
     return assigned->payload_arena_base;
+}
+// ---------------------------------------------------------------------------
+// RFC 0026 P6-7 rung A: the `ahfl.core-layout.v1` section plan.
+//
+// A P6-frame agent's boundary roots are its input/output value types. The plan
+// enumerates every input-reached bounded CONTAINER in a depth-first,
+// declaration-order boundary walk and assigns each a DISJOINT backing placement
+// by the sum-of-prior-backing rule (design section 6.2), then derives the
+// frame-payload arena span (0-capacity at rung A: input String packing arrives
+// with the packer in rung C; the arena address is still pinned deterministically
+// so no later rung can move it). Every coordinate is compile-time constant.
+// ---------------------------------------------------------------------------
+
+struct FrameSectionPlan {
+    ir::core::CoreValueTypeId input_vt{};
+    ir::core::CoreValueTypeId output_vt{};
+    /// Roots / placement container ids are already REMAPPED into the dense
+    /// `table` id space below (they are NOT ids into the full program layout
+    /// table).
+    ir::core::CoreLayoutId input_layout{};
+    ir::core::CoreLayoutId output_layout{};
+    std::uint32_t input_size{0};
+    std::uint32_t output_size{0};
+    std::vector<ir::core::CoreFrameBackingPlacement> placements;
+    std::uint32_t payload_arena_base{0};
+    std::uint32_t payload_arena_capacity{0};
+    /// V2-B: rodata literal-pool span carried to the section payload.
+    std::uint32_t rodata_base{0};
+    std::uint32_t rodata_extent{0};
+    /// V2-C: the capability bridge control page frame (zero for a non-bridge
+    /// module) and the dense per-call-site section records.
+    std::uint32_t bridge_control_base{0};
+    std::uint32_t bridge_block_stride{0};
+    std::uint32_t bridge_control_extent{0};
+    std::uint32_t bridge_spill_base{0};
+    std::uint32_t bridge_spill_extent{0};
+    std::vector<ir::core::CoreFrameBridgeCallSite> bridge_call_sites;
+    /// The self-contained boundary table: exactly the layouts reachable from
+    /// the two roots, with all edges remapped into this dense table.
+    ir::core::CoreLayoutTable table;
+};
+
+[[nodiscard]] std::optional<ir::core::CoreValueTypeId>
+frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
+    return p6_nominal_value_type(program, nominal);
+}
+
+// Build the canonical frame-layout SECTION payload structure (the one the
+// custom-section encoder and the host admitter consume) from the physical
+// plan. One SSOT for the boundary roots, placements, payload arena, rodata
+// span and the V2-C bridge page frame / call sites.
+[[nodiscard]] ir::core::CoreFrameLayoutSection
+frame_section_to_layout_section(const FrameSectionPlan &plan) {
+    ir::core::CoreFrameLayoutSection section;
+    section.format_version = 2;
+    section.table = plan.table;
+    section.input_layout = plan.input_layout;
+    section.output_layout = plan.output_layout;
+    section.placements = plan.placements;
+    section.payload_arena_base = plan.payload_arena_base;
+    section.payload_arena_capacity = plan.payload_arena_capacity;
+    section.rodata_base = plan.rodata_base;
+    section.rodata_extent = plan.rodata_extent;
+    section.bridge_control_base = plan.bridge_control_base;
+    section.bridge_block_stride = plan.bridge_block_stride;
+    section.bridge_control_extent = plan.bridge_control_extent;
+    section.bridge_spill_base = plan.bridge_spill_base;
+    section.bridge_spill_extent = plan.bridge_spill_extent;
+    section.bridge_call_sites = plan.bridge_call_sites;
+    return section;
+}
+
+// RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): walk the INPUT boundary's dense
+// P4-D layout and its wire schema IN LOCKSTEP (the same shape correspondence
+// verify_frame_layout_wire_consistency proves), metering every String slot:
+// a bounded String contributes its schema upper bound, and the first unbounded
+// String marks the shared kP6FrameStringPoolBytes reservation. A shape
+// disagreement fails the plan. Returns false on malformed ids.
+[[nodiscard]] bool accumulate_input_string_arena(
+    const ir::core::CoreLayoutTable &layouts,
+    ir::core::CoreLayoutId layout_id,
+    const ir::core::CoreWireSchemaTable &wire,
+    ir::core::CoreWireSchemaNodeId wire_id,
+    std::uint64_t &bounded_sum,
+    bool &has_unbounded_string) {
+    if (layout_id.value >= layouts.layouts.size() ||
+        wire_id.value >= wire.nodes.size()) {
+        return false;
+    }
+    const auto &layout = layouts.layouts[layout_id.value].shape;
+    const auto &shape = wire.nodes[wire_id.value].shape;
+    return std::visit(
+        Overloaded{
+            [&](const ir::core::CoreLayoutScalar &) { return true; },
+            [&](const ir::core::CoreLayoutPending &) { return false; },
+            [&](const ir::core::CoreLayoutPtrLen &) {
+                const auto *str = std::get_if<ir::core::CoreWireSchemaString>(&shape);
+                if (str == nullptr) {
+                    return false;
+                }
+                if (str->length_bounds.has_value()) {
+                    bounded_sum += static_cast<std::uint64_t>(str->length_bounds->second);
+                    if (bounded_sum > std::numeric_limits<std::uint32_t>::max()) {
+                        return false;
+                    }
+                } else {
+                    has_unbounded_string = true;
+                }
+                return true;
+            },
+            [&](const ir::core::CoreLayoutBytes &) { return false; },
+            [&](const ir::core::CoreLayoutFnRef &) { return false; },
+            [&](const ir::core::CoreLayoutClosure &) { return false; },
+            [&](const ir::core::CoreLayoutUninhabited &) { return false; },
+            [&](const ir::core::CoreLayoutStruct &s) {
+                const auto *wst = std::get_if<ir::core::CoreWireSchemaStruct>(&shape);
+                if (wst == nullptr || wst->fields.size() != s.field_layouts.size()) {
+                    return false;
+                }
+                for (std::uint32_t i = 0; i < s.field_layouts.size(); ++i) {
+                    if (!accumulate_input_string_arena(layouts, s.field_layouts[i], wire,
+                                                       wst->fields[i].type, bounded_sum,
+                                                       has_unbounded_string)) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+            [&](const ir::core::CoreLayoutEnum &e) {
+                const auto *wen = std::get_if<ir::core::CoreWireSchemaEnum>(&shape);
+                if (wen == nullptr || wen->variants.size() != e.variant_payload_layouts.size()) {
+                    return false;
+                }
+                for (std::uint32_t v = 0; v < e.variant_payload_layouts.size(); ++v) {
+                    const auto payload_id = e.variant_payload_layouts[v];
+                    if (payload_id.value >= layouts.layouts.size()) {
+                        return false;
+                    }
+                    const auto *payload = std::get_if<ir::core::CoreLayoutStruct>(
+                        &layouts.layouts[payload_id.value].shape);
+                    if (payload == nullptr ||
+                        payload->field_layouts.size() != wen->variants[v].slots.size()) {
+                        return false;
+                    }
+                    for (std::uint32_t i = 0; i < payload->field_layouts.size(); ++i) {
+                        if (!accumulate_input_string_arena(layouts,
+                                                           payload->field_layouts[i], wire,
+                                                           wen->variants[v].slots[i].type,
+                                                           bounded_sum, has_unbounded_string)) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            },
+            [&](const ir::core::CoreLayoutContainer &c) {
+                // A bounded List carries one element slot; a Map carries key +
+                // value slots (key shapes stay outside the frame subset, so a
+                // String key would already have failed wire projection).
+                const auto *seq = std::get_if<ir::core::CoreWireSchemaSequence>(&shape);
+                const auto *map = std::get_if<ir::core::CoreWireSchemaMap>(&shape);
+                if (seq != nullptr) {
+                    return accumulate_input_string_arena(layouts, c.element, wire, seq->element,
+                                                         bounded_sum, has_unbounded_string);
+                }
+                if (map != nullptr) {
+                    return accumulate_input_string_arena(layouts, c.element, wire, map->key,
+                                                        bounded_sum, has_unbounded_string) &&
+                           c.value.has_value() &&
+                           accumulate_input_string_arena(layouts, *c.value, wire, map->value,
+                                                        bounded_sum, has_unbounded_string);
+                }
+                return false;
+            },
+        },
+        layout);
+}
+
+
+[[nodiscard]] std::optional<FrameSectionPlan>
+build_frame_section_plan(const CoreProgram &program,
+                         const ir::core::CoreLayoutTable &layouts,
+                         const CoreAgentDecl &agent,
+                         std::uint32_t rodata_extent,
+                         const ir::core::CoreWireSchemaTable *frame_wire_table,
+                         BridgeCallRegistry *bridge_registry,
+                         CoreWasmCodegenResult &result) {
+    const auto input_vt = frame_boundary_value_type(program, agent.input_type);
+    const auto output_vt = frame_boundary_value_type(program, agent.output_type);
+    if (!input_vt.has_value() || !output_vt.has_value()) {
+        add_diag(result, core_wasm_diag::kInvalidLayout,
+                 "a P6-frame agent boundary nominal has no finalized argument-less value type");
+        return std::nullopt;
+    }
+    const ir::core::CoreLayout *input_layout =
+        p6_value_layout(program, layouts, *input_vt);
+    const ir::core::CoreLayout *output_layout =
+        p6_value_layout(program, layouts, *output_vt);
+    if (input_layout == nullptr || output_layout == nullptr) {
+        add_diag(result, core_wasm_diag::kInvalidLayout,
+                 "a P6-frame agent boundary nominal has no finalized P4-D layout");
+        return std::nullopt;
+    }
+
+    FrameSectionPlan plan;
+    plan.input_vt = *input_vt;
+    plan.output_vt = *output_vt;
+    const ir::core::CoreLayoutId full_input_layout =
+        layouts.value_layouts[input_vt->value];
+    const ir::core::CoreLayoutId full_output_layout =
+        layouts.value_layouts[output_vt->value];
+    // Bound the descriptor's u32 frame sizes explicitly instead of narrowing a
+    // u64 layout size with an unchecked static_cast, and enforce the design
+    // section 6.1 frame-region capacities here too (input <= 3072; an identity
+    // final's output equals its input and a computed-final output <= 4096 is
+    // gated again when computed emission lands). Today's 64 KiB RESOURCE gates
+    // keep these unreachable, but the descriptor is the authority the host
+    // cross-checks against the u64-encoded section.
+    constexpr std::uint64_t kU32Max = std::numeric_limits<std::uint32_t>::max();
+    if (input_layout->size > kU32Max ||
+        input_layout->size > ir::core::kP6AggregateInputCapacity) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "P6 frame input boundary exceeds the input frame region of the fixed 64 KiB "
+                 "linear-memory page");
+        return std::nullopt;
+    }
+    if (output_layout->size > kU32Max ||
+        output_layout->size > ir::core::kP6AggregateOutputCapacity) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "P6 frame output boundary exceeds the output frame region of the fixed 64 KiB "
+                 "linear-memory page");
+        return std::nullopt;
+    }
+    plan.input_size = static_cast<std::uint32_t>(input_layout->size);
+    plan.output_size = static_cast<std::uint32_t>(output_layout->size);
+
+    BoundaryTableBuilder builder(layouts);
+    const ir::core::CoreLayoutId input_dense =
+        builder.emit_fixed(full_input_layout, /*from_input=*/true);
+    ir::core::CoreLayoutId output_dense = input_dense;
+    if (full_output_layout.value != full_input_layout.value) {
+        output_dense = builder.emit_fixed(full_output_layout, /*from_input=*/false);
+    }
+    if (builder.failed()) {
+        if (builder.nested_container()) {
+            add_diag(result, core_wasm_diag::kUnsupportedOrchestration,
+                     "a P6-frame bounded collection nests another container in its backing "
+                     "storage; nested bounded collections are outside the P6-7 frame lane");
+        } else {
+            add_diag(result, core_wasm_diag::kInvalidLayout,
+                     "a P6-frame boundary layout is not finalizable into a self-contained frame "
+                     "table");
+        }
+        return std::nullopt;
+    }
+    plan.input_layout = input_dense;
+    plan.output_layout = output_dense;
+
+    // Every INPUT-REACHED fixed container occurrence, in boundary DFS order,
+    // gets a DISJOINT sum-of-prior-backing placement (the same SSOT the
+    // construct-heap relocation uses). Output-only occurrences (a distinct
+    // computed-output nominal) name no input placement at rung E.
+    FramePlacementFailure placement_failure = FramePlacementFailure::InvalidBacking;
+    const auto assigned =
+        assign_input_container_placements(builder.table_ref(), builder.occurrences(),
+                                          placement_failure);
+    if (!assigned.has_value()) {
+        if (placement_failure == FramePlacementFailure::InvalidBacking) {
+            add_diag(result, core_wasm_diag::kInvalidLayout,
+                     "a P6-frame input container has an invalid backing layout");
+        } else {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "P6 frame backing placements exceed the fixed 64 KiB linear-memory page");
+        }
+        return std::nullopt;
+    }
+    plan.placements = assigned->placements;
+    plan.payload_arena_base = assigned->payload_arena_base;
+    // RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): the input frame's packed
+    // String payloads need a REAL arena now (it was hardcoded 0 at rung A).
+    // Bounded String slots are metered exactly from their schema upper bound;
+    // every unbounded String slot is covered once by the shared
+    // kP6FrameStringPoolBytes reservation. The joint layout/wire walk below is
+    // the single derivation (a shared string shape is metered once).
+    std::uint64_t bounded_sum = 0;
+    bool has_unbounded_string = false;
+    if (frame_wire_table != nullptr && frame_wire_table->frame_roots.has_value()) {
+        if (!accumulate_input_string_arena(builder.table_ref(),
+                                           plan.input_layout,
+                                           *frame_wire_table,
+                                           frame_wire_table->frame_roots->input,
+                                           bounded_sum,
+                                           has_unbounded_string)) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidLayout,
+                     "the P6-frame input layout and wire schema disagree on a String slot while "
+                     "planning the payload arena");
+            return std::nullopt;
+        }
+    }
+    std::uint64_t arena_capacity = (bounded_sum + 7u) & ~std::uint64_t{7u};
+    if (has_unbounded_string) {
+        arena_capacity += kP6FrameStringPoolBytes;
+    }
+    if (arena_capacity > std::numeric_limits<std::uint32_t>::max() ||
+        static_cast<std::uint64_t>(plan.payload_arena_base) + arena_capacity >
+            kCoreWasmFixedLinearMemoryCapacityBytes) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "the P6 input-frame String payload arena (bounded-slot bounds " +
+                     std::to_string(bounded_sum) + " bytes plus the unbounded pool " +
+                     (has_unbounded_string ? std::to_string(kP6FrameStringPoolBytes) : "0") +
+                     " bytes) exceeds the fixed 64 KiB linear-memory page") ;
+        return std::nullopt;
+    }
+    plan.payload_arena_capacity = static_cast<std::uint32_t>(arena_capacity);
+    // V2-B: rodata span (always names the fixed [256,1024) region).
+    plan.rodata_base = kP6RodataBase;
+    plan.rodata_extent = rodata_extent;
+
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4/D6 (rung V2-C): plan the capability
+    // bridge control page frame and the disjoint per-call-site result
+    // placements. They continue the same sum cursor after the input frame
+    // payload arena: control blocks (fixed-stride dense blocks), the scalar /
+    // PtrLen spill slots, then per call site the result root and its payload
+    // arena. The wire projection is required for every argument/result root so
+    // a non-frame-walkable shape rejects here with no partial artifact.
+    if (bridge_registry != nullptr && !bridge_registry->empty()) {
+        if (frame_wire_table == nullptr) {
+            add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
+                     "a frame capability bridge needs the projected wire-schema capability table");
+            return std::nullopt;
+        }
+        std::vector<BridgeCallPlan> &bridge_calls = bridge_registry->sites();
+        const auto align8 = [](std::uint64_t value) {
+            return (value + 7u) & ~std::uint64_t{7u};
+        };
+        // Emit the boundary roots first so result/param layout ids are stable.
+        const std::uint64_t arena_end =
+            static_cast<std::uint64_t>(plan.payload_arena_base) +
+            plan.payload_arena_capacity;
+        std::uint64_t cursor = align8(arena_end);
+
+        // The fixed block stride covers the largest block (8 + 8*max_arity),
+        // 8-aligned.
+        std::uint32_t max_arity = 0;
+        std::uint64_t spill_total = 0;
+        for (const BridgeCallPlan &site : bridge_calls) {
+            max_arity = std::max(max_arity,
+                                 static_cast<std::uint32_t>(site.param_vt.size()));
+            spill_total += align8(site.spill_bytes);
+        }
+        const std::uint64_t block_stride = align8(8u + 8u * max_arity);
+        const std::uint32_t control_base = static_cast<std::uint32_t>(cursor);
+        const std::uint64_t blocks_extent =
+            block_stride * static_cast<std::uint64_t>(bridge_calls.size());
+        cursor += blocks_extent;
+        const std::uint32_t spill_base = static_cast<std::uint32_t>(cursor);
+        const std::uint32_t spill_extent = static_cast<std::uint32_t>(spill_total);
+        cursor += spill_total;
+        plan.bridge_control_base = control_base;
+        plan.bridge_block_stride = static_cast<std::uint32_t>(block_stride);
+        plan.bridge_control_extent =
+            static_cast<std::uint32_t>(blocks_extent + spill_total);
+        plan.bridge_spill_base = spill_base;
+        plan.bridge_spill_extent = spill_extent;
+
+        // Resolve the projected capability records by source SymbolId (index
+        // identity never trusted from the call statement).
+        std::unordered_map<std::uint64_t, const ir::core::CoreWireCapabilitySchema *>
+            wire_by_symbol;
+        for (const ir::core::CoreWireCapabilitySchema &schema :
+             frame_wire_table->capabilities) {
+            wire_by_symbol.emplace(schema.source_symbol, &schema);
+        }
+
+        std::uint32_t running_spill = 0;
+        plan.bridge_call_sites.reserve(bridge_calls.size());
+        for (std::uint32_t index = 0; index < bridge_calls.size(); ++index) {
+            BridgeCallPlan &site = bridge_calls[index];
+            const CoreCapabilityDecl &capability = program.capabilities[site.capability.value];
+            if (!capability.symbol_ref.id.has_value()) {
+                add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
+                         "a frame bridge capability has no resolved SymbolId");
+                return std::nullopt;
+            }
+            const auto wire_it = wire_by_symbol.find(*capability.symbol_ref.id);
+            if (wire_it == wire_by_symbol.end()) {
+                add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
+                         "a frame bridge capability is missing from the projected wire-schema "
+                         "table");
+                return std::nullopt;
+            }
+            const ir::core::CoreWireCapabilitySchema &wire = *wire_it->second;
+            if (wire.params.size() != site.param_vt.size()) {
+                add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
+                         "a frame bridge call arity disagrees with the wire-schema parameter count");
+                return std::nullopt;
+            }
+
+            ir::core::CoreFrameBridgeCallSite record;
+            record.call_site_id = site.call_site_id;
+            record.source_symbol = *capability.symbol_ref.id;
+            record.arity = static_cast<std::uint32_t>(site.param_vt.size());
+            site.block_offset = index * static_cast<std::uint32_t>(block_stride);
+            site.spill_base = spill_base + running_spill;
+            running_spill += static_cast<std::uint32_t>(align8(site.spill_bytes));
+            record.block_offset = site.block_offset;
+            record.param_layouts.reserve(site.param_vt.size());
+            for (std::uint32_t p = 0; p < site.param_vt.size(); ++p) {
+                const ir::core::CoreLayoutId full_param =
+                    layouts.value_layouts[site.param_vt[p].value];
+                const ir::core::CoreLayoutId dense_param =
+                    builder.emit_fixed(full_param, /*from_input=*/false);
+                if (builder.failed()) {
+                    add_diag(result, core_wasm_diag::kUnsupportedCapabilityFrame,
+                             "a frame bridge argument layout is not finalizable into the frame "
+                             "table (a nested bounded collection is outside the frame subset)");
+                    return std::nullopt;
+                }
+                const auto param_diags =
+                    ir::core::verify_frame_layout_wire_consistency(
+                        builder.table_ref(), dense_param, *frame_wire_table,
+                        wire.params[p]);
+                if (!param_diags.empty()) {
+                    add_diag(result, core_wasm_diag::kUnsupportedCapabilityFrame,
+                             "a frame bridge argument is not representable on the wire frame "
+                             "subset (map/f64/decimal/duration/timestamp/uuid shapes stay "
+                             "fail-closed)");
+                    return std::nullopt;
+                }
+                record.param_layouts.push_back(dense_param);
+            }
+            const ir::core::CoreLayoutId full_result =
+                layouts.value_layouts[site.result_vt.value];
+            const ir::core::CoreLayoutId dense_result =
+                builder.emit_fixed(full_result, /*from_input=*/false);
+            if (builder.failed()) {
+                add_diag(result, core_wasm_diag::kUnsupportedCapabilityFrame,
+                         "a frame bridge result layout is not finalizable into the frame table");
+                return std::nullopt;
+            }
+            const auto result_diags =
+                ir::core::verify_frame_layout_wire_consistency(
+                    builder.table_ref(), dense_result, *frame_wire_table,
+                    wire.result);
+            if (!result_diags.empty()) {
+                add_diag(result, core_wasm_diag::kUnsupportedCapabilityFrame,
+                         "a frame bridge result is not representable on the wire frame subset");
+                return std::nullopt;
+            }
+            record.result_layout = dense_result;
+
+            // Disjoint result placement + its String payload arena on the sum
+            // cursor. The result extent is the aligned layout root size; the
+            // payload arena covers bounded String upper bounds plus the shared
+            // unbounded pool (D6).
+            const ir::core::CoreLayout &result_layout =
+                builder.table_ref().layouts[dense_result.value];
+            const std::uint64_t result_extent = align8(result_layout.size);
+            if (result_extent == 0 || cursor > kU32Max ||
+                cursor + result_extent > ir::core::kCoreWasmFixedLinearMemoryCapacityBytes) {
+                add_diag(result, core_wasm_diag::kResourceExhausted,
+                         "a frame bridge result placement exceeds the fixed 64 KiB linear-memory "
+                         "page");
+                return std::nullopt;
+            }
+            site.result_base = static_cast<std::uint32_t>(cursor);
+            record.result_base = site.result_base;
+            record.result_extent = static_cast<std::uint32_t>(result_extent);
+            cursor += result_extent;
+            std::uint64_t result_bounded = 0;
+            bool result_unbounded = false;
+            if (!accumulate_input_string_arena(builder.table_ref(),
+                                               dense_result, *frame_wire_table,
+                                               wire.result, result_bounded,
+                                               result_unbounded)) {
+                add_diag(result, core_wasm_diag::kInvalidLayout,
+                         "the frame bridge result layout and wire schema disagree on a String "
+                         "slot");
+                return std::nullopt;
+            }
+            std::uint64_t payload_capacity = align8(result_bounded);
+            if (result_unbounded) {
+                payload_capacity += kP6FrameStringPoolBytes;
+            }
+            cursor = align8(cursor);
+            if (cursor + payload_capacity > ir::core::kCoreWasmFixedLinearMemoryCapacityBytes) {
+                add_diag(result, core_wasm_diag::kResourceExhausted,
+                         "a frame bridge result String payload arena exceeds the fixed 64 KiB "
+                         "linear-memory page");
+                return std::nullopt;
+            }
+            record.result_payload_base = static_cast<std::uint32_t>(cursor);
+            record.result_payload_capacity =
+                static_cast<std::uint32_t>(payload_capacity);
+            cursor += payload_capacity;
+
+            plan.bridge_call_sites.push_back(std::move(record));
+        }
+        // Install the page-frame coordinates the handler emit reads.
+        bridge_registry->install_coordinates(control_base,
+                                             static_cast<std::uint32_t>(block_stride),
+                                             spill_base);
+    }
+    // Finalize the self-contained dense table after every boundary root and
+    // bridge argument/result root has been emitted.
+    plan.table = builder.take_table();
+    return plan;
 }
 
 [[nodiscard]] bool compile_reachable_fn_bodies(
@@ -8777,6 +9899,12 @@ input_frame_backing_high_water(const CoreProgram &program,
     // boundary), so an fn String literal keeps failing closed.
     RodataLiteralPool rodata_pool;
 
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): the module-wide bridge
+    // call-site registry every frame-lane HANDLER builder registers into. It is
+    // populated during planning and physically laid out (control blocks,
+    // disjoint result placements) before handler bodies are emitted.
+    BridgeCallRegistry bridge_registry;
+
     // RFC 0026 P6-2: a computed-goto handler compiles to its OWN `() -> i32`
     // function, so its locals are private and every handler can be emitted
     // immediately (no function-wide local-pool base to resolve first).
@@ -8897,7 +10025,8 @@ input_frame_backing_high_water(const CoreProgram &program,
         const bool single_goto =
             statements.size() == 1 && std::holds_alternative<CoreGotoStmt>(statements.front().node);
         if (!single_goto) {
-            if (!handler->body.statements.empty() && is_p6_computation_region(handler->body)) {
+            if (!handler->body.statements.empty() &&
+                is_p6_computation_region(handler->body, policy.allow_bridge)) {
                 if (!policy.allow_computed_goto) {
                     add_diag(result,
                              policy.unsupported_code,
@@ -8915,6 +10044,23 @@ input_frame_backing_high_water(const CoreProgram &program,
                                                                   used_exprs,
                                                                   used_values,
                                                                   result);
+                // V2-C: a direct-agent frame handler may plan ordered capability
+                // bridge calls; the workflow packaging policy keeps this off. The
+                // registry (and the rodata pool) is installed ONLY into a handler
+                // whose region actually reaches a capability statement: a pure
+                // goto handler stays on the closed V2-A lane, so a String field
+                // read there keeps failing closed instead of being silently
+                // admitted merely because the MODULE has a bridge elsewhere.
+                // Reaching a capability in an allow_bridge builder is what makes
+                // this a bridge handler; it also owns the shared rodata pool so a
+                // computed continuation can compare a bridge result against a
+                // String literal straight out of the Data region.
+                if (policy.allow_bridge &&
+                    region_contains_capability(handler->body)) {
+                    builder->install_bridge_registry(&bridge_registry,
+                                                     CoreStateId{state});
+                    builder->install_rodata_pool(&rodata_pool);
+                }
                 if (!builder->plan()) {
                     return std::nullopt;
                 }
@@ -9105,15 +10251,72 @@ input_frame_backing_high_water(const CoreProgram &program,
             plan.imports.push_back(capability->capability);
         }
     }
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): every REACHABLE planned
+    // bridge call site contributes its capability import and survives into the
+    // dense call-site table; a call planned in an unreachable handler is
+    // filtered out and the surviving sites are renumbered to a dense prefix so
+    // their block coordinates stay contiguous.
+    if (!bridge_registry.empty()) {
+        std::vector<BridgeCallPlan> &all_sites = bridge_registry.sites();
+        const bool any_unreachable = std::any_of(
+            all_sites.begin(), all_sites.end(),
+            [&](const BridgeCallPlan &site) {
+                return !reachable_state[site.state.value];
+            });
+        if (any_unreachable) {
+            // Filter into a dense vector by COPY first (so a no-filter run
+            // never leaves moved-from sites behind), renumber, then replace.
+            std::vector<BridgeCallPlan> reachable_sites;
+            reachable_sites.reserve(all_sites.size());
+            for (const BridgeCallPlan &site : all_sites) {
+                if (reachable_state[site.state.value]) {
+                    reachable_sites.push_back(site);
+                }
+            }
+            std::unordered_map<std::uint32_t, std::uint32_t> remap;
+            for (std::uint32_t new_id = 0; new_id < reachable_sites.size(); ++new_id) {
+                remap.emplace(reachable_sites[new_id].call_site_id, new_id);
+                reachable_sites[new_id].call_site_id = new_id;
+            }
+            for (const PlannedComputedHandler &planned : planned_handlers) {
+                planned.builder->remap_bridge_call_ids(remap);
+            }
+            all_sites = std::move(reachable_sites);
+        }
+        for (const BridgeCallPlan &site : all_sites) {
+            plan.imports.push_back(site.capability);
+        }
+        plan.bridge_calls = all_sites;
+    }
     std::sort(plan.imports.begin(), plan.imports.end(), [](auto lhs, auto rhs) {
         return lhs.value < rhs.value;
     });
     plan.imports.erase(std::unique(plan.imports.begin(), plan.imports.end()), plan.imports.end());
-    if (plan.imports.size() > 1) {
+    // The opaque capability-FINAL lane admits at most one REACHABLE capability
+    // final (the E2 least-privilege rule; a capability final on an unreachable
+    // state is simply not imported). A frame bridge module (observed through
+    // runv) can never also reach such a final — runv has no capability-final
+    // arm — so a reachable bridge call and a reachable capability final in one
+    // agent is rejected explicitly.
+    std::uint32_t reachable_capability_finals = 0;
+    for (std::uint32_t state = 0; state < plan.actions.size(); ++state) {
+        if (reachable_state[state] &&
+            std::holds_alternative<CapabilityAction>(plan.actions[state])) {
+            ++reachable_capability_finals;
+        }
+    }
+    if (reachable_capability_finals > 1) {
         add_diag(result,
                  core_wasm_diag::kUnsupportedCapabilityFrame,
                  "KR6.5 " + std::string(policy.slice) +
-                     " computed-goto graph reaches more than one capability final");
+                     " capability-final graph reaches more than one opaque capability final");
+        return std::nullopt;
+    }
+    if (reachable_capability_finals == 1 && !bridge_registry.empty()) {
+        add_diag(result,
+                 core_wasm_diag::kUnsupportedCapabilityFrame,
+                 "a frame bridge agent cannot share its runv lane with an opaque capability "
+                 "final (the P6-7 frame lane has one terminal observation kind per module)");
         return std::nullopt;
     }
     if (plan.imports.size() >
@@ -9188,17 +10391,27 @@ input_frame_backing_high_water(const CoreProgram &program,
         }
     }
 
-    // V2-A fail-closed gate: a computed final is a raw-P4-D frame module and
-    // must carry ZERO capability imports (the v1 §4.4 mix rejection, narrowed
-    // for the frame bridge — an in-handler bridge call is the V2-C rung). This
-    // catches both a capability FINAL (already excluded above) and a capability
-    // reached through an effectful outlined fn in a non-final handler.
-    if (has_planned_computed_final && !plan.imports.empty()) {
-        add_diag(result,
-                 core_wasm_diag::kUnsupportedCapabilityFrame,
-                 "a computed-final agent cannot reach a capability on the P6-7 frame lane "
-                 "(raw P4-D finals and wire-JSON capabilities never mix in one agent)");
-        return std::nullopt;
+    // V2-A fail-closed gate: a computed final that ALSO reaches an OPAQUE
+    // capability final (or an effectful outlined fn) is the forbidden
+    // raw-P4-D/wire-JSON mix. V2-C lifts this for the FRAME BRIDGE: a
+    // computed-final agent may reach in-handler bridge capabilities, whose
+    // results live in the same disjoint frame placements and are materialized
+    // through runv. The remaining opaque imports must therefore all be
+    // bridge-mode.
+    if (has_planned_computed_final) {
+        const bool opaque_imports =
+            std::any_of(plan.imports.begin(), plan.imports.end(),
+                        [&](CoreCapabilityId id) {
+                            return !bridge_registry.uses_capability(id);
+                        });
+        if (opaque_imports) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedCapabilityFrame,
+                     "a computed-final agent cannot reach an opaque capability on the P6-7 "
+                     "frame lane (raw P4-D finals mix only with frame-bridge capabilities, "
+                     "never wire-JSON tuple finals)");
+            return std::nullopt;
+        }
     }
 
     const std::uint32_t agent_fn_base =
@@ -9265,6 +10478,159 @@ input_frame_backing_high_water(const CoreProgram &program,
         plan.rodata_extent = rodata_pool.extent();
     }
 
+    // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): a module that projects
+    // the raw P4-D input frame, materializes a computed final, OR carries an
+    // in-handler capability bridge is a P6-frame module. Build its physical
+    // section plan HERE (after the import table and the reachable bridge sites
+    // are fixed, before handler emission), because the bridge emit reads the
+    // control-block / spill coordinates the physical planner installs. The
+    // handler ACTIONS (and plan.has_computed_final / reads_raw_input_frame) are
+    // published only during the emit loop below, so derive the predicates from
+    // the already-planned handlers here.
+    const bool planned_computed_final =
+        std::any_of(planned_handlers.begin(), planned_handlers.end(),
+                    [](const PlannedComputedHandler &planned) {
+                        return planned.is_final_return;
+                    });
+    const bool planned_raw_read =
+        std::any_of(planned_handlers.begin(), planned_handlers.end(),
+                    [](const PlannedComputedHandler &planned) {
+                        return planned.builder->reads_raw_input_frame();
+                    });
+    const bool needs_frame_section =
+        planned_raw_read || planned_computed_final || !bridge_registry.empty();
+    // A bridge call or a computed final REQUIRES the frame sections (there is
+    // no sectionless observation for either). A raw-projecting agent whose
+    // boundary is not yet wire-representable keeps the legacy sectionless
+    // raw-frame fallback (its pre-P6-7 skip).
+    const bool frame_section_required =
+        planned_computed_final || !bridge_registry.empty();
+    const bool frame_lane_eligible =
+        plan.fns.empty() && plan.closure_table.empty();
+    if (needs_frame_section) {
+        if (!frame_lane_eligible) {
+            // An FB-lane agent (outlined fn / closure) may still project an
+            // input field in a handler, but the v1 eligibility rule keeps it on
+            // the opaque wire-JSON sectionless lane; only a REQUIRED frame
+            // section (computed final / bridge) rejects here.
+            if (frame_section_required) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedCapabilityFrame,
+                         "a P6-frame agent cannot mix the frame lane with outlined fns or "
+                         "closures");
+                return std::nullopt;
+            }
+        } else {
+        const CoreAgentDecl &agent_decl = program.agents[target.value];
+        auto candidate_boundary = [&]()
+            -> std::optional<std::pair<ir::core::CoreValueTypeId,
+                                       ir::core::CoreValueTypeId>> {
+            auto input_vt = frame_boundary_value_type(program, agent_decl.input_type);
+            auto output_vt = frame_boundary_value_type(program, agent_decl.output_type);
+            if (!input_vt.has_value() || !output_vt.has_value()) {
+                return std::nullopt;
+            }
+            return std::pair{*input_vt, *output_vt};
+        }();
+        if (!candidate_boundary.has_value()) {
+            if (frame_section_required) {
+                add_diag(result, core_wasm_diag::kInvalidLayout,
+                         "a P6-frame agent boundary nominal has no finalized argument-less value "
+                         "type");
+                return std::nullopt;
+            }
+        } else {
+            // The wire projection covers BOTH the capability imports and the
+            // agent boundary roots, in one table, so the bridge argument/result
+            // roots and the runv pack/encode roots share a single verified
+            // schema.
+            auto projection = ir::core::project_core_wire_schema(
+                program, plan.imports, candidate_boundary);
+            bool projection_ok = projection.ok() &&
+                                 projection.table->frame_roots.has_value();
+            bool physical_ok = false;
+            std::optional<FrameSectionPlan> frame_section;
+            const std::size_t planner_diags_before = result.diagnostics.size();
+            if (projection_ok) {
+                frame_section = build_frame_section_plan(
+                    program, layouts, agent_decl, plan.rodata_extent,
+                    &*projection.table, &bridge_registry, result);
+                physical_ok = frame_section.has_value();
+            }
+            bool consistent = false;
+            std::vector<ir::core::CoreLowerDiagnostic> bridge_site_diags;
+            if (physical_ok) {
+                const auto &roots = *projection.table->frame_roots;
+                const auto layout_section =
+                    frame_section_to_layout_section(*frame_section);
+                consistent =
+                    ir::core::verify_frame_layout_wire_consistency(
+                        frame_section->table, frame_section->input_layout,
+                        *projection.table, roots.input)
+                        .empty() &&
+                    ir::core::verify_frame_layout_wire_consistency(
+                        frame_section->table, frame_section->output_layout,
+                        *projection.table, roots.output)
+                        .empty();
+                if (consistent) {
+                    bridge_site_diags = ir::core::verify_frame_bridge_sites(
+                        layout_section, *projection.table);
+                    consistent = bridge_site_diags.empty();
+                }
+            }
+            if (projection_ok && physical_ok && consistent) {
+                plan.frame_section =
+                    std::make_unique<FrameSectionPlan>(std::move(*frame_section));
+                plan.frame_wire_table = std::move(*projection.table);
+                // The rodata pool itself moves onto the plan only AFTER every
+                // handler body has been emitted below (the builders hold a
+                // non-owning pointer to it).
+            } else if (frame_section_required) {
+                // Surface the real diagnostic when the physical planner or the
+                // admission-side bridge-site verifier added one; otherwise give
+                // the explicit frame rejection.
+                for (const ir::core::CoreLowerDiagnostic &diag : bridge_site_diags) {
+                    add_diag(result, core_wasm_diag::kUnsupportedCapabilityFrame,
+                             diag.message);
+                }
+                if (result.diagnostics.empty()) {
+                    add_diag(result,
+                             core_wasm_diag::kUnsupportedCapabilityFrame,
+                             "a P6-frame computed-final or capability-bridge agent is not "
+                             "representable on the P6-7 frame lane (its boundary or capability "
+                             "ABI must project to the v1 wire-schema frame roots)");
+                }
+                return std::nullopt;
+            } else {
+                // A raw-projecting-only agent (frame section not required)
+                // normally keeps the legacy sectionless fallback when its
+                // boundary does not project. But a HARD planner failure
+                // (RESOURCE_EXHAUSTED: the fixed 64 KiB page genuinely cannot
+                // hold the backing geometry) must NEVER downgrade to that
+                // fallback — the whole point of the section is page
+                // accounting, and emitting a sectionless module would hide a
+                // real resource ceiling. Only an expressibility rejection
+                // (unsupported-orchestration / unsupported-frame) is a soft
+                // skip to the legacy lane.
+                bool hard_planner_failure = false;
+                for (std::size_t i = planner_diags_before;
+                     i < result.diagnostics.size(); ++i) {
+                    if (result.diagnostics[i].code ==
+                        core_wasm_diag::kResourceExhausted) {
+                        hard_planner_failure = true;
+                        break;
+                    }
+                }
+                if (hard_planner_failure) {
+                    return std::nullopt;
+                }
+            }
+            // A raw-projecting-only agent with an unprojectable boundary keeps
+            // the legacy sectionless fallback: no frame plan is attached.
+        }
+        }
+    }
+
     // Now that ordinals are fixed, emit the planned computed handlers in
     // state-loop order and publish their actions (the function index is the
     // handler's position in plan.handlers). A builder owns state via a
@@ -9279,6 +10645,10 @@ input_frame_backing_high_water(const CoreProgram &program,
         std::unique_ptr<P6ComputationHandlerBuilder> builder = std::move(planned.builder);
         builder->set_fn_call_tables(&instance_to_ordinal, &handler_fn_base);
         builder->install_closure_tables(fn_to_table_slot, entry_closure_type_index);
+        // V2-C: a frame handler's bridge call emits the ahfl_cap import at its
+        // sorted-table ordinal; fn handlers already receive this in the
+        // reachable-fn driver.
+        builder->install_import_table(&plan.imports);
         if (plan.construct_heap_enabled) {
             builder->reset_construct_heap_on_entry(plan.construct_heap_base);
         }
@@ -9302,9 +10672,8 @@ input_frame_backing_high_water(const CoreProgram &program,
             plan.reads_raw_input_frame = true;
         }
     }
-    // V2-B: publish the frozen pool to the plan only now (the move must happen
-    // after the last builder emitted; the builders hold non-owning pointers
-    // whose lifetime ends with this loop).
+    // V2-B: move the frozen pool onto the plan only after the last handler
+    // body was emitted (the builders hold non-owning pointers into it).
     if (plan.rodata_extent != 0) {
         plan.rodata = std::move(rodata_pool);
     }
@@ -9588,6 +10957,7 @@ build_workflow_plan(const CoreProgram &program,
                              AgentPlanPolicy{core_wasm_diag::kUnsupportedWorkflowFrame,
                                              /*allow_capability=*/true,
                                              /*allow_computed_goto=*/false,
+                                             /*allow_bridge=*/false,
                                              "E3"});
         if (!agent_plan.has_value()) {
             return std::nullopt;
@@ -10156,20 +11526,38 @@ encode_module(const CoreProgram &program,
     ByteBuffer module;
     module.raw({0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
 
+    const bool has_bridge = !plan.bridge_calls.empty();
+    // One capability uses exactly one mode per module: a bridge call site
+    // names the bridge functype; every other capability import keeps the opaque
+    // tuple type.
+    std::vector<bool> import_is_bridge(plan.imports.size(), false);
+    if (has_bridge) {
+        for (const BridgeCallPlan &site : plan.bridge_calls) {
+            const auto it = std::find(plan.imports.begin(), plan.imports.end(), site.capability);
+            if (it == plan.imports.end()) {
+                return std::nullopt;
+            }
+            import_is_bridge[static_cast<std::size_t>(
+                std::distance(plan.imports.begin(), it))] = true;
+        }
+    }
+
     ByteBuffer types;
     types.u32(5 + static_cast<std::uint32_t>(plan.fns.size()) +
                   static_cast<std::uint32_t>(plan.closure_signatures.size()) +
-                  (p6_frame ? 1u : 0u));
+                  (p6_frame ? 1u : 0u) + (has_bridge ? 1u : 0u));
     append_func_type(types, {}, {kI32});
     append_func_type(types, {kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {});
     append_func_type(types, {kI32, kI32}, {kI32});
     append_func_type(types, {kI32, kI32}, {kI32, kI32, kI32});
     // RFC 0026 P6-7 D3: the additive runv functype index follows every fixed,
-    // per-fn, and closure type so no existing index moves.
+    // per-fn, and closure type so no existing index moves. The V2-C bridge
+    // functype is appended after runv (it is the very last type).
     const std::uint32_t runv_type_index =
         5u + static_cast<std::uint32_t>(plan.fns.size()) +
         static_cast<std::uint32_t>(plan.closure_signatures.size());
+    const std::uint32_t bridge_type_index = runv_type_index + (p6_frame ? 1u : 0u);
     // RFC 0026 FB-1: one functype per outlined fn, in ordinal order, appended
     // beyond the five fixed types. Wasm permits structurally duplicate
     // functypes, so each fn gets its own type index (5 + ordinal) even when
@@ -10202,10 +11590,15 @@ encode_module(const CoreProgram &program,
         types.u32(1);
         types.byte(signature.result);
     }
-    // RFC 0026 P6-7 D3: runv `() -> (status:i32, value_ptr:i32)` is the LAST
-    // additive functype, appended after every existing type so no index moves.
+    // RFC 0026 P6-7 D3: runv `() -> (status:i32, value_ptr:i32)` is appended
+    // after every existing type so no index moves. The V2-C bridge functype
+    // `(i32)->(i32,i32)` follows as the very LAST type (one mode per capability
+    // field; an old host that meets the unknown functype fails closed).
     if (p6_frame) {
         append_func_type(types, {}, {kI32, kI32});
+    }
+    if (has_bridge) {
+        append_func_type(types, {kI32}, {kI32, kI32});
     }
     if (!append_section(module, kSectionType, types)) {
         return std::nullopt;
@@ -10214,13 +11607,15 @@ encode_module(const CoreProgram &program,
     if (!plan.imports.empty()) {
         ByteBuffer imports;
         imports.u32(static_cast<std::uint32_t>(plan.imports.size()));
-        for (const auto id : plan.imports) {
+        for (std::size_t ordinal = 0; ordinal < plan.imports.size(); ++ordinal) {
+            const auto id = plan.imports[ordinal];
             const auto symbol = *program.capabilities[id.value].symbol_ref.id;
             if (!imports.name("ahfl_cap") || !imports.name("cap_" + std::to_string(symbol))) {
                 return std::nullopt;
             }
             imports.byte(kImportFunction);
-            imports.u32(kTypeCapabilityTuple);
+            imports.u32(import_is_bridge[ordinal] ? bridge_type_index
+                                                 : kTypeCapabilityTuple);
         }
         if (!append_section(module, kSectionImport, imports)) {
             return std::nullopt;
@@ -11317,296 +12712,6 @@ build_import_descriptors(const CoreProgram &program,
     return walk;
 }
 
-// ---------------------------------------------------------------------------
-// RFC 0026 P6-7 rung A: the `ahfl.core-layout.v1` section plan.
-//
-// A P6-frame agent's boundary roots are its input/output value types. The plan
-// enumerates every input-reached bounded CONTAINER in a depth-first,
-// declaration-order boundary walk and assigns each a DISJOINT backing placement
-// by the sum-of-prior-backing rule (design section 6.2), then derives the
-// frame-payload arena span (0-capacity at rung A: input String packing arrives
-// with the packer in rung C; the arena address is still pinned deterministically
-// so no later rung can move it). Every coordinate is compile-time constant.
-// ---------------------------------------------------------------------------
-
-struct FrameSectionPlan {
-    ir::core::CoreValueTypeId input_vt{};
-    ir::core::CoreValueTypeId output_vt{};
-    /// Roots / placement container ids are already REMAPPED into the dense
-    /// `table` id space below (they are NOT ids into the full program layout
-    /// table).
-    ir::core::CoreLayoutId input_layout{};
-    ir::core::CoreLayoutId output_layout{};
-    std::uint32_t input_size{0};
-    std::uint32_t output_size{0};
-    std::vector<ir::core::CoreFrameBackingPlacement> placements;
-    std::uint32_t payload_arena_base{0};
-    std::uint32_t payload_arena_capacity{0};
-    /// V2-B: rodata literal-pool span carried to the section payload.
-    std::uint32_t rodata_base{0};
-    std::uint32_t rodata_extent{0};
-    /// The self-contained boundary table: exactly the layouts reachable from
-    /// the two roots, with all edges remapped into this dense table.
-    ir::core::CoreLayoutTable table;
-};
-
-[[nodiscard]] std::optional<ir::core::CoreValueTypeId>
-frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
-    return p6_nominal_value_type(program, nominal);
-}
-
-// RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): walk the INPUT boundary's dense
-// P4-D layout and its wire schema IN LOCKSTEP (the same shape correspondence
-// verify_frame_layout_wire_consistency proves), metering every String slot:
-// a bounded String contributes its schema upper bound, and the first unbounded
-// String marks the shared kP6FrameStringPoolBytes reservation. A shape
-// disagreement fails the plan. Returns false on malformed ids.
-[[nodiscard]] bool accumulate_input_string_arena(
-    const ir::core::CoreLayoutTable &layouts,
-    ir::core::CoreLayoutId layout_id,
-    const ir::core::CoreWireSchemaTable &wire,
-    ir::core::CoreWireSchemaNodeId wire_id,
-    std::uint64_t &bounded_sum,
-    bool &has_unbounded_string) {
-    if (layout_id.value >= layouts.layouts.size() ||
-        wire_id.value >= wire.nodes.size()) {
-        return false;
-    }
-    const auto &layout = layouts.layouts[layout_id.value].shape;
-    const auto &shape = wire.nodes[wire_id.value].shape;
-    return std::visit(
-        Overloaded{
-            [&](const ir::core::CoreLayoutScalar &) { return true; },
-            [&](const ir::core::CoreLayoutPending &) { return false; },
-            [&](const ir::core::CoreLayoutPtrLen &) {
-                const auto *str = std::get_if<ir::core::CoreWireSchemaString>(&shape);
-                if (str == nullptr) {
-                    return false;
-                }
-                if (str->length_bounds.has_value()) {
-                    bounded_sum += static_cast<std::uint64_t>(str->length_bounds->second);
-                    if (bounded_sum > std::numeric_limits<std::uint32_t>::max()) {
-                        return false;
-                    }
-                } else {
-                    has_unbounded_string = true;
-                }
-                return true;
-            },
-            [&](const ir::core::CoreLayoutBytes &) { return false; },
-            [&](const ir::core::CoreLayoutFnRef &) { return false; },
-            [&](const ir::core::CoreLayoutClosure &) { return false; },
-            [&](const ir::core::CoreLayoutUninhabited &) { return false; },
-            [&](const ir::core::CoreLayoutStruct &s) {
-                const auto *wst = std::get_if<ir::core::CoreWireSchemaStruct>(&shape);
-                if (wst == nullptr || wst->fields.size() != s.field_layouts.size()) {
-                    return false;
-                }
-                for (std::uint32_t i = 0; i < s.field_layouts.size(); ++i) {
-                    if (!accumulate_input_string_arena(layouts, s.field_layouts[i], wire,
-                                                       wst->fields[i].type, bounded_sum,
-                                                       has_unbounded_string)) {
-                        return false;
-                    }
-                }
-                return true;
-            },
-            [&](const ir::core::CoreLayoutEnum &e) {
-                const auto *wen = std::get_if<ir::core::CoreWireSchemaEnum>(&shape);
-                if (wen == nullptr || wen->variants.size() != e.variant_payload_layouts.size()) {
-                    return false;
-                }
-                for (std::uint32_t v = 0; v < e.variant_payload_layouts.size(); ++v) {
-                    const auto payload_id = e.variant_payload_layouts[v];
-                    if (payload_id.value >= layouts.layouts.size()) {
-                        return false;
-                    }
-                    const auto *payload = std::get_if<ir::core::CoreLayoutStruct>(
-                        &layouts.layouts[payload_id.value].shape);
-                    if (payload == nullptr ||
-                        payload->field_layouts.size() != wen->variants[v].slots.size()) {
-                        return false;
-                    }
-                    for (std::uint32_t i = 0; i < payload->field_layouts.size(); ++i) {
-                        if (!accumulate_input_string_arena(layouts,
-                                                           payload->field_layouts[i], wire,
-                                                           wen->variants[v].slots[i].type,
-                                                           bounded_sum, has_unbounded_string)) {
-                            return false;
-                        }
-                    }
-                }
-                return true;
-            },
-            [&](const ir::core::CoreLayoutContainer &c) {
-                // A bounded List carries one element slot; a Map carries key +
-                // value slots (key shapes stay outside the frame subset, so a
-                // String key would already have failed wire projection).
-                const auto *seq = std::get_if<ir::core::CoreWireSchemaSequence>(&shape);
-                const auto *map = std::get_if<ir::core::CoreWireSchemaMap>(&shape);
-                if (seq != nullptr) {
-                    return accumulate_input_string_arena(layouts, c.element, wire, seq->element,
-                                                         bounded_sum, has_unbounded_string);
-                }
-                if (map != nullptr) {
-                    return accumulate_input_string_arena(layouts, c.element, wire, map->key,
-                                                        bounded_sum, has_unbounded_string) &&
-                           c.value.has_value() &&
-                           accumulate_input_string_arena(layouts, *c.value, wire, map->value,
-                                                        bounded_sum, has_unbounded_string);
-                }
-                return false;
-            },
-        },
-        layout);
-}
-
-
-[[nodiscard]] std::optional<FrameSectionPlan>
-build_frame_section_plan(const CoreProgram &program,
-                         const ir::core::CoreLayoutTable &layouts,
-                         const CoreAgentDecl &agent,
-                         std::uint32_t rodata_extent,
-                         const ir::core::CoreWireSchemaTable *frame_wire_table,
-                         CoreWasmCodegenResult &result) {
-    const auto input_vt = frame_boundary_value_type(program, agent.input_type);
-    const auto output_vt = frame_boundary_value_type(program, agent.output_type);
-    if (!input_vt.has_value() || !output_vt.has_value()) {
-        add_diag(result, core_wasm_diag::kInvalidLayout,
-                 "a P6-frame agent boundary nominal has no finalized argument-less value type");
-        return std::nullopt;
-    }
-    const ir::core::CoreLayout *input_layout =
-        p6_value_layout(program, layouts, *input_vt);
-    const ir::core::CoreLayout *output_layout =
-        p6_value_layout(program, layouts, *output_vt);
-    if (input_layout == nullptr || output_layout == nullptr) {
-        add_diag(result, core_wasm_diag::kInvalidLayout,
-                 "a P6-frame agent boundary nominal has no finalized P4-D layout");
-        return std::nullopt;
-    }
-
-    FrameSectionPlan plan;
-    plan.input_vt = *input_vt;
-    plan.output_vt = *output_vt;
-    const ir::core::CoreLayoutId full_input_layout =
-        layouts.value_layouts[input_vt->value];
-    const ir::core::CoreLayoutId full_output_layout =
-        layouts.value_layouts[output_vt->value];
-    // Bound the descriptor's u32 frame sizes explicitly instead of narrowing a
-    // u64 layout size with an unchecked static_cast, and enforce the design
-    // section 6.1 frame-region capacities here too (input <= 3072; an identity
-    // final's output equals its input and a computed-final output <= 4096 is
-    // gated again when computed emission lands). Today's 64 KiB RESOURCE gates
-    // keep these unreachable, but the descriptor is the authority the host
-    // cross-checks against the u64-encoded section.
-    constexpr std::uint64_t kU32Max = std::numeric_limits<std::uint32_t>::max();
-    if (input_layout->size > kU32Max ||
-        input_layout->size > ir::core::kP6AggregateInputCapacity) {
-        add_diag(result,
-                 core_wasm_diag::kResourceExhausted,
-                 "P6 frame input boundary exceeds the input frame region of the fixed 64 KiB "
-                 "linear-memory page");
-        return std::nullopt;
-    }
-    if (output_layout->size > kU32Max ||
-        output_layout->size > ir::core::kP6AggregateOutputCapacity) {
-        add_diag(result,
-                 core_wasm_diag::kResourceExhausted,
-                 "P6 frame output boundary exceeds the output frame region of the fixed 64 KiB "
-                 "linear-memory page");
-        return std::nullopt;
-    }
-    plan.input_size = static_cast<std::uint32_t>(input_layout->size);
-    plan.output_size = static_cast<std::uint32_t>(output_layout->size);
-
-    BoundaryTableBuilder builder(layouts);
-    const ir::core::CoreLayoutId input_dense =
-        builder.emit_fixed(full_input_layout, /*from_input=*/true);
-    ir::core::CoreLayoutId output_dense = input_dense;
-    if (full_output_layout.value != full_input_layout.value) {
-        output_dense = builder.emit_fixed(full_output_layout, /*from_input=*/false);
-    }
-    if (builder.failed()) {
-        if (builder.nested_container()) {
-            add_diag(result, core_wasm_diag::kUnsupportedOrchestration,
-                     "a P6-frame bounded collection nests another container in its backing "
-                     "storage; nested bounded collections are outside the P6-7 frame lane");
-        } else {
-            add_diag(result, core_wasm_diag::kInvalidLayout,
-                     "a P6-frame boundary layout is not finalizable into a self-contained frame "
-                     "table");
-        }
-        return std::nullopt;
-    }
-    plan.table = builder.take_table();
-    plan.input_layout = input_dense;
-    plan.output_layout = output_dense;
-
-    // Every INPUT-REACHED fixed container occurrence, in boundary DFS order,
-    // gets a DISJOINT sum-of-prior-backing placement (the same SSOT the
-    // construct-heap relocation uses). Output-only occurrences (a distinct
-    // computed-output nominal) name no input placement at rung E.
-    FramePlacementFailure placement_failure = FramePlacementFailure::InvalidBacking;
-    const auto assigned =
-        assign_input_container_placements(plan.table, builder.occurrences(), placement_failure);
-    if (!assigned.has_value()) {
-        if (placement_failure == FramePlacementFailure::InvalidBacking) {
-            add_diag(result, core_wasm_diag::kInvalidLayout,
-                     "a P6-frame input container has an invalid backing layout");
-        } else {
-            add_diag(result,
-                     core_wasm_diag::kResourceExhausted,
-                     "P6 frame backing placements exceed the fixed 64 KiB linear-memory page");
-        }
-        return std::nullopt;
-    }
-    plan.placements = assigned->placements;
-    plan.payload_arena_base = assigned->payload_arena_base;
-    // RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): the input frame's packed
-    // String payloads need a REAL arena now (it was hardcoded 0 at rung A).
-    // Bounded String slots are metered exactly from their schema upper bound;
-    // every unbounded String slot is covered once by the shared
-    // kP6FrameStringPoolBytes reservation. The joint layout/wire walk below is
-    // the single derivation (a shared string shape is metered once).
-    std::uint64_t bounded_sum = 0;
-    bool has_unbounded_string = false;
-    if (frame_wire_table != nullptr && frame_wire_table->frame_roots.has_value()) {
-        if (!accumulate_input_string_arena(plan.table,
-                                           plan.input_layout,
-                                           *frame_wire_table,
-                                           frame_wire_table->frame_roots->input,
-                                           bounded_sum,
-                                           has_unbounded_string)) {
-            add_diag(result,
-                     core_wasm_diag::kInvalidLayout,
-                     "the P6-frame input layout and wire schema disagree on a String slot while "
-                     "planning the payload arena");
-            return std::nullopt;
-        }
-    }
-    std::uint64_t arena_capacity = (bounded_sum + 7u) & ~std::uint64_t{7u};
-    if (has_unbounded_string) {
-        arena_capacity += kP6FrameStringPoolBytes;
-    }
-    if (arena_capacity > std::numeric_limits<std::uint32_t>::max() ||
-        static_cast<std::uint64_t>(plan.payload_arena_base) + arena_capacity >
-            kCoreWasmFixedLinearMemoryCapacityBytes) {
-        add_diag(result,
-                 core_wasm_diag::kResourceExhausted,
-                 "the P6 input-frame String payload arena (bounded-slot bounds " +
-                     std::to_string(bounded_sum) + " bytes plus the unbounded pool " +
-                     (has_unbounded_string ? std::to_string(kP6FrameStringPoolBytes) : "0") +
-                     " bytes) exceeds the fixed 64 KiB linear-memory page") ;
-        return std::nullopt;
-    }
-    plan.payload_arena_capacity = static_cast<std::uint32_t>(arena_capacity);
-    // V2-B: rodata span (always names the fixed [256,1024) region).
-    plan.rodata_base = kP6RodataBase;
-    plan.rodata_extent = rodata_extent;
-    return plan;
-}
-
 [[nodiscard]] CoreWasmExecutionDescriptor build_agent_descriptor(const CoreProgram &program,
                                                                  const AgentPlan &plan,
                                                                  const FrameSectionPlan *frame_plan,
@@ -11643,20 +12748,64 @@ build_frame_section_plan(const CoreProgram &program,
         lane.payload_arena_capacity = frame_plan->payload_arena_capacity;
         lane.rodata_base = frame_plan->rodata_base;
         lane.rodata_extent = frame_plan->rodata_extent;
+        // V2-C: the capability bridge control page frame and per-call-site
+        // facts the Node host callback walks.
+        lane.bridge_control_base = frame_plan->bridge_control_base;
+        lane.bridge_block_stride = frame_plan->bridge_block_stride;
+        lane.bridge_control_extent = frame_plan->bridge_control_extent;
+        lane.bridge_spill_base = frame_plan->bridge_spill_base;
+        lane.bridge_spill_extent = frame_plan->bridge_spill_extent;
+        lane.bridge_call_sites.reserve(frame_plan->bridge_call_sites.size());
+        for (const auto &site : frame_plan->bridge_call_sites) {
+            CoreWasmBridgeCallSite bridge;
+            bridge.call_site_id = site.call_site_id;
+            const auto import_it = std::find_if(
+                plan.imports.begin(), plan.imports.end(),
+                [&](CoreCapabilityId id) {
+                    return program.capabilities[id.value].symbol_ref.id.has_value() &&
+                           *program.capabilities[id.value].symbol_ref.id ==
+                               site.source_symbol;
+                });
+            bridge.import_ordinal =
+                import_it == plan.imports.end()
+                    ? std::numeric_limits<std::uint32_t>::max()
+                    : static_cast<std::uint32_t>(
+                          std::distance(plan.imports.begin(), import_it));
+            bridge.source_symbol = site.source_symbol;
+            bridge.arity = site.arity;
+            bridge.block_offset = site.block_offset;
+            bridge.param_wire.reserve(site.param_layouts.size());
+            bridge.param_layout.reserve(site.param_layouts.size());
+            if (frame_wire_schema != nullptr) {
+                const auto cap_it = std::find_if(
+                    frame_wire_schema->capabilities.begin(),
+                    frame_wire_schema->capabilities.end(),
+                    [&](const ir::core::CoreWireCapabilitySchema &schema) {
+                        return schema.source_symbol == site.source_symbol;
+                    });
+                if (cap_it != frame_wire_schema->capabilities.end()) {
+                    for (const auto param : cap_it->params) {
+                        bridge.param_wire.push_back(param.value);
+                    }
+                    bridge.result_wire = cap_it->result.value;
+                }
+            }
+            for (const auto param_layout : site.param_layouts) {
+                bridge.param_layout.push_back(param_layout.value);
+            }
+            bridge.result_layout = site.result_layout.value;
+            bridge.result_base = site.result_base;
+            bridge.result_extent = site.result_extent;
+            bridge.result_payload_base = site.result_payload_base;
+            bridge.result_payload_capacity = site.result_payload_capacity;
+            lane.bridge_call_sites.push_back(std::move(bridge));
+        }
         descriptor.frame = std::move(lane);
         // Carry the exact boundary tables the sections encode so a generic host
         // can pack/encode without a second projection. Both are the same values
         // used to emit the module's verified custom sections.
-        ir::core::CoreFrameLayoutSection section;
-        section.format_version = 2;
-        section.table = frame_plan->table;
-        section.input_layout = frame_plan->input_layout;
-        section.output_layout = frame_plan->output_layout;
-        section.placements = frame_plan->placements;
-        section.payload_arena_base = frame_plan->payload_arena_base;
-        section.payload_arena_capacity = frame_plan->payload_arena_capacity;
-        section.rodata_base = frame_plan->rodata_base;
-        section.rodata_extent = frame_plan->rodata_extent;
+        ir::core::CoreFrameLayoutSection section =
+            frame_section_to_layout_section(*frame_plan);
         descriptor.frame_section = std::move(section);
         if (frame_wire_schema != nullptr) {
             descriptor.wire_schema = *frame_wire_schema;
@@ -11666,6 +12815,15 @@ build_frame_section_plan(const CoreProgram &program,
     descriptor.states = program.agents[plan.agent.value].states;
     descriptor.initial_state = plan.initial.value;
     descriptor.imports = build_import_descriptors(program, plan.imports);
+    // V2-C: tag each import with its functype protocol.
+    for (const BridgeCallPlan &site : plan.bridge_calls) {
+        const auto symbol = *program.capabilities[site.capability.value].symbol_ref.id;
+        for (auto &import : descriptor.imports) {
+            if (import.field == "cap_" + std::to_string(symbol)) {
+                import.mode = "bridge";
+            }
+        }
+    }
     descriptor.event_log_base = ir::core::kNodeEventLogBase;
     descriptor.event_header_bytes = ir::core::kNodeEventHeaderBytes;
     descriptor.event_record_bytes = ir::core::kNodeEventRecordBytes;
@@ -11877,115 +13035,38 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     // frame-module predicate (design §7.3 emission disjunction): such an agent
     // may never project its raw input (its handlers only construct the output)
     // but still carries the layout/wire sections and runv.
-    const CoreAgentDecl &agent_decl = program.agents[agent->value];
+    // RFC 0026 P6-7 frame-bridge v2 (rung V2-C): the frame section is physically
+    // planned exactly once, inside build_agent_plan BEFORE handler emission (a
+    // bridge handler's bytes embed the control-block coordinates). The emit
+    // entry only serializes the already-verified plan; a raw-projecting agent
+    // whose boundary is not wire-representable carries no plan and stays on the
+    // legacy sectionless raw-frame fallback.
     std::optional<FrameSectionPlan> frame_plan;
+    if (plan->frame_section) {
+        frame_plan = std::move(*plan->frame_section);
+        plan->frame_section.reset();
+    }
+    const bool is_frame_module = frame_plan.has_value();
     std::optional<std::pair<ir::core::CoreValueTypeId, ir::core::CoreValueTypeId>>
         frame_boundary;
-    const bool frame_lane_eligible = plan->imports.empty() && plan->fns.empty() &&
-                                     plan->closure_table.empty();
-    if ((plan->reads_raw_input_frame || plan->has_computed_final) && frame_lane_eligible) {
-        // Build into the PRIMARY result: a genuine hard failure (unfinalized
-        // boundary layout, backing/frame RESOURCE overflow) must reject the
-        // build with its diagnostic rather than be discarded into a throwaway
-        // result and silently downgraded to the sectionless legacy module.
-        // The String payload-arena capacity (D6/V2-B) is metered from the
-        // projected wire schema's length bounds, so the projection trial runs
-        // first and is passed to the physical plan.
-        auto candidate_boundary = [&]()
-            -> std::optional<std::pair<ir::core::CoreValueTypeId,
-                                       ir::core::CoreValueTypeId>> {
-            auto input_vt = frame_boundary_value_type(program, agent_decl.input_type);
-            auto output_vt = frame_boundary_value_type(program, agent_decl.output_type);
-            if (!input_vt.has_value() || !output_vt.has_value()) {
-                return std::nullopt;
-            }
-            return std::pair{*input_vt, *output_vt};
-        }();
-        if (!candidate_boundary.has_value()) {
-            add_diag(result, core_wasm_diag::kInvalidLayout,
-                     "a P6-frame agent boundary nominal has no finalized argument-less value type");
-            return result;
-        }
-        // The physical plan is sound regardless; only WIRE-PROJECTABILITY (a
-        // logical-schema concern the physical plan does not encode) can still
-        // decline the section. A boundary that is not yet wire-representable
-        // (e.g. a `Map<Bool,...>` frame; the map-key/raw-get surface stays on a
-        // later ladder per design section 11) falls back to the legacy
-        // SECTIONLESS raw module and its existing skip, with NO diagnostic.
-        auto trial = ir::core::project_core_wire_schema(program, {}, *candidate_boundary);
-        const bool trial_consistent =
-            trial.ok() && trial.table->frame_roots.has_value();
-        auto candidate =
-            build_frame_section_plan(program, layouts, agent_decl,
-                                     plan->rodata_extent,
-                                     trial_consistent ? &*trial.table : nullptr, result);
-        if (!candidate.has_value()) {
-            return result;
-        }
-        bool projectable = trial_consistent;
-        if (projectable) {
-            const auto &roots = *trial.table->frame_roots;
-            projectable =
-                ir::core::verify_frame_layout_wire_consistency(
-                    candidate->table, candidate->input_layout, *trial.table, roots.input)
-                    .empty() &&
-                ir::core::verify_frame_layout_wire_consistency(
-                    candidate->table, candidate->output_layout, *trial.table, roots.output)
-                    .empty();
-        }
-        if (projectable) {
-            frame_plan = std::move(candidate);
-            frame_boundary = std::move(candidate_boundary);
-        } else if (plan->has_computed_final) {
-            // A computed final REQUIRES the runv + frame sections: there is no
-            // legacy sectionless observation for a module that materializes an
-            // output frame. Unlike a raw-projecting module (which keeps its
-            // pre-P6-7 skip until its boundary is wire-representable), fail the
-            // build rather than emit a computed-final module with no frame lane.
-            add_diag(result,
-                     core_wasm_diag::kUnsupportedCapabilityFrame,
-                     "a computed-final agent boundary is not representable on the P6-7 frame "
-                     "lane (the input/output nominal must project to a v1 wire-schema frame root)");
-            return result;
-        }
-        // Not projectable and raw-input-only: legacy sectionless raw-frame
-        // module (no diagnostic).
+    if (is_frame_module) {
+        frame_boundary = std::pair{frame_plan->input_vt, frame_plan->output_vt};
     }
 
-    // RFC 0026 E4-B1: project the deterministic logical wire schema for exactly
-    // the reachable capability imports (already sorted/unique in the plan), then
-    // encode it to its canonical section payload. E1 no-import agents skip this
-    // entirely and stay byte-identical, EXCEPT an eligible P6-frame agent, whose
-    // boundary roots extend the projection. Any projection or encode failure
-    // fails closed: no partial artifact, no silent section drop.
+    // RFC 0026 E4-B1: the wire schema is projected once during planning for a
+    // frame module (capability roots + agent boundary roots). An opaque
+    // capability-final / FB module has no frame plan, so project its
+    // capability-only table here (the pre-V2-C path). A no-import non-frame
+    // agent carries no section.
     std::vector<std::uint8_t> wire_schema_payload;
     std::optional<ir::core::CoreWireSchemaTable> frame_wire_table;
-    if (!plan->imports.empty() || frame_boundary.has_value()) {
-        auto projection = ir::core::project_core_wire_schema(program, plan->imports,
-                                                             frame_boundary);
-        if (!projection.ok()) {
-            // Fail-closed seam: never assume a diagnostic is present. A future or
-            // defensive empty-diagnostics result must still reject with a fixed
-            // code, not deref an empty vector.
-            std::string message = "reachable capability import ABI is not wire-transportable";
-            ir::SourceRangeOpt range;
-            if (!projection.diagnostics.empty()) {
-                const auto &first = projection.diagnostics.front();
-                message += " (" + first.code + ")";
-                range = first.source_range;
-            }
-            add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message), range);
+    if (is_frame_module) {
+        if (!plan->frame_wire_table.has_value()) {
+            add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
+                     "a frame agent carries no projected wire-schema table");
             return result;
         }
-        // RFC 0026 P6-7 rung A: the eligibility trial already established
-        // layout/wire consistency; re-assert the frame roots are present so a
-        // future projection change can never silently drop them.
-        if (frame_plan.has_value() && !projection.table->frame_roots.has_value()) {
-            add_diag(result, core_wasm_diag::kInvalidLayout,
-                     "a P6-frame agent wire projection carries no boundary roots");
-            return result;
-        }
-        auto encoded = ir::core::encode_core_wire_schema_table(*projection.table);
+        auto encoded = ir::core::encode_core_wire_schema_table(*plan->frame_wire_table);
         if (!encoded.ok()) {
             std::string message = "wire-schema section payload exceeds the encoding domain";
             ir::SourceRangeOpt range;
@@ -11998,27 +13079,37 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
             return result;
         }
         wire_schema_payload = std::move(*encoded.bytes);
-        if (frame_plan.has_value()) {
-            frame_wire_table = *projection.table;
+        frame_wire_table = *plan->frame_wire_table;
+    } else if (!plan->imports.empty()) {
+        auto projection = ir::core::project_core_wire_schema(program, plan->imports);
+        if (!projection.ok()) {
+            std::string message = "reachable capability import ABI is not wire-transportable";
+            ir::SourceRangeOpt range;
+            if (!projection.diagnostics.empty()) {
+                const auto &first = projection.diagnostics.front();
+                message += " (" + first.code + ")";
+                range = first.source_range;
+            }
+            add_diag(result, core_wasm_diag::kInvalidCapabilityAbi, std::move(message), range);
+            return result;
         }
+        auto encoded = ir::core::encode_core_wire_schema_table(*projection.table);
+        if (!encoded.ok()) {
+            add_diag(result,
+                     core_wasm_diag::kBinaryOverflow,
+                     "wire-schema section payload exceeds the encoding domain");
+            return result;
+        }
+        wire_schema_payload = std::move(*encoded.bytes);
     }
 
-    // RFC 0026 P6-7 rung A: build + canonically encode the core-layout section
-    // for a P6-frame agent. The layout/wire consistency is verified once here
-    // (compile-side admission): the same table the wire projection was built
-    // from must agree on arity/order/width/capacity.
+    // RFC 0026 P6-7: canonically encode the pre-built core-layout section
+    // (compile-side admission already ran the layout/wire + bridge consistency
+    // checks at planning time).
     std::vector<std::uint8_t> frame_layout_payload;
-    if (frame_plan.has_value()) {
-        ir::core::CoreFrameLayoutSection section;
-        section.format_version = 2;
-        section.table = frame_plan->table;
-        section.input_layout = frame_plan->input_layout;
-        section.output_layout = frame_plan->output_layout;
-        section.placements = frame_plan->placements;
-        section.payload_arena_base = frame_plan->payload_arena_base;
-        section.payload_arena_capacity = frame_plan->payload_arena_capacity;
-        section.rodata_base = frame_plan->rodata_base;
-        section.rodata_extent = frame_plan->rodata_extent;
+    if (is_frame_module) {
+        ir::core::CoreFrameLayoutSection section =
+            frame_section_to_layout_section(*frame_plan);
         auto layout_encoded = ir::core::encode_core_frame_layout_section(section);
         if (!layout_encoded.ok()) {
             std::string message = "core-layout section payload is not encodable";
@@ -12035,7 +13126,7 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     }
 
     auto bytes = encode_module(program, *plan, wire_schema_payload, frame_layout_payload,
-                               frame_plan.has_value());
+                               is_frame_module);
     if (!bytes.has_value()) {
         add_diag(result,
                  core_wasm_diag::kBinaryOverflow,

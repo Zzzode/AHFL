@@ -273,6 +273,20 @@ admit_core_wasm_frame_sections(std::span<const std::uint8_t> module_bytes) {
         return result;
     }
 
+    // V2-C: every capability bridge call site must name a capability the wire
+    // schema projects and be layout/wire consistent at every argument/result
+    // root.
+    auto bridge_diags =
+        irc::verify_frame_bridge_sites(layout_section, wire_table);
+    if (!bridge_diags.empty()) {
+        for (auto &d : bridge_diags) {
+            result.diagnostics.push_back(std::move(d));
+        }
+        add_error(result.diagnostics,
+                  "a frame capability bridge record fails layout/wire admission");
+        return result;
+    }
+
     // 4. Mint the immutable wire authority and the typed frame bindings.
     auto verified_table_result = irc::make_verified_wire_schema_table(*schema_decoded.table);
     if (!verified_table_result.ok()) {

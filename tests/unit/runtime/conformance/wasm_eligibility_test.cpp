@@ -209,6 +209,16 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // Frame-bridge v2 rung V2-C: a direct agent invokes a multi-argument
+        // capability from a non-final handler through the additive
+        // (i32)->(i32,i32) control-block bridge, then materializes a computed
+        // final carrying the capability-produced String. It emits as a
+        // P6Frame module (dense control blocks + disjoint result placements).
+        {"v2c_multi_arg_bridge.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
         // RFC 0026 FB-3b: a higher-order lambda / call_indirect program emits
         // cleanly on the orchestration lane (funcref table + closure env). Its
         // node-only observation (no evaluator reference until KR6.8) is a

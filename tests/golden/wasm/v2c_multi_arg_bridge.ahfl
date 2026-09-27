@@ -1,0 +1,72 @@
+module wasm::v2c_multi_arg_bridge;
+
+// RFC 0026 P6-7 frame-bridge v2 rung V2-C: a DIRECT agent that invokes a
+// MULTI-ARGUMENT capability from a non-final handler through the additive
+// `(block_ptr)->(status,result_root_ptr)` frame bridge. The module builds a
+// dense control block naming three P4-D argument spans (an aggregate field
+// String PtrLen, a projected tag-only enum word, and a scalar Bool), the host
+// walks them into the multi-argument wire envelope, and packs the aggregate
+// capability result (with its own String payload) into the call site's
+// disjoint result placement. The computed final materializes a RoutingDecision
+// carrying the capability-produced owner String through the context frame; the
+// ordered bridge capability sequence and that String are the real
+// differential evidence.
+
+struct TicketRequest {
+    ticket_id: String;
+    urgent: Bool;
+    channel: Channel;
+}
+
+struct RoutingContext {
+    owner: String = "unassigned";
+}
+
+struct RoutingDecision {
+    route: Channel;
+    owner: String;
+}
+
+enum Channel {
+    Web,
+    Phone,
+    Post,
+}
+
+capability RouteTicket(ticket_id: String, channel: Channel, urgent: Bool) -> RoutingDecision;
+
+agent RoutingAgent {
+    input: TicketRequest;
+    context: RoutingContext;
+    output: RoutingDecision;
+    states: [Init, Routing, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [RouteTicket];
+
+    transition Init -> Routing;
+    transition Routing -> Done;
+}
+
+flow for RoutingAgent {
+    state Init {
+        goto Routing;
+    }
+
+    state Routing {
+        // The multi-argument (String PtrLen, tag-only enum, scalar Bool)
+        // capability call; the aggregate result is projected into ctx so the
+        // computed final can materialize it (a direct String comparison is not
+        // on the scalar ladder, so the continuation is an unconditional goto).
+        let decision = RouteTicket(input.ticket_id, input.channel, input.urgent);
+        ctx.owner = decision.owner;
+        goto Done;
+    }
+
+    state Done {
+        return RoutingDecision {
+            route: Channel::Phone,
+            owner: ctx.owner,
+        };
+    }
+}

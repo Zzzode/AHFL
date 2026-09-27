@@ -552,7 +552,199 @@ int main() {
         }
     }
 
-    // RFC 0026 P6-7 fix-forward, finding 4: the layout/wire consistency check
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-C: the per-module bridge
+    // control-frame span and the dense, pairwise-disjoint per-call-site result
+    // placements. A canonical one-site section round-trips through the encoder
+    // and decoder and agrees with the projected wire capability; every tampered
+    // geometry / arity variant fails closed at admission.
+    {
+        // Geometry (one sum cursor off the frame-payload arena):
+        //   arena [16384, +32) -> control 16416
+        //   stride 24 (arity 2: block = 8 + 16) x 1 site -> spill 16440
+        //   spill extent 16 (one PtrLen + one scalar) -> result 16456
+        //   result extent 8 (one-PtrLen struct) -> payload arena 16464 +2048
+        constexpr std::uint32_t kStride = 24;
+        constexpr std::uint32_t kControlBase = 16416;
+        constexpr std::uint32_t kSpillBase = 16440;
+        constexpr std::uint32_t kSpillExtent = 16;
+        constexpr std::uint32_t kResultBase = 16456;
+        constexpr std::uint32_t kResultExtent = 8;
+        constexpr std::uint32_t kResultPayloadBase = 16464;
+        constexpr std::uint32_t kResultPayloadCap = 2048;
+
+        struct BridgePair {
+            irc::CoreFrameLayoutSection section;
+            irc::CoreWireSchemaTable wire;
+        };
+        auto make_pair = [&]() -> BridgePair {
+            BridgePair out;
+            out.section.format_version = 2;
+            out.section.table.target = irc::TargetDataLayout{};
+            // Layout 0: i32 scalar (Bool). Layout 1: String PtrLen.
+            // Layout 2: one-PtrLen struct (8 bytes, one field at offset 0).
+            out.section.table.layouts.push_back(
+                irc::CoreLayout{4, 4, false,
+                                irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
+            out.section.table.layouts.push_back(
+                irc::CoreLayout{8, 4, false, irc::CoreLayoutPtrLen{}});
+            out.section.table.layouts.push_back(
+                irc::CoreLayout{8, 4, false,
+                                irc::CoreLayoutStruct{std::vector<std::uint64_t>{0},
+                                                      std::vector<irc::CoreLayoutId>{{1}}}});
+            out.section.input_layout = irc::CoreLayoutId{0};
+            out.section.output_layout = irc::CoreLayoutId{2};
+            out.section.payload_arena_base = 16384;
+            out.section.payload_arena_capacity = 32;
+            out.section.rodata_base = irc::kP6RodataBase;
+            out.section.rodata_extent = 0;
+            out.section.bridge_control_base = kControlBase;
+            out.section.bridge_block_stride = kStride;
+            out.section.bridge_control_extent = kStride + kSpillExtent;
+            out.section.bridge_spill_base = kSpillBase;
+            out.section.bridge_spill_extent = kSpillExtent;
+            out.section.bridge_call_sites.push_back(irc::CoreFrameBridgeCallSite{
+                /*call_site_id=*/0,
+                /*source_symbol=*/42,
+                /*arity=*/2,
+                /*block_offset=*/0,
+                /*param_layouts=*/{irc::CoreLayoutId{1}, irc::CoreLayoutId{0}},
+                /*result_layout=*/{2},
+                kResultBase, kResultExtent, kResultPayloadBase, kResultPayloadCap});
+
+            // Parallel wire graph: 0 bool, 1 string, 2 struct {s: string}.
+            out.wire.format_version = 1;
+            out.wire.nodes.push_back(
+                irc::CoreWireSchemaNode{irc::CoreWireSchemaBool{}});
+            out.wire.nodes.push_back(
+                irc::CoreWireSchemaNode{irc::CoreWireSchemaString{std::nullopt}});
+            auto result_shape = irc::CoreWireSchemaStruct{};
+            result_shape.wire_name = "Res";
+            result_shape.fields.push_back(
+                irc::CoreWireSchemaField{"s", irc::CoreWireSchemaNodeId{1}});
+            out.wire.nodes.push_back(irc::CoreWireSchemaNode{std::move(result_shape)});
+            out.wire.capabilities.push_back(irc::CoreWireCapabilitySchema{
+                /*capability=*/{}, /*source_symbol=*/42,
+                /*params=*/{irc::CoreWireSchemaNodeId{1},
+                            irc::CoreWireSchemaNodeId{0}},
+                /*result=*/irc::CoreWireSchemaNodeId{2}});
+            return out;
+        };
+
+        const auto canonical = make_pair();
+        const auto encoded = irc::encode_core_frame_layout_section(canonical.section);
+        check(encoded.ok(), "canonical one-site bridge section encodes");
+        if (encoded.ok()) {
+            const auto decoded = irc::decode_core_frame_layout_section(*encoded.bytes);
+            check(decoded.ok(), "canonical one-site bridge section decodes");
+            if (decoded.ok()) {
+                check(decoded.section.value() == canonical.section,
+                      "bridge section round-trips byte-canonically");
+            }
+        }
+        check(irc::verify_frame_bridge_sites(canonical.section, canonical.wire).empty(),
+              "canonical bridge site agrees with the projected wire capability");
+
+        // A v1 payload may never carry bridge spans: the v1 encoder rejects a
+        // section that names a control frame (the additive fields are v2-only).
+        {
+            auto v1 = canonical.section;
+            v1.format_version = 1;
+            check(!irc::encode_core_frame_layout_section(v1).ok(),
+                  "a v1 frame-layout section cannot carry bridge spans");
+        }
+
+        // A v2 section with NO bridge sites still requires a zero control span.
+        {
+            auto empty = canonical.section;
+            empty.bridge_call_sites.clear();
+            empty.bridge_control_base = 100;
+            const auto enc = irc::encode_core_frame_layout_section(empty);
+            check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
+                  "a bridge-free section with a nonzero control base is rejected");
+        }
+
+        // Result placements must be disjoint on the sum cursor. Moving the first
+        // result back over the spill region breaks the sum rule.
+        {
+            auto bad = canonical.section;
+            bad.bridge_call_sites[0].result_base = kSpillBase;
+            const auto enc = irc::encode_core_frame_layout_section(bad);
+            check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
+                  "a bridge result placement that leaves the sum cursor fails closed");
+        }
+
+        // The result extent must equal the aligned layout size; a tampered,
+        // shorter extent (aliasing risk against the payload arena) is rejected.
+        {
+            auto bad = canonical.section;
+            bad.bridge_call_sites[0].result_extent = 0;
+            const auto enc = irc::encode_core_frame_layout_section(bad);
+            check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
+                  "a zero bridge result extent fails closed");
+        }
+
+        // Arity must equal the dense param-root count.
+        {
+            auto bad = canonical.section;
+            bad.bridge_call_sites[0].arity = 3;
+            const auto enc = irc::encode_core_frame_layout_section(bad);
+            check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
+                  "a bridge arity that disagrees with its param roots fails closed");
+        }
+
+        // block_offset must be call_site_id * stride.
+        {
+            auto bad = canonical.section;
+            bad.bridge_call_sites[0].block_offset = 8;
+            const auto enc = irc::encode_core_frame_layout_section(bad);
+            check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
+                  "a bridge block off its dense fixed-stride offset fails closed");
+        }
+
+        // The call site must name a capability the wire table projects.
+        {
+            auto unknown_wire = canonical.wire;
+            unknown_wire.capabilities[0].source_symbol = 999;
+            check(!irc::verify_frame_bridge_sites(canonical.section, unknown_wire).empty(),
+                  "a bridge site naming an unprojected capability fails closed");
+        }
+
+        // The site's param shape must structurally match the wire parameter.
+        {
+            auto shape_bad = canonical.section;
+            shape_bad.bridge_call_sites[0].param_layouts[0] = irc::CoreLayoutId{0};
+            check(!irc::verify_frame_bridge_sites(shape_bad, canonical.wire).empty(),
+                  "a bridge param layout that disagrees with its wire shape fails closed");
+        }
+
+        // The frame-WALK wire subset: a param whose (consistent) wire shape is
+        // f64 cannot cross the bridge even though the P4-D layout represents it,
+        // because the host pack/read walkers deliberately reject f64.
+        {
+            auto f64_pair = canonical;
+            f64_pair.section.table.layouts.push_back(
+                irc::CoreLayout{8, 8, false,
+                                irc::CoreLayoutScalar{irc::CoreScalarRepr::F64}});
+            const auto f64_id = static_cast<std::uint32_t>(
+                f64_pair.section.table.layouts.size() - 1);
+            f64_pair.wire.nodes.push_back(
+                irc::CoreWireSchemaNode{irc::CoreWireSchemaFloat{}});
+            const auto f64_wire = static_cast<std::uint32_t>(
+                f64_pair.wire.nodes.size() - 1);
+            f64_pair.section.bridge_call_sites[0].param_layouts[0] = {f64_id};
+            f64_pair.wire.capabilities[0].params[0] = {f64_wire};
+            check(irc::verify_frame_layout_wire_consistency(
+                      f64_pair.section.table, {f64_id}, f64_pair.wire,
+                      {f64_wire})
+                          .empty(),
+                  "f64 scalar is a structurally consistent layout/wire pair");
+            check(!irc::verify_frame_bridge_sites(f64_pair.section, f64_pair.wire)
+                          .empty(),
+                  "an f64 bridge argument outside the frame-walk subset fails closed");
+        }
+    }
+
+
     // over a DECODED, untrusted pair is iterative, so a legal but deep acyclic
     // struct chain completes without exhausting the C++ stack. The pre-fix
     // recursive checker SIGSEGVed past a depth of 50k.
@@ -589,6 +781,100 @@ int main() {
                     return diag.code == backends::core_wasm_diag::kResourceExhausted;
                 });
             check(resource, "oversized backing reports wasm.RESOURCE_EXHAUSTED");
+        }
+    }
+
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-C, byte obligations: the bridge
+    // functype is strictly ADDITIVE. The emitted v2c module carries exactly
+    // ONE `(i32)->(i32,i32)` functype in its Type(1) section (one bridge
+    // capability) and the descriptor tags that import mode="bridge"; a
+    // non-bridge P6 module carries NONE (its capability tuple lane is the old
+    // `(i32,i32)->(i32,i32,i32)` type, untouched). A module that bridges no
+    // String literal emits no Data(11) section.
+    {
+        constexpr std::uint8_t kTypeSection = 1;
+        constexpr std::uint8_t kDataSection = 11;
+        struct StandardSpan {
+            std::size_t content{0};
+            std::size_t size{0};
+        };
+        auto find_standard_section = [&](const std::vector<std::uint8_t> &module,
+                                         std::uint8_t wanted) -> std::optional<StandardSpan> {
+            if (module.size() < 8) {
+                return std::nullopt;
+            }
+            std::size_t pos = 8;
+            while (pos < module.size()) {
+                const std::uint8_t id = module[pos++];
+                const auto size = read_uleb(module, pos);
+                if (!size || pos + *size > module.size()) {
+                    return std::nullopt;
+                }
+                const std::size_t content = pos;
+                pos = content + *size;
+                if (id == wanted) {
+                    return StandardSpan{content, *size};
+                }
+            }
+            return std::nullopt;
+        };
+        auto count_bridge_functypes = [&](const std::vector<std::uint8_t> &module) {
+            const auto span = find_standard_section(module, kTypeSection);
+            if (!span.has_value()) {
+                return static_cast<std::size_t>(0);
+            }
+            static constexpr std::array<std::uint8_t, 4> kBridgeFunctype{
+                0x60, 0x01, 0x7f, 0x02};
+            static constexpr std::array<std::uint8_t, 2> kI32I32{0x7f, 0x7f};
+            std::size_t count = 0;
+            for (std::size_t i = span->content;
+                 i + kBridgeFunctype.size() + kI32I32.size() <=
+                     span->content + span->size;
+                 ++i) {
+                if (module[i] != kBridgeFunctype[0]) {
+                    continue;
+                }
+                if (!std::equal(kBridgeFunctype.begin(), kBridgeFunctype.end(),
+                                module.begin() + static_cast<std::ptrdiff_t>(i)) ||
+                    !std::equal(kI32I32.begin(), kI32I32.end(),
+                                module.begin() +
+                                    static_cast<std::ptrdiff_t>(
+                                        i + kBridgeFunctype.size()))) {
+                    continue;
+                }
+                ++count;
+            }
+            return count;
+        };
+
+        const auto bridge =
+            emit_fixture_full(repo / "tests/golden/wasm/v2c_multi_arg_bridge.ahfl");
+        check(bridge.has_value() && bridge->ok() && bridge->artifact.has_value(),
+              "emit v2c multi-arg bridge fixture");
+        if (bridge.has_value() && bridge->ok() && bridge->artifact.has_value()) {
+            const auto &bytes = bridge->artifact->bytes;
+            check(count_bridge_functypes(bytes) == 1,
+                  "v2c module appends exactly one (i32)->(i32,i32) bridge functype");
+            check(!find_standard_section(bytes, kDataSection).has_value(),
+                  "v2c module without a String literal emits no Data section");
+            check(bridge->descriptor.has_value(), "v2c module carries a descriptor");
+            if (bridge->descriptor.has_value()) {
+                const auto &imports = bridge->descriptor->imports;
+                check(imports.size() == 1 && imports[0].mode == "bridge",
+                      "v2c module's single capability import is tagged mode=bridge");
+                check(bridge->descriptor->frame.has_value() &&
+                          bridge->descriptor->frame->bridge_call_sites.size() == 1,
+                      "v2c descriptor lane names exactly one bridge call site");
+            }
+        }
+
+        // Additivity on the NON-bridge side: a raw P6-frame module appends no
+        // bridge functype (its type table is the unchanged fixed table).
+        const auto plain = emit_fixture(repo / "tests/golden/wasm/p6_aggregate.ahfl");
+        check(plain.has_value(), "emit plain p6_aggregate fixture for the additivity probe");
+        if (plain.has_value()) {
+            check(count_bridge_functypes(*plain) == 0,
+                  "a non-bridge P6 module appends no (i32)->(i32,i32) functype");
         }
     }
 

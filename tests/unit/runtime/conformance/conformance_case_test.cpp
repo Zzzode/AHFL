@@ -201,6 +201,13 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration,
         },
         {
+            "v2c_multi_arg_bridge.case.json",
+            "tests/golden/wasm/v2c_multi_arg_bridge.ahfl",
+            CaseKind::Agent,
+            "wasm::v2c_multi_arg_bridge::RoutingAgent",
+            1, 1, WasmEligibility::Orchestration,
+        },
+        {
             "p6_coerce.case.json",
             "tests/golden/wasm/p6_coerce.ahfl",
             CaseKind::Agent,
