@@ -229,13 +229,20 @@ project_core_wire_schema(const CoreProgram &program,
 
 /// Verify both local graph invariants and exact deterministic reprojection from
 /// the selected Core capability signatures. When `frame_boundary` is given the
-/// reprojection includes the P6-frame agent boundary roots.
+/// reprojection includes the P6-frame agent boundary roots. When
+/// `node_boundaries` is given the reprojection also includes the V2-D workflow
+/// per-node input/output root tables; a caller verifying a transported
+/// workflow frame table must pass the same pair `project_core_wire_schema`
+/// received or the per-node roots cannot match the canonical projection.
 [[nodiscard]] std::vector<CoreLowerDiagnostic>
 verify_core_wire_schema_table(const CoreProgram &program,
                               const std::vector<CoreCapabilityId> &selected_capabilities,
                               const CoreWireSchemaTable &table,
                               std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
-                                  frame_boundary = std::nullopt);
+                                  frame_boundary = std::nullopt,
+                              std::optional<std::pair<std::vector<CoreValueTypeId>,
+                                                     std::vector<CoreValueTypeId>>>
+                                  node_boundaries = std::nullopt);
 
 /// Verify ONLY the local graph invariants of a wire-schema table (format version,
 /// 32-bit id space, strictly-ordered/unique capability roots, per-node structural

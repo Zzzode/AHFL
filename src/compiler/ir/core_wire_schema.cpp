@@ -1767,7 +1767,10 @@ verify_core_wire_schema_table(const CoreProgram &program,
                               const std::vector<CoreCapabilityId> &selected_capabilities,
                               const CoreWireSchemaTable &table,
                               std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
-                                  frame_boundary) {
+                                  frame_boundary,
+                              std::optional<std::pair<std::vector<CoreValueTypeId>,
+                                                     std::vector<CoreValueTypeId>>>
+                                  node_boundaries) {
     auto local = verify_local(table);
     if (!local.empty()) {
         return local;
@@ -1775,7 +1778,7 @@ verify_core_wire_schema_table(const CoreProgram &program,
     std::vector<CoreLowerDiagnostic> projection_diagnostics;
     const auto expected =
         build_raw(program, selected_capabilities, std::move(frame_boundary), projection_diagnostics,
-                  std::nullopt);
+                  std::move(node_boundaries));
     if (!expected.has_value()) {
         return projection_diagnostics;
     }

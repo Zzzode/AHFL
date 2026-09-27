@@ -550,6 +550,14 @@ struct AgentPlan {
     // runv returns the fixed output base; mixing it with capability finals (or a
     // second final kind in one agent) is rejected by build_agent_plan.
     bool has_computed_final{false};
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: true when at least
+    // one NON-FINAL state is a ComputedGotoAction (a scalar computed-goto
+    // preamble, with or without a capability final behind it). The opaque
+    // workflow runner is a static GotoAction walk that treats any other action
+    // as its terminal, so a workflow packaging such an agent must take the
+    // (pending) V2-D computed-runner lane and is fail-closed rejected until
+    // that emission lands.
+    bool has_computed_goto{false};
     // RFC 0026 P6-2: compiled handler functions in ascending function-index
     // order. Empty for a pure E1-E3 agent, so its function/code sections keep
     // their byte-identical 7-entry shape.
@@ -11147,6 +11155,7 @@ build_frame_section_plan(const CoreProgram &program,
             plan.has_computed_final = true;
         } else {
             plan.actions[state] = ComputedGotoAction{index, std::move(targets)};
+            plan.has_computed_goto = true;
         }
         if (reads_raw) {
             plan.reads_raw_input_frame = true;
@@ -11609,7 +11618,11 @@ validate_workflow_region(const CoreProgram &program,
         }
         return layouts.layouts[id.value].size;
     };
-    std::uint64_t node_blocks_extent = 0;
+    // Gather each P6 runner's aligned block parts (opaque runners keep a
+    // zero-spaced block slot parallel to the packaged-instance table), then
+    // derive the dense cursor through the shared pure arithmetic.
+    std::vector<CoreWasmP6NodeBlockParts> block_parts(
+        plan.packaged_instances.size());
     for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
         plan.node_blocks[runner].instance = plan.packaged_instances[runner];
         if (!gathered[runner].p6) {
@@ -11633,16 +11646,23 @@ validate_workflow_region(const CoreProgram &program,
         }
         const std::uint64_t scratch_size =
             align8(std::max<std::uint64_t>(gathered[runner].scratch_high, 16u));
-        const std::uint64_t parts[4] = {align8(*input_size), align8(*context_size),
-                                        scratch_size, align8(*output_size)};
-        for (std::uint64_t part : parts) {
-            node_blocks_extent += part;
-            if (node_blocks_extent > std::numeric_limits<std::uint32_t>::max() ||
-                cursor > std::numeric_limits<std::uint32_t>::max() - node_blocks_extent) {
-                overflow("node-frame block region");
-                return false;
-            }
+        block_parts[runner] = CoreWasmP6NodeBlockParts{
+            static_cast<std::uint32_t>(align8(*input_size)),
+            static_cast<std::uint32_t>(align8(*context_size)),
+            static_cast<std::uint32_t>(scratch_size),
+            static_cast<std::uint32_t>(align8(*output_size))};
+    }
+    const auto block_cursor = plan_p6_node_block_cursor(cursor, block_parts);
+    if (!block_cursor.has_value()) {
+        overflow("node-frame block region");
+        return false;
+    }
+    for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
+        if (!gathered[runner].p6) {
+            continue;
         }
+        const auto *instance = agent_instance(program, plan.packaged_instances[runner]);
+        const CoreWasmP6NodeBlockParts &parts = block_parts[runner];
         WorkflowNodeBlock &block = plan.node_blocks[runner];
         const ir::core::CoreLayoutId in_id =
             layouts.value_layouts[instance->dispatch_types[0].value];
@@ -11653,18 +11673,21 @@ validate_workflow_region(const CoreProgram &program,
         block.input_layout = in_id.value;
         block.context_layout = ctx_id.value;
         block.output_layout = out_id.value;
-        block.input_size = static_cast<std::uint32_t>(*input_size);
-        block.context_size = static_cast<std::uint32_t>(*context_size);
-        block.output_size = static_cast<std::uint32_t>(*output_size);
-        block.input_base = static_cast<std::uint32_t>(cursor);
-        block.context_base = static_cast<std::uint32_t>(cursor + parts[0]);
-        block.scratch_base =
-            static_cast<std::uint32_t>(cursor + parts[0] + parts[1]);
-        block.scratch_size = static_cast<std::uint32_t>(parts[2]);
-        block.output_base = static_cast<std::uint32_t>(
-            cursor + parts[0] + parts[1] + parts[2]);
-        cursor += node_blocks_extent;
+        // The recorded block sizes are the 8-aligned backing extents (exactly
+        // the strides the bases step by), so the transport verifier can
+        // re-derive them from the named layout roots and a crafted section
+        // cannot claim an 8-byte root and name a multi-KiB span.
+        block.input_size = parts.input;
+        block.context_size = parts.context;
+        block.output_size = parts.output;
+        block.input_base = block_cursor->bases[runner][0];
+        block.context_base = block_cursor->bases[runner][1];
+        block.scratch_base = block_cursor->bases[runner][2];
+        block.scratch_size = parts.scratch;
+        block.output_base = block_cursor->bases[runner][3];
     }
+    const std::uint64_t node_blocks_extent = block_cursor->extent;
+    cursor += node_blocks_extent;
     plan.node_blocks_extent = static_cast<std::uint32_t>(node_blocks_extent);
 
     // (3) Host-packed entry payload arena: one shared pool share (the bounded
@@ -11944,8 +11967,9 @@ build_workflow_plan(const CoreProgram &program,
             if (!agent_plan.has_value()) {
                 return std::nullopt;
             }
-            gathered[runner].p6 =
-                agent_plan->has_computed_final || !agent_plan->bridge_calls.empty();
+            gathered[runner].p6 = agent_plan->has_computed_final ||
+                                  agent_plan->has_computed_goto ||
+                                  !agent_plan->bridge_calls.empty();
             gathered[runner].scratch_high = agent_plan->p6_scratch_high;
             gathered[runner].rodata_extent = agent_plan->rodata_extent;
             gathered[runner].bridge_site_count =
@@ -11957,13 +11981,32 @@ build_workflow_plan(const CoreProgram &program,
                 gathered[runner].bridge_spill_extent +=
                     static_cast<std::uint32_t>((std::uint64_t{site.spill_bytes} + 7u) &
                                                ~std::uint64_t{7u});
-                if (site.result_vt.value < layouts.value_layouts.size()) {
-                    const auto &result_layout =
-                        layouts.layouts[layouts.value_layouts[site.result_vt.value].value];
-                    gathered[runner].bridge_result_extent +=
-                        static_cast<std::uint32_t>((result_layout.size + 7u) &
-                                                   ~std::uint64_t{7u});
+                // P6-7 V2-D fix-forward: every planned bridge result must own a
+                // finalized value layout. With skip_frame_section=true the
+                // agent-lane physical planner that otherwise proves this does
+                // not run, so an out-of-range value type / layout id must fail
+                // closed here rather than silently account zero result bytes
+                // and under-count the D6 result-placement region.
+                if (site.result_vt.value >= layouts.value_layouts.size()) {
+                    add_diag(result,
+                             core_wasm_diag::kInvalidLayout,
+                             "a packaged workflow frame bridge result has no finalized P4-D "
+                             "value layout");
+                    return std::nullopt;
                 }
+                const ir::core::CoreLayoutId result_layout_id =
+                    layouts.value_layouts[site.result_vt.value];
+                if (result_layout_id.value >= layouts.layouts.size()) {
+                    add_diag(result,
+                             core_wasm_diag::kInvalidLayout,
+                             "a packaged workflow frame bridge result names an invalid P4-D "
+                             "layout id");
+                    return std::nullopt;
+                }
+                const auto &result_layout = layouts.layouts[result_layout_id.value];
+                gathered[runner].bridge_result_extent +=
+                    static_cast<std::uint32_t>((result_layout.size + 7u) &
+                                               ~std::uint64_t{7u});
             }
             fact_plans.push_back(std::move(*agent_plan));
         }
@@ -12081,10 +12124,11 @@ build_workflow_plan(const CoreProgram &program,
         // the V2-D emission slice lands and flips them to agreed.
         add_diag(result,
                  core_wasm_diag::kUnsupportedWorkflowFrame,
-                 "the workflow lane does not yet package a P6 computed-final handler or an "
-                 "in-handler capability bridge into a workflow module (the V2-D computed-runner "
-                 "node-frame packaging is planned through the per-handler gates and the D6 "
-                 "capacity family, but workflow computed-runner module emission is pending)");
+                 "the workflow lane does not yet package a P6 computed handler into a workflow "
+                 "module (a computed-final handler, a scalar computed-goto preamble, or an "
+                 "in-handler capability bridge reaches the V2-D node-frame lane; the per-handler "
+                 "gates and the D6 capacity family plan it, but workflow computed-runner module "
+                 "emission is pending)");
         return std::nullopt;
     }
     return plan;
@@ -13581,6 +13625,39 @@ encode_workflow_module(const CoreProgram &program,
 }
 
 } // namespace
+
+std::optional<CoreWasmP6NodeBlockCursor>
+plan_p6_node_block_cursor(const std::uint64_t start_cursor,
+                          const std::span<const CoreWasmP6NodeBlockParts> blocks) {
+    constexpr auto kMax = std::numeric_limits<std::uint32_t>::max();
+    if (start_cursor > kMax) {
+        return std::nullopt;
+    }
+    CoreWasmP6NodeBlockCursor plan;
+    plan.base = static_cast<std::uint32_t>(start_cursor);
+    std::uint64_t cursor = start_cursor;
+    std::uint64_t extent = 0;
+    plan.bases.reserve(blocks.size());
+    for (const CoreWasmP6NodeBlockParts &block : blocks) {
+        const std::uint64_t parts[4] = {block.input, block.context, block.scratch,
+                                        block.output};
+        const std::uint64_t block_extent = parts[0] + parts[1] + parts[2] + parts[3];
+        if (block_extent > kMax - extent || cursor > kMax - block_extent) {
+            return std::nullopt;
+        }
+        std::array<std::uint32_t, 4> bases{};
+        std::uint64_t within = 0;
+        for (std::size_t part = 0; part < 4; ++part) {
+            bases[part] = static_cast<std::uint32_t>(cursor + within);
+            within += parts[part];
+        }
+        plan.bases.push_back(bases);
+        extent += block_extent;
+        cursor += block_extent;
+    }
+    plan.extent = static_cast<std::uint32_t>(extent);
+    return plan;
+}
 
 std::expected<CoreWasmEntry, CoreWasmDiagnostic>
 resolve_core_wasm_entry(const CoreProgram &program,

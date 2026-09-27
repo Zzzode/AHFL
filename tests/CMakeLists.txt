@@ -1007,6 +1007,25 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;structural"
     )
 
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: a workflow node
+    # whose agent's only computed content is a scalar computed-goto preamble
+    # feeding an opaque capability final must fail closed
+    # (wasm.UNSUPPORTED_WORKFLOW_FRAME) until the V2-D computed-runner
+    # emission lands; the opaque static-walk runner would otherwise emit an
+    # identity arm that completes the node without invoking the capability.
+    # The baseline bare-goto capability workflow stays emitted with one
+    # import, so the predicate does not sweep the opaque lane.
+    add_test(NAME ahfl.wasm.v2d_computed_goto_preamble_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2d_computed_goto_preamble_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
+    )
+    set_tests_properties(ahfl.wasm.v2d_computed_goto_preamble_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "V2-D scalar computed-goto preamble fail-closed compile-reject lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
     # KR6.7 (RFC 0026 P7): the capability-workflow Node embedded-host matrix
     # (OK/PENDING/ERROR/unknown normalization, pending-latch re-entry negative,
     # pending-nonnull non-latching ERROR, the node-event record layout with

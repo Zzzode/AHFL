@@ -888,6 +888,51 @@ TEST_CASE("wire projection lowers an enum variant with a Struct payload") {
     CHECK(verify_core_wire_schema_table(s.program, {s.cap}, table).empty());
 }
 
+// RFC 0026 P6-7 frame-bridge v2 rung V2-D: the CoreProgram-side verifier must
+// thread the per-node workflow boundary roots through its deterministic
+// reprojection. Pre-fix verify_core_wire_schema_table forced
+// node_boundaries = nullopt, so a transported V2-D table could NEVER be
+// checked against a CoreProgram (spurious mismatch, or the comparison skipped
+// and a drifted table accepted).
+TEST_CASE("public verifier reprojects V2-D workflow per-node boundary roots") {
+    const CoreProgram program = make_wire_program();
+    // Two workflow nodes: inputs Int/String (vt 0/2), outputs Bool/Int (vt 1/0).
+    std::vector<CoreValueTypeId> node_inputs{CoreValueTypeId{0}, CoreValueTypeId{2}};
+    std::vector<CoreValueTypeId> node_outputs{CoreValueTypeId{1}, CoreValueTypeId{0}};
+    auto boundaries = std::make_pair(node_inputs, node_outputs);
+    const auto projected =
+        project_core_wire_schema(program, {}, std::nullopt, boundaries);
+    REQUIRE(projected.ok());
+    REQUIRE(projected.table->frame_roots.has_value());
+    CHECK(projected.table->frame_roots->node_inputs.size() == 2);
+    CHECK(projected.table->frame_roots->node_outputs.size() == 2);
+
+    // With the boundaries threaded through, the canonical reprojection matches.
+    CHECK(verify_core_wire_schema_table(program, {}, *projected.table, std::nullopt,
+                                        boundaries)
+              .empty());
+    // Without the parameter the canonical projection carries no per-node roots,
+    // so the V2-D table is rejected at the reprojection gate (the pre-fix
+    // verifier could never accept a workflow frame table).
+    const auto without = verify_core_wire_schema_table(program, {}, *projected.table);
+    CHECK(has_code(without, std::string(wire_schema::kInvalid)));
+    CHECK(has_message(without, "deterministic Core reprojection"));
+
+    // A transported (encode -> decode) table with non-empty node roots passes
+    // the same full verifier once the host threads the boundaries it admits.
+    const auto encoded = encode_core_wire_schema_table(*projected.table);
+    REQUIRE(encoded.ok());
+    const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    REQUIRE(decoded.table.has_value());
+    REQUIRE(decoded.table->frame_roots.has_value());
+    CHECK(decoded.table->frame_roots->node_inputs ==
+           projected.table->frame_roots->node_inputs);
+    CHECK(verify_core_wire_schema_table(program, {}, *decoded.table, std::nullopt,
+                                        boundaries)
+              .empty());
+}
+
 // --- §7.1 coverage closure: table verifier fail-closed negatives -----------
 
 TEST_CASE("public verifier rejects a duplicated capability entry at the local gate") {

@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -263,5 +265,31 @@ resolve_core_wasm_entry(const ir::core::CoreProgram &program,
 [[nodiscard]] CoreWasmCodegenResult emit_core_wasm(const ir::core::CoreProgram &program,
                                                    const ir::core::CoreLayoutTable &layouts,
                                                    CoreWasmTarget target);
+
+// RFC 0026 P6-7 frame-bridge v2 rung V2-D D6: the pure node-frame block cursor
+// arithmetic shared by the workflow capacity family. One block per packaged P6
+// instance, each block I/C/scratch/O with already-8-aligned extents; the cursor
+// advances by each block's OWN extent exactly once, so the dense high-water is
+// the simple sum of the block extents (never the per-runner cumulative total,
+// which double-counted every earlier block quadratically). Exposed for the
+// exact-high-water unit test; returns nullopt on wasm32-domain overflow.
+struct CoreWasmP6NodeBlockParts {
+    std::uint32_t input{0};
+    std::uint32_t context{0};
+    std::uint32_t scratch{0};
+    std::uint32_t output{0};
+};
+
+struct CoreWasmP6NodeBlockCursor {
+    std::uint32_t base{0};
+    std::uint32_t extent{0};
+    // Per-block bases in packaged-instance order: [input, context, scratch,
+    // output].
+    std::vector<std::array<std::uint32_t, 4>> bases;
+};
+
+[[nodiscard]] std::optional<CoreWasmP6NodeBlockCursor>
+plan_p6_node_block_cursor(std::uint64_t start_cursor,
+                          std::span<const CoreWasmP6NodeBlockParts> blocks);
 
 } // namespace ahfl::backends

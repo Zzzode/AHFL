@@ -1,0 +1,64 @@
+module wasm::v2d_computed_goto_preamble;
+
+// RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: a workflow node whose
+// agent's ONLY computed content is a SCALAR computed-goto preamble feeding an
+// opaque capability final. The opaque workflow runner is a static GotoAction
+// walk that treats the ComputedGotoAction state as its terminal, so packaging
+// this on the opaque lane emits an identity arm that completes the node
+// without ever invoking the capability (the imported ahfl_cap is present but
+// never called). Until the V2-D computed-runner emission lands, the workflow
+// build MUST fail closed with wasm.UNSUPPORTED_WORKFLOW_FRAME and write no
+// wasm artifact. wasm_v2d_computed_goto_preamble_reject.py locks this.
+
+pub struct Frame {
+    value: String;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+pub agent RouteAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [Echo];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for RouteAgent {
+    state Decide {
+        let a = 100 + 1;
+        let b = a * 2;
+        if (b > 150) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return Echo(input);
+    }
+}
+
+pub workflow RouteWorkflow {
+    input: Frame;
+    output: Frame;
+
+    node first: RouteAgent(input);
+
+    return: first;
+}

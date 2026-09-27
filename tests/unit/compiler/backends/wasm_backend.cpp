@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
@@ -4716,6 +4717,46 @@ int main() {
                       "P6-8a a closure payload sub-pattern fails closed (no half-closure latch)");
             }
         }
+    }
+
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-D D6 fix-forward: the node-block
+    // cursor advances by each packaged P6 instance's OWN block extent exactly
+    // once, so the dense high-water is the simple sum of the block extents.
+    // Pre-fix a per-runner running total was added to the cursor inside the
+    // runner loop, so two instances with parts p0/p1 produced high-water
+    // 2*p0+p1 (quadratic over N) and the bases/result/output coordinates were
+    // derived from an inflated cursor with an unused gap.
+    {
+        using ahfl::backends::CoreWasmP6NodeBlockParts;
+        using ahfl::backends::plan_p6_node_block_cursor;
+        const std::uint32_t start = 4096;
+        // Two blocks with distinct parts: p0 = 8+8+16+8 = 40,
+        // p1 = 16+0+16+24 = 56; dense high-water 96.
+        const std::vector<CoreWasmP6NodeBlockParts> blocks = {
+            CoreWasmP6NodeBlockParts{8, 8, 16, 8},
+            CoreWasmP6NodeBlockParts{16, 0, 16, 24}};
+        const auto cursor = plan_p6_node_block_cursor(start, blocks);
+        const bool planned = cursor.has_value();
+        const bool base = planned && cursor->base == start;
+        const bool extent = planned && cursor->extent == 96;
+        const bool dense_bases =
+            planned && cursor->bases.size() == 2 &&
+            // block 0: I@4096 C@4104 scratch@4112 O@4128 (end 4136)
+            cursor->bases[0] == std::array<std::uint32_t, 4>{4096, 4104, 4112, 4128} &&
+            // block 1 starts exactly where block 0 ended (no p0 gap):
+            // I@4136 C shares the zero-sized context start, scratch@4152,
+            // O@4168 (end 4192 = 4096+96)
+            cursor->bases[1] == std::array<std::uint32_t, 4>{4136, 4152, 4152, 4168};
+        const bool end_matches =
+            planned && cursor->bases[1][3] + blocks[1].output == start + cursor->extent;
+        check(planned && base && extent && dense_bases && end_matches,
+              "D6 two-P6-instance node-block cursor is dense with exact high-water arithmetic");
+        // A block at a non-zero start whose end leaves the wasm32 domain fails
+        // closed.
+        const std::vector<CoreWasmP6NodeBlockParts> huge = {
+            CoreWasmP6NodeBlockParts{std::numeric_limits<std::uint32_t>::max(), 0, 0, 0}};
+        check(!plan_p6_node_block_cursor(8, huge).has_value(),
+              "D6 node-block cursor fails closed when the extent leaves the wasm32 domain");
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

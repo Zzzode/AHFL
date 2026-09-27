@@ -566,7 +566,8 @@ class Decoder {
         }
     }
 
-    [[nodiscard]] bool valid_id(const CoreLayoutTable &table, CoreLayoutId id) const noexcept {
+    [[nodiscard]] static bool
+    valid_id(const CoreLayoutTable &table, CoreLayoutId id) noexcept {
         return id.value < table.layouts.size();
     }
 
@@ -1157,101 +1158,23 @@ class Decoder {
         return diags;
     }
 
-    // V2-D: validate a workflow module's frame spans. The agent placement/arena
-    // cursor rules do not apply (a workflow has no agent input placements; the
-    // entry frame is packed directly into an entry node's I block). Every named
-    // span must be inside the fixed page, 8-aligned where it starts a region,
-    // and the node blocks / bridge page / result placements must be pairwise
-    // disjoint.
+    // Shared validation of the bridge control-frame shape and the dense
+    // per-call-site RECORDS on the explicitly untrusted transport boundary.
+    // The agent-lane (V2-C) and workflow (V2-D) sections carry identical dense
+    // records, so a transported section of either kind gets the same
+    // guarantees: a zero-site section carries an all-zero control span; with
+    // sites the stride is a non-zero 8-aligned constant, the control extent is
+    // exactly stride*sites + spill, call-site ids are dense from zero, arity
+    // matches the param root count, the control block sits at its dense
+    // fixed-stride offset, every param/result root names a table layout, and
+    // the result placement extent is the re-derived aligned layout size. Only
+    // the arena-cursor-relative PLACEMENT rules differ between the two lanes
+    // (an agent chains its bridge page off the frame-payload arena and its
+    // result placements off that page; a workflow follows the workflow D6
+    // cursor) and are enforced by the callers.
     [[nodiscard]] static bool
-    verify_workflow_spans(const CoreFrameLayoutSection &section,
+    verify_bridge_records(const CoreFrameLayoutSection &section,
                           const std::function<void(std::string)> &fail_local) {
-        constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
-        const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
-
-        struct Span {
-            std::uint64_t lo;
-            std::uint64_t hi;
-        };
-        std::vector<Span> spans;
-        auto add = [&](std::uint64_t base, std::uint64_t extent) -> bool {
-            if (extent == 0 || base % 8u != 0 || base >= kPageEnd ||
-                base + extent > kPageEnd) {
-                fail_local("a workflow frame span is unaligned, empty, or outside the fixed page");
-                return false;
-            }
-            spans.push_back({base, base + extent});
-            return true;
-        };
-
-        if (section.node_blocks.empty()) {
-            fail_local("a workflow frame section must name at least one node block");
-            return false;
-        }
-        for (const CoreFrameLayoutSection::NodeBlock &block : section.node_blocks) {
-            if (block.input_layout.value >= section.table.layouts.size() ||
-                block.context_layout.value >= section.table.layouts.size() ||
-                block.output_layout.value >= section.table.layouts.size()) {
-                fail_local("a workflow node block names an out-of-range layout root");
-                return false;
-            }
-            if (block.input_size == 0 || block.output_size == 0) {
-                fail_local("a workflow node input/output block must be non-empty");
-                return false;
-            }
-            if (!add(block.input_base, block.input_size) ||
-                !add(block.output_base, block.output_size)) {
-                return false;
-            }
-            // Context and scratch blocks may be empty for a zero-sized context.
-            if (block.context_size != 0 && !add(block.context_base, block.context_size)) {
-                return false;
-            }
-            if (block.scratch_size != 0 && !add(block.scratch_base, block.scratch_size)) {
-                return false;
-            }
-        }
-        if (section.bridge_control_extent != 0 &&
-            !add(section.bridge_control_base, section.bridge_control_extent)) {
-            return false;
-        }
-        if (section.entry_payload_capacity != 0 &&
-            !add(section.entry_payload_base, section.entry_payload_capacity)) {
-            return false;
-        }
-        if (section.workflow_output_base != 0) {
-            const std::uint64_t output_extent =
-                align8(section.table.layouts[section.output_layout.value].size);
-            if (!add(section.workflow_output_base, output_extent)) {
-                return false;
-            }
-        }
-        for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
-            if (!add(site.result_base, site.result_extent) ||
-                (site.result_payload_capacity != 0 &&
-                 !add(site.result_payload_base, site.result_payload_capacity))) {
-                return false;
-            }
-        }
-        std::sort(spans.begin(), spans.end(),
-                  [](const Span &a, const Span &b) { return a.lo < b.lo; });
-        for (std::size_t i = 1; i < spans.size(); ++i) {
-            if (spans[i].lo < spans[i - 1].hi) {
-                fail_local("two workflow frame spans overlap inside the fixed page");
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // V2-C: validate the capability-bridge control-frame span and the dense
-    // per-call-site result placements. The regions form ONE sum cursor chained
-    // off the frame-payload arena: control blocks, the scalar/PtrLen spill
-    // slots, then per call site the result root and its payload arena. Two sites
-    // can therefore never alias (the e5ef55c sum-of-prior-backing class).
-    [[nodiscard]] bool
-    verify_bridge_spans(const CoreFrameLayoutSection &section,
-                        const std::function<void(std::string)> &fail_local) {
         constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
         const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
         const std::uint32_t site_count =
@@ -1277,18 +1200,17 @@ class Decoder {
             fail_local("frame-layout bridge control blocks exceed the fixed page");
             return false;
         }
-        // The control page frame begins exactly at the aligned end of the
-        // frame-payload arena on the same sum cursor the backing placements use.
-        const std::uint64_t expected_control = align8(
-            static_cast<std::uint64_t>(section.payload_arena_base) +
-            section.payload_arena_capacity);
-        if (section.bridge_control_base != expected_control ||
-            section.bridge_control_base % 8u != 0) {
-            fail_local("frame-layout bridge control frame must begin at the 8-aligned arena "
-                       "high-water");
+        // The control page frame is a non-zero 8-aligned fixed-page span on
+        // BOTH lanes (it never starts at address 0, which the reserved frame
+        // regions own).
+        if (section.bridge_control_base == 0 || section.bridge_control_base % 8u != 0 ||
+            section.bridge_control_base >= kPageEnd) {
+            fail_local("frame-layout bridge control frame must begin at a non-zero 8-aligned "
+                       "fixed-page address");
             return false;
         }
-        const std::uint64_t expected_spill = section.bridge_control_base + blocks_extent;
+        const std::uint64_t expected_spill =
+            section.bridge_control_base + blocks_extent;
         if (static_cast<std::uint64_t>(section.bridge_spill_base) != expected_spill) {
             fail_local("frame-layout bridge spill slots must immediately follow the control blocks");
             return false;
@@ -1296,17 +1218,12 @@ class Decoder {
         const std::uint64_t control_extent =
             blocks_extent + section.bridge_spill_extent;
         if (section.bridge_control_extent != control_extent ||
-            section.bridge_spill_base + section.bridge_spill_extent > kPageEnd) {
+            section.bridge_control_base + section.bridge_control_extent > kPageEnd) {
             fail_local("frame-layout bridge control-frame extent is inconsistent or exceeds the "
                        "fixed page");
             return false;
         }
 
-        std::uint64_t cursor = section.bridge_control_base + section.bridge_control_extent;
-        // v3: the per-site private spill windows must densely partition the
-        // module-wide spill region in dense call-site order, with no gaps or
-        // overlap: the host authorizes a spilled scalar / PtrLen descriptor
-        // only against its own site's window, so two windows can never alias.
         std::uint64_t spill_cursor = 0;
         for (std::uint32_t i = 0; i < site_count; ++i) {
             const CoreFrameBridgeCallSite &site = section.bridge_call_sites[i];
@@ -1365,6 +1282,168 @@ class Decoder {
                            "aligned size");
                 return false;
             }
+        }
+        if (section.format_version >= 3 && spill_cursor != section.bridge_spill_extent) {
+            fail_local("the per-site bridge spill windows do not exactly partition the module "
+                       "spill region");
+            return false;
+        }
+        return true;
+    }
+
+    // V2-D: validate a workflow module's frame spans. The agent placement/arena
+    // cursor rules do not apply (a workflow has no agent input placements; the
+    // entry frame is packed directly into an entry node's I block). Every named
+    // span must be inside the fixed page, 8-aligned where it starts a region,
+    // and the node blocks / bridge page / result placements must be pairwise
+    // disjoint. The bridge call-site records get the SAME dense-record
+    // validation the agent lane enforces.
+    [[nodiscard]] static bool
+    verify_workflow_spans(const CoreFrameLayoutSection &section,
+                          const std::function<void(std::string)> &fail_local) {
+        constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
+        const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
+
+        struct Span {
+            std::uint64_t lo;
+            std::uint64_t hi;
+        };
+        std::vector<Span> spans;
+        auto add = [&](std::uint64_t base, std::uint64_t extent) -> bool {
+            if (extent == 0 || base % 8u != 0 || base >= kPageEnd ||
+                base + extent > kPageEnd) {
+                fail_local("a workflow frame span is unaligned, empty, or outside the fixed page");
+                return false;
+            }
+            spans.push_back({base, base + extent});
+            return true;
+        };
+
+        if (section.node_blocks.empty()) {
+            fail_local("a workflow frame section must name at least one node block");
+            return false;
+        }
+        for (const CoreFrameLayoutSection::NodeBlock &block : section.node_blocks) {
+            if (block.input_layout.value >= section.table.layouts.size() ||
+                block.context_layout.value >= section.table.layouts.size() ||
+                block.output_layout.value >= section.table.layouts.size()) {
+                fail_local("a workflow node block names an out-of-range layout root");
+                return false;
+            }
+            // Re-derive every block size from its named layout root: a crafted
+            // section cannot name an 8-byte root and claim a multi-KiB span
+            // (or vice versa). Input/output roots are always non-empty; the
+            // context block is empty exactly when its layout is zero-sized
+            // (Unit context).
+            const std::uint64_t expected_input =
+                align8(section.table.layouts[block.input_layout.value].size);
+            const std::uint64_t expected_context =
+                align8(section.table.layouts[block.context_layout.value].size);
+            const std::uint64_t expected_output =
+                align8(section.table.layouts[block.output_layout.value].size);
+            if (expected_input == 0 || expected_output == 0) {
+                fail_local("a workflow node input/output layout root must be non-empty");
+                return false;
+            }
+            if (block.input_size != expected_input ||
+                block.output_size != expected_output ||
+                block.context_size != expected_context) {
+                fail_local("a workflow node block size disagrees with the aligned size of its "
+                           "named layout root");
+                return false;
+            }
+            if (!add(block.input_base, block.input_size) ||
+                !add(block.output_base, block.output_size)) {
+                return false;
+            }
+            // The context block is present iff the context layout is non-empty.
+            if (block.context_size != 0 && !add(block.context_base, block.context_size)) {
+                return false;
+            }
+            // The scratch block carries no named layout root; it may be empty.
+            if (block.scratch_size != 0 && !add(block.scratch_base, block.scratch_size)) {
+                return false;
+            }
+        }
+        if (!verify_bridge_records(section, fail_local)) {
+            return false;
+        }
+        if (section.bridge_control_extent != 0 &&
+            !add(section.bridge_control_base, section.bridge_control_extent)) {
+            return false;
+        }
+        if (section.entry_payload_capacity != 0 &&
+            !add(section.entry_payload_base, section.entry_payload_capacity)) {
+            return false;
+        }
+        if (section.workflow_output_base != 0) {
+            if (!valid_id(section.table, section.output_layout)) {
+                fail_local("a workflow output slot names an out-of-range layout root");
+                return false;
+            }
+            const std::uint64_t output_extent =
+                align8(section.table.layouts[section.output_layout.value].size);
+            if (output_extent == 0 || !add(section.workflow_output_base, output_extent)) {
+                return false;
+            }
+        }
+        for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
+            if (!add(site.result_base, site.result_extent) ||
+                (site.result_payload_capacity != 0 &&
+                 !add(site.result_payload_base, site.result_payload_capacity))) {
+                return false;
+            }
+        }
+        std::sort(spans.begin(), spans.end(),
+                  [](const Span &a, const Span &b) { return a.lo < b.lo; });
+        for (std::size_t i = 1; i < spans.size(); ++i) {
+            if (spans[i].lo < spans[i - 1].hi) {
+                fail_local("two workflow frame spans overlap inside the fixed page");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // V2-C: validate the capability-bridge control-frame span and the dense
+    // per-call-site result placements. The regions form ONE sum cursor chained
+    // off the frame-payload arena: control blocks, the scalar/PtrLen spill
+    // slots, then per call site the result root and its payload arena. Two sites
+    // can therefore never alias (the e5ef55c sum-of-prior-backing class).
+    [[nodiscard]] bool
+    verify_bridge_spans(const CoreFrameLayoutSection &section,
+                        const std::function<void(std::string)> &fail_local) {
+        constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
+        const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
+        const std::uint32_t site_count =
+            static_cast<std::uint32_t>(section.bridge_call_sites.size());
+        // Dense-record validation is shared with the workflow lane (zero-site
+        // invariant, stride/control-extent shape, dense ids, arity, block
+        // offsets, param/result roots, result extents, v3 spill windows).
+        if (!verify_bridge_records(section, fail_local)) {
+            return false;
+        }
+        if (site_count == 0) {
+            return true;
+        }
+
+        // Agent-lane-only placement rules: the control page frame begins
+        // exactly at the aligned end of the frame-payload arena on the same
+        // sum cursor the backing placements use, and every per-site result
+        // root + payload arena chains off one sum cursor (so two sites can
+        // never alias, the e5ef55c sum-of-prior-backing class).
+        const std::uint64_t expected_control = align8(
+            static_cast<std::uint64_t>(section.payload_arena_base) +
+            section.payload_arena_capacity);
+        if (section.bridge_control_base != expected_control) {
+            fail_local("frame-layout bridge control frame must begin at the 8-aligned arena "
+                       "high-water");
+            return false;
+        }
+
+        std::uint64_t cursor = section.bridge_control_base + section.bridge_control_extent;
+        for (std::uint32_t i = 0; i < site_count; ++i) {
+            const CoreFrameBridgeCallSite &site = section.bridge_call_sites[i];
             if (site.result_base != cursor || site.result_base % 8u != 0) {
                 fail_local("frame-layout bridge result placements must be disjoint and follow the "
                            "sum cursor");
@@ -1385,11 +1464,6 @@ class Decoder {
                 return false;
             }
             cursor += site.result_payload_capacity;
-        }
-        if (section.format_version >= 3 && spill_cursor != section.bridge_spill_extent) {
-            fail_local("the per-site bridge spill windows do not exactly partition the module "
-                       "spill region");
-            return false;
         }
         return true;
     }

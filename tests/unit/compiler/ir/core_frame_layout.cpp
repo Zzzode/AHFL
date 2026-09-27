@@ -254,3 +254,188 @@ TEST_CASE("frame-layout verifier rejects overlapping workflow node blocks") {
     REQUIRE(encoded.ok());
     CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
 }
+
+// V2-D fix-forward: a workflow section carrying a capability bridge must get
+// the SAME dense call-site record validation the agent-lane (V2-C) section
+// gets, plus node-block sizes re-derived from the named layout roots. This
+// fixture packs one node block (I/C/scratch/O) + one one-arity bridge site +
+// the entry arena + the workflow output slot into pairwise-disjoint spans.
+//   node block : I@8192/8 C@8200/8 scratch@8208/16 O@8224/8 -> ends 8232
+//   bridge page: control@8232 stride16 one block (spill zero) -> ends 8248
+//   result     : @8248/8 -> ends 8256
+//   entry arena: @8256/2048 -> ends 10304
+//   output slot: @10304/8
+[[nodiscard]] CoreFrameLayoutSection workflow_bridge_section() {
+    CoreFrameLayoutSection section;
+    section.format_version = 2;
+    section.rodata_base = kP6RodataBase;
+    section.table.target = TargetDataLayout{};
+    section.table.layouts.push_back(scalar_layout(CoreScalarRepr::I64)); // 0
+    // A zero-sized empty struct is the Unit context's finalized layout.
+    CoreLayout unit;
+    unit.size = 0;
+    unit.align = 1;
+    unit.is_zero_sized = true;
+    unit.shape = CoreLayoutStruct{{}, {}};
+    section.table.layouts.push_back(unit); // 1
+    section.table.value_layouts.push_back(CoreLayoutId{0});
+    section.input_layout = CoreLayoutId{CoreLayoutId::kInvalid};
+    section.output_layout = CoreLayoutId{0};
+
+    CoreFrameLayoutSection::NodeBlock block;
+    block.input_layout = CoreLayoutId{0};
+    block.context_layout = CoreLayoutId{0};
+    block.output_layout = CoreLayoutId{0};
+    block.input_size = 8;
+    block.context_size = 8;
+    block.output_size = 8;
+    block.input_base = 8192;
+    block.context_base = 8200;
+    block.scratch_base = 8208;
+    block.scratch_size = 16;
+    block.output_base = 8224;
+    section.node_blocks.push_back(block);
+
+    section.bridge_control_base = 8232;
+    section.bridge_block_stride = 16;
+    section.bridge_control_extent = 16;
+    section.bridge_spill_base = 8248;
+    section.bridge_spill_extent = 0;
+
+    CoreFrameBridgeCallSite site;
+    site.call_site_id = 0;
+    site.source_symbol = 1;
+    site.arity = 1;
+    site.block_offset = 0;
+    site.param_layouts = {CoreLayoutId{0}};
+    site.result_layout = CoreLayoutId{0};
+    site.result_base = 8248;
+    site.result_extent = 8;
+    site.result_payload_base = 0;
+    site.result_payload_capacity = 0;
+    section.bridge_call_sites.push_back(site);
+
+    section.entry_payload_base = 8256;
+    section.entry_payload_capacity = kP6FrameStringPoolBytes;
+    section.workflow_output_base = 8256 + kP6FrameStringPoolBytes;
+    return section;
+}
+
+TEST_CASE("frame-layout codec round-trips a V2-D workflow bridge section") {
+    const auto section = workflow_bridge_section();
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    auto decoded = decode_core_frame_layout_section(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    REQUIRE(decoded.section.has_value());
+    CHECK(*decoded.section == section);
+    CHECK(decoded.section->bridge_call_sites.size() == 1);
+}
+
+TEST_CASE("frame-layout verifier accepts a V2-D node block with a zero-sized "
+          "Unit context") {
+    // A packaged agent declares context: Unit, whose finalized layout is
+    // zero-sized: the C sub-block is absent (context_size == 0) and the
+    // scratch block starts exactly where I ends.
+    auto section = workflow_bridge_section();
+    auto &block = section.node_blocks[0];
+    block.context_layout = CoreLayoutId{1}; // zero-sized Unit
+    block.context_size = 0;
+    block.context_base = 0; // absent block carries no span base
+    block.scratch_base = block.input_base + block.input_size; // 8200
+    block.output_base = block.scratch_base + block.scratch_size; // 8216
+    // Shift the bridge page / result / arena / output down with the block.
+    const std::uint32_t page = block.output_base + block.output_size; // 8224
+    section.bridge_control_base = page;
+    section.bridge_spill_base = page + section.bridge_block_stride;
+    section.bridge_call_sites[0].result_base = section.bridge_spill_base;
+    section.entry_payload_base = section.bridge_call_sites[0].result_base +
+                                 section.bridge_call_sites[0].result_extent;
+    section.workflow_output_base = section.entry_payload_base +
+                                   section.entry_payload_capacity;
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects a workflow node block size that lies "
+          "about its layout root") {
+    auto section = workflow_bridge_section();
+    section.node_blocks[0].input_size = 4096; // root is an 8-byte i64
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects a workflow node block naming an "
+          "unknown layout root") {
+    auto section = workflow_bridge_section();
+    section.node_blocks[0].output_layout = CoreLayoutId{99};
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects a non-dense workflow bridge call-site id") {
+    auto section = workflow_bridge_section();
+    section.bridge_call_sites[0].call_site_id = 1;
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects a workflow bridge arity that "
+          "disagrees with its param roots") {
+    auto section = workflow_bridge_section();
+    section.bridge_call_sites[0].arity = 2; // only one param root
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects a workflow bridge block off its "
+          "dense fixed-stride offset") {
+    auto section = workflow_bridge_section();
+    section.bridge_call_sites[0].block_offset = 16; // must be 0 for site 0
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects a workflow bridge result naming an "
+          "unknown layout") {
+    auto section = workflow_bridge_section();
+    section.bridge_call_sites[0].result_layout = CoreLayoutId{99};
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects a workflow bridge result extent "
+          "that disagrees with its layout size") {
+    auto section = workflow_bridge_section();
+    section.bridge_call_sites[0].result_extent = 16; // i64 root aligns to 8
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects an inconsistent workflow bridge "
+          "control extent") {
+    auto section = workflow_bridge_section();
+    section.bridge_control_extent = 24; // stride*sites + spill == 16
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
+
+TEST_CASE("frame-layout verifier rejects non-zero bridge control fields on a "
+          "zero-site workflow section") {
+    auto section = workflow_bridge_section();
+    section.bridge_call_sites.clear();
+    section.bridge_control_extent = 0;
+    section.bridge_block_stride = 16; // must be zero when there are no sites
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}
