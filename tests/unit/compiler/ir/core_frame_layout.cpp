@@ -197,3 +197,60 @@ TEST_CASE("frame layout/wire consistency rejects struct arity disagreement") {
         section.table, CoreLayoutId{0}, wire, CoreWireSchemaNodeId{1});
     CHECK_FALSE(diags.empty());
 }
+
+// RFC 0026 P6-7 frame-bridge v2 D5/D6 (rung V2-D): a workflow frame-layout
+// section is a format-version-2 payload whose trailing presence-gated block
+// carries the per-packaged-instance node-frame blocks (I/C/scratch/O), the
+// host-packed entry payload arena span and the workflow output slot.
+[[nodiscard]] CoreFrameLayoutSection workflow_node_section() {
+    CoreFrameLayoutSection section;
+    section.format_version = 2;
+    section.rodata_base = kP6RodataBase;
+    section.table.target = TargetDataLayout{};
+    section.table.layouts.push_back(scalar_layout(CoreScalarRepr::I64)); // 0
+    section.table.layouts.push_back(scalar_layout(CoreScalarRepr::I32)); // 1
+    section.table.value_layouts.push_back(CoreLayoutId{0});
+    // The agent input boundary root is kInvalid on a workflow table (the wire
+    // schema carries the per-node boundary arrays instead); the output root
+    // names the workflow output layout.
+    section.input_layout = CoreLayoutId{CoreLayoutId::kInvalid};
+    section.output_layout = CoreLayoutId{0};
+    CoreFrameLayoutSection::NodeBlock block;
+    block.input_layout = CoreLayoutId{0};
+    block.context_layout = CoreLayoutId{0};
+    block.output_layout = CoreLayoutId{0};
+    block.input_size = 8;
+    block.context_size = 8;
+    block.output_size = 8;
+    block.input_base = 8192;
+    block.context_base = 8200;
+    block.scratch_base = 8208;
+    block.scratch_size = 16;
+    block.output_base = 8224;
+    section.node_blocks.push_back(block);
+    section.entry_payload_base = 8240;
+    section.entry_payload_capacity = kP6FrameStringPoolBytes;
+    section.workflow_output_base = 8240 + kP6FrameStringPoolBytes;
+    return section;
+}
+
+TEST_CASE("frame-layout codec round-trips a V2-D workflow node-block section") {
+    const auto section = workflow_node_section();
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    auto decoded = decode_core_frame_layout_section(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    REQUIRE(decoded.section.has_value());
+    CHECK(*decoded.section == section);
+    CHECK(decoded.section->format_version == 2);
+    CHECK(decoded.section->node_blocks.size() == 1);
+}
+
+TEST_CASE("frame-layout verifier rejects overlapping workflow node blocks") {
+    auto section = workflow_node_section();
+    // Overlap the output block onto the scratch span.
+    section.node_blocks[0].output_base = section.node_blocks[0].scratch_base;
+    auto encoded = encode_core_frame_layout_section(section);
+    REQUIRE(encoded.ok());
+    CHECK_FALSE(decode_core_frame_layout_section(*encoded.bytes).ok());
+}

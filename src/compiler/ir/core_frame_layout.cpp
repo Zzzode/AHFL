@@ -68,7 +68,9 @@ class Encoder {
             (section.rodata_base != 0 || section.rodata_extent != 0 ||
              section.bridge_control_base != 0 || section.bridge_block_stride != 0 ||
              section.bridge_control_extent != 0 || section.bridge_spill_base != 0 ||
-             section.bridge_spill_extent != 0 || !section.bridge_call_sites.empty())) {
+             section.bridge_spill_extent != 0 || !section.bridge_call_sites.empty() ||
+             !section.node_blocks.empty() || section.entry_payload_base != 0 ||
+             section.entry_payload_capacity != 0 || section.workflow_output_base != 0)) {
             diagnostics_.push_back(
                 fail("a v1 frame-layout section cannot carry a rodata or bridge span"));
             return std::nullopt;
@@ -93,8 +95,11 @@ class Encoder {
         }
 
         // Boundary roots come first so a reader fails on a bad root before
-        // walking either table.
-        id(section.input_layout);
+        // walking either table. The input root is a raw u32 because a workflow
+        // section encodes kInvalid there (its boundary roots are the wire
+        // schema's per-node arrays); verify_local rejects kInvalid on an agent
+        // section.
+        boundary_root_id(section.input_layout);
         id(section.output_layout);
 
         // Layout table.
@@ -150,6 +155,27 @@ class Encoder {
                     id(param);
                 }
             }
+            // V2-D: the presence-gated workflow node-packaging extension.
+            if (!section.node_blocks.empty()) {
+                u8(1);
+                u32(section.entry_payload_base);
+                u32(section.entry_payload_capacity);
+                u32(section.workflow_output_base);
+                u32_size(section.node_blocks.size());
+                for (const CoreFrameLayoutSection::NodeBlock &block : section.node_blocks) {
+                    id(block.input_layout);
+                    id(block.context_layout);
+                    id(block.output_layout);
+                    u32(block.input_size);
+                    u32(block.context_size);
+                    u32(block.output_size);
+                    u32(block.input_base);
+                    u32(block.context_base);
+                    u32(block.scratch_base);
+                    u32(block.scratch_size);
+                    u32(block.output_base);
+                }
+            }
         }
         return std::move(bytes_);
     }
@@ -193,6 +219,10 @@ class Encoder {
         }
         u32(value.value);
     }
+    // A boundary root may be the kInvalid sentinel (the workflow section has no
+    // agent input root; its roots are the per-node wire arrays), encoded as the
+    // raw u32 so it round-trips without being mistaken for a table id.
+    void boundary_root_id(CoreLayoutId value) { u32(value.value); }
 
     void encode_layout(const CoreLayout &layout) {
         u64(layout.size);
@@ -324,6 +354,16 @@ class Cursor {
         }
         return CoreLayoutId{*value};
     }
+    // Boundary-root counterpart of Encoder::boundary_root_id: kInvalid is a
+    // legal sentinel for a workflow input root; local verification is where an
+    // agent section rejects it.
+    [[nodiscard]] std::optional<CoreLayoutId> boundary_root_id() {
+        const auto value = u32();
+        if (!value.has_value()) {
+            return std::nullopt;
+        }
+        return CoreLayoutId{*value};
+    }
 
     [[nodiscard]] bool match(std::span<const std::uint8_t> expected) {
         if (remaining() < expected.size()) {
@@ -366,7 +406,7 @@ class Decoder {
         }
 
         CoreFrameLayoutSection section;
-        const auto input = cursor_.id();
+        const auto input = cursor_.boundary_root_id();
         const auto output = cursor_.id();
         if (!input.has_value() || !output.has_value()) {
             result.diagnostics.push_back(fail("frame-layout boundary roots are malformed"));
@@ -412,6 +452,70 @@ class Decoder {
             if (!decode_bridge_sites(section)) {
                 result.diagnostics = std::move(diagnostics_);
                 return result;
+            }
+            // V2-D: the optional trailing workflow node-packaging extension.
+            if (!cursor_.at_end()) {
+                const auto present = cursor_.u8();
+                if (!present.has_value() || *present != 1) {
+                    result.diagnostics.push_back(
+                        fail("frame-layout v2 node-block tag is malformed"));
+                    return result;
+                }
+                const auto entry_base = cursor_.u32();
+                const auto entry_capacity = cursor_.u32();
+                const auto wf_output = cursor_.u32();
+                if (!entry_base.has_value() || !entry_capacity.has_value() ||
+                    !wf_output.has_value()) {
+                    result.diagnostics.push_back(
+                        fail("frame-layout workflow span is malformed"));
+                    return result;
+                }
+                section.entry_payload_base = *entry_base;
+                section.entry_payload_capacity = *entry_capacity;
+                section.workflow_output_base = *wf_output;
+                const auto block_count = cursor_.u32();
+                if (!block_count.has_value() || !bounded_count(*block_count)) {
+                    result.diagnostics.push_back(
+                        fail("frame-layout node-block count is malformed"));
+                    return result;
+                }
+                section.node_blocks.reserve(*block_count);
+                for (std::uint32_t i = 0; i < *block_count; ++i) {
+                    CoreFrameLayoutSection::NodeBlock block;
+                    const auto input_layout = cursor_.id();
+                    const auto context_layout = cursor_.id();
+                    const auto output_layout = cursor_.id();
+                    if (!input_layout.has_value() || !context_layout.has_value() ||
+                        !output_layout.has_value()) {
+                        bad("frame-layout node-block root layout is truncated");
+                        return result;
+                    }
+                    block.input_layout = *input_layout;
+                    block.context_layout = *context_layout;
+                    block.output_layout = *output_layout;
+                    const auto isize = cursor_.u32();
+                    const auto csize = cursor_.u32();
+                    const auto osize = cursor_.u32();
+                    const auto ibase = cursor_.u32();
+                    const auto cbase = cursor_.u32();
+                    const auto sbase = cursor_.u32();
+                    const auto ssize = cursor_.u32();
+                    const auto obase = cursor_.u32();
+                    if (!isize || !csize || !osize || !ibase || !cbase || !sbase ||
+                        !ssize || !obase) {
+                        bad("frame-layout node-block span is truncated");
+                        return result;
+                    }
+                    block.input_size = *isize;
+                    block.context_size = *csize;
+                    block.output_size = *osize;
+                    block.input_base = *ibase;
+                    block.context_base = *cbase;
+                    block.scratch_base = *sbase;
+                    block.scratch_size = *ssize;
+                    block.output_base = *obase;
+                    section.node_blocks.push_back(std::move(block));
+                }
             }
             if (!cursor_.at_end()) {
                 result.diagnostics.push_back(
@@ -812,7 +916,17 @@ class Decoder {
         const auto fail_local = [&](std::string message) {
             diags.push_back(fail(std::move(message)));
         };
-        if (!valid_id(table, section.input_layout) || !valid_id(table, section.output_layout)) {
+        // A workflow section (node blocks present) has no agent input root: its
+        // boundary roots are the per-node arrays in the wire schema and the
+        // input root is encoded kInvalid. The workflow OUTPUT root is still a
+        // real layout id (run2 returns the workflow output slot at that root).
+        const bool workflow_section = !section.node_blocks.empty();
+        const bool input_root_ok =
+            workflow_section
+                ? section.input_layout.value == CoreLayoutId::kInvalid ||
+                      valid_id(table, section.input_layout)
+                : valid_id(table, section.input_layout);
+        if (!input_root_ok || !valid_id(table, section.output_layout)) {
             fail_local("frame-layout boundary root id is out of range");
             return diags;
         }
@@ -898,11 +1012,26 @@ class Decoder {
 
         // Placements: dense edge indices, container nodes, extents that match the
         // RE-DERIVED aligned backing (== stride*capacity), and pairwise-disjoint
-        // fixed-page extents on the sum-of-prior-backing rule.
+        // fixed-page extents on the sum-of-prior-backing rule. A V2-D workflow
+        // section has NO agent input placements or agent payload arena: the
+        // entry frame is packed directly into an entry node's I block and the
+        // entry payload arena is the separate workflow span. Those are checked
+        // by verify_workflow_spans below.
         constexpr std::uint64_t kBackingBase = kP6CollectionBackingBase;
         constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
+        const bool workflow_section_v2 =
+            section.format_version >= 2 && !section.node_blocks.empty();
+        if (workflow_section_v2) {
+            if (!section.placements.empty() || section.payload_arena_base != 0 ||
+                section.payload_arena_capacity != 0) {
+                fail_local("a workflow frame-layout section cannot carry agent backing "
+                           "placements or an agent payload arena");
+                return diags;
+            }
+        }
         std::uint64_t expected_cursor = kBackingBase;
-        for (std::uint32_t i = 0; i < section.placements.size(); ++i) {
+        for (std::uint32_t i = 0;
+             !workflow_section_v2 && i < section.placements.size(); ++i) {
             const CoreFrameBackingPlacement &placement = section.placements[i];
             if (placement.edge_index != i) {
                 fail_local("frame-layout backing placement edge indices are not dense and in "
@@ -951,11 +1080,13 @@ class Decoder {
 
         // Arena span begins exactly at the aligned post-placement high-water and
         // stays inside the page.
-        const std::uint64_t expected_arena = (expected_cursor + 7u) & ~std::uint64_t{7u};
-        if (section.payload_arena_base != expected_arena) {
-            fail_local("frame-layout payload arena does not begin at the aligned backing "
-                       "high-water");
-            return diags;
+        if (!workflow_section_v2) {
+            const std::uint64_t expected_arena = (expected_cursor + 7u) & ~std::uint64_t{7u};
+            if (section.payload_arena_base != expected_arena) {
+                fail_local("frame-layout payload arena does not begin at the aligned backing "
+                           "high-water");
+                return diags;
+            }
         }
         if (static_cast<std::uint64_t>(section.payload_arena_base) +
                 section.payload_arena_capacity >
@@ -976,11 +1107,107 @@ class Decoder {
                 fail_local("frame-layout rodata extent exceeds its fixed [256,1024) region");
                 return diags;
             }
-            if (!verify_bridge_spans(section, fail_local)) {
+            if (!section.node_blocks.empty()) {
+                // V2-D workflow module: the physical layout (node blocks, the
+                // shared bridge page, the entry arena, result placements)
+                // follows the workflow D6 cursor, not the agent backing/arena
+                // cursor. Verify in-page bounds, alignment and pairwise
+                // disjointness independently.
+                if (!verify_workflow_spans(section, fail_local)) {
+                    return diags;
+                }
+            } else if (!verify_bridge_spans(section, fail_local)) {
                 return diags;
             }
         }
         return diags;
+    }
+
+    // V2-D: validate a workflow module's frame spans. The agent placement/arena
+    // cursor rules do not apply (a workflow has no agent input placements; the
+    // entry frame is packed directly into an entry node's I block). Every named
+    // span must be inside the fixed page, 8-aligned where it starts a region,
+    // and the node blocks / bridge page / result placements must be pairwise
+    // disjoint.
+    [[nodiscard]] static bool
+    verify_workflow_spans(const CoreFrameLayoutSection &section,
+                          const std::function<void(std::string)> &fail_local) {
+        constexpr std::uint64_t kPageEnd = kCoreWasmFixedLinearMemoryCapacityBytes;
+        const auto align8 = [](std::uint64_t value) { return (value + 7u) & ~std::uint64_t{7u}; };
+
+        struct Span {
+            std::uint64_t lo;
+            std::uint64_t hi;
+        };
+        std::vector<Span> spans;
+        auto add = [&](std::uint64_t base, std::uint64_t extent) -> bool {
+            if (extent == 0 || base % 8u != 0 || base >= kPageEnd ||
+                base + extent > kPageEnd) {
+                fail_local("a workflow frame span is unaligned, empty, or outside the fixed page");
+                return false;
+            }
+            spans.push_back({base, base + extent});
+            return true;
+        };
+
+        if (section.node_blocks.empty()) {
+            fail_local("a workflow frame section must name at least one node block");
+            return false;
+        }
+        for (const CoreFrameLayoutSection::NodeBlock &block : section.node_blocks) {
+            if (block.input_layout.value >= section.table.layouts.size() ||
+                block.context_layout.value >= section.table.layouts.size() ||
+                block.output_layout.value >= section.table.layouts.size()) {
+                fail_local("a workflow node block names an out-of-range layout root");
+                return false;
+            }
+            if (block.input_size == 0 || block.output_size == 0) {
+                fail_local("a workflow node input/output block must be non-empty");
+                return false;
+            }
+            if (!add(block.input_base, block.input_size) ||
+                !add(block.output_base, block.output_size)) {
+                return false;
+            }
+            // Context and scratch blocks may be empty for a zero-sized context.
+            if (block.context_size != 0 && !add(block.context_base, block.context_size)) {
+                return false;
+            }
+            if (block.scratch_size != 0 && !add(block.scratch_base, block.scratch_size)) {
+                return false;
+            }
+        }
+        if (section.bridge_control_extent != 0 &&
+            !add(section.bridge_control_base, section.bridge_control_extent)) {
+            return false;
+        }
+        if (section.entry_payload_capacity != 0 &&
+            !add(section.entry_payload_base, section.entry_payload_capacity)) {
+            return false;
+        }
+        if (section.workflow_output_base != 0) {
+            const std::uint64_t output_extent =
+                align8(section.table.layouts[section.output_layout.value].size);
+            if (!add(section.workflow_output_base, output_extent)) {
+                return false;
+            }
+        }
+        for (const CoreFrameBridgeCallSite &site : section.bridge_call_sites) {
+            if (!add(site.result_base, site.result_extent) ||
+                (site.result_payload_capacity != 0 &&
+                 !add(site.result_payload_base, site.result_payload_capacity))) {
+                return false;
+            }
+        }
+        std::sort(spans.begin(), spans.end(),
+                  [](const Span &a, const Span &b) { return a.lo < b.lo; });
+        for (std::size_t i = 1; i < spans.size(); ++i) {
+            if (spans[i].lo < spans[i - 1].hi) {
+                fail_local("two workflow frame spans overlap inside the fixed page");
+                return false;
+            }
+        }
+        return true;
     }
 
     // V2-C: validate the capability-bridge control-frame span and the dense

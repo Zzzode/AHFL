@@ -152,6 +152,12 @@ struct CoreWireCapabilitySchema {
 struct CoreWireFrameRoots {
     CoreWireSchemaNodeId input{};
     CoreWireSchemaNodeId output{};
+    /// RFC 0026 P6-7 frame-bridge v2 D5 (rung V2-D): per-packaged-instance node
+    /// boundary roots of a P6 workflow module (parallel to the workflow's
+    /// sorted packaged-instance table). Empty on an agent module and on an
+    /// all-opaque workflow.
+    std::vector<CoreWireSchemaNodeId> node_inputs;
+    std::vector<CoreWireSchemaNodeId> node_outputs;
     [[nodiscard]] friend bool operator==(const CoreWireFrameRoots &,
                                          const CoreWireFrameRoots &) noexcept = default;
 };
@@ -216,7 +222,10 @@ struct CoreWireSchemaDecodeResult {
 project_core_wire_schema(const CoreProgram &program,
                          const std::vector<CoreCapabilityId> &selected_capabilities,
                          std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
-                             frame_boundary = std::nullopt);
+                             frame_boundary = std::nullopt,
+                         std::optional<std::pair<std::vector<CoreValueTypeId>,
+                                                std::vector<CoreValueTypeId>>>
+                             node_boundaries = std::nullopt);
 
 /// Verify both local graph invariants and exact deterministic reprojection from
 /// the selected Core capability signatures. When `frame_boundary` is given the

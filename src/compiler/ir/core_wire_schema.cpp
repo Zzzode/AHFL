@@ -46,10 +46,14 @@ class SchemaBuilder {
     SchemaBuilder(const CoreProgram &program,
                   const std::vector<CoreCapabilityId> &selected_capabilities,
                   std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary =
+                      std::nullopt,
+                  std::optional<std::pair<std::vector<CoreValueTypeId>,
+                                         std::vector<CoreValueTypeId>>> node_boundaries =
                       std::nullopt)
         : program_(program),
           selected_(selected_capabilities),
           frame_boundary_(std::move(frame_boundary)),
+          node_boundaries_(std::move(node_boundaries)),
           scratch_types_(program.value_types) {
         schema_ids_.resize(scratch_types_.size());
     }
@@ -106,11 +110,44 @@ class SchemaBuilder {
             frame_input_node_ = *input;
             frame_output_node_ = *output;
         }
+        if (node_boundaries_.has_value()) {
+            const auto &[inputs, outputs] = *node_boundaries_;
+            if (inputs.size() != outputs.size()) {
+                fail(wire_schema::kInvalid, "workflow node boundary input/output arity mismatch");
+                return std::nullopt;
+            }
+            node_input_nodes_.reserve(inputs.size());
+            node_output_nodes_.reserve(outputs.size());
+            for (const CoreValueTypeId input : inputs) {
+                if (input.value >= scratch_types_.size()) {
+                    fail(wire_schema::kInvalid, "workflow node input root value type is out of range");
+                    return std::nullopt;
+                }
+                const auto root = project_type(input, std::nullopt);
+                if (!root.has_value()) {
+                    return std::nullopt;
+                }
+                node_input_nodes_.push_back(*root);
+            }
+            for (const CoreValueTypeId output : outputs) {
+                if (output.value >= scratch_types_.size()) {
+                    fail(wire_schema::kInvalid, "workflow node output root value type is out of range");
+                    return std::nullopt;
+                }
+                const auto root = project_type(output, std::nullopt);
+                if (!root.has_value()) {
+                    return std::nullopt;
+                }
+                node_output_nodes_.push_back(*root);
+            }
+        }
         canonicalize();
-        if (frame_input_node_.has_value()) {
+        if (frame_input_node_.has_value() || !node_input_nodes_.empty()) {
             CoreWireFrameRoots roots;
-            roots.input = *frame_input_node_;
-            roots.output = *frame_output_node_;
+            roots.input = frame_input_node_.value_or(CoreWireSchemaNodeId{});
+            roots.output = frame_output_node_.value_or(CoreWireSchemaNodeId{});
+            roots.node_inputs = node_input_nodes_;
+            roots.node_outputs = node_output_nodes_;
             table_.frame_roots = roots;
         }
         return std::move(table_);
@@ -540,11 +577,21 @@ class SchemaBuilder {
             frame_input_node_ = remap[frame_input_node_->value];
             frame_output_node_ = remap[frame_output_node_->value];
         }
+        for (auto &node : node_input_nodes_) {
+            node = remap[node.value];
+        }
+        for (auto &node : node_output_nodes_) {
+            node = remap[node.value];
+        }
     }
 
     const CoreProgram &program_;
     const std::vector<CoreCapabilityId> &selected_;
     std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary_;
+    std::optional<std::pair<std::vector<CoreValueTypeId>,
+                           std::vector<CoreValueTypeId>>> node_boundaries_;
+    std::vector<CoreWireSchemaNodeId> node_input_nodes_;
+    std::vector<CoreWireSchemaNodeId> node_output_nodes_;
     std::optional<CoreWireSchemaNodeId> frame_input_node_;
     std::optional<CoreWireSchemaNodeId> frame_output_node_;
     std::vector<CoreValueType> scratch_types_;
@@ -561,8 +608,12 @@ class SchemaBuilder {
 build_raw(const CoreProgram &program,
           const std::vector<CoreCapabilityId> &selected,
           std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>> frame_boundary,
-          std::vector<CoreLowerDiagnostic> &diagnostics) {
-    SchemaBuilder builder(program, selected, std::move(frame_boundary));
+          std::vector<CoreLowerDiagnostic> &diagnostics,
+          std::optional<std::pair<std::vector<CoreValueTypeId>,
+                                 std::vector<CoreValueTypeId>>> node_boundaries =
+              std::nullopt) {
+    SchemaBuilder builder(program, selected, std::move(frame_boundary),
+                          std::move(node_boundaries));
     auto table = builder.run();
     diagnostics = builder.take_diagnostics();
     return table;
@@ -610,8 +661,25 @@ class LocalSchemaVerifier {
         // admission (it distinguishes "no capability imports" cases with its own
         // diagnostics), so local verification stays unchanged for such tables.
         if (table_.frame_roots.has_value()) {
-            if (!mark(table_.frame_roots->input) || !mark(table_.frame_roots->output)) {
+            // Agent boundary roots are kInvalid on a P6 workflow table (its
+            // roots are the per-node arrays); mark them only when real.
+            const CoreWireFrameRoots &roots = *table_.frame_roots;
+            const bool has_agent_roots =
+                roots.input.value != CoreWireSchemaNodeId::kInvalid ||
+                roots.output.value != CoreWireSchemaNodeId::kInvalid;
+            if (has_agent_roots &&
+                (!mark(roots.input) || !mark(roots.output))) {
                 return std::move(diagnostics_);
+            }
+            for (const CoreWireSchemaNodeId node : roots.node_inputs) {
+                if (!mark(node)) {
+                    return std::move(diagnostics_);
+                }
+            }
+            for (const CoreWireSchemaNodeId node : roots.node_outputs) {
+                if (!mark(node)) {
+                    return std::move(diagnostics_);
+                }
             }
         }
         for (std::size_t i = 0; i < table_.nodes.size(); ++i) {
@@ -968,10 +1036,35 @@ class SchemaEncoder {
         }
         // RFC 0026 P6-7: the frame-root block is a trailing, presence-gated
         // extension, so a capability-only section keeps its pre-P6-7 bytes.
+        // V2-D: when non-empty, the agent input/output roots are followed by
+        // the per-packaged-node root pairs (presence-gated by a node count),
+        // so an agent frame table keeps its V2-C bytes exactly.
         if (table.frame_roots.has_value()) {
             byte(1);
             u32(table.frame_roots->input.value);
             u32(table.frame_roots->output.value);
+            if (!table.frame_roots->node_inputs.empty()) {
+                if (table.frame_roots->node_inputs.size() !=
+                    table.frame_roots->node_outputs.size()) {
+                    fail("workflow frame node roots have mismatched input/output arity");
+                    return std::nullopt;
+                }
+                // One dense node count, then the input roots and the output
+                // roots as raw ids (mirror of the decoder's single-count read).
+                u32_size(table.frame_roots->node_inputs.size());
+                if (failed()) {
+                    return std::nullopt;
+                }
+                for (const auto value : table.frame_roots->node_inputs) {
+                    u32(value.value);
+                }
+                for (const auto value : table.frame_roots->node_outputs) {
+                    u32(value.value);
+                }
+                if (failed()) {
+                    return std::nullopt;
+                }
+            }
         }
         return std::move(bytes_);
     }
@@ -1229,6 +1322,30 @@ class SchemaDecoder {
         CoreWireFrameRoots roots;
         roots.input = CoreWireSchemaNodeId{frame_input};
         roots.output = CoreWireSchemaNodeId{frame_output};
+        // V2-D: an optional trailing per-node root block (node count + inputs
+        // + outputs). Absent on an agent frame table.
+        if (pos_ != data_.size()) {
+            const std::uint32_t node_count = u32();
+            if (failed() || !bounded_count(node_count)) {
+                return std::nullopt;
+            }
+            const auto read_ids = [&]() {
+                std::vector<CoreWireSchemaNodeId> values;
+                values.reserve(node_count);
+                for (std::uint32_t i = 0; i < node_count; ++i) {
+                    values.push_back(CoreWireSchemaNodeId{u32()});
+                }
+                return values;
+            };
+            roots.node_inputs = read_ids();
+            if (failed()) {
+                return std::nullopt;
+            }
+            roots.node_outputs = read_ids();
+            if (failed()) {
+                return std::nullopt;
+            }
+        }
         table.frame_roots = roots;
         if (failed()) {
             return std::nullopt;
@@ -1620,10 +1737,13 @@ CoreWireSchemaBuildResult
 project_core_wire_schema(const CoreProgram &program,
                          const std::vector<CoreCapabilityId> &selected_capabilities,
                          std::optional<std::pair<CoreValueTypeId, CoreValueTypeId>>
-                             frame_boundary) {
+                             frame_boundary,
+                         std::optional<std::pair<std::vector<CoreValueTypeId>,
+                                                std::vector<CoreValueTypeId>>>
+                             node_boundaries) {
     CoreWireSchemaBuildResult result;
     result.table = build_raw(program, selected_capabilities, std::move(frame_boundary),
-                             result.diagnostics);
+                             result.diagnostics, std::move(node_boundaries));
     if (!result.table.has_value()) {
         return result;
     }
@@ -1654,7 +1774,8 @@ verify_core_wire_schema_table(const CoreProgram &program,
     }
     std::vector<CoreLowerDiagnostic> projection_diagnostics;
     const auto expected =
-        build_raw(program, selected_capabilities, std::move(frame_boundary), projection_diagnostics);
+        build_raw(program, selected_capabilities, std::move(frame_boundary), projection_diagnostics,
+                  std::nullopt);
     if (!expected.has_value()) {
         return projection_diagnostics;
     }

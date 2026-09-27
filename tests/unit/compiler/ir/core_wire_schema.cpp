@@ -1935,3 +1935,32 @@ TEST_CASE("wire decoder handles a very deep acyclic reachable chain without recu
     REQUIRE(reencoded.ok());
     CHECK(*reencoded.bytes == *encoded.bytes);
 }
+
+// RFC 0026 P6-7 V2-D: a workflow frame-root table carries kInvalid agent roots
+// plus the per-node input/output boundary roots. The raw codec must round-trip
+// them and the local verifier must accept the node roots as reachability roots.
+TEST_CASE("wire codec round-trips V2-D per-node workflow frame roots") {
+    CoreWireSchemaTable table;
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}}); // 0
+    table.nodes.push_back(CoreWireSchemaNode{CoreWireSchemaBool{}}); // 1
+    CoreWireFrameRoots roots;
+    roots.input = CoreWireSchemaNodeId{};  // kInvalid workflow agent roots
+    roots.output = CoreWireSchemaNodeId{};
+    roots.node_inputs = {CoreWireSchemaNodeId{0}};
+    roots.node_outputs = {CoreWireSchemaNodeId{1}};
+    table.frame_roots = roots;
+    const auto encoded = encode_core_wire_schema_table(table);
+    REQUIRE(encoded.ok());
+    REQUIRE(encoded.bytes.has_value());
+    const auto decoded = decode_core_wire_schema_table(*encoded.bytes);
+    REQUIRE(decoded.ok());
+    REQUIRE(decoded.table.has_value());
+    REQUIRE(decoded.table->frame_roots.has_value());
+    const auto &round = *decoded.table->frame_roots;
+    CHECK(round.node_inputs.size() == 1);
+    CHECK(round.node_outputs.size() == 1);
+    CHECK(round.node_inputs[0] == CoreWireSchemaNodeId{0});
+    CHECK(round.node_outputs[0] == CoreWireSchemaNodeId{1});
+    CHECK(round.input.value == CoreWireSchemaNodeId::kInvalid);
+    CHECK(round.output.value == CoreWireSchemaNodeId::kInvalid);
+}

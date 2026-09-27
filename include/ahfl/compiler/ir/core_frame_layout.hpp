@@ -116,6 +116,40 @@ struct CoreFrameLayoutSection {
     /// call_site_id order (empty for a non-bridge module).
     std::vector<CoreFrameBridgeCallSite> bridge_call_sites;
 
+    // ------------------------------------------------------------------
+    // V2-D workflow node-packaging extension (all fields empty/zero on an
+    // agent section and on an all-opaque workflow). Encoded as a trailing
+    // presence-gated block inside a format-version-2 payload, so an agent
+    // frame section keeps its rung V2-C bytes exactly.
+    // ------------------------------------------------------------------
+
+    /// One packaged instance's fixed node-frame block (parallel to the
+    /// workflow module's sorted packaged-instance table).
+    struct NodeBlock {
+        CoreLayoutId input_layout{};
+        CoreLayoutId context_layout{};
+        CoreLayoutId output_layout{};
+        std::uint32_t input_size{0};
+        std::uint32_t context_size{0};
+        std::uint32_t output_size{0};
+        std::uint32_t input_base{0};
+        std::uint32_t context_base{0};
+        std::uint32_t scratch_base{0};
+        std::uint32_t scratch_size{0};
+        std::uint32_t output_base{0};
+
+        [[nodiscard]] friend bool operator==(const NodeBlock &,
+                                             const NodeBlock &) noexcept = default;
+    };
+    std::vector<NodeBlock> node_blocks;
+    /// Host-packed workflow entry payload arena (String bytes for the entry
+    /// node's I frame), [base, +capacity).
+    std::uint32_t entry_payload_base{0};
+    std::uint32_t entry_payload_capacity{0};
+    /// The fixed slot the scheduler copies a constructed workflow output into
+    /// and run2 returns (size is the workflow output root layout size).
+    std::uint32_t workflow_output_base{0};
+
     [[nodiscard]] friend bool operator==(const CoreFrameLayoutSection &,
                                          const CoreFrameLayoutSection &) noexcept = default;
 };
