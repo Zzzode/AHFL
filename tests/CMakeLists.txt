@@ -795,6 +795,41 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-B fix-forward: the D6
+    # input-payload arena meters every String OCCURRENCE, so a bounded
+    # List<String(0,8)>(4) reserves capacity*bound = 32 bytes and a
+    # nested-struct element (4+2 slots)*3 = 24, not the element subtree
+    # once. Engine-independent pin of the compile-time arithmetic (the
+    # Node lane packs all capacity elements; this gate runs with no Node).
+    add_test(NAME ahfl.wasm.v2b_arena_metering_gate
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_arena_metering_gate.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.v2b_arena_metering_gate PROPERTIES
+        PASS_REGULAR_EXPRESSION "String arena multiplicity metering gate passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-B: pin the Decimal/Duration
+    # computed-final decision — the module EMITS i64 words and a frame
+    # section, yet the certified embedded host keeps both shapes outside
+    # its pack/read walk subset (documented host-unobservable non-goal),
+    # so the p6_scalar_kind rationale comment cannot drift again.
+    add_test(NAME ahfl.wasm.v2b_builtin_frame_subset_gate
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_builtin_frame_subset_gate.py"
+                "${PROJECT_SOURCE_DIR}"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+    )
+    set_tests_properties(ahfl.wasm.v2b_builtin_frame_subset_gate PROPERTIES
+        PASS_REGULAR_EXPRESSION "emit-but-host-unobservable frame subset gate passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
     # RFC 0026 P6-6 (KR6.6): coercion physical effects. The KR6.5
     # `coercion_plans` arena gate is lifted; a CoreCoerceExpr lowers to a real
     # effect derived from the P4-D layout table. The producer emits a real

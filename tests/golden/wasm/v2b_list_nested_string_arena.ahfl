@@ -1,0 +1,49 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-B fix-forward: a COMPUTED-final
+// agent whose INPUT packs a bounded `List<Entry>(3)` whose element struct
+// nests TWO bounded String slots (`name: String(0,4)`, `tag:
+// String(0,2)`). D6 must meter the whole element SUBTREE per occurrence:
+// capacity*(4+2) = 18 aligned to 24 bytes. Metering the nested String
+// shapes once (without the capacity product) reserved only 6 aligned to 8
+// and fail-closed on the second packed element. Pins that a struct nested
+// inside a container element is covered by the same post-order capacity
+// scaling. No String literal is constructed, so the module emits NO
+// Data(11) section.
+module std::collections;
+
+pub struct List<T> { }
+
+pub struct Entry {
+    name: String(0,4);
+    tag: String(0,2);
+}
+
+pub struct In {
+    entries: List<Entry>(3);
+}
+
+pub struct Out {
+    n: Int;
+}
+
+agent ListNestedStringArenaAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for ListNestedStringArenaAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Out {
+            n: 1,
+        };
+    }
+}

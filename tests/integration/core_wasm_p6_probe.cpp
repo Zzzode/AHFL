@@ -508,6 +508,118 @@ int main(int argc, char **argv) {
             std::cout << " outputs=" << leaves;
         }
         std::cout << "\n";
+
+        // RFC 0026 P6-7 frame-bridge v2 rung V2-B fix-forward: the Node hosts
+        // also pack the input-payload ARENA (bounded List<String> fixtures) and
+        // read inlined String PtrLen words (enum/passthrough fixtures), so
+        // report:
+        //   * every inline PtrLen slot offset of the input/output roots
+        //     (struct fields and enum payload unions; collection backing slots
+        //     are NOT inline and are reported separately);
+        //   * the payload-arena span, the disjoint container backing
+        //     placements (dense layout id -> base/extent), and each inline
+        //     container header's offset/stride/capacity with the PtrLen slot
+        //     offsets inside ONE element subtree.
+        // Layout-only facts; the host pins the string contents and the arena
+        // accounting itself.
+        if (emitted.descriptor->frame_section.has_value()) {
+            const auto &section = *emitted.descriptor->frame_section;
+            auto ptrlen_slots = [&](auto &&self, ir::core::CoreLayoutId id,
+                                   std::uint64_t base,
+                                   std::vector<std::uint64_t> &out) -> void {
+                const auto &lay = section.table.layouts[id.value];
+                if (const auto *s =
+                        std::get_if<ir::core::CoreLayoutStruct>(&lay.shape)) {
+                    for (std::uint32_t i = 0; i < s->field_layouts.size(); ++i) {
+                        self(self, s->field_layouts[i], base + s->field_offsets[i], out);
+                    }
+                    return;
+                }
+                if (const auto *e =
+                        std::get_if<ir::core::CoreLayoutEnum>(&lay.shape)) {
+                    for (const ir::core::CoreLayoutId payload :
+                         e->variant_payload_layouts) {
+                        self(self, payload, base + e->payload_offset, out);
+                    }
+                    return;
+                }
+                if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(lay.shape)) {
+                    out.push_back(base);
+                }
+                // Scalars contribute no PtrLen; containers name backing
+                // storage, never an inline PtrLen slot.
+            };
+            std::vector<std::uint64_t> in_ptrs;
+            std::vector<std::uint64_t> out_ptrs;
+            ptrlen_slots(ptrlen_slots, section.input_layout, 0, in_ptrs);
+            ptrlen_slots(ptrlen_slots, section.output_layout, 0, out_ptrs);
+            auto join_offsets = [](const std::vector<std::uint64_t> &offsets,
+                                   char sep) {
+                std::string acc;
+                for (std::size_t i = 0; i < offsets.size(); ++i) {
+                    if (i != 0) acc += sep;
+                    acc += std::to_string(offsets[i]);
+                }
+                return acc;
+            };
+            std::cout << "ptrlen_slots input=" << join_offsets(in_ptrs, ',')
+                      << " output=" << join_offsets(out_ptrs, ',') << "\n";
+
+            struct ContainerInfo {
+                ir::core::CoreLayoutId layout{};
+                std::uint64_t header_offset{0};
+                const ir::core::CoreLayoutContainer *container{nullptr};
+            };
+            std::vector<ContainerInfo> container_headers;
+            auto find_containers = [&](auto &&self, ir::core::CoreLayoutId id,
+                                       std::uint64_t base) -> void {
+                const auto &lay = section.table.layouts[id.value];
+                if (const auto *s =
+                        std::get_if<ir::core::CoreLayoutStruct>(&lay.shape)) {
+                    for (std::uint32_t i = 0; i < s->field_layouts.size(); ++i) {
+                        self(self, s->field_layouts[i], base + s->field_offsets[i]);
+                    }
+                    return;
+                }
+                if (const auto *e =
+                        std::get_if<ir::core::CoreLayoutEnum>(&lay.shape)) {
+                    for (const ir::core::CoreLayoutId payload :
+                         e->variant_payload_layouts) {
+                        self(self, payload, base + e->payload_offset);
+                    }
+                    return;
+                }
+                if (const auto *c =
+                        std::get_if<ir::core::CoreLayoutContainer>(&lay.shape)) {
+                    container_headers.push_back({id, base, c});
+                }
+            };
+            find_containers(find_containers, section.input_layout, 0);
+
+            std::cout << "frame_arena base=" << frame.payload_arena_base
+                      << " cap=" << frame.payload_arena_capacity
+                      << " rodata_base=" << frame.rodata_base
+                      << " rodata_extent=" << frame.rodata_extent << " placements=";
+            for (std::size_t i = 0; i < section.placements.size(); ++i) {
+                const auto &p = section.placements[i];
+                if (i != 0) std::cout << ",";
+                std::cout << p.container_layout.value << ":" << p.base << ":"
+                          << p.extent;
+            }
+            std::cout << " containers=";
+            for (std::size_t i = 0; i < container_headers.size(); ++i) {
+                const auto &info = container_headers[i];
+                if (i != 0) std::cout << ";";
+                std::vector<std::uint64_t> element_slots;
+                ptrlen_slots(ptrlen_slots, info.container->element, 0, element_slots);
+                std::cout << info.layout.value << ":" << info.header_offset << ":"
+                          << info.container->stride << ":"
+                          << info.container->capacity << ":"
+                          << info.container->element.value << ":"
+                          << join_offsets(element_slots, '+');
+            }
+            std::cout << "\n";
+        }
     }
 
     std::cout << "native_status=" << native_status << " entered_ids=";

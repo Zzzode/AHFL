@@ -1753,8 +1753,16 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
     // is embedded as its compile-time i64 word (mantissa / bare milliseconds),
     // so on the physical P6 word model both ride the IntI64 kind — a constant
     // i64.const, never an arithmetic operand (plan_binary/unary require a real
-    // CoreVtInt) and never a frame-walking boundary (the output-frame gate
-    // rejects their wire nodes; host rendering stays the spelling authority).
+    // CoreVtInt). Such a final DOES emit a frame section: there is deliberately
+    // NO output-frame gate rejecting Decimal/Duration leaves (frame-bridge v2
+    // section 0 non-goals and section 10 V2-B — "i64 字面量, 无语差分 fixture,
+    // 仅词法/行走单测"). The certified embedded host keeps their wire nodes
+    // outside the rung-E walk subset (node_embedded_host.mjs packValue/readValue
+    // reject 'decimal'/'duration'), so the i64 word is produced but intentionally
+    // UNREACHABLE through a conforming host observation until a later rung
+    // renders the builtin s<scale>:<mantissa> / bare-millis spelling. The
+    // emit-but-unobservable decision is pinned by a structural probe so this
+    // comment and the code cannot drift.
     if ((std::holds_alternative<CoreVtDecimal>(node) ||
          std::holds_alternative<CoreVtDuration>(node)) &&
         scalar->repr == ir::core::CoreScalarRepr::I64) {
@@ -9086,7 +9094,19 @@ frame_section_to_layout_section(const FrameSectionPlan &plan) {
 // verify_frame_layout_wire_consistency proves), metering every String slot:
 // a bounded String contributes its schema upper bound, and the first unbounded
 // String marks the shared kP6FrameStringPoolBytes reservation. A shape
-// disagreement fails the plan. Returns false on malformed ids.
+// disagreement fails the plan. Returns false on malformed ids or a capacity
+// product that overflows the 32-bit arena.
+//
+// OCCURRENCE MULTIPLICITY: a struct/enum field exists once, but a bounded
+// container's element subtree exists `capacity` times — the host packer bumps
+// its arena cursor once per LIVE element (node_embedded_host.mjs packValue
+// 'sequence'), so the schema upper bound of every String slot reachable through
+// one element is multiplied by the container capacity here (a Map multiplies
+// the summed key+value subtree once). The design formula is per-occurrence:
+// "align8(sum 各 String 槽 schema 上界)" with size/stride/capacity the
+// compile-time inputs (frame-bridge v2 section 7.1). The unbounded-String pool
+// is a SINGLE shared reservation per boundary and is intentionally NOT
+// multiplied: it is a conservative fallback ceiling, not a per-slot budget.
 [[nodiscard]] bool accumulate_input_string_arena(
     const ir::core::CoreLayoutTable &layouts,
     ir::core::CoreLayoutId layout_id,
@@ -9167,21 +9187,52 @@ frame_section_to_layout_section(const FrameSectionPlan &plan) {
             [&](const ir::core::CoreLayoutContainer &c) {
                 // A bounded List carries one element slot; a Map carries key +
                 // value slots (key shapes stay outside the frame subset, so a
-                // String key would already have failed wire projection).
+                // String key would already have failed wire projection). Meter
+                // the child subtrees into LOCAL accumulators, then scale their
+                // bounded contribution by the capacity: every one of the
+                // `capacity` element (or key/value pair) slots can carry a
+                // distinct String payload, and the host packer bumps one arena
+                // cursor per live element. Metering the subtree once reserved
+                // only one element's budget and fail-closed on schema-valid
+                // inputs (e.g. List<String(0,8)>(4) packed with four 8-byte
+                // strings needs 32 bytes, not 8). The unbounded pool share
+                // propagates as a boolean, never multiplied (one shared pool).
+                std::uint64_t child_bounded = 0;
+                bool child_unbounded = false;
+                const auto meter_child = [&](ir::core::CoreLayoutId child_layout,
+                                             ir::core::CoreWireSchemaNodeId child_wire) {
+                    return accumulate_input_string_arena(layouts, child_layout, wire,
+                                                         child_wire, child_bounded,
+                                                         child_unbounded);
+                };
+                bool child_ok = false;
                 const auto *seq = std::get_if<ir::core::CoreWireSchemaSequence>(&shape);
                 const auto *map = std::get_if<ir::core::CoreWireSchemaMap>(&shape);
                 if (seq != nullptr) {
-                    return accumulate_input_string_arena(layouts, c.element, wire, seq->element,
-                                                         bounded_sum, has_unbounded_string);
+                    child_ok = meter_child(c.element, seq->element);
+                } else if (map != nullptr) {
+                    child_ok = c.value.has_value() &&
+                               meter_child(c.element, map->key) &&
+                               meter_child(*c.value, map->value);
                 }
-                if (map != nullptr) {
-                    return accumulate_input_string_arena(layouts, c.element, wire, map->key,
-                                                        bounded_sum, has_unbounded_string) &&
-                           c.value.has_value() &&
-                           accumulate_input_string_arena(layouts, *c.value, wire, map->value,
-                                                        bounded_sum, has_unbounded_string);
+                if (!child_ok) {
+                    return false;
                 }
-                return false;
+                constexpr std::uint64_t kU64Max =
+                    std::numeric_limits<std::uint64_t>::max();
+                if (child_bounded != 0 &&
+                    c.capacity > kU64Max / child_bounded) {
+                    return false;
+                }
+                const std::uint64_t scaled = child_bounded * c.capacity;
+                if (bounded_sum > kU64Max - scaled ||
+                    bounded_sum + scaled >
+                        std::numeric_limits<std::uint32_t>::max()) {
+                    return false;
+                }
+                bounded_sum += scaled;
+                has_unbounded_string = has_unbounded_string || child_unbounded;
+                return true;
             },
         },
         layout);
@@ -9292,10 +9343,12 @@ build_frame_section_plan(const CoreProgram &program,
     plan.payload_arena_base = assigned->payload_arena_base;
     // RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): the input frame's packed
     // String payloads need a REAL arena now (it was hardcoded 0 at rung A).
-    // Bounded String slots are metered exactly from their schema upper bound;
-    // every unbounded String slot is covered once by the shared
-    // kP6FrameStringPoolBytes reservation. The joint layout/wire walk below is
-    // the single derivation (a shared string shape is metered once).
+    // Bounded String slots are metered exactly from their schema upper bound
+    // times their occurrence multiplicity (a bounded collection multiplies its
+    // element subtree by its capacity); the first unbounded String slot is
+    // covered by the shared kP6FrameStringPoolBytes reservation (one pool per
+    // boundary, never multiplied). The joint layout/wire walk below is the
+    // single derivation.
     std::uint64_t bounded_sum = 0;
     bool has_unbounded_string = false;
     if (frame_wire_table != nullptr && frame_wire_table->frame_roots.has_value()) {

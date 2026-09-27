@@ -1,0 +1,52 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-B: a computed final that constructs a
+// String-PAYLOAD ENUM variant (a tuple variant `Hit(String)`) selected by an
+// if, against a unit variant `Miss`. The payload is an inline PtrLen whose
+// bytes name the hash-consed rodata image (the same Data(11) section a
+// String-struct field uses), so this pins that String construction reaches a
+// payload-enum union slot on BOTH branches, not only struct fields:
+//
+//   * Hit: tag 1 at the enum slot, PtrLen at the payload union offset naming
+//     the rodata bytes "hit";
+//   * Miss: tag 0 and the inactive payload words stay provably zero.
+module wasm::v2b::enum_string;
+
+pub struct In {
+    flag: Bool;
+}
+
+pub enum Match {
+    Miss,
+    Hit(String),
+}
+
+pub struct Out {
+    result: Match;
+}
+
+agent EnumStringAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for EnumStringAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        if (input.flag) {
+            return Out {
+                result: Match::Hit("hit"),
+            };
+        }
+        return Out {
+            result: Match::Miss,
+        };
+    }
+}

@@ -1,0 +1,47 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-B structural pin (Decimal AND
+// Duration): a computed final whose output carries a Decimal(2) and a
+// Duration. Each literal embeds as its compile-time i64 word (mantissa
+// 125 for 1.25d at scale 2; 2000 bare milliseconds for 2s), so the module
+// EMITS a frame section and materializes both words through the IntI64
+// constant lane. There is deliberately NO output-frame gate rejecting these
+// leaves (frame-bridge v2 section 0 non-goals, section 10 V2-B "i64 字面量,
+// 无语差分 fixture, 仅词法/行走单测"): the certified embedded host keeps
+// 'decimal'/'duration' outside its rung-E walk subset, so the words are
+// produced but intentionally UNREACHABLE through a conforming host
+// observation until a later rung renders the builtin spelling. This fixture
+// pins that emit-but-unobservable decision; it carries NO Data(11) section
+// (the words are i64 constants, never PtrLen/rodata).
+module wasm::v2b::builtin_i64_final;
+
+pub struct In {
+    n: Int;
+}
+
+pub struct Out {
+    amount: Decimal(2);
+    ms: Duration;
+}
+
+agent BuiltinI64FinalAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for BuiltinI64FinalAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Out {
+            amount: 1.25d,
+            ms: 2s,
+        };
+    }
+}

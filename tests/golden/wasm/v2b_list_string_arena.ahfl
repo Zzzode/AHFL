@@ -1,0 +1,44 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-B fix-forward: a COMPUTED-final
+// agent whose INPUT packs a bounded `List<String(0,8)>(4)`. The final does
+// not project the collection (the inline-input-frame expansion is a later
+// rung); the fixture exists to meter the packed input-payload ARENA. Each of
+// the four capacity slots can carry a distinct 8-byte string, so D6 must
+// reserve capacity*bound = 32 bytes (align8(sum per OCCURRENCE), design
+// section 7.1) — metering the element String shape once reserved only 8 and
+// the reference host's per-element bump cursor fail-closed while packing a
+// schema-valid four-element input. The module constructs no String literal,
+// so it emits NO Data(11) section even though it is a p6-frame module.
+module std::collections;
+
+pub struct List<T> { }
+
+pub struct In {
+    labels: List<String(0,8)>(4);
+}
+
+pub struct Out {
+    n: Int;
+}
+
+agent ListStringArenaAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for ListStringArenaAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Out {
+            n: 1,
+        };
+    }
+}

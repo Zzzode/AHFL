@@ -52,6 +52,14 @@ FRAME_FIXTURES = frozenset(
         "v2b_computed_string",
         "v2b_bounded_string",
         "v2b_string_passthrough",
+        # V2-B fix-forward: String-payload enum final, bounded List<String> /
+        # nested-struct-element arena multiplicity fixtures, and the
+        # Decimal/Duration i64-word final (emits but intentionally outside the
+        # host walk subset).
+        "v2b_enum_string",
+        "v2b_list_string_arena",
+        "v2b_list_nested_string_arena",
+        "v2b_builtin_i64_final",
         "v2c_multi_arg_bridge",
     }
 )
@@ -65,6 +73,7 @@ DATA_SECTION_FIXTURES = frozenset(
     {
         "v2b_computed_string",
         "v2b_bounded_string",
+        "v2b_enum_string",
     }
 )
 DATA_SECTION_ID = 11
