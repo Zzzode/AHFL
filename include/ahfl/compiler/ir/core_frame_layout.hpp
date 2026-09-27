@@ -77,6 +77,14 @@ struct CoreFrameBridgeCallSite {
     std::uint32_t result_extent{0};
     std::uint32_t result_payload_base{0};
     std::uint32_t result_payload_capacity{0};
+    /// V3 (frame-bridge v2 fix-forward): this call site's PRIVATE scalar/PtrLen
+    /// spill window, `[spill_base, +spill_extent)`, inside the module-wide
+    /// spill region immediately following the control blocks. The embedded
+    /// host region-membership-tests every spilled scalar / PtrLen descriptor
+    /// against the site's own window (design section 4.3/5); both words are
+    /// absent (zero) on a decoded v2 payload.
+    std::uint32_t spill_base{0};
+    std::uint32_t spill_extent{0};
 
     [[nodiscard]] friend bool operator==(const CoreFrameBridgeCallSite &,
                                          const CoreFrameBridgeCallSite &) noexcept = default;

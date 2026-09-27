@@ -32,7 +32,12 @@ constexpr std::array<std::uint8_t, 6> kMagic{'A', 'H', 'F', 'L', 'C', 'L'};
 // Frame-bridge v2 D1 (rung V2-B): payload format v2 appends the rodata span
 // after the arena span. v1 payloads end exactly at the arena span and stay
 // decodable; the encoder writes kVersion.
-constexpr std::uint8_t kVersion = 2;
+// Frame-bridge v2 fix-forward: payload format v3 appends each bridge call
+// site's private scalar/PtrLen spill window [spill_base, +spill_extent) to the
+// per-site record, so an embedded host can region-membership-test every
+// spilled descriptor against the site's own declared window (design 4.3/5).
+// v2 records stay decodable with zero spill windows.
+constexpr std::uint8_t kVersion = 3;
 constexpr std::uint8_t kMinVersion = 1;
 constexpr std::uint8_t kTargetWasm32 = 0;
 
@@ -64,6 +69,12 @@ class Encoder {
         // A v1 payload carries no rodata span; a v2 section must report the v1
         // constants with a zero rodata extent (the canonical no-Data-section
         // shape), never a half-upgraded form.
+        const bool carries_v3_spill_windows =
+            std::any_of(section.bridge_call_sites.begin(),
+                        section.bridge_call_sites.end(),
+                        [](const CoreFrameBridgeCallSite &site) {
+                            return site.spill_base != 0 || site.spill_extent != 0;
+                        });
         if (section.format_version == 1 &&
             (section.rodata_base != 0 || section.rodata_extent != 0 ||
              section.bridge_control_base != 0 || section.bridge_block_stride != 0 ||
@@ -73,6 +84,13 @@ class Encoder {
              section.entry_payload_capacity != 0 || section.workflow_output_base != 0)) {
             diagnostics_.push_back(
                 fail("a v1 frame-layout section cannot carry a rodata or bridge span"));
+            return std::nullopt;
+        }
+        // The per-site private spill windows are a v3 addition; a v2 payload
+        // predates them and must carry zero words.
+        if (section.format_version < 3 && carries_v3_spill_windows) {
+            diagnostics_.push_back(
+                fail("a v2 frame-layout section cannot carry per-site bridge spill windows"));
             return std::nullopt;
         }
         bytes_.assign(kMagic.begin(), kMagic.end());
@@ -153,6 +171,11 @@ class Encoder {
                 u32_size(site.param_layouts.size());
                 for (const CoreLayoutId param : site.param_layouts) {
                     id(param);
+                }
+                // v3: the site's private scalar/PtrLen spill window.
+                if (section.format_version >= 3) {
+                    u32(site.spill_base);
+                    u32(site.spill_extent);
                 }
             }
             // V2-D: the presence-gated workflow node-packaging extension.
@@ -876,6 +899,17 @@ class Decoder {
                 }
                 site.param_layouts.push_back(*param);
             }
+            // v3: the site's private scalar/PtrLen spill window.
+            if (section.format_version >= 3) {
+                const auto spill_base = cursor_.u32();
+                const auto spill_extent = cursor_.u32();
+                if (!spill_base.has_value() || !spill_extent.has_value()) {
+                    bad("frame-layout bridge call-site spill window is truncated");
+                    return false;
+                }
+                site.spill_base = *spill_base;
+                site.spill_extent = *spill_extent;
+            }
             section.bridge_call_sites.push_back(std::move(site));
         }
         return true;
@@ -1269,6 +1303,11 @@ class Decoder {
         }
 
         std::uint64_t cursor = section.bridge_control_base + section.bridge_control_extent;
+        // v3: the per-site private spill windows must densely partition the
+        // module-wide spill region in dense call-site order, with no gaps or
+        // overlap: the host authorizes a spilled scalar / PtrLen descriptor
+        // only against its own site's window, so two windows can never alias.
+        std::uint64_t spill_cursor = 0;
         for (std::uint32_t i = 0; i < site_count; ++i) {
             const CoreFrameBridgeCallSite &site = section.bridge_call_sites[i];
             if (site.call_site_id != i) {
@@ -1288,6 +1327,25 @@ class Decoder {
                 fail_local("a frame-layout bridge control block is not at its dense fixed-stride "
                            "offset");
                 return false;
+            }
+            if (section.format_version >= 3) {
+                if (site.spill_extent % 8u != 0) {
+                    fail_local("a frame-layout bridge spill window must be 8-aligned");
+                    return false;
+                }
+                const std::uint64_t expected_site_spill =
+                    static_cast<std::uint64_t>(section.bridge_spill_base) + spill_cursor;
+                if (static_cast<std::uint64_t>(site.spill_base) != expected_site_spill) {
+                    fail_local("a frame-layout bridge spill window does not densely follow the "
+                               "prior sites' windows");
+                    return false;
+                }
+                spill_cursor += site.spill_extent;
+                if (spill_cursor > section.bridge_spill_extent) {
+                    fail_local("a frame-layout bridge spill window runs past the module spill "
+                               "region");
+                    return false;
+                }
             }
             for (const CoreLayoutId param : site.param_layouts) {
                 if (!valid_id(section.table, param)) {
@@ -1327,6 +1385,11 @@ class Decoder {
                 return false;
             }
             cursor += site.result_payload_capacity;
+        }
+        if (section.format_version >= 3 && spill_cursor != section.bridge_spill_extent) {
+            fail_local("the per-site bridge spill windows do not exactly partition the module "
+                       "spill region");
+            return false;
         }
         return true;
     }

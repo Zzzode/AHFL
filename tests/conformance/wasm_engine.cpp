@@ -410,6 +410,9 @@ build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
         s->set("result_extent", juint(site.result_extent));
         s->set("result_payload_base", juint(site.result_payload_base));
         s->set("result_payload_capacity", juint(site.result_payload_capacity));
+        // v3 frame section: the site's private scalar/PtrLen spill window.
+        s->set("spill_base", juint(site.spill_base));
+        s->set("spill_extent", juint(site.spill_extent));
         bridge_sites->push(std::move(s));
     }
     node->set("bridge_call_sites", std::move(bridge_sites));

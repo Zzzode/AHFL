@@ -61,6 +61,12 @@ FRAME_FIXTURES = frozenset(
         "v2b_list_nested_string_arena",
         "v2b_builtin_i64_final",
         "v2c_multi_arg_bridge",
+        # V2-C fix-forward: two computed bridge handlers in a chain (two dense
+        # sites share one import ordinal), a producing match followed by an
+        # ordered bridge statement, and a single tag-only-enum bridge argument.
+        "v2c_bridge_chain",
+        "v2c_route_then_bridge",
+        "v2c_single_enum_bridge",
     }
 )
 

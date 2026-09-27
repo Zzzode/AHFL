@@ -607,7 +607,13 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/v2b_list_string_arena.ahfl",
         "wasm/v2b_rodata_overflow.ahfl",
         "wasm/v2b_string_passthrough.ahfl",
+        // V2-C fix-forward regressions: a two-handler bridge chain, a
+        // producing match followed by an ordered bridge statement, and a
+        // single tag-only-enum bridge argument.
+        "wasm/v2c_bridge_chain.ahfl",
         "wasm/v2c_multi_arg_bridge.ahfl",
+        "wasm/v2c_route_then_bridge.ahfl",
+        "wasm/v2c_single_enum_bridge.ahfl",
     };
 }
 

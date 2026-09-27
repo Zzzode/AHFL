@@ -578,7 +578,8 @@ int main() {
         };
         auto make_pair = [&]() -> BridgePair {
             BridgePair out;
-            out.section.format_version = 2;
+            // v3 carries the per-call-site private scalar/PtrLen spill window.
+            out.section.format_version = 3;
             out.section.table.target = irc::TargetDataLayout{};
             // Layout 0: i32 scalar (Bool). Layout 1: String PtrLen.
             // Layout 2: one-PtrLen struct (8 bytes, one field at offset 0).
@@ -609,7 +610,8 @@ int main() {
                 /*block_offset=*/0,
                 /*param_layouts=*/{irc::CoreLayoutId{1}, irc::CoreLayoutId{0}},
                 /*result_layout=*/{2},
-                kResultBase, kResultExtent, kResultPayloadBase, kResultPayloadCap});
+                kResultBase, kResultExtent, kResultPayloadBase, kResultPayloadCap,
+                /*spill_base=*/kSpillBase, /*spill_extent=*/kSpillExtent});
 
             // Parallel wire graph: 0 bool, 1 string, 2 struct {s: string}.
             out.wire.format_version = 1;
@@ -741,6 +743,35 @@ int main() {
             check(!irc::verify_frame_bridge_sites(f64_pair.section, f64_pair.wire)
                           .empty(),
                   "an f64 bridge argument outside the frame-walk subset fails closed");
+        }
+
+        // v3: the per-site private spill windows must exactly partition the
+        // module spill region in dense order. These are geometric, decode-time
+        // obligations (verify_local), so a tampered section encodes but fails
+        // admission on decode. A shortened window leaves part of the spill
+        // region unclaimed (the partition equality fails); a window that
+        // starts off the dense cursor is rejected too.
+        {
+            auto bad = canonical.section;
+            bad.bridge_call_sites[0].spill_extent = kSpillExtent / 2;
+            const auto enc = irc::encode_core_frame_layout_section(bad);
+            check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
+                  "a v3 bridge spill window that does not partition the spill region fails closed");
+        }
+        {
+            auto bad = canonical.section;
+            bad.bridge_call_sites[0].spill_base = kSpillBase + 8;
+            const auto enc = irc::encode_core_frame_layout_section(bad);
+            check(enc.ok() && !irc::decode_core_frame_layout_section(*enc.bytes).ok(),
+                  "a v3 bridge spill window off the dense spill cursor fails closed");
+        }
+        {
+            // A v2 section cannot carry the v3 per-site spill words: the
+            // encoder rejects the versioned fields.
+            auto v2 = canonical.section;
+            v2.format_version = 2;
+            check(!irc::encode_core_frame_layout_section(v2).ok(),
+                  "a v2 frame-layout section cannot carry v3 per-site spill windows");
         }
     }
 

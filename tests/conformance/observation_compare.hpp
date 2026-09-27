@@ -11,7 +11,9 @@
 //
 //   1. state_sequence       ordered {agent,state} entries (declaration order);
 //   2. capability_sequence  ordered canonical capability names;
-//   3. output_json          canonical output wire bytes (or both absent);
+//   3. capability_arguments ordered canonical wire argument envelopes
+//                            (serialize_args_for_wire_json SSOT per call);
+//   4. output_json          canonical output wire bytes (or both absent);
 //   0. status               completed / suspended / failed.
 //
 // It returns an empty optional when they agree, or a human-readable reason
@@ -91,6 +93,37 @@ namespace detail {
     return std::nullopt;
 }
 
+// Compares the ordered per-call capability ARGUMENT envelopes. Each element is
+// an arbitrary canonical JSON value ({} for zero args, {"value":..} for one
+// non-struct, the bare struct object for one struct, {"args":[..]} for many),
+// so equality is byte-exact after canonical re-serialization.
+[[nodiscard]] inline std::optional<std::string>
+compare_argument_envelopes(const json::JsonValue &lhs, const json::JsonValue &rhs) {
+    constexpr std::string_view dimension = "capability_arguments";
+    if (!lhs.is_array() || !rhs.is_array()) {
+        return std::string{dimension} + " is not an array in one observation";
+    }
+    if (lhs.array_items.size() != rhs.array_items.size()) {
+        return std::string{dimension} + " length diverged (evaluator " +
+               std::to_string(lhs.array_items.size()) + ", node " +
+               std::to_string(rhs.array_items.size()) + ")";
+    }
+    for (std::size_t i = 0; i < lhs.array_items.size(); ++i) {
+        const auto *a = lhs.array_items[i].get();
+        const auto *b = rhs.array_items[i].get();
+        if (a == nullptr || b == nullptr) {
+            return std::string{dimension} + "[" + std::to_string(i) + "] is null";
+        }
+        const std::string a_bytes = canonical_json(*a);
+        const std::string b_bytes = canonical_json(*b);
+        if (a_bytes != b_bytes) {
+            return std::string{dimension} + "[" + std::to_string(i) +
+                   "] diverged (evaluator " + a_bytes + ", node " + b_bytes + ")";
+        }
+    }
+    return std::nullopt;
+}
+
 // Compares the output value subtree by re-serializing both through the canonical
 // emitter, so the comparison is byte-exact regardless of document formatting.
 [[nodiscard]] inline std::optional<std::string> compare_output(const json::JsonValue &lhs,
@@ -149,6 +182,20 @@ observations_agree(std::string_view evaluator_observation_json,
     }
     if (auto divergence = detail::compare_string_array(
             *ev.get("capability_sequence"), *nd.get("capability_sequence"), "capability_sequence");
+        divergence.has_value()) {
+        return divergence;
+    }
+    // capability_arguments: every run records one envelope per capability
+    // call. The opaque lane records the exact frame bytes the mock received;
+    // the bridge lane records the SSOT envelope the host built from P4-D spans.
+    // Both are required so a mis-marshaled / reordered argument frame cannot
+    // agree on names and output alone.
+    if (ev.get("capability_arguments") == nullptr ||
+        nd.get("capability_arguments") == nullptr) {
+        return "one observation is missing the capability_arguments array";
+    }
+    if (auto divergence = detail::compare_argument_envelopes(
+            *ev.get("capability_arguments"), *nd.get("capability_arguments"));
         divergence.has_value()) {
         return divergence;
     }

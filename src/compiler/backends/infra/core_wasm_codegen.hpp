@@ -135,6 +135,11 @@ struct CoreWasmBridgeCallSite {
     std::uint32_t result_extent{0};
     std::uint32_t result_payload_base{0};
     std::uint32_t result_payload_capacity{0};
+    /// The call site's private scalar/PtrLen spill window inside the module
+    /// spill region; the host membership-tests every spilled descriptor only
+    /// against [spill_base, +spill_extent) (frame section v3, design 4.3/5).
+    std::uint32_t spill_base{0};
+    std::uint32_t spill_extent{0};
 };
 
 /// RFC 0026 P6-7: the P6-frame facts an embedded host needs to pack input and

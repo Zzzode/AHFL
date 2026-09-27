@@ -1,0 +1,75 @@
+module wasm::v2c_route_then_bridge;
+
+// RFC 0026 P6-7 frame-bridge v2 rung V2-C fix-forward regression: a non-final
+// handler that first runs a PRODUCING match (a statement-position pattern
+// arena) and then invokes an ORDERED bridge capability OUTSIDE the match arms
+// -- the "route then call" shape. Before the fix the module-wide pattern-arena
+// admission gate called is_p6_computation_region(state.body) with the default
+// allow_bridge_calls=false, so a region containing both a match and a bridge
+// statement failed the gate's ANY-of and was rejected as a "hidden pattern
+// arena" even though D2/D3 admit an ordered bridge inside a bridge
+// computation region. The match-derived scalar is passed as a bridge argument,
+// so the per-call argument envelope pins the match result.
+
+struct TicketRequest {
+    ticket_id: String;
+    urgent: Bool;
+    channel: Channel;
+}
+
+struct RoutingContext {
+    owner: String = "unassigned";
+}
+
+struct RoutingDecision {
+    route: Channel;
+    owner: String;
+}
+
+enum Channel {
+    Web,
+    Phone,
+    Post,
+}
+
+capability RouteTicket(ticket_id: String, priority: Int, urgent: Bool) -> RoutingDecision;
+
+agent RoutingAgent {
+    input: TicketRequest;
+    context: RoutingContext;
+    output: RoutingDecision;
+    states: [Init, Routing, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [RouteTicket];
+
+    transition Init -> Routing;
+    transition Routing -> Done;
+}
+
+flow for RoutingAgent {
+    state Init {
+        goto Routing;
+    }
+
+    state Routing {
+        // The producing match lives in the pattern arena; its scalar result is
+        // consumed by the ordered bridge statement that follows it (outside the
+        // arms). Phone -> priority 1 for this scenario.
+        let priority: Int = match input.channel {
+            Phone => 1,
+            Web => 2,
+            Post => 3,
+        };
+        let decision = RouteTicket(input.ticket_id, priority, input.urgent);
+        ctx.owner = decision.owner;
+        goto Done;
+    }
+
+    state Done {
+        return RoutingDecision {
+            route: Channel::Phone,
+            owner: ctx.owner,
+        };
+    }
+}

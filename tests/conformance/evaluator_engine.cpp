@@ -13,6 +13,7 @@
 #include "conformance/compile_source.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/capability_bridge.hpp"
+#include "runtime/engine/wire_value.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/evaluator/value_json.hpp"
@@ -142,13 +143,15 @@ build_mock_registry(const ConformanceCase &manifest, std::string &error_out) {
 
 // Serializes one engine run into the canonical observation DOM. `states` are
 // declaration-order (agent, state) pairs; `capabilities` the canonical
-// capability-name sequence.
+// capability-name sequence; `argument_envelopes` the per-call canonical wire
+// argument envelope (serialize_args_for_wire_json SSOT) in the same order.
 [[nodiscard]] std::string render_observation(const ConformanceCase &manifest,
                                              const ConformanceScenario &scenario,
                                              const char *status,
                                              const std::vector<std::pair<std::string, std::string>>
                                                  &states,
                                              const std::vector<std::string> &capabilities,
+                                             const std::vector<std::string> &argument_envelopes,
                                              const Value *output) {
     auto root = json::JsonValue::make_object();
     root->set("schema", make_string_node("ahfl.evaluator-observation.v1"));
@@ -170,6 +173,22 @@ build_mock_registry(const ConformanceCase &manifest, std::string &error_out) {
         capability_array->push(make_string_node(capability));
     }
     root->set("capability_sequence", std::move(capability_array));
+
+    // The per-call argument envelope is the SAME canonical frame every C++
+    // transport sends (serialize_args_for_wire_json): bare struct /
+    // {"value":..} / {"args":[..]} / {}. Embedded as a value subtree (never a
+    // string) so the differential comparator can canonicalize bytes, exactly
+    // like output_json.
+    auto argument_array = json::JsonValue::make_array();
+    for (const std::string &envelope : argument_envelopes) {
+        auto parsed = json::parse_json(envelope);
+        if (parsed.has_value() && *parsed) {
+            argument_array->push(std::move(*parsed));
+        } else {
+            argument_array->push(make_string_node(envelope));
+        }
+    }
+    root->set("capability_arguments", std::move(argument_array));
 
     if (output != nullptr) {
         // value_to_json is canonical compact wire JSON; re-parse only to embed
@@ -200,9 +219,22 @@ run_workflow(const Program &program,
              Value input) {
     std::vector<std::pair<std::string, std::string>> states;
     std::vector<std::string> capabilities;
+    std::vector<std::string> argument_envelopes;
 
     WorkflowRuntimeConfig config;
-    config.capability_invoker = registry.as_invoker();
+    // Wrap the registry invoker so BOTH the canonical name and the canonical
+    // wire argument envelope are recorded per call (the Node embedded host
+    // compares the envelopes, not just the capability order).
+    const ahfl::runtime::CapabilityInvoker base_invoker = registry.as_invoker();
+    config.capability_invoker =
+        [base_invoker, &capabilities, &argument_envelopes](
+            const std::string &name,
+            const std::vector<Value> &args) -> CapabilityCallResult {
+            capabilities.emplace_back(name);
+            argument_envelopes.push_back(
+                ahfl::runtime::serialize_args_for_wire_json(args));
+            return base_invoker(name, args);
+        };
     config.monotonic_clock = fixed_clock;
     config.state_entered_hook =
         [&states](AgentId,
@@ -211,9 +243,6 @@ run_workflow(const Program &program,
                   std::string_view state_name) {
             states.emplace_back(std::string{agent_name}, std::string{state_name});
         };
-    config.capability_invoked_hook = [&capabilities](AgentId, std::string_view name) {
-        capabilities.emplace_back(name);
-    };
 
     WorkflowRuntime runtime(program, std::move(config));
     const WorkflowResult result = runtime.run(manifest.entry, std::move(input));
@@ -222,7 +251,7 @@ run_workflow(const Program &program,
     outcome.ok = true;
     outcome.observation_json =
         render_observation(manifest, scenario, status_name_workflow(result.status()), states,
-                           capabilities, result.output());
+                           capabilities, argument_envelopes, result.output());
     return outcome;
 }
 
@@ -243,14 +272,19 @@ run_agent(const Program &program,
 
     std::vector<std::pair<std::string, std::string>> states;
     std::vector<std::string> capabilities;
+    std::vector<std::string> argument_envelopes;
 
     // Wrap the registry invoker so capability invocations are observed with
     // their canonical callee name (AgentRuntime has no workflow-style invoked
-    // hook; the non-contextual invoker receives the canonical callee).
+    // hook; the non-contextual invoker receives the canonical callee) and the
+    // canonical wire argument envelope (the Node host's bridgeEnvelope SSOT).
     ahfl::runtime::CapabilityInvoker recording_invoker =
-        [&registry, &capabilities](const std::string &name,
-                                   const std::vector<Value> &args) -> CapabilityCallResult {
+        [&registry, &capabilities, &argument_envelopes](
+            const std::string &name,
+            const std::vector<Value> &args) -> CapabilityCallResult {
         capabilities.push_back(name);
+        argument_envelopes.push_back(
+            ahfl::runtime::serialize_args_for_wire_json(args));
         return registry.invoke(name, args);
     };
 
@@ -273,7 +307,7 @@ run_agent(const Program &program,
     const Value *output = result.output.has_value() ? &*result.output : nullptr;
     outcome.observation_json =
         render_observation(manifest, scenario, status_name_agent(result.status), states,
-                           capabilities, output);
+                           capabilities, argument_envelopes, output);
     return outcome;
 }
 

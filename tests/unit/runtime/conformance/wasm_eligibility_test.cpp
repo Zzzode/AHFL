@@ -219,6 +219,28 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // V2-C fix-forward: two computed non-final handlers each invoke the same
+        // capability (two dense sites sharing one import ordinal); reachability
+        // must keep both handlers and the module stays P6Frame.
+        {"v2c_bridge_chain.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        // V2-C fix-forward: a producing pattern-arena match followed by an
+        // ordered bridge statement outside the arms (route then call).
+        {"v2c_route_then_bridge.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        // V2-C fix-forward: one tag-only-enum bridge argument; still a P6Frame
+        // bridge module, with a single non-Struct argument wrapped {"value":..}.
+        {"v2c_single_enum_bridge.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
         // RFC 0026 FB-3b: a higher-order lambda / call_indirect program emits
         // cleanly on the orchestration lane (funcref table + closure env). Its
         // node-only observation (no evaluator reference until KR6.8) is a

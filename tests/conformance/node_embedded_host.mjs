@@ -156,22 +156,110 @@ function assertEventRegionZero(exports, label, includeHeader) {
 // payload arena). Every read/write is bounds-checked against the descriptor;
 // a bad control block or result is a host fail (the module traps regardless).
 
-function findBridgeSite(ordinal) {
-  const lane = descriptor.frame_lane;
-  if (!lane) return undefined;
-  return lane.bridge_call_sites.find((s) => s.import_ordinal === ordinal);
+// Fixed P6 frame-region bases (the wire ABI SSOT is
+// core_wasm_abi_constants.hpp; the certified host hardcodes the same wasm32
+// constants rather than trusting module words).
+const kContextFrameBase = 4096;
+const kContextFrameEnd = 7168;
+const kScratchArenaBase = 7168;
+const kScratchArenaEnd = 12288;
+
+// Classify one bridge parameter by its WIRE shape (the SSOT discriminator): a
+// scalar / tag-only enum / String PtrLen is spilled into the call site's
+// private 8-byte slots; a struct / tuple / option / payload-bearing enum stays
+// at its aggregate root address. This mirrors the C++ planning classification
+// in plan_capability_call (p6_scalar_kind: PtrLen/Index/Bool/Int spill,
+// Ptr roots keep their address).
+function bridgeParamKind(W, wireId) {
+  const w = W[wireId];
+  if (w === undefined) frameFail("bridge parameter names an unknown wire node");
+  switch (w.t) {
+    case "bool":
+    case "int":
+    case "unit":
+    case "string":
+      return "spill";
+    case "struct":
+    case "option":
+    case "tuple":
+      return "root";
+    case "enum": {
+      const tagOnly = w.variants.every((v) => v.kind === "unit");
+      return tagOnly ? "spill" : "root";
+    }
+    case "float":
+    case "decimal":
+    case "duration":
+    case "timestamp":
+    case "uuid":
+    case "map":
+    case "sequence":
+      frameFail(`a bridge parameter of wire shape '${w.t}' is outside the frame-bridge subset`);
+      return "reject";
+  }
+  frameFail(`unhandled bridge parameter wire shape '${w.t}'`);
+  return "reject";
 }
 
-// Read ONE bridge argument P4-D span into a JS value. `wireId`/`layoutId` name
-// the logical shape and dense physical root; the physical span starts at `addr`
-// and is `len` bytes. Only the frame-walk subset is reachable (compile +
-// admission already rejected the rest).
+function inRegion(addr, len, region) {
+  return addr >= region.lo && len <= region.hi - addr;
+}
+
+// Read ONE bridge argument P4-D span into a JS value. The descriptor ptr/len
+// words are UNTRUSTED module evidence (design sections 4.3/5): each argument
+// span is independently region-membership-tested against exactly the homes
+// that parameter kind may name, and the module-provided len is only
+// cross-checked against the dense layout (8 for a spill slot, the layout root
+// size for an aggregate root) -- never used as the span authority.
 function readBridgeArgValue(e, lane, W, L, backing, currentSite, wireId, layoutId,
-                            addr, len) {
-  if (addr < 0 || len < 0 || addr + len > kPageSize) {
+                            ptr, len, rootRegions) {
+  if (!Number.isInteger(ptr) || !Number.isInteger(len) ||
+      ptr < 0 || len < 0 || ptr + len > kPageSize) {
     frameFail("bridge argument span lies outside the fixed page");
   }
-  return readValue(e, lane, W, L, wireId, layoutId, addr, backing,
+  const l = L[layoutId];
+  if (l === undefined) frameFail("bridge argument names an unknown layout root");
+  const kind = bridgeParamKind(W, wireId);
+  if (kind === "spill") {
+    // Every spilled slot is one 8-byte private slot in THIS site's spill
+    // window. A scalar reads its first 4/8 bytes; a String PtrLen reads the
+    // 8-byte pair and its payload is then authorized against the payload
+    // regions; a tag-only enum is one i32 tag word (p6_scalar_kind's Index
+    // kind): its dense layout carries t:"enum" but it is physically a spilled
+    // scalar, never a root address. The module cannot name another site's
+    // slot, the context frame, rodata, or an arbitrary page word as a source.
+    if (l.t !== "scalar" && l.t !== "ptrlen" && l.t !== "enum") {
+      frameFail("a spilled bridge parameter maps to a non-scalar/non-PtrLen/non-tag-enum layout");
+    }
+    if (len !== 8) {
+      frameFail(`a spilled bridge parameter descriptor len must be 8 (got ${len})`);
+    }
+    const spillRegion = {
+      lo: Number(currentSite.spill_base),
+      hi: Number(currentSite.spill_base) + Number(currentSite.spill_extent),
+    };
+    if (!(spillRegion.hi > spillRegion.lo) || !inRegion(ptr, 8, spillRegion)) {
+      frameFail("a spilled bridge parameter lies outside its call site's private spill window");
+    }
+  } else {
+    // An aggregate root stays at its existing stable address. Authorize only
+    // the packed input frame, the fixed context frame, the constructor scratch
+    // arena, or ANOTHER call site's result placement -- never this call's own
+    // result (it is the call output, unwritten before the invocation).
+    if (l.t !== "struct" && l.t !== "enum") {
+      frameFail("an aggregate bridge parameter maps to a non-struct/non-enum layout");
+    }
+    const rootSize = Number(l.size);
+    if (len !== rootSize) {
+      frameFail("an aggregate bridge parameter descriptor len disagrees with its dense layout " +
+                `root size (descriptor ${len}, layout ${rootSize})`);
+    }
+    if (!rootRegions.some((r) => inRegion(ptr, rootSize, r))) {
+      frameFail("an aggregate bridge parameter names a root outside an authorized frame / " +
+                "scratch / other-site result placement");
+    }
+  }
+  return readValue(e, lane, W, L, wireId, layoutId, ptr, backing,
                    bridgeStringRegions(lane, currentSite));
 }
 
@@ -219,24 +307,32 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
     const e = instance.exports;
     const dv = new DataView(e.memory.buffer);
     const lane = descriptor.frame_lane;
-    const site = findBridgeSite(ordinal);
-    if (site === undefined) {
-      frameFail(`import ${importEntry.field} is invoked on the bridge protocol but has no ` +
-                `descriptor bridge record`);
+    if (importEntry.mode !== "bridge") {
+      frameFail(`import ${importEntry.field} is invoked but the descriptor does not tag it as a ` +
+                `bridge import`);
     }
-    // Control-block membership: exactly
-    // [bridge_control_base, bridge_control_base + site_count*stride).
-    const blocks_end = lane.bridge_control_base +
-                       lane.bridge_call_sites.length * lane.bridge_block_stride;
-    if (blockPtr < lane.bridge_control_base || blockPtr >= blocks_end) {
-      frameFail("bridge control-block pointer names an address outside the control-block region");
+    // Resolve the call site FROM THE CONTROL-BLOCK ADDRESS, never from the
+    // import ordinal: one capability legally occupies one import (one ordinal)
+    // shared by MANY dense call sites (the normal loop / chain shape, design
+    // D3 "each reachable capability occupies one low ordinal"). The ordinal is
+    // verified against the resolved site only after the block identifies it.
+    const sites = lane.bridge_call_sites;
+    const stride = Number(lane.bridge_block_stride);
+    const rel = blockPtr - lane.bridge_control_base;
+    if (!Number.isInteger(blockPtr) || rel < 0 ||
+        rel >= sites.length * stride || rel % stride !== 0) {
+      frameFail("bridge control-block pointer names an address outside a dense fixed-stride " +
+                "control-block slot");
     }
-    const block_index = Math.floor(
-      (blockPtr - lane.bridge_control_base) / lane.bridge_block_stride);
-    const site_at_block = lane.bridge_call_sites[block_index];
-    if (site_at_block === undefined ||
+    const block_index = Math.floor(rel / stride);
+    const site = sites[block_index];
+    if (site === undefined ||
         blockPtr !== lane.bridge_control_base + site.block_offset) {
       frameFail("bridge control-block pointer is not at its dense fixed-stride offset");
+    }
+    if (site.import_ordinal !== ordinal) {
+      frameFail(`bridge call site ${site.call_site_id} names import ordinal ` +
+                `${site.import_ordinal} but import ordinal ${ordinal} was invoked`);
     }
     const call_site_id = dv.getUint32(blockPtr, true);
     const arg_count = dv.getUint32(blockPtr + 4, true);
@@ -251,6 +347,21 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
     const W = descriptor.wire_schema.nodes;
     const L = lane.layouts;
     const backing = backingByLayout(lane);
+    // The authorized aggregate-root homes for THIS call (design 4.3/5): the
+    // packed input frame, the fixed context frame, the constructor scratch
+    // arena, and every OTHER call site's disjoint result placement. The input
+    // region is the exact packed input span; context/scratch use the fixed ABI
+    // windows. The current site's own result is deliberately excluded.
+    const rootRegions = [
+      {lo: Number(lane.input_base), hi: Number(lane.input_base) + Number(lane.input_size)},
+      {lo: kContextFrameBase, hi: kContextFrameEnd},
+      {lo: kScratchArenaBase, hi: kScratchArenaEnd},
+    ];
+    for (const other of sites) {
+      if (other.call_site_id === site.call_site_id) continue;
+      rootRegions.push({lo: Number(other.result_base),
+                        hi: Number(other.result_base) + Number(other.result_extent)});
+    }
     const argValues = [];
     for (let i = 0; i < arg_count; ++i) {
       const desc = blockPtr + 8 + 8 * i;
@@ -258,11 +369,14 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
       const len = dv.getUint32(desc + 4, true);
       argValues.push(readBridgeArgValue(e, lane, W, L, backing, site,
                                         site.params[i], site.param_layout[i],
-                                        ptr, len));
+                                        ptr, len, rootRegions));
     }
 
     state.calls += 1;
-    state.events.push({name: importEntry.name, argument: bridgeEnvelope(argValues)});
+    state.events.push({
+      name: importEntry.name,
+      argument: bridgeEnvelope(W, site.params, argValues),
+    });
 
     // ABI-matrix modes for the bridge protocol: a non-OK status makes the module
     // trap single-run, no result packing needed.
@@ -292,16 +406,22 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
   };
 }
 
-// The wire argument envelope SSOT (mirrors serialize_args_for_wire_json).
-function bridgeEnvelope(args) {
+// The wire argument envelope SSOT (mirrors serialize_args_for_wire_json in
+// src/runtime/engine/wire_value.cpp EXACTLY). The single-argument "bare
+// object" decision is made on the evaluator Value kind there (bare iff the
+// value is a StructValue); its wire image is precisely a wire node of
+// t=='struct'. A single enum renders {_enum,_variant} but an EnumValue is not
+// a StructValue, so the envelope must be {"value":{...}} -- classifying on the
+// JS JSON shape ("any object") would diverge for enum / option / tuple args.
+function bridgeEnvelope(W, paramWireIds, args) {
   if (args.length === 0) return "{}";
   if (args.length === 1) {
-    const only = args[0];
-    if (only && typeof only === "object" && !Array.isArray(only) &&
-        !(only instanceof Boolean)) {
-      return jsonString(only);
+    const wireNode = W[paramWireIds[0]];
+    if (wireNode === undefined) frameFail("bridge envelope names an unknown wire parameter");
+    if (wireNode.t === "struct") {
+      return jsonString(args[0]);
     }
-    return jsonString({value: only});
+    return jsonString({value: args[0]});
   }
   return jsonString({args});
 }
@@ -389,9 +509,11 @@ function emitStateSequence(entries) {
     return `{"agent":${agent},"state":${state}}`;
   }).join(",")}]`;
 }
-function emitObservation({ status, states, capabilities, outputRaw, transitions,
+function emitObservation({ status, states, capabilities, capabilityArguments, outputRaw,
+                           transitions,
                            completedNodes }) {
   const fields = [
+    [`"capability_arguments"`, `[${capabilityArguments.join(",")}]`],
     [`"capability_sequence"`, `[${capabilities.map(jsonString).join(",")}]`],
     [`"case"`, jsonString(descriptor.case)],
     ...(outputRaw !== null ? [[`"output_json"`, outputRaw]] : []),
@@ -985,6 +1107,7 @@ async function runAgent(compiled) {
       status: "completed",
       states: walked.map((state) => ({agent: lane.agent, state})),
       capabilities: probe.events.map((event) => event.name),
+      capabilityArguments: probe.events.map((event) => event.argument),
       outputRaw,
       transitions: e.transition_count.value,
       completedNodes: null,
@@ -1009,6 +1132,7 @@ async function runAgent(compiled) {
     status: normalizeStatus(tuple[0]),
     states: walked.map((state) => ({ agent: lane.agent, state })),
     capabilities: probe.events.map((event) => event.name),
+    capabilityArguments: probe.events.map((event) => event.argument),
     outputRaw,
     transitions: e.transition_count.value,
     completedNodes: null,
@@ -1169,6 +1293,7 @@ async function runWorkflow(compiled) {
     status,
     states,
     capabilities: probe.events.map((event) => event.name),
+    capabilityArguments: probe.events.map((event) => event.argument),
     outputRaw,
     transitions: e.transition_count.value,
     completedNodes: e.workflow_completed_count.value,
@@ -1194,13 +1319,18 @@ async function runAbiProbes(compiled) {
     const hasBridge = descriptor.frame_contract === "p6_frame" &&
                       (descriptor.frame_lane?.bridge_call_sites?.length ?? 0) > 0;
     if (hasBridge) {
-      // OK path: one bridge invocation, runv returns the computed output base.
+      // OK path: every dense bridge call site fires exactly once on one
+      // completed run (one capability may legally own several sites that share
+      // one import ordinal -- the chain/loop shape), and runv returns the
+      // computed output base.
+      const bridgeCallCount = descriptor.frame_lane.bridge_call_sites.length;
       {
         const p = await makeInstance(compiled, "scenario");
         packP6Input(p);
         const tuple = p.exports.runv();
-        if (tuple[0] !== 0 || p.calls !== 1) {
-          fail(`bridge runv OK normalization mismatch: ${tuple}, calls=${p.calls}`);
+        if (tuple[0] !== 0 || p.calls !== bridgeCallCount) {
+          fail(`bridge runv OK normalization mismatch: ${tuple}, calls=${p.calls}, ` +
+               `expected=${bridgeCallCount}`);
         }
         if (tuple[1] !== descriptor.frame_lane.output_base) {
           fail("bridge runv returned a value_ptr other than the computed output base");

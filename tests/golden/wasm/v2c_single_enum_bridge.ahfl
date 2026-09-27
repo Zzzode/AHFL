@@ -1,0 +1,65 @@
+module wasm::v2c_single_enum_bridge;
+
+// RFC 0026 P6-7 frame-bridge v2 rung V2-C fix-forward regression: a bridge
+// capability with ONE tag-only-enum argument. The wire argument envelope SSOT
+// (serialize_args_for_wire_json) wraps every non-Struct single argument as
+// {"value":..}; an EnumValue is NOT a StructValue, so its frame must be
+// {"value":{"_enum":...,"_variant":"..."}}, never the bare enum object. The
+// pre-fix host classified by the JS JSON shape ("any object is bare") and
+// emitted the enum bare, diverging from every C++ transport; the differential
+// now compares the per-call argument envelope and pins the SSOT frame.
+
+struct TicketRequest {
+    channel: Channel;
+}
+
+struct RoutingContext {
+    owner: String = "unassigned";
+}
+
+struct RoutingDecision {
+    route: Channel;
+    owner: String;
+}
+
+enum Channel {
+    Web,
+    Phone,
+    Post,
+}
+
+capability ClassifyChannel(channel: Channel) -> RoutingDecision;
+
+agent RoutingAgent {
+    input: TicketRequest;
+    context: RoutingContext;
+    output: RoutingDecision;
+    states: [Init, Classify, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [ClassifyChannel];
+
+    transition Init -> Classify;
+    transition Classify -> Done;
+}
+
+flow for RoutingAgent {
+    state Init {
+        goto Classify;
+    }
+
+    state Classify {
+        // One tag-only enum argument: spilled scalar, wrapped {"value":..} on
+        // the wire (not the bare enum object).
+        let decision = ClassifyChannel(input.channel);
+        ctx.owner = decision.owner;
+        goto Done;
+    }
+
+    state Done {
+        return RoutingDecision {
+            route: Channel::Phone,
+            owner: ctx.owner,
+        };
+    }
+}

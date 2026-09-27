@@ -447,6 +447,24 @@ class RodataLiteralPool {
 
     [[nodiscard]] bool empty() const noexcept { return unique_.empty(); }
 
+    // V2-C fix-forward: replace the pool's internee set with the reachable
+    // builders' literals (reachability compaction dropped the dead handlers
+    // that interned the old contents). The supplied bytes are a subset of what
+    // a prior successful planning round interned, so every length bound and
+    // the rodata capacity already held; the bool only re-checks capacity.
+    [[nodiscard]] bool rebuild_from_literals(std::span<const std::string> literals) {
+        unique_.clear();
+        for (const std::string &bytes : literals) {
+            unique_.insert(bytes);
+        }
+        std::uint64_t extent = 0;
+        for (const std::string &entry : unique_) {
+            extent = (extent + 7u) & ~std::uint64_t{7u};
+            extent += static_cast<std::uint64_t>(entry.size());
+        }
+        return extent <= kP6RodataCapacity;
+    }
+
     // Freeze the pool: sort by byte content, assign 8-aligned offsets, and
     // build the zero-padded image plus the offset lookup.
     void freeze() {
@@ -2044,6 +2062,13 @@ class P6ComputationHandlerBuilder {
     // String literals keep failing closed (no rodata region is planned there).
     void install_rodata_pool(RodataLiteralPool *pool) { rodata_pool_ = pool; }
 
+    // V2-C fix-forward: the String literal bytes THIS builder interned while
+    // planning. Reachability compaction rebuilds the module-wide pool from the
+    // surviving builders so dead-handler literals cannot pin rodata space.
+    [[nodiscard]] const std::vector<std::string> &rodata_literals() const noexcept {
+        return rodata_literals_;
+    }
+
     // V2-D: the construct-scratch high-water this builder planned (relative
     // bytes; the workflow packager sizes the per-instance scratch sub-block
     // from the maximum across an agent's handlers).
@@ -2062,17 +2087,24 @@ class P6ComputationHandlerBuilder {
         bridge_state_ = state;
     }
 
-    // V2-C: renumber this builder's bridge statement ids after unreachable
-    // call sites were filtered out of the dense module table. No-op for a
-    // builder without bridge statements.
-    void remap_bridge_call_ids(
-        const std::unordered_map<std::uint32_t, std::uint32_t> &remap) {
+    // V2-C fix-forward: renumber this builder's bridge statement ids after
+    // unreachable call sites were filtered out of the dense module table.
+    // Returns false (a compiler-internal inconsistency the caller must reject
+    // on) when a retained statement names a filtered-away id: an emitted bridge
+    // statement whose dense site no longer exists would index sites()[id] out of
+    // bounds and the host would reject the module. No-op for a builder without
+    // bridge statements.
+    [[nodiscard]] bool remap_bridge_call_ids(
+        const std::unordered_map<std::uint32_t, std::uint32_t> &remap,
+        std::size_t dense_site_count) {
         for (auto &[statement, id] : bridge_call_ids_) {
             const auto it = remap.find(id);
-            if (it != remap.end()) {
-                id = it->second;
+            if (it == remap.end() || it->second >= dense_site_count) {
+                return false;
             }
+            id = it->second;
         }
+        return true;
     }
 
     // Validate the handler is in the scalar subset and assign every bound SSA
@@ -2657,6 +2689,9 @@ class P6ComputationHandlerBuilder {
     // (null outside a P6-frame agent). A String literal SSA value is the PtrLen
     // immediate pair naming this pool; the pool is frozen between plan and emit.
     RodataLiteralPool *rodata_pool_{nullptr};
+    // Byte content of every literal this builder interned (duplicates kept;
+    // the pool hash-conses on rebuild).
+    std::vector<std::string> rodata_literals_;
 
     // Fixed P6 frame regions (single named authority for every emit/plan site).
     // The V2-D workflow packaging relocates these onto per-instance node blocks
@@ -4072,6 +4107,11 @@ class P6ComputationHandlerBuilder {
                     : std::nullopt;
             std::string bytes =
                 ahfl::support::decode_string_literal_bytes(lit.spelling);
+            // Record the literal this builder contributed BEFORE moving the
+            // bytes into the shared pool: the reachability compaction rebuilds
+            // the module pool from the surviving (reachable) builders only, so
+            // a dead handler can never pin rodata bytes a live byte never names.
+            rodata_literals_.push_back(bytes);
             if (!rodata_pool_->intern(std::move(bytes), upper_length)) {
                 if (upper_length.has_value()) {
                     return reject_with_code(
@@ -6177,6 +6217,15 @@ class P6ComputationHandlerBuilder {
         const auto id_it = bridge_call_ids_.find(&s);
         if (id_it == bridge_call_ids_.end()) {
             return reject("bridge capability call has no planned call-site id", range);
+        }
+        // V2-C fix-forward: never index the dense site table without proving
+        // the remapped id is in range. The plan-time reachability compaction
+        // renumbers retained statements and rejects when a retained id is
+        // absent, so a hit here is defense in depth, not a normal path.
+        if (id_it->second >= bridge_registry_->size()) {
+            return reject("bridge capability call names a dense call site outside the planned "
+                          "call-site table",
+                          range);
         }
         const BridgeCallPlan &site = bridge_registry_->sites()[id_it->second];
         const auto import_it = std::find(imports_->begin(), imports_->end(), s.capability);
@@ -9071,7 +9120,8 @@ frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
 [[nodiscard]] ir::core::CoreFrameLayoutSection
 frame_section_to_layout_section(const FrameSectionPlan &plan) {
     ir::core::CoreFrameLayoutSection section;
-    section.format_version = 2;
+    // v3: per-call-site private spill windows (frame-bridge v2 fix-forward).
+    section.format_version = 3;
     section.table = plan.table;
     section.input_layout = plan.input_layout;
     section.output_layout = plan.output_layout;
@@ -9418,9 +9468,34 @@ build_frame_section_plan(const CoreProgram &program,
             spill_total += align8(site.spill_bytes);
         }
         const std::uint64_t block_stride = align8(8u + 8u * max_arity);
-        const std::uint32_t control_base = static_cast<std::uint32_t>(cursor);
         const std::uint64_t blocks_extent =
             block_stride * static_cast<std::uint64_t>(bridge_calls.size());
+        // V2-C fix-forward: every bridge coordinate is a u32 wasm32 immediate,
+        // so narrow the u64 stride/extent math only after a checked comparison
+        // against the uint32 domain. The fixed-page checks below bound the
+        // FINAL sum cursor but would let an intermediate wrap slip through.
+        constexpr std::uint64_t kU32Domain =
+            static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max());
+        if (block_stride > kU32Domain || spill_total > kU32Domain ||
+            blocks_extent > kU32Domain ||
+            blocks_extent + spill_total > kU32Domain ||
+            cursor > kU32Domain ||
+            cursor + blocks_extent + spill_total > kU32Domain) {
+            add_diag(result,
+                     core_wasm_diag::kBinaryOverflow,
+                     "a frame bridge control-block stride or spill span exceeds the wasm32 "
+                     "uint32 coordinate domain");
+            return std::nullopt;
+        }
+        if (cursor + blocks_extent + spill_total >
+            ir::core::kCoreWasmFixedLinearMemoryCapacityBytes) {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "the frame bridge control blocks and scalar/PtrLen spill slots exceed the "
+                     "fixed 64 KiB linear-memory page");
+            return std::nullopt;
+        }
+        const std::uint32_t control_base = static_cast<std::uint32_t>(cursor);
         cursor += blocks_extent;
         const std::uint32_t spill_base = static_cast<std::uint32_t>(cursor);
         const std::uint32_t spill_extent = static_cast<std::uint32_t>(spill_total);
@@ -9469,10 +9544,30 @@ build_frame_section_plan(const CoreProgram &program,
             record.call_site_id = site.call_site_id;
             record.source_symbol = *capability.symbol_ref.id;
             record.arity = static_cast<std::uint32_t>(site.param_vt.size());
-            site.block_offset = index * static_cast<std::uint32_t>(block_stride);
-            site.spill_base = spill_base + running_spill;
-            running_spill += static_cast<std::uint32_t>(align8(site.spill_bytes));
+            {
+                const std::uint64_t block_offset =
+                    static_cast<std::uint64_t>(index) * block_stride;
+                const std::uint64_t aligned_site_spill = align8(site.spill_bytes);
+                const std::uint64_t next_running_spill =
+                    static_cast<std::uint64_t>(running_spill) + aligned_site_spill;
+                if (block_offset > kU32Domain || next_running_spill > spill_total) {
+                    add_diag(result,
+                             core_wasm_diag::kBinaryOverflow,
+                             "a frame bridge call-site block or spill coordinate exceeds the "
+                             "wasm32 uint32 coordinate domain");
+                    return std::nullopt;
+                }
+                site.block_offset = static_cast<std::uint32_t>(block_offset);
+                site.spill_base = spill_base + running_spill;
+                running_spill = static_cast<std::uint32_t>(next_running_spill);
+            }
             record.block_offset = site.block_offset;
+            // The site's private scalar/PtrLen spill window (v3 section): the
+            // host membership-tests every spilled descriptor against exactly
+            // this [base, +extent) span.
+            record.spill_base = site.spill_base;
+            record.spill_extent =
+                static_cast<std::uint32_t>(align8(site.spill_bytes));
             record.param_layouts.reserve(site.param_vt.size());
             for (std::uint32_t p = 0; p < site.param_vt.size(); ++p) {
                 const ir::core::CoreLayoutId full_param =
@@ -10118,11 +10213,18 @@ build_frame_section_plan(const CoreProgram &program,
     // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a COMPUTED FINAL region (if-let
     // lowers to a match ending in a value return) is the second region kind that
     // legitimately owns a non-empty pattern arena.
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-C fix-forward: the ANY-of admits
+    // not only a pure computation region and a computed-final region but ALSO
+    // a BRIDGE computation region — a region that contains both a match and an
+    // ordered bridge statement ("route then call"). The predicate must carry
+    // the same policy.allow_bridge the per-handler region gate below uses, or
+    // that handler is rejected here with the misleading hidden-arena diagnostic
+    // despite being admitted by the D2/D3 region subset.
     if (!flow->storage.patterns.empty() &&
         !std::any_of(
-            flow->states.begin(), flow->states.end(), [](const ir::core::CoreFlowState &state) {
+            flow->states.begin(), flow->states.end(), [&](const ir::core::CoreFlowState &state) {
                 return region_contains_match(state.body) &&
-                       (is_p6_computation_region(state.body) ||
+                       (is_p6_computation_region(state.body, policy.allow_bridge) ||
                         is_p6_computed_final_region(state.body));
             })) {
         const bool contains_capability = std::any_of(
@@ -10445,7 +10547,36 @@ build_frame_section_plan(const CoreProgram &program,
     // possible next states, so the analysis is a three-color DFS over the
     // successor SET (a reachable back edge on any path is rejected), not the
     // E1 single-successor walk.
+    //
+    // V2-C fix-forward: a planned computed handler's ComputedGotoAction is
+    // published into plan.actions only during the emit loop BELOW. Reading
+    // plan.actions here would therefore see the default IdentityAction for
+    // every computed handler: a state reached only through another computed
+    // handler would be classified unreachable, its dense bridge call sites
+    // filtered out (and its capability dropped from plan.imports), while its
+    // emitted bytes still invoked the bridge at a dense id the filtered table
+    // no longer contained (an OOB sites()[id] and a host-rejected module).
+    // Overlay the already-planned {state -> targets} table so the acyclic /
+    // reachability walks see the exact successor graph the emit loop will
+    // eventually publish.
+    const auto planned_successors = [&](std::uint32_t state)
+        -> const std::vector<CoreStateId> * {
+        for (const PlannedComputedHandler &planned : planned_handlers) {
+            if (planned.state == state && !planned.is_final_return) {
+                return &planned.targets;
+            }
+        }
+        return nullptr;
+    };
     const auto successors = [&](std::uint32_t state) -> std::vector<std::uint32_t> {
+        if (const std::vector<CoreStateId> *targets = planned_successors(state)) {
+            std::vector<std::uint32_t> out;
+            out.reserve(targets->size());
+            for (const CoreStateId target : *targets) {
+                out.push_back(target.value);
+            }
+            return out;
+        }
         return std::visit(Overloaded{
                               [](const GotoAction &a) { return std::vector{a.target.value}; },
                               [](const ComputedGotoAction &a) {
@@ -10554,38 +10685,75 @@ build_frame_section_plan(const CoreProgram &program,
             plan.imports.push_back(capability->capability);
         }
     }
+    // V2-C fix-forward: now that reachability is exact (it sees the planned
+    // computed-handler targets), compact the planned handlers DOWN to the
+    // reachable set BEFORE any bridge-site table, import table, fn fixed point
+    // or frame section is built. Previously every planned handler — including
+    // ones no run can enter — was emitted: its body bytes were dead code in the
+    // dense handler function index space, its String literals pinned rodata
+    // space, and (the P0 defect) its bridge statements had reserved dense call
+    // sites and capability imports that the reachability filter then deleted,
+    // leaving retained statements indexing a shorter table. A reachable
+    // computed chain now owns contiguous handler ordinals and the full bridge
+    // table.
+    const std::size_t planned_before_compaction = planned_handlers.size();
+    std::erase_if(planned_handlers, [&](const PlannedComputedHandler &planned) {
+        return !reachable_state[planned.state];
+    });
+    if (planned_handlers.size() != planned_before_compaction) {
+        // Rebuild the rodata pool from the surviving builders only (their
+        // bytes were validated against length bounds and pool capacity during
+        // planning, so a subset cannot fail either; the bool is defensive).
+        std::vector<std::string> surviving_literals;
+        for (const PlannedComputedHandler &planned : planned_handlers) {
+            const std::vector<std::string> &literals =
+                planned.builder->rodata_literals();
+            surviving_literals.insert(surviving_literals.end(),
+                                      literals.begin(), literals.end());
+        }
+        if (!rodata_pool.rebuild_from_literals(surviving_literals)) {
+            add_diag(result,
+                     core_wasm_diag::kResourceExhausted,
+                     "the reachable-handler String literal pool exceeds its reserved rodata "
+                     "region in the fixed 64 KiB linear-memory page");
+            return std::nullopt;
+        }
+    }
+
     // RFC 0026 P6-7 frame-bridge v2 D3/D4 (rung V2-C): every REACHABLE planned
     // bridge call site contributes its capability import and survives into the
-    // dense call-site table; a call planned in an unreachable handler is
-    // filtered out and the surviving sites are renumbered to a dense prefix so
-    // their block coordinates stay contiguous.
+    // dense call-site table; a call planned in a handler reachability proved
+    // dead is filtered out and the surviving sites are renumbered to a dense
+    // prefix so their block coordinates stay contiguous. The surviving
+    // builders' retained statements are remapped to the new ids and every
+    // retained id is REQUIRED to resolve within the dense table — an emitted
+    // bridge statement must never index sites() out of bounds.
     if (!bridge_registry.empty()) {
         std::vector<BridgeCallPlan> &all_sites = bridge_registry.sites();
-        const bool any_unreachable = std::any_of(
-            all_sites.begin(), all_sites.end(),
-            [&](const BridgeCallPlan &site) {
-                return !reachable_state[site.state.value];
-            });
-        if (any_unreachable) {
-            // Filter into a dense vector by COPY first (so a no-filter run
-            // never leaves moved-from sites behind), renumber, then replace.
-            std::vector<BridgeCallPlan> reachable_sites;
-            reachable_sites.reserve(all_sites.size());
-            for (const BridgeCallPlan &site : all_sites) {
-                if (reachable_state[site.state.value]) {
-                    reachable_sites.push_back(site);
-                }
+        std::vector<BridgeCallPlan> reachable_sites;
+        reachable_sites.reserve(all_sites.size());
+        for (const BridgeCallPlan &site : all_sites) {
+            if (reachable_state[site.state.value]) {
+                reachable_sites.push_back(site);
             }
-            std::unordered_map<std::uint32_t, std::uint32_t> remap;
-            for (std::uint32_t new_id = 0; new_id < reachable_sites.size(); ++new_id) {
-                remap.emplace(reachable_sites[new_id].call_site_id, new_id);
-                reachable_sites[new_id].call_site_id = new_id;
-            }
-            for (const PlannedComputedHandler &planned : planned_handlers) {
-                planned.builder->remap_bridge_call_ids(remap);
-            }
-            all_sites = std::move(reachable_sites);
         }
+        std::unordered_map<std::uint32_t, std::uint32_t> remap;
+        for (std::uint32_t new_id = 0; new_id < reachable_sites.size(); ++new_id) {
+            remap.emplace(reachable_sites[new_id].call_site_id, new_id);
+            reachable_sites[new_id].call_site_id = new_id;
+        }
+        for (const PlannedComputedHandler &planned : planned_handlers) {
+            if (!planned.builder->remap_bridge_call_ids(
+                    remap, reachable_sites.size())) {
+                add_diag(result,
+                         core_wasm_diag::kInvalidCapabilityAbi,
+                         "a reachable frame bridge statement lost its dense call site during "
+                         "reachability filtering (the bridge call-site table is inconsistent "
+                         "with the handler that planned it)");
+                return std::nullopt;
+            }
+        }
+        all_sites = std::move(reachable_sites);
         for (const BridgeCallPlan &site : all_sites) {
             plan.imports.push_back(site.capability);
         }
@@ -13615,6 +13783,8 @@ build_import_descriptors(const CoreProgram &program,
             bridge.result_extent = site.result_extent;
             bridge.result_payload_base = site.result_payload_base;
             bridge.result_payload_capacity = site.result_payload_capacity;
+            bridge.spill_base = site.spill_base;
+            bridge.spill_extent = site.spill_extent;
             lane.bridge_call_sites.push_back(std::move(bridge));
         }
         descriptor.frame = std::move(lane);

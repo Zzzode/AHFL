@@ -8,9 +8,11 @@ UNREACHABLE through a conforming embedded-host observation (frame-bridge v2
 section 0 non-goals; section 10 V2-B). This gate pins BOTH sides of that
 decision so the comment and the code cannot drift:
 
-  1. the certified embedded host rejects 'decimal'/'duration' in BOTH its
-     input packer and its output reader with the rung-E frame-subset fail
-     (exactly two joint float/decimal/duration rejection sites);
+  1. the certified embedded host rejects 'decimal'/'duration' at every frame
+     walk site with the rung-E frame-subset fail: the input packer and the
+     output reader (the two original V2-B sites), and with frame-bridge v2 V2-C
+     fix-forward the bridge-argument classifier (a third site that must also
+     refuse to marshal an unobservable Decimal/Duration across the bridge);
   2. the computed-final Decimal/Duration fixture nonetheless compiles, carries
      the ahfl.core-layout.v1 frame section, and plans a zero payload arena
      (the words are i64 constants, never a rodata/PtrLen String).
@@ -27,9 +29,11 @@ from pathlib import Path
 
 HOST = Path("tests/conformance/node_embedded_host.mjs")
 
-# One joint case header serves packValue (input) and readValue (output); the
-# decision requires both sites to keep rejecting the shapes.
+# Joint case headers serve the frame-walk rejection sites: packValue (input),
+# readValue (output), and the V2-C fix-forward bridge-argument classifier. The
+# V2-B decision requires the pack/read pair; V2-C adds the bridge site.
 SUBSET_REJECTION = 'case "float":\n    case "decimal":\n    case "duration":'
+EXPECTED_REJECTION_SITES = 3
 
 
 def fail(message: str) -> int:
@@ -49,12 +53,14 @@ def main(argv: list[str]) -> int:
 
     host_source = host.read_text(encoding="utf-8")
     rejection_sites = host_source.count(SUBSET_REJECTION)
-    if rejection_sites != 2:
+    if rejection_sites != EXPECTED_REJECTION_SITES:
         return fail(
-            f"the certified embedded host must reject decimal/duration in BOTH "
-            f"packValue and readValue (2 sites), found {rejection_sites}: the "
-            f"Decimal/Duration computed-final is intentionally host-"
-            f"unobservable (frame-bridge v2 V2-B non-goal)")
+            f"the certified embedded host must reject decimal/duration at the "
+            f"input packer, the output reader, and the bridge-argument "
+            f"classifier ({EXPECTED_REJECTION_SITES} sites), found "
+            f"{rejection_sites}: the Decimal/Duration shapes are intentionally "
+            f"host-unobservable (frame-bridge v2 V2-B non-goals, kept across the "
+            f"V2-C bridge)")
 
     source = (repo_root / "tests" / "golden" / "wasm" /
               "v2b_builtin_i64_final.ahfl")

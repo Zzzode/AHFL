@@ -1,0 +1,82 @@
+module wasm::v2c_bridge_chain;
+
+// RFC 0026 P6-7 frame-bridge v2 rung V2-C fix-forward regression: a chain of
+// TWO computed non-final handlers, each invoking the SAME capability through
+// the dense (i32)->(i32,i32) control-block bridge, behind a plain goto and
+// before a computed final. The two dense call sites legally share ONE import
+// (one capability -> one low ordinal, design D3).
+//
+// Before the fix the dense-site reachability filter ran before the
+// ComputedGotoAction successors were published, so Routing2 (reachable only
+// through another computed handler) was classified unreachable: its call site
+// was deleted from the dense table and its capability dropped from the import
+// table, while its emitted bytes still invoked the bridge with call_site_id=1
+// against a size-1 table (OOB sites()[id]) -- the module failed host
+// validation, and the per-ordinal site lookup could not distinguish the two
+// blocks. Both handlers must survive, each with its own block, and both
+// capability invocations must carry identical argument envelopes.
+
+struct TicketRequest {
+    ticket_id: String;
+    urgent: Bool;
+    channel: Channel;
+}
+
+struct RoutingContext {
+    owner: String = "unassigned";
+}
+
+struct RoutingDecision {
+    route: Channel;
+    owner: String;
+}
+
+enum Channel {
+    Web,
+    Phone,
+    Post,
+}
+
+capability RouteTicket(ticket_id: String, channel: Channel, urgent: Bool) -> RoutingDecision;
+
+agent RoutingAgent {
+    input: TicketRequest;
+    context: RoutingContext;
+    output: RoutingDecision;
+    states: [Init, Routing, Routing2, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [RouteTicket];
+
+    transition Init -> Routing;
+    transition Routing -> Routing2;
+    transition Routing2 -> Done;
+}
+
+flow for RoutingAgent {
+    state Init {
+        goto Routing;
+    }
+
+    state Routing {
+        let decision = RouteTicket(input.ticket_id, input.channel, input.urgent);
+        ctx.owner = decision.owner;
+        goto Routing2;
+    }
+
+    state Routing2 {
+        // The second dense call site for the same capability/import ordinal:
+        // the host resolves the site from the control-block address, not the
+        // ordinal, and reads this block's own spill slots.
+        let decision2 = RouteTicket(input.ticket_id, input.channel, input.urgent);
+        ctx.owner = decision2.owner;
+        goto Done;
+    }
+
+    state Done {
+        return RoutingDecision {
+            route: Channel::Phone,
+            owner: ctx.owner,
+        };
+    }
+}

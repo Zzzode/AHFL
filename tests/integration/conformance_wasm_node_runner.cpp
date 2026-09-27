@@ -71,12 +71,24 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // (i32)->(i32,i32) control-block bridge: the host walks the dense P4-D spans
 // into the multi-argument wire envelope, packs the aggregate result into the
 // call site's disjoint placement, and a computed final materializes a String
-// projected from that result through ctx, moving 17/5 -> 18/5. The five
-// remaining skips are the KR6.6 workflow-computation cases (if_let_e2e x2,
+// projected from that result through ctx, moving 17/5 -> 18/5. The V2-C
+// fix-forward adds three regression agents and a per-call argument-envelope
+// differential dimension (18/5 -> 21/5):
+//   * v2c_bridge_chain: TWO computed non-final handlers chain behind a plain
+//     goto and each invokes the same capability; the two dense call sites
+//     share one import ordinal, so reachability must see the planned computed
+//     successors and the host must resolve each site from its control-block
+//     address (never ordinal -> single site);
+//   * v2c_route_then_bridge: a producing pattern-arena match followed by an
+//     ordered bridge statement OUTSIDE the match arms (route then call);
+//   * v2c_single_enum_bridge: one tag-only-enum bridge argument pins the SSOT
+//     single-argument envelope ({"value":{...}} for a non-Struct, never the
+//     bare enum object) via the new capability_arguments comparison.
+// The five remaining skips are the KR6.6 workflow-computation cases (if_let_e2e x2,
 // enum_variant_e2e, e2e_multi_agent x2): their packaging needs the deferred
 // workflow-level raw-P4-D/capability frame bridge (design section 11), each
 // manifest still declaring blocked_kr66 with its precise reason.
-constexpr int kExpectedAgreed = 18;
+constexpr int kExpectedAgreed = 21;
 constexpr int kExpectedSkipped = 5;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare

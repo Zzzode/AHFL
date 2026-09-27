@@ -207,6 +207,32 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::v2c_multi_arg_bridge::RoutingAgent",
             1, 1, WasmEligibility::Orchestration,
         },
+        // RFC 0026 P6-7 frame-bridge v2 V2-C fix-forward regressions: a chain
+        // of two computed bridge handlers sharing one import ordinal, a
+        // producing match followed by an ordered bridge statement, and a
+        // single tag-only-enum bridge argument pinning the SSOT
+        // {"value":..} envelope through the per-call argument differential.
+        {
+            "v2c_bridge_chain.case.json",
+            "tests/golden/wasm/v2c_bridge_chain.ahfl",
+            CaseKind::Agent,
+            "wasm::v2c_bridge_chain::RoutingAgent",
+            1, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "v2c_route_then_bridge.case.json",
+            "tests/golden/wasm/v2c_route_then_bridge.ahfl",
+            CaseKind::Agent,
+            "wasm::v2c_route_then_bridge::RoutingAgent",
+            1, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "v2c_single_enum_bridge.case.json",
+            "tests/golden/wasm/v2c_single_enum_bridge.ahfl",
+            CaseKind::Agent,
+            "wasm::v2c_single_enum_bridge::RoutingAgent",
+            1, 1, WasmEligibility::Orchestration,
+        },
         {
             "p6_coerce.case.json",
             "tests/golden/wasm/p6_coerce.ahfl",
