@@ -372,6 +372,10 @@ build_frame_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descriptor) 
     node->set("output_size", juint(lane.output_size));
     node->set("payload_arena_base", juint(lane.payload_arena_base));
     node->set("payload_arena_capacity", juint(lane.payload_arena_capacity));
+    // V2-B: the rodata span the read walker authorizes for String PtrLen
+    // payloads in addition to the packed input-payload arena.
+    node->set("rodata_base", juint(lane.rodata_base));
+    node->set("rodata_extent", juint(lane.rodata_extent));
     const auto &section = *descriptor.frame_section;
     auto placements = json::JsonValue::make_array();
     for (const auto &placement : section.placements) {

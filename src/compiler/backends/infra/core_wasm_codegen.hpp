@@ -122,6 +122,12 @@ struct CoreWasmFrameLane {
     std::vector<CoreWasmFramePlacement> placements;
     std::uint32_t payload_arena_base{0};
     std::uint32_t payload_arena_capacity{0};
+    /// RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the read-only String
+    /// literal pool the module's Data(11) section initializes. `rodata_base` is
+    /// the fixed kP6RodataBase (256); `rodata_extent` is zero when the module
+    /// emits no Data section and the active segment byte length otherwise.
+    std::uint32_t rodata_base{0};
+    std::uint32_t rodata_extent{0};
 };
 
 /// The input/output frame contract an embedded host must honor.

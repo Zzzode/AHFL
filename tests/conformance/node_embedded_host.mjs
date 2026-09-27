@@ -538,6 +538,7 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
       frameFail(`read shape '${w.t}' is outside the P6-7 rung-E frame subset`);
       return undefined;
     case "string": {
+      if (l.t !== "ptrlen") frameFail("wire string maps to a non-PtrLen layout");
       const ptr = readI32(e, addr + 0);
       const len = readI32(e, addr + 4);
       if (len < 0) frameFail("string length is negative");
@@ -547,12 +548,22 @@ function readValue(e, lane, W, L, wId, lId, addr, backing) {
       if (w.hi !== undefined && len > Number(w.hi)) {
         frameFail("frame string length exceeds the schema length upper bound");
       }
-      // Region membership: the PtrLen the module wrote must name the packed
-      // frame-payload arena exactly, never any other in-page address.
+      // Region membership (untrusted module-written PtrLen): authorize the
+      // union of the packed input frame-payload arena and, with frame-bridge
+      // v2 V2-B, the fixed read-only rodata span [rodata_base, +extent) the
+      // module's Data section initialized. A V2-C bridge result span is added
+      // later; anything else (scratch/heap pointer, wrap-around) fails closed
+      // without echoing bytes.
       const arenaLo = Number(lane.payload_arena_base);
       const arenaHi = arenaLo + Number(lane.payload_arena_capacity);
-      if (ptr < arenaLo || len > arenaHi - ptr) {
-        frameFail("frame string payload lies outside the frame-payload arena");
+      const inArena = ptr >= arenaLo && len <= arenaHi - ptr;
+      const rodataLo = Number(lane.rodata_base || 0);
+      const rodataHi = rodataLo + Number(lane.rodata_extent || 0);
+      const inRodata =
+        rodataLo !== 0 && ptr >= rodataLo && len <= rodataHi - ptr;
+      if (!inArena && !inRodata) {
+        frameFail("frame string payload lies outside the frame-payload arena " +
+                  "or the rodata region");
       }
       return new TextDecoder().decode(readRaw(e, ptr, len));
     }

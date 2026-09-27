@@ -29,10 +29,10 @@ from pathlib import Path
 # RFC 0026 P6-7 frame-bridge v2 rung V2-A adds the three node-only
 # computed-final fixtures (scalar / nested aggregate / if-selected tag
 # enum): they materialize the output frame, so they are p6-frame
-# modules even though no handler projects the raw input. The
-# v2a_string_final_unsupported fixture compiles-REJECTS (String
-# output needs rung V2-B), so it never emits an artifact and is
-# absent from this set by construction.
+# modules even though no handler projects the raw input. V2-B adds the
+# String-literal computed final, the bounded-String variant, and the
+# input-String passthrough (no Data section, but still a p6-frame
+# module with runv + both frame sections).
 FRAME_FIXTURES = frozenset(
     {
         "p6_aggregate",
@@ -41,10 +41,31 @@ FRAME_FIXTURES = frozenset(
         "v2a_computed_scalar",
         "v2a_computed_aggregate",
         "v2a_computed_enum",
+        "v2b_computed_string",
+        "v2b_bounded_string",
+        "v2b_string_passthrough",
     }
 )
 
 CORE_LAYOUT_SECTION = b"ahfl.core-layout.v1"
+
+# The V2-B fixtures that MUST carry exactly one Data(11) section (one per
+# String-literal module); every other successfully emitting fixture must carry
+# NONE (byte-identity pin for the additive Data section).
+DATA_SECTION_FIXTURES = frozenset(
+    {
+        "v2b_computed_string",
+        "v2b_bounded_string",
+    }
+)
+DATA_SECTION_ID = 11
+
+# A V2-B reject fixture: its one String literal's aligned image exceeds the
+# reserved 768-byte rodata region [256,1024), so emission MUST fail closed with
+# the rodata RESOURCE gate (no artifact). Pins the extent metering, not just
+# the happy-path image.
+RODATA_OVERFLOW_FIXTURE = "v2b_rodata_overflow"
+RODATA_OVERFLOW_SUBSTR = "rodata region"
 
 
 def fail(message: str) -> None:
@@ -92,6 +113,17 @@ def custom_section_names(data: bytes) -> list[str]:
     return names
 
 
+def section_ids(data: bytes) -> list[int]:
+    ids: list[int] = []
+    offset = 8
+    while offset < len(data):
+        ids.append(data[offset])
+        offset += 1
+        size, offset = read_u32(data, offset)
+        offset += size
+    return ids
+
+
 def emit(ahflc: Path, source: Path) -> tuple[int, bytes]:
     proc = subprocess.run(
         [str(ahflc), "emit", "wasm", str(source)],
@@ -111,6 +143,7 @@ def main(argv: list[str]) -> int:
         fail("missing ahflc or golden/wasm directory")
 
     frame_section_seen: set[str] = set()
+    data_section_seen: set[str] = set()
     checked = 0
     for source in sorted(wasm_dir.glob("*.ahfl")):
         name = source.stem
@@ -130,6 +163,18 @@ def main(argv: list[str]) -> int:
                     f"pinned frame fixture (the frame lane must not mix with capability/FB "
                     f"agents; byte-identity regression)"
                 )
+        # V2-B: exactly one Data(11) section iff the fixture constructs a
+        # String literal; additive byte-identity for every other module.
+        data_count = sum(1 for sid in section_ids(first) if sid == DATA_SECTION_ID)
+        if name in DATA_SECTION_FIXTURES:
+            if data_count != 1:
+                fail(f"{source.name} must carry exactly one Data(11) section, got {data_count}")
+            data_section_seen.add(name)
+        elif data_count != 0:
+            fail(
+                f"{source.name} unexpectedly carries a Data(11) section (the rodata Data "
+                f"section is additive only for V2-B String-literal frame modules)"
+            )
 
     missing = FRAME_FIXTURES - frame_section_seen
     if missing:
@@ -137,9 +182,39 @@ def main(argv: list[str]) -> int:
             "pinned frame fixtures emitted no core-layout section: "
             + ", ".join(sorted(missing))
         )
+    missing_data = DATA_SECTION_FIXTURES - data_section_seen
+    if missing_data:
+        fail(
+            "pinned V2-B fixtures emitted no Data(11) section: "
+            + ", ".join(sorted(missing_data))
+        )
+
+    # V2-B extent metering: an over-large literal image fails closed with the
+    # rodata RESOURCE gate and produces NO artifact.
+    overflow_source = wasm_dir / f"{RODATA_OVERFLOW_FIXTURE}.ahfl"
+    if not overflow_source.is_file():
+        fail(f"missing rodata-overflow reject fixture {overflow_source.name}")
+    overflow = subprocess.run(
+        [str(ahflc), "emit", "wasm", str(overflow_source)],
+        capture_output=True,
+        timeout=60,
+    )
+    overflow_err = overflow.stderr.decode(errors="replace")
+    if overflow.returncode == 0 or overflow.stdout:
+        fail(
+            f"{overflow_source.name} must fail closed when its literal image "
+            f"exceeds the rodata region, but emission produced an artifact"
+        )
+    if RODATA_OVERFLOW_SUBSTR not in overflow_err:
+        fail(
+            f"{overflow_source.name} rejection must name the rodata region "
+            f"(extent gate); stderr was: {overflow_err!r}"
+        )
+
     print(
         f"all P6-7 frame-section eligibility gates passed "
-        f"({checked} fixtures, {len(frame_section_seen)} frame modules)"
+        f"({checked} fixtures, {len(frame_section_seen)} frame modules, "
+        f"{len(data_section_seen)} rodata modules)"
     )
     return 0
 

@@ -124,6 +124,35 @@ static_assert(kP6AggregateInputCapacity > 0 && kP6AggregateContextCapacity > 0 &
                   kP6AggregateScratchCapacity > 0 && kP6AggregateOutputCapacity > 0,
               "each P6 aggregate frame region reserves at least one byte");
 
+// RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the READ-ONLY literal pool
+// region. A module that constructs at least one String literal emits ONE
+// additive active Data section (wasm section id 11) that initializes
+// [kP6RodataBase, +extent) with the hash-consed, byte-sorted UTF-8 literal
+// bytes at instantiation. A constructed String is the PtrLen immediate pair
+// (kP6RodataBase + pool_offset, byte_length); the module never stores into
+// this region. [0, kP6RodataBase) stays the zero page / null-deref guard
+// band, and the input frame at kP6AggregateInputBase (1024) begins exactly
+// where the rodata region ends, so no existing reservation moves.
+inline constexpr std::uint32_t kP6RodataBase = 256;
+inline constexpr std::uint32_t kP6RodataCapacity =
+    kP6AggregateInputBase - kP6RodataBase; // [256,1024)
+
+static_assert(kP6RodataBase % 8 == 0, "the rodata region is 8-byte aligned");
+static_assert(kP6RodataCapacity == 768, "the rodata region is exactly 768 bytes");
+
+// RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): the compile-time fallback
+// pool budget for UNBOUNDED String payloads packed into a frame's payload
+// arena. Bounded String slots are metered exactly from their schema upper
+// bound and are never double-counted with this pool; the pool is one fixed
+// reservation (never a runtime growth request) for every unbounded String
+// slot of one packed frame. The D6 page-capacity comparison family accounts
+// for it together with the rodata region, backing placements, frames and
+// scratch against the single 64 KiB page.
+inline constexpr std::uint32_t kP6FrameStringPoolBytes = 2048;
+
+static_assert(kP6FrameStringPoolBytes % 8 == 0,
+              "the unbounded-String pool reservation is 8-byte aligned");
+
 // RFC 0026 P6-5 (KR6.6): the internal bounded-collection HANDLE convention — the
 // INPUT side of the eventual P6-7 frame decision, deliberately NOT a wire format.
 //

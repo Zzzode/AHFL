@@ -1,0 +1,51 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-B: computed STRING final.
+//
+// The final region selects between two String LITERALS through an
+// if and constructs the output aggregate. Each String is the inline
+// eight-byte PtrLen (rodata ptr, utf8 byte len); the two literals
+// ("some"/"none", matching runtime::if_let_e2e) are hash-consed into
+// the module's ONE Data(11) section and the constructed PtrLen pairs
+// are copied verbatim into the output frame. The payload bytes stay
+// in read-only rodata [256,1024), so runv returns canonical bytes
+// agreeing with the evaluator.
+module wasm::v2b::computed_string;
+
+pub struct In {
+    flag: Bool;
+}
+
+pub struct Out {
+    label: String;
+    value: Int;
+}
+
+agent ComputedStringAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for ComputedStringAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        if (input.flag) {
+            return Out {
+                label: "some",
+                value: 1,
+            };
+        } else {
+            return Out {
+                label: "none",
+                value: 0,
+            };
+        }
+    }
+}

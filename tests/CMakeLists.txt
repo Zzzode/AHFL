@@ -758,6 +758,26 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;execution;node"
     )
 
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-B: in-module String(PtrLen)
+    # construction. The computed-final module emits ONE additive Data(11)
+    # section initializing the rodata region with the hash-consed literal
+    # image; runv returns the inline PtrLen naming those bytes. Node-only
+    # fixtures (NOT census cases): real Node v22 parses the Data section
+    # (rodata layout/hash-cons/extent KAT) and walks the canonical output
+    # bytes. SKIPs (77) when node is unavailable.
+    add_test(NAME ahfl.wasm.v2b_string_literal_node
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2b_string_literal_node_host.py"
+                $<TARGET_FILE:ahfl_core_wasm_p6_probe>
+                "${PROJECT_SOURCE_DIR}/tests/golden/wasm"
+    )
+    set_tests_properties(ahfl.wasm.v2b_string_literal_node PROPERTIES
+        SKIP_RETURN_CODE 77
+        PASS_REGULAR_EXPRESSION "V2-B in-module String"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;node"
+    )
+
     # RFC 0026 P6-6 (KR6.6): coercion physical effects. The KR6.5
     # `coercion_plans` arena gate is lifted; a CoreCoerceExpr lowers to a real
     # effect derived from the P4-D layout table. The producer emits a real

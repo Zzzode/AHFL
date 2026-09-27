@@ -4188,12 +4188,15 @@ int main() {
                   "P6-6 lifts the coercion arena gate and the per-expr coercion reject");
         }
 
-        // P6-6 fail-closed: a `StringWiden` plan is a Core-legal strict length
-        // widening whose endpoints are BOTH the 2-word PtrLen String layout, but
-        // the P6 value model has no 2-word value at all (a PtrLen is neither a
-        // scalar local nor a single-word aggregate address), so the coercion's
-        // RESULT has no P6 kind and the handler fails closed before any byte is
-        // emitted — a truncated handle is never produced.
+        // P6-6 StringWiden under frame-bridge v2 V2-B: the coercion is now a
+        // SAME-WIDTH physical no-op (both endpoints are the 2-word PtrLen String
+        // layout), and a computed-final builder materializes it — the
+        // v2b_computed_string node fixture returns a widened literal through an
+        // unbounded output field. A String LITERAL in a NON-FINAL goto handler
+        // still fails closed, however, because that builder owns no in-module
+        // rodata Data region: the rejection is the rodata-pool gate, not a
+        // missing P6 value form. This keeps the guard that a non-final handler
+        // never silently emits String-construction bytes.
         {
             auto program = make_e1_core_program();
             program.value_types.push_back(
@@ -4229,9 +4232,10 @@ int main() {
             const auto emitted = emit_agent(program, *layout.table);
             check(!emitted.artifact.has_value() &&
                       has_codegen_code(emitted,
-                                       backends::core_wasm_diag::kUnsupportedOrchestration) &&
-                      has_codegen_message(emitted, "non-scalar or f64"),
-                  "P6-6 fails closed on a StringWiden whose result has no P6 value form");
+                                       backends::core_wasm_diag::kUnsupportedCapabilityFrame) &&
+                      has_codegen_message(emitted, "computed final"),
+                  "P6-6 StringWiden is a final-lane no-op; a non-final handler's String "
+                  "literal fails closed at the rodata-pool gate");
         }
 
         // P6-5 (RFC 0026 KR6.6): bounded collections. A `List<Int>(4)` value is

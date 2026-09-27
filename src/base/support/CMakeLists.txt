@@ -1,5 +1,6 @@
 add_library(ahfl_base_support STATIC
     atomic_file.cpp
+    const_literal.cpp
     curl.cpp
     diagnostic_serialization.cpp
     http.cpp

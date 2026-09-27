@@ -60,6 +60,11 @@ struct CoreFrameLayoutSection {
     /// Frame-payload arena span (packed input String bytes), [base, +capacity).
     std::uint32_t payload_arena_base{0};
     std::uint32_t payload_arena_capacity{0};
+    /// V2 (frame-bridge v2 D1, rung V2-B): read-only String literal pool span.
+    /// Base is the constant kP6RodataBase (256); extent is the active Data(11)
+    /// segment's byte length (0 when the module emits no Data section).
+    std::uint32_t rodata_base{0};
+    std::uint32_t rodata_extent{0};
 
     [[nodiscard]] friend bool operator==(const CoreFrameLayoutSection &,
                                          const CoreFrameLayoutSection &) noexcept = default;

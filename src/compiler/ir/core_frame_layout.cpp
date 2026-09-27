@@ -28,7 +28,11 @@ namespace layout_diag = ahfl::ir::core::layout;
 }
 
 constexpr std::array<std::uint8_t, 6> kMagic{'A', 'H', 'F', 'L', 'C', 'L'};
-constexpr std::uint8_t kVersion = 1;
+// Frame-bridge v2 D1 (rung V2-B): payload format v2 appends the rodata span
+// after the arena span. v1 payloads end exactly at the arena span and stay
+// decodable; the encoder writes kVersion.
+constexpr std::uint8_t kVersion = 2;
+constexpr std::uint8_t kMinVersion = 1;
 constexpr std::uint8_t kTargetWasm32 = 0;
 
 // Shape tags (a stable, explicit X-set — never reuse a retired ordinal).
@@ -51,8 +55,22 @@ class Encoder {
   public:
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> run(
         const CoreFrameLayoutSection &section) {
+        if (section.format_version < kMinVersion || section.format_version > kVersion) {
+            diagnostics_.push_back(
+                fail("frame-layout section requests an unsupported format version"));
+            return std::nullopt;
+        }
+        // A v1 payload carries no rodata span; a v2 section must report the v1
+        // constants with a zero rodata extent (the canonical no-Data-section
+        // shape), never a half-upgraded form.
+        if (section.format_version == 1 &&
+            (section.rodata_base != 0 || section.rodata_extent != 0)) {
+            diagnostics_.push_back(
+                fail("a v1 frame-layout section cannot carry a rodata span"));
+            return std::nullopt;
+        }
         bytes_.assign(kMagic.begin(), kMagic.end());
-        u8(kVersion);
+        u8(static_cast<std::uint8_t>(section.format_version));
 
         // Target data layout.
         const TargetDataLayout &target = section.table.target;
@@ -100,6 +118,11 @@ class Encoder {
         // Frame-payload arena span.
         u32(section.payload_arena_base);
         u32(section.payload_arena_capacity);
+        // V2-B: the rodata literal-pool span (base is kP6RodataBase).
+        if (section.format_version >= 2) {
+            u32(section.rodata_base);
+            u32(section.rodata_extent);
+        }
         return std::move(bytes_);
     }
 
@@ -302,10 +325,11 @@ class Decoder {
             return result;
         }
         const auto version = cursor_.u8();
-        if (!version.has_value() || *version != kVersion) {
+        if (!version.has_value() || *version < kMinVersion || *version > kVersion) {
             result.diagnostics.push_back(fail("frame-layout section has an unsupported version"));
             return result;
         }
+        const std::uint8_t payload_version = *version;
         const auto target = cursor_.u8();
         if (!target.has_value() || *target != kTargetWasm32) {
             result.diagnostics.push_back(
@@ -333,13 +357,30 @@ class Decoder {
         }
         const auto arena_base = cursor_.u32();
         const auto arena_capacity = cursor_.u32();
-        if (!arena_base.has_value() || !arena_capacity.has_value() || !cursor_.at_end()) {
-            result.diagnostics.push_back(fail("frame-layout arena span is malformed or the "
-                                              "section carries trailing bytes"));
+        if (!arena_base.has_value() || !arena_capacity.has_value()) {
+            result.diagnostics.push_back(fail("frame-layout arena span is malformed"));
             return result;
         }
         section.payload_arena_base = *arena_base;
         section.payload_arena_capacity = *arena_capacity;
+        section.format_version = payload_version;
+
+        // V2-B: a v2 payload carries the rodata span after the arena span; a v1
+        // payload ends exactly here (its rodata span is absent / zero).
+        if (payload_version >= 2) {
+            const auto rodata_base = cursor_.u32();
+            const auto rodata_extent = cursor_.u32();
+            if (!rodata_base.has_value() || !rodata_extent.has_value() || !cursor_.at_end()) {
+                result.diagnostics.push_back(fail("frame-layout rodata span is malformed or the "
+                                                  "section carries trailing bytes"));
+                return result;
+            }
+            section.rodata_base = *rodata_base;
+            section.rodata_extent = *rodata_extent;
+        } else if (!cursor_.at_end()) {
+            result.diagnostics.push_back(fail("frame-layout v1 section carries trailing bytes"));
+            return result;
+        }
 
         auto local = verify_local(section);
         if (!local.empty()) {
@@ -804,6 +845,20 @@ class Decoder {
             kPageEnd) {
             fail_local("frame-layout payload arena exceeds the fixed page");
             return diags;
+        }
+
+        // V2-B: the rodata span names the fixed [256,1024) reservation. It is
+        // either empty (no Data section) or an 8-aligned extent entirely inside
+        // the region, beginning exactly at kP6RodataBase.
+        if (section.format_version >= 2) {
+            if (section.rodata_base != kP6RodataBase) {
+                fail_local("frame-layout rodata span must begin at the fixed rodata base 256");
+                return diags;
+            }
+            if (section.rodata_extent > kP6RodataCapacity) {
+                fail_local("frame-layout rodata extent exceeds its fixed [256,1024) region");
+                return diags;
+            }
         }
         return diags;
     }

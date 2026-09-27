@@ -1,5 +1,6 @@
 #include "runtime/evaluator/evaluator.hpp"
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/base/support/string_literal.hpp"
 #include "runtime/evaluator/builtins.hpp"
 #include "runtime/evaluator/executor.hpp"
 #include "runtime/evaluator/pattern_match.hpp"
@@ -197,45 +198,9 @@ EvalResult eval_decimal_literal(const ir::DecimalLiteralExpr &expr, const EvalCo
     return EvalResult{make_decimal(expr.spelling), {}};
 }
 
-std::string decode_string_literal_spelling(std::string_view spelling) {
-    if (spelling.size() < 2 || spelling.front() != '"' || spelling.back() != '"') {
-        return std::string{spelling};
-    }
-    std::string decoded;
-    decoded.reserve(spelling.size() - 2);
-    for (std::size_t index = 1; index + 1 < spelling.size(); ++index) {
-        const char ch = spelling[index];
-        if (ch != '\\' || index + 2 >= spelling.size()) {
-            decoded.push_back(ch);
-            continue;
-        }
-        const char escaped = spelling[++index];
-        switch (escaped) {
-        case 'n':
-            decoded.push_back('\n');
-            break;
-        case 'r':
-            decoded.push_back('\r');
-            break;
-        case 't':
-            decoded.push_back('\t');
-            break;
-        case '\\':
-            decoded.push_back('\\');
-            break;
-        case '"':
-            decoded.push_back('"');
-            break;
-        default:
-            decoded.push_back(escaped);
-            break;
-        }
-    }
-    return decoded;
-}
-
 EvalResult eval_string_literal(const ir::StringLiteralExpr &expr, const EvalContext & /*ctx*/) {
-    return EvalResult{make_string(decode_string_literal_spelling(expr.spelling)), {}};
+    return EvalResult{
+        make_string(ahfl::support::decode_string_literal_bytes(expr.spelling)), {}};
 }
 
 EvalResult eval_duration_literal(const ir::DurationLiteralExpr &expr, const EvalContext & /*ctx*/) {

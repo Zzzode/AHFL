@@ -27,6 +27,8 @@ add_library(ahfl_compiler_semantics STATIC
 target_link_libraries(ahfl_compiler_semantics
     PUBLIC
         ahfl_compiler_syntax
+    PRIVATE
+        ahfl_base_support
 )
 
 target_include_directories(ahfl_compiler_semantics PRIVATE ${PROJECT_SOURCE_DIR}/src)

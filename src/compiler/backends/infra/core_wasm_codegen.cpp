@@ -1,6 +1,8 @@
 #include "compiler/backends/infra/core_wasm_codegen.hpp"
 
+#include "ahfl/base/support/const_literal.hpp"
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/base/support/string_literal.hpp"
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_recursion.hpp"
 #include "ahfl/compiler/ir/core_verify.hpp"
@@ -17,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -98,8 +101,11 @@ using ir::core::CoreVariantId;
 using ir::core::CoreVariantPat;
 using ir::core::CoreVariantPatField;
 using ir::core::CoreVtBool;
+using ir::core::CoreVtDecimal;
+using ir::core::CoreVtDuration;
 using ir::core::CoreVtInt;
 using ir::core::CoreVtNominal;
+using ir::core::CoreVtString;
 using ir::core::CoreWildcardPat;
 using ir::core::CoreWorkflowDecl;
 using ir::core::CoreWorkflowId;
@@ -120,6 +126,9 @@ using ir::core::kP6AggregateOutputCapacity;
 using ir::core::kP6AggregateScratchBase;
 using ir::core::kP6AggregateScratchCapacity;
 using ir::core::kP6CollectionBackingCapacity;
+using ir::core::kP6FrameStringPoolBytes;
+using ir::core::kP6RodataBase;
+using ir::core::kP6RodataCapacity;
 
 constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kI64 = 0x7e;
@@ -143,6 +152,8 @@ constexpr std::uint8_t kSectionExport = 7;
 // active funcref initializers table[0..N) -> wasm funcidx.
 constexpr std::uint8_t kSectionElement = 9;
 constexpr std::uint8_t kSectionCode = 10;
+// RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the ONE active rodata segment.
+constexpr std::uint8_t kSectionData = 11;
 // The funcref reftype encoding (wasm spec reftype space).
 constexpr std::uint8_t kFuncRefType = 0x70;
 
@@ -370,6 +381,110 @@ closure_call_type_key(const ClosureCallType &t) {
     return key;
 }
 
+// RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the module-wide String literal
+// pool. Every reachable String literal's DECODED UTF-8 bytes are interned here
+// during planning (Principle 3: hash-cons by byte content), then frozen once
+// into the deterministic rodata image: unique byte sequences sorted by their
+// UNSIGNED byte order, concatenated with 8-alignment zero padding. A
+// constructed String is the PtrLen immediate pair
+// (kP6RodataBase + frozen_offset, byte_length), and the frozen image is the ONE
+// active Data(11) segment's payload. Determinism comes from the byte content
+// itself, never the source appearance or interner allocation order.
+class RodataLiteralPool {
+  public:
+    struct Entry {
+        std::string bytes;
+        std::uint32_t offset{0};
+    };
+
+    // Comparator on UNSIGNED bytes so the ordering is platform-independent.
+    struct ByteLess {
+        using is_transparent = void;
+        [[nodiscard]] bool operator()(std::string_view lhs,
+                                      std::string_view rhs) const noexcept {
+            const auto *a = reinterpret_cast<const unsigned char *>(lhs.data());
+            const auto *b = reinterpret_cast<const unsigned char *>(rhs.data());
+            const std::size_t common = std::min(lhs.size(), rhs.size());
+            for (std::size_t i = 0; i < common; ++i) {
+                if (a[i] != b[i]) {
+                    return a[i] < b[i];
+                }
+            }
+            return lhs.size() < rhs.size();
+        }
+    };
+
+    // Intern one literal's decoded bytes. `upper_length_bound` is the PtrLen
+    // slot wire node's declared length upper bound (nullopt for unbounded); a
+    // literal over the bound fails the RESOURCE/frame family. The pool is
+    // fail-closed itself with no diagnostic channel, so the planner converts
+    // the false result into the named diagnostic.
+    [[nodiscard]] bool intern(std::string bytes,
+                              std::optional<std::int64_t> upper_length_bound) {
+        if (upper_length_bound.has_value() &&
+            static_cast<std::int64_t>(bytes.size()) > *upper_length_bound) {
+            return false;
+        }
+        unique_.insert(std::move(bytes));
+        // Meter the aligned extent eagerly so a fourth over-capacity literal is
+        // rejected at its own plan site with an actionable diagnostic.
+        std::uint64_t extent = 0;
+        for (const std::string &entry : unique_) {
+            extent = (extent + 7u) & ~std::uint64_t{7u};
+            extent += static_cast<std::uint64_t>(entry.size());
+        }
+        if (extent > kP6RodataCapacity) {
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool empty() const noexcept { return unique_.empty(); }
+
+    // Freeze the pool: sort by byte content, assign 8-aligned offsets, and
+    // build the zero-padded image plus the offset lookup.
+    void freeze() {
+        entries_.clear();
+        entries_.reserve(unique_.size());
+        image_.clear();
+        std::uint32_t cursor = 0;
+        for (const std::string &bytes : unique_) {
+            Entry entry;
+            entry.bytes = bytes;
+            entry.offset = cursor;
+            image_.append(bytes);
+            cursor += static_cast<std::uint32_t>(bytes.size());
+            while ((image_.size() & 7u) != 0u) {
+                image_.push_back('\0');
+                ++cursor;
+            }
+            entries_.push_back(std::move(entry));
+        }
+        extent_ = cursor;
+    }
+
+    [[nodiscard]] std::uint32_t extent() const noexcept { return extent_; }
+    [[nodiscard]] const std::string &image() const noexcept { return image_; }
+
+    // The frozen rodata offset of `bytes`, or nullopt for a literal that was
+    // never interned (a planner/emitter disagreement that must fail closed).
+    [[nodiscard]] std::optional<std::uint32_t>
+    offset_of(std::string_view bytes) const {
+        for (const Entry &entry : entries_) {
+            if (entry.bytes == bytes) {
+                return entry.offset;
+            }
+        }
+        return std::nullopt;
+    }
+
+  private:
+    std::set<std::string, ByteLess> unique_;
+    std::vector<Entry> entries_;
+    std::string image_;
+    std::uint32_t extent_{0};
+};
+
 struct AgentPlan {
     CoreAgentId agent{};
     CoreStateId initial{};
@@ -414,6 +529,13 @@ struct AgentPlan {
     // descriptor is the full functype (params already prefixed by the env i32
     // and with closure args expanded to two i32 words).
     std::vector<ClosureCallType> closure_signatures;
+    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the frozen String literal
+    // pool. Non-empty iff at least one reachable handler constructs a String
+    // literal; then the module emits exactly ONE active Data(11) section
+    // initializing [kP6RodataBase, +rodata_extent). Empty modules gain no Data
+    // section and stay byte-identical.
+    RodataLiteralPool rodata;
+    std::uint32_t rodata_extent{0};
 };
 
 struct AgentPlanPolicy {
@@ -1101,6 +1223,15 @@ enum class P6ScalarKind {
     // scalar/aggregate slot; only `CoreClosureExpr` (constructor),
     // `CoreCallClosureExpr` (indirect call), and a callable parameter / binding
     // touch it.
+    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a STRING value. Its whole
+    // runtime representation is the eight-byte PtrLen word pair
+    // `(payload_ptr:i32, byte_len:i32)` (P4-D `CoreLayoutPtrLen`, the only
+    // PtrLen family). Like a Closure it occupies TWO consecutive i32 locals /
+    // stack words, but unlike a Closure it is inline 8-byte data in every
+    // struct/enum frame slot (no pointer-tree expansion, no funcref table), it
+    // never crosses the capability/fn ABI, and its two words are compile-time
+    // immediates for a literal: (kP6RodataBase + pool_offset, utf8_byte_len).
+    String,
     Closure
 };
 
@@ -1391,6 +1522,15 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
             layouts.layouts[layout_id.value].shape)) {
         return P6ScalarKind::Closure;
     }
+    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String's whole physical
+    // representation is the eight-byte CoreLayoutPtrLen word pair
+    // (payload_ptr, byte_len). PtrLen is the String-only layout family, so this
+    // mapping is total. It is a TWO-word inline value: never an aggregate
+    // address, never an operand of a scalar/collection op.
+    if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(
+            layouts.layouts[layout_id.value].shape)) {
+        return P6ScalarKind::String;
+    }
     const auto *scalar =
         std::get_if<ir::core::CoreLayoutScalar>(&layouts.layouts[layout_id.value].shape);
     if (scalar == nullptr || scalar->repr == ir::core::CoreScalarRepr::F64) {
@@ -1432,6 +1572,17 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
             return std::nullopt;
         }
     }
+    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a Decimal / Duration literal
+    // is embedded as its compile-time i64 word (mantissa / bare milliseconds),
+    // so on the physical P6 word model both ride the IntI64 kind — a constant
+    // i64.const, never an arithmetic operand (plan_binary/unary require a real
+    // CoreVtInt) and never a frame-walking boundary (the output-frame gate
+    // rejects their wire nodes; host rendering stays the spelling authority).
+    if ((std::holds_alternative<CoreVtDecimal>(node) ||
+         std::holds_alternative<CoreVtDuration>(node)) &&
+        scalar->repr == ir::core::CoreScalarRepr::I64) {
+        return P6ScalarKind::IntI64;
+    }
     return std::nullopt;
 }
 
@@ -1453,14 +1604,16 @@ p6_closure_environment_struct(const ir::core::CoreLayout *env_layout) {
 //                  unchanged layout, e.g. an unbounded phantom argument); a
 //                  projection that changes the shape fails closed, because
 //                  performing it would need the child plan's own effects.
-//   StringWiden  : no runtime code in principle — a `CoreVtString` is a 2-word
-//                  PtrLen pair whose width is layout-identical at both endpoints,
-//                  so the words would move unchanged. But the P6 value model has
-//                  NO 2-word value at all (a `PtrLen` is neither a scalar local
-//                  nor a single-word aggregate address), so no P6 local can hold
-//                  the result: it fails closed rather than truncating.
-//   CapacityWiden: likewise outside the P6 value model. A bounded collection is
-//                  a `CoreLayoutContainer` keyed by `capacity` -> `backing_size`,
+//   StringWiden  : since frame-bridge v2 V2-B a `CoreVtString` IS a first-class
+//                  two-word PtrLen P6 value, so a strict length widening whose
+//                  endpoints share the layout-identical PtrLen shape is a
+//                  same-bytes no-op: the two inline words move unchanged. It is
+//                  realizable only on the frame computed-final lane (the only
+//                  builder that constructs / carries a String pair); a String
+//                  literal anywhere else is rejected earlier by the
+//                  rodata-pool gate, not by this classifier.
+//   CapacityWiden: outside the P6 value model. A bounded collection is a
+//                  `CoreLayoutContainer` keyed by `capacity` -> `backing_size`,
 //                  and P6 has no collection handle, element store, or length
 //                  word, so there is no layout-derived action to emit.
 //
@@ -1700,6 +1853,12 @@ class P6ComputationHandlerBuilder {
         final_state_id_ = final_state_id;
     }
 
+    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): install the module-wide
+    // String literal pool a frame handler's literals are interned into during
+    // planning and read from at emit time. Null outside a P6-frame agent, where
+    // String literals keep failing closed (no rodata region is planned there).
+    void install_rodata_pool(RodataLiteralPool *pool) { rodata_pool_ = pool; }
+
     // Validate the handler is in the scalar subset and assign every bound SSA
     // value a per-repr pool slot (i32 group first, then i64 — a real function
     // needs one fixed type per local index), recording the goto target set.
@@ -1890,7 +2049,14 @@ class P6ComputationHandlerBuilder {
         // i32, appended after the KeyGet temps (absent outside a computed
         // final).
         const std::uint32_t final_count = final_return_mode_ ? final_src_count_ : 0u;
-        if (temp_count != 0 || keyget_count != 0 || final_count != 0) {
+        // V2-B: one temp holding a String ctx-store slot address for its two
+        // PtrLen stores (absent without such a store).
+        const std::uint32_t ctx_store_count = ptrlen_ctx_store_needed_ ? 1u : 0u;
+        // V2-B: one temp holding a projection slot address while reading the
+        // String PtrLen leaf's two words (absent without such a read).
+        const std::uint32_t ptrlen_read_count = ptrlen_read_needed_ ? 1u : 0u;
+        if (temp_count != 0 || keyget_count != 0 || final_count != 0 ||
+            ctx_store_count != 0 || ptrlen_read_count != 0) {
             // The bump temporaries are placed AFTER the i64 group (a second
             // i32 local group) so they do not shift the SSA/scratch i64 pool
             // indices pool_local derives from i32_group_size(). Fn bodies have
@@ -1918,6 +2084,15 @@ class P6ComputationHandlerBuilder {
             }
             if (final_count != 0) {
                 final_src_local_ = after_groups + temp_count + keyget_count;
+            }
+            if (ctx_store_count != 0) {
+                ctx_store_addr_local_ =
+                    after_groups + temp_count + keyget_count + final_count;
+            }
+            if (ptrlen_read_count != 0) {
+                ptrlen_read_addr_local_ =
+                    after_groups + temp_count + keyget_count + final_count +
+                    ctx_store_count;
             }
         }
         // Handler mode, aggregate/closure heap enabled: reset the per-activation
@@ -1978,7 +2153,9 @@ class P6ComputationHandlerBuilder {
         // The fn-mode bump temporaries form a SECOND i32 group after the i64
         // group, keeping the pool index spaces stable. The KeyGet scan scratch
         // joins that trailing i32 group (it exists in either body mode).
-        const std::uint32_t temp_i32 = temp_count + keyget_count + final_count;
+        const std::uint32_t temp_i32 =
+            temp_count + keyget_count + final_count + ctx_store_count +
+            ptrlen_read_count;
         if (temp_i32 != 0) {
             ++local_groups;
         }
@@ -2112,6 +2289,18 @@ class P6ComputationHandlerBuilder {
     std::uint32_t keyget_found_local_{std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t keyget_addr_local_{std::numeric_limits<std::uint32_t>::max()};
 
+    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String ctx store needs the
+    // walked slot address twice (the PtrLen is two i32 stores), so it is teed
+    // into ONE trailing i32 temp local. Allocated only when such a store is
+    // planned; lives in the second i32 group after the i64 group.
+    bool ptrlen_ctx_store_needed_{false};
+    std::uint32_t ctx_store_addr_local_{std::numeric_limits<std::uint32_t>::max()};
+    // V2-B: one temp holding the walked slot address while reading a String
+    // PtrLen leaf's two words through a projection. Allocated only when such a
+    // read is planned.
+    bool ptrlen_read_needed_{false};
+    std::uint32_t ptrlen_read_addr_local_{std::numeric_limits<std::uint32_t>::max()};
+
     // RFC 0026 P6-7 frame-bridge v2 rung V2-A: a computed-final aggregate /
     // collection materialization needs ONE trailing i32 scratch local holding
     // the root value's source address (a scratch-constructed aggregate or an
@@ -2228,6 +2417,11 @@ class P6ComputationHandlerBuilder {
     // reads_raw_input_frame().
     bool reads_raw_input_frame_{false};
 
+    // RFC 0026 P6-7 frame-bridge v2 rung V2-B: module-wide String literal pool
+    // (null outside a P6-frame agent). A String literal SSA value is the PtrLen
+    // immediate pair naming this pool; the pool is frozen between plan and emit.
+    RodataLiteralPool *rodata_pool_{nullptr};
+
     [[nodiscard]] bool reject(std::string message, ir::SourceRangeOpt range) {
         body_.byte(kOpUnreachable);
         add_diag(result_,
@@ -2329,11 +2523,43 @@ class P6ComputationHandlerBuilder {
 
     // Latch one arm binding's value into its scratch local from its SITE: a
     // scalar is loaded, and an aggregate (a `Ptr` site) has its ADDRESS copied
-    // (the binding then reads fields through that address later).
+    // (the binding then reads fields through that address later). A String site
+    // (V2-B) latches the TWO inline PtrLen words: from the two local slots for a
+    // whole-String scrutinee, or by two i32 loads from the payload slot address.
     [[nodiscard]] bool emit_binding_latch(std::uint32_t scrutinee_local,
                                           std::uint32_t dest,
                                           const P6PatternSite &site,
                                           ir::SourceRangeOpt range) {
+        if (site.kind == P6ScalarKind::String) {
+            if (!site.in_memory) {
+                emit_local_get(scrutinee_local);
+                body_.byte(kOpLocalSet);
+                body_.u32(dest);
+                emit_local_get(scrutinee_local + 1u);
+                body_.byte(kOpLocalSet);
+                body_.u32(dest + 1u);
+                return true;
+            }
+            // Inline PtrLen slot at scrutinee(+offset). The address walk is all
+            // compile-time immediates, so recompute it for each of the two
+            // words instead of borrowing a temp local.
+            const auto load_slot_word = [&](std::uint32_t word_offset,
+                                            std::uint32_t target) {
+                emit_local_get(scrutinee_local);
+                if (site.offset != 0) {
+                    emit_const_i32(static_cast<std::int32_t>(site.offset));
+                    body_.byte(kOpI32Add);
+                }
+                body_.byte(kOpI32Load);
+                body_.u32(kAlignI32);
+                body_.u32(word_offset);
+                body_.byte(kOpLocalSet);
+                body_.u32(target);
+            };
+            load_slot_word(0, dest);
+            load_slot_word(4, dest + 1u);
+            return true;
+        }
         if (!emit_site_value(scrutinee_local, site, range)) {
             return false;
         }
@@ -2385,8 +2611,29 @@ class P6ComputationHandlerBuilder {
             return reject("value is not a readable local at this point in the handler",
                           std::move(range));
         }
+        const auto kind = readable_kind(value);
+        if (kind == P6ScalarKind::String) {
+            // The two-word PtrLen (payload ptr, byte len), ptr first.
+            emit_local_get(*local);
+            emit_local_get(*local + 1u);
+            return true;
+        }
         emit_local_get(*local);
         return true;
+    }
+
+    // Pop the words `emit_value_read` pushed into one SSA value's own local
+    // pair. A two-word value (Closure func_index/env_ptr, String ptr/len)
+    // leaves TWO words; the second word (env_ptr / len) is the stack top and
+    // lands in slot+1 first, then the first word lands in slot. Every other
+    // kind leaves one.
+    void emit_set_value_words(std::optional<P6ScalarKind> kind, std::uint32_t local) {
+        if (kind.has_value() && is_two_word_kind(*kind)) {
+            body_.byte(kOpLocalSet);
+            body_.u32(local + 1u);
+        }
+        body_.byte(kOpLocalSet);
+        body_.u32(local);
     }
 
     // Push ONE boundary argument's words onto the operand stack in declared
@@ -2615,6 +2862,14 @@ class P6ComputationHandlerBuilder {
             if (std::holds_alternative<ir::core::CoreLayoutClosure>(layout.shape)) {
                 return P6ScalarKind::Closure;
             }
+            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the eight-byte
+            // inline (ptr,len) String word pair. It is NOT an aggregate address
+            // (the words ARE the value, inline in its struct slot) and not a
+            // scalar; only literal construction, frame-slot copy, ctx store and
+            // the final materializer touch it.
+            if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(layout.shape)) {
+                return P6ScalarKind::String;
+            }
             if (const auto *scalar = std::get_if<ir::core::CoreLayoutScalar>(&layout.shape)) {
                 switch (scalar->repr) {
                 case ir::core::CoreScalarRepr::I32:
@@ -2674,6 +2929,16 @@ class P6ComputationHandlerBuilder {
                                     [](std::uint64_t size) { return size == 0; });
     }
 
+    // Whether a P4-D layout edge is the inline eight-byte PtrLen String slot
+    // (RFC 0026 P6-7 frame-bridge v2 D1). The ONE predicate every String-slot
+    // path (constructor copy, ctx store, final materialization, enum payload
+    // binding) consults.
+    [[nodiscard]] bool edge_is_ptr_len(CoreLayoutId id) const {
+        return id.value < layouts_.layouts.size() &&
+               std::holds_alternative<ir::core::CoreLayoutPtrLen>(
+                   layouts_.layouts[id.value].shape);
+    }
+
     // Whether a P4-D layout edge is a single-word P6 value at all: a scalar, a
     // tag-only enum discriminant, or an address-shaped leaf.
     [[nodiscard]] bool place_is_p6_value(CoreLayoutId layout_id) const {
@@ -2703,6 +2968,19 @@ class P6ComputationHandlerBuilder {
             return std::nullopt;
         }
         const CoreLayoutId edge = payload.field_layouts[slot];
+        if (edge.value >= layouts_.layouts.size()) {
+            static_cast<void>(
+                reject("variant payload sub-pattern slot is out of range", std::move(range)));
+            return std::nullopt;
+        }
+        if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(
+                layouts_.layouts[edge.value].shape)) {
+            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String payload
+            // slot is the inline two-word PtrLen; a binding latches both words
+            // from the payload address.
+            return P6PatternSite{
+                P6ScalarKind::String, true, payload_base + payload.field_offsets[slot]};
+        }
         if (!place_is_p6_value(edge)) {
             static_cast<void>(
                 reject("variant payload sub-pattern slot is not a single-word P6 value",
@@ -2745,6 +3023,10 @@ class P6ComputationHandlerBuilder {
         return ProjectionRoot{false, 0, kP6AggregateContextBase};
     }
 
+    [[nodiscard]] static bool is_two_word_kind(P6ScalarKind kind) {
+        return kind == P6ScalarKind::Closure || kind == P6ScalarKind::String;
+    }
+
     // Allocate a fresh scratch slot for `value` in whichever pool the physical
     // repr needs. `pool` selects binding-vs-result for the diagnostics-free local
     // table; the slot itself comes from the shared cursor.
@@ -2756,11 +3038,18 @@ class P6ComputationHandlerBuilder {
         LocalInfo &info = pool[value.value];
         info.bound = true;
         info.kind = kind;
-        // A Closure is a TWO-word (func_index, env_ptr) pair; only one-word
-        // kinds reach the monotone match-scratch pool in this slice, so pairs
-        // are never allocated here (defensive guard).
+        // A Closure is a TWO-word (func_index, env_ptr) pair and a String is
+        // the TWO-word (ptr,len) PtrLen pair; only one-word kinds reach the
+        // monotone match-scratch pool in this slice, so pairs are allocated the
+        // two consecutive slots they need.
         if (kind == P6ScalarKind::Closure) {
             return false;
+        }
+        if (kind == P6ScalarKind::String) {
+            info.is_word_pair = true;
+            info.slot = scratch_i32_count_++;
+            ++scratch_i32_count_; // byte_len word
+            return true;
         }
         info.slot = kind == P6ScalarKind::IntI64 ? scratch_i64_count_++ : scratch_i32_count_++;
         return true;
@@ -2768,7 +3057,9 @@ class P6ComputationHandlerBuilder {
 
     // Assign a pool slot to a let-bound value (one slot per CoreValueId; the
     // Core verifier proves flow-global single definition). A Closure value
-    // occupies TWO consecutive i32 pool slots (func_index then env_ptr).
+    // occupies TWO consecutive i32 pool slots (func_index then env_ptr); a
+    // String literal value occupies TWO consecutive slots (payload ptr then
+    // byte_len).
     [[nodiscard]] bool bind_value(CoreValueId value, P6ScalarKind kind) {
         if (value.value >= locals_.size() || locals_[value.value].bound) {
             return false;
@@ -2780,9 +3071,9 @@ class P6ComputationHandlerBuilder {
             info.slot = i64_count_++;
         } else {
             info.slot = i32_count_++;
-            if (kind == P6ScalarKind::Closure) {
+            if (is_two_word_kind(kind)) {
                 info.is_word_pair = true;
-                ++i32_count_; // env_ptr word
+                ++i32_count_; // second word (env_ptr / byte_len)
             }
         }
         return true;
@@ -2943,6 +3234,7 @@ class P6ComputationHandlerBuilder {
             return true;
         case P6ScalarKind::IntI64:
         case P6ScalarKind::Closure:
+        case P6ScalarKind::String:
             return false;
         }
         return false;
@@ -3042,16 +3334,19 @@ class P6ComputationHandlerBuilder {
             const auto arg_kind =
                 p6_scalar_kind(program_, layouts_, storage_.value_types[arg.value]);
             // A closure argument is legal: the unified functype expands it to
-            // its two (func_index, env_ptr) words. Only genuinely non-P6 types
-            // (String PtrLen / bytes / f64) cross no boundary in this slice.
-            if (arg_kind == std::nullopt) {
+            // its two (func_index, env_ptr) words. A String is also two words
+            // but is NOT part of the fn-boundary calling convention in any
+            // rung (its by-address PtrLen marshaling arrives with the frame
+            // bridge), so it crosses no boundary; f64/bytes stay non-P6.
+            if (arg_kind == std::nullopt || *arg_kind == P6ScalarKind::String) {
                 return reject("call argument is not a representable P6 boundary value "
                               "(String / f64 / multi-word types cannot cross an fn boundary)",
                               range);
             }
         }
         const auto result_kind = p6_scalar_kind(program_, layouts_, result_type);
-        if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Closure) {
+        if (result_kind == std::nullopt || *result_kind == P6ScalarKind::Closure ||
+            *result_kind == P6ScalarKind::String) {
             return reject("call result is not a single-word P6 value "
                           "(a closure / String / f64 / multi-word result cannot cross an fn "
                           "boundary in this slice)",
@@ -3076,11 +3371,12 @@ class P6ComputationHandlerBuilder {
             out.push_back(kind == P6ScalarKind::IntI64 ? kI64 : kI32);
         }
     }
-    // A single RESULT word's type byte; nullopt for a closure (two-word) or
-    // otherwise non-P6 result, which this slice cannot return.
+    // A single RESULT word's type byte; nullopt for a closure / String
+    // (two-word) or otherwise non-P6 result, which this slice cannot return.
     [[nodiscard]] static std::optional<std::uint8_t>
     boundary_result_byte(const std::optional<P6ScalarKind> &kind) {
-        if (kind == std::nullopt || *kind == P6ScalarKind::Closure) {
+        if (kind == std::nullopt || *kind == P6ScalarKind::Closure ||
+            *kind == P6ScalarKind::String) {
             return std::nullopt;
         }
         return *kind == P6ScalarKind::IntI64 ? kI64 : kI32;
@@ -3263,6 +3559,82 @@ class P6ComputationHandlerBuilder {
                 return reject("integer literal has a non-Int scalar type", expr.source_range);
             }
             return true;
+        case CoreLiteralKind::String: {
+            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String literal is
+            // the two-word PtrLen (rodata ptr, byte len), constructible ONLY on
+            // the frame lane where the module owns a rodata Data section.
+            if (rodata_pool_ == nullptr) {
+                return reject_with_code(
+                    core_wasm_diag::kUnsupportedCapabilityFrame,
+                    "a String literal is constructible only inside a P6-7 frame-bridge v2 "
+                    "computed final: this builder owns no in-module rodata region (the "
+                    "E1-E3/FB lanes never build one, and V2-B does not construct String "
+                    "literals in a non-final frame handler)",
+                    expr.source_range);
+            }
+            if (*kind != P6ScalarKind::String) {
+                return reject("string literal has a non-String result type", expr.source_range);
+            }
+            if (expr.result_type.value >= program_.value_types.size()) {
+                return reject("string literal references an out-of-range result type",
+                              expr.source_range);
+            }
+            const auto *string_type =
+                std::get_if<CoreVtString>(&program_.value_types[expr.result_type.value].node);
+            if (string_type == nullptr) {
+                return reject("string literal result type is not a String", expr.source_range);
+            }
+            const std::optional<std::int64_t> upper_length =
+                string_type->length_bounds.has_value()
+                    ? std::optional{string_type->length_bounds->second}
+                    : std::nullopt;
+            std::string bytes =
+                ahfl::support::decode_string_literal_bytes(lit.spelling);
+            if (!rodata_pool_->intern(std::move(bytes), upper_length)) {
+                if (upper_length.has_value()) {
+                    return reject_with_code(
+                        core_wasm_diag::kUnsupportedCapabilityFrame,
+                        "a string literal is longer than its slot's declared String length "
+                        "upper bound",
+                        expr.source_range);
+                }
+                return reject_with_code(
+                    core_wasm_diag::kResourceExhausted,
+                    "the deduplicated String literal pool exceeds its reserved rodata region "
+                    "of " + std::to_string(kP6RodataCapacity) +
+                    " bytes in the fixed 64 KiB linear-memory page; shorten the literals",
+                    expr.source_range);
+            }
+            return true;
+        }
+        case CoreLiteralKind::Decimal: {
+            // V2-B: the compile-time i64 mantissa word; the host renders the
+            // builtin `s<scale>:<mantissa>` spelling at encode. Literal only —
+            // no Decimal arithmetic crosses the P6 lane.
+            if (*kind != P6ScalarKind::IntI64) {
+                return reject("decimal literal has a non-i64 scalar type", expr.source_range);
+            }
+            const auto parsed = ahfl::support::parse_decimal_literal(lit.spelling);
+            if (!parsed.has_value()) {
+                return reject("decimal literal spelling does not parse or its mantissa overflows "
+                              "i64",
+                              expr.source_range);
+            }
+            return true;
+        }
+        case CoreLiteralKind::Duration: {
+            if (*kind != P6ScalarKind::IntI64) {
+                return reject("duration literal has a non-i64 scalar type", expr.source_range);
+            }
+            const auto milliseconds =
+                ahfl::support::parse_duration_literal_milliseconds(lit.spelling);
+            if (!milliseconds.has_value()) {
+                return reject("duration literal spelling does not parse or its milliseconds "
+                              "overflow i64",
+                              expr.source_range);
+            }
+            return true;
+        }
         case CoreLiteralKind::Unit:
             // FB-1: a Unit literal is the zero-word value; it has no runtime
             // representation and is legal only where a Unit result is expected
@@ -3270,10 +3642,11 @@ class P6ComputationHandlerBuilder {
             // keep the single-word boundary, matching the multi-word gate.
             return reject("a Unit literal has no single-word wasm representation in this slice",
                           expr.source_range);
-        default:
-            return reject("only Bool and Integer literals are in the scalar subset",
+        case CoreLiteralKind::Float:
+            return reject("float literals need the f64 opcode ladder, a later P6 slice",
                           expr.source_range);
         }
+        return reject("literal kind is outside the P6 scalar subset", expr.source_range);
     }
 
     // --- P6-4 aggregate memory planning ---
@@ -3314,6 +3687,26 @@ class P6ComputationHandlerBuilder {
                 return true;
             }
             return reject("a bare input/context root is not a memory read in the P6 subset", range);
+        }
+        // V2-B: a leaf that lands on a String PtrLen slot is read as the two
+        // inline words. A two-word String pair is realizable ONLY on the
+        // computed-final lane that materializes the output frame: a non-final
+        // goto handler can neither construct a String (no rodata pool) nor pass
+        // one across an fn / capability boundary, and it never materializes an
+        // output, so such a read has no legal consumer and fails closed here
+        // rather than emitting an orphaned two-word load.
+        if (const auto leaf =
+                resolve_projection_slot(path.projection, path.root_type, range);
+            leaf.has_value() && edge_is_ptr_len(leaf->edge)) {
+            if (!final_return_mode_) {
+                return reject(
+                    "a String (PtrLen) field is readable only inside a P6-7 frame-bridge v2 "
+                    "computed final; a non-final goto handler cannot carry the two-word String "
+                    "pair (it constructs no rodata, crosses no String boundary, and materializes "
+                    "no output frame)",
+                    range);
+            }
+            ptrlen_read_needed_ = true;
         }
         return true;
     }
@@ -3445,8 +3838,9 @@ class P6ComputationHandlerBuilder {
 
     // Validate ONE constructor operand against its P4-D SLOT edge: a scalar slot
     // takes an i32/i64 operand of the same width, an addressable-aggregate slot
-    // takes a `Ptr` operand, and any other slot (a String / collection / f64, or
-    // an inline tag-only enum the P6 model cannot address) fails closed.
+    // takes a `Ptr` operand, a String PtrLen slot (V2-B) takes the two-word
+    // String operand, and any other slot (bytes / f64 / an inline tag-only enum
+    // the P6 model cannot address) fails closed.
     [[nodiscard]] bool
     plan_construct_operand(CoreValueId value, CoreLayoutId slot, ir::SourceRangeOpt range) {
         if (value.value >= storage_.value_types.size()) {
@@ -3455,6 +3849,15 @@ class P6ComputationHandlerBuilder {
         const auto kind = scalar_kind(storage_.value_types[value.value]);
         if (kind == std::nullopt) {
             return reject("constructor operand has a non-aggregate, non-scalar type", range);
+        }
+        if (slot.value < layouts_.layouts.size() &&
+            std::holds_alternative<ir::core::CoreLayoutPtrLen>(
+                layouts_.layouts[slot.value].shape)) {
+            if (*kind != P6ScalarKind::String) {
+                return reject("constructor operand for a String slot is not a String PtrLen value",
+                              range);
+            }
+            return true;
         }
         if (place_is_aggregate_leaf(slot)) {
             if (*kind != P6ScalarKind::Ptr) {
@@ -3561,6 +3964,14 @@ class P6ComputationHandlerBuilder {
             }
         }
         return true;
+    }
+
+    // V2-B: true iff an expression is a Decimal/Duration literal (its i64 word
+    // is a compile-time constant, never an integer-arithmetic operand).
+    [[nodiscard]] bool is_decimal_duration_expr(const CoreExpr &expr) const {
+        const auto *literal = std::get_if<CoreLiteralExpr>(&expr.node);
+        return literal != nullptr && (literal->kind == CoreLiteralKind::Decimal ||
+                                      literal->kind == CoreLiteralKind::Duration);
     }
 
     // Emit a bounded-collection operation. The handle in `base` is the address
@@ -4121,7 +4532,8 @@ class P6ComputationHandlerBuilder {
             }
             const auto key_kind = readable_kind(collection.index);
             if (key_kind == std::nullopt || *key_kind == P6ScalarKind::Ptr ||
-                *key_kind == P6ScalarKind::Collection || *key_kind == P6ScalarKind::Closure) {
+                *key_kind == P6ScalarKind::Collection || *key_kind == P6ScalarKind::Closure ||
+                *key_kind == P6ScalarKind::String) {
                 return reject("keyed scan key is not a scalar Int/Bool/enum value", range);
             }
             if (!same_word_width(*key_kind, place_kind_of_layout(container->element))) {
@@ -4130,7 +4542,8 @@ class P6ComputationHandlerBuilder {
             if (collection.op == CoreCollectionOpKind::KeyGet) {
                 const auto value_kind_opt = scalar_kind(storage_.exprs[id.value].result_type);
                 if (value_kind_opt == std::nullopt || *value_kind_opt == P6ScalarKind::Ptr ||
-                    *value_kind_opt == P6ScalarKind::Collection) {
+                    *value_kind_opt == P6ScalarKind::Collection ||
+                    *value_kind_opt == P6ScalarKind::String) {
                     return reject("Map keyed lookup result is not a scalar P6 value", range);
                 }
                 if (!same_word_width(*value_kind_opt,
@@ -4298,6 +4711,14 @@ class P6ComputationHandlerBuilder {
         const auto scrutinee_kind = readable_kind(match.scrutinee);
         if (scrutinee_kind == std::nullopt) {
             return reject("match scrutinee is not a readable local in this handler", range);
+        }
+        // A String PtrLen scrutinee would need byte-wise literal comparison;
+        // String values on the frame lane move only as enum-payload bindings
+        // and constructor operands, never as a compared scrutinee.
+        if (*scrutinee_kind == P6ScalarKind::String) {
+            return reject("matching directly on a String value is outside the P6 frame subset "
+                          "(bind a String enum payload instead)",
+                          range);
         }
         used_values_[match.scrutinee.value] = true;
         // A scrutinee is a scalar or a tag-only enum: a literal / Bool pattern
@@ -4668,9 +5089,15 @@ class P6ComputationHandlerBuilder {
                             return reject("an fn body must return a value", statement.source_range);
                         }
                         used_values_[s.value.value] = true;
-                        if (s.value.value >= storage_.value_types.size() ||
-                            p6_scalar_kind(program_, layouts_,
-                                           storage_.value_types[s.value.value]) == std::nullopt) {
+                        const auto return_kind =
+                            s.value.value < storage_.value_types.size()
+                                ? p6_scalar_kind(program_, layouts_,
+                                                 storage_.value_types[s.value.value])
+                                : std::nullopt;
+                        // A String PtrLen is two words and never crosses the
+                        // single-word fn calling convention (any rung).
+                        if (return_kind == std::nullopt ||
+                            *return_kind == P6ScalarKind::String) {
                             return reject("fn return value is not a single-word P6 value",
                                           statement.source_range);
                         }
@@ -4748,9 +5175,60 @@ class P6ComputationHandlerBuilder {
             emit_const_i32(lit.spelling == "true" ? 1 : 0);
             return true;
         }
+        if (lit.kind == CoreLiteralKind::String) {
+            // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): leave the PtrLen
+            // pair (rodata_ptr:i32, byte_len:i32) on the operand stack. The
+            // planner interned the bytes into the frozen pool, so both words
+            // are compile-time immediates.
+            if (kind != P6ScalarKind::String) {
+                return reject("string literal has a non-String type", std::move(range));
+            }
+            if (rodata_pool_ == nullptr) {
+                return reject("string literal reached emit without a rodata pool",
+                              std::move(range));
+            }
+            const std::string bytes =
+                ahfl::support::decode_string_literal_bytes(lit.spelling);
+            const auto offset = rodata_pool_->offset_of(bytes);
+            if (!offset.has_value()) {
+                return reject("string literal was not interned into the rodata pool",
+                              std::move(range));
+            }
+            emit_const_i32(static_cast<std::int32_t>(kP6RodataBase + *offset));
+            emit_const_i32(static_cast<std::int32_t>(bytes.size()));
+            return true;
+        }
+        if (lit.kind == CoreLiteralKind::Decimal) {
+            // V2-B: the i64 mantissa word the compile-time parser derived.
+            if (kind != P6ScalarKind::IntI64) {
+                return reject("decimal literal has a non-i64 type", std::move(range));
+            }
+            const auto parsed = ahfl::support::parse_decimal_literal(lit.spelling);
+            if (!parsed.has_value()) {
+                return reject("decimal literal spelling does not parse or its mantissa overflows "
+                              "i64",
+                              std::move(range));
+            }
+            emit_const_i64(parsed->units);
+            return true;
+        }
+        if (lit.kind == CoreLiteralKind::Duration) {
+            if (kind != P6ScalarKind::IntI64) {
+                return reject("duration literal has a non-i64 type", std::move(range));
+            }
+            const auto milliseconds =
+                ahfl::support::parse_duration_literal_milliseconds(lit.spelling);
+            if (!milliseconds.has_value()) {
+                return reject("duration literal spelling does not parse or its milliseconds "
+                              "overflow i64",
+                              std::move(range));
+            }
+            emit_const_i64(*milliseconds);
+            return true;
+        }
         if (lit.kind != CoreLiteralKind::Integer ||
             (kind != P6ScalarKind::IntI32 && kind != P6ScalarKind::IntI64)) {
-            return reject("only Bool and Integer literals are in the scalar subset",
+            return reject("literal kind is outside the P6 scalar subset",
                           std::move(range));
         }
         const auto parsed = parse_unsigned_spelling(lit.spelling);
@@ -5133,12 +5611,28 @@ class P6ComputationHandlerBuilder {
         if (slot == std::nullopt) {
             return false;
         }
-        // A projected LEAF must be a single-word P6 value: a scalar, a tag-only
-        // enum discriminant, an addressable aggregate, or a bounded collection.
-        // A PtrLen String / bytes / f64 has no single-word P6 representation,
-        // so fail closed rather than load half of it.
-        if (!place_is_p6_value(slot->edge)) {
-            return reject("projection leaf is not a single-word P6 value", std::move(range));
+        // A projected LEAF must be a single-word P6 value (a scalar, a tag-only
+        // enum discriminant, an addressable aggregate, a bounded collection) OR
+        // the two-word String PtrLen pair (V2-B). Bytes / f64 leaves fail closed.
+        const bool slot_ptr_len = edge_is_ptr_len(slot->edge);
+        if (!place_is_p6_value(slot->edge) && !slot_ptr_len) {
+            return reject("projection leaf is not a representable P6 frame value",
+                          std::move(range));
+        }
+        if (slot_ptr_len) {
+            // V2-B: the two inline PtrLen words. The walked slot address is
+            // teed into the reserved read temp so both loads address the same
+            // slot; the stack ends with (payload_ptr, byte_len).
+            body_.byte(kOpLocalTee);
+            body_.u32(ptrlen_read_addr_local_);
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(slot->offset);
+            emit_local_get(ptrlen_read_addr_local_);
+            body_.byte(kOpI32Load);
+            body_.u32(kAlignI32);
+            body_.u32(slot->offset + 4u);
+            return true;
         }
         const P6ScalarKind kind = place_kind_of_layout(slot->edge);
         if (kind == P6ScalarKind::Collection) {
@@ -5370,6 +5864,34 @@ class P6ComputationHandlerBuilder {
         if (kind == std::nullopt || local == std::nullopt) {
             return reject("constructor operand is not a readable value", std::move(range));
         }
+        // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): a String slot holds the
+        // PtrLen INLINE (8 bytes at the slot offset). Copy both words straight
+        // from the operand's two i32 locals (a literal's two immediates, a
+        // projection's, or a match binding's). The payload pointer names a
+        // stable region (rodata / input arena / a bridge result), so no
+        // lifetime rule is involved.
+        if (slot_layout.value < layouts_.layouts.size() &&
+            std::holds_alternative<ir::core::CoreLayoutPtrLen>(
+                layouts_.layouts[slot_layout.value].shape)) {
+            if (*kind != P6ScalarKind::String) {
+                return reject("constructor String slot operand is not a String",
+                              std::move(range));
+            }
+            const auto store_word = [&](std::uint32_t word_offset, std::uint32_t src) {
+                if (dynamic_address) {
+                    emit_local_get(alloc_temp_local_);
+                } else {
+                    emit_const_i32(static_cast<std::int32_t>(static_address));
+                }
+                emit_local_get(src);
+                body_.byte(kOpI32Store);
+                body_.u32(kAlignI32);
+                body_.u32(static_cast<std::uint32_t>(offset + word_offset));
+            };
+            store_word(0, *local);
+            store_word(4, *local + 1u);
+            return true;
+        }
         if (place_is_aggregate_leaf(slot_layout)) {
             // An aggregate operand materializes as a 32-bit ADDRESS; it is one i32
             // slot. A P6 aggregate is never flattened inline.
@@ -5428,12 +5950,40 @@ class P6ComputationHandlerBuilder {
         // resets to zero in every handler), so a later handler's first constructor
         // reuses that byte range and silently clobbers the value the context slot
         // still points at. P6 has no lifetime rule for a value that outlives its
-        // handler yet, so this fails closed exactly like the PtrLen / String leaf
+        // handler yet, so this fails closed exactly like the bytes / f64 leaf
         // rather than emit a dangling pointer.
         const auto slot =
             resolve_projection_slot(store.place.projection, store.place.root_type, range);
         if (slot == std::nullopt) {
             return false;
+        }
+        // RFC 0026 P6-7 frame-bridge v2 §2.3 (rung V2-B): a PtrLen-valued ctx
+        // store IS admitted, but only when the payload pointer names an
+        // all-run-stable region (rodata / input frame arena / a bridge result).
+        // Of those, V2-B can prove only rodata — a String LITERAL — so a String
+        // value produced any other way stays fail-closed here until later rungs
+        // carry its provenance. An aggregate slot keeps its dangling-address
+        // rejection below.
+        if (edge_is_ptr_len(slot->edge)) {
+            if (readable_kind(store.value) != P6ScalarKind::String) {
+                return reject("a context String slot requires a String PtrLen value", range);
+            }
+            if (store.value.value >= storage_.exprs.size()) {
+                return reject("a context String store references an out-of-range value", range);
+            }
+            const CoreExpr &source = storage_.exprs[store.value.value];
+            const auto *literal = std::get_if<CoreLiteralExpr>(&source.node);
+            if (literal == nullptr || literal->kind != CoreLiteralKind::String) {
+                return reject_with_code(
+                    core_wasm_diag::kUnsupportedCapabilityFrame,
+                    "a context String store is admitted in V2-B only for a String literal whose "
+                    "payload pointer names the stable rodata region (a computed or input-borrowed "
+                    "String ctx store arrives with a later frame-bridge rung)",
+                    range);
+            }
+            used_values_[store.value.value] = true;
+            ptrlen_ctx_store_needed_ = true;
+            return true;
         }
         if (place_is_aggregate_leaf(slot->edge)) {
             return reject("a context store may not persist an aggregate value in the P6 subset",
@@ -5456,16 +6006,38 @@ class P6ComputationHandlerBuilder {
         if (slot == std::nullopt) {
             return false;
         }
-        // A store leaf must be a single-word P6 value: a scalar or an addressable
-        // aggregate. A PtrLen / bytes / collection / f64 leaf has no single-word
-        // P6 representation, so fail closed.
-        if (!place_is_p6_value(slot->edge)) {
-            return reject("store destination is not a single-word P6 value", std::move(range));
+        // A store leaf must be a single-word P6 value (a scalar or an
+        // addressable aggregate) OR the eight-byte inline String PtrLen pair
+        // (V2-B). A bytes / f64 leaf still fails closed.
+        const bool slot_ptr_len = edge_is_ptr_len(slot->edge);
+        if (!place_is_p6_value(slot->edge) && !slot_ptr_len) {
+            return reject("store destination is not a P6 frame value", std::move(range));
         }
         const auto place_kind = place_kind_of_layout(slot->edge);
         const auto local = readable_local(store.value);
         if (local == std::nullopt) {
             return reject("store value is not a readable value", std::move(range));
+        }
+        if (slot_ptr_len) {
+            // The projection walk left exactly ONE destination address on the
+            // stack; tee it into the reserved temp so the two PtrLen stores can
+            // each address the slot (the second i32 word sits at offset + 4).
+            if (readable_kind(store.value) != P6ScalarKind::String) {
+                return reject("store value kind does not match its String destination slot",
+                              std::move(range));
+            }
+            body_.byte(kOpLocalTee);
+            body_.u32(ctx_store_addr_local_);
+            const auto store_word = [&](std::uint32_t word_offset, std::uint32_t src) {
+                emit_local_get(ctx_store_addr_local_);
+                emit_local_get(src);
+                body_.byte(kOpI32Store);
+                body_.u32(kAlignI32);
+                body_.u32(slot->offset + word_offset);
+            };
+            store_word(0, *local);
+            store_word(4, *local + 1u);
+            return true;
         }
         if (place_kind == P6ScalarKind::Ptr) {
             // An aggregate destination holds the operand's ADDRESS (one i32 slot),
@@ -5502,12 +6074,16 @@ class P6ComputationHandlerBuilder {
     //   * a bounded-collection root -> its 8-byte inline (ptr,len) header is
     //     copied; the backing elements stay in the stable input-backed placement.
     //
-    // String (PtrLen), Bytes16 (Uuid), f64, closures, and uninhabited slots are
-    // NOT representable by the v1 frame walker and fail closed; module-internal
-    // String construction is the V2-B rung.
+    // V2-B: a String (PtrLen) slot is copied as its two inline words (the
+    // payload pointer stays a rodata / input-arena pointer — the payload is
+    // never copied). Bytes16 (Uuid), f64, closures, and uninhabited slots still
+    // fail closed. Decimal/Duration i64 literal words pass the scalar gate but
+    // have no canonical differential observation (the host spelling render is a
+    // later rung).
 
-    // Validate one P4-D layout edge is entirely in the v1 output-frame walk
-    // subset (scalars i32/i64, inline structs/enums, bounded containers).
+    // Validate one P4-D layout edge is entirely in the v2 output-frame walk
+    // subset (scalars i32/i64, inline structs/enums, bounded containers, and the
+    // String PtrLen pair).
     [[nodiscard]] bool
     validate_final_layout_shape(CoreLayoutId id, ir::SourceRangeOpt range) {
         if (id.value >= layouts_.layouts.size()) {
@@ -5521,7 +6097,8 @@ class P6ComputationHandlerBuilder {
                     return s.repr != ir::core::CoreScalarRepr::F64;
                 },
                 [](const ir::core::CoreLayoutBytes &) { return false; },
-                [](const ir::core::CoreLayoutPtrLen &) { return false; },
+                // V2-B: the String PtrLen inline pair.
+                [](const ir::core::CoreLayoutPtrLen &) { return true; },
                 [](const ir::core::CoreLayoutFnRef &) { return false; },
                 [](const ir::core::CoreLayoutClosure &) { return false; },
                 [&](const ir::core::CoreLayoutStruct &s) {
@@ -5548,9 +6125,9 @@ class P6ComputationHandlerBuilder {
             layout.shape);
         if (!ok) {
             return reject(
-                "computed final carries a shape the P6-7 v1 output frame cannot represent "
-                "(only Bool/Int scalars, tag enums, inline structs/enums, and bounded "
-                "collections; String/f64/Uuid/closure slots arrive with later rungs)",
+                "computed final carries a shape the P6-7 output frame cannot represent "
+                "(only Bool/Int scalars, tag enums, inline structs/enums, bounded "
+                "collections, and String PtrLen slots; f64/Uuid/closure slots stay fail-closed)",
                 range);
         }
         return true;
@@ -5587,7 +6164,11 @@ class P6ComputationHandlerBuilder {
         case P6ScalarKind::Index:
             return true;
         case P6ScalarKind::Closure:
-            return reject("a closure value cannot cross the computed-final frame boundary",
+        case P6ScalarKind::String:
+            // A closure never crosses; a bare-String ROOT output is also not
+            // materialized by V2-B (String rides inline inside an aggregate
+            // output — the five V2-E cases all return structs).
+            return reject("a closure or bare String value cannot be the computed-final frame root",
                           range);
         case P6ScalarKind::Collection:
             final_src_count_ = std::max(final_src_count_, 1u);
@@ -5683,10 +6264,20 @@ class P6ComputationHandlerBuilder {
                               dst_base, dst_off + off);
                 continue;
             }
-            if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(field.shape) ||
-                std::holds_alternative<ir::core::CoreLayoutBytes>(field.shape) ||
+            if (std::holds_alternative<ir::core::CoreLayoutPtrLen>(field.shape)) {
+                // V2-B: copy the String PtrLen's two inline words from the
+                // source aggregate slot straight into the output frame slot.
+                // The payload pointer is preserved verbatim (rodata / input
+                // arena); the payload bytes themselves are never copied.
+                emit_copy_word(false, final_src_local_ + level, src_off + off,
+                              dst_base, dst_off + off);
+                emit_copy_word(false, final_src_local_ + level, src_off + off + 4u,
+                              dst_base, dst_off + off + 4u);
+                continue;
+            }
+            if (std::holds_alternative<ir::core::CoreLayoutBytes>(field.shape) ||
                 std::holds_alternative<ir::core::CoreLayoutClosure>(field.shape)) {
-                return reject("computed final copies a String/Uuid/closure field", range);
+                return reject("computed final copies a Uuid/closure field", range);
             }
             if (std::holds_alternative<ir::core::CoreLayoutStruct>(field.shape) ||
                 std::holds_alternative<ir::core::CoreLayoutContainer>(field.shape) ||
@@ -5841,7 +6432,8 @@ class P6ComputationHandlerBuilder {
             body_.u32(0);
             break;
         case P6ScalarKind::Closure:
-            return reject("a closure value cannot cross the computed-final frame boundary",
+        case P6ScalarKind::String:
+            return reject("a closure or bare String value cannot be the computed-final frame root",
                           range);
         case P6ScalarKind::Collection: {
             // Copy the 8-byte inline header; the backing placement is shared.
@@ -5935,6 +6527,13 @@ class P6ComputationHandlerBuilder {
         if (operand_kind == std::nullopt) {
             return reject("unary operand has a non-scalar or f64 result type", std::move(range));
         }
+        // A Decimal/Duration i64 word rides the constant lane only; it has no
+        // integer arithmetic opcode on the P6 frame model.
+        if (*operand_kind == P6ScalarKind::String ||
+            is_decimal_duration_expr(storage_.exprs[u.operand.value])) {
+            return reject("unary arithmetic is defined for Int and Bool only on the P6 frame lane",
+                          std::move(range));
+        }
         switch (u.op) {
         case CoreUnaryOp::Not:
             if (*operand_kind != P6ScalarKind::Bool) {
@@ -5973,6 +6572,17 @@ class P6ComputationHandlerBuilder {
         const auto rhs_kind = scalar_kind(storage_.exprs[b.rhs.value].result_type);
         if (lhs_kind == std::nullopt || rhs_kind == std::nullopt || *lhs_kind != *rhs_kind) {
             return reject("binary operands must share one scalar type", std::move(range));
+        }
+        // A String PtrLen pair never participates in integer/comparison ops
+        // (its equality/order is byte semantics on the payload, a later rung),
+        // and a Decimal/Duration i64 word is a literal constant, not an
+        // arithmetic operand on the P6 frame model.
+        if (*lhs_kind == P6ScalarKind::String ||
+            is_decimal_duration_expr(storage_.exprs[b.lhs.value]) ||
+            is_decimal_duration_expr(storage_.exprs[b.rhs.value])) {
+            return reject("binary arithmetic/comparison is defined for Int/Bool only on the P6 "
+                          "frame lane",
+                          std::move(range));
         }
         const P6ScalarKind kind = *lhs_kind;
         const bool wide = kind == P6ScalarKind::IntI64;
@@ -6169,6 +6779,12 @@ class P6ComputationHandlerBuilder {
         if (site.kind == P6ScalarKind::Ptr) {
             emit_site_address(scrutinee_local, site);
             return true;
+        }
+        if (site.kind == P6ScalarKind::String) {
+            // A String site latches TWO words through emit_binding_latch; a
+            // one-word site read would truncate the PtrLen pair.
+            return reject("a String pattern site is copied as a PtrLen pair, not read as one word",
+                          std::move(range));
         }
         if (!site.in_memory) {
             emit_local_get(scrutinee_local);
@@ -6380,8 +6996,11 @@ class P6ComputationHandlerBuilder {
                     if (!emit_value_read(yield->value, default_range)) {
                         return false;
                     }
-                    body_.byte(kOpLocalSet);
-                    body_.u32(*result_local);
+                    const auto yielded_kind =
+                        yield->value.value < storage_.value_types.size()
+                            ? scalar_kind(storage_.value_types[yield->value.value])
+                            : std::nullopt;
+                    emit_set_value_words(yielded_kind, *result_local);
                 }
                 emit_br(completion_offset + (label_depth_ - region_base));
                 return true;
@@ -6538,19 +7157,14 @@ class P6ComputationHandlerBuilder {
                     if (local == std::nullopt) {
                         return reject("let result has no SSA local", statement.source_range);
                     }
-                    // FB-3b: a closure result is the two-word (func_index,
-                    // env_ptr) pair, popped in REVERSE push order: env_ptr into
-                    // slot+1 first, then func_index into slot.
+                    // A two-word result is popped in REVERSE push order: the
+                    // second word (closure env_ptr / String byte_len) into
+                    // slot+1 first, then the first word (func_index / ptr).
                     const auto result_kind =
                         s.result.value < storage_.value_types.size()
                             ? scalar_kind(storage_.value_types[s.result.value])
                             : std::nullopt;
-                    if (result_kind == P6ScalarKind::Closure) {
-                        body_.byte(kOpLocalSet);
-                        body_.u32(*local + 1u);
-                    }
-                    body_.byte(kOpLocalSet);
-                    body_.u32(*local);
+                    emit_set_value_words(result_kind, *local);
                     return true;
                 },
                 [&](const CoreIfStmt &s) {
@@ -7741,12 +8355,12 @@ input_frame_backing_high_water(const CoreProgram &program,
             }
             const auto word =
                 p6_scalar_kind(program, layouts, fn.storage.value_types[param.value]);
-            if (word == std::nullopt) {
+            if (word == std::nullopt || *word == P6ScalarKind::String) {
                 add_diag(result,
                          core_wasm_diag::kUnsupportedOrchestration,
                          "fn '" + fn.name +
                              "' crosses a boundary with a non-representable parameter "
-                             "(String / f64 / multi-word types are rejected)");
+                             "(String PtrLen / f64 / multi-word types are rejected)");
                 return false;
             }
             param_words.push_back(*word);
@@ -8155,6 +8769,14 @@ input_frame_backing_high_water(const CoreProgram &program,
     };
     std::vector<PlannedComputedHandler> planned_handlers;
 
+    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): the module-wide String
+    // literal pool every ENTRY-HANDLER builder interns into while planning.
+    // It is frozen before handler bodies are emitted and, when non-empty, the
+    // module gains exactly ONE active Data(11) section initializing the rodata
+    // region. Outlined fn builders never see it (a String crosses no fn
+    // boundary), so an fn String literal keeps failing closed.
+    RodataLiteralPool rodata_pool;
+
     // RFC 0026 P6-2: a computed-goto handler compiles to its OWN `() -> i32`
     // function, so its locals are private and every handler can be emitted
     // immediately (no function-wide local-pool base to resolve first).
@@ -8235,6 +8857,7 @@ input_frame_backing_high_water(const CoreProgram &program,
                                                                   used_values,
                                                                   result);
                 builder->enable_computed_final(*output_vt, state);
+                builder->install_rodata_pool(&rodata_pool);
                 if (!builder->plan()) {
                     return std::nullopt;
                 }
@@ -8633,6 +9256,15 @@ input_frame_backing_high_water(const CoreProgram &program,
             closure_call_type_key(plan.closure_signatures[i]), agent_closure_type_base + i);
     }
 
+    // V2-B: every reachable entry-handler String literal has been interned;
+    // freeze the deterministic pool (byte-sorted, 8-aligned) before any body is
+    // emitted so PtrLen immediates read stable offsets. The frozen image moves
+    // onto the plan for the Data(11) section emitter.
+    if (!rodata_pool.empty()) {
+        rodata_pool.freeze();
+        plan.rodata_extent = rodata_pool.extent();
+    }
+
     // Now that ordinals are fixed, emit the planned computed handlers in
     // state-loop order and publish their actions (the function index is the
     // handler's position in plan.handlers). A builder owns state via a
@@ -8669,6 +9301,12 @@ input_frame_backing_high_water(const CoreProgram &program,
         if (reads_raw) {
             plan.reads_raw_input_frame = true;
         }
+    }
+    // V2-B: publish the frozen pool to the plan only now (the move must happen
+    // after the last builder emitted; the builders hold non-owning pointers
+    // whose lifetime ends with this loop).
+    if (plan.rodata_extent != 0) {
+        plan.rodata = std::move(rodata_pool);
     }
     return plan;
 }
@@ -9751,6 +10389,31 @@ encode_module(const CoreProgram &program,
         return std::nullopt;
     }
 
+    // RFC 0026 P6-7 frame-bridge v2 D1 (rung V2-B): exactly ONE additive
+    // active Data(11) section, in canonical position AFTER Code(10) and before
+    // the EOF custom sections. Its single active segment (flags 0: memory 0,
+    // active, offset i32.const kP6RodataBase; end) initializes the rodata
+    // region with the frozen literal image. A module with no String literal
+    // emits no Data section and stays byte-identical to V2-A.
+    if (plan.rodata_extent != 0) {
+        ByteBuffer data;
+        data.u32(1); // one segment
+        data.byte(0); // active, implicit memory index 0
+        data.byte(kOpI32Const);
+        data.s32(static_cast<std::int32_t>(kP6RodataBase));
+        data.byte(kOpEnd);
+        const std::string &image = plan.rodata.image();
+        if (image.size() > std::numeric_limits<std::uint32_t>::max()) {
+            return std::nullopt;
+        }
+        data.u32(static_cast<std::uint32_t>(image.size()));
+        data.raw_span(std::span<const std::uint8_t>{
+            reinterpret_cast<const std::uint8_t *>(image.data()), image.size()});
+        if (!append_section(module, kSectionData, data)) {
+            return std::nullopt;
+        }
+    }
+
     // RFC 0026 E4-B1: exactly one wire-schema custom section, fixed after the
     // Code section, present iff the agent has reachable capability imports (the
     // caller passes an empty payload otherwise). The custom payload is the
@@ -10679,6 +11342,9 @@ struct FrameSectionPlan {
     std::vector<ir::core::CoreFrameBackingPlacement> placements;
     std::uint32_t payload_arena_base{0};
     std::uint32_t payload_arena_capacity{0};
+    /// V2-B: rodata literal-pool span carried to the section payload.
+    std::uint32_t rodata_base{0};
+    std::uint32_t rodata_extent{0};
     /// The self-contained boundary table: exactly the layouts reachable from
     /// the two roots, with all edges remapped into this dense table.
     ir::core::CoreLayoutTable table;
@@ -10689,11 +11355,119 @@ frame_boundary_value_type(const CoreProgram &program, CoreTypeId nominal) {
     return p6_nominal_value_type(program, nominal);
 }
 
+// RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): walk the INPUT boundary's dense
+// P4-D layout and its wire schema IN LOCKSTEP (the same shape correspondence
+// verify_frame_layout_wire_consistency proves), metering every String slot:
+// a bounded String contributes its schema upper bound, and the first unbounded
+// String marks the shared kP6FrameStringPoolBytes reservation. A shape
+// disagreement fails the plan. Returns false on malformed ids.
+[[nodiscard]] bool accumulate_input_string_arena(
+    const ir::core::CoreLayoutTable &layouts,
+    ir::core::CoreLayoutId layout_id,
+    const ir::core::CoreWireSchemaTable &wire,
+    ir::core::CoreWireSchemaNodeId wire_id,
+    std::uint64_t &bounded_sum,
+    bool &has_unbounded_string) {
+    if (layout_id.value >= layouts.layouts.size() ||
+        wire_id.value >= wire.nodes.size()) {
+        return false;
+    }
+    const auto &layout = layouts.layouts[layout_id.value].shape;
+    const auto &shape = wire.nodes[wire_id.value].shape;
+    return std::visit(
+        Overloaded{
+            [&](const ir::core::CoreLayoutScalar &) { return true; },
+            [&](const ir::core::CoreLayoutPending &) { return false; },
+            [&](const ir::core::CoreLayoutPtrLen &) {
+                const auto *str = std::get_if<ir::core::CoreWireSchemaString>(&shape);
+                if (str == nullptr) {
+                    return false;
+                }
+                if (str->length_bounds.has_value()) {
+                    bounded_sum += static_cast<std::uint64_t>(str->length_bounds->second);
+                    if (bounded_sum > std::numeric_limits<std::uint32_t>::max()) {
+                        return false;
+                    }
+                } else {
+                    has_unbounded_string = true;
+                }
+                return true;
+            },
+            [&](const ir::core::CoreLayoutBytes &) { return false; },
+            [&](const ir::core::CoreLayoutFnRef &) { return false; },
+            [&](const ir::core::CoreLayoutClosure &) { return false; },
+            [&](const ir::core::CoreLayoutUninhabited &) { return false; },
+            [&](const ir::core::CoreLayoutStruct &s) {
+                const auto *wst = std::get_if<ir::core::CoreWireSchemaStruct>(&shape);
+                if (wst == nullptr || wst->fields.size() != s.field_layouts.size()) {
+                    return false;
+                }
+                for (std::uint32_t i = 0; i < s.field_layouts.size(); ++i) {
+                    if (!accumulate_input_string_arena(layouts, s.field_layouts[i], wire,
+                                                       wst->fields[i].type, bounded_sum,
+                                                       has_unbounded_string)) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+            [&](const ir::core::CoreLayoutEnum &e) {
+                const auto *wen = std::get_if<ir::core::CoreWireSchemaEnum>(&shape);
+                if (wen == nullptr || wen->variants.size() != e.variant_payload_layouts.size()) {
+                    return false;
+                }
+                for (std::uint32_t v = 0; v < e.variant_payload_layouts.size(); ++v) {
+                    const auto payload_id = e.variant_payload_layouts[v];
+                    if (payload_id.value >= layouts.layouts.size()) {
+                        return false;
+                    }
+                    const auto *payload = std::get_if<ir::core::CoreLayoutStruct>(
+                        &layouts.layouts[payload_id.value].shape);
+                    if (payload == nullptr ||
+                        payload->field_layouts.size() != wen->variants[v].slots.size()) {
+                        return false;
+                    }
+                    for (std::uint32_t i = 0; i < payload->field_layouts.size(); ++i) {
+                        if (!accumulate_input_string_arena(layouts,
+                                                           payload->field_layouts[i], wire,
+                                                           wen->variants[v].slots[i].type,
+                                                           bounded_sum, has_unbounded_string)) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            },
+            [&](const ir::core::CoreLayoutContainer &c) {
+                // A bounded List carries one element slot; a Map carries key +
+                // value slots (key shapes stay outside the frame subset, so a
+                // String key would already have failed wire projection).
+                const auto *seq = std::get_if<ir::core::CoreWireSchemaSequence>(&shape);
+                const auto *map = std::get_if<ir::core::CoreWireSchemaMap>(&shape);
+                if (seq != nullptr) {
+                    return accumulate_input_string_arena(layouts, c.element, wire, seq->element,
+                                                         bounded_sum, has_unbounded_string);
+                }
+                if (map != nullptr) {
+                    return accumulate_input_string_arena(layouts, c.element, wire, map->key,
+                                                        bounded_sum, has_unbounded_string) &&
+                           c.value.has_value() &&
+                           accumulate_input_string_arena(layouts, *c.value, wire, map->value,
+                                                        bounded_sum, has_unbounded_string);
+                }
+                return false;
+            },
+        },
+        layout);
+}
+
 
 [[nodiscard]] std::optional<FrameSectionPlan>
 build_frame_section_plan(const CoreProgram &program,
                          const ir::core::CoreLayoutTable &layouts,
                          const CoreAgentDecl &agent,
+                         std::uint32_t rodata_extent,
+                         const ir::core::CoreWireSchemaTable *frame_wire_table,
                          CoreWasmCodegenResult &result) {
     const auto input_vt = frame_boundary_value_type(program, agent.input_type);
     const auto output_vt = frame_boundary_value_type(program, agent.output_type);
@@ -10789,7 +11563,47 @@ build_frame_section_plan(const CoreProgram &program,
     }
     plan.placements = assigned->placements;
     plan.payload_arena_base = assigned->payload_arena_base;
-    plan.payload_arena_capacity = 0; // rung C packs String payloads into this arena
+    // RFC 0026 P6-7 frame-bridge v2 D6 (rung V2-B): the input frame's packed
+    // String payloads need a REAL arena now (it was hardcoded 0 at rung A).
+    // Bounded String slots are metered exactly from their schema upper bound;
+    // every unbounded String slot is covered once by the shared
+    // kP6FrameStringPoolBytes reservation. The joint layout/wire walk below is
+    // the single derivation (a shared string shape is metered once).
+    std::uint64_t bounded_sum = 0;
+    bool has_unbounded_string = false;
+    if (frame_wire_table != nullptr && frame_wire_table->frame_roots.has_value()) {
+        if (!accumulate_input_string_arena(plan.table,
+                                           plan.input_layout,
+                                           *frame_wire_table,
+                                           frame_wire_table->frame_roots->input,
+                                           bounded_sum,
+                                           has_unbounded_string)) {
+            add_diag(result,
+                     core_wasm_diag::kInvalidLayout,
+                     "the P6-frame input layout and wire schema disagree on a String slot while "
+                     "planning the payload arena");
+            return std::nullopt;
+        }
+    }
+    std::uint64_t arena_capacity = (bounded_sum + 7u) & ~std::uint64_t{7u};
+    if (has_unbounded_string) {
+        arena_capacity += kP6FrameStringPoolBytes;
+    }
+    if (arena_capacity > std::numeric_limits<std::uint32_t>::max() ||
+        static_cast<std::uint64_t>(plan.payload_arena_base) + arena_capacity >
+            kCoreWasmFixedLinearMemoryCapacityBytes) {
+        add_diag(result,
+                 core_wasm_diag::kResourceExhausted,
+                 "the P6 input-frame String payload arena (bounded-slot bounds " +
+                     std::to_string(bounded_sum) + " bytes plus the unbounded pool " +
+                     (has_unbounded_string ? std::to_string(kP6FrameStringPoolBytes) : "0") +
+                     " bytes) exceeds the fixed 64 KiB linear-memory page") ;
+        return std::nullopt;
+    }
+    plan.payload_arena_capacity = static_cast<std::uint32_t>(arena_capacity);
+    // V2-B: rodata span (always names the fixed [256,1024) region).
+    plan.rodata_base = kP6RodataBase;
+    plan.rodata_extent = rodata_extent;
     return plan;
 }
 
@@ -10827,17 +11641,22 @@ build_frame_section_plan(const CoreProgram &program,
         }
         lane.payload_arena_base = frame_plan->payload_arena_base;
         lane.payload_arena_capacity = frame_plan->payload_arena_capacity;
+        lane.rodata_base = frame_plan->rodata_base;
+        lane.rodata_extent = frame_plan->rodata_extent;
         descriptor.frame = std::move(lane);
         // Carry the exact boundary tables the sections encode so a generic host
         // can pack/encode without a second projection. Both are the same values
         // used to emit the module's verified custom sections.
         ir::core::CoreFrameLayoutSection section;
+        section.format_version = 2;
         section.table = frame_plan->table;
         section.input_layout = frame_plan->input_layout;
         section.output_layout = frame_plan->output_layout;
         section.placements = frame_plan->placements;
         section.payload_arena_base = frame_plan->payload_arena_base;
         section.payload_arena_capacity = frame_plan->payload_arena_capacity;
+        section.rodata_base = frame_plan->rodata_base;
+        section.rodata_extent = frame_plan->rodata_extent;
         descriptor.frame_section = std::move(section);
         if (frame_wire_schema != nullptr) {
             descriptor.wire_schema = *frame_wire_schema;
@@ -11069,19 +11888,41 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         // boundary layout, backing/frame RESOURCE overflow) must reject the
         // build with its diagnostic rather than be discarded into a throwaway
         // result and silently downgraded to the sectionless legacy module.
-        auto candidate = build_frame_section_plan(program, layouts, agent_decl, result);
+        // The String payload-arena capacity (D6/V2-B) is metered from the
+        // projected wire schema's length bounds, so the projection trial runs
+        // first and is passed to the physical plan.
+        auto candidate_boundary = [&]()
+            -> std::optional<std::pair<ir::core::CoreValueTypeId,
+                                       ir::core::CoreValueTypeId>> {
+            auto input_vt = frame_boundary_value_type(program, agent_decl.input_type);
+            auto output_vt = frame_boundary_value_type(program, agent_decl.output_type);
+            if (!input_vt.has_value() || !output_vt.has_value()) {
+                return std::nullopt;
+            }
+            return std::pair{*input_vt, *output_vt};
+        }();
+        if (!candidate_boundary.has_value()) {
+            add_diag(result, core_wasm_diag::kInvalidLayout,
+                     "a P6-frame agent boundary nominal has no finalized argument-less value type");
+            return result;
+        }
+        // The physical plan is sound regardless; only WIRE-PROJECTABILITY (a
+        // logical-schema concern the physical plan does not encode) can still
+        // decline the section. A boundary that is not yet wire-representable
+        // (e.g. a `Map<Bool,...>` frame; the map-key/raw-get surface stays on a
+        // later ladder per design section 11) falls back to the legacy
+        // SECTIONLESS raw module and its existing skip, with NO diagnostic.
+        auto trial = ir::core::project_core_wire_schema(program, {}, *candidate_boundary);
+        const bool trial_consistent =
+            trial.ok() && trial.table->frame_roots.has_value();
+        auto candidate =
+            build_frame_section_plan(program, layouts, agent_decl,
+                                     plan->rodata_extent,
+                                     trial_consistent ? &*trial.table : nullptr, result);
         if (!candidate.has_value()) {
             return result;
         }
-        auto candidate_boundary = std::pair{candidate->input_vt, candidate->output_vt};
-        // The plan is sound; only WIRE-PROJECTABILITY (a logical-schema concern
-        // the physical plan does not encode) can still decline the section. A
-        // boundary that is not yet wire-representable (e.g. a `Map<Bool,...>`
-        // frame; the map-key/raw-get surface stays on a later ladder per design
-        // section 11) falls back to the legacy SECTIONLESS raw module and its
-        // existing skip, with NO diagnostic.
-        auto trial = ir::core::project_core_wire_schema(program, {}, candidate_boundary);
-        bool projectable = trial.ok() && trial.table->frame_roots.has_value();
+        bool projectable = trial_consistent;
         if (projectable) {
             const auto &roots = *trial.table->frame_roots;
             projectable =
@@ -11169,12 +12010,15 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
     std::vector<std::uint8_t> frame_layout_payload;
     if (frame_plan.has_value()) {
         ir::core::CoreFrameLayoutSection section;
+        section.format_version = 2;
         section.table = frame_plan->table;
         section.input_layout = frame_plan->input_layout;
         section.output_layout = frame_plan->output_layout;
         section.placements = frame_plan->placements;
         section.payload_arena_base = frame_plan->payload_arena_base;
         section.payload_arena_capacity = frame_plan->payload_arena_capacity;
+        section.rodata_base = frame_plan->rodata_base;
+        section.rodata_extent = frame_plan->rodata_extent;
         auto layout_encoded = ir::core::encode_core_frame_layout_section(section);
         if (!layout_encoded.ok()) {
             std::string message = "core-layout section payload is not encodable";

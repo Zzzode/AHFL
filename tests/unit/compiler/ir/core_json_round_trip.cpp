@@ -595,7 +595,10 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/v2a_computed_aggregate.ahfl",
         "wasm/v2a_computed_enum.ahfl",
         "wasm/v2a_computed_scalar.ahfl",
-        "wasm/v2a_string_final_unsupported.ahfl",
+        "wasm/v2b_bounded_string.ahfl",
+        "wasm/v2b_computed_string.ahfl",
+        "wasm/v2b_rodata_overflow.ahfl",
+        "wasm/v2b_string_passthrough.ahfl",
     };
 }
 

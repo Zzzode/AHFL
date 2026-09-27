@@ -1,0 +1,44 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-B: computed final whose String slot is
+// BOUNDED (String(0,8)). The literals ("some"/"none") fit the bound, so they
+// intern into the rodata pool exactly like unbounded strings; this pins that a
+// bounded String slot carries the same inline PtrLen construction and that the
+// slot's schema upper bound (8) — not the unbounded pool — meters the packed
+// input payload arena.
+module wasm::v2b::bounded_string;
+
+pub struct In {
+    flag: Bool;
+}
+
+pub struct Out {
+    label: String(0, 8);
+}
+
+agent BoundedStringAgent {
+    input: In;
+    context: Unit;
+    output: Out;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for BoundedStringAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        if (input.flag) {
+            return Out {
+                label: "some",
+            };
+        } else {
+            return Out {
+                label: "none",
+            };
+        }
+    }
+}

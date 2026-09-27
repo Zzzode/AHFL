@@ -1,0 +1,35 @@
+// RFC 0026 P6-7 frame-bridge v2 rung V2-B: a computed final that passes the
+// input String PtrLen straight through to the output frame. No String literal
+// is constructed, so this module emits NO Data(11) section (the rodata region
+// stays uninitialized), yet the String slot is a legal frame value: the
+// projected input-arena PtrLen is copied as its two inline words. This pins
+// that input-borrowed String flow works without rodata, and that the frame
+// sections + runv still appear.
+module wasm::v2b::string_passthrough;
+
+pub struct Frame {
+    label: String;
+}
+
+agent StringFinalAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for StringFinalAgent {
+    state Start {
+        goto Done;
+    }
+
+    state Done {
+        return Frame {
+            label: input.label,
+        };
+    }
+}
