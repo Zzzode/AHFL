@@ -94,12 +94,19 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // into module pointer-tree form before the entry runner, admitting an enum
 // payload projection off `input`. This moves enum_variant_e2e and if_let_e2e
 // (two scenarios) from the skip set to differential agreement: 21/5 -> 24/2.
-// The two remaining skips are e2e_multi_agent (two scenarios), which need the
-// later V2-D rungs: an in-handler capability bridge inside a workflow module,
-// a scalar capability-result -> context store, and a constructed SummaryInput;
-// each manifest still declares blocked_kr66 with its precise reason.
-constexpr int kExpectedAgreed = 24;
-constexpr int kExpectedSkipped = 2;
+// Frame-bridge v2 rung V2-D emission half 2 (scalar capability-result ->
+// context stores + constructed SummaryInput) lands e2e_multi_agent (two
+// scenarios): packaged runners now dispatch EVERY state through relocated
+// handlers on a bounded fuel ladder (a computed-goto if-routing handler takes
+// a real successor, an ordered multi-argument capability bridge fires inside
+// the workflow module, and a projected tag-enum/Bool capability-result field
+// stores into context under the P6 scalar-kind agreement rule), the scheduler
+// zero-fills C_k and materializes a bare-forward non-entry node frame and the
+// CONSTRUCTED SummaryInput node input word-by-word, and a fixed state-entry
+// trace ring records the real runtime (runner, state) evidence the host reads.
+// 24/2 -> 26/0: the blocked_kr66 skip set is empty.
+constexpr int kExpectedAgreed = 26;
+constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
 // engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the

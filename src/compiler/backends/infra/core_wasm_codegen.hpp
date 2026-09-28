@@ -81,6 +81,10 @@ struct CoreWasmDiagnostic {
 struct CoreWasmStateWalk {
     std::string agent;             // canonical agent name
     std::vector<std::string> walk; // state names entered on one runner call
+    // V2-D emission half 2: every declared state name by dense agent state id
+    // (the runtime state-trace ring records an id, not a walk position; a
+    // computed-goto runner may omit an untaken branch state from walk).
+    std::vector<std::string> all_states;
 };
 
 struct CoreWasmNodeDescriptor {

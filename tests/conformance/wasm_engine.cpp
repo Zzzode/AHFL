@@ -153,6 +153,11 @@ build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descripto
             walk_states->push(jstr(state));
         }
         agent_node->set("walk", std::move(walk_states));
+        auto all_states = json::JsonValue::make_array();
+        for (const auto &state : walk.all_states) {
+            all_states->push(jstr(state));
+        }
+        agent_node->set("all_states", std::move(all_states));
         agents->push(std::move(agent_node));
     }
     lane->set("agents", std::move(agents));
@@ -196,6 +201,10 @@ build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descripto
                   juint(descriptor.frame_section->entry_payload_base));
         lane->set("entry_payload_capacity",
                   juint(descriptor.frame_section->entry_payload_capacity));
+        lane->set("state_trace_base",
+                  juint(descriptor.frame_section->state_trace_base));
+        lane->set("state_trace_capacity",
+                  juint(descriptor.frame_section->state_trace_capacity));
     }
     return lane;
 }

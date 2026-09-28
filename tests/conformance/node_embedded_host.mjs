@@ -347,16 +347,35 @@ function makeBridgeCallback(importEntry, ordinal, getInstance, getState, mode) {
     const W = descriptor.wire_schema.nodes;
     const L = lane.layouts;
     const backing = backingByLayout(lane);
-    // The authorized aggregate-root homes for THIS call (design 4.3/5): the
-    // packed input frame, the fixed context frame, the constructor scratch
-    // arena, and every OTHER call site's disjoint result placement. The input
-    // region is the exact packed input span; context/scratch use the fixed ABI
-    // windows. The current site's own result is deliberately excluded.
-    const rootRegions = [
-      {lo: Number(lane.input_base), hi: Number(lane.input_base) + Number(lane.input_size)},
-      {lo: kContextFrameBase, hi: kContextFrameEnd},
-      {lo: kScratchArenaBase, hi: kScratchArenaEnd},
-    ];
+    // The authorized aggregate-root homes for THIS call (design 4.3/5):
+    //  * agent lane: the packed input frame, the fixed context frame, the
+    //    constructor scratch arena, and every OTHER call site's disjoint
+    //    result placement;
+    //  * V2-D workflow lane: every packaged node's I_k / C_k / scratch_k
+    //    block span (a bridge in a non-final handler may project the node
+    //    input or an earlier handler's context/scratch) and every OTHER call
+    //    site's result placement. The current site's own result is excluded
+    //    in both modes.
+    const rootRegions = [];
+    if (descriptor.kind === "workflow" && descriptor.workflow_lane?.node_blocks) {
+      for (const block of descriptor.workflow_lane.node_blocks) {
+        rootRegions.push({lo: Number(block.input_base),
+                          hi: Number(block.input_base) + Number(block.input_size)});
+        if (Number(block.context_size) > 0) {
+          rootRegions.push({lo: Number(block.context_base),
+                            hi: Number(block.context_base) + Number(block.context_size)});
+        }
+        if (Number(block.scratch_size) > 0) {
+          rootRegions.push({lo: Number(block.scratch_base),
+                            hi: Number(block.scratch_base) + Number(block.scratch_size)});
+        }
+      }
+    } else {
+      rootRegions.push(
+        {lo: Number(lane.input_base), hi: Number(lane.input_base) + Number(lane.input_size)},
+        {lo: kContextFrameBase, hi: kContextFrameEnd},
+        {lo: kScratchArenaBase, hi: kScratchArenaEnd});
+    }
     for (const other of sites) {
       if (other.call_site_id === site.call_site_id) continue;
       rootRegions.push({lo: Number(other.result_base),
@@ -1264,7 +1283,8 @@ async function runWorkflowP6(compiled) {
     fail(`completed_count ${e.workflow_completed_count.value} != ${nodeCount}`);
   }
   // Encode the workflow output slot against the workflow output root. String
-  // payloads are authorized in rodata or the entry payload arena only.
+  // payloads are authorized in rodata, the entry payload arena, or any bridge
+  // call site's disjoint result placement (V2-D emission half 2).
   const stringRegions = [];
   if (frameLane.rodata_extent > 0) {
     stringRegions.push({lo: frameLane.rodata_base,
@@ -1274,22 +1294,58 @@ async function runWorkflowP6(compiled) {
     stringRegions.push({lo: lane.entry_payload_base,
                         hi: lane.entry_payload_base + lane.entry_payload_capacity});
   }
+  for (const site of (frameLane.bridge_call_sites ?? [])) {
+    if (site.result_payload_capacity > 0) {
+      stringRegions.push({lo: Number(site.result_payload_base),
+                          hi: Number(site.result_payload_base) +
+                              Number(site.result_payload_capacity)});
+    }
+  }
   const output = readValue(e, frameLane, W, L, roots.output,
                            frameLane.output_layout, tuple[1], backing,
                            stringRegions);
   outputRaw = JSON.stringify(output);
-  // The evaluator records every state the node's packaged agent enters, in
-  // runner-walk order (a p6 workflow writes no node-event records, so the
-  // walk descriptor is the only evidence, exactly as for the opaque counters).
-  const states = lane.nodes.flatMap((node) => {
-    const agentWalk = lane.agents[node.runner];
-    return agentWalk.walk.map((state) => ({ agent: agentWalk.agent, state }));
-  });
+  // V2-D emission half 2: the state sequence is REAL runtime evidence read
+  // from the module's state-entry trace ring: one (runner, state) record per
+  // dispatched state (a computed-goto routing handler records only the
+  // branch actually taken, and every computed final is included). The runner
+  // dispatch ladder appends in schedule execution order; the host never
+  // re-derives the trace from descriptor walks.
+  const traceBase = Number(lane.state_trace_base);
+  const traceCap = Number(lane.state_trace_capacity);
+  const traceCount = traceCap > 0
+      ? new DataView(e.memory.buffer).getUint32(traceBase, true) : 0;
+  if (traceCap === 0 || traceCount * 8 + 8 > traceCap) {
+    fail(`state-trace count ${traceCount} exceeds its fixed ring capacity ${traceCap}`);
+  }
+  const states = [];
+  for (let i = 0; i < traceCount; ++i) {
+    const addr = traceBase + 8 + 8 * i;
+    const dv2 = new DataView(e.memory.buffer);
+    const runner = dv2.getUint32(addr, true);
+    const stateId = dv2.getUint32(addr + 4, true);
+    const agentWalk = lane.agents[runner];
+    const stateNames = agentWalk.all_states ?? agentWalk.walk;
+    if (agentWalk === undefined || stateId >= stateNames.length) {
+      fail(`state-trace record ${i} names an out-of-range runner/state ` +
+           `(${runner},${stateId})`);
+    }
+    // all_states names every dense state id; walk can omit an untaken branch.
+    const stateName = stateNames[stateId];
+    if (typeof stateName !== "string") {
+      fail(`state-trace record ${i} runner ${runner} names an unknown state ${stateId}`);
+    }
+    states.push({ agent: agentWalk.agent, state: stateName });
+  }
+  // V2-D emission half 2: in-handler capability bridges record their
+  // capabilities + argument envelopes on probe events (no node-event records).
+  const capabilities = probe.events.map((event) => event.name);
+  const capabilityArguments = probe.events.map((event) => event.argument);
   return {
     status: "completed",
     states,
-    capabilities: [],
-    capabilityArguments: [],
+    capabilities,
+    capabilityArguments,
     outputRaw,
     transitions: e.transition_count.value,
     completedNodes: e.workflow_completed_count.value,
@@ -1315,12 +1371,28 @@ async function runWorkflow(compiled) {
     }
   }
 
-  // Deterministic transition expectation: each scheduled node executes its
-  // runner agent's full walk, which performs exactly (walk length - 1) gotos.
-  // Summed over nodes (two nodes may share one packaged runner instance), this
-  // is the module's exact transition_count, derived from descriptor facts --
-  // never a weak non-zero check.
-  const expectedTransitions = expectedWorkflowTransitions();
+  // Deterministic transition expectation:
+  //  * a V2-D emission-half-2 P6 workflow (with the state-entry trace ring)
+  //    enters N states per scheduled node along its REAL runtime path and
+  //    performs exactly (N - 1) transitions; the exact total is traceCount -
+  //    nodeCount, which a static walk cannot derive for a computed-goto
+  //    routing handler;
+  //  * an older P6/opaque workflow still uses the descriptor walk sum
+  //    (every node executes its full declared walk).
+  const traceLane = descriptor.frame_lane;
+  const traceCount = traceLane && Number(traceLane.state_trace_capacity) > 0
+      ? new DataView(probe.exports.memory.buffer)
+            .getUint32(Number(traceLane.state_trace_base), true)
+      : null;
+  let expectedTransitions;
+  if (traceCount !== null) {
+    if (traceCount < nodeCount) {
+      fail(`p6 workflow state-trace count ${traceCount} is below the node count ${nodeCount}`);
+    }
+    expectedTransitions = traceCount - nodeCount;
+  } else {
+    expectedTransitions = expectedWorkflowTransitions();
+  }
 
   const [ptr, len] = probe.writeInput();
   const tuple = e.run2(ptr, len);

@@ -158,6 +158,16 @@ struct CoreFrameLayoutSection {
     /// and run2 returns (size is the workflow output root layout size).
     std::uint32_t workflow_output_base{0};
 
+    /// V2-D emission half 2: the fixed state-entry trace ring the packaged P6
+    /// runners append one (runner, state) 8-byte record to on EVERY dispatched
+    /// state (including computed-goto branch successors and the computed
+    /// final), giving the host real runtime state-sequence evidence across
+    /// input-dependent computed handlers. The first 8 bytes are the record
+    /// count header; records begin at base+8. Zero on an agent section and an
+    /// all-opaque workflow.
+    std::uint32_t state_trace_base{0};
+    std::uint32_t state_trace_capacity{0};
+
     [[nodiscard]] friend bool operator==(const CoreFrameLayoutSection &,
                                          const CoreFrameLayoutSection &) noexcept = default;
 };

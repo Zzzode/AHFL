@@ -763,3 +763,23 @@ H <= 65536 否则 wasm.RESOURCE_EXHAUSTED
   timestamp/uuid/float 的帧行走子集扩展;
 * 两个节点复用同一打包实例的 p6 工作流(v2 直接拒编);
 * 任何对 E1/E2/E3/FB 既有模块在不使用新特性时的字节改动。
+
+## 12. 落地状态(实现记录)
+
+* **V2-D emission half 1(RETURN)**:已落地,普查 21/5 -> 24/2
+  (`enum_variant_e2e`、`if_let_e2e` 两场景)。
+* **V2-D emission half 2(CTX + 构造节点输入)**:已落地,普查 24/2 ->
+  **26/0**,`blocked_kr66` 跳过集清空(`e2e_multi_agent` 两场景)。实现要点:
+  打包 runner 改为在**有界燃料 ladder 上对每个状态分发到重定位 handler**
+  (plain goto 内联、computed goto/computed return 调 handler),共享跨 runner
+  的稠密 bridge registry(per-runner 可达性压缩到全局 dense id + 全局排序
+  import 表 + bridge/tuple 混合 functype),scalar/tag-enum 能力结果 -> ctx
+  store 按 `same_word_width` 规则放行,scheduler 零填充 C_k 并物化非入口
+  bare-forward 节点帧与构造式 SummaryInput;状态序列证据由新增的**固定状态
+  进入 trace ring**(`state_trace_base`,每个分发状态追加 (runner,state)
+  8 字节记录)给出,取代静态 walk(后者会漏掉 if 路由未走的分支)。
+  computed-goto preamble 喂养**不透明** capability/identity 终态仍按精确
+  `UNSUPPORTED_WORKFLOW_FRAME` 拒编(`v2d_computed_goto_preamble_reject` 探针
+  继续锁定)。
+* **V2-E 普查收口**:随 half 2 同 commit 完成(26/0);KR6.8 evaluator 退役
+  门与 C++ 生产宿主桥接适配仍是非目标(见 §9、§11)。

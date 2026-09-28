@@ -152,9 +152,9 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "runtime::e2e_multi_agent::CustomerSupportWorkflow",
             4,
             2,
-            WasmEligibility::Computation,
+            WasmEligibility::Orchestration,
             /*evaluator=*/true,
-            WasmNodeObservationSkip::BlockedOnKr66,
+            WasmNodeObservationSkip::None,
         },
         {
             "float_output_e2e.case.json",

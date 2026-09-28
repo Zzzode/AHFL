@@ -81,7 +81,8 @@ class Encoder {
              section.bridge_control_extent != 0 || section.bridge_spill_base != 0 ||
              section.bridge_spill_extent != 0 || !section.bridge_call_sites.empty() ||
              !section.node_blocks.empty() || section.entry_payload_base != 0 ||
-             section.entry_payload_capacity != 0 || section.workflow_output_base != 0)) {
+             section.entry_payload_capacity != 0 || section.workflow_output_base != 0 ||
+             section.state_trace_base != 0 || section.state_trace_capacity != 0)) {
             diagnostics_.push_back(
                 fail("a v1 frame-layout section cannot carry a rodata or bridge span"));
             return std::nullopt;
@@ -198,6 +199,8 @@ class Encoder {
                     u32(block.scratch_size);
                     u32(block.output_base);
                 }
+                u32(section.state_trace_base);
+                u32(section.state_trace_capacity);
             }
         }
         return std::move(bytes_);
@@ -539,6 +542,15 @@ class Decoder {
                     block.output_base = *obase;
                     section.node_blocks.push_back(std::move(block));
                 }
+                const auto trace_base = cursor_.u32();
+                const auto trace_capacity = cursor_.u32();
+                if (!trace_base.has_value() || !trace_capacity.has_value()) {
+                    result.diagnostics.push_back(
+                        fail("frame-layout workflow state-trace span is truncated"));
+                    return result;
+                }
+                section.state_trace_base = *trace_base;
+                section.state_trace_capacity = *trace_capacity;
             }
             if (!cursor_.at_end()) {
                 result.diagnostics.push_back(
@@ -1384,6 +1396,19 @@ class Decoder {
             const std::uint64_t output_extent =
                 align8(section.table.layouts[section.output_layout.value].size);
             if (output_extent == 0 || !add(section.workflow_output_base, output_extent)) {
+                return false;
+            }
+        }
+        // V2-D emission half 2: the state-entry trace ring (8-byte count
+        // header plus the fixed record capacity) is a disjoint in-page span.
+        if (section.state_trace_capacity != 0) {
+            if (section.state_trace_base == 0 ||
+                section.state_trace_base % 8u != 0 ||
+                section.state_trace_capacity < 8u ||
+                section.state_trace_capacity % 8u != 0 ||
+                !add(section.state_trace_base, section.state_trace_capacity)) {
+                fail_local("a workflow state-trace span is unaligned, undersized, or outside the "
+                           "fixed page");
                 return false;
             }
         }

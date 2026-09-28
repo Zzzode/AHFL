@@ -58,9 +58,9 @@
   "engines": {
     "evaluator": true,
     "wasm": {
-      "eligible": "computation",
-      "node_observation_skip": "blocked_kr66",
-      "reason": "capability-bearing non-final handlers project input fields into multi-argument capability calls, store projected capability results in context, and a node takes a constructed SummaryInput; V2-A/V2-B/V2-C land the direct-agent computed/String/multi-arg bridge lanes and the V2-D packager admits these agents through the same per-handler gates (including bridge) and plans the D6 capacity family; the V2-D packager runs these agents through the same per-handler gates a standalone agent passes and plans the D6 capacity family, but the first gate this DAG does not clear is the P6 scalar context-store check (a projected capability-result field stored into a context field whose P6 scalar kind disagrees: store value kind does not match its destination field); the V2-D emission slice (scalar-result context stores, in-module P4-D scheduler construction, hybrid opaque+P6 computed runner, Node workflow P6 host lane) remains pending"
+      "eligible": "orchestration",
+      "node_observation_skip": "none",
+      "reason": "V2-D in-module scheduler full computed lane: each packaged agent runs a relocated handler-dispatch runner on its fixed I/C/scratch/O node block (scalar and tag-enum capability-result fields store into context with P6 scalar kind agreement, an if-branched computed-goto routing handler, and ordered multi-argument capability bridges); the scheduler zero-fills C_k, builds the constructed SummaryInput node input word-by-word, and copies the projected workflow return into the fixed output slot"
     }
   }
 }

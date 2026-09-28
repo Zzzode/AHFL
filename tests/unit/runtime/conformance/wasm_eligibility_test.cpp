@@ -15,10 +15,11 @@
 //   (b) the five tests/golden/wasm orchestration cases classify
 //       runnable_orchestration via a real lower+layout+emit with a non-empty
 //       artifact and an empty diagnostic code;
-//   (c) e2e_multi_agent classifies blocked, asserting the blocking construct,
-//       proven by actually invoking lower_ahfl_to_core + compute_core_layouts +
-//       emit_core_wasm; enum_variant_e2e / if_let_e2e now classify runnable
-//       (V2-D computed-final workflow packaging);
+//   (c) e2e_multi_agent, enum_variant_e2e and if_let_e2e all classify
+//       runnable (V2-D computed-runner workflow packaging, including the
+//       half-2 in-handler bridge / constructed SummaryInput lane), proven by
+//       actually invoking lower_ahfl_to_core + compute_core_layouts +
+//       emit_core_wasm;
 //   (d) manifest-vs-computed agreement in both directions, and that a tampered
 //       manifest marking a blocked case wasm-eligible is rejected while one
 //       wrongly skipping a runnable case is rejected too.
@@ -262,6 +263,15 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // V2-D emission half 2: a multi-agent DAG whose packaged runners carry
+        // computed-goto routing, scalar/tag-enum capability-result -> context
+        // stores, in-handler bridges and a constructed SummaryInput now emits
+        // and runs on the P6 frame lane.
+        {"e2e_multi_agent.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);
@@ -279,23 +289,10 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
                   std::string{expectation.sidecar});
     }
 
-    // The remaining blocked case is genuinely blocked TODAY at a precise
-    // construct. The codes and messages are the compiler's own; pinning them
-    // keeps the classifier honest about WHY a case is skipped instead of
-    // hand-curating a skip list.
-    const std::vector<CaseVerdict> blocked = {
-        // A multi-agent DAG whose non-final handlers carry context stores, an
-        // enum-routing branch and a multi-argument capability bridge. Under
-        // V2-D the packaged agents now run through the SAME per-handler gates a
-        // standalone agent passes, and the first gate this DAG does not clear
-        // is a precise scalar-codegen one (a projected capability-result field
-        // stored into a context field whose P6 scalar kind disagrees); the
-        // workflow in-handler capability bridge is a later V2-D rung.
-        {"e2e_multi_agent.case.json",
-         WasmEligibilityVerdict::BlockedComputation,
-         "wasm.UNSUPPORTED_WORKFLOW_FRAME",
-         "store value kind does not match its destination field"},
-    };
+    // No committed case is blocked on this lane: the last one
+    // (e2e_multi_agent) moved to RunnableOrchestration with V2-D emission half
+    // 2. The catalogue-coverage loop below still runs with an empty table.
+    const std::vector<CaseVerdict> blocked = {};
     for (const auto &expectation : blocked) {
         const auto classification = classify_case(repo_root, expectation.sidecar);
         check(classification.verdict == expectation.verdict,
@@ -368,24 +365,26 @@ void test_manifest_agreement(const std::filesystem::path &repo_root) {
         }
     }
 
-    // Tampering: a manifest marking a blocked case wasm-eligible is rejected.
-    // This is the exact overclaim the slice exists to catch. e2e_multi_agent is
-    // the remaining blocked workflow case (the V2-D in-handler capability
-    // bridge rung).
-    const auto blocked_manifest = load_manifest(repo_root, "e2e_multi_agent.case.json");
-    check(blocked_manifest.has_value(), "e2e_multi_agent manifest loads for the overclaim probe");
-    if (blocked_manifest.has_value()) {
-        ConformanceCase tampered = *blocked_manifest;
-        tampered.engines.wasm.eligibility = WasmEligibility::Orchestration;
-        tampered.engines.wasm.reason = "hand-curated claim that wasm can run this";
+    // Tampering: a manifest claiming the KR6.6 computation lane for a case the
+    // compiler RUNS on the orchestration lane is an overclaim the classifier
+    // rejects. e2e_multi_agent now emits on the P6 workflow lane (V2-D
+    // emission half 2), so flipping its manifest back to "computation" (the
+    // stale blocked shape) must diverge.
+    const auto now_runnable_manifest = load_manifest(repo_root, "e2e_multi_agent.case.json");
+    check(now_runnable_manifest.has_value(),
+          "e2e_multi_agent manifest loads for the overclaim probe");
+    if (now_runnable_manifest.has_value()) {
+        ConformanceCase tampered = *now_runnable_manifest;
+        tampered.engines.wasm.eligibility = WasmEligibility::Computation;
+        tampered.engines.wasm.reason =
+            "stale hand-curated claim that a KR6.6 seam blocks this";
         const auto classification = classify_case(repo_root, "e2e_multi_agent.case.json");
         const auto divergence = wasm_eligibility_divergence(tampered, classification);
-        check(divergence.has_value(), "wasm-eligible overclaim of a blocked case is rejected");
+        check(divergence.has_value(),
+              "a stale computation-lane claim on a runnable case is rejected");
         if (divergence.has_value()) {
-            check(divergence->find("overclaims") != std::string::npos,
-                  "overclaim divergence names the overclaim");
-            check(divergence->find("wasm.UNSUPPORTED_WORKFLOW_FRAME") != std::string::npos,
-                  "overclaim divergence cites the blocking code");
+            check(divergence->find("stale") != std::string::npos,
+                  "overclaim divergence names the staleness");
         }
     }
 
@@ -403,24 +402,22 @@ void test_manifest_agreement(const std::filesystem::path &repo_root) {
               "untouched orchestration manifest agrees");
     }
 
-    // The lanes are NOT interchangeable: a case blocked at a KR6.6 seam claims
-    // `computation` (only that lane lifts the block), so a `none` lane on the
-    // SAME case is a lie -- and, symmetrically, `computation` on a case the
-    // compiler blocks outside that lane is a lie too. Without this the skip
-    // list could not tell "needs the computation lane" from "permanently
-    // host-side".
-    const auto blocked_manifest_none = load_manifest(repo_root, "e2e_multi_agent.case.json");
-    check(blocked_manifest_none.has_value(),
+    // The lanes are NOT interchangeable: a `none` (permanently host-side)
+    // claim on a case the compiler RUNS on the orchestration lane is a lie.
+    // e2e_multi_agent now emits on the P6 workflow lane (V2-D emission half 2),
+    // so it is the runnable case this lane-projection probe uses.
+    const auto runnable_manifest_none = load_manifest(repo_root, "e2e_multi_agent.case.json");
+    check(runnable_manifest_none.has_value(),
           "e2e_multi_agent manifest loads for the lane-projection probe");
-    if (blocked_manifest_none.has_value()) {
+    if (runnable_manifest_none.has_value()) {
         const auto classification = classify_case(repo_root, "e2e_multi_agent.case.json");
-        check(classification.verdict == WasmEligibilityVerdict::BlockedComputation,
-              "e2e_multi_agent is blocked at a KR6.6 computation seam");
-        ConformanceCase host_only = *blocked_manifest_none;
+        check(classification.verdict == WasmEligibilityVerdict::RunnableOrchestration,
+              "e2e_multi_agent runs on the orchestration P6 workflow lane");
+        ConformanceCase host_only = *runnable_manifest_none;
         host_only.engines.wasm.eligibility = WasmEligibility::None;
         host_only.engines.wasm.reason = "permanently host-side";
         check(wasm_eligibility_divergence(host_only, classification).has_value(),
-              "a `none` lane on a KR6.6-blocked case is rejected as a lane mismatch");
+              "a `none` lane on an orchestration-runnable case is rejected as a lane mismatch");
     }
 }
 
