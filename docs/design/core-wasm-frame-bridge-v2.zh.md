@@ -766,10 +766,13 @@ H <= 65536 否则 wasm.RESOURCE_EXHAUSTED
 
 ## 12. 落地状态(实现记录)
 
-* **V2-D emission half 1(RETURN)**:已落地,普查 21/5 -> 24/2
+* **V2-D emission half 1(RETURN)**:已落地(commit `05ad54d760c566394a22f7babbd974f54c81b6cd`),
+  普查 21/5 -> 24/2
   (`enum_variant_e2e`、`if_let_e2e` 两场景)。
-* **V2-D emission half 2(CTX + 构造节点输入)**:已落地,普查 24/2 ->
-  **26/0**,`blocked_kr66` 跳过集清空(`e2e_multi_agent` 两场景)。实现要点:
+* **V2-D emission half 2(CTX + 构造节点输入)**:已落地(commit
+  `2cd6dbf65bc1cc7bd268069d696567ef832ecefe`),普查 24/2 ->
+  **26/0**(据实纠正 §8.2 设计草稿的 23/0:漏计 V2-C fix-forward 新增的 3 个
+  agreed 场景,硬钉按场景计),`blocked_kr66` 跳过集清空(`e2e_multi_agent` 两场景)。实现要点:
   打包 runner 改为在**有界燃料 ladder 上对每个状态分发到重定位 handler**
   (plain goto 内联、computed goto/computed return 调 handler),共享跨 runner
   的稠密 bridge registry(per-runner 可达性压缩到全局 dense id + 全局排序
