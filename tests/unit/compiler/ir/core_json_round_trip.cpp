@@ -618,6 +618,10 @@ lower_golden_file(const std::filesystem::path &path) {
         // fail-closed gate now lives in wasm codegen (BFS reachability), not in
         // Core verification, so the fixture belongs in the lowering corpus.
         "wasm/v2d_computed_goto_preamble_reject.ahfl",
+        // V2-D fix-forward: a non-entry computed-final node whose I_k would be
+        // dereferenced as an inline nested frame is verifier-clean Core; the
+        // fail-closed gate lives in wasm workflow codegen, not the verifier.
+        "wasm/v2d_nonentry_nested_frame_reject.ahfl",
     };
 }
 

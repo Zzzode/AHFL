@@ -1026,6 +1026,23 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         LABELS "wasm;backend;conformance;structural"
     )
 
+    # RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: a second packaged
+    # computed-final node that reads a nested struct/enum off its inline
+    # scheduler-materialized INPUT frame must fail closed
+    # (wasm.UNSUPPORTED_WORKFLOW_FRAME): only the host-packed entry frame is
+    # rewritten into pointer-tree form this rung. A flat-field computed-final
+    # workflow still emits, so the predicate does not sweep the V2-D lane.
+    add_test(NAME ahfl.wasm.v2d_nonentry_nested_frame_reject
+        COMMAND ${Python3_EXECUTABLE}
+                "${PROJECT_SOURCE_DIR}/tests/scripts/wasm_v2d_nonentry_nested_frame_reject.py"
+                $<TARGET_FILE:ahfl_core_wasm_capability_workflow_probe>
+    )
+    set_tests_properties(ahfl.wasm.v2d_nonentry_nested_frame_reject PROPERTIES
+        PASS_REGULAR_EXPRESSION "V2-D non-entry inline nested-frame fail-closed lane passed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;structural"
+    )
+
     # KR6.7 (RFC 0026 P7): the capability-workflow Node embedded-host matrix
     # (OK/PENDING/ERROR/unknown normalization, pending-latch re-entry negative,
     # pending-nonnull non-latching ERROR, the node-event record layout with

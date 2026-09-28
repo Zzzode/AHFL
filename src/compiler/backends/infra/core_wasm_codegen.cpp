@@ -789,18 +789,28 @@ struct AgentPlanPolicy {
     // computation region.
     bool allow_bridge{true};
     std::string_view slice{"E2"};
-    // V2-D RETURN: true on BOTH workflow packaging passes (fact gathering and
-    // relocated emit). The in-module scheduler rewrites the host-packed INLINE
-    // entry frame into module pointer-tree form before the entry runner runs,
-    // so a packaged computed final may project a struct/enum field through its
-    // input frame on this lane. The direct-agent lane leaves this false: no
-    // scheduler normalizes that frame, so the input-inline rejection stands.
+    // V2-D RETURN: true ONLY for the single packaged runner whose bare
+    // host-packed entry frame the workflow scheduler rewrites in place into
+    // module pointer-tree form before that runner executes (the first
+    // scheduled node, with a non-constructed Input-sourced input region). The
+    // computed-final input-inline provenance gate then admits aggregate
+    // projections / payload-enum leaves off `input` for that runner. Every
+    // other workflow runner receives an inline scheduler-materialized I_k and
+    // leaves this false, and direct-agent builds leave it false: no scheduler
+    // normalizes those frames, so the input-inline rejection stands.
     bool admit_normalized_entry_frame{false};
     // V2-D: true for a packaged agent: do not build the agent-level frame
     // section (the workflow packager owns the module-level section) and gather
     // the per-agent facts (scratch high-water, rodata extent, bridge sites) the
     // workflow D6 capacity family needs.
     bool skip_frame_section{false};
+    // V2-D fix-forward: true on BOTH workflow packaging builds (fact gathering
+    // and relocated emit). It lets the input-inline provenance gate fire on a
+    // non-final computed-goto preamble too: only the single entry runner's
+    // host-packed I_k is pointer-tree normalized, so every other packaged
+    // handler receives an inline scheduler-materialized frame. Direct-agent
+    // builds leave this false and keep the historic final-only predicate.
+    bool workflow_packaging_lane{false};
     // V2-D emission: when non-null, every frame handler is emitted with its
     // fixed frame regions and state globals relocated onto a packaged instance's
     // node block inside a workflow module. Null on the direct-agent lane.
@@ -2944,6 +2954,15 @@ class P6ComputationHandlerBuilder {
     // false.
     bool normalized_entry_frame_admitted_{false};
 
+    // V2-D fix-forward: true on BOTH workflow packaging builds (fact gathering
+    // and relocated emit). It lets the input-inline provenance gate fire on a
+    // non-final computed-goto preamble too: only the single entry runner's
+    // host-packed I_k is pointer-tree normalized, so every OTHER packaged
+    // handler receives an inline scheduler-materialized frame and must not
+    // dereference aggregate edges off INPUT. Direct-agent builders leave this
+    // false and keep the historic final-only predicate.
+    bool workflow_packaging_lane_{false};
+
     // RFC 0026 P6-7 frame-bridge v2 rung V2-B: module-wide String literal pool
     // (null outside a P6-frame agent). A String literal SSA value is the PtrLen
     // immediate pair naming this pool; the pool is frozen between plan and emit.
@@ -2974,6 +2993,13 @@ class P6ComputationHandlerBuilder {
     // projections are dereferenceable here.
     void admit_normalized_entry_frame() {
         normalized_entry_frame_admitted_ = true;
+    }
+
+    // V2-D fix-forward: mark this builder as compiled on the workflow
+    // packaging lane (fact gathering or relocated emit), so the inline-input
+    // provenance gate applies to non-final handlers as well.
+    void mark_workflow_packaging_lane() {
+        workflow_packaging_lane_ = true;
     }
 
     [[nodiscard]] std::uint32_t input_base() const noexcept {
@@ -4567,26 +4593,57 @@ class P6ComputationHandlerBuilder {
         // and the two rejections below are lifted for a relocated entry
         // handler. A top-level scalar / tag-enum / inline-String /
         // collection-header field needs no child dereference on every lane.
-        if (final_return_mode_ && !path.has_local &&
-            path.root == ir::core::CorePathRoot::Input &&
-            !normalized_entry_frame_admitted_) {
-            if (!leaf->deref_offsets.empty()) {
-                return reject(
-                    "a computed final projects through a nested aggregate of the host-packed "
-                    "INPUT frame; the inline-input-frame walk (frame-base + P4-D offset, no "
-                    "child-address dereference) is a later frame-bridge rung, so a nested "
-                    "input projection cannot be read on this lane yet",
-                    range);
-            }
-            if (place_is_aggregate_leaf(leaf->edge) &&
-                place_kind_of_layout(leaf->edge) == P6ScalarKind::Ptr) {
-                return reject(
-                    "a computed final reads a struct/enum field directly off the host-packed "
-                    "INPUT frame, whose aggregate bytes are packed inline rather than stored as "
-                    "a child address; materializing that value awaits the inline-input-frame "
-                    "expansion of the frame-bridge v2 (construct the aggregate in-module on "
-                    "this rung instead)",
-                    range);
+        //
+        // The admission is FRAME-LEVEL (one builder per packaged runner) but
+        // the rewrite is per-runner: only the scheduler's entry runner gets a
+        // pointer-tree I_k. Every OTHER packaged runner receives an INLINE
+        // scheduler-materialized frame, so on the relocated workflow lane the
+        // gate applies to ALL its handlers — including a non-final
+        // computed-goto preamble, whose intermediate aggregate dereference
+        // would otherwise read inline words as a child address. The direct
+        // agent lane (no relocation) keeps the historic final-only predicate.
+        const bool workflow_inline_input_lane = workflow_packaging_lane_;
+        if (!normalized_entry_frame_admitted_ &&
+            (final_return_mode_ || workflow_inline_input_lane) &&
+            !path.has_local && path.root == ir::core::CorePathRoot::Input) {
+            if (workflow_packaging_lane_) {
+                if (!leaf->deref_offsets.empty()) {
+                    return reject(
+                        "a workflow handler projects through a nested aggregate of an inline "
+                        "scheduler-materialized INPUT frame; only the host-packed entry frame is "
+                        "rewritten into pointer-tree form this rung, so a nested input projection "
+                        "cannot be read on a non-entry node yet",
+                        range);
+                }
+                if (place_is_aggregate_leaf(leaf->edge) &&
+                    place_kind_of_layout(leaf->edge) == P6ScalarKind::Ptr) {
+                    return reject(
+                        "a workflow handler reads a struct/enum field directly off an inline "
+                        "scheduler-materialized INPUT frame, whose aggregate bytes are expanded "
+                        "in place rather than stored as a child address; only the host-packed "
+                        "entry frame is pointer-tree normalized this rung (construct the "
+                        "aggregate in-module instead)",
+                        range);
+                }
+            } else {
+                if (!leaf->deref_offsets.empty()) {
+                    return reject(
+                        "a computed final projects through a nested aggregate of the host-packed "
+                        "INPUT frame; the inline-input-frame walk (frame-base + P4-D offset, no "
+                        "child-address dereference) is a later frame-bridge rung, so a nested "
+                        "input projection cannot be read on this lane yet",
+                        range);
+                }
+                if (place_is_aggregate_leaf(leaf->edge) &&
+                    place_kind_of_layout(leaf->edge) == P6ScalarKind::Ptr) {
+                    return reject(
+                        "a computed final reads a struct/enum field directly off the host-packed "
+                        "INPUT frame, whose aggregate bytes are packed inline rather than stored "
+                        "as a child address; materializing that value awaits the deferred "
+                        "inline-input-frame expansion of the frame-bridge v2 (construct the "
+                        "aggregate in-module on this rung instead)",
+                        range);
+                }
             }
         }
         // V2-C: latch the raw-frame fact at PLAN time too, so the frame section
@@ -10734,6 +10791,9 @@ build_frame_section_plan(const CoreProgram &program,
                                                                   result);
                 builder->enable_computed_final(*output_vt, state);
                 builder->install_rodata_pool(&rodata_pool);
+                if (policy.workflow_packaging_lane) {
+                    builder->mark_workflow_packaging_lane();
+                }
                 if (policy.admit_normalized_entry_frame) {
                     builder->admit_normalized_entry_frame();
                 }
@@ -10811,6 +10871,9 @@ build_frame_section_plan(const CoreProgram &program,
                     builder->install_bridge_registry(&effective_bridge_registry,
                                                      CoreStateId{state});
                     builder->install_rodata_pool(&rodata_pool);
+                }
+                if (policy.workflow_packaging_lane) {
+                    builder->mark_workflow_packaging_lane();
                 }
                 if (!builder->plan()) {
                     return std::nullopt;
@@ -11873,13 +11936,11 @@ validate_workflow_region(const CoreProgram &program,
     auto align8_u32 = [](std::uint64_t value) -> std::uint64_t {
         return (value + 7u) & ~std::uint64_t{7u};
     };
-    std::unordered_map<std::uint32_t, std::size_t> let_index_by_value;
-    let_index_by_value.reserve(lets.size());
     std::vector<WorkflowFrameLet> frame_lets;
     frame_lets.reserve(lets.size());
     std::uint64_t construct_scratch = 0;
-    for (std::size_t i = 0; i < lets.size(); ++i) {
-        const CoreLetStmt &let = *lets[i];
+    for (const auto *let_stmt : lets) {
+        const CoreLetStmt &let = *let_stmt;
         const CoreExpr &expr = workflow.storage.exprs[let.expr.value];
         const CoreValueTypeId value_type = workflow.storage.value_types[let.result.value];
         WorkflowFrameLet frame_let;
@@ -11925,7 +11986,6 @@ validate_workflow_region(const CoreProgram &program,
                 return std::nullopt;
             }
         }
-        let_index_by_value.emplace(let.result.value, i);
         frame_lets.push_back(std::move(frame_let));
     }
 
@@ -11963,6 +12023,88 @@ validate_workflow_region(const CoreProgram &program,
 
 [[nodiscard]] std::optional<std::uint32_t> workflow_runner_index(const WorkflowPlan &plan,
                                                                  CoreInstanceId instance);
+
+// V2-D fix-forward: whether one layout edge is an aggregate the runtime
+// represents as a CHILD ADDRESS in the module's pointer-tree form (a struct or
+// a payload-bearing enum). A tag-only enum is physically one inline
+// discriminant word and a container is its two-word inline header, so neither
+// edge is dereferenced.
+[[nodiscard]] bool workflow_layout_is_child_aggregate(const ir::core::CoreLayout &layout) {
+    if (std::holds_alternative<ir::core::CoreLayoutStruct>(layout.shape)) {
+        return true;
+    }
+    if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
+        return !std::ranges::all_of(tagged->variant_payload_sizes,
+                                    [](std::uint64_t size) { return size == 0; });
+    }
+    return false;
+}
+
+// True when copying the aggregate named by `id` emits a child-address load
+// (copy_struct / copy_enum dereference every struct or payload-enum field).
+// The immediate children decide it: a struct child is itself the dereffed
+// edge, and an enum child's payload struct fields are walked one level deeper.
+[[nodiscard]] bool workflow_layout_emits_child_dereference(
+    const ir::core::CoreLayoutTable &layouts,
+    CoreLayoutId id,
+    std::uint32_t depth) {
+    if (id.value >= layouts.layouts.size() || depth > 64u) {
+        return true; // fail closed on an out-of-range / runaway edge
+    }
+    const ir::core::CoreLayout &layout = layouts.layouts[id.value];
+    if (const auto *structure = std::get_if<ir::core::CoreLayoutStruct>(&layout.shape)) {
+        for (const CoreLayoutId field : structure->field_layouts) {
+            if (field.value >= layouts.layouts.size()) {
+                return true;
+            }
+            if (workflow_layout_is_child_aggregate(layouts.layouts[field.value])) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (const auto *tagged = std::get_if<ir::core::CoreLayoutEnum>(&layout.shape)) {
+        for (const CoreLayoutId payload : tagged->variant_payload_layouts) {
+            if (workflow_layout_emits_child_dereference(layouts, payload, depth + 1u)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
+// V2-D fix-forward: true when materializing `path` off an INLINE P4-D source
+// frame (the host-packed workflow Input or a node's inline O_k block) would
+// emit a child-address load against inline bytes. The scheduler materializer
+// (latch_path_slot + copy_aggregate) speaks the module POINTER-TREE form:
+// every non-last projection step is an i32.load child dereference, and an
+// aggregate leaf is expanded by re-dereferencing its children. Only the bare
+// host-packed entry frame is rewritten into pointer-tree form before its
+// runner, so every other materialized region must fail closed on these edges.
+[[nodiscard]] bool workflow_inline_path_needs_child_dereference(
+    const CoreProgram &program,
+    const ir::core::CoreLayoutTable &layouts,
+    const CorePathExpr &path,
+    CoreValueTypeId leaf_value_type) {
+    for (std::uint32_t i = 0; i + 1 < path.projection.size(); ++i) {
+        const ir::core::CoreProjectionStep &step = path.projection[i];
+        const auto *owner = p6_nominal_struct_layout(program, layouts, step.owner_type);
+        if (owner == nullptr || step.field.value >= owner->field_layouts.size()) {
+            return true;
+        }
+        const CoreLayoutId edge = owner->field_layouts[step.field.value];
+        if (edge.value >= layouts.layouts.size() ||
+            workflow_layout_is_child_aggregate(layouts.layouts[edge.value])) {
+            return true;
+        }
+    }
+    if (leaf_value_type.value >= layouts.value_layouts.size()) {
+        return true;
+    }
+    return workflow_layout_emits_child_dereference(
+        layouts, layouts.value_layouts[leaf_value_type.value], 0u);
+}
 
 // V2-D D6: the compile-time single-page capacity family for a workflow that
 // contains at least one P6-frame node. Every extent is a compile-time constant;
@@ -12583,6 +12725,27 @@ build_workflow_plan(const CoreProgram &program,
         }
     }
 
+    // V2-D RETURN: the scheduler rewrites the host-packed INLINE entry frame
+    // into module POINTER-TREE form before ONE runner executes: the runner of
+    // the FIRST scheduled node, and only when that node's input region is the
+    // bare host-packed forward (!constructed, sourced from the workflow
+    // Input). Every other I_k is scheduler-materialized INLINE (a bare
+    // forward out of an upstream O_k or a projected/constructed region) and no
+    // normalization runs for it, so the input-inline provenance gate must stay
+    // CLOSED for those handlers: lifting it would let a handler dereference
+    // inline aggregate words as child addresses. This predicate is the single
+    // authority both packaging builds use.
+    const CoreWorkflowNodeId entry_node_id = plan.schedule.front();
+    const auto entry_runner_index =
+        workflow_runner_index(plan, workflow.nodes[entry_node_id.value].target_instance);
+    const WorkflowRegionPlan &entry_region = node_regions[entry_node_id.value];
+    const bool entry_frame_is_normalized =
+        entry_runner_index.has_value() && !entry_region.constructed &&
+        entry_region.source.kind == WorkflowFrameSourceKind::Input;
+    auto admit_for_runner = [&](std::uint32_t runner) {
+        return entry_frame_is_normalized && runner == *entry_runner_index;
+    };
+
     // V2-D: build every packaged agent plan in FACT-GATHERING mode (agent-lane
     // coordinates, no agent frame section). This proves the SAME per-handler
     // gates the direct agent passes and reveals computed finals, bridge sites,
@@ -12613,14 +12776,17 @@ build_workflow_plan(const CoreProgram &program,
                                 .allow_computed_goto = true,
                                 .allow_bridge = true,
                                 .slice = "E3",
-                                // V2-D RETURN: the scheduler normalizes the
-                                // host-packed entry frame before the entry
-                                // runner, so input aggregate projections are
-                                // admitted on the workflow packaging lane.
-                                .admit_normalized_entry_frame = true,
+                                // V2-D RETURN: only the runner whose bare
+                                // host-packed entry frame the scheduler
+                                // normalizes in place may project through an
+                                // aggregate of its INPUT frame; every other
+                                // runner receives an inline I_k and keeps the
+                                // provenance gate closed.
+                                .admit_normalized_entry_frame = admit_for_runner(runner),
                                 // The workflow packager owns the module-level
                                 // core-layout section; this is fact gathering.
-                                .skip_frame_section = true});
+                                .skip_frame_section = true,
+                                .workflow_packaging_lane = true});
             if (!agent_plan.has_value()) {
                 return std::nullopt;
             }
@@ -12755,6 +12921,63 @@ build_workflow_plan(const CoreProgram &program,
         // runner/manifest emission consumes; a P6 workflow's relocated handler
         // bodies replace the runner body in the module-emission slice.
         plan.agent_plans = std::move(fact_plans);
+    }
+
+    // V2-D fix-forward: the scheduler materializer copies every P6 node's I_k
+    // and the workflow output frame from INLINE sources (the host-packed
+    // workflow Input and every upstream node's inline O_k block) using
+    // pointer-tree child dereferences. Only the single bare host-packed ENTRY
+    // frame is skipped (the runner consumes it after in-place
+    // normalization). Every other materialized region must therefore project
+    // only top-level words / flat aggregates; a nested struct / payload-enum
+    // edge has no child address in an inline frame and would be read as a
+    // garbage window, so reject the workflow until inline->pointer-tree
+    // normalization covers scheduler-materialized regions.
+    if (plan.has_p6_nodes) {
+        const auto region_reads_inline_child = [&](const WorkflowRegionPlan &region) -> bool {
+            for (const WorkflowFrameLet &let : region.lets) {
+                if (let.is_construct || let.path == nullptr) {
+                    continue;
+                }
+                if (workflow_inline_path_needs_child_dereference(
+                        program, layouts, *let.path, let.value_type)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (std::uint32_t id = 0; id < workflow.nodes.size(); ++id) {
+            const CoreWorkflowNodeId node_id{id};
+            const auto runner = workflow_runner_index(plan, workflow.nodes[id].target_instance);
+            if (!runner.has_value() || !gathered[*runner].p6) {
+                continue; // an opaque node's region is not scheduler-materialized
+            }
+            const WorkflowRegionPlan &region = plan.node_regions[id];
+            const bool host_packed_entry =
+                node_id == plan.schedule.front() && !region.constructed &&
+                region.source.kind == WorkflowFrameSourceKind::Input;
+            if (host_packed_entry) {
+                continue; // normalized in place by the scheduler before the runner
+            }
+            if (region_reads_inline_child(region)) {
+                add_diag(result,
+                         core_wasm_diag::kUnsupportedWorkflowFrame,
+                         "a scheduler-materialized workflow node frame projects through a "
+                         "nested struct/enum of an inline source frame (the host-packed entry or "
+                         "an upstream node output); only a flat inline frame is materializable "
+                         "until the inline->pointer-tree rewrite covers non-entry regions");
+                return std::nullopt;
+            }
+        }
+        if (region_reads_inline_child(plan.return_region)) {
+            add_diag(result,
+                     core_wasm_diag::kUnsupportedWorkflowFrame,
+                     "the workflow return frame projects through a nested struct/enum of an "
+                     "inline source frame (the host-packed entry or a node output); only a flat "
+                     "inline return is materializable until the scheduler region rewrite "
+                     "covers the return frame");
+            return std::nullopt;
+        }
     }
 
     // V2-D physical planning: run the D6 compile-time single-page capacity
@@ -12905,8 +13128,13 @@ build_workflow_plan(const CoreProgram &program,
                                .allow_computed_goto = true,
                                .allow_bridge = true,
                                .slice = "E3",
-                               .admit_normalized_entry_frame = true,
+                               // V2-D RETURN: match the fact-gathering build:
+                               // only the entry runner with the scheduler-
+                               // normalized bare host-packed frame may read
+                               // INPUT through aggregate edges.
+                               .admit_normalized_entry_frame = admit_for_runner(runner),
                                .skip_frame_section = true,
+                               .workflow_packaging_lane = true,
                                .frame_relocation = &relocation,
                                .shared_rodata_pool = &plan.workflow_rodata,
                                .shared_bridge_registry = &workflow_bridge_registry,
@@ -16281,8 +16509,13 @@ encode_workflow_module(const CoreProgram &program,
 
     // V2-D: a P6 workflow carries the core-layout section (node blocks, the
     // entry payload arena, the workflow output slot, rodata span and the dense
-    // layout table) immediately followed by the boundary wire-schema section;
-    // both are custom sections at EOF, mirroring the agent p6-frame lane.
+    // layout table) as an EOF custom section, mirroring the agent p6-frame
+    // lane. The matching boundary wire-schema section is appended exactly
+    // once further below: a hybrid p6 + capability workflow's table already
+    // carries BOTH the capability roots and the per-node frame roots
+    // (project_core_wire_schema over plan.imports and the boundary pairs), so
+    // it must be the module's single FINAL AHFLWS section, emitted after the
+    // exec-manifest section.
     if (p6) {
         if (!plan.frame_section.has_value() || !plan.frame_wire_table.has_value()) {
             add_diag(result,
@@ -16305,47 +16538,55 @@ encode_workflow_module(const CoreProgram &program,
         if (!append_section(module, kSectionCustom, layout_custom)) {
             return std::nullopt;
         }
-        auto wire_payload = ir::core::encode_core_wire_schema_table(*plan.frame_wire_table);
-        if (!wire_payload.ok()) {
-            add_diag(result,
-                     core_wasm_diag::kBinaryOverflow,
-                     "a V2-D workflow wire-schema section payload exceeds the encoding domain");
-            return std::nullopt;
-        }
-        ByteBuffer wire_custom;
-        if (!wire_custom.name(kWireSchemaSectionName)) {
-            return std::nullopt;
-        }
-        wire_custom.raw_span(*wire_payload.bytes);
-        if (!append_section(module, kSectionCustom, wire_custom)) {
-            return std::nullopt;
-        }
     }
 
-    // RFC 0026 E4-B2-C: a capability workflow ends with the exec-manifest custom
-    // section (AHFLXM) EXACTLY ONCE, IMMEDIATELY BEFORE the wire-schema custom
-    // section (AHFLWS), which remains the module's FINAL section at EOF.
-    if (capability_workflow) {
-        auto manifest = encode_exec_manifest(plan);
-        if (!manifest.has_value()) {
-            return std::nullopt;
+    // RFC 0026 E4-B2-C: a capability workflow ends with the exec-manifest
+    // custom section (AHFLXM) EXACTLY ONCE, IMMEDIATELY BEFORE the wire-schema
+    // custom section (AHFLWS), which remains the module's FINAL section at
+    // EOF. The FINAL AHFLWS section is emitted for every workflow here from a
+    // SINGLE table: for a P6 workflow that is the merged capabilities +
+    // frame-roots table (encoded into this owning buffer); for an opaque
+    // capability workflow it is the capability-only projection the caller
+    // passes in.
+    std::vector<std::uint8_t> merged_wire_payload;
+    if (p6 || capability_workflow) {
+        if (capability_workflow) {
+            auto manifest = encode_exec_manifest(plan);
+            if (!manifest.has_value()) {
+                return std::nullopt;
+            }
+            ByteBuffer manifest_custom;
+            if (!manifest_custom.name(kExecManifestSectionName)) {
+                return std::nullopt;
+            }
+            manifest_custom.raw_span(*manifest);
+            if (!append_section(module, kSectionCustom, manifest_custom)) {
+                return std::nullopt;
+            }
         }
-        ByteBuffer manifest_custom;
-        if (!manifest_custom.name(kExecManifestSectionName)) {
-            return std::nullopt;
-        }
-        manifest_custom.raw_span(*manifest);
-        if (!append_section(module, kSectionCustom, manifest_custom)) {
-            return std::nullopt;
-        }
-        if (wire_schema_payload.empty()) {
-            return std::nullopt;
+        std::span<const std::uint8_t> final_wire_payload;
+        if (p6) {
+            auto wire_payload = ir::core::encode_core_wire_schema_table(*plan.frame_wire_table);
+            if (!wire_payload.ok()) {
+                add_diag(result,
+                         core_wasm_diag::kBinaryOverflow,
+                         "a V2-D workflow wire-schema section payload exceeds the encoding "
+                         "domain");
+                return std::nullopt;
+            }
+            merged_wire_payload = std::move(*wire_payload.bytes);
+            final_wire_payload = merged_wire_payload;
+        } else {
+            if (wire_schema_payload.empty()) {
+                return std::nullopt;
+            }
+            final_wire_payload = wire_schema_payload;
         }
         ByteBuffer schema_custom;
         if (!schema_custom.name(kWireSchemaSectionName)) {
             return std::nullopt;
         }
-        schema_custom.raw_span(wire_schema_payload);
+        schema_custom.raw_span(final_wire_payload);
         if (!append_section(module, kSectionCustom, schema_custom)) {
             return std::nullopt;
         }
@@ -16821,11 +17062,18 @@ CoreWasmCodegenResult emit_core_wasm(const CoreProgram &program,
         if (!plan.has_value()) {
             return result;
         }
-        // RFC 0026 E4-B2-C: a capability workflow projects the deterministic wire
-        // schema for exactly its reachable capability imports (same authority the
-        // E2 agent path uses). Identity workflows have no imports and skip it.
+        // RFC 0026 E4-B2-C: an OPAQUE capability workflow projects the
+        // deterministic wire schema for exactly its reachable capability
+        // imports (same authority the E2 agent path uses). A P6 workflow's
+        // frame-wire projection (built inside build_workflow_plan) already
+        // covers those same capability roots MERGED with the per-node frame
+        // roots, so re-projecting a capability-only table here would emit a
+        // second, contradictory AHFLWS section; the P6 path passes an empty
+        // payload and encode_workflow_module serializes the single merged
+        // table as the module's final wire-schema section. Identity workflows
+        // have no imports and skip it too.
         std::vector<std::uint8_t> wire_schema_payload;
-        if (!plan->imports.empty()) {
+        if (!plan->imports.empty() && !plan->has_p6_nodes) {
             auto projection = ir::core::project_core_wire_schema(program, plan->imports);
             if (!projection.ok()) {
                 std::string message = "reachable capability import ABI is not wire-transportable";

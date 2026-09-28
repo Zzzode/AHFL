@@ -1,0 +1,79 @@
+module wasm::v2d_nonentry_nested_frame;
+
+// RFC 0026 P6-7 frame-bridge v2 rung V2-D fix-forward: a second packaged
+// computed-final node whose bare-forward INPUT frame carries a NESTED struct.
+// The in-module scheduler materializes a non-entry I_k INLINE (child bytes at
+// fixed offsets), while the relocated handler dereferences an aggregate slot
+// as a module pointer-tree child address (i32.load). Only the host-packed
+// ENTRY frame is rewritten into pointer-tree form this rung, so this workflow
+// MUST fail closed with wasm.UNSUPPORTED_WORKFLOW_FRAME and write no wasm
+// artifact. wasm_v2d_nonentry_nested_frame_reject.py locks this.
+
+pub struct Inner {
+    x: Int;
+}
+
+pub struct Shell {
+    inner: Inner;
+}
+
+pub agent MakeAgent {
+    input: Shell;
+    context: Unit;
+    output: Shell;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for MakeAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Shell {
+            inner: Inner {
+                x: input.inner.x,
+            },
+        };
+    }
+}
+
+pub agent ReadAgent {
+    input: Shell;
+    context: Unit;
+    output: Shell;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for ReadAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        let v: Int = input.inner.x;
+        return Shell {
+            inner: Inner {
+                x: v,
+            },
+        };
+    }
+}
+
+pub workflow NestedChainWorkflow {
+    input: Shell;
+    output: Shell;
+
+    node first: MakeAgent(input);
+    node second: ReadAgent(first) after [first];
+
+    return: second;
+}
