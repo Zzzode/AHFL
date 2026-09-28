@@ -40,7 +40,7 @@
 14. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
 15. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
 16. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
-17. 单层 `emit-ir` / `emit-ir-json`（`ahfl.ir.v2`）**mark-deprecated**，由分层 Core-IR 投影 `emit core-ir-json`（`ahfl.core.v1`）取代；删除绑定 KR6.8，当前不删除。
+17. 三层 IR 定型后，每层各自提供稳定的检查面投影：`emit ir` / `emit ir-json` 投影 AHFL-IR 层（`ir::Program`，`ahfl.ir.v2`，供 verification/orchestration 与 SMV/assurance 调试），`emit core-ir-json` 投影 Core-IR 执行层（`ahfl.core.v1`）。二者是不同层的并列一等投影，不存在取代或弃用关系（类比 rustc 同时提供 `--emit=mir` 与 `--emit=llvm-ir`）。
 
 ## 总览
 

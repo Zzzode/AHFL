@@ -3,20 +3,6 @@
 #include <cstddef>
 
 namespace ahfl::cli {
-namespace {
-
-// ---------------------------------------------------------------------------
-// Deprecation marker (RFC 0026 P9 §8)
-// ---------------------------------------------------------------------------
-//
-// The single-layer IR-JSON projection is mark-deprecated in favour of the
-// layered Core-IR projection. Removal is bound to KR6.8 (evaluator retirement)
-// plus all downstream consumers having migrated; this slice only labels it, so
-// the marker is a stable, machine-readable fragment (the KR6.9 completion slice
-// asserts it is present) rather than free prose.
-inline constexpr std::string_view kSingleLayerIrJsonFormat = "ahfl.ir.v2";
-
-} // namespace
 
 // ---------------------------------------------------------------------------
 // format_comma_or_commands
@@ -119,14 +105,6 @@ void print_usage(std::ostream &out) {
 
     // Dump targets
     out << "\n  Dump targets: ast, types, package-graph, lockfile\n";
-
-    // RFC 0026 P9 §8: mark-deprecate the single-layer AHFL-IR projection. The
-    // artifact is NOT removed here — removal is bound to KR6.8 (evaluator
-    // retirement) plus downstream migration to the layered projection.
-    out << "\n  Deprecated (use `emit core-ir-json`, the layered Core-IR projection):\n"
-        << "    ir-json                    single-layer " << kSingleLayerIrJsonFormat
-        << " projection\n"
-        << "    ir                         single-layer text AHFL-IR projection\n";
 
     // Options grouped by scope
     out << "\nInput Options:\n"

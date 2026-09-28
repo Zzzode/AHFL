@@ -6,10 +6,11 @@
 //
 // The execution layer (`CoreProgram`, `include/ahfl/compiler/ir/core_ir.hpp`)
 // gains a machine-readable JSON projection with format identity
-// `CoreProgram::format_version` (default `"ahfl.core.v1"`). This is the
-// executable-layer counterpart of the single-layer `ir::Program` projection
-// (`print_program_ir_json` / `parse_program_ir_json`, `ir_json.cpp`), whose
-// format is `"ahfl.ir.v2"`.
+// `CoreProgram::format_version` (default `"ahfl.core.v1"`). It projects a
+// different tower layer than the AHFL-IR `ir::Program` projection
+// (`print_program_ir_json` / `parse_program_ir_json`, `ir_json.cpp`,
+// `"ahfl.ir.v2"`); the two projections are co-equal per-layer inspection
+// surfaces, not replacements.
 //
 // The complete contract — envelope, per-table schema, arena canonicalization /
 // index-remapping rules, the byte-exact round-trip obligations R1/R2, and the
@@ -22,7 +23,7 @@
 //     `layer: "core"` discriminator, then the program-global tables (`types`,
 //     `value_types`, `capabilities`, `agents`, `flows`, `workflows`,
 //     `instances`) in that fixed order.
-//   * The lexical rules mirror the single-layer streaming writer (§2): 2-space
+//   * The lexical rules mirror the AHFL-IR streaming writer (§2): 2-space
 //     indent, `": "` key separator, no trailing comma, one trailing `'\n'`.
 //   * The program-global `value_types` arena is a true hash-cons; it is written
 //     in arena order (§6.1). The READER rebuilds it by interning through

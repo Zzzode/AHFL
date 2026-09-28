@@ -94,7 +94,7 @@ flowchart TD
 1. 稳定中间表示
 2. backend 共享的序列化/导出边界
 
-Core-IR 是 Semantic IR 下方的执行层，有自己的分层 JSON projection（`emit core-ir-json`，`ahfl.core.v1`），其契约固定在 `docs/design/core-ir-p9-layered-json.zh.md`。单层 `ir::Program` JSON projection（`ahfl.ir.v2`）标记为 deprecated，删除绑定 KR6.8（RFC 0026 Q5 / P9 §8）；两者过渡期并行，暂不删除任何一侧。
+Core-IR 是 Semantic IR 下方的执行层，有自己的分层 JSON projection（`emit core-ir-json`，`ahfl.core.v1`），其契约固定在 `docs/design/core-ir-p9-layered-json.zh.md`。`ir::Program` JSON projection（`ahfl.ir.v2`）是 AHFL-IR 层的永久一等投影，与 Core-IR 投影并列、互不取代（三层 IR 塔定型后的分层事实，见 `docs/reference/ir-format.zh.md`「分层投影边界」）。
 
 Opt IR 则是 Semantic IR 下方的诊断/优化层。它通过 CLI `emit opt-ir` / `emit opt-ir-json` 可见，但不在当前 core backend registry 中作为普通 backend 消费合同。当前生产路径决策是 artifact-only：普通 backend 不消费 Opt IR，`--optimize` 不把 Opt IR 回降 Semantic IR，也不让 backend 隐式直连 Opt IR。
 

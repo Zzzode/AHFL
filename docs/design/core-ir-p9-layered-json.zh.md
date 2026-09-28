@@ -9,9 +9,10 @@
 > (`docs/plans/q4-2026-roadmap.zh.md` L200).
 >
 > Scope: the **Core-IR layer's JSON projection** — its envelope, its per-table
-> schema, its arena canonicalization / index-remapping rules, its byte-exact
-> round-trip contract, and the deprecation boundary for the pre-existing
-> single-layer projection. Design only; no production code in this slice.
+> schema, its arena canonicalization / index-remapping rules, and its byte-exact
+> round-trip contract. The relationship to the pre-existing single-layer
+> projection is recorded in §8 (amended: permanent per-layer projections, no
+> deprecation). Design only; no production code in this slice.
 >
 > All `file:line` anchors below were re-verified against `develop` in the
 > fix-forward commit that follows this one; where a symbol moved, the citation
@@ -60,14 +61,14 @@ B1–B4 implementation slices (§10) are mechanical.
   `include/ahfl/compiler/ir/core_layout.hpp`. The JSON envelope inherits that
   boundary: it carries logical identity and never a target data-layout fact.
 - **No AHFL-IR re-projection work.** The single-layer `ir::Program` projection is
-  today the AHFL-IR layer's projection (KR6.3 alias-first:
+  the AHFL-IR layer's projection (KR6.3 alias-first:
   `using AhflIr = Program`, `include/ahfl/compiler/ir/program.hpp:155`
   (`using AhflIr = Program;`); node-set
-  purification is a KR6.3 residual). This document does not re-specify it — it
-  only fixes its **deprecation boundary** (§8).
-- **No removal of the single-layer projection.** Removal is bound to KR6.8
-  (evaluator retirement) by RFC 0026 Q5; this slice is **mark-deprecate only** and
-  emits no `BREAKING CHANGE:` footer.
+  purification is a KR6.3 residual). This document does not re-specify it.
+- **The single-layer projection is a permanent per-layer projection, not a
+  deprecated one.** It was originally marked deprecated with removal bound to
+  KR6.8; that transitional labeling was reversed when the three-layer tower
+  settled (see §8, amended). Each tower layer keeps its own projection.
 - **No new `CoreProgram` field, no node-set change.** The schema projects the
   `CoreProgram` that exists at `core_ir.hpp:1601-1610` plus the body arenas already
   owned by `CoreFlowDecl` / `CoreWorkflowDecl`. A field that is not in the IR
@@ -162,7 +163,7 @@ Number precision is inherited, not re-decided: `int_range`-style bounds and inde
 fields are emitted as bare integers, so a consumer that needs arbitrary precision
 must use a bignum-aware JSON parser. This is the same documented limitation the
 single-layer projection already has; the layered projection does not make it
-worse and does not fix it here (§8 defers any lexical change to a format bump).
+worse and does not fix it here; any lexical change waits for a format bump).
 
 ## 3. Node discriminators (`kind`), derived — never hand-maintained
 
@@ -561,41 +562,44 @@ value-type reference, and §9 promises "never a partially populated program" —
 require the typed struct. `SourceRangeOpt` (not `SourceRange`) is used because the
 JSON document supplies no range for an envelope-level failure.
 
-## 8. Deprecation boundary for the single-layer projection
+## 8. Layer boundary for the AHFL-IR projection (amended)
 
-**Decision (recorded, matching RFC 0026 Q5 verbatim): the pre-existing single-layer
-IR-JSON projection is MARK-DEPRECATED, not removed. Its removal is bound to
-evaluator retirement (KR6.8) plus all downstream consumers having migrated to the
-layered projection (KR6.9 complete).**
+> **Amendment (2026-09-29).** This section originally recorded a
+> MARK-DEPRECATED decision for the single-layer projection, with removal bound to
+> KR6.8 (evaluator retirement). That decision is **superseded**: once the
+> three-layer IR tower settled, `ir::Program` remained the permanent
+> verification/orchestration layer consumed by SMV, assurance and formal, and its
+> JSON projection is that layer's first-class inspection surface. Keeping a
+> "deprecated but retained" label on a live layer's projection created exactly the
+> transitional coexistence state that repository Principle 1 forbids (no
+> deprecation periods, no old-and-new coexistence). The label was removed from the
+> CLI help and reference docs; the projection itself, its writer/reader, CLI
+> flags, artifact ids and goldens are unchanged and permanently supported. The
+> original mark-deprecate rationale is preserved in RFC 0026 history; this
+> amendment states the settled design, it does not delete the projection.
 
-This slice:
+**Decision: the AHFL-IR layer (`ir::Program`) keeps its own JSON/text projection
+(`emit ir-json` / `emit ir`, `ahfl.ir.v2`) permanently, alongside the Core-IR
+layer's projection (`emit core-ir-json`, `ahfl.core.v1`). The two project
+different layers; neither replaces or deprecates the other.**
 
-- **adds** a deprecation marker: the single-layer `ir-json` / text-`ir` emit paths
-  are documented as deprecated-in-favour-of the layered projection in
-  `docs/reference/ir-format.zh.md` and `docs/reference/cli-commands.zh.md`, and the
-  marker is machine-readable (a stable doc fragment, not prose only) so the KR6.9
-  completion slice can assert it is present. Those two files are among the ones
-  `scripts/check-ir-doc-sync.py` inspects, so the marker is added **without**
-  introducing any new string that script requires unless the script is updated in
-  the same commit (`docs/reference/ir-format.zh.md` already satisfies the gate; the
-  marker must be additive prose, not a new gate). Documenting this is B4's job, not
-  B0's.
-- **does NOT** change the single-layer writer, reader, CLI flag, artifact id, or
-  golden files. The existing goldens (`tests/golden/ir/*.json`, the
-  `ahflc.emit_ir_json.*` fleet in `tests/cmake/SingleFileCliTests.cmake`) stay
-  byte-identical, and the dual round-trip guards
-  (`ahfl.ir.json_round_trip` + the new Core round-trip) run **side by side** during
-  the transition — the "round-trip golden 双守护" RFC 0026 Q5 asks for.
-- **does NOT** emit a `BREAKING CHANGE:` footer. That footer belongs to the removal
-  slice (KR6.8-gated), which is the only slice allowed to delete the single-layer
-  projection and its goldens.
+Consequences:
 
-Why mark-only: the single-layer projection currently **is** the AHFL-IR layer's
-projection (KR6.3 alias-first, §0), so deleting it before the layer split is
-complete would delete a *live* layer's projection, not a legacy one. Binding
-removal to KR6.8 avoids that and matches the RFC's own rationale — the deprecation
-point is bound to a definite milestone rather than left hanging (RFC 0026
-L369-372).
+- The single-layer writer, reader, CLI flag, artifact id and golden files stay as
+  they are, guarded by `ahfl.ir.json_round_trip`; the Core projection is guarded
+  by `ahfl.ir.core_json_round_trip`. Both guards are permanent.
+- No `BREAKING CHANGE:` footer is associated with either projection: nothing is
+  being removed.
+- Analogy: rustc exposes `--emit=mir` and `--emit=llvm-ir` simultaneously. A
+  compiler offering one inspection projection per tower layer is standard
+  practice, not technical debt; the projection count is not a migration surface.
+
+Historical rationale for the original mark-only decision (for context): before
+the layer split was complete the single-layer projection *was* the AHFL-IR
+projection (KR6.3 alias-first), so removing it would have deleted a live layer's
+projection; binding a hypothetical removal to KR6.8 was meant to avoid that. With
+the tower settled, the layer is permanent rather than pending retirement, so the
+deprecation framing itself was the defect.
 
 ## 9. Admission model
 
@@ -628,11 +632,11 @@ document) is docs-only and adds no code.
 | **B1** | Envelope + program-global tables: `CoreJsonPrinter` for `types` / `value_types` / `capabilities` / `agents` / `instances`, the shared 2-space writer base, the X-macro `.def` node lists for the hand-declared Core variants (§3 rule 2), and the `kind`/field-order tables of §4 | Unit tests over hand-built minimal programs; the writer is `[[nodiscard]]`-gated, fails closed on a `kInvalid` in any required-valid position, and encodes the one legal `kInvalid` (`field_nominal_types`, §4) as `null` |
 | **B2** | Per-body nested arenas: `flows` / `workflows` incl. `exprs` / `patterns` / `coercion_plans` / dense `value_types` and the recursive region/statement projection (§5) | Unit tests per node family; the verifier-clean corpus serializes without error |
 | **B3** | Reader `CoreJsonParseResult parse_core_ir_json(std::string_view)` (signature pinned in §7) with interning rebuild + identity-remap assert (§6.2), fail-closed admission (§9), `core_program_equal` (§7 R2), and the R1/R2 byte-exact round-trip corpus test | New `ahfl.ir.core_json_round_trip` test; negative-reader cases per §7 (each asserting the typed diagnostic code, not just `!ok()`); the existing `ahfl.ir.json_round_trip` stays green |
-| **B4** | CLI surface + docs: `emit core-ir-json` command kind + artifact id registered in `config/product-scope-freeze.json` (the gate is currently lifted — RFC 0012 is `stabilized`, `scripts/check-product-scope-freeze.py:138` — but the catalog entries are still the documented registration point), plus the deprecation marker in `docs/reference/ir-format.zh.md` / `docs/reference/cli-commands.zh.md` (§8) | New CLI golden fleet alongside the existing `ahflc.emit_ir_json.*` ones; `ahfl.docs.ir_sync_gate` stays green |
+| **B4** | CLI surface + docs: `emit core-ir-json` command kind + artifact id registered in `config/product-scope-freeze.json` (the gate is currently lifted — RFC 0012 is `stabilized`, `scripts/check-product-scope-freeze.py:138` — but the catalog entries are still the documented registration point), plus the layer-boundary wording in `docs/reference/ir-format.zh.md` / `docs/reference/cli-commands.zh.md` (§8) | New CLI golden fleet alongside the existing `ahflc.emit_ir_json.*` ones; `ahfl.docs.ir_sync_gate` stays green |
 
-Every slice keeps the single-layer projection and all its goldens byte-identical
-(§8). No slice branches on a feature flag: the layered projection is purely
-additive until the removal slice, which is out of scope here.
+Every slice keeps the AHFL-IR projection and all its goldens byte-identical
+(§8): both layers' projections are permanent. No slice branches on a feature
+flag: the layered projection is purely additive.
 
 ## 11. Rejected alternatives
 
@@ -644,5 +648,5 @@ additive until the removal slice, which is out of scope here.
 | Trust serialized ids on read | Would accept a reordered / hand-edited arena and would create a second notion of structural equality; §6.2's rebuild + identity assert is the single decision point |
 | Re-sort or dedup `value_types` at write time | The arena is already canonical (verifier-enforced); re-sorting is a second canonicalizer that can disagree with the hash-cons |
 | Re-run the full Core verifier inside the reader | The reader is an admission boundary for a document's shape, not a substitute for verification; conflating them makes round-trip failures ambiguous |
-| Delete the single-layer projection now | It is currently the AHFL-IR layer's projection (KR6.3 alias-first); removal is KR6.8-gated (RFC 0026 Q5) |
+| Delete the single-layer projection | It is the AHFL-IR layer's permanent projection (KR6.3 alias-first); the three-layer tower keeps one inspection projection per layer (§8, amended) |
 | Pretty-print with `null` for absent optionals | Diverges from the single-layer writer and makes "absent" and "present-but-null" two encodings of one state. NOTE: this rejects `null` as the encoding for an ABSENT FIELD only. `field_nominal_types` (§4) has no absent state — the slot exists and the array length is pinned — so it uses `null` for `kInvalid`, which is the ONE sanctioned `null` in the document |

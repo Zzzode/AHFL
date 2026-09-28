@@ -32,22 +32,23 @@ REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
         "Program::analysis_revision",
         "artifact-only",
         "readonly",
-        # RFC 0026 P9 §8: the single-layer AHFL-IR projection's deprecation
-        # marker. These fragments are the machine-readable record that the
-        # mark-deprecate step happened; the layered Core-IR projection's
-        # registration is asserted alongside it so the two cannot drift apart.
+        # RFC 0026 settled three-layer tower: the AHFL-IR projection
+        # (ahfl.ir.v2) and the layered Core-IR projection (ahfl.core.v1) are
+        # permanent per-layer inspection surfaces, neither replacing the other.
+        # These fragments pin that co-equal registration so the docs cannot
+        # drift back into a deprecation/replacement framing.
         "emit core-ir-json",
         "ahfl.core.v1",
-        "mark-deprecated",
+        "分层投影边界",
     ),
     "docs/reference/cli-commands.zh.md": (
         "ahflc emit-opt-ir-json",
         "emit opt-ir-json",
         "AHFL_OPT_IR_V1",
         "artifact-only",
-        # RFC 0026 P9 §8 deprecation marker (see ir-format.zh.md above).
+        # Settled per-layer projections (see ir-format.zh.md above).
         "emit core-ir-json",
-        "mark-deprecated",
+        "三层 IR",
     ),
 }
 

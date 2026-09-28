@@ -24,7 +24,7 @@
 // Core-IR layered IR-JSON projection (RFC 0026 P9 / KR6.9).
 //
 // This file is the ONE writer/reader pair for `CoreProgram`. It mirrors the
-// single-layer `ir_json.cpp` shape (a streaming printer over the shared
+// AHFL-IR `ir_json.cpp` shape (a streaming printer over the shared
 // `PrettyJsonWriter` lexical base, and a `JsonValue`-driven reader) but follows
 // the APPROVED design `docs/design/core-ir-p9-layered-json.zh.md` exactly:
 //   * envelope + fixed table order (§1, §4);
@@ -2004,7 +2004,7 @@ class CoreJsonReader final {
     //
     // Every helper records a typed diagnostic and returns a sentinel on failure;
     // `ok()` (no diagnostics) is the single success signal — matching the
-    // single-layer reader's `ok_` pattern but with a code per cause (§7).
+    // AHFL-IR reader's `ok_` pattern but with a code per cause (§7).
 
     [[nodiscard]] const JsonValue *field(const JsonValue &obj, std::string_view key) {
         return obj.get(key);
