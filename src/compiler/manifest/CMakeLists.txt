@@ -9,7 +9,11 @@ target_link_libraries(ahfl_compiler_manifest
         ahfl_base_toml
 )
 
-target_include_directories(ahfl_compiler_manifest PUBLIC ${PROJECT_SOURCE_DIR}/src)
+# Internal src/ headers ("compiler/manifest/..."), build-tree usage only;
+# see src/base/toml/CMakeLists.txt for the BUILD_INTERFACE rationale.
+target_include_directories(ahfl_compiler_manifest PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
+)
 
 ahfl_assert_no_external_toml_runtime(ahfl_compiler_manifest)
 ahfl_apply_project_warnings(ahfl_compiler_manifest)

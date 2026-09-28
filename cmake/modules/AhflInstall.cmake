@@ -56,6 +56,7 @@ set(AHFL_INTERNAL_INSTALL_TARGETS
     antlr4_runtime
     ahfl_base_support
     ahfl_base_json
+    ahfl_base_toml
     ahfl_base_query
     ahfl_compiler_syntax_parser
     ahfl_compiler_syntax
@@ -76,9 +77,13 @@ set(AHFL_INTERNAL_INSTALL_TARGETS
     ahfl_compiler_backend_wasm
     ahfl_compiler_backend_infra_k8s_crd
     ahfl_compiler_backend_infra_openapi_spec
+    ahfl_compiler_backend_infra_type_schema
     ahfl_compiler_backend_infra_terraform_gen
     ahfl_compiler_backends
     ahfl_compiler_passes
+    ahfl_compiler_manifest
+    ahfl_compiler_package_graph
+    ahfl_compiler_project_discovery
     ahfl_compiler_core
     ahfl_runtime_evaluator
     ahfl_runtime_engine

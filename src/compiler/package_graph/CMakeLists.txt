@@ -12,6 +12,10 @@ target_link_libraries(ahfl_compiler_package_graph
         ahfl_base_support
 )
 
-target_include_directories(ahfl_compiler_package_graph PUBLIC ${PROJECT_SOURCE_DIR}/src)
+# Internal src/ headers ("compiler/package_graph/..."), build-tree usage only;
+# see src/base/toml/CMakeLists.txt for the BUILD_INTERFACE rationale.
+target_include_directories(ahfl_compiler_package_graph PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
+)
 
 ahfl_apply_project_warnings(ahfl_compiler_package_graph)
