@@ -53,7 +53,6 @@ using ir::core::CoreCapabilityId;
 using ir::core::CoreCoerceExpr;
 using ir::core::CoreCoercionOp;
 using ir::core::CoreCoercionOpKind;
-using ir::core::CoreCoercionPlanId;
 using ir::core::CoreCoercionPlanNode;
 using ir::core::CoreCollectionExpr;
 using ir::core::CoreCollectionOpKind;

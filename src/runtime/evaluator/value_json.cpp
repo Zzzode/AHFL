@@ -8,7 +8,6 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -375,7 +374,7 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
     case ahfl::json::Kind::String:
         return Value{StringValue{json_value.string_val}};
     case ahfl::json::Kind::Array: {
-        // Legacy shape: a bare JSON array is an AHFL list.
+        // A JSON array decodes to an AHFL list (its natural JSON encoding).
         Value list = make_list(std::vector<Value>{});
         auto *lv = get_list_if(list);
         for (const auto &json_item : json_value.array_items) {

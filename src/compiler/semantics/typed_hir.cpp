@@ -810,8 +810,8 @@ std::vector<std::uint32_t> TypedProgram::lookup_impl_index_by_key(
 
 // ----------------------------------------------------------------------------
 // AssertionKind helpers (Wave-20 N-5: typed classifier upgrade).
-// Mirrors the legacy string set {"assert", "unwrap", "requires", "unreachable"}
-// so consumers that already know the string form can round-trip losslessly.
+// Source/diagnostic spelling of the canonical enum (Principle 2: strings at the
+// source boundary, the enum internally).
 // ----------------------------------------------------------------------------
 
 const char *to_string(AssertionKind kind) noexcept {
@@ -831,8 +831,7 @@ AssertionKind parse_assertion_kind(std::string_view s) noexcept {
     if (s == "unwrap")      return AssertionKind::Unwrap;
     if (s == "requires")    return AssertionKind::Requires;
     if (s == "unreachable") return AssertionKind::Unreachable;
-    // Unknown / legacy strings fall back to None so unknown future strings
-    // don't crash serialization round-trips.
+    // Unknown future spellings map to None rather than crashing.
     return AssertionKind::None;
 }
 

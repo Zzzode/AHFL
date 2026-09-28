@@ -92,7 +92,8 @@ struct ResumeRequest {
     // The fresh, never-used slot id to publish the Suspended->Injected frame
     // under. Used only when the frontier is Suspended.
     core_wasm_resume::PayloadSlotId chosen_injected_slot{};
-    // Optional D2b-4 dedup binding (nullptr = legacy always-ReadyForLive,
+    // Optional D2b-4 dedup binding (nullptr = the no-dedup baseline that always
+    // returns ReadyForLive; the read/recover/dedup authority lands in D2b-3,
     // which then fails closed at this driver's blocked live frontier).
     rc::GatedResumeOptions gated_options{};
 };

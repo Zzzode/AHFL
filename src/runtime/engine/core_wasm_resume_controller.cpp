@@ -129,7 +129,8 @@ struct PreparedState {
     std::uint64_t current_generation{0}; // last committed generation N
     Phase phase{Phase::Replaying};
 
-    // D2b-4 token-aware ReadyForLive consultation (nullopt authority = legacy).
+    // D2b-4 token-aware ReadyForLive consultation (nullopt authority = the
+    // no-dedup baseline; a read/recover/dedup authority lands in D2b-3).
     DedupContext dedup;
 
     // Controller-owned, join authority precomputed once at admission (O(1) lookups).
@@ -796,11 +797,11 @@ namespace {
 }
 
 // D2b-4 READ-ONLY dedup consultation at one AFTER-frontier call site. With no
-// authority bound this is the legacy verdict (ReadyForLive). With an authority,
-// mint the D0 token from the AUTHENTICATED namespace + host-bound authority id +
-// call-site coordinate + canonical-param digest and ask the authority for a
-// preview (seals NOTHING). A recorded terminal/pending verdict suppresses the
-// live command; a same-site param-digest divergence fails closed as
+// authority bound this is the no-dedup baseline verdict (ReadyForLive). With an
+// authority, mint the D0 token from the AUTHENTICATED namespace + host-bound
+// authority id + call-site coordinate + canonical-param digest and ask the
+// authority for a preview (seals NOTHING). A recorded terminal/pending verdict
+// suppresses the live command; a same-site param-digest divergence fails closed as
 // CoordinateMismatch; a backend storage fault is carried verbatim. Every
 // returned decision leaves the caller responsible for the AwaitingLiveResult
 // transition; this helper never touches the phase.
@@ -946,8 +947,8 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
     }
 
     // After the frontier: D2b-4 token-aware decision. With no authority bound
-    // this is the legacy ReadyForLive verdict; with one, a READ-ONLY authority
-    // preview may instead suppress the live call (DedupReplay /
+    // this is the no-dedup baseline ReadyForLive verdict; with one, a READ-ONLY
+    // authority preview may instead suppress the live call (DedupReplay /
     // DedupReplayFailure / RecoverPending) or fail closed on a same-site
     // param-digest divergence / backend fault. Every verdict (live or replay)
     // parks in AwaitingLiveResult -- the follow-on live-response API is blocked.

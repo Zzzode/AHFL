@@ -251,9 +251,11 @@ struct CoreWasmCodegenResult {
     }
 };
 
-/// Resolve the package/legacy CLI boundary into the same typed entry consumed
-/// by emit_core_wasm. An explicit package entry is exact-canonical and never
-/// falls back to a display name or declaration position.
+/// Resolve the executable entry for either CLI input mode into the same typed
+/// entry consumed by emit_core_wasm: single-file invocation (null package
+/// metadata, unambiguous single-agent program) or package invocation with an
+/// explicit package entry (exact-canonical, never falling back to a display
+/// name or declaration position).
 [[nodiscard]] std::expected<CoreWasmEntry, CoreWasmDiagnostic>
 resolve_core_wasm_entry(const ir::core::CoreProgram &program,
                         const handoff::PackageMetadata *package_metadata);
