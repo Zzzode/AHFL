@@ -1,6 +1,5 @@
 #include "tooling/cli/option_table.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <iostream>
 #include <string>
@@ -708,14 +707,6 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
         return usage_error("--verbosity must be normal, verbose, or trace");
     }
     return std::nullopt;
-}
-
-// ---------------------------------------------------------------------------
-// print_generated_usage — delegates to existing print_usage for now
-// ---------------------------------------------------------------------------
-
-void print_generated_usage(std::ostream &out) {
-    print_usage(out);
 }
 
 } // namespace ahfl::cli

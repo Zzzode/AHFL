@@ -2,9 +2,7 @@
 
 #include "tooling/cli/command_catalog.hpp"
 
-#include <cstddef>
 #include <optional>
-#include <ostream>
 #include <span>
 #include <string_view>
 
@@ -38,8 +36,5 @@ struct ParseResult {
 
 [[nodiscard]] std::optional<ParseResult>
 parse_options_from_table(std::span<const std::string_view> arguments, CommandLineOptions &options);
-
-// Auto-generate help text from the option table + command catalog
-void print_generated_usage(std::ostream &out);
 
 } // namespace ahfl::cli
