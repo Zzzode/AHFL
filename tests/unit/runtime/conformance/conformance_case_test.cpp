@@ -130,9 +130,9 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "runtime::enum_variant_e2e::TicketWorkflow",
             0,
             1,
-            WasmEligibility::Computation,
+            WasmEligibility::Orchestration,
             /*evaluator=*/true,
-            WasmNodeObservationSkip::BlockedOnKr66,
+            WasmNodeObservationSkip::None,
         },
         {
             "if_let_e2e.case.json",
@@ -141,9 +141,9 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "runtime::if_let_e2e::IfLetWorkflow",
             0,
             2,
-            WasmEligibility::Computation,
+            WasmEligibility::Orchestration,
             /*evaluator=*/true,
-            WasmNodeObservationSkip::BlockedOnKr66,
+            WasmNodeObservationSkip::None,
         },
         {
             "e2e_multi_agent.case.json",

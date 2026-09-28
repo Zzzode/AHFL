@@ -19,9 +19,9 @@
   "engines": {
     "evaluator": true,
     "wasm": {
-      "eligible": "computation",
-      "node_observation_skip": "blocked_kr66",
-      "reason": "final handler matches a struct-payload enum and constructs a response with a String owner; the direct-agent lanes are complete (V2-A computed final plus match arena, V2-B in-module String PtrLen/rodata); the V2-D workflow packager admits the packaged agent through the same per-handler gates and plans the D6 capacity family; the workflow return is a projected/constructed P4-D frame the in-module scheduler must materialize (only an exact bare node-output forward is packaged today); the direct-agent computed/String lanes are complete and the V2-D packager plans the D6 capacity family, but in-module scheduler computed-runner emission remains pending"
+      "eligible": "orchestration",
+      "node_observation_skip": "none",
+      "reason": "V2-D in-module scheduler computed-runner node: the packaged computed-final agent runs on its fixed I/C/scratch/O node block; the scheduler materializes the projected node input and copies the projected workflow return (String owner via rodata) into the fixed workflow output slot with zero-copy PtrLen shares"
     }
   }
 }

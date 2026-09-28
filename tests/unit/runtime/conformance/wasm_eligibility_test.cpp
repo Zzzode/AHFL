@@ -15,9 +15,10 @@
 //   (b) the five tests/golden/wasm orchestration cases classify
 //       runnable_orchestration via a real lower+layout+emit with a non-empty
 //       artifact and an empty diagnostic code;
-//   (c) enum_variant_e2e / if_let_e2e / e2e_multi_agent classify blocked,
-//       asserting the blocking construct, proven by actually invoking
-//       lower_ahfl_to_core + compute_core_layouts + emit_core_wasm;
+//   (c) e2e_multi_agent classifies blocked, asserting the blocking construct,
+//       proven by actually invoking lower_ahfl_to_core + compute_core_layouts +
+//       emit_core_wasm; enum_variant_e2e / if_let_e2e now classify runnable
+//       (V2-D computed-final workflow packaging);
 //   (d) manifest-vs-computed agreement in both directions, and that a tampered
 //       manifest marking a blocked case wasm-eligible is rejected while one
 //       wrongly skipping a runnable case is rejected too.
@@ -246,6 +247,21 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         // node-only observation (no evaluator reference until KR6.8) is a
         // manifest-pinned skip cross-checked separately by the Node runner.
         {"fb3_higher_order.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // V2-D emission half 1: a workflow packaging a computed-final node now
+        // emits as a P6-frame module: the relocated frame handlers run on the
+        // node blocks, the in-module scheduler materializes the projected
+        // node input, and the projected/constructed workflow return is copied
+        // into the fixed workflow output slot.
+        {"enum_variant_e2e.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"if_let_e2e.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);
@@ -263,34 +279,18 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
                   std::string{expectation.sidecar});
     }
 
-    // These three are genuinely blocked TODAY, each at a distinct construct.
-    // The codes and messages are the compiler's own; pinning them keeps the
-    // classifier honest about WHY a case is skipped instead of hand-curating a
-    // skip list.
+    // The remaining blocked case is genuinely blocked TODAY at a precise
+    // construct. The codes and messages are the compiler's own; pinning them
+    // keeps the classifier honest about WHY a case is skipped instead of
+    // hand-curating a skip list.
     const std::vector<CaseVerdict> blocked = {
-        // A workflow whose node agent carries a computed final (the if-let
-        // match over a struct/string payload, in a region that
-        // materializes an output): RFC 0026 P6-7 frame-bridge v2
-        // rungs V2-A/V2-B land the DIRECT-agent computed final and the
-        // in-module String PtrLen/rodata, and the V2-D packager now builds
-        // the packaged agent through the SAME per-handler gates and plans
-        // the D6 capacity family. The first workflow-level seam these cases
-        // reach is the projected/constructed RETURN frame the in-module
-        // scheduler must materialize; its emission is still pending.
-        {"enum_variant_e2e.case.json",
-         WasmEligibilityVerdict::BlockedComputation,
-         "wasm.UNSUPPORTED_WORKFLOW_FRAME",
-         "a projected or constructed workflow return frame"},
-        {"if_let_e2e.case.json",
-         WasmEligibilityVerdict::BlockedComputation,
-         "wasm.UNSUPPORTED_WORKFLOW_FRAME",
-         "a projected or constructed workflow return frame"},
         // A multi-agent DAG whose non-final handlers carry context stores, an
         // enum-routing branch and a multi-argument capability bridge. Under
         // V2-D the packaged agents now run through the SAME per-handler gates a
         // standalone agent passes, and the first gate this DAG does not clear
         // is a precise scalar-codegen one (a projected capability-result field
-        // stored into a context field whose P6 scalar kind disagrees).
+        // stored into a context field whose P6 scalar kind disagrees); the
+        // workflow in-handler capability bridge is a later V2-D rung.
         {"e2e_multi_agent.case.json",
          WasmEligibilityVerdict::BlockedComputation,
          "wasm.UNSUPPORTED_WORKFLOW_FRAME",
@@ -369,14 +369,16 @@ void test_manifest_agreement(const std::filesystem::path &repo_root) {
     }
 
     // Tampering: a manifest marking a blocked case wasm-eligible is rejected.
-    // This is the exact overclaim the slice exists to catch.
-    const auto blocked_manifest = load_manifest(repo_root, "enum_variant_e2e.case.json");
-    check(blocked_manifest.has_value(), "enum_variant manifest loads for the overclaim probe");
+    // This is the exact overclaim the slice exists to catch. e2e_multi_agent is
+    // the remaining blocked workflow case (the V2-D in-handler capability
+    // bridge rung).
+    const auto blocked_manifest = load_manifest(repo_root, "e2e_multi_agent.case.json");
+    check(blocked_manifest.has_value(), "e2e_multi_agent manifest loads for the overclaim probe");
     if (blocked_manifest.has_value()) {
         ConformanceCase tampered = *blocked_manifest;
         tampered.engines.wasm.eligibility = WasmEligibility::Orchestration;
         tampered.engines.wasm.reason = "hand-curated claim that wasm can run this";
-        const auto classification = classify_case(repo_root, "enum_variant_e2e.case.json");
+        const auto classification = classify_case(repo_root, "e2e_multi_agent.case.json");
         const auto divergence = wasm_eligibility_divergence(tampered, classification);
         check(divergence.has_value(), "wasm-eligible overclaim of a blocked case is rejected");
         if (divergence.has_value()) {
@@ -407,13 +409,13 @@ void test_manifest_agreement(const std::filesystem::path &repo_root) {
     // compiler blocks outside that lane is a lie too. Without this the skip
     // list could not tell "needs the computation lane" from "permanently
     // host-side".
-    const auto blocked_manifest_none = load_manifest(repo_root, "enum_variant_e2e.case.json");
+    const auto blocked_manifest_none = load_manifest(repo_root, "e2e_multi_agent.case.json");
     check(blocked_manifest_none.has_value(),
-          "enum_variant manifest loads for the lane-projection probe");
+          "e2e_multi_agent manifest loads for the lane-projection probe");
     if (blocked_manifest_none.has_value()) {
-        const auto classification = classify_case(repo_root, "enum_variant_e2e.case.json");
+        const auto classification = classify_case(repo_root, "e2e_multi_agent.case.json");
         check(classification.verdict == WasmEligibilityVerdict::BlockedComputation,
-              "enum_variant is blocked at a KR6.6 computation seam");
+              "e2e_multi_agent is blocked at a KR6.6 computation seam");
         ConformanceCase host_only = *blocked_manifest_none;
         host_only.engines.wasm.eligibility = WasmEligibility::None;
         host_only.engines.wasm.reason = "permanently host-side";

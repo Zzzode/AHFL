@@ -84,12 +84,22 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 //   * v2c_single_enum_bridge: one tag-only-enum bridge argument pins the SSOT
 //     single-argument envelope ({"value":{...}} for a non-Struct, never the
 //     bare enum object) via the new capability_arguments comparison.
-// The five remaining skips are the KR6.6 workflow-computation cases (if_let_e2e x2,
-// enum_variant_e2e, e2e_multi_agent x2): their packaging needs the deferred
-// workflow-level raw-P4-D/capability frame bridge (design section 11), each
-// manifest still declaring blocked_kr66 with its precise reason.
-constexpr int kExpectedAgreed = 21;
-constexpr int kExpectedSkipped = 5;
+// Frame-bridge v2 rung V2-D RETURN (emission half 1) packages a workflow whose
+// RETURN is a PROJECTED or CONSTRUCTED P4-D frame: the computed runner is
+// re-emitted with its fixed regions/globals relocated onto per-instance
+// I/C/scratch/O node blocks and a merged rodata Data region, the tuple runner
+// walks the plain-goto chain and invokes the relocated computed-final handler,
+// and the in-module scheduler materializes node inputs and the workflow return
+// with zero-copy PtrLen shares. A host-packed INLINE entry frame is rewritten
+// into module pointer-tree form before the entry runner, admitting an enum
+// payload projection off `input`. This moves enum_variant_e2e and if_let_e2e
+// (two scenarios) from the skip set to differential agreement: 21/5 -> 24/2.
+// The two remaining skips are e2e_multi_agent (two scenarios), which need the
+// later V2-D rungs: an in-handler capability bridge inside a workflow module,
+// a scalar capability-result -> context store, and a constructed SummaryInput;
+// each manifest still declares blocked_kr66 with its precise reason.
+constexpr int kExpectedAgreed = 24;
+constexpr int kExpectedSkipped = 2;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
 // engines.wasm.node_observation_skip='evaluator_surface_awaits_kr68' (the

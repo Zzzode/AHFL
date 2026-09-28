@@ -1216,7 +1216,90 @@ function recordStates(lane, record) {
   return agentWalk.walk.map((state) => ({ agent: agentWalk.agent, state }));
 }
 
+async function runWorkflowP6(compiled) {
+  const lane = descriptor.workflow_lane;
+  const frameLane = descriptor.frame_lane;
+  const W = descriptor.wire_schema.nodes;
+  const L = frameLane.layouts;
+  const roots = descriptor.wire_schema.roots;
+  const nodeCount = descriptor.workflow_node_count;
+  const probe = await makeInstance(compiled, "scenario");
+  const e = probe.exports;
+  if (e.workflow_node_count.value !== nodeCount) {
+    fail(`workflow_node_count ${e.workflow_node_count.value} != ${nodeCount}`);
+  }
+  for (const name of ["step", "current_state"]) {
+    expectTraps(() => e[name](), `${name}()`);
+  }
+
+  // The schedule's first node is the entry node; pack the canonical workflow
+  // input JSON into its fixed I block (the scheduler materializes the block
+  // from the packed bytes). The entry payload arena is the workflow's.
+  const entryNode = lane.nodes.find((n) => n.schedule_pos === 0);
+  const entryRunner = entryNode.runner;
+  const entryBlock = lane.node_blocks[entryRunner];
+  const entryWireRoot = roots.node_inputs[entryRunner];
+  const backing = new Map(); // workflow p6 frames carry no bounded collections
+  const arena = {cursor: lane.entry_payload_base,
+                 base: lane.entry_payload_base,
+                 capacity: lane.entry_payload_capacity};
+  // Zero the frame regions so padding/union words are 0.
+  new Uint8Array(e.memory.buffer, 1024, 16384 - 1024).fill(0);
+  packValue(e, frameLane, W, L, JSON.parse(probe.scenarioInput),
+            entryWireRoot, entryBlock.input_layout,
+            entryBlock.input_base, backing, arena);
+
+  const tuple = e.run2(entryBlock.input_base, entryBlock.input_size);
+  let outputRaw = null;
+  if (tuple[0] !== 0) {
+    fail(`p6 workflow run2 returned non-OK status ${tuple[0]}`);
+  }
+  if (tuple[1] !== frameLane.output_base) {
+    fail(`p6 workflow run2 returned ${tuple[1]} != output slot ${frameLane.output_base}`);
+  }
+  if (tuple[2] !== frameLane.output_size) {
+    fail(`p6 workflow run2 length ${tuple[2]} != ${frameLane.output_size}`);
+  }
+  if (e.workflow_completed_count.value !== nodeCount) {
+    fail(`completed_count ${e.workflow_completed_count.value} != ${nodeCount}`);
+  }
+  // Encode the workflow output slot against the workflow output root. String
+  // payloads are authorized in rodata or the entry payload arena only.
+  const stringRegions = [];
+  if (frameLane.rodata_extent > 0) {
+    stringRegions.push({lo: frameLane.rodata_base,
+                        hi: frameLane.rodata_base + frameLane.rodata_extent});
+  }
+  if (lane.entry_payload_capacity > 0) {
+    stringRegions.push({lo: lane.entry_payload_base,
+                        hi: lane.entry_payload_base + lane.entry_payload_capacity});
+  }
+  const output = readValue(e, frameLane, W, L, roots.output,
+                           frameLane.output_layout, tuple[1], backing,
+                           stringRegions);
+  outputRaw = JSON.stringify(output);
+  // The evaluator records every state the node's packaged agent enters, in
+  // runner-walk order (a p6 workflow writes no node-event records, so the
+  // walk descriptor is the only evidence, exactly as for the opaque counters).
+  const states = lane.nodes.flatMap((node) => {
+    const agentWalk = lane.agents[node.runner];
+    return agentWalk.walk.map((state) => ({ agent: agentWalk.agent, state }));
+  });
+  return {
+    status: "completed",
+    states,
+    capabilities: [],
+    capabilityArguments: [],
+    outputRaw,
+    transitions: e.transition_count.value,
+    completedNodes: e.workflow_completed_count.value,
+  };
+}
+
 async function runWorkflow(compiled) {
+  if (descriptor.frame_contract === "p6_frame") {
+    return runWorkflowP6(compiled);
+  }
   const lane = descriptor.workflow_lane;
   const nodeCount = descriptor.workflow_node_count;
   const probe = await makeInstance(compiled, "scenario");
@@ -1440,6 +1523,15 @@ async function runAbiProbes(compiled) {
   for (const name of ["step", "current_state"]) {
     const p = await makeInstance(compiled, "ok");
     expectTraps(() => p.exports[name](), `workflow ${name}()`);
+  }
+
+  // V2-D p6 workflow: run2 drives the frame lane and is already fully
+  // exercised by runWorkflowP6 (packed I block, fixed output slot); the opaque
+  // identity/capability normalization below does not apply.
+  if (descriptor.frame_contract === "p6_frame") {
+    const p = await makeInstance(compiled, "ok");
+    expectTraps(() => p.exports.run(...p.writeInput()), "p6 workflow legacy run()");
+    return;
   }
 
   if (!hasCapabilities) {

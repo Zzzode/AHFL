@@ -169,6 +169,34 @@ build_workflow_lane(const ahfl::backends::CoreWasmExecutionDescriptor &descripto
         nodes->push(std::move(node_node));
     }
     lane->set("nodes", std::move(nodes));
+
+    // V2-D: the per-packaged-runner node-frame blocks and the entry/output
+    // coordinates the p6 workflow host packs/encodes against. Present only for
+    // a p6-frame workflow (the section carries the same records).
+    if (descriptor.frame_section.has_value() &&
+        !descriptor.frame_section->node_blocks.empty()) {
+        auto blocks = json::JsonValue::make_array();
+        for (const auto &block : descriptor.frame_section->node_blocks) {
+            auto b = json::JsonValue::make_object();
+            b->set("input_base", juint(block.input_base));
+            b->set("input_size", juint(block.input_size));
+            b->set("input_layout", juint(block.input_layout.value));
+            b->set("context_base", juint(block.context_base));
+            b->set("context_size", juint(block.context_size));
+            b->set("context_layout", juint(block.context_layout.value));
+            b->set("scratch_base", juint(block.scratch_base));
+            b->set("scratch_size", juint(block.scratch_size));
+            b->set("output_base", juint(block.output_base));
+            b->set("output_size", juint(block.output_size));
+            b->set("output_layout", juint(block.output_layout.value));
+            blocks->push(std::move(b));
+        }
+        lane->set("node_blocks", std::move(blocks));
+        lane->set("entry_payload_base",
+                  juint(descriptor.frame_section->entry_payload_base));
+        lane->set("entry_payload_capacity",
+                  juint(descriptor.frame_section->entry_payload_capacity));
+    }
     return lane;
 }
 
@@ -450,6 +478,20 @@ build_wire_schema(const irc::CoreWireSchemaTable &schema) {
         auto roots = json::JsonValue::make_object();
         roots->set("input", juint(schema.frame_roots->input.value));
         roots->set("output", juint(schema.frame_roots->output.value));
+        // V2-D: per-packaged-runner node boundary roots (parallel to the
+        // workflow_lane.node_blocks array).
+        if (!schema.frame_roots->node_inputs.empty()) {
+            auto node_inputs = json::JsonValue::make_array();
+            for (const auto root : schema.frame_roots->node_inputs) {
+                node_inputs->push(juint(root.value));
+            }
+            roots->set("node_inputs", std::move(node_inputs));
+            auto node_outputs = json::JsonValue::make_array();
+            for (const auto root : schema.frame_roots->node_outputs) {
+                node_outputs->push(juint(root.value));
+            }
+            roots->set("node_outputs", std::move(node_outputs));
+        }
         node->set("roots", std::move(roots));
     }
     return node;
