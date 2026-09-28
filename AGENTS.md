@@ -28,6 +28,9 @@ AHFL (Agent Handoff Flow Language) — A strongly typed DSL compiler oriented to
 - Keeping dead code around "just in case"
 - Wrapping a broken interface in a workaround instead of fixing the interface
 - Reinventing wheels when a standard pattern exists
+- **Forward-compatibility shims, deprecation periods, "temporarily retained" old paths, legacy/compatibility directories, and old-and-new coexistence of any kind.** A migration is ONE big-bang change: flip every call site, delete the old implementation, delete its flags/env vars/adapters/tests/goldens in the SAME change. There is no transitional state. The `BREAKING CHANGE:` footer marks such deletions; it never apologizes for them.
+- **Letting directory structure lie about the architecture.** Package/module placement MUST reflect the real role and weight of a component (a peer-tier execution engine does not live inside a "misc/infra/utils" bucket). When a subsystem outgrows its tier, promote it (move it) in the same work that made it outgrow the tier — no `legacy_*`/`new_*`/`v2_*` sibling directories.
+- **Replacing one implementation while leaving the replaced one unreachable but present.** If a grep shows zero non-test production callers, it is dead: delete it and its dedicated tests in the same change.
 
 **Explicitly encouraged:**
 
