@@ -45,7 +45,7 @@
 #include <string>
 #include <string_view>
 
-#include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "conformance/conformance_case.hpp"
 
 namespace ahfl::conformance {

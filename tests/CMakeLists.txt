@@ -60,7 +60,7 @@ add_test(NAME ahfl.wasm.preflight_execution
 )
 set_tests_properties(ahfl.wasm.preflight_execution PROPERTIES SKIP_RETURN_CODE 77)
 
-if(AHFL_ENABLE_BACKEND_INFRA)
+if(AHFL_ENABLE_BACKEND_WASM)
     # KR6.5 E1: this producer always runs one checked frontend program through
     # native AgentRuntime and AHFL->Core->layout->wasm. It is a semantic/binary
     # probe but not, by itself, real wasm execution evidence.
@@ -1228,6 +1228,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/cmake/ProjectTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/SingleFileCliTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/BackendEffectExtraTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/InfraTargetTests.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/WasmTargetTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/PassTraceTests.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/fuzz/CMakeLists.txt")

@@ -15,7 +15,7 @@
 // into the stable orchestrator diagnostic `resume.event.malformed`; this decoder
 // emits no `resume.*` string of its own.
 //
-// Buffer grammar (mirrors src/compiler/backends/infra/core_wasm_codegen.cpp): a
+// Buffer grammar (mirrors src/compiler/backends/wasm/core_wasm_codegen.cpp): a
 // fixed header at byte 1024 holds `event_count` as a u32 little-endian at [0..3]
 // with pad[4..7] == 0; records start at 1032; each record is a fixed 40 bytes; the
 // region is statically sized to `node_count` records and the module heap begins at

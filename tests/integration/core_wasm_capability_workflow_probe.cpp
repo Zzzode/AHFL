@@ -13,7 +13,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
-#include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
 #include <filesystem>
 #include <fstream>

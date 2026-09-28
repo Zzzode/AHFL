@@ -9,7 +9,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -29,40 +28,6 @@ namespace ir = ahfl::ir;
         }
     }
     return names;
-}
-
-// RFC 0019 slice 2: map the IR capability effect kind to the backend-local
-// mirror used by the effect -> WASI projection.
-[[nodiscard]] WasmCapabilityEffect to_wasm_effect(ir::CapabilityEffectKind kind) {
-    switch (kind) {
-    case ir::CapabilityEffectKind::Read:
-        return WasmCapabilityEffect::Read;
-    case ir::CapabilityEffectKind::ExternalSideEffect:
-        return WasmCapabilityEffect::ExternalSideEffect;
-    case ir::CapabilityEffectKind::DurableWrite:
-        return WasmCapabilityEffect::DurableWrite;
-    case ir::CapabilityEffectKind::FinancialWrite:
-        return WasmCapabilityEffect::FinancialWrite;
-    case ir::CapabilityEffectKind::Unknown:
-        return WasmCapabilityEffect::Unknown;
-    }
-    return WasmCapabilityEffect::Unknown;
-}
-
-// Build a canonical-name -> effect kind index over the program's capability
-// declarations, so an agent's capability refs can be resolved to their effect.
-[[nodiscard]] std::unordered_map<std::string, WasmCapabilityEffect>
-build_capability_effects(const ir::AhflIr &program) {
-    std::unordered_map<std::string, WasmCapabilityEffect> effects;
-    for (const auto &decl : program.declarations) {
-        if (const auto *cap = std::get_if<ir::CapabilityDecl>(&decl)) {
-            const auto name = ir::symbol_canonical_name(cap->symbol_ref);
-            if (!name.empty()) {
-                effects.emplace(std::string(name), to_wasm_effect(cap->effect.kind));
-            }
-        }
-    }
-    return effects;
 }
 
 [[nodiscard]] std::string last_segment(std::string_view qualified) {
@@ -224,40 +189,6 @@ std::vector<TerraformConfig> lower_terraform(const ir::AhflIr &program) {
                     std::unique(resource.depends_on.begin(), resource.depends_on.end()),
                     resource.depends_on.end());
                 config.resources.push_back(std::move(resource));
-            }
-            result.push_back(std::move(config));
-        }
-    }
-    return result;
-}
-
-std::vector<WasmAgentConfig> lower_wasm(const ir::AhflIr &program) {
-    std::vector<WasmAgentConfig> result;
-    const auto capability_effects = build_capability_effects(program);
-    for (const auto &decl : program.declarations) {
-        if (const auto *agent = std::get_if<ir::AgentDecl>(&decl)) {
-            WasmAgentConfig config;
-            config.agent_name = agent->name;
-            config.states = agent->states;
-            for (const auto &t : agent->transitions) {
-                config.transitions.emplace_back(t.from_state, t.to_state);
-            }
-            // RFC 0019: build capabilities / effects / ids as three strictly
-            // parallel vectors in one pass over the agent's capability refs, so
-            // the WASI projection and import naming never desync. Import
-            // identity is the SymbolId (index-based), falling back to the
-            // ordinal when a ref has no resolved id, keeping output deterministic.
-            const auto &refs = agent->capability_refs;
-            config.capabilities.reserve(refs.size());
-            config.capability_effects.reserve(refs.size());
-            config.capability_ids.reserve(refs.size());
-            for (std::size_t i = 0; i < refs.size(); ++i) {
-                const auto name = std::string(ir::symbol_canonical_name(refs[i]));
-                config.capabilities.push_back(name);
-                const auto it = capability_effects.find(name);
-                config.capability_effects.push_back(
-                    it != capability_effects.end() ? it->second : WasmCapabilityEffect::Unknown);
-                config.capability_ids.push_back(refs[i].id.value_or(i));
             }
             result.push_back(std::move(config));
         }

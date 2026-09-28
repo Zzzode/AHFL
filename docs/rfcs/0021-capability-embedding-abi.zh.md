@@ -38,8 +38,8 @@ Open Questions Q1(语言无关 C ABI)与 Q3(异步:语言同步语义 + ABI 支�
 这条边界列为项目核心资产。但今天这条边界只存在于**一个宿主形态**里:
 
 1. **WASM 特化**:[RFC 0019](0019-wasm-runtime-model.zh.md) 的 `ahfl_cap` import
-   (`(import "ahfl_cap" "cap_<id>" (func (param i32 i32) (result i32)))`,见
-   `src/compiler/backends/infra/wasm_backend.cpp` 的 `emit_capability_imports`)是 WASM
+   (`(import "ahfl_cap" "cap_<id>" (func (param i32 i32) (result i32)))`,现由
+   `src/compiler/backends/wasm/core_wasm_codegen.cpp` 的二进制发射器内联生成)是 WASM
    专属的。原生宿主(`src/runtime/engine/workflow_runtime.cpp` 的
    `ContextualCapabilityInvoker`)走的是另一套 C++ 内部接口。**两套 capability 接口没有
    统一契约**——这正是"多宿主"定位缺的那块地基。
@@ -273,8 +273,9 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   `tests/unit/runtime/engine/ahfl_host_abi.cpp`(`ahfl.runtime.host_abi_all`:定宽/OK=0/
   struct_size 首字段的 static_assert + 版本/wire/args 形态)。原生绑定、WASM pending、
   resume 接口为后续 slice。
-- 2026-08-25: Slice 3 landed — WASM 绑定对齐。`emit_capability_imports`
-  (`src/compiler/backends/infra/wasm_backend.cpp`)的 `ahfl_cap` import 签名从
+- 2026-08-25: Slice 3 landed — WASM 绑定对齐。`ahfl_cap` import 签名(当时由
+  WAT 发射器的 import 生成 helper 发射,现由
+  `src/compiler/backends/wasm/core_wasm_codegen.cpp` 二进制发射)从
   `(param i32 i32) (result i32)`(RFC 0019,丢了 status 与 result_len)改为
   `(param i32 i32) (result i32 i32 i32)` = args (ptr,len) → (status, result_ptr,
   result_len),即 `ahfl_host.h` 的 WASM 投影(status 为 ahfl_cap_status,含 PENDING)。

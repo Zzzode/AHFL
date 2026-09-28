@@ -302,30 +302,34 @@ target_link_libraries(ahfl_core_wasm_resume_record_tests
 )
 ahfl_apply_project_warnings(ahfl_core_wasm_resume_record_tests)
 
-add_executable(ahfl_core_wasm_schema_module_tests
-    unit/runtime/engine/core_wasm_schema_module.cpp
-)
-target_link_libraries(ahfl_core_wasm_schema_module_tests
-    PRIVATE
-        ahfl_compiler_backend_infra_wasm
-        ahfl_runtime_engine
-)
-target_include_directories(ahfl_core_wasm_schema_module_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
-ahfl_apply_project_warnings(ahfl_core_wasm_schema_module_tests)
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_executable(ahfl_core_wasm_schema_module_tests
+        unit/runtime/engine/core_wasm_schema_module.cpp
+    )
+    target_link_libraries(ahfl_core_wasm_schema_module_tests
+        PRIVATE
+            ahfl_compiler_backend_wasm
+            ahfl_runtime_engine
+    )
+    target_include_directories(ahfl_core_wasm_schema_module_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/tests
+        ${PROJECT_SOURCE_DIR}/src)
+    ahfl_apply_project_warnings(ahfl_core_wasm_schema_module_tests)
 
-add_executable(ahfl_core_wasm_frame_module_tests
-    unit/runtime/engine/core_wasm_frame_module.cpp
-)
-target_link_libraries(ahfl_core_wasm_frame_module_tests
-    PRIVATE
-        ahfl_compiler_backend_infra_wasm
-        ahfl_runtime_engine
-        ahfl_base_support
-)
-target_include_directories(ahfl_core_wasm_frame_module_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/tests
-    ${PROJECT_SOURCE_DIR}/src)
-ahfl_apply_project_warnings(ahfl_core_wasm_frame_module_tests)
+    add_executable(ahfl_core_wasm_frame_module_tests
+        unit/runtime/engine/core_wasm_frame_module.cpp
+    )
+    target_link_libraries(ahfl_core_wasm_frame_module_tests
+        PRIVATE
+            ahfl_compiler_backend_wasm
+            ahfl_runtime_engine
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_core_wasm_frame_module_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/tests
+        ${PROJECT_SOURCE_DIR}/src)
+    ahfl_apply_project_warnings(ahfl_core_wasm_frame_module_tests)
+endif()
 
 add_executable(ahfl_core_wasm_node_events_tests
     unit/runtime/engine/core_wasm_node_events.cpp
@@ -483,16 +487,16 @@ ahfl_apply_project_warnings(ahfl_conformance_evaluator_runner)
 
 # KR6.7 (RFC 0026 P7): WASM eligibility classifier. Links the real compiler
 # wasm backend (so it can actually run lower -> layout -> emit) plus the
-# engine-independent manifest parser. Registered only when the infra wasm
-# backend exists, because its whole point is to exercise that emit path.
-if(AHFL_ENABLE_BACKEND_INFRA)
+# engine-independent manifest parser. Registered only when the executable
+# wasm backend exists, because its whole point is to exercise that emit path.
+if(AHFL_ENABLE_BACKEND_WASM)
     add_executable(ahfl_conformance_wasm_eligibility_tests
         unit/runtime/conformance/wasm_eligibility_test.cpp
         conformance/wasm_eligibility.cpp
     )
     target_link_libraries(ahfl_conformance_wasm_eligibility_tests
         PRIVATE
-            ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_backend_wasm
     )
     target_include_directories(ahfl_conformance_wasm_eligibility_tests
         PRIVATE
@@ -511,8 +515,8 @@ endif()
 # conformance case, drives the generic Node embedded host, and compares the
 # evaluator and Node observations on the three differential dimensions. Links
 # the real evaluator engine and the wasm backend (the producer emits real
-# bytes); only registered when the infra backend exists.
-if(AHFL_ENABLE_BACKEND_INFRA)
+# bytes); only registered when the executable wasm backend exists.
+if(AHFL_ENABLE_BACKEND_WASM)
     add_executable(ahfl_conformance_wasm_node_runner
         conformance/evaluator_engine.cpp
         conformance/wasm_engine.cpp
@@ -521,7 +525,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     target_link_libraries(ahfl_conformance_wasm_node_runner
         PRIVATE
             ahfl_runtime_engine
-            ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_backend_wasm
             ahfl_base_json
     )
     target_include_directories(ahfl_conformance_wasm_node_runner
@@ -1578,22 +1582,22 @@ target_link_libraries(ahfl_tooling_cache_tests
 )
 ahfl_apply_project_warnings(ahfl_tooling_cache_tests)
 
-if(AHFL_ENABLE_BACKEND_INFRA)
-    add_executable(ahfl_wasm_backend_tests
-        unit/compiler/backends/wasm_backend.cpp
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_executable(ahfl_core_wasm_codegen_tests
+        unit/compiler/backends/core_wasm_codegen.cpp
     )
-    target_link_libraries(ahfl_wasm_backend_tests
+    target_link_libraries(ahfl_core_wasm_codegen_tests
         PRIVATE
-            ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_backend_wasm
     )
-    ahfl_apply_project_warnings(ahfl_wasm_backend_tests)
+    ahfl_apply_project_warnings(ahfl_core_wasm_codegen_tests)
 
     add_executable(ahfl_core_wasm_e1_probe
         integration/core_wasm_e1_probe.cpp
     )
     target_link_libraries(ahfl_core_wasm_e1_probe
         PRIVATE
-            ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_backend_wasm
             ahfl_runtime_engine
     )
     target_include_directories(ahfl_core_wasm_e1_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -1604,7 +1608,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
     target_link_libraries(ahfl_core_wasm_e2_probe
         PRIVATE
-            ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_backend_wasm
             ahfl_runtime_engine
     )
     target_include_directories(ahfl_core_wasm_e2_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -1617,7 +1621,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
     target_link_libraries(ahfl_core_wasm_p6_probe
         PRIVATE
-            ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_backend_wasm
             ahfl_compiler_package_graph
             ahfl_runtime_engine
     )
@@ -1630,7 +1634,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
     target_link_libraries(ahfl_core_wasm_e3_probe
         PRIVATE
-            ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_backend_wasm
             ahfl_runtime_engine
     )
     target_include_directories(ahfl_core_wasm_e3_probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -1644,7 +1648,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
     target_link_libraries(ahfl_core_wasm_capability_workflow_probe
         PRIVATE
-            ahfl_compiler_backend_infra_wasm
+            ahfl_compiler_backend_wasm
     )
     target_include_directories(ahfl_core_wasm_capability_workflow_probe
         PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -1764,7 +1768,6 @@ foreach(_tgt
     ahfl_native_wasm_differential_tests
     ahfl_core_wire_codec_tests
     ahfl_core_wasm_resume_record_tests
-    ahfl_core_wasm_schema_module_tests
     ahfl_core_wasm_node_events_tests
     ahfl_core_wire_canonical_size_tests
     ahfl_core_wasm_resume_controller_tests
@@ -1866,7 +1869,8 @@ foreach(_tgt
 endforeach()
 
 if(AHFL_ENABLE_BACKEND_INFRA)
-    foreach(_tgt ahfl_target_backends_tests ahfl_wasm_backend_tests)
-        target_include_directories(${_tgt} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    endforeach()
+    target_include_directories(ahfl_target_backends_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+endif()
+if(AHFL_ENABLE_BACKEND_WASM)
+    target_include_directories(ahfl_core_wasm_codegen_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 endif()

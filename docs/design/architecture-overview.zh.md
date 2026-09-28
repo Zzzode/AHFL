@@ -65,7 +65,7 @@ AHFL 的定位是**一门可嵌入（embeddable）、可验证（verifiable）�
 - **能力由宿主提供**：AHFL 编排 workflow 的结构与行为，但不自己实现底层通用计算；能力由宿主（任意语言实现）经一条 **capability 嵌入边界（capability embedding ABI）** 提供。
 - **多宿主**：同一份 workflow 可嵌入不同宿主——原生解释器（参考语义 + 开发/调试）、WASM+WASI（运行时权限沙箱）、agent 框架宿主（宿主能力当 capability 调用、可模块化装卸）。因此不存在单一"默认 target"，由场景选宿主。
 - **表达力护栏（A 型 / B 型）**：workflow **建模**表达力（状态 / 迁移 / 类型化数据流 / contract / handoff / multi-agent 编排）无上限；节点内**通用计算**（任意算法 / IO / 数据结构）留在 capability 边界之外由宿主实现——`capability` 是通用计算的唯一入口。这条护栏是 AHFL 同时"通用地编排"与"保持可验证 + 不打通用语言生态战"的原因。
-- **capability 嵌入 ABI 是项目核心资产**（非某后端细节）：其第一个具体实例是 [RFC 0019](../rfcs/0019-wasm-runtime-model.zh.md) 的 `ahfl_cap` import 契约 + effect→WASI 投影。
+- **capability 嵌入 ABI 是项目核心资产**（非某后端细节）：其第一个具体实例是 [RFC 0019](../rfcs/0019-wasm-runtime-model.zh.md)（已被 [RFC 0026](../rfcs/0026-ir-tower-and-execution-model.zh.md) supersede）确立的 `ahfl_cap` import 契约；该 import 现由 `src/compiler/backends/wasm/` 的二进制发射器直接生成，RFC 0019 的 effect→WASI 文本投影已随 WAT 路径删除。
 
 评估任何新特性时的判据：**它增强的是 A 型编排表达力，还是把 AHFL 推向 B 型通用语言？** 前者纳入，后者应留在 capability 边界外。
 
@@ -114,7 +114,8 @@ IR（`ahfl.ir.v2`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系�
 
 - **解释器执行 IR**——tree-walking 解释器直接遍历 `ir::Program` / `ir::Expr`，没有字节码、没有 native codegen（见 [native-runtime-architecture.zh.md](native-runtime-architecture.zh.md)）
 - **SMV 后端投影 IR**——agent 状态变量、workflow 生命周期、contract clauses → LTLSPEC
-- **infra 后端消费 IR**——提取 agent/flow 结构生成部署描述
+- **可执行 wasm 后端从 Core-IR 发射二进制**——peer-tier 执行引擎(`src/compiler/backends/wasm/`),消费验证后的 Core-IR + P4-D layout,产出真实 wasm32 模块
+- **infra 后端消费 IR**——提取 agent/flow 结构生成部署描述(k8s/openapi/terraform)
 - **IR 可 JSON 序列化**——typed HIR、const value tree、effect facts 都有稳定 schema gate
 
 设计约束（不可协商）：`std::variant` + visitor（无继承）、hash-consed 类型（指针相等 ⇔ 结构相等）、flat store + index 引用（无字符串身份）。
@@ -125,8 +126,9 @@ IR（`ahfl.ir.v2`，定义于 `include/ahfl/compiler/ir/ir.hpp`）是整个系�
 | --- | --- | --- | --- |
 | Core | `ir` / `ir-json` / `native-json` / `summary` / `package-review` | 分析与评审 artifact | 人 / 工具链 |
 | Formal | `smv` / `assurance-json` | NuSMV 模型、保证案例 | 模型检测器 / 保证流程 |
+| Executable wasm | `wasm` | 可执行 wasm32 二进制(Core-IR + P4-D layout) | wasm 嵌入式宿主(WASI / Node / 浏览器) |
 | Runtime Handoff | `execution-plan` / `dry-run-trace` | workflow DAG 计划 | runtime 编排层 |
-| Infra | `k8s-crd` / `openapi` / `terraform` / `wasm` | 部署描述 | 部署平台 |
+| Infra(部署视图) | `k8s-crd` / `openapi` / `terraform` | 部署描述 | 部署平台 |
 
 后端扩展指南见 [backend-extension-guide.zh.md](backend-extension-guide.zh.md)。
 
@@ -211,7 +213,11 @@ CLI 管线架构见 [cli-pipeline-architecture.zh.md](cli-pipeline-architecture.
 | `k8s-crd` | Agent 的 CRD YAML | 已落库，缺外部验收 |
 | `openapi` | API surface spec | 同上 |
 | `terraform` | IaC 配置 | 同上 |
-| `wasm` | WAT（仅编码 agent 状态机骨架） | 同上 |
+
+RFC 0019 时代的 WAT 文本骨架曾是第四个 infra backend；它在生产路径零调用者，
+2026-09-29 随可执行二进制发射器一起删除（无兼容层）。`wasm` 后端现在是 **peer-tier
+执行引擎**（与 `smv/`、`pipeline/` 同级的 `src/compiler/backends/wasm/`），从验证后的
+Core-IR + P4-D layout 发射真实 wasm32 二进制，不属于部署视图族。
 
 ### 4.5 生产准入门禁
 
@@ -232,6 +238,11 @@ Serverless 托管、多租户平台、多 region 控制面——目前**只有�
 | LLM / Secret providers | `src/runtime/providers/`（L1 目录内） | L3 | runtime 核心只依赖 provider 抽象接口；secret 以 handle 表达，不进 artifact |
 | Infra backends | `src/compiler/backends/infra/`（L1 目录内） | L3 | 后端是 IR 的**只读消费者**：只提取结构生成描述，不反向要求 IR 为部署平台变形 |
 | Capability transport / 事件 | `src/runtime/engine/`（与核心引擎同目录） | L3 | 引擎核心通过 `CapabilityBridge` 抽象调用传输；事件 schema 独立演进 |
+
+> 2026-09-29：可执行 wasm 后端的同类张力已通过**晋升**消除——它从
+> `src/compiler/backends/infra/` 移到 peer-tier 目录 `src/compiler/backends/wasm/`，
+> 目录结构不再需要为它说谎。RFC 0019 的 WAT 文本骨架（零生产调用者）在同一次变更中
+> 删除。
 
 判断标准：**一个组件被删掉后，L1 的测试（语义、golden、SMV）是否需要改？** 需要改 = 越界；不需要 = 物理位置可以接受。
 

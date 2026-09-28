@@ -1083,13 +1083,15 @@ add_test(NAME ahfl.runtime.core_wasm_resume_record
     COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_record_tests>
 )
 
-add_test(NAME ahfl.runtime.core_wasm_schema_module
-    COMMAND $<TARGET_FILE:ahfl_core_wasm_schema_module_tests>
-)
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahfl.runtime.core_wasm_schema_module
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_schema_module_tests>
+    )
 
-add_test(NAME ahfl.runtime.core_wasm_frame_module
-    COMMAND $<TARGET_FILE:ahfl_core_wasm_frame_module_tests>
-)
+    add_test(NAME ahfl.runtime.core_wasm_frame_module
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_frame_module_tests>
+    )
+endif()
 
 add_test(NAME ahfl.runtime.core_wasm_node_events
     COMMAND $<TARGET_FILE:ahfl_core_wasm_node_events_tests>
@@ -1188,7 +1190,7 @@ add_test(NAME ahfl.conformance.evaluator_mutation
 # computed verdict, so the KR6.6 skip list is machine-verified instead of
 # hand-curated. A manifest overclaiming wasm eligibility fails here even
 # though no WASM engine needs to be installed.
-if(AHFL_ENABLE_BACKEND_INFRA)
+if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.conformance.wasm_eligibility
         COMMAND $<TARGET_FILE:ahfl_conformance_wasm_eligibility_tests>
     )
@@ -1202,7 +1204,7 @@ endif()
 # evaluator observation. Blocked / P6-7-gated scenarios SKIP (77) with a
 # structured reason; an absent Node engine SKIPs visibly. This is Node
 # embedded-engine evidence, explicitly NOT wasmtime evidence.
-if(AHFL_ENABLE_BACKEND_INFRA)
+if(AHFL_ENABLE_BACKEND_WASM)
     set(AHFL_CONFORMANCE_WASM_SCRATCH_DIR
         "${CMAKE_CURRENT_BINARY_DIR}/conformance-wasm-node")
     add_test(NAME ahfl.conformance.wasm_node_differential
@@ -1748,9 +1750,9 @@ add_test(NAME ahfl.cache.cache_core_all
     COMMAND $<TARGET_FILE:ahfl_tooling_cache_tests>
 )
 
-if(AHFL_ENABLE_BACKEND_INFRA)
+if(AHFL_ENABLE_BACKEND_WASM)
     add_test(NAME ahfl.backends.wasm_all
-        COMMAND $<TARGET_FILE:ahfl_wasm_backend_tests>
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_codegen_tests>
     )
 
     # RFC 0026 E4-B2-D2a (F5): the F4 production resume-host driver driven

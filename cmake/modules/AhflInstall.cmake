@@ -73,7 +73,7 @@ set(AHFL_INTERNAL_INSTALL_TARGETS
     ahfl_compiler_backend_pipeline_handoff
     ahfl_compiler_backend_assurance
     ahfl_compiler_backend_summary
-    ahfl_compiler_backend_infra_wasm
+    ahfl_compiler_backend_wasm
     ahfl_compiler_backend_infra_k8s_crd
     ahfl_compiler_backend_infra_openapi_spec
     ahfl_compiler_backend_infra_terraform_gen

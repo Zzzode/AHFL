@@ -76,22 +76,23 @@ if(AHFL_ENABLE_BACKEND_PIPELINE)
     ahfl_apply_project_warnings(ahfl_compiler_backend_summary)
 endif()
 
-# --- Infrastructure backends ---
-if(AHFL_ENABLE_BACKEND_INFRA)
-    add_library(ahfl_compiler_backend_infra_wasm STATIC
-        infra/core_wasm_codegen.cpp
-        infra/wasm_backend.cpp
-        infra/wasm_runtime.cpp
+# --- Executable WebAssembly backend (peer-tier execution engine) ---
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_library(ahfl_compiler_backend_wasm STATIC
+        wasm/core_wasm_codegen.cpp
     )
 
-    target_link_libraries(ahfl_compiler_backend_infra_wasm
+    target_link_libraries(ahfl_compiler_backend_wasm
         PUBLIC
             ahfl_base_support
             ahfl_compiler_ir
     )
 
-    ahfl_apply_project_warnings(ahfl_compiler_backend_infra_wasm)
+    ahfl_apply_project_warnings(ahfl_compiler_backend_wasm)
+endif()
 
+# --- Infrastructure view backends (deployment descriptors) ---
+if(AHFL_ENABLE_BACKEND_INFRA)
     add_library(ahfl_compiler_backend_infra_k8s_crd STATIC
         infra/k8s_crd.cpp
     )
@@ -137,6 +138,9 @@ set(_backend_targets "")
 if(AHFL_ENABLE_BACKEND_FORMAL)
     list(APPEND _backend_targets ahfl_compiler_backend_smv)
 endif()
+if(AHFL_ENABLE_BACKEND_WASM)
+    list(APPEND _backend_targets ahfl_compiler_backend_wasm)
+endif()
 if(AHFL_ENABLE_BACKEND_PIPELINE)
     list(APPEND _backend_targets
         ahfl_compiler_backend_pipeline_common
@@ -148,7 +152,6 @@ if(AHFL_ENABLE_BACKEND_PIPELINE)
 endif()
 if(AHFL_ENABLE_BACKEND_INFRA)
     list(APPEND _backend_targets
-        ahfl_compiler_backend_infra_wasm
         ahfl_compiler_backend_infra_k8s_crd
         ahfl_compiler_backend_infra_openapi_spec
         ahfl_compiler_backend_infra_terraform_gen
@@ -179,9 +182,13 @@ if(AHFL_ENABLE_BACKEND_PIPELINE)
         ahfl_compiler_backend_summary
     )
 endif()
+if(AHFL_ENABLE_BACKEND_WASM)
+    target_link_libraries(ahfl_compiler_backends PUBLIC
+        ahfl_compiler_backend_wasm
+    )
+endif()
 if(AHFL_ENABLE_BACKEND_INFRA)
     target_link_libraries(ahfl_compiler_backends PUBLIC
-        ahfl_compiler_backend_infra_wasm
         ahfl_compiler_backend_infra_k8s_crd
         ahfl_compiler_backend_infra_openapi_spec
         ahfl_compiler_backend_infra_terraform_gen
@@ -191,6 +198,9 @@ endif()
 
 target_include_directories(ahfl_compiler_backends PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
+if(AHFL_ENABLE_BACKEND_WASM)
+    target_compile_definitions(ahfl_compiler_backends PRIVATE AHFL_ENABLE_BACKEND_WASM=1)
+endif()
 if(AHFL_ENABLE_BACKEND_INFRA)
     target_compile_definitions(ahfl_compiler_backends PRIVATE AHFL_ENABLE_BACKEND_INFRA=1)
     target_sources(ahfl_compiler_backends PRIVATE infra/lower.cpp)

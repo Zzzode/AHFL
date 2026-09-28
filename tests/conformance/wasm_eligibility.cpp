@@ -9,7 +9,7 @@
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
-#include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "conformance/compile_source.hpp"
 
 namespace ahfl::conformance {

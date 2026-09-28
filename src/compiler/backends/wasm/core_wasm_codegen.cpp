@@ -1,4 +1,4 @@
-#include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
 #include "ahfl/base/support/const_literal.hpp"
 #include "ahfl/base/support/overloaded.hpp"
@@ -9,7 +9,7 @@
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/runtime/ahfl_host.h"
-#include "compiler/backends/infra/detail/wasm_byte_buffer.hpp"
+#include "compiler/backends/wasm/detail/wasm_byte_buffer.hpp"
 
 #include <algorithm>
 #include <array>

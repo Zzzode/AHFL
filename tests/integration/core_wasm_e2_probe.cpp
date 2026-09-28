@@ -8,7 +8,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
-#include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/core_wasm_schema_transport.hpp"

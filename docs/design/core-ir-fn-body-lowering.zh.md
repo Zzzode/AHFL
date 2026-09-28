@@ -55,7 +55,7 @@ KR6.6/P6 的表达式、match、coercion、aggregate、bounded collection 已在
    没有构造闭包值、调用闭包值的 expr/stmt 节点。
 6. WASM 编码器没有 Table(4)/Element(9) 段常量:已有的七个**有编号**段常量
    是 Type(1)/Import(2)/Function(3)/Memory(5)/Global(6)/Export(7)/Code(10)
-   (`src/compiler/backends/infra/core_wasm_codegen.cpp:111-117`);同一常量块
+   (`src/compiler/backends/wasm/core_wasm_codegen.cpp:111-117`);同一常量块
    另有 `kSectionCustom = 0`(`:110`),它不是编号段,用于可选的 wire-schema
    custom 段。agent `encode_module`(`core_wasm_codegen.cpp:5157-5299`)按序
    追加上述七个有编号段(`:5172-5279`),并在带 wire schema 时追加**第八个**

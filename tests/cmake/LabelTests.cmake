@@ -271,7 +271,7 @@ ahfl_label_tests(
         ahfl.runtime.if_let_e2e
 )
 
-if(AHFL_ENABLE_BACKEND_INFRA)
+if(AHFL_ENABLE_BACKEND_WASM)
     ahfl_label_tests(
         LABELS conformance
         TESTS
@@ -612,13 +612,15 @@ ahfl_label_tests(
         ahfl.cache.cache_core_all
 )
 
-if(AHFL_ENABLE_BACKEND_INFRA)
+if(AHFL_ENABLE_BACKEND_WASM)
     ahfl_label_tests(
         LABELS wasm-backend
         TESTS
             ahfl.backends.wasm_all
     )
+endif()
 
+if(AHFL_ENABLE_BACKEND_INFRA)
     ahfl_label_tests(
         LABELS target-backends
         TESTS

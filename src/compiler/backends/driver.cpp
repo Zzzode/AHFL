@@ -18,8 +18,11 @@
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "compiler/backends/pipeline/summary.hpp"
 
+#ifdef AHFL_ENABLE_BACKEND_WASM
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
+#endif
+
 #ifdef AHFL_ENABLE_BACKEND_INFRA
-#include "compiler/backends/infra/core_wasm_codegen.hpp"
 #include "compiler/backends/infra/lower.hpp"
 #endif
 
@@ -195,7 +198,9 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                            }
                                            return {};
                                        }});
+#endif
 
+#ifdef AHFL_ENABLE_BACKEND_WASM
     registry.register_builtin_backend({BackendKind::InfraWasm,
                                        "wasm",
                                        "WebAssembly binary from Core-IR",

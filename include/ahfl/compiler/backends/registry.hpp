@@ -17,8 +17,9 @@ struct EmitContext {
     const ir::Program &program;
     std::ostream &out;
     const handoff::PackageMetadata *package_metadata;
-    // RFC 0019: WASM deployment profile; consumed by the InfraWasm backend,
-    // ignored by others. Defaults to wasi.
+    // WASM deployment profile; consumed by the executable wasm backend
+    // (BackendKind::InfraWasm, src/compiler/backends/wasm/), ignored by
+    // others. Defaults to wasi.
     WasmProfile wasm_profile{WasmProfile::Wasi};
 };
 

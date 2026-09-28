@@ -193,7 +193,7 @@ static_assert(kP6CollectionHeaderLenOffset == kP6CollectionHeaderPtrOffset + 4 &
 //
 // `heap_base = align_up(kNodeEventLogBase + 8 + node_count * 40, 8)`. These
 // constants are the single wire-grammar authority shared by the emitter
-// (src/compiler/backends/infra/core_wasm_codegen.cpp), the runtime structural
+// (src/compiler/backends/wasm/core_wasm_codegen.cpp), the runtime structural
 // decoder (src/runtime/engine/core_wasm_node_events.cpp), and the KR6.7
 // manifest-driven Node embedded host (which reads the same region to
 // reconstruct the canonical observation). An identity workflow (no capability

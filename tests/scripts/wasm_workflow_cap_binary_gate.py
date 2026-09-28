@@ -15,7 +15,7 @@ copy of the committed golden source, per the B4 ruling) and locks, precisely:
 The run2 pending-latch first instruction, the 40-byte node-event record layout /
 body-before-count write order, the checked-alloc fail/no-advance sequence, and the
 shifted defined/export function indices are covered by the opcode/index assertions
-in tests/unit/compiler/backends/wasm_backend.cpp and the executed KR6.7
+in tests/unit/compiler/backends/core_wasm_codegen.cpp and the executed KR6.7
 manifest-driven Node embedded host (tests/conformance/node_embedded_host.mjs,
 driven by ahfl.conformance.wasm_node_differential); this gate does not re-assert
 them.
@@ -200,7 +200,7 @@ def main(argv: "list[str]") -> int:
 
     # The run2 opcode-level structural contract (pending-latch first instruction,
     # 40-byte event record writes preceding the event_count publish, checked
-    # alloc) is locked in tests/unit/compiler/backends/wasm_backend.cpp against the
+    # alloc) is locked in tests/unit/compiler/backends/core_wasm_codegen.cpp against the
     # same emitter; this gate owns the CLI-vs-producer byte identity + section /
     # import / AHFLXM-golden / AHFLWS-EOF structure.
     print("all KR6.5 E4-B2-C capability-workflow binary/structural gates passed "

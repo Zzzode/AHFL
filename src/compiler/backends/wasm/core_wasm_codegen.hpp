@@ -14,7 +14,7 @@
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
-#include "compiler/backends/infra/wasm_backend.hpp"
+#include "compiler/backends/wasm/wasm_profile.hpp"
 
 namespace ahfl::backends {
 

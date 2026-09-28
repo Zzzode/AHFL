@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-09-27"
+updated: "2026-09-29"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -111,7 +111,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0019"
     title: "WASM Backend Runtime Model"
-    status: "implemented"
+    status: "superseded"
     file: "0019-wasm-runtime-model.zh.md"
     area: ["runtime", "compiler", "tooling"]
     stability: "experimental"

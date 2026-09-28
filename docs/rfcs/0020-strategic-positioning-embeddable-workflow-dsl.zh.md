@@ -125,10 +125,11 @@ import 契约)。AHFL 的对应物是 **capability embedding ABI**,其第一个�
 [RFC 0019](0019-wasm-runtime-model.zh.md) 落地:
 
 - `ahfl_cap` import 契约:capability 按 `SymbolId`(索引式身份)命名、统一签名
-  `(ptr,len) -> ptr`、fail-closed(见 `src/compiler/backends/infra/wasm_backend.cpp` 的
-  `emit_capability_imports`)。
-- effect→WASI 最小权限投影(`src/compiler/backends/infra/wasm_runtime.cpp` 的
-  `project_wasi_config`):把 AHFL capability 的 effect 分级映射为宿主的权限子集。
+  `(ptr,len) -> ptr`、fail-closed(二进制发射器
+  `src/compiler/backends/wasm/core_wasm_codegen.cpp` 直接生成 import 段)。
+- effect→宿主权限的最小权限思想:RFC 0019 曾实现为 effect→WASI 文本投影
+  (`project_wasi_config`);该投影随 RFC 0019 WAT 路径于 2026-09-29 删除,效应分级
+  本身仍由下面的 `CapabilityEffectKind` 向宿主声明。
 - capability effect 分级(`read` / `external_side_effect` / `durable_write` /
   `financial_write`,见 `include/ahfl/compiler/ir/decl.hpp` 的 `CapabilityEffectKind`):
   向宿主声明每个能力的风险等级。

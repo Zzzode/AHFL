@@ -142,7 +142,8 @@ else()
 endif()
 
 option(AHFL_ENABLE_BACKEND_FORMAL "Build formal verification backend (SMV)" ON)
-option(AHFL_ENABLE_BACKEND_INFRA "Build infrastructure backends (WASM, K8s, OpenAPI, Terraform)" ON)
+option(AHFL_ENABLE_BACKEND_WASM "Build executable WebAssembly backend" ON)
+option(AHFL_ENABLE_BACKEND_INFRA "Build infrastructure view backends (K8s, OpenAPI, Terraform)" ON)
 option(AHFL_ENABLE_BACKEND_PIPELINE "Build pipeline observation backends" ON)
 
 add_subdirectory(third_party/antlr4)

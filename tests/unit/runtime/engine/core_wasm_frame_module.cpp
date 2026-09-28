@@ -17,7 +17,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
-#include "compiler/backends/infra/core_wasm_codegen.hpp"
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "common/project_input_support.hpp"
 #include "base/support/sha256.hpp"
 #include "runtime/engine/core_wasm_frame_module.hpp"

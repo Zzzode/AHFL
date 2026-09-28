@@ -9,7 +9,6 @@
 #include "compiler/backends/infra/k8s_crd.hpp"
 #include "compiler/backends/infra/openapi_spec.hpp"
 #include "compiler/backends/infra/terraform_gen.hpp"
-#include "compiler/backends/infra/wasm_backend.hpp"
 
 namespace ahfl::backends {
 
@@ -31,8 +30,5 @@ lower_openapi(const ir::AhflIr &program);
 
 /// Lower AHFL-IR to Terraform configs (one per WorkflowDecl).
 [[nodiscard]] std::vector<TerraformConfig> lower_terraform(const ir::AhflIr &program);
-
-/// Lower AHFL-IR to Wasm agent configs (one per AgentDecl).
-[[nodiscard]] std::vector<WasmAgentConfig> lower_wasm(const ir::AhflIr &program);
 
 } // namespace ahfl::backends

@@ -88,8 +88,10 @@ therefore stays on the P5 side of the P5/P6 seam.
   `run` returns the input pointer itself.
 - No browser host, JS glue, WASI resource mapping, optimization, debug info, or
   source map is introduced.
-- The legacy `generate_wasm(WasmAgentConfig)` WAT helper is not reused by Core
-  codegen and is not an execution semantics source.
+- The RFC 0019 textual-WAT helper (the deleted `WasmAgentConfig`-based WAT
+  generator) was never reused by Core codegen; it was removed together with its
+  dedicated tests when the binary emitter was promoted to
+  `src/compiler/backends/wasm/`, which is now the only wasm producer.
 
 ## 2. Input contract and ownership
 
@@ -286,16 +288,17 @@ accepted single-agent subset. The backend:
 4. requires exactly one agent and one flow target in E1;
 5. emits that single binary to the provided stream.
 
-It does not call `lower_wasm`, build `WasmAgentConfig`, infer final states, or
+It does not build the RFC 0019 `WasmAgentConfig`, infer final states, or
 concatenate modules. Zero or multiple agents, any workflow, or an unsupported
 flow body fails with a stable diagnostic. A later package/entry-selection slice
 must define multi-agent/workflow artifact identity before lifting this gate;
 silently choosing the first agent is forbidden.
 
-The old WAT generator may remain temporarily for its RFC 0019 contract unit
-tests, but it becomes a clearly named legacy helper and is not reachable from
-the `emit wasm` execution path. A later cleanup can add an explicit debug WAT
-target or delete it; E1 does not make `wasm` mean two formats.
+The RFC 0019 textual-WAT generator (its config lowering, its WASI text
+projection helpers, and its contract unit tests) was deleted in the same
+change that promoted the binary emitter to `src/compiler/backends/wasm/`: it
+had zero production callers, so no debug WAT target or legacy copy remains, and
+`wasm` means exactly one format.
 
 ## 6. Diagnostics and fail-closed matrix
 

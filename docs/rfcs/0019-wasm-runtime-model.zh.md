@@ -1,11 +1,11 @@
 ---
 rfc: "0019"
 title: "WASM Backend Runtime Model"
-status: "implemented"
+status: "superseded"
 area: ["runtime", "compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-24"
-updated: "2026-08-24"
+updated: "2026-09-29"
 authors: ["zzzode"]
 shepherd: "project lead"
 owners:
@@ -17,18 +17,31 @@ tracking_issue: "none"
 discussion: "none"
 implementation_prs: ["5de66701", "ccda3ce9", "221e5883", "43e06843"]
 decision_due: "2026-09-30"
+superseded_by: "0026"
 ---
 
 # RFC 0019: WASM Backend Runtime Model
 
+> **Superseded (2026-09-29) by [RFC 0026](0026-ir-tower-and-execution-model.zh.md).**
+> 本 RFC 落地的文本 WAT 骨架路径（WAT 发射器、`WasmAgentConfig` 配置 lowering、
+> effect→WASI 文本投影、browser 拒绝谓词，及其专用单测）已在 RFC 0026 可执行二进制
+> 发射器晋升为 peer-tier 后端 `src/compiler/backends/wasm/` 的同一次变更中**整体删除**
+> ——它在生产路径零调用者，不存在兼容层或 legacy 副本。存活下来的只有：
+> (1) 部署 profile 枚举（`wasm/wasm_profile.hpp` 的 `WasmProfileKind`，仍由
+> `emit wasm --wasm-profile` 与全部 Core-Wasm 探针使用）；(2) 能力 import 的
+> `ahfl_cap` / `(status,result_ptr,result_len)` ABI 思想，由二进制发射器直接实现
+> （见 [RFC 0021](0021-capability-embedding-abi.zh.md) 与
+> `src/compiler/backends/wasm/core_wasm_codegen.cpp`）。下文为历史决策记录，按原样
+> 保留；其中指向已删除文件/函数的路径即本通告所述的删除对象。
+
 ## Summary
 
 为 AHFL 的 WASM 后端定义 **runtime model**：WASM 模块与 host 的执行契约、AHFL capability
-到 WASI / host import 的映射、以及 browser-side 执行边界。当前 WASM 后端
-（`src/compiler/backends/infra/wasm_backend.cpp`）只发射一个**结构性 WAT 骨架**——
-`emit_wat_header` 声明 `$state_fn`/`$cap_fn` 类型、线性内存、`$current_state` 全局，
-`emit_wat_state_table` 展开状态表，`generate_wasm` 从 `WasmAgentConfig`（agent 名 / 状态 /
-迁移 / capability 名字符串）产出 WAT。`wasm_runtime.hpp` 已有 `WasiCapability` 枚举
+到 WASI / host import 的映射、以及 browser-side 执行边界。RFC 0019 落地时的 WASM
+后端（文件已于 2026-09-29 删除，见上方 Superseded 通告）只发射一个**结构性 WAT 骨架**
+——`emit_wat_header` 声明 `$state_fn`/`$cap_fn` 类型、线性内存、`$current_state` 全局，
+`emit_wat_state_table` 展开状态表，WAT 生成入口从 `WasmAgentConfig`（agent 名 / 状态 /
+迁移 / capability 名字符串）产出 WAT。`wasm_runtime.hpp` 当时提供 `WasiCapability` 枚举
 （FileRead/FileWrite/NetworkAccess/EnvironmentVars/ClockAccess）+ `WasiConfig` +
 `WasmRuntimeConfig`（内存页/栈深上限）——但**这些结构与 AHFL 的 capability 语义、runtime
 执行引擎、以及 agent 的 input/output/context 数据流没有任何连接**。本 RFC 定义把 WASM
@@ -203,7 +216,7 @@ browser profile 的硬约束:
 
 1. **ABI 契约定义**（`wasm_runtime.hpp` + 文档）：导出/导入函数签名、线性内存布局、
    input/context/output 序列化格式。无行为变更,纯契约。
-2. **effect → WASI 投影**（`src/compiler/backends/infra/wasm_runtime.cpp` + 消费
+2. **effect → WASI 投影**（已删除的 `wasm_runtime.cpp` 投影实现 + 消费
    `effect_judgement`）：从 agent effect judgement 静态推导 `WasiConfig`;最小权限。
 3. **capability import 生成**（`wasm_backend.cpp`）：每个用到的 capability 发射
    `ahfl_cap` import(按 `SymbolId` 命名),类型统一。
@@ -327,7 +340,7 @@ RFC 让契约先落地。
   financial write / unknown project to `NetworkAccess` (the external-effect
   channel — the IR effect kind is a severity, not a resource category, so
   external effects conservatively map to network). `WasmAgentConfig` carries a
-  `capability_effects` vector; `lower_wasm` resolves each agent capability to
+  `capability_effects` vector; the (now-deleted) WAT config lowering resolved each agent capability to
   its `CapabilityDecl` effect kind (default Unknown when absent). Covered by
   `ahfl.backends.wasm_all` (pure/read → empty; external/unknown → NetworkAccess;
   mixed severities dedupe).
@@ -336,7 +349,7 @@ RFC 让契约先落地。
   capability's SymbolId (index-based identity, `cap_<id>`), unified signature
   `(param i32 i32) (result i32)` — replacing the old `env`/source-name imports,
   so a rename no longer changes the ABI. `WasmAgentConfig` gains
-  `capability_ids`; `lower_wasm` builds capabilities / effects / ids as three
+  `capability_ids`; the (now-deleted) WAT config lowering built capabilities / effects / ids as three
   strictly parallel vectors in one pass over the agent's capability refs
   (SymbolId with ordinal fallback). Covered by `ahfl.backends.wasm_all`
   (ahfl_cap naming, no `env` import, no source-name leak, import-list
