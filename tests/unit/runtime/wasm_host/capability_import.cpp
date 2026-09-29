@@ -662,6 +662,423 @@ void test_abort_bridge_site_id_mismatch() {
     check(mock.call_count == 0, "abort bridge id: invoker not called");
 }
 
+// ==== P2-6: missing executor abort-path tests ====
+
+// Build a module with A2 admission sections whose wire schema has a String
+// result type (node 1) instead of the default Int (node 0). The opaque lane's
+// result validation accepts any-length String (unbounded), so the executor
+// reaches the alloc_then_write step — used by the oversized-frame test.
+[[nodiscard]] std::vector<std::uint8_t>
+with_a2_admission_string_result(std::vector<std::uint8_t> module_bytes,
+                                std::uint64_t source_symbol) {
+    wht::put_section(module_bytes, 0,
+                wht::custom_payload("ahfl.wasm-exec-manifest.v1",
+                                   wht::exec_manifest_body(
+                                       7, {{.workflow_node_id = 1,
+                                            .cap_call_count = 1,
+                                            .capability = 0,
+                                            .source_symbol = source_symbol}})));
+    wht::put_section(module_bytes, 0,
+                wht::custom_payload("ahfl.wire-schema.v1",
+                                   wht::encode_schema(wht::schema_table(
+                                       {ir::core::CoreWireSchemaNode{
+                                           ir::core::CoreWireSchemaString{}}},
+                                       {wht::CapSpec{
+                                           .cap_id = 0,
+                                           .symbol = source_symbol,
+                                           .result = ir::core::CoreWireSchemaNodeId{1}}}))));
+    return module_bytes;
+}
+
+// 10. Opaque closure-in-result: the mock returns Success with a closure Value.
+//     The executor validates the result against the Int result binding and
+//     rejects it as ResultSchemaInvalid. Post-effect: the invoker WAS called
+//     (the capability executed and returned a value the host must not wire).
+void test_abort_opaque_closure_result() {
+    constexpr std::uint64_t kSymbol = 400;
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort closure result: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort closure result: engine instantiated");
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    mock.result.value = runtime::Value{
+        runtime::InterpreterClosureHandle{.id = 1, .descriptor = nullptr}};
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    ir::core::CoreFrameLayoutSection section;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    const std::string arg_json = "{\"value\":42}";
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.param_frame = std::span<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t *>(arg_json.data()), arg_json.size());
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort closure result: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::ResultSchemaInvalid,
+          "abort closure result: error is ResultSchemaInvalid");
+    check(mock.call_count == 1, "abort closure result: invoker called once (post-effect)");
+}
+
+// 11. Opaque oversized frame: the mock returns Success with a StringValue whose
+//     JSON serialization exceeds the fixed single-page capacity (65536). The
+//     executor validates the result (String, unbounded), serializes it to
+//     65537 bytes, and rejects the alloc_then_write as EngineAllocFailed.
+//     Post-effect: the invoker WAS called.
+void test_abort_opaque_oversized_frame() {
+    constexpr std::uint64_t kSymbol = 401;
+    auto bytes = with_a2_admission_string_result(
+        wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort oversized: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort oversized: engine instantiated");
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    // 65535 chars -> JSON is 65537 bytes > 65536 (fixed single-page capacity).
+    mock.result.value = runtime::Value{runtime::StringValue{std::string(65535, 'x')}};
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    ir::core::CoreFrameLayoutSection section;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    const std::string arg_json = "{\"value\":42}";
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.param_frame = std::span<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t *>(arg_json.data()), arg_json.size());
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort oversized: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::EngineAllocFailed,
+          "abort oversized: error is EngineAllocFailed");
+    check(mock.call_count == 1, "abort oversized: invoker called once (post-effect)");
+}
+
+// 12. Bridge arg_count mismatch: the control block's arg_count word disagrees
+//     with the site's arity. Pre-effect: the invoker is NEVER called.
+void test_abort_bridge_arg_count() {
+    constexpr std::uint64_t kSymbol = 402;
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort bridge arg_count: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort bridge arg_count: engine instantiated");
+
+    auto section = make_bridge_section(kSymbol);
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    // Set up the control block, then overwrite arg_count to a wrong value.
+    setup_bridge_control_block(engine, 42);
+    auto page = engine.mutable_whole_memory();
+    put_u32_le(*page, kControlBase + 4, 2); // wrong: site.arity is 1
+
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.scalar_arg = kControlBase;
+    obs.param_frame = {};
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort bridge arg_count: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::BridgeArgCountMismatch,
+          "abort bridge arg_count: error is BridgeArgCountMismatch");
+    check(mock.call_count == 0, "abort bridge arg_count: invoker not called");
+}
+
+// 13. Bridge stride failure: the control block pointer is not at a
+//     stride-aligned offset within the control region. Pre-effect: the
+//     invoker is NEVER called.
+void test_abort_bridge_stride() {
+    constexpr std::uint64_t kSymbol = 403;
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort bridge stride: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort bridge stride: engine instantiated");
+
+    auto section = make_bridge_section(kSymbol);
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    // Set up the control block (for consistency), but point at a
+    // non-stride-aligned address.
+    setup_bridge_control_block(engine, 42);
+
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.scalar_arg = kControlBase + 4; // rel=4, 4 % 16 != 0
+    obs.param_frame = {};
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort bridge stride: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::BridgeBlockStride,
+          "abort bridge stride: error is BridgeBlockStride");
+    check(mock.call_count == 0, "abort bridge stride: invoker not called");
+}
+
+// 14. Bridge expected_addr failure: the site's block_offset disagrees with the
+//     dense block address. Pre-effect: the invoker is NEVER called.
+void test_abort_bridge_expected_addr() {
+    constexpr std::uint64_t kSymbol = 404;
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort bridge expected_addr: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort bridge expected_addr: engine instantiated");
+
+    // The site's block_offset is wrong (16 instead of 0), so the expected
+    // address (control_base + 16) != block_ptr (control_base).
+    auto section = make_bridge_section(kSymbol);
+    section.bridge_call_sites[0].block_offset = 16;
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    setup_bridge_control_block(engine, 42);
+
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.scalar_arg = kControlBase;
+    obs.param_frame = {};
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort bridge expected_addr: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::BridgeBlockStride,
+          "abort bridge expected_addr: error is BridgeBlockStride");
+    check(mock.call_count == 0, "abort bridge expected_addr: invoker not called");
+}
+
+// 15. Bridge wire-schema-arity failure: the wire schema's param count
+//     disagrees with the site's arity. Pre-effect: the invoker is NEVER called.
+void test_abort_bridge_wire_schema_arity() {
+    constexpr std::uint64_t kSymbol = 405;
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort bridge ws-arity: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort bridge ws-arity: engine instantiated");
+
+    // The site's arity is 2, but the wire schema has 1 param (Int).
+    auto section = make_bridge_section(kSymbol);
+    section.bridge_call_sites[0].arity = 2;
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    // Set arg_count=2 to pass the arg_count check (2 == site.arity), so the
+    // wire-schema-arity check is the one that fires.
+    setup_bridge_control_block(engine, 42);
+    auto page = engine.mutable_whole_memory();
+    put_u32_le(*page, kControlBase + 4, 2); // arg_count = 2 (matches site.arity)
+
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.scalar_arg = kControlBase;
+    obs.param_frame = {};
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort bridge ws-arity: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::BridgeWireSchemaMismatch,
+          "abort bridge ws-arity: error is BridgeWireSchemaMismatch");
+    check(mock.call_count == 0, "abort bridge ws-arity: invoker not called");
+}
+
+// 16. Bridge span-region failure: an arg span lies outside the authorized
+//     spill region. Pre-effect: the invoker is NEVER called.
+void test_abort_bridge_span_region() {
+    constexpr std::uint64_t kSymbol = 406;
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort bridge span-region: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort bridge span-region: engine instantiated");
+
+    auto section = make_bridge_section(kSymbol);
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    // Set up the control block, then overwrite the arg descriptor's ptr to
+    // address 0 (outside the spill region [kSpillBase, kSpillBase+8)).
+    setup_bridge_control_block(engine, 42);
+    auto page = engine.mutable_whole_memory();
+    put_i32_le(*page, kControlBase + 8, 0); // ptr = 0 (outside spill region)
+
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.scalar_arg = kControlBase;
+    obs.param_frame = {};
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort bridge span-region: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::ArgDecodeFailed,
+          "abort bridge span-region: error is ArgDecodeFailed");
+    check(mock.call_count == 0, "abort bridge span-region: invoker not called");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -674,6 +1091,13 @@ int main() {
     test_abort_unknown_name();
     test_abort_bridge_block_oob();
     test_abort_bridge_site_id_mismatch();
+    test_abort_opaque_closure_result();
+    test_abort_opaque_oversized_frame();
+    test_abort_bridge_arg_count();
+    test_abort_bridge_stride();
+    test_abort_bridge_expected_addr();
+    test_abort_bridge_wire_schema_arity();
+    test_abort_bridge_span_region();
 
     std::cout << pass_count << "/" << test_count << " checks passed\n";
     return (pass_count == test_count) ? 0 : 1;
