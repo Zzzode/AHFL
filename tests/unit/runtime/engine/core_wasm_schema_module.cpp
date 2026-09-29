@@ -98,6 +98,12 @@ std::vector<std::uint8_t> capability_tuple() {
     return func_type({0x7f, 0x7f}, {0x7f, 0x7f, 0x7f});
 }
 
+// WH-3: the bridge (i32)->(i32,i32) ahfl_cap functype, accepted alongside the
+// opaque 3-result tuple (decision doc section 11.3).
+std::vector<std::uint8_t> bridge_signature() {
+    return func_type({0x7f}, {0x7f, 0x7f});
+}
+
 std::vector<std::uint8_t> type_payload(const std::vector<std::vector<std::uint8_t>> &types) {
     std::vector<std::uint8_t> p;
     put_uleb(p, types.size());
@@ -1009,6 +1015,55 @@ int main() {
             put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
                                              encode_schema(schema_table({{3, 300}}))));
             check(admit_fails(m), "neg.import_wrong_type_ordinal");
+        }
+        // WH-3 bridge positive: the import uses the bridge (i32)->(i32,i32)
+        // functype (not the opaque 3-result tuple) and is ADMITTED. The schema
+        // capability still has exactly one Param (the one-param rule is about the
+        // schema, not the functype), so eager mint succeeds.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({bridge_signature()}));
+            put_section(m, 2, import_payload({{300, 0}})); // typeidx 0 == bridge
+            put_section(m, 0,
+                        custom_payload("ahfl.wasm-exec-manifest.v1",
+                                       exec_manifest_body(7, {{40, 1, 3, 300}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_ok(m), "bridge.import_bridge_functype_admitted");
+            auto admitted = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(m));
+            check(admitted.ok() && admitted.module->call_site_count() == 1,
+                  "bridge.import_one_call_site");
+        }
+        // WH-3 bridge + tuple coexist: two types [tuple, bridge], the import
+        // references the bridge typeidx and is admitted (proves the gate is
+        // tuple-OR-bridge, not tuple-only).
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple(), bridge_signature()}));
+            put_section(m, 2, import_payload({{300, 1}})); // typeidx 1 == bridge
+            put_section(m, 0,
+                        custom_payload("ahfl.wasm-exec-manifest.v1",
+                                       exec_manifest_body(7, {{40, 1, 3, 300}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_ok(m), "bridge.import_bridge_second_type_admitted");
+        }
+        // WH-3 third-functype negative: three types [tuple, bridge, (i32)->i32],
+        // the import references the (i32)->i32 typeidx and is REJECTED (neither
+        // tuple nor bridge). Proves the bridge acceptance does not loosen the gate
+        // for an unrelated shape.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1,
+                        type_payload({capability_tuple(), bridge_signature(),
+                                      func_type({0x7f}, {0x7f})}));
+            put_section(m, 2, import_payload({{300, 2}})); // typeidx 2 == (i32)->i32
+            put_section(m, 0,
+                        custom_payload("ahfl.wasm-exec-manifest.v1",
+                                       exec_manifest_body(7, {{40, 1, 3, 300}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "bridge.import_third_functype_rejected");
         }
         // duplicate EOF wire-schema section: two AHFLWS sections -> the second is a
         // section after the (first) EOF-target and fails the not-at-EOF gate.

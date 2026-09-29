@@ -206,11 +206,19 @@ struct ParsedMemorySection {
     std::uint32_t max_pages = 0; // valid only when flags == 1
 };
 
-// Framing facts: per Type entry whether it is the ahfl_cap tuple signature, the
-// capability imports, the raw bytes of BOTH target custom sections (borrowed), and
-// the three raw SHA-256 artifact digests computed once here after framing succeeds.
+// Framing facts: per Type entry whether it is the ahfl_cap tuple signature or the
+// bridge (i32)->(i32,i32) signature, the capability imports, the raw bytes of
+// BOTH target custom sections (borrowed), and the three raw SHA-256 artifact
+// digests computed once here after framing succeeds.
 struct ModuleFraming {
     std::vector<bool> type_is_capability_tuple;
+    // WH-3: the bridge (i32)->(i32,i32) functype, accepted alongside the opaque
+    // capability tuple (decision doc section 11.3). The schema table carries no
+    // mode field, so A2 cannot distinguish a bridge capability from an opaque
+    // one; it accepts BOTH functypes and rejects anything else. The mode
+    // cross-check (bridge vs opaque) lives in the frame-section
+    // verify_frame_bridge_sites, which sees the bridge_call_sites.
+    std::vector<bool> type_is_bridge_signature;
     std::vector<ParsedImport> imports;
     bool have_memory_section = false;
     ParsedMemorySection memory;                        // valid only when have_memory_section
@@ -242,6 +250,32 @@ struct ModuleFraming {
     return true;
 }
 
+// The bridge ahfl_cap function signature: (i32) -> (i32, i32). The P6-frame
+// bridge lane (WH-2 String region authorization trusts the declared bridge
+// call sites/placements) uses this 2-result shape; A2 admission must accept it
+// alongside the opaque 3-result tuple (decision doc section 11.3). Parallel
+// copy of the C3 predicate per the "no speculative shared framer" ruling.
+[[nodiscard]] bool
+spans_are_bridge_signature(std::span<const std::uint8_t> params,
+                           std::span<const std::uint8_t> results) noexcept {
+    static constexpr std::array<std::uint8_t, 1> kParams{kValueTypeI32};
+    static constexpr std::array<std::uint8_t, 2> kResults{kValueTypeI32, kValueTypeI32};
+    if (params.size() != kParams.size() || results.size() != kResults.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < kParams.size(); ++i) {
+        if (params[i] != kParams[i]) {
+            return false;
+        }
+    }
+    for (std::size_t i = 0; i < kResults.size(); ++i) {
+        if (results[i] != kResults[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] bool parse_type_section(std::span<const std::uint8_t> payload,
                                       ModuleFraming &framing) {
     ByteCursor cursor(payload);
@@ -254,6 +288,7 @@ struct ModuleFraming {
         return false;
     }
     framing.type_is_capability_tuple.reserve(*count);
+    framing.type_is_bridge_signature.reserve(*count);
     for (std::uint32_t i = 0; i < *count; ++i) {
         const auto form = cursor.byte();
         if (!form.has_value() || *form != kFuncTypeForm) {
@@ -276,6 +311,7 @@ struct ModuleFraming {
             return false;
         }
         framing.type_is_capability_tuple.push_back(spans_are_capability_tuple(*params, *results));
+        framing.type_is_bridge_signature.push_back(spans_are_bridge_signature(*params, *results));
     }
     return cursor.at_end();
 }
@@ -953,10 +989,20 @@ struct SchemaModuleFactory {
                     error("module import source symbol does not match the table"));
                 return result;
             }
-            if (imported.type_index >= framing->type_is_capability_tuple.size() ||
-                !framing->type_is_capability_tuple[imported.type_index]) {
-                result.diagnostics.push_back(
-                    error("module capability import does not use the ahfl_cap tuple signature"));
+            // Every ordinal's capability-tuple/bridge signature must agree before
+            // we honor the import. The schema table carries no mode field, so A2
+            // accepts BOTH the opaque (i32,i32)->(i32,i32,i32) tuple and the
+            // bridge (i32)->(i32,i32) shape; anything else is rejected (decision
+            // doc section 11.3).
+            const bool type_in_range =
+                imported.type_index < framing->type_is_capability_tuple.size();
+            const bool is_tuple =
+                type_in_range && framing->type_is_capability_tuple[imported.type_index];
+            const bool is_bridge =
+                type_in_range && framing->type_is_bridge_signature[imported.type_index];
+            if (!is_tuple && !is_bridge) {
+                result.diagnostics.push_back(error(
+                    "module capability import does not use the ahfl_cap tuple or bridge signature"));
                 return result;
             }
         }

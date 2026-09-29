@@ -1,0 +1,62 @@
+module wasm::v2c_single_arg_bridge;
+
+// RFC 0026 KR6.8 WH-3 fix-forward: a DIRECT agent that invokes a SINGLE-ARGUMENT
+// capability from a non-final handler through the additive
+// `(block_ptr)->(status,result_root_ptr)` frame bridge. The dense control block
+// names one P4-D argument span (a String PtrLen); the host walks it into the
+// wire envelope and packs the aggregate capability result (with its own String
+// payload) into the call site's disjoint result placement. The computed final
+// materializes a RoutingDecision carrying the capability-produced owner String.
+//
+// Unlike v2c_multi_arg_bridge (whose 3-param capability is rejected by A2's
+// exactly-one-Param eager-mint contract), this fixture's single-Param capability
+// is admissible through make_verified_core_wasm_schema_module, so it is the real
+// emitted bridge module for the WH-3 A2+executor end-to-end evidence.
+
+struct TicketRequest {
+    ticket_id: String;
+}
+
+struct RoutingContext {
+    owner: String = "unassigned";
+}
+
+struct RoutingDecision {
+    owner: String;
+}
+
+capability RouteTicket(ticket_id: String) -> RoutingDecision;
+
+agent RoutingAgent {
+    input: TicketRequest;
+    context: RoutingContext;
+    output: RoutingDecision;
+    states: [Init, Routing, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [RouteTicket];
+
+    transition Init -> Routing;
+    transition Routing -> Done;
+}
+
+flow for RoutingAgent {
+    state Init {
+        goto Routing;
+    }
+
+    state Routing {
+        // The single-argument (String PtrLen) capability call through the dense
+        // bridge; the aggregate result is projected into ctx so the computed
+        // final can materialize it.
+        let decision = RouteTicket(input.ticket_id);
+        ctx.owner = decision.owner;
+        goto Done;
+    }
+
+    state Done {
+        return RoutingDecision {
+            owner: ctx.owner,
+        };
+    }
+}

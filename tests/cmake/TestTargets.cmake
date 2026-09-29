@@ -1772,8 +1772,9 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # invoker -> reply -> classifier -> run2-return) for both lanes (opaque +
     # bridge), the Suspended->Injected->Consumed replay flow, and ImportAbort
     # on engine fault. Links the wasm host target (executor + engine), the
-    # engine (A2 admission + schema module), and the value SSOT (mock invoker
-    # results).
+    # engine (A2 admission + schema module), the value SSOT (mock invoker
+    # results), and the wasm backend (real bridge-module emit for the WH-3
+    # bridge e2e).
     add_executable(ahfl_core_wasm_resume_wasm3_e2e
         integration/core_wasm_resume_wasm3_e2e.cpp
     )
@@ -1782,6 +1783,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
             ahfl_runtime_wasm_host
             ahfl_runtime_engine
             ahfl_runtime_value
+            ahfl_compiler_backend_wasm
     )
     target_include_directories(ahfl_core_wasm_resume_wasm3_e2e
         PRIVATE

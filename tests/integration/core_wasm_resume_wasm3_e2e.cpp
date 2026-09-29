@@ -21,19 +21,32 @@
 //      from Run2Trapped).
 //
 // The bridge lane (i32)->(i32,i32) is covered by the unit tests
-// (ahfl_wasm_host_capability_import_tests): A2 admission's
-// spans_are_capability_tuple gate currently seals the opaque
-// (i32,i32)->(i32,i32,i32) functype only, so a bridge-functype module cannot
-// pass make_verified_core_wasm_schema_module. The engine's fresh_instance
-// admits both functypes; the A2 gate's bridge acceptance is a separate slice.
+// (ahfl_wasm_host_capability_import_tests) AND by the real bridge e2e below
+// (test_bridge_e2e): WH-3 made A2 admission accept the bridge functype
+// alongside the opaque tuple, so a real emitted bridge module
+// (v2c_single_arg_bridge) now passes make_verified_core_wasm_schema_module +
+// admit_core_wasm_frame_sections and is driven end-to-end through the
+// capability_import executor on the real wasm3 engine.
 
 #include "runtime/wasm_host/capability_import.hpp"
+#include "runtime/wasm_host/p6_frame_driver.hpp"
 #include "runtime/wasm_host/wasm3_engine.hpp"
+
+#include "runtime/engine/core_wasm_frame_module.hpp"
+#include "runtime/value/value_json.hpp"
+
+#include "ahfl/compiler/ir/core_ir.hpp"
+#include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/core_wire_schema.hpp"
+#include "compiler/backends/wasm/core_wasm_codegen.hpp"
+#include "common/project_input_support.hpp"
+#include "conformance/compile_source.hpp"
 
 #include "unit/runtime/wasm_host/wasm_host_test_support.hpp"
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <span>
@@ -133,6 +146,329 @@ struct E2eSession {
         }
     }
 };
+
+// ==== bridge lane e2e (real emitted bridge module) ====
+
+namespace fr = ahfl::runtime::core_wasm_frame_module;
+namespace irc = ahfl::ir::core;
+namespace conf = ahfl::conformance;
+
+void put_uleb(std::vector<std::uint8_t> &out, std::uint64_t value) {
+    do {
+        auto b = static_cast<std::uint8_t>(value & 0x7fU);
+        value >>= 7U;
+        if (value != 0) {
+            b |= 0x80U;
+        }
+        out.push_back(b);
+    } while (value != 0);
+}
+
+void put_section(std::vector<std::uint8_t> &out, std::uint8_t id,
+                 const std::vector<std::uint8_t> &payload) {
+    out.push_back(id);
+    put_uleb(out, payload.size());
+    out.insert(out.end(), payload.begin(), payload.end());
+}
+
+std::vector<std::uint8_t> custom_payload(const std::string &name,
+                                         const std::vector<std::uint8_t> &body) {
+    std::vector<std::uint8_t> p;
+    put_uleb(p, name.size());
+    p.insert(p.end(), name.begin(), name.end());
+    p.insert(p.end(), body.begin(), body.end());
+    return p;
+}
+
+// A synthetic canonical AHFLXM body for a Workflow with ONE cap node. The
+// agent-emitted bridge module carries no exec-manifest (the AHFLXM is a
+// workflow-section artifact), so the e2e injects a test-synthesized manifest
+// matching the module's REAL import + wire-schema capability to prove A2's
+// framing / table-decode / cross-check / eager-mint accept the genuine
+// Type/Import/AHFLWS bytes (the same evidence class as the schema_module
+// test's real-emitter + synthetic-manifest injection).
+std::vector<std::uint8_t> bridge_manifest_body(std::uint32_t capability,
+                                               std::uint64_t source_symbol) {
+    std::vector<std::uint8_t> b;
+    const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+    for (char c : magic) {
+        b.push_back(static_cast<std::uint8_t>(c));
+    }
+    b.push_back(1); // version
+    b.push_back(0); // entry.kind = Workflow
+    put_uleb(b, 0); // entry_id
+    put_uleb(b, 1); // one node
+    put_uleb(b, 0); // workflow_node_id
+    put_uleb(b, 0); // schedule_pos
+    b.push_back(1); // cap_call_count = 1
+    put_uleb(b, capability);
+    put_uleb(b, source_symbol);
+    return b;
+}
+
+// Inject a synthetic AHFLXM section immediately before the EOF AHFLWS section.
+std::optional<std::vector<std::uint8_t>>
+inject_manifest_before_schema(const std::vector<std::uint8_t> &module,
+                              const std::vector<std::uint8_t> &manifest_body) {
+    std::size_t off = 8;
+    std::size_t last_section_start = std::string::npos;
+    while (off < module.size()) {
+        last_section_start = off;
+        ++off; // id
+        std::uint64_t size = 0;
+        std::uint32_t shift = 0;
+        while (off < module.size()) {
+            const std::uint8_t b = module[off++];
+            size |= static_cast<std::uint64_t>(b & 0x7fU) << shift;
+            if ((b & 0x80U) == 0) {
+                break;
+            }
+            shift += 7;
+        }
+        off += static_cast<std::size_t>(size);
+    }
+    if (last_section_start == std::string::npos || off != module.size()) {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> out(module.begin(),
+                                  module.begin() + static_cast<std::ptrdiff_t>(last_section_start));
+    put_section(out, 0, custom_payload("ahfl.wasm-exec-manifest.v1", manifest_body));
+    out.insert(out.end(),
+               module.begin() + static_cast<std::ptrdiff_t>(last_section_start), module.end());
+    return out;
+}
+
+// Read the emitter's sole capability identity (cap id, source_symbol) out of
+// the genuine AHFLWS section at module EOF, via the C1 decoder.
+std::optional<std::pair<std::uint32_t, std::uint64_t>>
+real_sole_capability(const std::vector<std::uint8_t> &module) {
+    std::size_t off = 8;
+    std::span<const std::uint8_t> last_payload;
+    std::uint8_t last_id = 0xff;
+    while (off < module.size()) {
+        const std::uint8_t id = module[off++];
+        std::uint64_t size = 0;
+        std::uint32_t shift = 0;
+        while (off < module.size()) {
+            const std::uint8_t b = module[off++];
+            size |= static_cast<std::uint64_t>(b & 0x7fU) << shift;
+            if ((b & 0x80U) == 0) {
+                break;
+            }
+            shift += 7;
+        }
+        if (off + size > module.size()) {
+            return std::nullopt;
+        }
+        last_id = id;
+        last_payload = std::span<const std::uint8_t>(module.data() + off, size);
+        off += static_cast<std::size_t>(size);
+    }
+    if (last_id != 0) {
+        return std::nullopt;
+    }
+    std::size_t p = 0;
+    std::uint64_t name_len = 0;
+    std::uint32_t shift = 0;
+    while (p < last_payload.size()) {
+        const std::uint8_t b = last_payload[p++];
+        name_len |= static_cast<std::uint64_t>(b & 0x7fU) << shift;
+        if ((b & 0x80U) == 0) {
+            break;
+        }
+        shift += 7;
+    }
+    if (p + name_len > last_payload.size()) {
+        return std::nullopt;
+    }
+    const auto table_bytes = last_payload.subspan(p + name_len);
+    auto decoded = irc::decode_core_wire_schema_table(table_bytes);
+    if (!decoded.ok() || !decoded.table.has_value() ||
+        decoded.table->capabilities.size() != 1) {
+        return std::nullopt;
+    }
+    const auto &cap = decoded.table->capabilities.front();
+    return std::make_pair(cap.capability.value, cap.source_symbol);
+}
+
+struct EmittedBridgeFixture {
+    std::vector<std::uint8_t> module_bytes;
+    fr::AdmittedFrameSections admitted;
+    wh::P6FinalKind final_kind{wh::P6FinalKind::Identity};
+};
+
+// Emit the real v2c_single_arg_bridge agent in-process and admit its frame
+// sections. Returns nullopt on any pipeline failure.
+std::optional<EmittedBridgeFixture> emit_bridge_fixture() {
+    namespace fs = std::filesystem;
+    const fs::path repo = ahfl::test_support::repo_root_from_source_file(__FILE__);
+    const fs::path fixture = repo / "tests" / "golden" / "wasm" / "v2c_single_arg_bridge.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(fixture, error);
+    if (!program.has_value()) {
+        std::cerr << "  bridge compile failed: " << error << "\n";
+        return std::nullopt;
+    }
+    const auto core = irc::lower_ahfl_to_core(*program);
+    if (!core.ok()) {
+        std::cerr << "  bridge core lower failed\n";
+        return std::nullopt;
+    }
+    const auto layouts = irc::compute_core_layouts(core.program);
+    if (!layouts.ok() || !layouts.table.has_value()) {
+        std::cerr << "  bridge layout failed\n";
+        return std::nullopt;
+    }
+    const auto emitted = ahfl::backends::emit_core_wasm(
+        core.program, *layouts.table,
+        {irc::CoreAgentId{0}, ahfl::backends::WasmProfileKind::Wasi});
+    if (!emitted.ok() || !emitted.artifact.has_value() || !emitted.descriptor.has_value()) {
+        std::cerr << "  bridge emit failed\n";
+        return std::nullopt;
+    }
+    auto admitted = fr::admit_core_wasm_frame_sections(emitted.artifact->bytes);
+    if (!admitted.ok()) {
+        std::cerr << "  bridge frame admit failed\n";
+        return std::nullopt;
+    }
+    const wh::P6FinalKind final_kind =
+        (emitted.descriptor->frame.has_value() &&
+         emitted.descriptor->frame->final_kind == "computed")
+            ? wh::P6FinalKind::Computed
+            : wh::P6FinalKind::Identity;
+    return EmittedBridgeFixture{
+        .module_bytes = emitted.artifact->bytes,
+        .admitted = std::move(*admitted.sections),
+        .final_kind = final_kind,
+    };
+}
+
+// WH-3 bridge e2e: a real emitted bridge module (v2c_single_arg_bridge) is
+// A2-admitted (with a synthetic manifest matching its real import + schema),
+// frame-admitted, and driven end-to-end through the capability_import executor
+// on the real wasm3 engine. The OK case proves the bridge reply binds the
+// result_base (the executor packs the capability result at the call site's
+// disjoint placement and the module materializes it); the non-OK case proves a
+// bridge Error/Pending reaches the guest's unreachable -> Run2Trapped (the
+// bridge has no graceful ERROR/PENDING arm).
+void test_bridge_e2e() {
+    auto fixture = emit_bridge_fixture();
+    check(fixture.has_value(), "bridge e2e: emit + frame admit");
+    if (!fixture.has_value()) {
+        return;
+    }
+
+    // A2-admit with a synthetic manifest matching the real import + schema.
+    auto identity = real_sole_capability(fixture->module_bytes);
+    check(identity.has_value(), "bridge e2e: read sole capability from AHFLWS");
+    if (!identity.has_value()) {
+        return;
+    }
+    const auto manifest = bridge_manifest_body(identity->first, identity->second);
+    auto injected = inject_manifest_before_schema(fixture->module_bytes, manifest);
+    check(injected.has_value(), "bridge e2e: manifest injected");
+    if (!injected.has_value()) {
+        return;
+    }
+    auto admitted = csm::make_verified_core_wasm_schema_module(
+        std::span<const std::uint8_t>(*injected));
+    check(admitted.ok(), "bridge e2e: A2 admission accepts bridge functype");
+    if (!admitted.ok() || !admitted.module.has_value()) {
+        return;
+    }
+    check(admitted.module->call_site_count() == 1, "bridge e2e: one call site");
+
+    const auto source_symbol = identity->second;
+    auto name_resolver = [source_symbol](std::uint64_t sym) -> std::optional<std::string> {
+        if (sym == source_symbol) {
+            return std::string{"RouteTicket"};
+        }
+        return std::nullopt;
+    };
+
+    // --- OK case: the mock returns Success + RoutingDecision{owner:"alice"};
+    //     the executor packs it at the result placement and the module
+    //     materializes the owner through the computed final.
+    {
+        wh::Wasm3ResumeEngine engine;
+        wh::CapabilityImportState state;
+        ScriptedInvoker mock;
+        mock.result.status = runtime::CapabilityCallStatus::Success;
+        auto result_value = runtime::value_from_json(R"({"owner":"alice"})");
+        check(result_value.has_value(), "bridge e2e ok: result value built");
+        if (!result_value.has_value()) {
+            return;
+        }
+        mock.result.value = std::move(*result_value);
+        auto invoker = mock.as_invoker();
+        runtime::CapabilityInvocationContext context;
+        wh::CapabilityImportConfig config{
+            .engine = engine,
+            .module = *admitted.module,
+            .frame_section = fixture->admitted.layout,
+            .invoker = invoker,
+            .context = context,
+            .name_resolver = name_resolver,
+            .state = state,
+        };
+        auto callback = wh::make_capability_import_callback(std::move(config));
+
+        auto input = runtime::value_from_json(R"({"ticket_id":"T-123"})");
+        check(input.has_value(), "bridge e2e ok: input value built");
+        if (!input.has_value()) {
+            return;
+        }
+        auto output = wh::execute_p6_frame(
+            engine, fixture->module_bytes, fixture->admitted.layout,
+            fixture->admitted.input_binding, fixture->admitted.output_binding, *input,
+            fixture->final_kind, std::move(callback));
+        check(output.has_value(), "bridge e2e ok: execute_p6_frame succeeded");
+        if (output.has_value()) {
+            check(output->find("\"owner\":\"alice\"") != std::string::npos,
+                  "bridge e2e ok: output carries mock owner 'alice'");
+        }
+        check(mock.call_count == 1, "bridge e2e ok: invoker called once");
+    }
+
+    // --- non-OK case: the mock returns Error; the bridge has no graceful
+    //     ERROR/PENDING arm, so the guest traps -> Run2Trapped.
+    {
+        wh::Wasm3ResumeEngine engine;
+        wh::CapabilityImportState state;
+        ScriptedInvoker mock;
+        mock.result.status = runtime::CapabilityCallStatus::Error;
+        auto invoker = mock.as_invoker();
+        runtime::CapabilityInvocationContext context;
+        wh::CapabilityImportConfig config{
+            .engine = engine,
+            .module = *admitted.module,
+            .frame_section = fixture->admitted.layout,
+            .invoker = invoker,
+            .context = context,
+            .name_resolver = name_resolver,
+            .state = state,
+        };
+        auto callback = wh::make_capability_import_callback(std::move(config));
+
+        auto input = runtime::value_from_json(R"({"ticket_id":"T-123"})");
+        check(input.has_value(), "bridge e2e err: input value built");
+        if (!input.has_value()) {
+            return;
+        }
+        auto output = wh::execute_p6_frame(
+            engine, fixture->module_bytes, fixture->admitted.layout,
+            fixture->admitted.input_binding, fixture->admitted.output_binding, *input,
+            fixture->final_kind, std::move(callback));
+        check(!output.has_value(), "bridge e2e err: execute_p6_frame failed");
+        if (!output.has_value()) {
+            const bool trapped =
+                std::holds_alternative<wh::RunvError>(output.error()) &&
+                std::get<wh::RunvError>(output.error()).kind == wh::RunvError::Kind::Trapped;
+            check(trapped, "bridge e2e err: Run2Trapped (no graceful arm)");
+        }
+        check(mock.call_count == 1, "bridge e2e err: invoker called once");
+    }
+}
 
 // ==== opaque lane e2e tests ====
 
@@ -322,6 +658,7 @@ void test_import_abort_e2e() {
 } // anonymous namespace
 
 int main() {
+    test_bridge_e2e();
     test_opaque_e2e_ok();
     test_opaque_e2e_error();
     test_opaque_e2e_pending();
