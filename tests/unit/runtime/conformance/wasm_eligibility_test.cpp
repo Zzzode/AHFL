@@ -291,6 +291,17 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"fb3_byvalue_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_nested_activation.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"fb3_nested_lambda_flow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // KR6.7 corpus widening (FB-5) slice E: the FB-4 effect-classification
+        // pure fn case (node-only KR6.8 surface) and the least-privilege
+        // capability-free agent compiled from a two-agent module (zero imports).
+        {"fb4_cross_agent_capability_leak.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         ""},
+        {"fb4_effect_clause_pure_body.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         ""},
         // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly as P6-7 p6-frame modules: they carry the core-layout +
         // boundary wire-schema sections and export runv, so their canonical

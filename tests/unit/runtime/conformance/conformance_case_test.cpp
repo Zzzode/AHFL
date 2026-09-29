@@ -552,6 +552,22 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
             WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
         },
+        // KR6.7 corpus widening (FB-5) slice E.
+        {
+            "fb4_cross_agent_capability_leak.case.json",
+            "tests/golden/wasm/fb4_cross_agent_capability_leak.ahfl",
+            CaseKind::Agent,
+            "wasm::fb4_cross_agent_capability_leak::PureAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "fb4_effect_clause_pure_body.case.json",
+            "tests/golden/wasm/fb4_effect_clause_pure_body.ahfl",
+            CaseKind::Agent,
+            "wasm::fb4_effect_clause_pure_body::DeclEffectAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";

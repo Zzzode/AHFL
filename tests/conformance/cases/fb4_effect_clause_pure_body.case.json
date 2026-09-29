@@ -1,0 +1,27 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/fb4_effect_clause_pure_body.ahfl",
+  "kind": "agent",
+  "entry": "wasm::fb4_effect_clause_pure_body::DeclEffectAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::fb4_effect_clause_pure_body::Frame","n":41},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Init", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::fb4_effect_clause_pure_body::Frame","n":41}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": false,
+    "wasm": {
+      "eligible": "orchestration",
+      "node_observation_skip": "evaluator_surface_awaits_kr68",
+      "reason": "RFC 0026 FB-4 fix-forward: an fn whose effect clause is an upper bound has a PURE body, so the call is a pure CoreCallExpr returning n+1; the in-process evaluator does not yet execute user-defined pure fn calls, so the Node embedded-engine observation is authoritative until KR6.8."
+    }
+  }
+}

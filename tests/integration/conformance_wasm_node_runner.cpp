@@ -136,7 +136,15 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // physically read the fixed P4-D input frame and only the bespoke
 // hand-packing hosts can drive them; the generic descriptor-driven host has
 // no frame_lane to pack from.
-constexpr int kExpectedAgreed = 64;
+// FB-5 slice E: fb4_effect_clause_pure_body adds one node-only pure-fn
+// scenario and fb4_cross_agent_capability_leak adds one full differential
+// scenario (the capability-free PureAgent compiled from a two-agent module,
+// proving zero imports): 64/0 -> 66/0. fb4_construct_only_closure (dormant
+// declared import trips the host ABI normalization matrix) and
+// fb4_effectful_fn (an in-fn capability call sends a constructed frame over
+// the opaque lane, which only accepts the borrowed input bytes) stay on
+// bespoke hosts.
+constexpr int kExpectedAgreed = 66;
 constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
@@ -147,13 +155,14 @@ constexpr int kExpectedSkipped = 0;
 // catches that. The pin moves deliberately when the KR6.8 evaluator surface
 // retires or a reviewed node-only case lands. Keep sorted; the runner compares
 // the sorted observed set against it.
-constexpr std::array<std::string_view, 6> kExpectedNodeOnlyStems{
+constexpr std::array<std::string_view, 7> kExpectedNodeOnlyStems{
     "fb1_aggregate_direct_call",
     "fb1_direct_call",
     "fb3_byvalue_capture",
     "fb3_higher_order",
     "fb3_nested_activation",
     "fb3_nested_lambda_flow",
+    "fb4_effect_clause_pure_body",
 };
 
 int g_failures = 0;

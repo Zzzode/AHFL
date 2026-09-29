@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/fb4_cross_agent_capability_leak.ahfl",
+  "kind": "agent",
+  "entry": "wasm::fb4_cross_agent_capability_leak::PureAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::fb4_cross_agent_capability_leak::Frame","n":7},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Init", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::fb4_cross_agent_capability_leak::Frame","n":7}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "FB-4 least-privilege: the capability-free PureAgent compiled from a two-agent module must emit zero ahfl_cap imports; an identity agent on the orchestration lane"
+    }
+  }
+}
