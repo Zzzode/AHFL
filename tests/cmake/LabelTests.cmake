@@ -619,6 +619,14 @@ if(AHFL_ENABLE_BACKEND_WASM)
         TESTS
             ahfl.backends.wasm_all
     )
+
+    # RFC 0026 KR6.8 WH-1: the wasm3 embedded execution host (peer of
+    # runtime/engine). Gated with the wasm3 archive it drives.
+    ahfl_label_tests(
+        LABELS wasm-host
+        TESTS
+            ahfl.runtime.wasm_host_engine
+    )
 endif()
 
 if(AHFL_ENABLE_BACKEND_INFRA)

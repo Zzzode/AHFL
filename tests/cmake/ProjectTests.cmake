@@ -1093,6 +1093,16 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm;runtime"
     )
 
+    # RFC 0026 KR6.8 WH-1: the wasm3-backed CoreWasmResumeEngine port unit
+    # tests. Labelled `wasm-host` (the new peer-tier engine) plus `wasm` so
+    # `ctest -L wasm` covers it alongside the emitter gates and the WH-0 smoke.
+    add_test(NAME ahfl.runtime.wasm_host_engine
+        COMMAND $<TARGET_FILE:ahfl_wasm_host_engine_tests>
+    )
+    set_tests_properties(ahfl.runtime.wasm_host_engine PROPERTIES
+        LABELS "wasm-host;wasm;runtime"
+    )
+
     add_test(NAME ahfl.runtime.core_wasm_schema_module
         COMMAND $<TARGET_FILE:ahfl_core_wasm_schema_module_tests>
     )

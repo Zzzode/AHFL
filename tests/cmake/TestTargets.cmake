@@ -1605,6 +1605,26 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
     ahfl_apply_project_warnings(ahfl_wasm3_smoke_tests)
 
+    # RFC 0026 KR6.8 WH-1: the wasm3-backed CoreWasmResumeEngine port unit
+    # tests. Links the engine under test + the runtime engine (A2 admission +
+    # the shared resume_test_support fixture builders). src/ reaches the test
+    # through the engine target's BUILD_INTERFACE; tests/ is added for the
+    # unit/ fixture includes. Gated with the wasm3 archive it drives.
+    add_executable(ahfl_wasm_host_engine_tests
+        unit/runtime/wasm_host/wasm3_engine.cpp
+    )
+    target_link_libraries(ahfl_wasm_host_engine_tests
+        PRIVATE
+            ahfl_runtime_wasm_host
+            ahfl_runtime_engine
+    )
+    target_include_directories(ahfl_wasm_host_engine_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_wasm_host_engine_tests)
+
     add_executable(ahfl_core_wasm_codegen_tests
         unit/compiler/backends/core_wasm_codegen.cpp
     )
