@@ -508,6 +508,50 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
             WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
         },
+        // KR6.7 corpus widening (FB-5): more node-only user pure-fn / closure
+        // cases from the FB-1 direct-call and FB-3b closure ladders. The Node
+        // embedded-engine observation is blessed directly; each module emits on
+        // the orchestration lane while the evaluator surface awaits KR6.8.
+        {
+            "fb1_direct_call.case.json",
+            "tests/golden/wasm/fb1_direct_call.ahfl",
+            CaseKind::Agent,
+            "wasm::fb1_direct_call::DirectCallAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+        },
+        {
+            "fb1_aggregate_direct_call.case.json",
+            "tests/golden/wasm/fb1_aggregate_direct_call.ahfl",
+            CaseKind::Agent,
+            "wasm::fb1_aggregate_direct_call::Fb1AggregateAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+        },
+        {
+            "fb3_byvalue_capture.case.json",
+            "tests/golden/wasm/fb3_byvalue_capture.ahfl",
+            CaseKind::Agent,
+            "wasm::fb3_byvalue_capture::ByValueCaptureAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+        },
+        {
+            "fb3_nested_activation.case.json",
+            "tests/golden/wasm/fb3_nested_activation.ahfl",
+            CaseKind::Agent,
+            "wasm::fb3_nested_activation::NestedActivationAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+        },
+        {
+            "fb3_nested_lambda_flow.case.json",
+            "tests/golden/wasm/fb3_nested_lambda_flow.ahfl",
+            CaseKind::Agent,
+            "wasm::fb3_nested_lambda_flow::NestedLambdaFlowAgent",
+            0, 1, WasmEligibility::Orchestration, /*evaluator=*/false,
+            WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";

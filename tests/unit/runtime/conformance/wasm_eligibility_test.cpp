@@ -281,6 +281,16 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          WasmEligibilityVerdict::RunnableOrchestration,
          "",
          ""},
+        // KR6.7 corpus widening (FB-5): node-only FB-1/FB-3 cases whose user
+        // pure-fn / first-class-closure surface the in-process evaluator does
+        // not execute yet. The modules emit cleanly on the orchestration lane
+        // (WireJson identity finals) and the Node observation is blessed
+        // directly; the manifest pins evaluator_surface_awaits_kr68.
+        {"fb1_aggregate_direct_call.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"fb1_direct_call.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"fb3_byvalue_capture.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"fb3_nested_activation.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"fb3_nested_lambda_flow.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly as P6-7 p6-frame modules: they carry the core-layout +
         // boundary wire-schema sections and export runv, so their canonical

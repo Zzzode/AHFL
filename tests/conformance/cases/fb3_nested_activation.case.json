@@ -1,0 +1,27 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/fb3_nested_activation.ahfl",
+  "kind": "agent",
+  "entry": "wasm::fb3_nested_activation::NestedActivationAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::fb3_nested_activation::Frame","value":0},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Init", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::fb3_nested_activation::Frame","value":0}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": false,
+    "wasm": {
+      "eligible": "orchestration",
+      "node_observation_skip": "evaluator_surface_awaits_kr68",
+      "reason": "RFC 0026 FB-3b: a recursive fn constructs a fresh capturing closure per activation whose env is runtime-bumped (never static scratch); the activation tree sums 4+3+2+1=10, driving the computed goto to Done. Emits on the orchestration lane; the in-process evaluator does not yet execute user-defined pure fn calls / first-class closures, so the Node embedded-engine observation is authoritative until KR6.8."
+    }
+  }
+}

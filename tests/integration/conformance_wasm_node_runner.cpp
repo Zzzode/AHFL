@@ -126,7 +126,17 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // resume) add eight differential scenarios: 51/0 -> 59/0. v2b_enum_string is
 // excluded: the evaluator misroutes its String tuple-variant enum construction
 // through the capability invoker while the wasm run is correct.
-constexpr int kExpectedAgreed = 59;
+// FB-5 slice D: five node-only FB-1/FB-3 cases (fb1_direct_call,
+// fb1_aggregate_direct_call, fb3_byvalue_capture, fb3_nested_activation,
+// fb3_nested_lambda_flow) land on the evaluator_surface_awaits_kr68 lane:
+// the modules emit and the Node observations are blessed directly, adding
+// five compared scenarios without an evaluator reference: 59/0 -> 64/0.
+// The two bounded-list recursion fixtures (fb2_bounded_recursion,
+// fb3_bounded_collection) stay out: their wire_json-classified modules
+// physically read the fixed P4-D input frame and only the bespoke
+// hand-packing hosts can drive them; the generic descriptor-driven host has
+// no frame_lane to pack from.
+constexpr int kExpectedAgreed = 64;
 constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare
@@ -137,8 +147,13 @@ constexpr int kExpectedSkipped = 0;
 // catches that. The pin moves deliberately when the KR6.8 evaluator surface
 // retires or a reviewed node-only case lands. Keep sorted; the runner compares
 // the sorted observed set against it.
-constexpr std::array<std::string_view, 1> kExpectedNodeOnlyStems{
+constexpr std::array<std::string_view, 6> kExpectedNodeOnlyStems{
+    "fb1_aggregate_direct_call",
+    "fb1_direct_call",
+    "fb3_byvalue_capture",
     "fb3_higher_order",
+    "fb3_nested_activation",
+    "fb3_nested_lambda_flow",
 };
 
 int g_failures = 0;
