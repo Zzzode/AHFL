@@ -336,6 +336,22 @@ WH-1 无生产调用方。**决策**:`ahfl_runtime_wasm_host` 静态库**不**�
 
 实现未发现 `core_wasm_resume_engine.hpp` 端口缺陷。Fake 与 Node 端口无需同改。**端口头零改动。**
 
+## 11. WH-2 实现决策记录(2026-09-30,BUILDER 代理,无人类 owner 门)
+
+WH-2 落地帧 packer/reader + 薄宿主驱动 + schema_transport bridge functype 准入硬化。实现过程中的设计岔路,按 senior Rust/Clang 工程师方式决策并记录如下。
+
+### 11.1 P6-frame 车道的引擎组合:具体引擎加法式扩展,端口头零改动
+
+P6-frame 模块的入口是 `runv() -> (status:i32, value_ptr:i32)`,不是 `run2`。`CoreWasmResumeEngine` 端口只暴露 `run2`/`alloc_then_write`/`read_whole_memory`,且 `read_whole_memory` 返回 const span——packer 必须把输入帧写入**固定地址**(input 1024、backing 16384+、arena),这两个能力端口都不提供。**决策**:在**具体** `Wasm3ResumeEngine` 上加法式新增两个方法——`mutable_whole_memory()`(read_whole_memory 的可变对应物,供 packer 直接写入存活实例内存,与 JS oracle 写 `e.memory.buffer` 同构)和 `invoke_runv()`(惰性 m3_FindFunction + 校验 `() -> (i32,i32)` + 调用 + trap 映射 + 固定单页不变量复查)。端口头 `core_wasm_resume_engine.hpp` **零改动**;WH-1 既有方法语义**零变更**(纯加法)。拒绝另起并行 wasm3 驱动(Principle 1:并行实现)。`invoke_runv` 与 `invoke_run2` 共享 `run_started` 一次性闸门:一个会话只走一条车道(run2 或 runv),第二次调用为 InvalidSequence。
+
+### 11.2 final_kind 来源:codegen C++ 描述符,非常量推断
+
+runv 根授权需要 final_kind(identity → value_ptr 必须 == input_base 1024;computed → == output_base 12288)。准入的 `CoreFrameLayoutSection` **不携带** final_kind;input_layout == output_layout 也不能推断——`v2b_string_passthrough` 输入输出同名(Frame)但 final 是 computed(物化到 12288)。**决策**:final_kind 取自 codegen 的 C++ `CoreWasmExecutionDescriptor.frame->final_kind`(与模块同一次 `emit_core_wasm` 产出,是受信的我方编译器输出,非攻击者可控),**不**从常量推断,**不**从 JSON 描述符读取(那是 oracle/测试产物)。reader 只把 final_kind 用于在两个 ABI SSOT 常量基之间二选一;基本身来自 `core_wasm_abi_constants.hpp`。1024 与 node-event 区共享基的歧义(p6 agent 帧 vs capability-workflow 事件区)由 frame_contract(P6Frame vs WireJson)在驱动层消解:WH-2 只对 P6Frame 模块调用 `execute_p6_frame`,此上下文 1024 无歧义地是输入帧基。
+
+### 11.3 schema_transport bridge functype 白名单:两种 ABI functype 皆合法,模式对拍在帧段准入
+
+`CoreWireCapabilitySchema` 不携带 mode(opaque/bridge),schema_transport 看不到帧段的 `bridge_call_sites`。**决策**:schema_transport 把导入 functype 白名单扩展为两种 AHFL ABI functype——opaque `(i32,i32)->(i32,i32,i32)` 与 bridge `(i32)->(i32,i32)`;任一导入的 functype 不在白名单即拒绝(typed fixed diagnostic)。这是传输检查器在无 mode 信号下能施的最强检查:bridge 导入用错 functype(如 `(i32)->(i32)` 或 `(i32,i32)->(i32,i32)`)被拒,用对被接受。"哪个导入是 bridge"的模式对拍属于帧段准入(`verify_frame_bridge_sites`,它能看到 `bridge_call_sites`),不在 schema_transport 重复。A2(`core_wasm_schema_module.cpp`)的相同 opaque-only 检查不在本片改动(bridge 工作流模块走帧段准入,不走 A2;任务明确只点名 schema_transport)。
+
 ---
 
 ### Load-bearing file references (all absolute)
