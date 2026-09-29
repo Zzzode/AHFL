@@ -231,8 +231,13 @@ run_workflow(const Program &program,
             const std::string &name,
             const std::vector<Value> &args) -> CapabilityCallResult {
             capabilities.emplace_back(name);
+            // A non-wire argument (a closure) is recorded with a sentinel rather
+            // than as empty bytes: no lane can legitimately produce it, so the
+            // observation comparator fails loudly instead of comparing two
+            // malformed/empty frames.
             argument_envelopes.push_back(
-                ahfl::runtime::serialize_args_for_wire_json(args));
+                ahfl::runtime::serialize_args_for_wire_json(args)
+                    .value_or("__non_wire_argument__"));
             return base_invoker(name, args);
         };
     config.monotonic_clock = fixed_clock;
@@ -284,7 +289,8 @@ run_agent(const Program &program,
             const std::vector<Value> &args) -> CapabilityCallResult {
         capabilities.push_back(name);
         argument_envelopes.push_back(
-            ahfl::runtime::serialize_args_for_wire_json(args));
+            ahfl::runtime::serialize_args_for_wire_json(args)
+                .value_or("__non_wire_argument__"));
         return registry.invoke(name, args);
     };
 

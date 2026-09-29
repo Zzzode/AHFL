@@ -88,12 +88,12 @@
   PtrLen 家族。
 * **Decimal/Duration 的边界渲染规则 v1 已定死**:物理字只有 mantissa/ms,
   spell 由宿主在 encode 时用 `scalar_spelling::spell_builtin_decimal`
-  (`s<scale>:<mantissa>`,`src/runtime/evaluator/scalar_spelling.cpp:86-92`)
+  (`s<scale>:<mantissa>`,`src/runtime/value/scalar_spelling.cpp:86-92`)
   与裸毫秒 `std::to_string(i64)`(`scalar_spelling.hpp:77-90`,
   `builtins.cpp:946-958` duration_between 直接 `to_string`)生成;
   `value_to_json` 对 Decimal/Duration 逐字输出 `inner.spelling`
-  (`src/runtime/evaluator/value_json.cpp:76-79`)。evaluator Value 不存
-  mantissa,只存拼写串(`src/runtime/evaluator/value.hpp:47-53`)。
+  (`src/runtime/value/value_json.cpp:76-79`)。evaluator Value 不存
+  mantissa,只存拼写串(`src/runtime/value/value.hpp:47-53`)。
 * **模块今天没有 Data section**:段 id 常量表缺 11 号
   (`core_wasm_codegen.cpp:127-143`),1024 以下地址全部未使用;custom sections
   位于 Code 之后、EOF 之前(`:8974-9007`)。

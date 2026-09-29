@@ -91,13 +91,6 @@ parse_grpc_message_from_headers(const std::vector<std::pair<std::string, std::st
 [[nodiscard]] GrpcJsonTranscodingResponse
 execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request);
 
-/// Serialize a Value to the JSON-transcoding wire format.
-[[nodiscard]] std::string serialize_value_for_grpc_json_transcoding(const runtime::Value &value);
-
-/// Serialize a vector of Values to the JSON-transcoding wire format.
-[[nodiscard]] std::string
-serialize_args_for_grpc_json_transcoding(const std::vector<runtime::Value> &args);
-
 /// Build the curl command string for a JSON-transcoding request (exposed for testing).
 [[nodiscard]] std::string
 build_grpc_json_transcoding_curl_command(const GrpcJsonTranscodingRequest &request);

@@ -156,7 +156,7 @@ flowchart TD
 artifact 确定性边界）：
 
 - **类型映射**：`Bool` → SMT `Bool`；`Int` → SMT `Int`（数学整数）。运行时 `Int` 是
-  `int64_t`（`src/runtime/evaluator/value.hpp:34`，`+`/`-`/`*` 环绕、无检查），但 contract
+  `int64_t`（`src/runtime/value/value.hpp:34`，`+`/`-`/`*` 环绕、无检查），但 contract
   验证关心的是逻辑正确性,故默认编码为**数学整数**（可判定、更快）；溢出检查作为
   **可选**附加断言（在每个算术节点旁发射 `INT64_MIN ≤ result ≤ INT64_MAX`），仅在用户
   显式请求时开启,不默认拖慢求解。spec 的有界子类型 `Int(lo,hi)`

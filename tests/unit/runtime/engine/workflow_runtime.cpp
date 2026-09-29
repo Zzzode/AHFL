@@ -2810,7 +2810,7 @@ void test_resume_fails_closed_on_nested_null_struct() {
                 .cap_id = cap_id,
                 // Must equal the real coordinate hash for probe()'s empty arg list,
                 // or the coordinate gate would fire FIRST and mask the value gate.
-                .arg_hash = runtime::hash_values(std::vector<Value>{}),
+                .arg_hash = runtime::hash_values(std::vector<Value>{}).value_or(0),
                 .result = make_hostile_struct(),
                 .source = PersistedMemoResultSource::NativeOnly,
                 .authoritative_json = std::nullopt,
@@ -2918,7 +2918,7 @@ void test_resume_fails_closed_on_nested_null_struct() {
             record.memo.push_back(CapabilityMemoEntry{
                 .ordinal = 0,
                 .cap_id = cap_id,
-                .arg_hash = runtime::hash_values(std::vector<Value>{}),
+                .arg_hash = runtime::hash_values(std::vector<Value>{}).value_or(0),
                 .result = make_none(), // non-authoritative placeholder
                 .source = PersistedMemoResultSource::ExactSidecar,
                 .authoritative_json = wire,
@@ -3459,7 +3459,7 @@ legacy_memo_resume(const std::string &workflow_name, std::size_t probe0_id, Type
                << hold_id << R"(,"pending_ordinal":1,"node_input":null,"memo":[{"ordinal":0,)"
                   R"("cap_id":)"
                << probe0_id << R"(,"arg_hash":")"
-               << runtime::hash_values(std::vector<Value>{}) << R"(","result":)" << legacy_result
+               << runtime::hash_values(std::vector<Value>{}).value_or(0) << R"(","result":)" << legacy_result
                << "}]}}";
     }
     WorkflowRecoveryStore store(store_path);
@@ -3810,7 +3810,7 @@ void test_resume_consume_rejects_illformed_trust_state() {
         // Keep the real coordinate (ordinal 0, cap_id kProbe0Id, arg_hash of empty
         // args) so the coordinate + identity gates pass and the trust-state gate is
         // what fires.
-        entry.arg_hash = runtime::hash_values(std::vector<Value>{});
+        entry.arg_hash = runtime::hash_values(std::vector<Value>{}).value_or(0);
         mutate(entry);
 
         auto resume_program = make_two_call_memo_program(wf, kProbe0Id, int_type(), kHoldId);
@@ -3932,7 +3932,7 @@ void test_resume_p0_19_valueless_none_rejected_under_non_unit_binding() {
     }
     {
         auto &e = s1.suspended->suspended->memo[0];
-        e.arg_hash = runtime::hash_values(std::vector<Value>{});
+        e.arg_hash = runtime::hash_values(std::vector<Value>{}).value_or(0);
         e.source = PersistedMemoResultSource::NativeOnly;
         e.result = make_none(); // bare NoneValue (the deliberate true+None compat case)
         e.authoritative_json = std::nullopt;

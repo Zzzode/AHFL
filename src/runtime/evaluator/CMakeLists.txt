@@ -9,12 +9,16 @@ add_library(ahfl_runtime_evaluator STATIC
 
 # The tree-walking evaluator (RFC 0026 P8 retirement target) consumes the host
 # wire-value layer, which is a peer target now that the survivors live in
-# src/runtime/value/. ahfl_base_json is no longer needed here: the JSON edges
-# (value_json / scalar_spelling) moved with the survivor target.
+# src/runtime/value/. ahfl_base_json reaches it transitively and PUBLICly
+# through ahfl_runtime_value. ahfl_base_support is a PRIVATE edge of that
+# target (its include dir is build-tree-only), and several evaluator TUs
+# include base/support headers directly, so it is linked PRIVATE here as well.
 target_link_libraries(ahfl_runtime_evaluator
     PUBLIC
         ahfl_runtime_value
         ahfl_compiler_ir
+    PRIVATE
+        ahfl_base_support
 )
 
 target_include_directories(ahfl_runtime_evaluator PRIVATE ${PROJECT_SOURCE_DIR}/src)

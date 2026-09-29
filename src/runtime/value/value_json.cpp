@@ -3,11 +3,11 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -35,32 +35,36 @@ void write_int64(std::ostream &out, std::int64_t value) {
     out.write(buf, static_cast<std::streamsize>(ptr - buf));
 }
 
-void write_json_impl(const Value &v, std::ostream &out) {
-    if (const auto *items = list_items(v)) {
-        out << '[';
-        for (std::size_t i = 0; i < items->size(); ++i) {
-            if (i > 0)
-                out << ',';
-            if ((*items)[i]) {
-                write_json_impl(*(*items)[i], out);
-            } else {
-                out << "null";
-            }
-        }
-        out << ']';
-        return;
-    }
+template <class T> constexpr bool always_false_v = false;
+
+// Observation-only spelling of the interpreter-only closure kind. It is valid
+// JSON (so DAP panels, traces and tool output never contain malformed bytes),
+// but it is NOT a wire encoding: nothing decodes it and the strict serializer
+// (`try_value_to_json`) rejects the closure arm instead. The bytes match the
+// pre-WH-S placeholder so existing observations stay stable.
+constexpr std::string_view kOpaqueClosureJson = R"({"_callable":"runtime"})";
+
+// Strict=true is the trust-boundary encoder: a closure anywhere in the value
+// tree makes the whole value non-encodable and the function returns false
+// WITHOUT producing a frame (callers serialize into a scratch stream and
+// discard on false — never splice partial bytes onto the wire). Strict=false
+// is the observation encoder and renders the opaque placeholder.
+template <bool Strict>
+[[nodiscard]] bool write_json_impl(const Value &v, std::ostream &out) {
+    // Option is a semantic view over EnumValue, not a variant arm, so its
+    // projection is unwrapped before the visit. Every ValueNode alternative
+    // has an explicit arm (or the compile-time trap) in the visitor below.
     if (is_optional(v)) {
         if (const auto *inner = optional_inner(v)) {
-            write_json_impl(*inner, out);
-        } else {
-            out << "null";
+            return write_json_impl<Strict>(*inner, out);
         }
-        return;
+        out << "null";
+        return true;
     }
 
+    bool rejected = false;
     std::visit(
-        [&out](const auto &inner) {
+        [&](const auto &inner) {
             using T = std::decay_t<decltype(inner)>;
             if constexpr (std::is_same_v<T, NoneValue>) {
                 out << "null";
@@ -76,6 +80,21 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 ahfl::write_escaped_json_string(out, inner.spelling);
             } else if constexpr (std::is_same_v<T, DurationValue>) {
                 ahfl::write_escaped_json_string(out, inner.spelling);
+            } else if constexpr (std::is_same_v<T, ListValue>) {
+                out << '[';
+                for (std::size_t i = 0; i < inner.items.size(); ++i) {
+                    if (i > 0)
+                        out << ',';
+                    if (inner.items[i]) {
+                        if (!write_json_impl<Strict>(*inner.items[i], out)) {
+                            rejected = true;
+                            return;
+                        }
+                    } else {
+                        out << "null";
+                    }
+                }
+                out << ']';
             } else if constexpr (std::is_same_v<T, StructValue>) {
                 out << '{';
                 ahfl::write_escaped_json_string(out, "_type");
@@ -86,7 +105,10 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     ahfl::write_escaped_json_string(out, name);
                     out << ':';
                     if (val) {
-                        write_json_impl(*val, out);
+                        if (!write_json_impl<Strict>(*val, out)) {
+                            rejected = true;
+                            return;
+                        }
                     } else {
                         out << "null";
                     }
@@ -110,7 +132,10 @@ void write_json_impl(const Value &v, std::ostream &out) {
                         if (i > 0)
                             out << ',';
                         if (inner.payload[i]) {
-                            write_json_impl(*inner.payload[i], out);
+                            if (!write_json_impl<Strict>(*inner.payload[i], out)) {
+                                rejected = true;
+                                return;
+                            }
                         } else {
                             out << "null";
                         }
@@ -133,7 +158,10 @@ void write_json_impl(const Value &v, std::ostream &out) {
                         ahfl::write_escaped_json_string(out, name);
                         out << ':';
                         if (value) {
-                            write_json_impl(*value, out);
+                            if (!write_json_impl<Strict>(*value, out)) {
+                                rejected = true;
+                                return;
+                            }
                         } else {
                             out << "null";
                         }
@@ -141,6 +169,13 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     out << '}';
                 }
                 out << '}';
+            } else if constexpr (std::is_same_v<T, InterpreterClosureHandle>) {
+                // Closures are interpreter state, never wire values.
+                if constexpr (Strict) {
+                    rejected = true;
+                    return;
+                }
+                out << kOpaqueClosureJson;
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 // Serialize Set as a JSON array; canonical ordering is already
                 // baked into the storage, so equal sets serialize identically.
@@ -149,7 +184,10 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     if (i > 0)
                         out << ',';
                     if (inner.items[i]) {
-                        write_json_impl(*inner.items[i], out);
+                        if (!write_json_impl<Strict>(*inner.items[i], out)) {
+                            rejected = true;
+                            return;
+                        }
                     } else {
                         out << "null";
                     }
@@ -164,14 +202,20 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     // their canonical spelling for round-tripping.
                     if (inner.entries[i].first) {
                         std::ostringstream key_oss;
-                        write_json_impl(*inner.entries[i].first, key_oss);
+                        if (!write_json_impl<Strict>(*inner.entries[i].first, key_oss)) {
+                            rejected = true;
+                            return;
+                        }
                         out << key_oss.str();
                     } else {
                         out << "null";
                     }
                     out << ':';
                     if (inner.entries[i].second) {
-                        write_json_impl(*inner.entries[i].second, out);
+                        if (!write_json_impl<Strict>(*inner.entries[i].second, out)) {
+                            rejected = true;
+                            return;
+                        }
                     } else {
                         out << "null";
                     }
@@ -195,27 +239,47 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 // round-trip asymmetry (null deserializes to NoneValue) is
                 // pinned by the value_json unit test.
                 out << "null";
+            } else {
+                // A new ValueNode alternative without a wire arm must fail the
+                // build rather than silently serialize as nothing (the WH-S
+                // review P0-1 regression shape).
+                static_assert(always_false_v<T>,
+                              "write_json_impl is non-exhaustive: give the new Value kind "
+                              "an explicit wire encoding or reject it here");
             }
         },
         v.node);
+    return !rejected;
 }
 
 } // namespace
 
 void write_value_json(const Value &v, std::ostream &out) {
-    write_json_impl(v, out);
+    // Observation mode cannot reject any kind, so the bool is always true.
+    (void)write_json_impl<false>(v, out);
 }
 
 std::string value_to_json(const Value &v) {
     std::ostringstream oss;
-    write_json_impl(v, oss);
+    (void)write_json_impl<false>(v, oss);
     return oss.str();
 }
 
-std::uint64_t hash_values(const std::vector<Value> &values) {
+std::optional<std::string> try_value_to_json(const Value &v) {
+    std::ostringstream oss;
+    if (!write_json_impl<true>(v, oss)) {
+        return std::nullopt;
+    }
+    return oss.str();
+}
+
+std::optional<std::uint64_t> hash_values(const std::vector<Value> &values) {
     // FNV-1a (64-bit). Deterministic across runs: no pointer identity, no
     // allocator order — we hash the canonical JSON bytes of each argument.
-    constexpr std::uint64_t kOffsetBasis = 1469598103934665603ULL;
+    // Strict encoding: a closure (even nested inside a composite) is not wire
+    // state, so hashing fails closed instead of collapsing every such call to
+    // one digest and defeating the replay coordinate cross-check.
+    constexpr std::uint64_t kOffsetBasis = 14695981039346656037ULL;
     constexpr std::uint64_t kPrime = 1099511628211ULL;
     std::uint64_t hash = kOffsetBasis;
     const auto mix_byte = [&hash](unsigned char byte) {
@@ -229,10 +293,13 @@ std::uint64_t hash_values(const std::vector<Value> &values) {
     };
     mix_length(values.size());
     for (const auto &value : values) {
-        const std::string json = value_to_json(value);
+        const auto json = try_value_to_json(value);
+        if (!json.has_value()) {
+            return std::nullopt;
+        }
         // Length-delimit each argument so ["a","b"] and ["ab"] cannot collide.
-        mix_length(json.size());
-        for (const char ch : json) {
+        mix_length(json->size());
+        for (const char ch : *json) {
             mix_byte(static_cast<unsigned char>(ch));
         }
     }
@@ -352,8 +419,8 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
     case ahfl::json::Kind::Int:
         // RFC 0026 C2b P0-10: a schema-free Int becomes an IntValue ONLY when it
         // is a genuine signed integer. An UnsignedInteger (high-bit magnitude) or
-        // an IntegerFallback is not representable and fails closed here rather than
-        // silently degrading (the trust-boundary consumers rely on this).
+        // an IntegerFallback is not representable and fails closed here rather
+        // than silently degrading (the trust-boundary consumers rely on this).
         if (json_value.number_provenance != ahfl::json::NumberProvenance::SignedInteger) {
             return std::nullopt;
         }

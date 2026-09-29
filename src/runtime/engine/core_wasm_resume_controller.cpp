@@ -785,15 +785,22 @@ supply_injected_result(PendingInjection &&pending, std::span<const std::uint8_t>
 namespace {
 
 // D2b-4: the SHA-256 of one arity-1 Param's canonical typed bytes. The canonical
-// byte form is the codebase's canonical wire-JSON SSOT (`value_to_json`, the
-// same deterministic serialization `hash_values` length-delimits): it is what a
-// future host seals and what this controller consults under, so there is exactly
-// one canonicalization authority.
-[[nodiscard]] support::Sha256Digest canonical_param_digest(const runtime::Value &param) {
-    const std::string canonical = runtime::value_to_json(param);
+// byte form is the codebase's canonical strict wire-JSON SSOT
+// (`try_value_to_json`, the same deterministic encoding the optional
+// `hash_values` length-delimits): it is what a future host seals and what this
+// controller consults under, so there is exactly one canonicalization
+// authority. A param that is not wire-encodable is an internal invariant fault
+// (every param here was decoded from wire JSON under its binding and can never
+// be a closure); the caller fails closed.
+[[nodiscard]] std::optional<support::Sha256Digest>
+canonical_param_digest(const runtime::Value &param) {
+    const auto canonical = runtime::try_value_to_json(param);
+    if (!canonical.has_value()) {
+        return std::nullopt;
+    }
     return support::sha256(
-        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(canonical.data()),
-                                      canonical.size()));
+        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(canonical->data()),
+                                      canonical->size()));
 }
 
 // D2b-4 READ-ONLY dedup consultation at one AFTER-frontier call site. With no
@@ -817,7 +824,10 @@ consult_live_dedup(const DedupContext &dedup,
         return ImportStepDecision{std::move(live)};
     }
     // Arity-1 is enforced by next_import's decode path.
-    const support::Sha256Digest param_digest = canonical_param_digest(live.params.front());
+    const auto param_digest = canonical_param_digest(live.params.front());
+    if (!param_digest.has_value()) {
+        return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
+    }
 
     dei::FrozenAuthorityNamespaceBuilder builder;
     if (!builder
@@ -835,7 +845,7 @@ consult_live_dedup(const DedupContext &dedup,
     coordinate.ordinal = call_site.invocation_ordinal();
     coordinate.capability = call_site.capability();
     coordinate.source_symbol = call_site.source_symbol();
-    coordinate.param_digest = param_digest;
+    coordinate.param_digest = *param_digest;
     auto minted = builder.mint(coordinate);
     if (!minted.has_value()) {
         return std::unexpected(ResumeStepError{ResumeStepReason::TransitionInvalid});
@@ -916,7 +926,15 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
     }
     std::vector<runtime::Value> params;
     params.push_back(std::move(*decoded.value));
-    const std::uint64_t arg_hash = runtime::hash_values(params);
+    // The param was decoded from wire JSON under the binding, so it cannot be a
+    // closure and hashing cannot reject it; a nullopt here is nevertheless a
+    // fail-closed payload fault rather than a zero-digest acceptance.
+    const auto arg_hash_or = runtime::hash_values(params);
+    if (!arg_hash_or.has_value()) {
+        st.phase = Phase::Failed;
+        return std::unexpected(ResumeStepError{ResumeStepReason::PayloadSchemaInvalid});
+    }
+    const std::uint64_t arg_hash = *arg_hash_or;
 
     const std::size_t j = st.replay_cursor;
     const bool below_frontier = j < st.frontier_call_site;

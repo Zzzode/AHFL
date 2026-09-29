@@ -470,8 +470,8 @@ Core verifier 对两类调用节点都做精确 arity 检查(§8.1)。未来若�
    类型为可调用型(`CoreVtFn` 签名位,或构造点赋的 `CoreVtClosure`,
    §3.1.1),lower 为 `CoreCallClosureExpr`——包括 FnT 形参在 fn 体内被调用
    (`list_map_into` 的 `f(...)`),不再有"FnT 参数无法调用"的洞。evaluator
-   的对应分派:`ctx.get_local(callee)` 命中 `CallableValue`
-   (`evaluator.cpp:1776-1799`)。
+   的对应分派:`ctx.get_local(callee)` 命中 Value 的闭包臂
+   `InterpreterClosureHandle`(`src/runtime/evaluator/evaluator.cpp` 的 `as_callable`;WH-S 前称 `CallableValue`)。
 6. **静态 fn 名作为值传递(新)**:不是调用而是把 fn 名出现在值位置时,
    lower 为零捕获 `CoreClosureExpr{fn=解析到的实例, captures={}}`
    (`(table_slot, 0)`),按 §3.1.1 子类型规则进入 `CoreVtFn` 形参。
@@ -684,7 +684,7 @@ KR6.8
 1. 顶层 fn 直调:`find_function` 名字扫描 + 实参克隆 + `exec_block`
    (`evaluator.cpp:2037-2097`);
 2. callable 值本地分派:`eval_call_expr` 的 `ctx.get_local(callee)` →
-   `CallableValue` 路径(`evaluator.cpp:1776-1799`);
+   `InterpreterClosureHandle` 闭包臂经 `as_callable` 取描述符(WH-S 前称 `CallableValue`,行号为当时锚点);
 3. lambda/闭包:`eval_lambda_expr` 整上下文深快照 + `invoke_callable_value`
    (`evaluator.cpp:249-275`、`:1949-1952`);
 4. 方法调用:`MethodCallExpr` receiver-first 扁平化后复用调用机制

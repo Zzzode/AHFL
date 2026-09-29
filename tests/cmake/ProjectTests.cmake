@@ -1382,6 +1382,10 @@ add_test(NAME ahfl.runtime.grpc_transport_all
     COMMAND $<TARGET_FILE:ahfl_grpc_transport_tests>
 )
 
+add_test(NAME ahfl.runtime.wire_value_all
+    COMMAND $<TARGET_FILE:ahfl_wire_value_tests>
+)
+
 add_test(NAME ahfl.json.value_all
     COMMAND $<TARGET_FILE:ahfl_base_json_value_tests>
 )

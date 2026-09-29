@@ -18,7 +18,7 @@ struct Value;
 
 // Interpreter-only closure alternative. A first-class closure is an opaque
 // handle to storage OWNED by the tree-walking evaluator; this translation unit
-// never dereferences it, so the descriptor stays incomplete here and the host
+// never dereferences the descriptor, so it stays incomplete here and the host
 // wire layer keeps zero dependency on evaluator internals (no EvalContext, no
 // ir::Expr, no executor). The definition lives in the evaluator
 // (src/runtime/evaluator/evaluator.hpp) and is reachable only from there.
@@ -31,13 +31,32 @@ struct Value;
 // `ValueNode`; the alternative is a second, parallel scope type in the
 // evaluator.
 //
-// Wire discipline: this is NOT a wire kind. Closures never cross the frame
-// boundary (RFC 0026 KR6.8), so `value_to_json` has no arm for it and printing
-// renders it opaquely. Only the interpreter's own `value_kind`,
-// `structurally_equal` and `clone_value` know about it, for the closure-typed
-// stdlib argument checks and Set/Map canonicalization.
+// Identity is the monotonic `id`, assigned by `make_interpreter_closure`
+// (Principle 2: index/id identity, never a heap address). Equality and the
+// strict-weak ordering used for Set/Map canonicalization compare ONLY the id,
+// so they are stable for the whole process and cannot alias through address
+// reuse. The shared_ptr descriptor is pure lifetime management; it is never
+// the identity and is never dereferenced on this layer. The id is process-local
+// state and is intentionally NOT a wire value.
+//
+// Wire discipline: a closure is NOT a wire kind and never crosses the frame
+// boundary (RFC 0026 KR6.8). The trust boundary MUST call
+// `try_value_to_json` / the optional `hash_values`, which reject a closure
+// (including one nested anywhere inside a composite) instead of emitting
+// bytes. The plain `value_to_json` is observation-only (DAP, traces, tool
+// output) and renders the closure as a fixed opaque JSON object so that output
+// stays syntactically valid.
 struct InterpreterClosure;
 using InterpreterClosureRef = std::shared_ptr<const InterpreterClosure>;
+
+struct InterpreterClosureHandle {
+    std::uint64_t id{0};
+    InterpreterClosureRef descriptor;
+
+    [[nodiscard]] bool operator==(const InterpreterClosureHandle &other) const noexcept {
+        return id == other.id;
+    }
+};
 
 // ============================================================================
 // Value Variants
@@ -191,7 +210,7 @@ using ValueNode = std::variant<NoneValue,
                                MapValue,
                                UuidValue,
                                TimestampValue,
-                               InterpreterClosureRef,
+                               InterpreterClosureHandle,
                                UnitValue>;
 
 struct Value {
@@ -247,6 +266,12 @@ void print_value(const Value &v, std::ostream &out);
 /// and their contents compare equal.  Used by Set/Map canonicalization and
 /// by builtin dispatchers for membership / lookup checks.
 [[nodiscard]] bool structurally_equal(const Value &lhs, const Value &rhs);
+
+/// Canonical strict-weak ordering: -1/0/1. Used by Set/Map canonicalization
+/// to give every value a deterministic order; it is NOT semantic `<`. Every
+/// kind — including the interpreter-only closure arm — has a stable
+/// comparator (closures order by monotonic id, never heap address).
+[[nodiscard]] int compare_values(const Value &lhs, const Value &rhs);
 
 // ============================================================================
 // Nominal accessors (preferred over spelling variant names at call sites)

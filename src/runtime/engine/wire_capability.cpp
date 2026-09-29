@@ -190,7 +190,18 @@ execute_http_capability_call(const HTTPCapabilityConfig &config,
     request.url = config.url;
     request.method = config.method;
     request.headers = config.headers;
-    request.body = serialize_args_for_wire_json(args);
+    auto body = serialize_args_for_wire_json(args);
+    if (!body.has_value()) {
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = std::nullopt,
+            .error_message =
+                "HTTP capability received a non-wire argument (a closure cannot cross "
+                "the capability frame boundary)",
+            .attempts = 1,
+        };
+    }
+    request.body = std::move(*body);
     request.timeout_seconds = static_cast<int>(config.timeout.deadline.count() / 1000);
 
     if (request.headers.find("Content-Type") == request.headers.end()) {
@@ -318,7 +329,18 @@ execute_grpc_json_transcoding_capability_call(const GrpcJsonTranscodingCapabilit
 
     GrpcJsonTranscodingRequest request;
     request.endpoint = std::move(endpoint);
-    request.serialized_body = serialize_args_for_grpc_json_transcoding(args);
+    auto transcoded_body = serialize_args_for_wire_json(args);
+    if (!transcoded_body.has_value()) {
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = std::nullopt,
+            .error_message =
+                "gRPC capability received a non-wire argument (a closure cannot cross "
+                "the capability frame boundary)",
+            .attempts = 1,
+        };
+    }
+    request.serialized_body = std::move(*transcoded_body);
     request.timeout = std::chrono::duration_cast<std::chrono::seconds>(config.timeout.deadline);
 
     if (config.auth.has_value() && !config.secret_manager) {

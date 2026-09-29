@@ -117,7 +117,13 @@ non_negative_id(const JsonValue &object, std::string_view key) {
         if (entry.authoritative_json.has_value() || !entry.result_present.has_value()) {
             return false; // ill-formed NativeOnly state
         }
-        const std::string wire = runtime::value_to_json(entry.result);
+        // Strict wire encoding: a non-wire value (a closure) makes the memo
+        // entry unpersistable. Returning false rejects the snapshot instead of
+        // writing an entry whose wire bytes are empty or malformed.
+        const auto wire = runtime::try_value_to_json(entry.result);
+        if (!wire.has_value()) {
+            return false;
+        }
         bool present = *entry.result_present;
         // P0-19 save-local normalization (no caller mutation): a present bare
         // NoneValue is the established valueless-success compat case; persist it as
@@ -131,16 +137,16 @@ non_negative_id(const JsonValue &object, std::string_view key) {
         if (!present) {
             // Only a valueless success (NoneValue) or an explicit Unit may be
             // absent, and its wire spelling must be exactly null.
-            if (!(is_bare_none || is_unit) || wire != "null") {
+            if (!(is_bare_none || is_unit) || *wire != "null") {
                 return false;
             }
         }
-        auto legacy = ahfl::json::parse_json(wire);
+        auto legacy = ahfl::json::parse_json(*wire);
         if (!legacy.has_value() || !*legacy) {
             return false;
         }
         memo_item.set("result", std::move(*legacy));
-        memo_item.set("result_wire_json", JsonValue::make_string(wire));
+        memo_item.set("result_wire_json", JsonValue::make_string(*wire));
         memo_item.set("result_present", JsonValue::make_bool(present));
         return true;
     }
@@ -163,7 +169,11 @@ non_negative_id(const JsonValue &object, std::string_view key) {
         item->set("node_id", id_json(node.node.index()));
         item->set("agent_id", id_json(node.agent.index()));
         if (node.output.has_value()) {
-            auto output = ahfl::json::parse_json(runtime::value_to_json(*node.output));
+            auto output_json = runtime::try_value_to_json(*node.output);
+            if (!output_json.has_value()) {
+                return {};
+            }
+            auto output = ahfl::json::parse_json(*output_json);
             if (!output.has_value() || !*output) {
                 return {};
             }
@@ -183,7 +193,11 @@ non_negative_id(const JsonValue &object, std::string_view key) {
         record->set("pending_cap_id", id_json(suspended.pending_cap_id));
         record->set("pending_ordinal", id_json(static_cast<std::size_t>(suspended.pending_ordinal)));
         if (suspended.node_input.has_value()) {
-            auto input = ahfl::json::parse_json(runtime::value_to_json(*suspended.node_input));
+            auto input_json = runtime::try_value_to_json(*suspended.node_input);
+            if (!input_json.has_value()) {
+                return {};
+            }
+            auto input = ahfl::json::parse_json(*input_json);
             if (!input.has_value() || !*input) {
                 return {};
             }

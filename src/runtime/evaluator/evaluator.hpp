@@ -15,10 +15,10 @@
 // ============================================================================
 
 // The tree-walking interpreter's closure representation. `runtime::Value`
-// carries it as an opaque `InterpreterClosureRef` handle (see
+// carries it inside an opaque `InterpreterClosureHandle` (see
 // src/runtime/value/value.hpp): the host wire layer only forward-declares the
-// type, so nothing there depends on evaluator machinery. The definition is
-// completed HERE because every member is interpreter state:
+// descriptor, so nothing there depends on evaluator machinery. The definition
+// is completed HERE because every member is interpreter state:
 //
 //   * `params` / `body`      -- the lambda in the IR the interpreter walks;
 //   * `captured_context`     -- the interpreter environment snapshot taken at
@@ -33,7 +33,10 @@
 //
 // Storage is shared and immutable: one `make_shared<const InterpreterClosure>`
 // is created at lambda evaluation, `clone_value` copies the handle rather than
-// the captured environment, and every invocation reads through it.
+// the captured environment, and every invocation reads through it. The
+// shared_ptr is lifetime management ONLY: the closure's canonical identity is
+// the monotonic `InterpreterClosureHandle::id` assigned by
+// `make_interpreter_closure` (Principle 2), never the pointer value.
 namespace ahfl::runtime {
 
 struct InterpreterClosure {

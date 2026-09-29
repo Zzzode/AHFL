@@ -1,7 +1,6 @@
 #include "runtime/engine/grpc_transport.hpp"
 
 #include "runtime/engine/wire_transport_adapter.hpp"
-#include "runtime/engine/wire_value.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -176,14 +175,6 @@ parse_grpc_message_from_headers(const std::vector<std::pair<std::string, std::st
 // ============================================================================
 // serialize helpers
 // ============================================================================
-
-std::string serialize_value_for_grpc_json_transcoding(const runtime::Value &value) {
-    return serialize_value_for_wire_json(value);
-}
-
-std::string serialize_args_for_grpc_json_transcoding(const std::vector<runtime::Value> &args) {
-    return serialize_args_for_wire_json(args);
-}
 
 std::string build_grpc_json_transcoding_curl_command(const GrpcJsonTranscodingRequest &request) {
     return describe_wire_transport(request);

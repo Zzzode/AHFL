@@ -7,19 +7,24 @@
 
 namespace ahfl::runtime {
 
-std::string serialize_value_for_wire_json(const runtime::Value &value) {
-    return runtime::value_to_json(value);
+std::optional<std::string> serialize_value_for_wire_json(const runtime::Value &value) {
+    return runtime::try_value_to_json(value);
 }
 
-std::string serialize_args_for_wire_json(const std::vector<runtime::Value> &args) {
+std::optional<std::string>
+serialize_args_for_wire_json(const std::vector<runtime::Value> &args) {
     if (args.empty()) {
-        return "{}";
+        return std::string("{}");
     }
     if (args.size() == 1) {
         if (std::holds_alternative<runtime::StructValue>(args[0].node)) {
             return serialize_value_for_wire_json(args[0]);
         }
-        return "{\"value\":" + serialize_value_for_wire_json(args[0]) + "}";
+        auto inner = serialize_value_for_wire_json(args[0]);
+        if (!inner.has_value()) {
+            return std::nullopt;
+        }
+        return "{\"value\":" + *inner + "}";
     }
     std::ostringstream out;
     out << "{\"args\":[";
@@ -27,7 +32,11 @@ std::string serialize_args_for_wire_json(const std::vector<runtime::Value> &args
         if (i > 0) {
             out << ',';
         }
-        out << serialize_value_for_wire_json(args[i]);
+        auto item = serialize_value_for_wire_json(args[i]);
+        if (!item.has_value()) {
+            return std::nullopt;
+        }
+        out << *item;
     }
     out << "]}";
     return out.str();

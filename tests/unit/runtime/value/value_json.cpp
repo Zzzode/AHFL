@@ -611,7 +611,8 @@ void test_locale_independent_integers() {
         args.push_back(make_timestamp(kMin));
         return args;
     };
-    const std::uint64_t hash_classic = hash_values(make_hash_args());
+    const auto hash_classic = hash_values(make_hash_args());
+    check(hash_classic.has_value(), "locale.classic_hash_present");
 
     // Sanity: the classic spelling is fixed decimal with no separators.
     check(int_max_classic == "9223372036854775807", "locale.classic_int_max_bytes");

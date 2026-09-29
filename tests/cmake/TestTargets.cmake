@@ -709,6 +709,15 @@ target_link_libraries(ahfl_grpc_transport_tests
 )
 ahfl_apply_project_warnings(ahfl_grpc_transport_tests)
 
+add_executable(ahfl_wire_value_tests
+    unit/runtime/engine/wire_value.cpp
+)
+target_link_libraries(ahfl_wire_value_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_wire_value_tests)
+
 add_executable(ahfl_base_json_value_tests
     unit/base/json/json_value.cpp
 )
@@ -1802,6 +1811,7 @@ foreach(_tgt
     ahfl_smt_bmc_tests
     ahfl_http_transport_tests
     ahfl_grpc_transport_tests
+    ahfl_wire_value_tests
     ahfl_base_json_value_tests
     ahfl_base_toml_tests
     ahfl_base_query_tests

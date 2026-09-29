@@ -24,7 +24,7 @@
 | 语义类型 | `TypeKind::{Optional,List,Set,Map}` + `types::{OptionalT,ListT,SetT,MapT}` variant | `include/ahfl/compiler/semantics/types.hpp:38-40, 95-107, 120-128` |
 | IR 类型引用 | `ir::TypeRefKind::{Optional,List,Set,Map}` | `include/ahfl/compiler/ir/types.hpp:147-150` |
 | IR 表达式节点 | `ir::{NoneLiteralExpr,SomeExpr,ListLiteralExpr,SetLiteralExpr,MapLiteralExpr,IndexAccessExpr}` | `include/ahfl/compiler/ir/expr.hpp:96,129,162,167,178,202` |
-| Runtime Value | `OptionalValue / ListValue` 是 `ValueNode` variant；**无 `SetValue / MapValue`** | `src/runtime/evaluator/value.hpp:52-63, 69-79` |
+| Runtime Value | `OptionalValue / ListValue` 是 `ValueNode` variant；**无 `SetValue / MapValue`** | `src/runtime/value/value.hpp`（WH-S 前位于 `src/runtime/evaluator/`；行号为迁移前锚点） |
 | Runtime 求值 | `list.length` / `list[i]` / list 字面量硬编码；`set[...]` / `map[...]` 直接 `not supported in v0.51` | `src/runtime/evaluator/evaluator.cpp:199, 525-526, 553, 617-619` |
 
 ### 1.2 目标态（来自主 RFC §3）

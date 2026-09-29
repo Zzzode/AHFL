@@ -184,7 +184,7 @@ for (const auto& [agent_id, state] : inspector_.agent_states()) {
 | `Context` | 200 + agent_id | agent context 字段 |
 | `Input/Output` | 300 + agent_id | workflow input / output |
 
-`variables` 请求递归展开结构化值（struct fields、enum payloads）。`Value` 类型通过 `value_to_json`（`src/runtime/evaluator/value_json.cpp`）序列化，嵌套值使用 `variablesReference` 链式展开。
+`variables` 请求递归展开结构化值（struct fields、enum payloads）。`Value` 类型通过 `value_to_json`（`src/runtime/value/value_json.cpp`）序列化，嵌套值使用 `variablesReference` 链式展开。
 
 ### 栈帧
 

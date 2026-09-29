@@ -328,7 +328,9 @@ inline std::uint64_t param_arg_hash(const VerifiedCoreWasmSchemaModule &mod,
     }
     std::vector<ahfl::runtime::Value> v;
     v.push_back(std::move(*decoded.value));
-    return ahfl::runtime::hash_values(v);
+    // The param decoded from wire JSON under its binding, so it is always
+    // encodable; value_or(0) matches the helper's other failure sentinels.
+    return ahfl::runtime::hash_values(v).value_or(0);
 }
 
 // D2b-4: the controller's canonical typed Param digest for a call site --

@@ -33,8 +33,16 @@ ContextualCapabilityInvoker make_native_capability_invoker(const NativeHostBindi
                                 name + "'");
         }
 
-        // Marshal arguments into a JSON wire frame (AHFL_WIRE_VALUE_JSON).
-        const std::string args_frame = serialize_args_for_wire_json(arguments);
+        // Marshal arguments into a JSON wire frame (AHFL_WIRE_VALUE_JSON). A
+        // non-wire argument (a closure) fails the call closed instead of
+        // reaching the host as malformed JSON.
+        const auto args_frame = serialize_args_for_wire_json(arguments);
+        if (!args_frame.has_value()) {
+            return error_result(
+                "native host capability '" + name +
+                "' received a non-wire argument (a closure cannot cross the "
+                "capability frame boundary)");
+        }
 
         // cap_id is the capability's SymbolId (index-based identity). Use the
         // source symbol id resolved by the compiler when present; 0 is a valid
@@ -49,8 +57,8 @@ ContextualCapabilityInvoker make_native_capability_invoker(const NativeHostBindi
         ahfl_invoke_args invoke_args;
         invoke_args.struct_size = static_cast<uint32_t>(sizeof(ahfl_invoke_args));
         invoke_args.cap_id = cap_id;
-        invoke_args.args_ptr = reinterpret_cast<const uint8_t *>(args_frame.data());
-        invoke_args.args_len = static_cast<uint32_t>(args_frame.size());
+        invoke_args.args_ptr = reinterpret_cast<const uint8_t *>(args_frame->data());
+        invoke_args.args_len = static_cast<uint32_t>(args_frame->size());
         invoke_args.result_ptr = &result_ptr;
         invoke_args.result_len = &result_len;
 

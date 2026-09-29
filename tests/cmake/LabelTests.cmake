@@ -336,6 +336,7 @@ ahfl_label_tests(
     TESTS
         ahfl.json.value_all
         ahfl.runtime.value_json_all
+        ahfl.runtime.wire_value_all
 )
 
 ahfl_label_tests(

@@ -20,6 +20,7 @@
 namespace ahfl::evaluator {
 
 using ahfl::runtime::InterpreterClosure;
+using ahfl::runtime::InterpreterClosureHandle;
 
 using ahfl::runtime::Value;
 
@@ -377,8 +378,8 @@ struct OptionReader {
 }
 
 [[nodiscard]] const InterpreterClosure *as_callable(const Value &value) noexcept {
-    const auto *handle = std::get_if<InterpreterClosureRef>(&value.node);
-    return handle == nullptr ? nullptr : handle->get();
+    const auto *handle = std::get_if<InterpreterClosureHandle>(&value.node);
+    return handle == nullptr ? nullptr : handle->descriptor.get();
 }
 
 [[nodiscard]] Value make_result_value(std::string variant, Value payload) {

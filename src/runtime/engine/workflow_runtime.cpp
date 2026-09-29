@@ -816,7 +816,28 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             const std::uint64_t memo_ordinal = node_memo.next_ordinal++;
             const std::size_t cap_symbol_id =
                 context.source_capability_symbol_id.value_or(0);
-            const std::uint64_t arg_hash = runtime::hash_values(arguments);
+            // Strict wire hash: a non-encodable argument (a closure) fails the
+            // capability call closed — hashing it as empty bytes would ledger a
+            // digest every such call shares and corrupt the replay coordinate
+            // gate below.
+            const auto arg_hash_or = runtime::hash_values(arguments);
+            if (!arg_hash_or.has_value()) {
+                CapabilityCallResult unencodable;
+                unencodable.status = CapabilityCallStatus::Error;
+                unencodable.error_message =
+                    "capability '" + name +
+                    "' received a non-wire argument (a closure cannot cross the "
+                    "capability frame boundary)";
+                unencodable.diagnostic_code =
+                    std::string(error_codes::backend::ExecutionError.id);
+                if (context.workflow_node_id.valid() &&
+                    context.workflow_node_id.index() < node_capability_failures.size()) {
+                    node_capability_failures[context.workflow_node_id.index()] =
+                        CapabilityFailureKind::Error;
+                }
+                return unencodable;
+            }
+            const std::uint64_t arg_hash = *arg_hash_or;
 
             // RFC 0022 (C7): resume replay. While replaying, calls at ordinals
             // below the pending one are served from the memo (never re-invoked),
