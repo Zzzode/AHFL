@@ -9,7 +9,6 @@
 
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/runtime/ahfl_host.h"
-#include "base/json/json_value.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -274,30 +273,15 @@ handle_opaque(const CapabilityImportConfig &config,
     // {"value":...} wrapper (non-Struct param).
     const std::string_view json_text(
         reinterpret_cast<const char *>(obs.param_frame.data()), obs.param_frame.size());
-    auto parsed = json::parse_json(json_text);
-    if (!parsed.has_value()) {
+    auto parsed_env = parse_args_from_wire_json(json_text, wire, cap->params);
+    if (!parsed_env.has_value() || parsed_env->args.size() != 1) {
         config.state.last_error = CapabilityImportError::ParamSchemaInvalid;
         return eng::ImportAbort{};
-    }
-    const json::JsonValue &root = **parsed;
-
-    // Determine the arg DOM: the bare root for a Struct param, or the "value"
-    // field for a non-Struct param.
-    const auto &root_node = wire.nodes[param_binding.root().value];
-    const bool is_struct =
-        std::holds_alternative<ir::core::CoreWireSchemaStruct>(root_node.shape);
-    const json::JsonValue *arg_dom = &root;
-    if (!is_struct) {
-        arg_dom = root.get("value");
-        if (arg_dom == nullptr) {
-            config.state.last_error = CapabilityImportError::ParamSchemaInvalid;
-            return eng::ImportAbort{};
-        }
     }
 
     // Schema-bound decode: rejects JSON that does not match the param binding.
     // Pre-effect: the capability is NEVER invoked on a param-schema violation.
-    auto decoded = wire_codec::decode_json(*arg_dom, param_binding);
+    auto decoded = wire_codec::decode_json(*parsed_env->args[0], param_binding);
     if (!decoded.ok()) {
         config.state.last_error = CapabilityImportError::ParamSchemaInvalid;
         return eng::ImportAbort{};
