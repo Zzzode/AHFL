@@ -300,6 +300,44 @@ Must all hold on the ATOMIC slice commit:
 
 ---
 
+## 10. WH-1 实现决策记录(2026-09-30,BUILDER 代理,无人类 owner 门)
+
+WH-1 落地首个真实 WASM 执行引擎(wasm3 后端的 `CoreWasmResumeEngine` 端口实现)+ CMake 准入 + 单元测试。实现过程中遇到的设计岔路,按 senior Rust/Clang 工程师方式决策并记录如下。
+
+### 10.1 A2 准入无法覆盖无导入模块 → 引擎自行施加 F3 等价的固定单页内存交叉校验
+
+`make_verified_core_wasm_schema_module`(A2)硬性要求 capability Import 段 + exec-manifest + wire-schema;无导入模块(identity 工作流)在结构上就不满足 A2 准入。**决策**:引擎在 `fresh_instance` 内对所有模块(无论是否经 A2)自行施加与 F3 等价的固定单页内存交叉校验——对照 `core_wasm_resume_capacity::fixed_single_page_capacity()` 验证:恰好一个内存、无 declared max、`min_pages == 1`、声明字节数 == 容量(65536)。capability 模块在测试中走完整 A2 → 引擎路径;无导入模块由引擎直接校验。这不是绕过 A2,而是把"固定单页内存"这一 F3 容量权威下沉到引擎层,使端口对两类模块都成立。
+
+### 10.2 A2 只准入 2 参数 opaque 形状;1 参数 §9 探针形状为引擎-only
+
+`spans_are_capability_tuple` 要求恰好 2 个 i32 参数 + 3 个 i32 结果。设计文档 §9 的 `(i32)->(i32,i32,i32)` 单参数形状是 raw-ABI 槽位探针,不经过 A2。**决策**:引擎同时支持 1 参数与 2 参数 functype(3 个 i32 结果);2 参数时 `param_frame = mem[ptr..+len)`,1 参数时 `param_frame` 为空。1 参数形状仅在引擎单元测试中直接验证(不经过 A2),2 参数 opaque 形状走完整 A2 准入。2 结果 bridge `(i32)->(i32,i32)` 属 WH-3,不在本片。
+
+### 10.3 wasm3 生命周期:必须先 m3_LoadModule 再 m3_LinkRawFunctionEx
+
+实测 wasm3 v0.9.0 要求 `m3_LoadModule`(转移模块所有权到 runtime)**之后**才能 `m3_LinkRawFunctionEx`;在 load 之前 link 返回 `m3Err_moduleNotLinked`。WH-0 smoke 测试也遵循此序。**决策**:生命周期固定为 parse → new runtime(userdata=impl)→ **m3_LoadModule** → **m3_LinkRawFunctionEx**(逐导入)→ m3_GetMemory 校验 → m3_FindFunction(急切编译,编译错误与未解析导入在此暴露)。load 失败时只 free runtime(它已拥有模块),不单独 free 模块。
+
+### 10.4 host-abort 信号:文件局部哨兵指针 + trap 指针恒等映射
+
+wasm3 把 raw 回调的返回指针作为 trap 向上传播(`forwardTrap`,指针恒等)。`M3Result` 是 `const void*`(指向静态字符串),14 个 `m3Err_trap*` 常量按指针比较。**决策**:用文件局部 `const char[]` + `const void* const kHostAbortSentinel`(与所有 wasm3 错误指针都不同)作为 host-abort 信号;trampoline 内 ImportAbort 或 C++ 异常(跨 C 边界 fail-closed)返回该哨兵。`invoke_run2` 按指针恒等映射:哨兵 → `Run2HostAborted`;14 个 trap 指针之一 → `Run2Trapped`;其余 wasm3 错误 → `InstanceUnavailable`。
+
+### 10.5 alloc 策略:调用模块导出的 alloc(Node-lane 忠实,ABI 正确)
+
+**决策**:引擎不自行在 guest 内存里维护 bump allocator,而是调用模块导出的 `alloc(len)`(经 m3_Call + m3_GetResults)。模块的 checked allocator 在 OOM 时返回 0 → 引擎映射为 `MemoryCapacityExceeded`,且 bump 不前进(无部分突变)。这与 Node lane 的行为一致,ABI 正确。
+
+### 10.6 目标不进 ahfl_runtime_bundle / install 集
+
+WH-1 无生产调用方。**决策**:`ahfl_runtime_wasm_host` 静态库**不**加入 `ahfl_runtime_bundle`(否则 WASM=OFF 时 bundle 断裂),header 为 src-internal BUILD_INTERFACE only,不进 install/export 集。WH-3/WH-6 有生产调用方时再评估提升。
+
+### 10.7 CMake 注册:遵循 gated 先例,不进全局 foreach
+
+`tests/cmake/TestTargets.cmake` 的全局 foreach 是 ungated 的;把 wasm-gated 目标放进 foreach 会在 WASM=OFF 时断裂。**决策**:遵循 `ahfl_core_wasm_codegen_tests` 先例——目标定义放在 `if(AHFL_ENABLE_BACKEND_WASM)` 块内,不进全局 foreach 列表。三文件模式(TestTargets / ProjectTests / LabelTests)均在 WASM 块内注册,`wasm-host` label。
+
+### 10.8 端口头零改动
+
+实现未发现 `core_wasm_resume_engine.hpp` 端口缺陷。Fake 与 Node 端口无需同改。**端口头零改动。**
+
+---
+
 ### Load-bearing file references (all absolute)
 
 - Emitted ABI / features: `/home/zhangdi.zode/Develop/AHFL/src/compiler/backends/wasm/core_wasm_codegen.cpp` (`:298`, `:4017`, `:4488`, `:14086-14115`, `:14146-14295`, `:16328-16427`); `/home/zhangdi.zode/Develop/AHFL/include/ahfl/compiler/ir/core_wasm_abi_constants.hpp` (`:28-31`, `:117`, `:136-141`, `:188-207`)

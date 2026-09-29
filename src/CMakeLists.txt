@@ -27,6 +27,12 @@ add_subdirectory(pipeline/execution)
 add_subdirectory(runtime/value)
 add_subdirectory(runtime/evaluator)
 add_subdirectory(runtime/engine)
+if(AHFL_ENABLE_BACKEND_WASM)
+    # RFC 0026 KR6.8 WH-1: the wasm3 embedded execution host (peer of
+    # runtime/engine). Gated with the wasm emitter it consumes; deliberately
+    # NOT in ahfl_runtime_bundle, which must stay linkable under WASM=OFF.
+    add_subdirectory(runtime/wasm_host)
+endif()
 add_subdirectory(runtime/providers/llm)
 add_subdirectory(compiler/backends)
 add_subdirectory(verification/formal)
