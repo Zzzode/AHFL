@@ -1625,6 +1625,32 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
     ahfl_apply_project_warnings(ahfl_wasm_host_engine_tests)
 
+    # RFC 0026 KR6.8 WH-2: the P6-frame packer + reader + thin driver tests.
+    # Emits REAL modules in-process through the wasm backend, admits them via
+    # the production admit_core_wasm_frame_sections path, and drives them
+    # through the wasm3 engine + packer/reader pair. Links the wasm host
+    # target (packer/reader/driver/engine), the wasm backend (emit_core_wasm),
+    # the engine (frame section admission), the value SSOT, and the JSON DOM
+    # (conformance case loading).
+    add_executable(ahfl_wasm_host_frame_tests
+        unit/runtime/wasm_host/frame_packer_reader.cpp
+    )
+    target_link_libraries(ahfl_wasm_host_frame_tests
+        PRIVATE
+            ahfl_runtime_wasm_host
+            ahfl_compiler_backend_wasm
+            ahfl_runtime_engine
+            ahfl_runtime_value
+            ahfl_base_json
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_wasm_host_frame_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_wasm_host_frame_tests)
+
     add_executable(ahfl_core_wasm_codegen_tests
         unit/compiler/backends/core_wasm_codegen.cpp
     )

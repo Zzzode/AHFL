@@ -626,6 +626,7 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS wasm-host
         TESTS
             ahfl.runtime.wasm_host_engine
+            ahfl.runtime.wasm_host_frame
     )
 endif()
 
