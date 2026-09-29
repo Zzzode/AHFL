@@ -344,6 +344,9 @@ struct Wasm3EngineImpl {
     bool module_loaded{false};
     IM3Function run2{nullptr};
     IM3Function alloc{nullptr};
+    // WH-2: found lazily on the first invoke_runv (a non-P6 module does not
+    // export runv and still instantiates, so fresh_instance never requires it).
+    IM3Function runv{nullptr};
 
     // m3_ParseModule requires the module bytes to outlive the parsed module;
     // the runtime owns the module, so they live as long as this Impl.
@@ -705,6 +708,67 @@ Wasm3ResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_
     }
     if (is_wasm_trap(result)) {
         return eng::Run2Outcome{eng::Run2Trapped{}};
+    }
+    return std::unexpected(eng::EngineError::InstanceUnavailable);
+}
+
+std::expected<std::span<std::uint8_t>, eng::EngineError>
+Wasm3ResumeEngine::mutable_whole_memory() {
+    if (!impl_->instantiated) {
+        return std::unexpected(eng::EngineError::InvalidSequence);
+    }
+    std::uint32_t size = 0;
+    std::uint8_t *memory = m3_GetMemory(impl_->runtime, &size, 0);
+    if (memory == nullptr || size != cap::fixed_single_page_capacity().value) {
+        return std::unexpected(eng::EngineError::InstanceUnavailable);
+    }
+    return std::span<std::uint8_t>(memory, size);
+}
+
+std::expected<RunvOutcome, eng::EngineError>
+Wasm3ResumeEngine::invoke_runv() {
+    if (!impl_->instantiated || impl_->run_started) {
+        return std::unexpected(eng::EngineError::InvalidSequence);
+    }
+    impl_->run_started = true;
+
+    // Lazily find + signature-check runv. m3_FindFunction compiles eagerly, so
+    // a body that does not compile (or an unresolved import) surfaces here.
+    if (impl_->runv == nullptr) {
+        if (m3_FindFunction(&impl_->runv, impl_->runtime, "runv") != nullptr ||
+            !export_has_i32_signature(impl_->runv, 0, 2)) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+    }
+
+    const M3Result result = m3_Call(impl_->runv, 0, nullptr);
+    if (result == nullptr) {
+        // Fixed-page invariant (same discipline as invoke_run2): a structurally
+        // admissible module can still execute memory.grow mid-runv, breaking the
+        // "exactly one fixed page" guarantee after admission.
+        std::uint32_t post_size = 0;
+        if (m3_GetMemory(impl_->runtime, &post_size, 0) == nullptr) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+        if (post_size != cap::fixed_single_page_capacity().value) {
+            return std::unexpected(eng::EngineError::MemoryCapacityExceeded);
+        }
+
+        std::uint32_t status = 0;
+        std::uint32_t ptr = 0;
+        const void *retptrs[2] = {&status, &ptr};
+        if (m3_GetResults(impl_->runv, 2, retptrs) != nullptr) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+        return RunvOutcome{RunvResult{status, eng::GuestPointer{ptr}}};
+    }
+    if (result == kHostAbortSentinel) {
+        // runv on an import-free P6-frame module cannot reach a host import,
+        // but a bridge module (WH-3) can; map the sentinel faithfully.
+        return RunvOutcome{eng::Run2Trapped{}};
+    }
+    if (is_wasm_trap(result)) {
+        return RunvOutcome{eng::Run2Trapped{}};
     }
     return std::unexpected(eng::EngineError::InstanceUnavailable);
 }

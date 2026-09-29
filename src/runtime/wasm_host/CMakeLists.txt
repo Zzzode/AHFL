@@ -3,8 +3,19 @@
 # emitted Core-IR wasm; WASM=OFF leaves the tree without it). It is a peer
 # execution engine of src/runtime/engine, not a subfolder of it (decision doc
 # section 5 tier-honesty), which is why it gets its own directory and target.
+#
+# WH-2 adds the P6-frame packer + reader + thin driver (frame_packer.cpp,
+# frame_reader.cpp, p6_frame_driver.cpp). The packer/reader are pure span
+# transforms over the admitted layout section + wire binding: they include no
+# wasm3 header and touch no wasm3 type, so wasm3 stays PRIVATE (only
+# wasm3_engine.cpp includes wasm3.h). The driver composes the engine + packer +
+# reader; it includes wasm3_engine.hpp (which includes the engine port header)
+# but not wasm3.h itself.
 add_library(ahfl_runtime_wasm_host STATIC
     wasm3_engine.cpp
+    frame_packer.cpp
+    frame_reader.cpp
+    p6_frame_driver.cpp
 )
 
 target_link_libraries(ahfl_runtime_wasm_host
@@ -14,7 +25,14 @@ target_link_libraries(ahfl_runtime_wasm_host
         wasm3
         # The engine port + the fixed-page capacity authority.
         ahfl_runtime_engine
-        # The F1 ABI SSOT (kCoreWasmFixedLinearMemory* constants).
+        # The host wire-value SSOT (Value, value_to_json). The packer/reader
+        # headers expose Value in their interface, but the wasm_host target's
+        # BUILD_INTERFACE src/ include already makes value.hpp findable; the
+        # link dependency is PRIVATE because consumers that construct Values
+        # link ahfl_runtime_value explicitly (mirrors the WH-1 test pattern).
+        ahfl_runtime_value
+        # The F1 ABI SSOT (kCoreWasmFixedLinearMemory* constants) + the P4-D
+        # layout / wire-schema IR types the packer/reader walk.
         ahfl_compiler_ir
 )
 

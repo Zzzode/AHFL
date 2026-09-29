@@ -36,6 +36,7 @@
 #include <expected>
 #include <memory>
 #include <span>
+#include <variant>
 
 #include "runtime/engine/core_wasm_resume_engine.hpp"
 
@@ -44,6 +45,19 @@ namespace ahfl::runtime::wasm_host {
 namespace detail {
 struct Wasm3EngineImpl;
 } // namespace detail
+
+// RFC 0026 KR6.8 WH-2: the P6-frame runv outcome. A P6-frame module's
+// `runv() -> (status:i32, value_ptr:i32)` is a DISTINCT entry point from the
+// run2 resume port: it drives the state walk and returns the borrowed input
+// base (identity final) or the materialized output base (computed final). The
+// engine grows these two additive capabilities (runv invocation + mutable
+// whole-memory access for the host frame writer) without touching the port
+// header or changing WH-1 semantics (decision doc section 11.1).
+struct RunvResult {
+    std::uint32_t raw_status{0};
+    core_wasm_resume_engine::GuestPointer value_ptr{};
+};
+using RunvOutcome = std::variant<RunvResult, core_wasm_resume_engine::Run2Trapped>;
 
 // One fresh-instance wasm3 engine session. Move-only; the Impl destructor is
 // the single owner of wasm3 teardown (the runtime, which owns the loaded
@@ -75,6 +89,24 @@ class Wasm3ResumeEngine final : public core_wasm_resume_engine::CoreWasmResumeEn
                                 core_wasm_resume_engine::EngineError>
     invoke_run2(core_wasm_resume_engine::GuestPointer entry_ptr,
                 std::uint32_t entry_len) override;
+
+    // WH-2 additive: the mutable counterpart of read_whole_memory, for the host
+    // frame writer (the P6-frame packer writes the input frame at its fixed
+    // regions directly into the live instance memory, exactly as the JS oracle
+    // writes e.memory.buffer). The span is valid until the next mutating call.
+    // The caller is the trusted host frame writer; it must not clobber the
+    // read-only rodata region [256,1024) the Data section initialized.
+    [[nodiscard]] std::expected<std::span<std::uint8_t>,
+                                core_wasm_resume_engine::EngineError>
+    mutable_whole_memory();
+
+    // WH-2 additive: invoke the module's `runv() -> (i32,i32)` P6-frame entry.
+    // Found lazily on first call (m3_FindFunction compiles eagerly, surfacing a
+    // compile error here rather than at fresh_instance, so non-P6 modules that
+    // do not export runv still instantiate). One-shot like invoke_run2 (shares
+    // the run_started gate): a session runs exactly one lane.
+    [[nodiscard]] std::expected<RunvOutcome, core_wasm_resume_engine::EngineError>
+    invoke_runv();
 
   private:
     std::unique_ptr<detail::Wasm3EngineImpl> impl_;
