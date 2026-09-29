@@ -78,6 +78,39 @@ If our design diverges from the mainstream, there must be a documented, AHFL-spe
 
 ---
 
+## Autonomous Decision-Making (No Human Gate)
+
+This repository has **no human owner / product-approval gate**. Contributors —
+human or AI — never pause work to wait for a user decision. "Needs an owner
+decision", "blocked on product", and similar notes are not acceptable statuses.
+
+When a decision is genuinely needed (execution-engine choice, dependency or
+embedding strategy, API-contract direction, a trade-off between valid designs,
+the scope of a breaking change):
+
+1. **Spawn a dedicated decision agent for that single decision.** Give it the
+   relevant RFCs, design docs, code paths, tests, hard constraints, and the
+   Reference Hierarchy above. It must produce a written decision: what is
+   chosen, why it beats the explicitly named alternatives, the AHFL-specific
+   reason for any divergence from mainstream practice, the costs, and concrete
+   acceptance / verification criteria.
+2. **Keep the decider separate from the builder.** A different agent implements
+   the decision; the standard implement -> adversarial review -> fix-forward
+   loop still applies. A decision record is not self-approval of the code.
+3. **Record the decision immediately** in the owning RFC (dated Decision
+   History entry) or design doc, then proceed in the same workflow. The entry
+   records the deciding agent's rationale; it must never invent human sign-off.
+4. **Revise decisions the same way they were made** — a new decision agent, a
+   new dated record, and ONE big-bang change. Never a compatibility flag, an
+   environment escape hatch, or a parallel implementation (Principle 1).
+
+The only legitimate "blocked" state is an **external fact no agent can change**:
+no network, a missing third-party binary, absent credentials. Report the exact
+fact and keep working on everything it does not cover. A decidable engineering
+question must never be relabeled as an external block.
+
+---
+
 ## Build & Test
 
 ### First-time setup (every contributor)
