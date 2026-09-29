@@ -90,6 +90,11 @@ struct FakeScript {
     // Make read_whole_memory report a short page after a successful run2,
     // simulating an engine port whose whole-page transport was truncated.
     bool truncate_whole_memory{false};
+    // WH-3: script the run2 tuple's raw status (default AHFL_CAP_OK). A
+    // non-OK status (e.g. AHFL_CAP_PENDING) exercises the controller's
+    // finish_run classification on the RESUME entry contract (a
+    // fresh-instance replay must end OK; PENDING -> TransitionInvalid).
+    std::optional<std::uint32_t> scripted_run2_status{};
 };
 
 // A record of every host frame transfer: its exact bytes and guest pointer.
@@ -198,6 +203,10 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
 
             eng::ImportObservation observation;
             observation.import_ordinal = step.import_ordinal;
+            // The Fake writes the L2 Param view at scratch `param_ptr`; for a
+            // 1-param import that pointer IS the single i32 arg (the bridge
+            // lane's control-block pointer), matching the Node/wasm3 ports.
+            observation.scalar_arg = param_ptr;
             observation.param_frame =
                 std::span<const std::uint8_t>(memory_.data() + param_ptr, step.param_frame.size());
             observation.whole_memory = std::span<const std::uint8_t>(memory_);
@@ -207,6 +216,7 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
                 return eng::Run2Outcome{eng::Run2HostAborted{}};
             }
             const auto &frame = std::get<eng::ImportReply>(reply);
+            import_raw_statuses_.push_back(frame.raw_status);
             last_output_ptr = frame.result_ptr.value;
             last_output_len = frame.result_len;
             ++cap_index;
@@ -222,9 +232,19 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
         }
 
         eng::Run2ResultTuple tuple;
-        tuple.raw_status = AHFL_CAP_OK;
-        tuple.output_ptr = eng::GuestPointer{last_output_ptr};
-        tuple.output_len = last_output_len;
+        if (script_.scripted_run2_status) {
+            // WH-3: a scripted non-OK run2 status (e.g. AHFL_CAP_PENDING)
+            // exercises the controller's finish_run classification on the
+            // RESUME entry contract. A real module returns (status,0,0) on a
+            // non-OK terminal status; the Fake mirrors that ABI shape.
+            tuple.raw_status = *script_.scripted_run2_status;
+            tuple.output_ptr = eng::GuestPointer{0};
+            tuple.output_len = 0;
+        } else {
+            tuple.raw_status = AHFL_CAP_OK;
+            tuple.output_ptr = eng::GuestPointer{last_output_ptr};
+            tuple.output_len = last_output_len;
+        }
         (void)completed;
         return eng::Run2Outcome{tuple};
     }
@@ -232,6 +252,11 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
     // Test inspection.
     [[nodiscard]] const std::vector<AllocationRecord> &host_allocations() const noexcept {
         return allocations_;
+    }
+    // WH-3: the raw ahfl_cap_status of every import reply the host served, in
+    // call order (memo/injected replies are always AHFL_CAP_OK).
+    [[nodiscard]] const std::vector<std::uint32_t> &import_reply_statuses() const noexcept {
+        return import_raw_statuses_;
     }
     [[nodiscard]] std::uint32_t event_count() const noexcept {
         return kEventLogBase < memory_.size()
@@ -261,6 +286,7 @@ class FakeResumeEngine final : public eng::CoreWasmResumeEngine {
     std::uint32_t host_next_{0};
     bool instantiated_{false};
     bool run_started_{false};
+    std::vector<std::uint32_t> import_raw_statuses_;
     std::vector<AllocationRecord> allocations_;
 };
 
@@ -996,6 +1022,111 @@ int main(int argc, char **argv) {
         auto after = store->load(kWf, kCkpt, id_span, key);
         check(after.has_value() && std::holds_alternative<ps::ResolvedAvailable>(*after),
               "S12.still_available");
+        nuke(work);
+    }
+
+    // ============ S13: memo/injected import replies carry raw OK ============
+    // WH-3: the host's write_frame sets ImportReply.raw_status = AHFL_CAP_OK
+    // explicitly (designated initializer), so every memo/injected reply the
+    // engine observes carries the raw success word. The Fake records every
+    // import reply's raw_status in call order.
+    {
+        const fs::path work = base / "s13-raw-ok";
+        Topology topo = topology_two_nodes();
+        auto mod_res = admit_module(topo.spec);
+        check(mod_res.ok(), "S13.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(topo.spec);
+
+        auto store = open_store(work);
+        check(store.has_value(), "S13.store");
+        auto suspended = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto injected_record = make_injected_record(suspended, kInjectedSlot);
+        std::vector<ps::Slot> slots = {
+            ps::Slot{kEntrySlot, std::span<const std::uint8_t>(kEntryBytes)},
+            ps::Slot{kInjectedSlot, std::span<const std::uint8_t>(injected)}};
+        auto pub0 = store->publish_available(kWf, kCkpt, 0, injected_record, slots, id_span, key);
+        check(pub0.has_value() && *pub0 == 1, "S13.gen1_injected");
+
+        FakeScript script;
+        script.nodes = topo.nodes;
+        script.caps = cap_steps(1);
+        FakeResumeEngine engine(std::move(script));
+
+        host::ResumeRequest request;
+        request.module = &mod;
+        request.module_bytes = std::span<const std::uint8_t>(module_bytes);
+        request.engine = &engine;
+        request.store = &*store;
+        request.workflow = kWf;
+        request.checkpoint = kCkpt;
+        request.key_id = id_span;
+        request.key = std::span<const std::uint8_t>(key);
+        request.chosen_injected_slot = PayloadSlotId{PayloadSlotId::kInvalid};
+
+        auto done = host::run_resume(request);
+        check(done.has_value(), "S13.resume_ok");
+        // The single frontier memo reply carried raw AHFL_CAP_OK.
+        check(engine.import_reply_statuses().size() == 1, "S13.one_import_reply");
+        if (engine.import_reply_statuses().size() == 1) {
+            check(engine.import_reply_statuses()[0] == AHFL_CAP_OK, "S13.reply_raw_ok");
+        }
+        nuke(work);
+    }
+
+    // ============ S14: finish_run raw PENDING -> TransitionInvalid ===========
+    // WH-3: the engine carries run2's raw_status verbatim; the controller's
+    // finish_run classifies it. A fresh-instance replay that ends PENDING (the
+    // resume entry contract requires OK) fails closed as TransitionInvalid,
+    // unchanged from the pre-WH-3 behaviour.
+    {
+        const fs::path work = base / "s14-pending-transition-invalid";
+        Topology topo = topology_two_nodes();
+        auto mod_res = admit_module(topo.spec);
+        check(mod_res.ok(), "S14.module.admits");
+        const csm::VerifiedCoreWasmSchemaModule mod = *mod_res.module;
+        const auto module_bytes = build_module(topo.spec);
+
+        auto store = open_store(work);
+        check(store.has_value(), "S14.store");
+        const auto record = make_suspended_record(
+            mod, kWf, topo.nodes, kEntrySlot, kIntParamJson, PayloadSlotId{101});
+        const auto slots = suspended_slots(record, std::span<const std::uint8_t>(injected));
+        auto pub0 = store->publish_available(kWf, kCkpt, 0, record, slots, id_span, key);
+        check(pub0.has_value() && *pub0 == 1, "S14.gen1");
+
+        FakeScript script;
+        script.nodes = topo.nodes;
+        script.caps = cap_steps(1);
+        // The memo reply is served (raw OK), then run2 returns a raw PENDING
+        // tuple: the engine never classifies, finish_run does.
+        script.scripted_run2_status = AHFL_CAP_PENDING;
+        FakeResumeEngine engine(std::move(script));
+
+        host::ResumeRequest request;
+        request.module = &mod;
+        request.module_bytes = std::span<const std::uint8_t>(module_bytes);
+        request.engine = &engine;
+        request.store = &*store;
+        request.workflow = kWf;
+        request.checkpoint = kCkpt;
+        request.key_id = id_span;
+        request.key = std::span<const std::uint8_t>(key);
+        request.injected_result = std::span<const std::uint8_t>(injected);
+        request.chosen_injected_slot = kInjectedSlot;
+
+        auto done = host::run_resume(request);
+        check(!done.has_value(), "S14.fails_closed");
+        if (!done.has_value()) {
+            check(is_step(done.error(), rc::ResumeStepReason::TransitionInvalid),
+                  "S14.transition_invalid");
+            check(host::host_code(done.error()) == "resume.transition.invalid", "S14.host_code");
+        }
+        // The memo reply was still served with raw OK before the PENDING run2.
+        check(engine.import_reply_statuses().size() == 1 &&
+                  engine.import_reply_statuses()[0] == AHFL_CAP_OK,
+              "S14.memo_reply_raw_ok");
         nuke(work);
     }
 

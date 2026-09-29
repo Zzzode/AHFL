@@ -498,6 +498,11 @@ NodeResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_l
             }
             eng::ImportObservation observation;
             observation.import_ordinal = ordinal;
+            // The child sends the first i32 arg as param_ptr; for a 1-param
+            // import (bridge control-block pointer / section-9 scalar) it is
+            // the authoritative scalar_arg, for a 2-param opaque import it is
+            // the frame pointer (also the param_frame start).
+            observation.scalar_arg = param_ptr;
             observation.param_frame =
                 std::span<const std::uint8_t>(impl_->page.data() + param_ptr, param_len);
             observation.whole_memory = std::span<const std::uint8_t>(impl_->page);
@@ -510,15 +515,23 @@ NodeResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_l
                 continue;
             }
             const auto &answer = std::get<eng::ImportReply>(reply);
-            std::uint8_t decision[8]{};
-            decision[0] = static_cast<std::uint8_t>(answer.result_ptr.value & 0xFFu);
-            decision[1] = static_cast<std::uint8_t>((answer.result_ptr.value >> 8) & 0xFFu);
-            decision[2] = static_cast<std::uint8_t>((answer.result_ptr.value >> 16) & 0xFFu);
-            decision[3] = static_cast<std::uint8_t>((answer.result_ptr.value >> 24) & 0xFFu);
-            decision[4] = static_cast<std::uint8_t>(answer.result_len & 0xFFu);
-            decision[5] = static_cast<std::uint8_t>((answer.result_len >> 8) & 0xFFu);
-            decision[6] = static_cast<std::uint8_t>((answer.result_len >> 16) & 0xFFu);
-            decision[7] = static_cast<std::uint8_t>((answer.result_len >> 24) & 0xFFu);
+            // WH-3: the import-reply payload is the raw ahfl_cap_status word
+            // followed by (ptr,len): 12 bytes. The child truncates the tuple
+            // it returns to the import functype's result arity (3 for the
+            // opaque lane, 2 for the bridge lane).
+            std::uint8_t decision[12]{};
+            decision[0] = static_cast<std::uint8_t>(answer.raw_status & 0xFFu);
+            decision[1] = static_cast<std::uint8_t>((answer.raw_status >> 8) & 0xFFu);
+            decision[2] = static_cast<std::uint8_t>((answer.raw_status >> 16) & 0xFFu);
+            decision[3] = static_cast<std::uint8_t>((answer.raw_status >> 24) & 0xFFu);
+            decision[4] = static_cast<std::uint8_t>(answer.result_ptr.value & 0xFFu);
+            decision[5] = static_cast<std::uint8_t>((answer.result_ptr.value >> 8) & 0xFFu);
+            decision[6] = static_cast<std::uint8_t>((answer.result_ptr.value >> 16) & 0xFFu);
+            decision[7] = static_cast<std::uint8_t>((answer.result_ptr.value >> 24) & 0xFFu);
+            decision[8] = static_cast<std::uint8_t>(answer.result_len & 0xFFu);
+            decision[9] = static_cast<std::uint8_t>((answer.result_len >> 8) & 0xFFu);
+            decision[10] = static_cast<std::uint8_t>((answer.result_len >> 16) & 0xFFu);
+            decision[11] = static_cast<std::uint8_t>((answer.result_len >> 24) & 0xFFu);
             if (!impl_->send(kCmdImportReply, decision)) {
                 return std::unexpected(eng::EngineError::InstanceUnavailable);
             }
@@ -594,8 +607,9 @@ catch (e) { fatal("WebAssembly.compile failed: " + e); }
 
 const listed = WebAssembly.Module.imports(compiled);
 const exported = WebAssembly.Module.exports(compiled);
-if (listed.length !== 1 || listed[0].module !== "ahfl_cap" ||
-    !listed[0].name.startsWith("cap_") || listed[0].kind !== "function") {
+if (listed.length < 1 ||
+    !listed.every((e) => e.module === "ahfl_cap" && e.name.startsWith("cap_") &&
+                        e.kind === "function")) {
   fatal("unexpected import catalogue: " + JSON.stringify(listed));
 }
 if (!exported.some((e) => e.name === "memory" && e.kind === "memory") ||
@@ -603,7 +617,57 @@ if (!exported.some((e) => e.name === "memory" && e.kind === "memory") ||
     !exported.some((e) => e.name === "run2" && e.kind === "function")) {
   fatal("missing memory/alloc/run2 exports: " + JSON.stringify(exported.map((e) => e.name)));
 }
-const field = listed[0].name;
+
+// WH-3: parse the Type + Import sections at startup to build an
+// ordinal->result-arity table. The parent's import-reply payload is always
+// the symmetric (status,ptr,len) triple (12 bytes); the child truncates the
+// tuple it returns to the import functype's result arity (3 for the opaque
+// lane, 2 for the bridge lane) so V8's multi-value coercion never sees a
+// length mismatch.
+function parseImportArities(bytes) {
+  let off = 8; // skip magic + version
+  const typeResults = [];
+  const importTypeIdx = [];
+  function readUleb() {
+    let v = 0, shift = 0;
+    for (let i = 0; i < 5; i++) {
+      const b = bytes[off++];
+      v |= (b & 0x7f) << shift;
+      if ((b & 0x80) === 0) return v >>> 0;
+      shift += 7;
+    }
+    fatal("module section has a malformed u32 LEB");
+  }
+  while (off < bytes.length) {
+    const sectionId = bytes[off++];
+    const size = readUleb();
+    const end = off + size;
+    if (sectionId === 1) { // Type
+      const count = readUleb();
+      for (let t = 0; t < count; t++) {
+        off++; // form 0x60
+        const pc = readUleb();
+        off += pc; // skip param value types
+        typeResults.push(readUleb());
+      }
+    } else if (sectionId === 2) { // Import
+      const count = readUleb();
+      for (let i = 0; i < count; i++) {
+        const mn = readUleb(); off += mn; // module name
+        const fn = readUleb(); off += fn; // field name
+        const kind = bytes[off++];
+        const typeIdx = readUleb();
+        if (kind === 0) importTypeIdx.push(typeIdx);
+      }
+    }
+    off = end;
+  }
+  return importTypeIdx.map((idx) => typeResults[idx] ?? 0);
+}
+const importArities = parseImportArities(moduleBytes);
+if (importArities.length !== listed.length) {
+  fatal("import arity table disagrees with the import catalogue");
+}
 
 let instance = null;
 let exports_ = null;
@@ -621,21 +685,35 @@ function allocWrite(payload) {
   writeFrame(K_ALLOC, r);
 }
 
-// The single synchronous ahfl_cap import (ordinal 0: the module's sole import).
-function capCallback(ptr, len) {
-  const h = Buffer.alloc(12);
-  h.writeUInt32LE(0, 0);
-  h.writeUInt32LE(ptr >>> 0, 4);
-  h.writeUInt32LE(len >>> 0, 8);
-  writeFrame(K_IMPORT, Buffer.concat([h, pageCopy()]));
-  // Parked: serve nested allocations until the terminal host decision.
-  for (;;) {
-    const [kind, payload] = readFrame();
-    if (kind === C_ALLOC) { allocWrite(payload); continue; }
-    if (kind === C_REPLY) return [0, u32le(payload, 0), u32le(payload, 4)];
-    if (kind === C_ABORT) throw new Error(ABORT_MARKER);
-    fatal("unexpected command while import parked: " + kind);
-  }
+// One synchronous ahfl_cap import callback, parameterized by its import
+// ordinal. A 2-param opaque import receives (ptr,len); a 1-param bridge import
+// receives the single control-block pointer (len is undefined). The
+// observation header carries (ordinal, param_ptr, param_len); for a 1-param
+// import param_len is 0 and param_ptr is the scalar arg. The reply tuple is
+// truncated to the import's result arity.
+function makeCapCallback(ordinal) {
+  return function (...args) {
+    const ptr = args.length >= 1 ? (args[0] >>> 0) : 0;
+    const len = args.length >= 2 ? (args[1] >>> 0) : 0;
+    const h = Buffer.alloc(12);
+    h.writeUInt32LE(ordinal, 0);
+    h.writeUInt32LE(ptr, 4);
+    h.writeUInt32LE(len, 8);
+    writeFrame(K_IMPORT, Buffer.concat([h, pageCopy()]));
+    // Parked: serve nested allocations until the terminal host decision.
+    for (;;) {
+      const [kind, payload] = readFrame();
+      if (kind === C_ALLOC) { allocWrite(payload); continue; }
+      if (kind === C_REPLY) {
+        // The parent always sends (status, ptr, len); truncate to the import
+        // functype's result arity (3 opaque / 2 bridge).
+        const tuple = [u32le(payload, 0), u32le(payload, 4), u32le(payload, 8)];
+        return tuple.slice(0, importArities[ordinal]);
+      }
+      if (kind === C_ABORT) throw new Error(ABORT_MARKER);
+      fatal("unexpected command while import parked: " + kind);
+    }
+  };
 }
 
 writeFrame(K_READY, Buffer.alloc(0));
@@ -645,7 +723,11 @@ for (;;) {
   if (kind === C_BYE) process.exit(0);
   if (kind === C_INSTANTIATE) {
     try {
-      instance = new WebAssembly.Instance(compiled, {ahfl_cap: {[field]: capCallback}});
+      const capImports = {};
+      for (let i = 0; i < listed.length; i++) {
+        capImports[listed[i].name] = makeCapCallback(i);
+      }
+      instance = new WebAssembly.Instance(compiled, {ahfl_cap: capImports});
       exports_ = instance.exports;
       if (exports_.memory.buffer.byteLength !== PAGE) {
         fatal("module memory is not the fixed single 64 KiB page");

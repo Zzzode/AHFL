@@ -7,6 +7,7 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
+#include "ahfl/runtime/ahfl_host.h" // AHFL_CAP_OK
 #include "base/support/sha256.hpp"
 #include "runtime/engine/core_wasm_resume_capacity.hpp"
 #include "runtime/engine/core_wasm_resume_controller.hpp"
@@ -112,7 +113,10 @@ struct ReplayState {
 };
 
 // Write one decision's exact bytes as an instance-lifetime L3/L4 bump and hand
-// the engine its guest (ptr,len).
+// the engine its guest (ptr,len). A memo/injected frame is ALWAYS an OK reply:
+// the controller only ever decides ReturnMemo/NeedInjectedSlot for an
+// authenticated result, so the raw status is AHFL_CAP_OK explicitly (WH-3: the
+// engine carries it verbatim, never classifies).
 [[nodiscard]] std::expected<ImportReply, EngineError>
 write_frame(CoreWasmResumeEngine &engine, ReplayState &state,
             std::span<const std::uint8_t> bytes) {
@@ -121,7 +125,9 @@ write_frame(CoreWasmResumeEngine &engine, ReplayState &state,
         state.abort_failure = host_failure(ResumeHostReason::EngineFailure, ptr.error());
         return std::unexpected(ptr.error());
     }
-    return ImportReply{*ptr, static_cast<std::uint32_t>(bytes.size())};
+    return ImportReply{.raw_status = AHFL_CAP_OK,
+                       .result_ptr = *ptr,
+                       .result_len = static_cast<std::uint32_t>(bytes.size())};
 }
 
 // Fail closed with a precise ResumeFailure and an engine-side abort.

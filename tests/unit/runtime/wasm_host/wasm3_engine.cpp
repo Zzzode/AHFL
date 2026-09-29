@@ -238,7 +238,204 @@ void test_single_arg_import_slot_discipline() {
     }
 }
 
-// 5. Trap mapping: unreachable, OOB load, and OOB import param all map to
+// 4b. WH-3 opaque-lane ABI matrix: the engine carries ImportReply.raw_status
+//     verbatim into the import's first result slot; the classifier module (the
+//     compiled guest's graceful arms) classifies it. Every scenario drives the
+//     REAL wasm3 interpreter through the engine port.
+void test_opaque_abi_matrix() {
+    const auto symbol = 42;
+    const std::vector<std::uint8_t> result = {0xCA, 0xFE, 0xBA, 0xBE};
+
+    // One scenario: script the import reply's raw_status / ptr / len, run the
+    // classifier, and assert the run2 tuple.
+    auto run_scenario = [&](std::uint32_t raw_status, bool null_ptr,
+                            std::uint32_t want_status, std::uint32_t want_len,
+                            const std::string &tag) {
+        auto bytes = wht::opaque_classifier_module(symbol);
+        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
+        auto inst = engine.fresh_instance(
+            std::span<const std::uint8_t>(bytes),
+            [&](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+                if (null_ptr) {
+                    return eng::ImportReply{.raw_status = raw_status,
+                                            .result_ptr = eng::GuestPointer{0},
+                                            .result_len = 0};
+                }
+                auto rp = engine.alloc_then_write(std::span<const std::uint8_t>(result));
+                if (!rp) {
+                    return eng::ImportAbort{};
+                }
+                return eng::ImportReply{.raw_status = raw_status,
+                                        .result_ptr = *rp,
+                                        .result_len = static_cast<std::uint32_t>(result.size())};
+            });
+        check(inst.has_value(), tag + ".fresh_instance");
+        auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
+        check(ptr.has_value(), tag + ".alloc entry");
+        auto out = engine.invoke_run2(*ptr, 8);
+        check(out.has_value(), tag + ".invoke_run2");
+        if (out) {
+            const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*out);
+            check(tuple != nullptr, tag + ".outcome is a tuple (not trap/abort)");
+            if (tuple != nullptr) {
+                check(tuple->raw_status == want_status, tag + ".raw_status");
+                check(tuple->output_len == want_len, tag + ".output_len");
+            }
+        }
+    };
+
+    // OK (0) + valid frame -> (0, ptr, 4): the success path forwards the frame.
+    run_scenario(/*raw_status=*/0, /*null_ptr=*/false, /*want_status=*/0,
+                 /*want_len=*/4, "abi.ok_valid");
+    // OK (0) + null ptr -> (1, 0, 0): fail-closed on a missing frame.
+    run_scenario(0, true, 1, 0, "abi.ok_null");
+    // OK (0) + zero-len (non-null ptr, len 0) -> (1, 0, 0).
+    // (null_ptr=false allocs a 4-byte frame; the zero-len case is covered by
+    // the classifier's len==0 arm via a dedicated scenario below.)
+    {
+        auto bytes = wht::opaque_classifier_module(symbol);
+        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
+        auto inst = engine.fresh_instance(
+            std::span<const std::uint8_t>(bytes),
+            [&](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+                auto rp = engine.alloc_then_write(std::span<const std::uint8_t>(result));
+                if (!rp) {
+                    return eng::ImportAbort{};
+                }
+                // OK but zero-length frame.
+                return eng::ImportReply{.raw_status = 0, .result_ptr = *rp, .result_len = 0};
+            });
+        check(inst.has_value(), "abi.ok_zero_len.fresh_instance");
+        auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
+        auto out = engine.invoke_run2(*ptr, 8);
+        if (out) {
+            const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*out);
+            check(tuple != nullptr && tuple->raw_status == 1 && tuple->output_len == 0,
+                  "abi.ok_zero_len -> (1,0,0)");
+        }
+    }
+    // ERROR (1) + valid frame -> (1, 0, 0): the graceful ERROR arm.
+    run_scenario(1, false, 1, 0, "abi.error");
+    // PENDING (2) + null ptr -> (2, 0, 0): the graceful PENDING arm (latch set).
+    run_scenario(2, true, 2, 0, "abi.pending_null");
+    // PENDING (2) + non-null ptr -> (1, 0, 0): a pending reply with a frame is
+    // an error (the pending contract is null-frame-only).
+    run_scenario(2, false, 1, 0, "abi.pending_nonnull");
+    // Unknown 77 + valid frame -> (1, 0, 0): the guest fail-closed rule.
+    run_scenario(77, false, 1, 0, "abi.unknown");
+}
+
+// 4c. WH-3 opaque-lane latch re-entry guard: a classifier module with the
+//     latch pre-armed traps at run2 entry (unreachable -> Run2Trapped). This is
+//     the re-entry guard a PENDING+null reply arms (the engine is one-shot per
+//     session, so the guard is exercised by pre-arming the latch global).
+void test_opaque_latch_reentry() {
+    auto bytes = wht::opaque_classifier_module(42, /*latch_init=*/1);
+    ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
+    bool callback_ran = false;
+    auto inst = engine.fresh_instance(
+        std::span<const std::uint8_t>(bytes),
+        [&](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            callback_ran = true;
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "latch.fresh_instance (pre-armed latch)");
+    auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
+    check(ptr.has_value(), "latch.alloc entry");
+    auto out = engine.invoke_run2(*ptr, 8);
+    check(out.has_value() && std::holds_alternative<eng::Run2Trapped>(*out),
+          "latch.pre-armed -> Run2Trapped (re-entry guard)");
+    check(!callback_ran, "latch.import never called (entry guard traps first)");
+}
+
+// 4d. WH-3 bridge lane: the (i32)->(i32,i32) import is admitted by the engine,
+//     the trampoline carries raw_status into the first result slot and the
+//     result pointer into the second, and the bridge classifier traps on any
+//     non-zero status (the bridge lane's guest contract).
+void test_bridge_lane() {
+    const auto symbol = 7;
+    const std::vector<std::uint8_t> result = {0x01, 0x02, 0x03};
+
+    // OK reply: the module binds the result pointer and returns (0, ptr, 0).
+    {
+        auto bytes = wht::bridge_classifier_module(symbol);
+        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
+        std::uint32_t observed_scalar = 0;
+        auto inst = engine.fresh_instance(
+            std::span<const std::uint8_t>(bytes),
+            [&](const eng::ImportObservation &obs) -> eng::ImportCallbackResult {
+                observed_scalar = obs.scalar_arg;
+                auto rp = engine.alloc_then_write(std::span<const std::uint8_t>(result));
+                if (!rp) {
+                    return eng::ImportAbort{};
+                }
+                return eng::ImportReply{.raw_status = 0, .result_ptr = *rp, .result_len = 0};
+            });
+        check(inst.has_value(), "bridge.ok.fresh_instance (2-result lane admitted)");
+        auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
+        check(ptr.has_value(), "bridge.ok.alloc entry");
+        auto out = engine.invoke_run2(*ptr, 8);
+        check(out.has_value(), "bridge.ok.invoke_run2");
+        // The single i32 arg is the entry pointer (control-block pointer).
+        check(observed_scalar == ptr->value, "bridge.ok.scalar_arg == entry ptr");
+        if (out) {
+            const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*out);
+            check(tuple != nullptr, "bridge.ok.outcome is a tuple");
+            if (tuple != nullptr) {
+                check(tuple->raw_status == 0, "bridge.ok.raw_status == 0");
+                check(tuple->output_len == 0, "bridge.ok.output_len == 0 (bridge has no len word)");
+                // The result pointer the callback allocated is bound.
+                auto mem = engine.read_whole_memory();
+                check(mem.has_value(), "bridge.ok.read_whole_memory");
+                if (mem && tuple->output_ptr.value != 0) {
+                    check(std::memcmp(mem->data() + tuple->output_ptr.value, result.data(),
+                                      result.size()) == 0,
+                          "bridge.ok.result bytes at output_ptr");
+                }
+            }
+        }
+    }
+
+    // Non-OK replies (ERROR / PENDING / unknown) trap the module (unreachable).
+    for (std::uint32_t status : {1u, 2u, 77u}) {
+        auto bytes = wht::bridge_classifier_module(symbol);
+        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
+        auto inst = engine.fresh_instance(
+            std::span<const std::uint8_t>(bytes),
+            [&](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+                auto rp = engine.alloc_then_write(std::span<const std::uint8_t>(result));
+                if (!rp) {
+                    return eng::ImportAbort{};
+                }
+                return eng::ImportReply{.raw_status = status,
+                                        .result_ptr = *rp,
+                                        .result_len = 0};
+            });
+        check(inst.has_value(), "bridge.nonok.fresh_instance");
+        auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
+        auto out = engine.invoke_run2(*ptr, 8);
+        check(out.has_value() && std::holds_alternative<eng::Run2Trapped>(*out),
+              "bridge.nonok raw_status=" + std::to_string(status) + " -> Run2Trapped");
+    }
+
+    // ImportAbort on the bridge lane -> Run2HostAborted (unchanged).
+    {
+        auto bytes = wht::bridge_classifier_module(symbol);
+        ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
+        auto inst = engine.fresh_instance(
+            std::span<const std::uint8_t>(bytes),
+            [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+                return eng::ImportAbort{};
+            });
+        check(inst.has_value(), "bridge.abort.fresh_instance");
+        auto ptr = engine.alloc_then_write(std::span<const std::uint8_t>(entry_bytes()));
+        auto out = engine.invoke_run2(*ptr, 8);
+        check(out.has_value() && std::holds_alternative<eng::Run2HostAborted>(*out),
+              "bridge.abort -> Run2HostAborted");
+    }
+}
+
+
 //    Run2Trapped (not Run2HostAborted, not a tuple).
 void test_trap_mapping() {
     {
@@ -669,6 +866,9 @@ int main() {
     test_import_free_workflow_shared_fixture();
     test_opaque_import_a2_admitted();
     test_single_arg_import_slot_discipline();
+    test_opaque_abi_matrix();
+    test_opaque_latch_reentry();
+    test_bridge_lane();
     test_trap_mapping();
     test_host_abort_mapping();
     test_runv_host_abort_mapping();

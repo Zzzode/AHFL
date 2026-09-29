@@ -57,6 +57,12 @@ constexpr std::uint8_t kOpMemoryGrow = 0x40;
 constexpr std::uint8_t kOpIf = 0x04;
 constexpr std::uint8_t kOpElse = 0x05;
 constexpr std::uint8_t kOpEnd = 0x0b;
+constexpr std::uint8_t kOpReturn = 0x0f;
+constexpr std::uint8_t kOpI32Eqz = 0x45;
+constexpr std::uint8_t kOpI32Eq = 0x46;
+
+// The Wasm void block type (0x40): an if/block/loop that produces no values.
+constexpr std::uint8_t kBlockTypeVoid = 0x40;
 
 constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kExportKindFunc = 0x00;
@@ -152,6 +158,24 @@ inline std::vector<std::uint8_t> global_i32_mut(std::int32_t init) {
     payload.push_back(kI32);
     payload.push_back(0x01); // mutable
     put_i32_const(payload, init);
+    payload.push_back(kOpEnd);
+    return payload;
+}
+
+// Two mutable i32 globals: the bump-allocator heap pointer (global 0) and a
+// WH-3 pending latch (global 1). The latch is set by the opaque classifier on
+// a PENDING+null reply and checked at run2 entry (the re-entry guard).
+inline std::vector<std::uint8_t>
+global_section_heap_and_latch(std::int32_t heap_init, std::int32_t latch_init) {
+    std::vector<std::uint8_t> payload;
+    put_uleb(payload, 2); // two globals
+    payload.push_back(kI32);
+    payload.push_back(0x01); // mutable
+    put_i32_const(payload, heap_init);
+    payload.push_back(kOpEnd);
+    payload.push_back(kI32);
+    payload.push_back(0x01); // mutable
+    put_i32_const(payload, latch_init);
     payload.push_back(kOpEnd);
     return payload;
 }
@@ -304,6 +328,161 @@ capability_module(std::uint64_t symbol, std::uint32_t param_count) {
     }
     put_op_uleb(run2_body, kOpCall, 0); // call the import
     run2_body.push_back(kOpEnd);
+    append_standard_code(m, run2_body);
+    return m;
+}
+
+// WH-3: the opaque-lane CLASSIFIER module. Unlike capability_module (which
+// forwards the import tuple verbatim), run2 inspects the import's first result
+// (the raw ahfl_cap_status) and classifies it exactly as the compiled guest's
+// graceful arms do:
+//   * OK (0) with a non-null, non-zero-len frame -> return (0, ptr, len);
+//   * OK with null ptr or zero len               -> return (1, 0, 0);
+//   * ERROR (1) or any unknown status            -> return (1, 0, 0);
+//   * PENDING (2) with null ptr                  -> set the latch (global 1),
+//                                                   return (2, 0, 0);
+//   * PENDING (2) with non-null ptr              -> return (1, 0, 0).
+// The latch is checked at run2 entry: a re-entry after a PENDING+null traps
+// (unreachable). `latch_init` lets a test pre-arm the entry guard.
+[[nodiscard]] inline std::vector<std::uint8_t>
+opaque_classifier_module(std::uint64_t symbol, std::int32_t latch_init = 0) {
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    // type 0: (i32,i32)->(i32,i32,i32) (import + run2); type 1: (i32)->i32 (alloc)
+    put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
+                                         func_type({kI32}, {kI32})}));
+    put_section(m, 2, rts::import_payload({{symbol, 0}})); // ahfl_cap.cap_<symbol> : type 0
+    put_section(m, 3, function_section({0, 1})); // func 1 = run2 (type 0), func 2 = alloc (type 1)
+    put_section(m, 5, memory_section(1));
+    put_section(m, 6, global_section_heap_and_latch(static_cast<std::int32_t>(kHeapBase),
+                                                     latch_init));
+    put_section(m, 7, standard_exports(1, 2));
+
+    // run2 body: entry latch guard, call the import, classify the raw status.
+    std::vector<std::uint8_t> run2_body = locals_decl({{3, kI32}}); // local 2=status, 3=ptr, 4=len
+
+    // Entry latch guard: if global 1 (latch) != 0, unreachable.
+    put_op_uleb(run2_body, kOpGlobalGet, 1);
+    run2_body.push_back(kOpIf);
+    run2_body.push_back(kBlockTypeVoid);
+    run2_body.push_back(kOpUnreachable);
+    run2_body.push_back(kOpEnd);
+
+    // Call the import (func 0) with the entry (ptr, len).
+    put_op_uleb(run2_body, kOpLocalGet, 0);
+    put_op_uleb(run2_body, kOpLocalGet, 1);
+    put_op_uleb(run2_body, kOpCall, 0);
+    // Stack: [status, ptr, len] (len on top). Save to locals.
+    put_op_uleb(run2_body, kOpLocalSet, 4); // len
+    put_op_uleb(run2_body, kOpLocalSet, 3); // ptr
+    put_op_uleb(run2_body, kOpLocalSet, 2); // status
+
+    // Emit `i32.const <status>; i32.const 0; i32.const 0; return`.
+    auto emit_const_tuple = [&](std::int32_t status) {
+        put_i32_const(run2_body, status);
+        put_i32_const(run2_body, 0);
+        put_i32_const(run2_body, 0);
+        run2_body.push_back(kOpReturn);
+    };
+
+    // if status == 0 (OK):
+    put_op_uleb(run2_body, kOpLocalGet, 2);
+    run2_body.push_back(kOpI32Eqz);
+    run2_body.push_back(kOpIf);
+    run2_body.push_back(kBlockTypeVoid);
+    {
+        // if ptr == 0 -> (1, 0, 0)
+        put_op_uleb(run2_body, kOpLocalGet, 3);
+        run2_body.push_back(kOpI32Eqz);
+        run2_body.push_back(kOpIf);
+        run2_body.push_back(kBlockTypeVoid);
+        emit_const_tuple(1);
+        run2_body.push_back(kOpEnd);
+        // if len == 0 -> (1, 0, 0)
+        put_op_uleb(run2_body, kOpLocalGet, 4);
+        run2_body.push_back(kOpI32Eqz);
+        run2_body.push_back(kOpIf);
+        run2_body.push_back(kBlockTypeVoid);
+        emit_const_tuple(1);
+        run2_body.push_back(kOpEnd);
+        // OK valid -> (0, ptr, len)
+        put_i32_const(run2_body, 0);
+        put_op_uleb(run2_body, kOpLocalGet, 3);
+        put_op_uleb(run2_body, kOpLocalGet, 4);
+        run2_body.push_back(kOpReturn);
+    }
+    run2_body.push_back(kOpElse);
+    {
+        // if status == 2 (PENDING):
+        put_op_uleb(run2_body, kOpLocalGet, 2);
+        put_i32_const(run2_body, 2);
+        run2_body.push_back(kOpI32Eq);
+        run2_body.push_back(kOpIf);
+        run2_body.push_back(kBlockTypeVoid);
+        {
+            // if ptr == 0: latch = 1; (2, 0, 0)
+            put_op_uleb(run2_body, kOpLocalGet, 3);
+            run2_body.push_back(kOpI32Eqz);
+            run2_body.push_back(kOpIf);
+            run2_body.push_back(kBlockTypeVoid);
+            put_i32_const(run2_body, 1);
+            put_op_uleb(run2_body, kOpGlobalSet, 1); // latch = 1
+            emit_const_tuple(2);
+            run2_body.push_back(kOpEnd);
+            // PENDING + non-null -> (1, 0, 0)
+            emit_const_tuple(1);
+        }
+        run2_body.push_back(kOpEnd); // end if (status == 2)
+        // ERROR (1) / unknown -> (1, 0, 0)
+        emit_const_tuple(1);
+    }
+    run2_body.push_back(kOpEnd); // end if (status == 0) / else
+    // All paths return; the fall-through is unreachable. This makes the stack
+    // polymorphic at func end, so wasm3 skips the exact result-count check
+    // (ReturnValues: the count mismatch is not enforced on polymorphic stacks).
+    run2_body.push_back(kOpUnreachable);
+    run2_body.push_back(kOpEnd); // end func
+    append_standard_code(m, run2_body);
+    return m;
+}
+
+// WH-3: the bridge-lane CLASSIFIER module. run2 calls the (i32)->(i32,i32)
+// bridge import with the entry pointer as the control-block pointer, then
+// classifies the first result (the raw ahfl_cap_status): any non-zero status
+// traps (unreachable, the bridge lane's guest contract); OK binds the result
+// pointer and returns (0, ptr, 0).
+[[nodiscard]] inline std::vector<std::uint8_t>
+bridge_classifier_module(std::uint64_t symbol) {
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    // type 0: (i32)->(i32,i32) (bridge import); type 1: (i32,i32)->(i32,i32,i32) (run2);
+    // type 2: (i32)->i32 (alloc)
+    put_section(m, 1, rts::type_payload({func_type({kI32}, {kI32, kI32}),
+                                         func_type({kI32, kI32}, {kI32, kI32, kI32}),
+                                         func_type({kI32}, {kI32})}));
+    put_section(m, 2, rts::import_payload({{symbol, 0}})); // ahfl_cap.cap_<symbol> : type 0
+    put_section(m, 3, function_section({1, 2})); // func 1 = run2 (type 1), func 2 = alloc (type 2)
+    put_section(m, 5, memory_section(1));
+    put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
+    put_section(m, 7, standard_exports(1, 2));
+
+    // run2 body: call the bridge import (func 0) with local 0 as the
+    // control-block pointer; classify the raw status.
+    std::vector<std::uint8_t> run2_body = locals_decl({{2, kI32}}); // local 2=status, 3=ptr
+    put_op_uleb(run2_body, kOpLocalGet, 0); // control-block pointer
+    put_op_uleb(run2_body, kOpCall, 0);    // bridge import -> (status, ptr)
+    // Stack: [status, ptr] (ptr on top). Save to locals.
+    put_op_uleb(run2_body, kOpLocalSet, 3); // ptr
+    put_op_uleb(run2_body, kOpLocalSet, 2); // status
+    // Bridge lane guest contract: any non-zero status traps.
+    put_op_uleb(run2_body, kOpLocalGet, 2);
+    run2_body.push_back(kOpIf);
+    run2_body.push_back(kBlockTypeVoid);
+    run2_body.push_back(kOpUnreachable);
+    run2_body.push_back(kOpEnd);
+    // OK: bind the result pointer, return (0, ptr, 0).
+    put_i32_const(run2_body, 0);
+    put_op_uleb(run2_body, kOpLocalGet, 3);
+    put_i32_const(run2_body, 0);
+    run2_body.push_back(kOpEnd); // end func
     append_standard_code(m, run2_body);
     return m;
 }

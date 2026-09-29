@@ -33,7 +33,10 @@
 //     (status,ptr,len); a Wasm trap is its own arm.
 // The engine MUST NOT classify OK / ERROR / PENDING and MUST NOT invent a
 // status: the raw u32 word is classified solely by the D1b controller
-// (seam: "the adapter never pre-classifies").
+// (seam: "the adapter never pre-classifies"). The same no-classification rule
+// holds for the per-import reply: ImportReply.raw_status is carried verbatim
+// to the import's first result slot; the guest's compiled code classifies it
+// (WH-3, 2026-09-30 decision).
 //
 // FOUNDATION: the port itself carries no store, no decision logic, and no
 // resume.* string. The synchronous in-test double is NOT a self-built VM;
@@ -79,8 +82,16 @@ using Run2Outcome = std::variant<Run2ResultTuple, Run2Trapped, Run2HostAborted>;
 // memory, never retained past the callback's return); `whole_memory` is the
 // whole fixed page at the moment of the call, the controller's sole
 // node-event authority.
+//
+// WH-3: `scalar_arg` carries the single i32 argument of a 1-param import (the
+// bridge lane's control-block pointer, or the section-9 probe's opaque scalar).
+// For a 2-param opaque import it carries the first arg (the frame pointer,
+// also the start of `param_frame`) and is not authoritative; the bridge
+// executor resolves its call site from `scalar_arg` (the control-block
+// address), never from the ordinal alone.
 struct ImportObservation {
     std::uint32_t import_ordinal{0};
+    std::uint32_t scalar_arg{0};
     std::span<const std::uint8_t> param_frame{};
     std::span<const std::uint8_t> whole_memory{};
 };
@@ -93,7 +104,21 @@ struct ImportObservation {
 // throwing out of the JS import callback, which traps the Wasm call). The host
 // records the precise reason in its own state; the abort tag itself carries no
 // error classification.
+//
+// WH-3 (2026-09-30 decision): a reply carries the raw ahfl_cap_status word
+// (include/ahfl/runtime/ahfl_host.h: AHFL_CAP_OK=0 / AHFL_CAP_ERROR=1 /
+// AHFL_CAP_PENDING=2). The engine writes it verbatim into the import's first
+// result slot and NEVER classifies it -- the guest's compiled code is the
+// classifier (the opaque lane's graceful ERROR/PENDING arms; the bridge lane's
+// unreachable on any non-zero), exactly as run2's raw_status is carried
+// verbatim and classified by the D1b controller. ImportAbort stays
+// HOST-DECISION-failure-only (store/CAS/engine fault): a capability that
+// executed but failed/pending is a raw non-OK reply, never an abort.
 struct ImportReply {
+    // The raw ahfl_cap_status word, written verbatim to the import's first
+    // result slot. Default 0 (AHFL_CAP_OK): a delivered frame is the success
+    // encoding, so every pre-WH-3 construction site keeps its semantics.
+    std::uint32_t raw_status{0};
     GuestPointer result_ptr{};
     std::uint32_t result_len{0};
 };

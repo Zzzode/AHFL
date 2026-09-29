@@ -39,9 +39,13 @@
 // resume.* catalogue (range-less, no-echo), the stable string production hosts
 // report.
 //
-// FOUNDATION (honest): verified with a synchronous in-test engine double, not
-// a real Wasm VM. The first real-engine port (F5, Node embedded engine) and
-// the D2b live-result API remain separate slices; B2 / KR6.5 stay false.
+// ENGINE EVIDENCE (WH-3, 2026-09-30): the driver is verified end-to-end on a
+// REAL Wasm VM -- the vendored wasm3 interpreter via Wasm3ResumeEngine
+// (core_wasm_resume_wasm3_e2e.cpp) -- in addition to the synchronous in-test
+// engine double and the Node embedded-engine port. The D2b live-result API
+// (ReadyForLive / dedup / recover) remains the blocked follow-on: this driver
+// never invokes a live capability and the live frontier stays
+// ReadyForLiveBlocked. B2 / KR6.5 stay false until that lands.
 
 #include <cstdint>
 #include <expected>

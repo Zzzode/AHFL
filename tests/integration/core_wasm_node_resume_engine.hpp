@@ -42,7 +42,11 @@
 //   while run2 is parked on an import the child runs a NESTED command loop over
 //   the same fd 0, accepting command 2 (alloc_then_write -> reply 17) and exactly
 //   one terminal decision:
-//     6 import_reply        (u32 ptr | u32 len) -> the import returns [OK,ptr,len]
+//     6 import_reply        (u32 raw_status | u32 ptr | u32 len; 12 bytes) -> the
+//                            import returns the tuple truncated to its functype
+//                            result arity (3 for the opaque lane, 2 for the bridge
+//                            lane); the child builds an ordinal->arity table at
+//                            startup from the Type/Import sections
 //     7 import_abort        (empty) -> the import throws; run2 unwinds and the
 //                            outcome reports the host-aborted arm, never a trap
 // so the port's nested alloc_then_write/ImportReply sequence round-trips

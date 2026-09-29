@@ -331,7 +331,13 @@ namespace detail {
 struct Wasm3EngineImpl {
     struct ImportBinding {
         std::uint32_t ordinal{0}; // position in the ahfl_cap import table
-        std::uint32_t param_count{0}; // 1 (section-9 probe) or 2 (opaque)
+        std::uint32_t param_count{0}; // 1 (section-9 probe / bridge) or 2 (opaque)
+        // WH-3: the import functype's RESULT arity. 3 for the opaque
+        // (i32,i32)->(i32,i32,i32) tuple lane; 2 for the bridge
+        // (i32)->(i32,i32) lane. The trampoline writes exactly this many
+        // result slots (sp[0..result_count)); on the 2-result lane the
+        // reply's result_ptr carries the bridge result_base semantics.
+        std::uint32_t result_count{0};
     };
 
     IM3Environment env{nullptr};
@@ -390,11 +396,14 @@ struct Wasm3EngineImpl {
         const std::uint32_t memory_size = m3_GetMemorySize(runtime);
         const auto *memory_bytes = static_cast<const std::uint8_t *>(mem);
 
-        // wasm3 raw ABI: results at sp[0..3), args at sp[3..].
+        // wasm3 raw ABI: results at sp[0..result_count), args at
+        // sp[result_count..]. The arg base is therefore the binding's result
+        // arity, NOT a hardcoded 3 (the bridge lane has 2 results).
+        const std::uint32_t arg_base = binding->result_count;
         std::span<const std::uint8_t> param_frame;
         if (binding->param_count == 2) {
-            const auto ptr = static_cast<std::uint32_t>(sp[3]);
-            const auto len = static_cast<std::uint32_t>(sp[4]);
+            const auto ptr = static_cast<std::uint32_t>(sp[arg_base]);
+            const auto len = static_cast<std::uint32_t>(sp[arg_base + 1]);
             // m3ApiCheckMem discipline: the module-supplied param frame must
             // lie entirely inside the page. An out-of-bounds frame fails
             // closed as a trap (the module, not the host, is at fault).
@@ -404,10 +413,15 @@ struct Wasm3EngineImpl {
             param_frame = std::span<const std::uint8_t>(memory_bytes + ptr, len);
         }
         // param_count == 1: the single arg is an opaque scalar (the section-9
-        // probe shape); the param frame is empty.
+        // probe shape, or the bridge control-block pointer); the param frame
+        // is empty.
 
         eng::ImportObservation observation;
         observation.import_ordinal = binding->ordinal;
+        // The single i32 arg of a 1-param import (bridge control-block pointer
+        // / section-9 scalar); for a 2-param import this is the frame pointer
+        // (also the start of param_frame) and is not authoritative.
+        observation.scalar_arg = static_cast<std::uint32_t>(sp[arg_base]);
         observation.param_frame = param_frame;
         observation.whole_memory =
             std::span<const std::uint8_t>(memory_bytes, memory_size);
@@ -426,9 +440,15 @@ struct Wasm3EngineImpl {
         }
 
         const auto &frame = std::get<eng::ImportReply>(reply);
-        sp[0] = 0; // AHFL_CAP_OK: a delivered reply is the success encoding
+        // Write exactly the import functype's result slots. The raw status is
+        // carried verbatim (the engine never classifies); the opaque lane's
+        // third slot is the result frame length, the bridge lane's second slot
+        // is the result_base (no length word on a 2-result functype).
+        sp[0] = frame.raw_status;
         sp[1] = frame.result_ptr.value;
-        sp[2] = frame.result_len;
+        if (binding->result_count == 3) {
+            sp[2] = frame.result_len;
+        }
         return m3Err_none;
     }
 };
@@ -481,8 +501,9 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     }
 
     // Import classification + functype validation. Every func import must be
-    // ahfl_cap.cap_<decimal> with the opaque 3-result functype; the 2-result
-    // bridge (i32)->(i32,i32) is WH-3.
+    // ahfl_cap.cap_<decimal> with one of the two sealed lane functypes:
+    //   * opaque: (i32,i32)->(i32,i32,i32) or (i32)->(i32,i32,i32) (3 results);
+    //   * bridge: (i32)->(i32,i32) (2 results; WH-3).
     std::vector<detail::Wasm3EngineImpl::ImportBinding> bindings;
     bindings.reserve(parsed->imports.size());
     for (const auto &import : parsed->imports) {
@@ -505,18 +526,24 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
         const auto &type = parsed->types[import.type_index];
-        if (type.results.size() != 3 || type.params.empty() ||
-            type.params.size() > 2) {
+        const auto is_i32 = [](std::uint8_t vt) { return vt == kWasmValueTypeI32; };
+        const bool results_i32 =
+            std::all_of(type.results.begin(), type.results.end(), is_i32);
+        const bool params_i32 =
+            std::all_of(type.params.begin(), type.params.end(), is_i32);
+        if (!results_i32 || !params_i32) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
-        const auto is_i32 = [](std::uint8_t vt) { return vt == kWasmValueTypeI32; };
-        if (!std::all_of(type.results.begin(), type.results.end(), is_i32) ||
-            !std::all_of(type.params.begin(), type.params.end(), is_i32)) {
+        const bool opaque_lane = type.results.size() == 3 &&
+                                 !type.params.empty() && type.params.size() <= 2;
+        const bool bridge_lane = type.results.size() == 2 && type.params.size() == 1;
+        if (!opaque_lane && !bridge_lane) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
         bindings.push_back(detail::Wasm3EngineImpl::ImportBinding{
             .ordinal = static_cast<std::uint32_t>(bindings.size()),
             .param_count = static_cast<std::uint32_t>(type.params.size()),
+            .result_count = static_cast<std::uint32_t>(type.results.size()),
         });
     }
 
@@ -558,9 +585,16 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
 
     // 5. Link every capability import with its raw trampoline. `bindings` is
     //    fully built, so its element addresses are stable for the session
-    //    (committed to the Impl below before any invocation).
+    //    (committed to the Impl below before any invocation). The wasm3 raw
+    //    signature is results-then-(params): the opaque 3-result lane is
+    //    "iii(ii)"/"iii(i)", the bridge 2-result lane is "ii(i)".
     for (std::size_t i = 0; i < parsed->imports.size(); ++i) {
-        const char *signature = bindings[i].param_count == 2 ? "iii(ii)" : "iii(i)";
+        const char *signature = nullptr;
+        if (bindings[i].result_count == 3) {
+            signature = bindings[i].param_count == 2 ? "iii(ii)" : "iii(i)";
+        } else {
+            signature = "ii(i)";
+        }
         if (m3_LinkRawFunctionEx(impl_->module, "ahfl_cap",
                                  parsed->imports[i].field_name.c_str(), signature,
                                  &detail::Wasm3EngineImpl::raw_import_trampoline,
