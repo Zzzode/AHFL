@@ -45,38 +45,15 @@ function(ahfl_apply_third_party_warnings target_name)
         return()
     endif()
 
-    # The downstream flags are C++-only. A C target (e.g. the vendored wasm3
-    # interpreter) would otherwise emit a diagnostic about the unknown option
-    # itself -- "valid for C++/ObjC++ but not for C" is a warning in GCC but a
-    # hard error in Clang, so under -Werror it breaks the build. Decide from the
-    # target's own sources, so every call site stays identical (antlr4
-    # precedent) and a C++ target keeps exactly its previous profile. The
-    # LINKER_LANGUAGE property is not readable for STATIC libraries, hence the
-    # extension scan.
-    get_target_property(AHFL_THIRD_PARTY_SOURCES ${target_name} SOURCES)
-    set(AHFL_THIRD_PARTY_IS_C ON)
-    if(AHFL_THIRD_PARTY_SOURCES)
-        foreach(AHFL_THIRD_PARTY_SOURCE IN LISTS AHFL_THIRD_PARTY_SOURCES)
-            if(AHFL_THIRD_PARTY_SOURCE MATCHES "\\.(cpp|cc|cxx|c\\+\\+|mm|ixx)$")
-                set(AHFL_THIRD_PARTY_IS_C OFF)
-                break()
-            endif()
-        endforeach()
-    else()
-        set(AHFL_THIRD_PARTY_IS_C OFF)
-    endif()
-
-    if(AHFL_THIRD_PARTY_IS_C)
-        # Silences the C++-only-flag diagnostics above; the vendored C has its
-        # own warning posture and is not ours to keep clean.
-        target_compile_options(${target_name} PRIVATE -w)
-    else()
-        target_compile_options(${target_name} PRIVATE
-            -Wno-overloaded-virtual
-            -Wno-dollar-in-identifier-extension
-            -Wno-four-char-constants
-        )
-    endif()
+    # These suppression flags are C++-only; scope them per language instead of
+    # passing them to C translation units (GCC warns they are not valid for C)
+    # or blanket-silencing a C target with -w. Verified harmless under GCC/Clang
+    # but pointless for C.
+    target_compile_options(${target_name} PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-overloaded-virtual>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-dollar-in-identifier-extension>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-four-char-constants>
+    )
 endfunction()
 
 function(ahfl_assert_no_external_toml_runtime target_name)

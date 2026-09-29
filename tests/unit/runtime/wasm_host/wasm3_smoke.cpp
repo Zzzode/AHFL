@@ -35,7 +35,6 @@ namespace {
 
 int test_count = 0;
 int pass_count = 0;
-
 void check(bool condition, const std::string &name) {
     ++test_count;
     if (condition) {
@@ -167,11 +166,126 @@ void test_rejects_truncated_module() {
     m3_FreeEnvironment(env);
 }
 
+// The load-bearing WH-0 path: a THREE-result host import. Every capability
+// AHFL emits imports ahfl_cap.cap_<id> with functype (i32,i32)->(i32,i32,i32)
+// (the decision doc's decisive fact), and a single-arg variant has the same
+// three-result shape. This proves the vendored interpreter subset actually
+// pulls in and runs m3_bind.c (m3_LinkRawFunction), not just parse/compile.
+//
+// Module (multi-value):
+//   (type $cap (func (param i32) (result i32 i32 i32)))
+//   (import "ahfl_cap" "cap_0" (func $cap (type $cap)))
+//   (func (export "call") (result i32 i32 i32) i32.const 42 call $cap)
+[[nodiscard]] const std::vector<uint8_t> &host_import_module() {
+    static const std::vector<uint8_t> bytes = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // wasm 1, multi-value
+        // type section (14 bytes): (i32)->(i32,i32,i32) and ()->(i32,i32,i32)
+        0x01, 0x0e, 0x02,
+            0x60, 0x01, 0x7f, 0x03, 0x7f, 0x7f, 0x7f,
+            0x60, 0x00,       0x03, 0x7f, 0x7f, 0x7f,
+        // import section (18 bytes): ahfl_cap.cap_0 : func type 0
+        0x02, 0x12, 0x01,
+            0x08, 'a', 'h', 'f', 'l', '_', 'c', 'a', 'p',
+            0x05, 'c', 'a', 'p', '_', '0',
+            0x00, 0x00,
+        // function section: func 1 : type 1
+        0x03, 0x02, 0x01, 0x01,
+        // export section: "call" -> func 1
+        0x07, 0x08, 0x01, 0x04, 'c', 'a', 'l', 'l', 0x00, 0x01,
+        // code section: body [locals 0; i32.const 42; call 0; end] (6 bytes)
+        0x0a, 0x08, 0x01, 0x06, 0x00, 0x41, 0x2a, 0x10, 0x00, 0x0b,
+    };
+    return bytes;
+}
+
+// wasm3 raw-function ABI: results occupy stack[0..retcount), arguments follow
+// at stack[retcount..]. Mirrors the independent /tmp probe that selected wasm3
+// over WAMR; kept deliberately signature-exact.
+const void *three_result_callback(IM3Runtime /*runtime*/,
+                                  IM3ImportContext /*context*/,
+                                  std::uint64_t *stack, void * /*memory*/) {
+    const auto argument = static_cast<uint32_t>(stack[3]);
+    stack[0] = static_cast<std::uint64_t>(argument) + 100;
+    stack[1] = 8;
+    stack[2] = 7;
+    return m3Err_none;
+}
+
+void test_three_result_host_import() {
+    const std::vector<uint8_t> &bytes = host_import_module();
+
+    IM3Environment env = m3_NewEnvironment();
+    check(env != nullptr, "m3_NewEnvironment (host import)");
+    if (env == nullptr) {
+        return;
+    }
+    IM3Runtime rt = m3_NewRuntime(env, 4096, nullptr);
+    check(rt != nullptr, "m3_NewRuntime (host import)");
+    if (rt == nullptr) {
+        m3_FreeEnvironment(env);
+        return;
+    }
+
+    IM3Module mod = nullptr;
+    M3Result result = m3_ParseModule(env, &mod, bytes.data(),
+                                     static_cast<uint32_t>(bytes.size()));
+    check(result == nullptr, std::string("host import m3_ParseModule: ") +
+                                 describe(result));
+    if (result != nullptr) {
+        m3_FreeRuntime(rt);
+        m3_FreeEnvironment(env);
+        return;
+    }
+    result = m3_LoadModule(rt, mod);
+    check(result == nullptr, std::string("host import m3_LoadModule: ") +
+                                 describe(result));
+    if (result != nullptr) {
+        m3_FreeModule(mod);
+        m3_FreeRuntime(rt);
+        m3_FreeEnvironment(env);
+        return;
+    }
+
+    result = m3_LinkRawFunction(mod, "ahfl_cap", "cap_0", "iii(i)",
+                                &three_result_callback);
+    check(result == nullptr,
+          std::string("m3_LinkRawFunction iii(i): ") + describe(result));
+
+    IM3Function fn = nullptr;
+    if (result == nullptr) {
+        result = m3_FindFunction(&fn, rt, "call");
+        check(result == nullptr,
+              std::string("host import m3_FindFunction: ") + describe(result));
+    }
+    if (result == nullptr && fn != nullptr) {
+        check(m3_GetRetCount(fn) == 3, "call returns three values");
+        result = m3_CallV(fn);
+        check(result == nullptr, std::string("host import m3_CallV: ") +
+                                     describe(result));
+        if (result == nullptr) {
+            uint32_t a = 0;
+            uint32_t b = 0;
+            uint32_t c = 0;
+            result = m3_GetResultsV(fn, &a, &b, &c);
+            check(result == nullptr, std::string("host import m3_GetResultsV: ") +
+                                         describe(result));
+            check(a == 142 && b == 8 && c == 7,
+                  "three-result import yields 142,8,7 (got " +
+                      std::to_string(a) + "," + std::to_string(b) + "," +
+                      std::to_string(c) + ")");
+        }
+    }
+
+    m3_FreeRuntime(rt);
+    m3_FreeEnvironment(env);
+}
+
 } // namespace
 
 int main() {
     test_version_pin();
     test_executes_exported_function();
+    test_three_result_host_import();
     test_rejects_truncated_module();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";

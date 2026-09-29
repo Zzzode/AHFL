@@ -25,6 +25,13 @@ if(TARGET wasm3)
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ahfl/third_party/wasm3
         FILES_MATCHING PATTERN "*.h"
     )
+    # MIT requires the copyright/permission notice to accompany distributed
+    # object code, so ship the licence text with the binary SDK package.
+    install(FILES
+        ${PROJECT_SOURCE_DIR}/third_party/wasm3/LICENSE
+        ${PROJECT_SOURCE_DIR}/third_party/wasm3/NOTICE.md
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/wasm3
+    )
 endif()
 
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/compiler/syntax/parser/generated/

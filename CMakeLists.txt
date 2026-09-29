@@ -154,6 +154,9 @@ add_subdirectory(third_party/doctest)
 # without a wasm3 target and without any reference to it. See
 # third_party/wasm3/{VERSION,NOTICE.md}.
 if(AHFL_ENABLE_BACKEND_WASM)
+    # wasm3 is the only C target in the tree; enabling C here keeps that
+    # language scoped to the option instead of mutating a WASM=OFF build.
+    enable_language(C)
     add_subdirectory(third_party/wasm3)
 endif()
 add_subdirectory(src)

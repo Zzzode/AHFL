@@ -6,14 +6,9 @@
 # platforms/ CLI, no extensions/. AHFL's embedded host registers its own
 # host imports (ahfl_cap) through the wasm3 C API.
 #
-# Wired from the root list only when AHFL_ENABLE_BACKEND_WASM is ON: the
-# embedded host requires the wasm backend, so WASM=OFF must produce no wasm3
-# target at all.
-#
-# wasm3 is plain C99 in a C++ project. This directory is the highest (and only)
-# directory holding a C target, which is exactly where the language must be
-# enabled.
-enable_language(C)
+# The C language is enabled by the root CMakeLists only when
+# AHFL_ENABLE_BACKEND_WASM is ON, which is also the only condition under which
+# this directory is added.
 
 add_library(wasm3 STATIC
     source/m3_bind.c
@@ -41,6 +36,16 @@ set_target_properties(wasm3 PROPERTIES
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
 )
+
+# m3_compile.c emits f32/f64 opcode implementations unconditionally and
+# references libm rounding functions (rint, ceil, floor, copysign, sqrt,
+# trunc, ...). A static archive does not record that dependency, so a pure-C
+# consumer of AHFL::wasm3 would fail to link; propagate libm as part of the
+# interface (portable no-op where the platform folds it into libc).
+find_library(M3_MATH_LIBRARY m)
+if(M3_MATH_LIBRARY)
+    target_link_libraries(wasm3 PUBLIC ${M3_MATH_LIBRARY})
+endif()
 
 # Third-party warning profile (antlr4 precedent): isolated from the project's
 # -Wall -Wextra -Werror. Vendored C is not ours to keep warning-clean.
