@@ -53,6 +53,7 @@ constexpr std::uint8_t kOpGlobalGet = 0x23;
 constexpr std::uint8_t kOpGlobalSet = 0x24;
 constexpr std::uint8_t kOpCall = 0x10;
 constexpr std::uint8_t kOpDrop = 0x1a;
+constexpr std::uint8_t kOpMemoryGrow = 0x40;
 constexpr std::uint8_t kOpIf = 0x04;
 constexpr std::uint8_t kOpElse = 0x05;
 constexpr std::uint8_t kOpEnd = 0x0b;
@@ -418,6 +419,55 @@ with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_s
     put_op_uleb(run2_body, kOpLocalGet, 0);
     put_op_uleb(run2_body, kOpLocalGet, 1);
     put_op_uleb(run2_body, kOpCall, 0);
+    run2_body.push_back(kOpEnd);
+    append_standard_code(m, run2_body);
+    return m;
+}
+
+// run2 executes memory.grow(1) and drops the result, then returns (0,0,0).
+// The Memory section is well-formed (min=1, no max) so the module passes the
+// structural gate, but the grow breaks the fixed-single-page invariant
+// mid-invoke (wasm3 v0.9.0 reallocates the linear memory): the engine must
+// fail closed (P2-2 review fix-forward). The grow body opcode sequence:
+//   i32.const 1 = 41 01; memory.grow = 40 00 (reserved byte); drop = 1A;
+//   three i32.const 0 = 41 00; end = 0B.
+[[nodiscard]] inline std::vector<std::uint8_t> memory_grow_module() {
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
+                                         func_type({kI32}, {kI32})}));
+    put_section(m, 3, function_section({0, 1}));
+    put_section(m, 5, memory_section(1));
+    put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
+    put_section(m, 7, standard_exports(0, 1));
+    std::vector<std::uint8_t> run2_body = locals_decl({});
+    put_i32_const(run2_body, 1);
+    run2_body.push_back(kOpMemoryGrow);
+    run2_body.push_back(0x00); // reserved immediate (wasm memory.grow encoding)
+    run2_body.push_back(kOpDrop);
+    put_i32_const(run2_body, 0);
+    put_i32_const(run2_body, 0);
+    put_i32_const(run2_body, 0);
+    run2_body.push_back(kOpEnd);
+    append_standard_code(m, run2_body);
+    return m;
+}
+
+// run2 returns a fixed non-zero raw status word (0xDEADBEEF) with the entry
+// ptr/len, proving the engine passes the raw u32 status through verbatim with
+// NO classification (P2-4 review fix-forward).
+[[nodiscard]] inline std::vector<std::uint8_t> nonzero_status_module() {
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
+                                         func_type({kI32}, {kI32})}));
+    put_section(m, 3, function_section({0, 1}));
+    put_section(m, 5, memory_section(1));
+    put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
+    put_section(m, 7, standard_exports(0, 1));
+    // run2 body: i32.const 0xDEADBEEF; local.get 0; local.get 1; end
+    std::vector<std::uint8_t> run2_body = locals_decl({});
+    put_i32_const(run2_body, static_cast<std::int32_t>(0xDEADBEEFu));
+    put_op_uleb(run2_body, kOpLocalGet, 0);
+    put_op_uleb(run2_body, kOpLocalGet, 1);
     run2_body.push_back(kOpEnd);
     append_standard_code(m, run2_body);
     return m;

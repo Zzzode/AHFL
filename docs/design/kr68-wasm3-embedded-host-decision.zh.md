@@ -314,7 +314,7 @@ WH-1 落地首个真实 WASM 执行引擎(wasm3 后端的 `CoreWasmResumeEngine`
 
 ### 10.3 wasm3 生命周期:必须先 m3_LoadModule 再 m3_LinkRawFunctionEx
 
-实测 wasm3 v0.9.0 要求 `m3_LoadModule`(转移模块所有权到 runtime)**之后**才能 `m3_LinkRawFunctionEx`;在 load 之前 link 返回 `m3Err_moduleNotLinked`。WH-0 smoke 测试也遵循此序。**决策**:生命周期固定为 parse → new runtime(userdata=impl)→ **m3_LoadModule** → **m3_LinkRawFunctionEx**(逐导入)→ m3_GetMemory 校验 → m3_FindFunction(急切编译,编译错误与未解析导入在此暴露)。load 失败时只 free runtime(它已拥有模块),不单独 free 模块。
+实测 wasm3 v0.9.0 要求 `m3_LoadModule`(转移模块所有权到 runtime)**之后**才能 `m3_LinkRawFunctionEx`;在 load 之前 link 返回 `m3Err_moduleNotLinked`。WH-0 smoke 测试也遵循此序。**决策**:生命周期固定为 parse → new runtime(userdata=impl)→ **m3_LoadModule** → **m3_LinkRawFunctionEx**(逐导入)→ m3_GetMemory 校验 → m3_FindFunction(急切编译,编译错误与未解析导入在此暴露)。所有权以 wasm3.h 明文为准:**load 成功**后 runtime 拥有模块(挂入 `runtime->modules`,`m3_FreeRuntime` 经 `ForEachModule` 释放),teardown 只 free runtime;**load 失败**时模块视为 unloaded(未挂入 `runtime->modules`,且 `module->runtime` 置 NULL),必须 free runtime 与模块**两者**(runtime 释放 `ResizeMemory` 已分配的线性内存,模块释放解析结构)。teardown 由 `Wasm3EngineImpl` 析构函数单一拥有(RAII):`fresh_instance` 每条错误路径只返回、不手工 free,失败后重试以全新 Impl 起步,不泄漏首次尝试的残余;默认的 move 构造/赋值因此安全(移后源持 null impl_,析构为空操作;move 赋值的旧会话由析构函数收口)。
 
 ### 10.4 host-abort 信号:文件局部哨兵指针 + trap 指针恒等映射
 

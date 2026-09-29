@@ -336,7 +336,12 @@ struct Wasm3EngineImpl {
 
     IM3Environment env{nullptr};
     IM3Runtime runtime{nullptr};
-    IM3Module module{nullptr}; // owned by `runtime` after m3_LoadModule
+    IM3Module module{nullptr};
+    // Set after a successful m3_LoadModule: the runtime then owns the module
+    // (m3_FreeRuntime frees it via ForEachModule). On a load failure the
+    // module is unloaded (wasm3.h: "m3_LoadModule returned a result" =>
+    // unloaded) and the dtor frees it separately.
+    bool module_loaded{false};
     IM3Function run2{nullptr};
     IM3Function alloc{nullptr};
 
@@ -351,6 +356,24 @@ struct Wasm3EngineImpl {
     // Stable once fresh_instance returns: the trampoline holds raw pointers
     // into this vector, so it must not reallocate after linking.
     std::vector<ImportBinding> import_bindings;
+
+    // The single owner of wasm3 teardown (RAII). This is what makes the
+    // outer engine's defaulted move ops safe: a moved-from engine holds a
+    // null impl_ (no-op destruction, no null-deref) and a move-assigned
+    // engine's old Impl is torn down here, freeing every raw wasm3 pointer
+    // (no leak per move-assignment). The environment is freed last:
+    // runtimes and modules reference it.
+    ~Wasm3EngineImpl() {
+        if (module != nullptr && !module_loaded) {
+            m3_FreeModule(module);
+        }
+        if (runtime != nullptr) {
+            m3_FreeRuntime(runtime); // frees the module when module_loaded
+        }
+        if (env != nullptr) {
+            m3_FreeEnvironment(env);
+        }
+    }
 
     // The raw-import trampoline. A static member function has C calling
     // convention (no captures) and is passed directly as M3RawCall. It
@@ -412,17 +435,7 @@ struct Wasm3EngineImpl {
 Wasm3ResumeEngine::Wasm3ResumeEngine() noexcept
     : impl_(std::make_unique<detail::Wasm3EngineImpl>()) {}
 
-Wasm3ResumeEngine::~Wasm3ResumeEngine() {
-    // m3_FreeRuntime frees the loaded module (the runtime owns it after
-    // m3_LoadModule); the environment is freed separately. On a session whose
-    // fresh_instance never committed, both are null and this is a no-op.
-    if (impl_->runtime != nullptr) {
-        m3_FreeRuntime(impl_->runtime);
-    }
-    if (impl_->env != nullptr) {
-        m3_FreeEnvironment(impl_->env);
-    }
-}
+Wasm3ResumeEngine::~Wasm3ResumeEngine() = default;
 
 Wasm3ResumeEngine::Wasm3ResumeEngine(Wasm3ResumeEngine &&) noexcept = default;
 Wasm3ResumeEngine &Wasm3ResumeEngine::operator=(Wasm3ResumeEngine &&) noexcept = default;
@@ -433,6 +446,11 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     if (impl_->instantiated) {
         return std::unexpected(eng::EngineError::InvalidSequence);
     }
+    // A previous failed attempt may have left wasm3 resources in this Impl.
+    // Replace it wholesale so every attempt starts from a coherent null
+    // state and a retry never leaks the remnants of the first (the Impl
+    // dtor is the single owner of teardown).
+    impl_ = std::make_unique<detail::Wasm3EngineImpl>();
 
     // 1. Structural admission: parse the Type/Import/Memory sections so we can
     //    (a) reject non-ahfl_cap imports and unsupported functypes, and (b)
@@ -499,53 +517,51 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
         });
     }
 
-    // 2. wasm3 environment + parse. The module bytes must outlive the module,
-    //    so copy them into the Impl first and parse from there.
+    // 2. wasm3 environment + parse. Resources commit to the Impl as they are
+    //    acquired: every error path below just returns, and the Impl dtor
+    //    tears down whatever was acquired (no manual frees, no leak on a
+    //    failed attempt). The module bytes must outlive the module, so copy
+    //    them into the Impl first and parse from there.
     impl_->module_bytes.assign(module_bytes.begin(), module_bytes.end());
 
-    IM3Environment env = m3_NewEnvironment();
-    if (env == nullptr) {
+    impl_->env = m3_NewEnvironment();
+    if (impl_->env == nullptr) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
 
-    IM3Module module = nullptr;
-    if (m3_ParseModule(env, &module, impl_->module_bytes.data(),
+    if (m3_ParseModule(impl_->env, &impl_->module, impl_->module_bytes.data(),
                        static_cast<std::uint32_t>(impl_->module_bytes.size())) !=
         nullptr) {
-        m3_FreeEnvironment(env);
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
 
     // 3. Runtime with this session as userdata (the trampoline recovers it).
-    IM3Runtime runtime = m3_NewRuntime(env, kRuntimeStackSizeBytes, impl_.get());
-    if (runtime == nullptr) {
-        m3_FreeModule(module);
-        m3_FreeEnvironment(env);
+    impl_->runtime = m3_NewRuntime(impl_->env, kRuntimeStackSizeBytes, impl_.get());
+    if (impl_->runtime == nullptr) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
 
     // 4. Load (transfers module ownership to the runtime). wasm3 resolves raw
     //    imports against the LOADED module, so linking follows the load (the
     //    WH-0 smoke test establishes this order); m3_LoadModule itself does
-    //    not require imports to be linked.
-    if (m3_LoadModule(runtime, module) != nullptr) {
-        m3_FreeRuntime(runtime);
-        m3_FreeModule(module);
-        m3_FreeEnvironment(env);
+    //    not require imports to be linked. On FAILURE the module is unloaded
+    //    (wasm3.h: "m3_LoadModule returned a result" => unloaded); the dtor
+    //    frees BOTH the module and the runtime. On SUCCESS the runtime owns
+    //    the module, so the dtor frees only the runtime.
+    if (m3_LoadModule(impl_->runtime, impl_->module) != nullptr) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
+    impl_->module_loaded = true;
 
     // 5. Link every capability import with its raw trampoline. `bindings` is
-    //    fully built, so its element addresses are stable for the session.
-    //    On failure the runtime owns the module, so free only the runtime.
+    //    fully built, so its element addresses are stable for the session
+    //    (committed to the Impl below before any invocation).
     for (std::size_t i = 0; i < parsed->imports.size(); ++i) {
         const char *signature = bindings[i].param_count == 2 ? "iii(ii)" : "iii(i)";
-        if (m3_LinkRawFunctionEx(module, "ahfl_cap",
+        if (m3_LinkRawFunctionEx(impl_->module, "ahfl_cap",
                                  parsed->imports[i].field_name.c_str(), signature,
                                  &detail::Wasm3EngineImpl::raw_import_trampoline,
                                  &bindings[i]) != nullptr) {
-            m3_FreeRuntime(runtime);
-            m3_FreeEnvironment(env);
             return std::unexpected(eng::EngineError::InstanceUnavailable);
         }
     }
@@ -553,33 +569,22 @@ Wasm3ResumeEngine::fresh_instance(std::span<const std::uint8_t> module_bytes,
     // 6. Post-load memory check: the live page must be exactly the fixed
     //    capacity (wasm3 allocates min pages at load).
     std::uint32_t memory_size = 0;
-    if (m3_GetMemory(runtime, &memory_size, 0) == nullptr ||
+    if (m3_GetMemory(impl_->runtime, &memory_size, 0) == nullptr ||
         memory_size != capacity.value) {
-        m3_FreeRuntime(runtime); // frees the loaded module
-        m3_FreeEnvironment(env);
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
 
     // 7. Export surface: run2 (i32,i32)->(i32,i32,i32) and alloc (i32)->i32.
     //    m3_FindFunction compiles eagerly, so an unresolved import or a body
     //    that does not compile fails here, at fresh_instance.
-    IM3Function run2 = nullptr;
-    IM3Function alloc = nullptr;
-    if (m3_FindFunction(&run2, runtime, "run2") != nullptr ||
-        !export_has_i32_signature(run2, 2, 3) ||
-        m3_FindFunction(&alloc, runtime, "alloc") != nullptr ||
-        !export_has_i32_signature(alloc, 1, 1)) {
-        m3_FreeRuntime(runtime);
-        m3_FreeEnvironment(env);
+    if (m3_FindFunction(&impl_->run2, impl_->runtime, "run2") != nullptr ||
+        !export_has_i32_signature(impl_->run2, 2, 3) ||
+        m3_FindFunction(&impl_->alloc, impl_->runtime, "alloc") != nullptr ||
+        !export_has_i32_signature(impl_->alloc, 1, 1)) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
 
     // 8. Commit: the session is live.
-    impl_->env = env;
-    impl_->runtime = runtime;
-    impl_->module = module;
-    impl_->run2 = run2;
-    impl_->alloc = alloc;
     impl_->callback = std::move(import_callback);
     impl_->import_bindings = std::move(bindings);
     impl_->instantiated = true;
@@ -664,6 +669,24 @@ Wasm3ResumeEngine::invoke_run2(eng::GuestPointer entry_ptr, std::uint32_t entry_
     const M3Result result = m3_Call(impl_->run2, 2, argptrs);
 
     if (result == nullptr) {
+        // Fixed-page invariant (decision doc section 5): the module declared
+        // exactly one 64 KiB page with no max, so a structurally admissible
+        // module can still execute memory.grow mid-invoke -- wasm3 v0.9.0
+        // reallocates the linear memory (ResizeMemory, m3_env.c), breaking
+        // the "exactly one fixed page" guarantee AFTER admission. The engine
+        // contract holds the invariant for the whole session, so a grown
+        // run2 fails closed as MemoryCapacityExceeded: the guest's grow is a
+        // write beyond the fixed page. Not Run2Trapped (no wasm trap
+        // occurred); not a byte scan for 0x40 (it legitimately appears as a
+        // LEB byte, e.g. the terminator of i32.const 64).
+        std::uint32_t post_size = 0;
+        if (m3_GetMemory(impl_->runtime, &post_size, 0) == nullptr) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+        if (post_size != cap::fixed_single_page_capacity().value) {
+            return std::unexpected(eng::EngineError::MemoryCapacityExceeded);
+        }
+
         std::uint32_t status = 0;
         std::uint32_t ptr = 0;
         std::uint32_t len = 0;

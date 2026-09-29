@@ -45,8 +45,11 @@ namespace detail {
 struct Wasm3EngineImpl;
 } // namespace detail
 
-// One fresh-instance wasm3 engine session. Move-only; the destructor frees the
-// wasm3 runtime (which owns the loaded module) and then the environment.
+// One fresh-instance wasm3 engine session. Move-only; the Impl destructor is
+// the single owner of wasm3 teardown (the runtime, which owns the loaded
+// module after a successful m3_LoadModule; a module that failed to load; and
+// the environment), so the defaulted move ops are safe: a moved-from engine
+// holds a null impl_ and a move-assigned engine's old session is torn down.
 class Wasm3ResumeEngine final : public core_wasm_resume_engine::CoreWasmResumeEngine {
   public:
     Wasm3ResumeEngine() noexcept;
