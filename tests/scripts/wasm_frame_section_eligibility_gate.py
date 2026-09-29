@@ -66,6 +66,7 @@ FRAME_FIXTURES = frozenset(
         # ordered bridge statement, and a single tag-only-enum bridge argument.
         "v2c_bridge_chain",
         "v2c_route_then_bridge",
+        "v2c_single_arg_bridge",
         "v2c_single_enum_bridge",
     }
 )

@@ -613,6 +613,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/v2c_bridge_chain.ahfl",
         "wasm/v2c_multi_arg_bridge.ahfl",
         "wasm/v2c_route_then_bridge.ahfl",
+        "wasm/v2c_single_arg_bridge.ahfl",
         "wasm/v2c_single_enum_bridge.ahfl",
         // V2-D: the opaque-terminal preamble shape is verifier-clean Core; the
         // fail-closed gate now lives in wasm codegen (BFS reachability), not in
