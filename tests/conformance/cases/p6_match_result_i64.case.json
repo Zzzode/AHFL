@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/p6_match_result_i64.ahfl",
+  "kind": "agent",
+  "entry": "wasm::p6_match_result_i64::MatchResultAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::p6_match_result_i64::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Decide","High","Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::p6_match_result_i64::Frame","value":"identity"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "P6 expression match yielding a Bool arm result feeding an i64 guard; landed P6 match lowering on the orchestration lane"
+    }
+  }
+}

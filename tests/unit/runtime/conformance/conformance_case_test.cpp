@@ -261,6 +261,123 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::p6_nested_fallthrough::NestedFallthroughAgent",
             0, 1, WasmEligibility::Orchestration,
         },
+        // KR6.7 corpus widening (FB-5): P6 expression/control-flow companion
+        // fixtures, migrated from bespoke Node probes to manifest-driven cases
+        // that run under BOTH engines with differential agreement. Each is an
+        // identity-final agent (the borrowed Frame is returned) whose computed
+        // non-final handler exercises the named construct.
+        {
+            "p6_cascade_high.case.json",
+            "tests/golden/wasm/p6_cascade_high.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_cascade_high::CascadeHighAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_elseless_fallthrough.case.json",
+            "tests/golden/wasm/p6_elseless_fallthrough.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_elseless_fallthrough::ElselessFallthroughAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_elseless_taken.case.json",
+            "tests/golden/wasm/p6_elseless_taken.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_elseless_taken::ElselessTakenAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_implies.case.json",
+            "tests/golden/wasm/p6_implies.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_implies::ImpliesAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_match_binding_payload.case.json",
+            "tests/golden/wasm/p6_match_binding_payload.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_match_binding_payload::MatchBindingAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_match_expr.case.json",
+            "tests/golden/wasm/p6_match_expr.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_match_expr::MatchAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_match_fallthrough.case.json",
+            "tests/golden/wasm/p6_match_fallthrough.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_match_fallthrough::MatchAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_match_guard.case.json",
+            "tests/golden/wasm/p6_match_guard.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_match_guard::MatchAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_match_or.case.json",
+            "tests/golden/wasm/p6_match_or.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_match_or::MatchAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_match_result_i64.case.json",
+            "tests/golden/wasm/p6_match_result_i64.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_match_result_i64::MatchResultAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_nested_depth3_taken.case.json",
+            "tests/golden/wasm/p6_nested_depth3_taken.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_nested_depth3_taken::NestedDepth3TakenAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_nested_elseless.case.json",
+            "tests/golden/wasm/p6_nested_elseless.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_nested_elseless::NestedElselessAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_nested_elseless_taken.case.json",
+            "tests/golden/wasm/p6_nested_elseless_taken.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_nested_elseless_taken::NestedElselessTakenAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_nested_projection.case.json",
+            "tests/golden/wasm/p6_nested_projection.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_nested_projection::NestedProjectionAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_nested_taken_high.case.json",
+            "tests/golden/wasm/p6_nested_taken_high.ahfl",
+            CaseKind::Agent,
+            "wasm::p6_nested_taken_high::NestedTakenHighAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "p6_unwrap_some.case.json",
+            "tests/golden/wasm/p6_unwrap_some.ahfl",
+            CaseKind::Agent,
+            "std::option::UnwrapAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
         // P4-D input-frame handlers: rung E packs their input frame, calls
         // runv, and encodes the output, so the Node lane now DIFFERENTIALLY
         // COMPARES them (engines.evaluator=true and blessed observations

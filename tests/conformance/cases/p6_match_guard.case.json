@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/p6_match_guard.ahfl",
+  "kind": "agent",
+  "entry": "wasm::p6_match_guard::MatchAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::p6_match_guard::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Decide","High","Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::p6_match_guard::Frame","value":"identity"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "P6 guarded match arm (High if flag) selects the leading guarded arm; landed P6 guard lowering on the orchestration lane"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/p6_match_expr.ahfl",
+  "kind": "agent",
+  "entry": "wasm::p6_match_expr::MatchAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::p6_match_expr::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Decide","High","Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::p6_match_expr::Frame","value":"identity"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "P6 expression match used as a value (i64 arm results drive the guard); landed P6 match lowering on the orchestration lane"
+    }
+  }
+}

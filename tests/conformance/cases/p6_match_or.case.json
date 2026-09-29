@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/p6_match_or.ahfl",
+  "kind": "agent",
+  "entry": "wasm::p6_match_or::MatchAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::p6_match_or::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Decide","High","Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::p6_match_or::Frame","value":"identity"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "P6 or-pattern if-let (High | Off) accepts the Off value; landed P6 or-pattern lowering on the orchestration lane"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/p6_nested_taken_high.ahfl",
+  "kind": "agent",
+  "entry": "wasm::p6_nested_taken_high::NestedTakenHighAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::p6_nested_taken_high::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Decide","High","Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::p6_nested_taken_high::Frame","value":"identity"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "P6-1 companion to p6_nested_fallthrough: a true outer guard actually enters the nested diverging if to High; landed on the orchestration lane"
+    }
+  }
+}

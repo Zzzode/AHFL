@@ -193,6 +193,27 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"p6_coerce_bounds.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_nested_depth3.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_nested_fallthrough.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // KR6.7 corpus widening (FB-5): the P6 expression/control-flow
+        // companion fixtures previously exercised only by bespoke Node probes.
+        // Every one emits cleanly on the orchestration lane with an identity
+        // final forwarding the borrowed wire frame, and now differentially
+        // compares under BOTH engines.
+        {"p6_cascade_high.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_elseless_fallthrough.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_elseless_taken.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_implies.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_match_binding_payload.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_match_expr.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_match_fallthrough.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_match_guard.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_match_or.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_match_result_i64.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_nested_depth3_taken.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_nested_elseless.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_nested_elseless_taken.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_nested_projection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_nested_taken_high.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        {"p6_unwrap_some.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly as P6-7 p6-frame modules: they carry the core-layout +
         // boundary wire-schema sections and export runv, so their canonical

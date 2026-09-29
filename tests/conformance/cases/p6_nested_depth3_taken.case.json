@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/p6_nested_depth3_taken.ahfl",
+  "kind": "agent",
+  "entry": "wasm::p6_nested_depth3_taken::NestedDepth3TakenAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::p6_nested_depth3_taken::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Decide","High","Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::p6_nested_depth3_taken::Frame","value":"identity"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "P6-1 companion to p6_nested_depth3: all three guards are entered, taking the innermost then-branch; landed on the orchestration lane"
+    }
+  }
+}

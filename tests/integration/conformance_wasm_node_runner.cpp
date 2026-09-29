@@ -105,7 +105,15 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // CONSTRUCTED SummaryInput node input word-by-word, and a fixed state-entry
 // trace ring records the real runtime (runner, state) evidence the host reads.
 // 24/2 -> 26/0: the blocked_kr66 skip set is empty.
-constexpr int kExpectedAgreed = 26;
+// KR6.7 corpus widening FB-5 slice A: sixteen P6 expression/control-flow
+// companions (the p6 expression-match family match_expr/guard/or/fallthrough/
+// binding_payload/result_i64, the nested-if/cascade path companions
+// cascade_high/nested_depth3_taken/nested_elseless[_taken]/nested_taken_high/
+// elseless_taken/elseless_fallthrough, the nested-aggregate projection
+// nested_projection, unwrap_some, and the implies boolean fixture) move from
+// bespoke Node probe coverage to manifest-driven cases that AGREE under both
+// engines with identity-final borrowed frames: 26/0 -> 42/0.
+constexpr int kExpectedAgreed = 42;
 constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare

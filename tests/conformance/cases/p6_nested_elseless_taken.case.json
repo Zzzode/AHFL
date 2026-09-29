@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/p6_nested_elseless_taken.ahfl",
+  "kind": "agent",
+  "entry": "wasm::p6_nested_elseless_taken::NestedElselessTakenAgent",
+  "scenarios": [
+    {
+      "name": "path",
+      "input": {"_type":"wasm::p6_nested_elseless_taken::Frame","value":"identity"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Decide","High","Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::p6_nested_elseless_taken::Frame","value":"identity"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "P6-1 companion to p6_nested_elseless: both true guards enter the inner then-branch to High; landed on the orchestration lane"
+    }
+  }
+}
