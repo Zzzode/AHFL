@@ -1,5 +1,6 @@
 #include "runtime/wasm_host/capability_import.hpp"
 
+#include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/engine/wire_value.hpp"
 #include "runtime/wasm_host/frame_packer.hpp"
 #include "runtime/wasm_host/frame_reader.hpp"
@@ -8,6 +9,7 @@
 
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/runtime/ahfl_host.h"
+#include "base/json/json_value.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -138,84 +140,6 @@ read_i32_le(std::span<const std::uint8_t> page, std::uint32_t addr) noexcept {
     return static_cast<std::int32_t>(*u);
 }
 
-// Decode the opaque lane's wire-JSON argument envelope (the inverse of
-// serialize_args_for_wire_json). The envelope format is:
-//   0 args -> "{}"
-//   1 Struct -> bare struct JSON
-//   1 non-Struct -> {"value":...}
-//   2+ -> {"args":[...]}
-// The arity and param wire shapes come from the wire-schema capability record.
-[[nodiscard]] std::optional<std::vector<runtime::Value>>
-decode_args_envelope(std::string_view json,
-                     const ir::core::CoreWireSchemaTable &wire,
-                     const std::vector<ir::core::CoreWireSchemaNodeId> &param_ids) {
-    auto parsed = runtime::parse_value_from_wire_json(json);
-    if (!parsed.has_value()) {
-        return std::nullopt;
-    }
-
-    const std::size_t arity = param_ids.size();
-
-    if (arity == 0) {
-        return std::vector<runtime::Value>{};
-    }
-
-    if (arity == 1) {
-        const auto *param_node =
-            (param_ids[0].value < wire.nodes.size()) ? &wire.nodes[param_ids[0].value]
-                                                     : nullptr;
-        if (param_node == nullptr) {
-            return std::nullopt;
-        }
-        const bool is_struct =
-            std::holds_alternative<ir::core::CoreWireSchemaStruct>(param_node->shape);
-        if (is_struct) {
-            // Bare struct: the parsed Value IS the arg.
-            std::vector<runtime::Value> args;
-            args.push_back(std::move(*parsed));
-            return args;
-        }
-        // {"value":...}: extract the field.
-        if (!std::holds_alternative<runtime::StructValue>(parsed->node)) {
-            return std::nullopt;
-        }
-        auto &sv = std::get<runtime::StructValue>(parsed->node);
-        auto it = sv.fields.find("value");
-        if (it == sv.fields.end() || !it->value) {
-            return std::nullopt;
-        }
-        std::vector<runtime::Value> args;
-        args.push_back(std::move(*it->value));
-        return args;
-    }
-
-    // arity >= 2: {"args":[...]}
-    if (!std::holds_alternative<runtime::StructValue>(parsed->node)) {
-        return std::nullopt;
-    }
-    auto &sv = std::get<runtime::StructValue>(parsed->node);
-    auto it = sv.fields.find("args");
-    if (it == sv.fields.end() || !it->value) {
-        return std::nullopt;
-    }
-    if (!std::holds_alternative<runtime::ListValue>(it->value->node)) {
-        return std::nullopt;
-    }
-    auto &list = std::get<runtime::ListValue>(it->value->node);
-    if (list.items.size() != arity) {
-        return std::nullopt;
-    }
-    std::vector<runtime::Value> args;
-    args.reserve(arity);
-    for (const auto &item : list.items) {
-        if (!item) {
-            return std::nullopt;
-        }
-        args.push_back(std::move(*item));
-    }
-    return args;
-}
-
 // Build the authorized String-payload regions for a BRIDGE argument walk: the
 // packed input-payload arena, the rodata region, and every OTHER call site's
 // result placement payload arena. The CURRENT call site's own result region is
@@ -322,8 +246,9 @@ build_bridge_root_regions(const ir::core::CoreFrameLayoutSection &section,
 }
 
 // The opaque lane: the module wrote a wire-JSON argument envelope at
-// (ptr, len); the host decodes it, invokes the capability, serializes the
-// result to wire JSON, alloc_then_writes it, and replies
+// (ptr, len); the host decodes it under the wire-schema param binding,
+// invokes the capability, validates the result under the result binding,
+// serializes it to wire JSON, alloc_then_writes it, and replies
 // (status, result_ptr, result_len).
 [[nodiscard]] eng::ImportCallbackResult
 handle_opaque(const CapabilityImportConfig &config,
@@ -343,17 +268,45 @@ handle_opaque(const CapabilityImportConfig &config,
         return eng::ImportAbort{};
     }
 
-    // Decode the wire-JSON argument envelope.
-    const std::string_view json(
+    // Schema-bound decode of the wire-JSON argument envelope. A2 admission
+    // guarantees exactly-one-parameter (the opaque lane is always arity-1),
+    // so the envelope is either a bare struct JSON (Struct param) or a
+    // {"value":...} wrapper (non-Struct param).
+    const std::string_view json_text(
         reinterpret_cast<const char *>(obs.param_frame.data()), obs.param_frame.size());
-    auto args = decode_args_envelope(json, wire, cap->params);
-    if (!args.has_value()) {
-        config.state.last_error = CapabilityImportError::ArgDecodeFailed;
+    auto parsed = json::parse_json(json_text);
+    if (!parsed.has_value()) {
+        config.state.last_error = CapabilityImportError::ParamSchemaInvalid;
+        return eng::ImportAbort{};
+    }
+    const json::JsonValue &root = **parsed;
+
+    // Determine the arg DOM: the bare root for a Struct param, or the "value"
+    // field for a non-Struct param.
+    const auto &root_node = wire.nodes[param_binding.root().value];
+    const bool is_struct =
+        std::holds_alternative<ir::core::CoreWireSchemaStruct>(root_node.shape);
+    const json::JsonValue *arg_dom = &root;
+    if (!is_struct) {
+        arg_dom = root.get("value");
+        if (arg_dom == nullptr) {
+            config.state.last_error = CapabilityImportError::ParamSchemaInvalid;
+            return eng::ImportAbort{};
+        }
+    }
+
+    // Schema-bound decode: rejects JSON that does not match the param binding.
+    // Pre-effect: the capability is NEVER invoked on a param-schema violation.
+    auto decoded = wire_codec::decode_json(*arg_dom, param_binding);
+    if (!decoded.ok()) {
+        config.state.last_error = CapabilityImportError::ParamSchemaInvalid;
         return eng::ImportAbort{};
     }
 
-    // Invoke the capability.
-    auto result = config.invoker(config.context, *name, *args);
+    // Invoke the capability with the single arity-1 decoded parameter.
+    std::vector<runtime::Value> args;
+    args.push_back(std::move(*decoded.value));
+    auto result = config.invoker(config.context, *name, args);
     const auto raw_status = map_status_to_raw(result.status);
 
     if (result.status != runtime::CapabilityCallStatus::Success) {
@@ -362,9 +315,18 @@ handle_opaque(const CapabilityImportConfig &config,
         return eng::ImportReply{raw_status, eng::GuestPointer{0}, 0};
     }
 
-    // Serialize the result to wire JSON.
+    // Schema-bound validate of the result against the result binding.
+    // Post-effect: the capability WAS invoked and returned Success, but the
+    // host rejects the result as a host fault (never a capability fault).
     auto value =
         std::move(result.value).value_or(runtime::Value{runtime::NoneValue{}});
+    auto validated = wire_codec::validate_value(value, call_site.result_binding());
+    if (!validated.valid) {
+        config.state.last_error = CapabilityImportError::ResultSchemaInvalid;
+        return eng::ImportAbort{};
+    }
+
+    // Serialize the result to wire JSON.
     auto body = runtime::serialize_value_for_wire_json(value);
     if (!body.has_value()) {
         config.state.last_error = CapabilityImportError::ResultEncodeFailed;

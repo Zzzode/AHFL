@@ -660,6 +660,93 @@ void test_import_abort_e2e() {
           "import abort e2e: error is CapabilityNameUnknown");
 }
 
+// ==== P2-4: opaque lane schema-bound validation ====
+
+// Param-schema violation (pre-effect): the param JSON does not match the
+// wire-schema param binding. The capability is NEVER invoked.
+void test_opaque_param_schema_invalid() {
+    constexpr std::uint64_t kSymbol = 310;
+    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    mock.result.value = runtime::Value{runtime::IntValue{42}};
+
+    E2eSession session(bytes, mock,
+                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
+    check(session.admitted.ok(), "opaque param-schema: A2 admission");
+
+    // The schema expects an Int param; send a String instead.
+    write_opaque_envelope(session.engine, "{\"value\":\"not_an_int\"}");
+    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 22);
+    check(outcome.has_value(), "opaque param-schema: invoke_run2 succeeded");
+    if (outcome.has_value()) {
+        check(std::holds_alternative<eng::Run2HostAborted>(*outcome),
+              "opaque param-schema: Run2HostAborted");
+    }
+    check(mock.call_count == 0, "opaque param-schema: invoker NOT called (pre-effect)");
+    check(session.state.last_error.has_value() &&
+              *session.state.last_error == wh::CapabilityImportError::ParamSchemaInvalid,
+          "opaque param-schema: error is ParamSchemaInvalid");
+}
+
+// Result-schema violation (post-effect): the capability returns Success with
+// a value that does not match the wire-schema result binding. The capability
+// WAS invoked; the host rejects the result as a host fault.
+void test_opaque_result_schema_invalid() {
+    constexpr std::uint64_t kSymbol = 311;
+    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    mock.result.value = runtime::Value{runtime::StringValue{"not_an_int"}};
+
+    E2eSession session(bytes, mock,
+                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
+    check(session.admitted.ok(), "opaque result-schema: A2 admission");
+
+    write_opaque_envelope(session.engine, "{\"value\":42}");
+    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 12);
+    check(outcome.has_value(), "opaque result-schema: invoke_run2 succeeded");
+    if (outcome.has_value()) {
+        check(std::holds_alternative<eng::Run2HostAborted>(*outcome),
+              "opaque result-schema: Run2HostAborted");
+    }
+    check(mock.call_count == 1, "opaque result-schema: invoker called once (post-effect)");
+    check(session.state.last_error.has_value() &&
+              *session.state.last_error == wh::CapabilityImportError::ResultSchemaInvalid,
+          "opaque result-schema: error is ResultSchemaInvalid");
+}
+
+// Missing "value" field: the envelope for a non-Struct param lacks the
+// "value" wrapper. The capability is NEVER invoked.
+void test_opaque_missing_value_field() {
+    constexpr std::uint64_t kSymbol = 312;
+    auto bytes = wht::with_a2_admission(wht::opaque_classifier_module(kSymbol), kSymbol);
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    mock.result.value = runtime::Value{runtime::IntValue{42}};
+
+    E2eSession session(bytes, mock,
+                       [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; });
+    check(session.admitted.ok(), "opaque missing-value: A2 admission");
+
+    // The schema expects an Int param (non-Struct); the envelope must be
+    // {"value":...}. Send "{}" (no "value" field).
+    write_opaque_envelope(session.engine, "{}");
+    auto outcome = session.engine.invoke_run2(eng::GuestPointer{kEnvelopeBase}, 2);
+    check(outcome.has_value(), "opaque missing-value: invoke_run2 succeeded");
+    if (outcome.has_value()) {
+        check(std::holds_alternative<eng::Run2HostAborted>(*outcome),
+              "opaque missing-value: Run2HostAborted");
+    }
+    check(mock.call_count == 0, "opaque missing-value: invoker NOT called (pre-effect)");
+    check(session.state.last_error.has_value() &&
+              *session.state.last_error == wh::CapabilityImportError::ParamSchemaInvalid,
+          "opaque missing-value: error is ParamSchemaInvalid");
+}
+
 // ==== P1-3: production run_resume on real wasm3 + real IntegrityPayloadStore ====
 
 namespace fs = std::filesystem;
@@ -974,6 +1061,9 @@ int main() {
     test_opaque_e2e_pending();
     test_replay_suspended_injected_consumed();
     test_import_abort_e2e();
+    test_opaque_param_schema_invalid();
+    test_opaque_result_schema_invalid();
+    test_opaque_missing_value_field();
     test_run_resume_wasm3_e2e();
 
     std::cout << pass_count << "/" << test_count << " checks passed\n";

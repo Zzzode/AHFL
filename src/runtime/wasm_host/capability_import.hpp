@@ -68,6 +68,13 @@ enum class CapabilityImportError {
     BridgeWireSchemaMismatch,
     /// A bridge argument span failed the P4-D walk (bounds/schema/region).
     ArgDecodeFailed,
+    /// The opaque-lane param JSON failed schema-bound decode against the
+    /// wire-schema param binding. Pre-effect: the capability is NEVER invoked.
+    ParamSchemaInvalid,
+    /// The opaque-lane result value failed schema-bound validation against the
+    /// wire-schema result binding. Post-effect: the capability WAS invoked and
+    /// returned Success, but the host rejects the result as a host fault.
+    ResultSchemaInvalid,
     /// The opaque-lane result value is not wire-encodable (a closure).
     ResultEncodeFailed,
     /// The bridge result failed the P4-D pack.
