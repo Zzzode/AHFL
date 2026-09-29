@@ -42,6 +42,34 @@ endfunction()
 function(ahfl_apply_third_party_warnings target_name)
     if(MSVC)
         target_compile_options(${target_name} PRIVATE /W0)
+        return()
+    endif()
+
+    # The downstream flags are C++-only. A C target (e.g. the vendored wasm3
+    # interpreter) would otherwise emit a diagnostic about the unknown option
+    # itself -- "valid for C++/ObjC++ but not for C" is a warning in GCC but a
+    # hard error in Clang, so under -Werror it breaks the build. Decide from the
+    # target's own sources, so every call site stays identical (antlr4
+    # precedent) and a C++ target keeps exactly its previous profile. The
+    # LINKER_LANGUAGE property is not readable for STATIC libraries, hence the
+    # extension scan.
+    get_target_property(AHFL_THIRD_PARTY_SOURCES ${target_name} SOURCES)
+    set(AHFL_THIRD_PARTY_IS_C ON)
+    if(AHFL_THIRD_PARTY_SOURCES)
+        foreach(AHFL_THIRD_PARTY_SOURCE IN LISTS AHFL_THIRD_PARTY_SOURCES)
+            if(AHFL_THIRD_PARTY_SOURCE MATCHES "\\.(cpp|cc|cxx|c\\+\\+|mm|ixx)$")
+                set(AHFL_THIRD_PARTY_IS_C OFF)
+                break()
+            endif()
+        endforeach()
+    else()
+        set(AHFL_THIRD_PARTY_IS_C OFF)
+    endif()
+
+    if(AHFL_THIRD_PARTY_IS_C)
+        # Silences the C++-only-flag diagnostics above; the vendored C has its
+        # own warning posture and is not ours to keep clean.
+        target_compile_options(${target_name} PRIVATE -w)
     else()
         target_compile_options(${target_name} PRIVATE
             -Wno-overloaded-virtual

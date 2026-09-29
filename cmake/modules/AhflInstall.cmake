@@ -17,6 +17,16 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/third_party/antlr4/runtime/src/
     FILES_MATCHING PATTERN "*.h"
 )
 
+# Vendored wasm3 interpreter headers, matching the antlr4 precedent above so the
+# exported AHFL::wasm3 target's INSTALL_INTERFACE include dir resolves. Absent
+# from a WASM=OFF tree (no wasm3 target, nothing to install).
+if(TARGET wasm3)
+    install(DIRECTORY ${PROJECT_SOURCE_DIR}/third_party/wasm3/source/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ahfl/third_party/wasm3
+        FILES_MATCHING PATTERN "*.h"
+    )
+endif()
+
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/compiler/syntax/parser/generated/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ahfl/compiler/syntax/parser/generated
     FILES_MATCHING PATTERN "*.h"
@@ -54,6 +64,9 @@ set(AHFL_INSTALL_TARGETS
 
 set(AHFL_INTERNAL_INSTALL_TARGETS
     antlr4_runtime
+    # wasm3 exists only with AHFL_ENABLE_BACKEND_WASM=ON; the TARGET check below
+    # skips it (and any other absent target) in a WASM=OFF tree.
+    wasm3
     ahfl_base_support
     ahfl_base_json
     ahfl_base_toml

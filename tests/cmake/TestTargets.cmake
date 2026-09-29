@@ -1583,6 +1583,18 @@ target_link_libraries(ahfl_tooling_cache_tests
 ahfl_apply_project_warnings(ahfl_tooling_cache_tests)
 
 if(AHFL_ENABLE_BACKEND_WASM)
+    # RFC 0026 KR6.8 WH-0: the vendored wasm3 static library has no production
+    # caller yet; this probe is its only consumer and proves the archive links
+    # and executes inside the AHFL build. It deliberately links `wasm3` alone.
+    add_executable(ahfl_wasm3_smoke_tests
+        unit/runtime/wasm_host/wasm3_smoke.cpp
+    )
+    target_link_libraries(ahfl_wasm3_smoke_tests
+        PRIVATE
+            wasm3
+    )
+    ahfl_apply_project_warnings(ahfl_wasm3_smoke_tests)
+
     add_executable(ahfl_core_wasm_codegen_tests
         unit/compiler/backends/core_wasm_codegen.cpp
     )

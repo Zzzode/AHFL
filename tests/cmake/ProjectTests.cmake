@@ -1084,6 +1084,15 @@ add_test(NAME ahfl.runtime.core_wasm_resume_record
 )
 
 if(AHFL_ENABLE_BACKEND_WASM)
+    # RFC 0026 KR6.8 WH-0: vendored-wasm3 link + execution smoke. Labelled
+    # `wasm` so `ctest -L wasm` covers it alongside the emitter gates.
+    add_test(NAME ahfl.runtime.wasm3_embedded_smoke
+        COMMAND $<TARGET_FILE:ahfl_wasm3_smoke_tests>
+    )
+    set_tests_properties(ahfl.runtime.wasm3_embedded_smoke PROPERTIES
+        LABELS "wasm;runtime"
+    )
+
     add_test(NAME ahfl.runtime.core_wasm_schema_module
         COMMAND $<TARGET_FILE:ahfl_core_wasm_schema_module_tests>
     )

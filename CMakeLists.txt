@@ -148,6 +148,14 @@ option(AHFL_ENABLE_BACKEND_PIPELINE "Build pipeline observation backends" ON)
 
 add_subdirectory(third_party/antlr4)
 add_subdirectory(third_party/doctest)
+# wasm3 (MIT) is the embedded execution engine for the compiled WebAssembly
+# backend (RFC 0026 KR6.8). It exists only when the wasm emitter does: the
+# embedded host consumes emitted Core-IR wasm, so WASM=OFF must leave the tree
+# without a wasm3 target and without any reference to it. See
+# third_party/wasm3/{VERSION,NOTICE.md}.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_subdirectory(third_party/wasm3)
+endif()
 add_subdirectory(src)
 
 enable_testing()

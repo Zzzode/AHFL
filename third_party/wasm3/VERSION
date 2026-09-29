@@ -1,0 +1,10 @@
+wasm3 v0.9.0
+commit 0cd38327f0c721e75172f4f1eeb55854dc0517af
+source upstream v0.9.0 tag (https://github.com/wasm3/wasm3)
+vendored 2026-09-29
+subset interpreter core only: m3_bind.c m3_code.c m3_compile.c m3_core.c m3_env.c
+  m3_exec.c m3_function.c m3_info.c m3_module.c m3_parse.c m3_validate.c
+  plus the headers they need. m3_api_libc.c, m3_api_wasi.c, m3_api_uvwasi.c,
+  m3_api_meta_wasi.c, m3_api_tracer.c, platforms/, extensions/, test/ and the
+  upstream build scripts are EXCLUDED: AHFL embeds the interpreter core only
+  and supplies its own host imports. See LICENSE and NOTICE.md.
