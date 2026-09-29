@@ -764,8 +764,9 @@ Wasm3ResumeEngine::invoke_runv() {
     }
     if (result == kHostAbortSentinel) {
         // runv on an import-free P6-frame module cannot reach a host import,
-        // but a bridge module (WH-3) can; map the sentinel faithfully.
-        return RunvOutcome{eng::Run2Trapped{}};
+        // but a bridge module (WH-3) can; map the sentinel faithfully as a
+        // host abort (distinct from a Wasm trap, mirroring Run2Outcome).
+        return RunvOutcome{eng::Run2HostAborted{}};
     }
     if (is_wasm_trap(result)) {
         return RunvOutcome{eng::Run2Trapped{}};

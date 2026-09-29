@@ -319,6 +319,24 @@ void test_host_abort_mapping() {
     }
 }
 
+// 6b. runv host-abort mapping: a module whose runv calls an ahfl_cap import.
+//     When the callback aborts, invoke_runv must return Run2HostAborted
+//     (distinct from Run2Trapped, mirroring the run2 three-arm outcome).
+void test_runv_host_abort_mapping() {
+    const auto bytes = wht::runv_import_module();
+    ahfl::runtime::wasm_host::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        std::span<const std::uint8_t>(bytes),
+        [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportAbort{};
+        });
+    check(inst.has_value(), "runv-abort.fresh_instance");
+    auto out = engine.invoke_runv();
+    check(out.has_value() &&
+              std::holds_alternative<eng::Run2HostAborted>(*out),
+          "runv-abort.ImportAbort -> Run2HostAborted (distinct from Run2Trapped)");
+}
+
 // 7. Fresh-instance discipline: a second fresh_instance is InvalidSequence;
 //    every op before fresh_instance is InvalidSequence; a null/OOB entry is
 //    InvalidSequence (and consumes the session, matching the Fake's
@@ -653,6 +671,7 @@ int main() {
     test_single_arg_import_slot_discipline();
     test_trap_mapping();
     test_host_abort_mapping();
+    test_runv_host_abort_mapping();
     test_fresh_instance_discipline();
     test_capacity_exhaustion();
     test_capacity_exact_boundary();

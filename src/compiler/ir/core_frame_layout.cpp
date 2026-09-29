@@ -1077,6 +1077,11 @@ class Decoder {
             }
         }
         std::uint64_t expected_cursor = kBackingBase;
+        // Each container layout may have at most ONE backing placement: the
+        // packer/reader's backing_by_layout map is indexed by layout id, so a
+        // duplicate would silently keep the last placement and shadow the
+        // first (the JS oracle rejects this with Map.has). Reject at admission.
+        std::vector<bool> placed_layouts(table.layouts.size(), false);
         for (std::uint32_t i = 0;
              !workflow_section_v2 && i < section.placements.size(); ++i) {
             const CoreFrameBackingPlacement &placement = section.placements[i];
@@ -1095,6 +1100,12 @@ class Decoder {
                 fail_local("frame-layout backing placement does not name a container layout");
                 return diags;
             }
+            if (placed_layouts[placement.container_layout.value]) {
+                fail_local("frame-layout backing placement names a container layout that "
+                           "already has a placement");
+                return diags;
+            }
+            placed_layouts[placement.container_layout.value] = true;
             const auto geometry = layout_geometry::expected_container(table, *container);
             if (!geometry.has_value() || geometry->stride == 0) {
                 fail_local("frame-layout backing placement names a container with invalid backing "

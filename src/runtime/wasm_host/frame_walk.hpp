@@ -10,10 +10,8 @@
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
-#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <vector>

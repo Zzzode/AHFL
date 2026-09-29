@@ -53,8 +53,6 @@ enum class FrameReadError {
     CollectionOverrunsPlacement,
     SetDuplicateElement,
     RunvRootUnauthorized,
-    RunvNonOkStatus,
-    RunvTrapped,
     PageBoundsExceeded,
     ArithmeticOverflow,
 };

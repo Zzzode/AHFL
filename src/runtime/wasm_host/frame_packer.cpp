@@ -1,5 +1,6 @@
 #include "runtime/wasm_host/frame_packer.hpp"
 
+#include "runtime/engine/core_wasm_resume_capacity.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
 #include "runtime/value/value.hpp"
 
@@ -262,9 +263,6 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
             }
             return {};
         }
-        if (!write_u32_le(page, addr, 1u)) {
-            return std::unexpected(FramePackError::PageBoundsExceeded);
-        }
         if (l_enum->variant_payload_layouts.size() < 2) {
             return std::unexpected(FramePackError::ShapeMismatch);
         }
@@ -280,9 +278,18 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         if (inner == nullptr) {
             return std::unexpected(FramePackError::ShapeMismatch);
         }
-        return pack_value(ctx, page, w_opt->value,
-                          l_enum->variant_payload_layouts[1], *inner, *payload_addr,
-                          arena_cursor);
+        // Pack the payload BEFORE writing the tag, so a non-encodable inner
+        // (e.g. a closure) fails closed without leaving a partial Some tag.
+        auto packed = pack_value(ctx, page, w_opt->value,
+                                 l_enum->variant_payload_layouts[1], *inner,
+                                 *payload_addr, arena_cursor);
+        if (!packed.has_value()) {
+            return packed;
+        }
+        if (!write_u32_le(page, addr, 1u)) {
+            return std::unexpected(FramePackError::PageBoundsExceeded);
+        }
+        return {};
     }
 
     // Enum: ordinal by variant name, tag@0, payload@payload_offset.
@@ -311,11 +318,12 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         if (!found) {
             return std::unexpected(FramePackError::EnumUnknownVariant);
         }
-        if (!write_u32_le(page, addr, static_cast<std::uint32_t>(ordinal))) {
-            return std::unexpected(FramePackError::PageBoundsExceeded);
-        }
         const auto &wire_variant = w_enum->variants[ordinal];
         if (wire_variant.payload_kind == ir::core::CoreWirePayloadKind::Unit) {
+            // Unit variant: tag only, no payload to leak.
+            if (!write_u32_le(page, addr, static_cast<std::uint32_t>(ordinal))) {
+                return std::unexpected(FramePackError::PageBoundsExceeded);
+            }
             return {};
         }
         if (ordinal >= l_enum->variant_payload_layouts.size()) {
@@ -336,23 +344,36 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         if (payload_struct == nullptr) {
             return std::unexpected(FramePackError::ShapeMismatch);
         }
+        // Pack the payload BEFORE writing the tag, so a non-encodable payload
+        // (e.g. a closure in a variant field) fails closed without leaving a
+        // partial tag byte.
+        std::expected<void, FramePackError> packed =
+            std::unexpected(FramePackError::ShapeMismatch);
         if (wire_variant.payload_kind == ir::core::CoreWirePayloadKind::Tuple) {
-            return pack_slots(ctx, page, wire_variant.slots, *payload_struct,
-                              [&](std::size_t i) -> const Value * {
-                                  if (i >= ev->payload.size()) {
-                                      return nullptr;
-                                  }
-                                  return ev->payload[i].get();
-                              },
-                              *payload_addr, arena_cursor);
+            packed = pack_slots(ctx, page, wire_variant.slots, *payload_struct,
+                                [&](std::size_t i) -> const Value * {
+                                    if (i >= ev->payload.size()) {
+                                        return nullptr;
+                                    }
+                                    return ev->payload[i].get();
+                                },
+                                *payload_addr, arena_cursor);
+        } else {
+            // Struct variant: named payload.
+            packed = pack_slots(ctx, page, wire_variant.slots, *payload_struct,
+                                [&](std::size_t i) -> const Value * {
+                                    return ev->named_payload.get(
+                                        wire_variant.slots[i].wire_name);
+                                },
+                                *payload_addr, arena_cursor);
         }
-        // Struct variant: named payload.
-        return pack_slots(ctx, page, wire_variant.slots, *payload_struct,
-                          [&](std::size_t i) -> const Value * {
-                              return ev->named_payload.get(
-                                  wire_variant.slots[i].wire_name);
-                          },
-                          *payload_addr, arena_cursor);
+        if (!packed.has_value()) {
+            return packed;
+        }
+        if (!write_u32_le(page, addr, static_cast<std::uint32_t>(ordinal))) {
+            return std::unexpected(FramePackError::PageBoundsExceeded);
+        }
+        return {};
     }
 
     // Sequence: inline (ptr,len) header, elements at the declared placement.
@@ -450,9 +471,13 @@ pack_p6_input(std::span<std::uint8_t> page,
               const ir::core::CoreFrameLayoutSection &section,
               const ir::core::VerifiedWireSchemaBinding &input_binding,
               const Value &input) {
-    // Zero the reserved named regions [1024,16384) so padding words are 0.
-    // [0,1024) (zero page + read-only rodata) is never touched.
-    if (page.size() < ir::core::kP6CollectionBackingBase) {
+    // The packer writes into the live fixed single-page guest memory: the
+    // caller MUST pass the whole 64 KiB page, not a trimmed or oversized
+    // buffer (the JS oracle writes e.memory.buffer, which is always exactly
+    // the fixed page). A partial page would silently skip the zeroing of
+    // padding words; an oversized buffer would let the packer touch bytes
+    // beyond the guest's real memory.
+    if (page.size() != core_wasm_resume_capacity::fixed_single_page_capacity().value) {
         return std::unexpected(FramePackError::PageBoundsExceeded);
     }
     std::fill(page.begin() + ir::core::kP6AggregateInputBase,

@@ -47,7 +47,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <variant>
 #include <vector>
 
 namespace {
@@ -61,7 +60,6 @@ namespace conf = ahfl::conformance;
 
 using ahfl::runtime::Value;
 using ahfl::runtime::value_from_json;
-using ahfl::runtime::value_to_json;
 
 int g_test_count = 0;
 int g_pass_count = 0;
@@ -313,16 +311,39 @@ void test_runv_root_auth(const std::filesystem::path &repo_root) {
               rejected.error() == wh::FrameReadError::RunvRootUnauthorized,
           "root_auth.identity_rejects_output_base");
 
-    // The correct base (1024) must be accepted (the page is zero, so the
-    // read itself may fail on a zeroed String/Int, but the root auth must
-    // pass — check that the error is NOT RunvRootUnauthorized, or that the
-    // read succeeded outright).
-    auto accepted = wh::encode_p6_output(
-        page, fixture->admitted.layout, fixture->admitted.output_binding,
-        irc::kP6AggregateInputBase, wh::P6FinalKind::Identity);
-    check(accepted.has_value() ||
-              accepted.error() != wh::FrameReadError::RunvRootUnauthorized,
-          "root_auth.identity_accepts_input_base");
+    // Strict identity success: write a=100, b=7 as little-endian i64 at the
+    // input base (1024), then read through the identity final. The output
+    // JSON must be the exact canonical observation.
+    {
+        std::vector<std::uint8_t> wpage(65536, 0);
+        const auto base = irc::kP6AggregateInputBase;
+        // a=100 at offset 0, b=7 at offset 8 (little-endian i64).
+        wpage[base + 0] = 100;
+        wpage[base + 8] = 7;
+        auto accepted = wh::encode_p6_output(
+            wpage, fixture->admitted.layout, fixture->admitted.output_binding,
+            irc::kP6AggregateInputBase, wh::P6FinalKind::Identity);
+        check(accepted.has_value(),
+              "root_auth.identity_accepts_input_base (strict success)");
+        if (accepted.has_value()) {
+            const std::string expected =
+                "{\"_type\":\"wasm::p6_aggregate::Frame\",\"a\":100,\"b\":7}";
+            check(*accepted == expected,
+                  "root_auth.identity_output_json_exact");
+        }
+    }
+
+    // Boundary probes on the identity final: every value_ptr other than 1024
+    // must be rejected with RunvRootUnauthorized.
+    for (const auto ptr : {std::uint32_t{1025}, std::uint32_t{12287},
+                           std::uint32_t{0}, std::uint32_t{65535}}) {
+        auto probe = wh::encode_p6_output(
+            page, fixture->admitted.layout, fixture->admitted.output_binding,
+            ptr, wh::P6FinalKind::Identity);
+        check(!probe.has_value() &&
+                  probe.error() == wh::FrameReadError::RunvRootUnauthorized,
+              "root_auth.identity_rejects_ptr_" + std::to_string(ptr));
+    }
 
     // v2b_bounded_string is computed final: value_ptr must equal 12288.
     const auto csource = repo_root / "tests/golden/wasm/v2b_bounded_string.ahfl";
@@ -337,6 +358,53 @@ void test_runv_root_auth(const std::filesystem::path &repo_root) {
     check(!crejected.has_value() &&
               crejected.error() == wh::FrameReadError::RunvRootUnauthorized,
           "root_auth.computed_rejects_input_base");
+
+    // Boundary probes on the computed final: every value_ptr other than 12288
+    // must be rejected with RunvRootUnauthorized.
+    for (const auto ptr : {std::uint32_t{1025}, std::uint32_t{12287},
+                           std::uint32_t{0}, std::uint32_t{65535}}) {
+        auto probe = wh::encode_p6_output(
+            page, cfixture->admitted.layout, cfixture->admitted.output_binding,
+            ptr, wh::P6FinalKind::Computed);
+        check(!probe.has_value() &&
+                  probe.error() == wh::FrameReadError::RunvRootUnauthorized,
+              "root_auth.computed_rejects_ptr_" + std::to_string(ptr));
+    }
+
+    // Direct computed+12288 happy-path: write "some" at the rodata base (256)
+    // and a PtrLen(256, 4) at the output base (12288), then read through the
+    // computed final. The output JSON must be the exact canonical observation.
+    {
+        std::vector<std::uint8_t> cpage(65536, 0);
+        const auto rodata = irc::kP6RodataBase; // 256
+        const auto out_base = irc::kP6AggregateOutputBase; // 12288
+        // Write "some" at rodata.
+        const std::string some = "some";
+        for (std::size_t i = 0; i < some.size(); ++i) {
+            cpage[rodata + i] = static_cast<std::uint8_t>(some[i]);
+        }
+        // Write PtrLen(256, 4) at the output base (little-endian u32 each).
+        // 256 = 0x100, so LE bytes are [0x00, 0x01, 0x00, 0x00].
+        cpage[out_base + 0] = 0x00;
+        cpage[out_base + 1] = 0x01;
+        cpage[out_base + 2] = 0x00;
+        cpage[out_base + 3] = 0x00;
+        cpage[out_base + 4] = 4;
+        cpage[out_base + 5] = 0;
+        cpage[out_base + 6] = 0;
+        cpage[out_base + 7] = 0;
+        auto caccepted = wh::encode_p6_output(
+            cpage, cfixture->admitted.layout, cfixture->admitted.output_binding,
+            irc::kP6AggregateOutputBase, wh::P6FinalKind::Computed);
+        check(caccepted.has_value(),
+              "root_auth.computed_accepts_output_base (strict success)");
+        if (caccepted.has_value()) {
+            const std::string expected =
+                "{\"_type\":\"wasm::v2b::bounded_string::Out\",\"label\":\"some\"}";
+            check(*caccepted == expected,
+                  "root_auth.computed_output_json_exact");
+        }
+    }
 }
 
 // --- 6. schema fail-closed family --------------------------------------------
@@ -572,18 +640,38 @@ void test_region_zeroing(const std::filesystem::path &repo_root) {
     // The reserved named regions [1024, 16384) must be zeroed EXCEPT where the
     // packer wrote the input frame (at 1024) and the collection placements
     // (>= 16384, outside the zeroed range). p6_aggregate has no collections,
-    // so the only non-zero bytes in [1024, 16384) should be the two i64 fields
-    // at offsets 0 and 8 (16 bytes total).
-    std::size_t non_zero_in_reserved = 0;
-    for (std::size_t i = 1024; i < 16384; ++i) {
-        if (page[i] != 0) {
-            ++non_zero_in_reserved;
+    // so the only non-zero bytes in [1024, 16384) are the two i64 fields.
+    // Pin the EXACT count and offsets: a=100 (0x64) at field offset 0, b=7
+    // (0x07) at field offset 8, both little-endian i64 (only the low byte
+    // is non-zero for these small values).
+    const auto &input_layout =
+        fixture->admitted.layout.table.layouts[fixture->admitted.layout.input_layout.value];
+    const auto *input_struct =
+        std::get_if<irc::CoreLayoutStruct>(&input_layout.shape);
+    check(input_struct != nullptr && input_struct->field_offsets.size() == 2,
+          "zeroing.input layout is a 2-field struct");
+    if (input_struct != nullptr && input_struct->field_offsets.size() == 2) {
+        const auto base = irc::kP6AggregateInputBase;
+        const auto off_a = input_struct->field_offsets[0];
+        const auto off_b = input_struct->field_offsets[1];
+        std::size_t non_zero_in_reserved = 0;
+        for (std::size_t i = 1024; i < 16384; ++i) {
+            if (page[i] != 0) {
+                ++non_zero_in_reserved;
+            }
         }
+        check(non_zero_in_reserved == 2, "zeroing.exactly 2 non-zero bytes in reserved");
+        check(page[base + off_a] == 0x64, "zeroing.a=100 (0x64) at derived offset");
+        check(page[base + off_b] == 0x07, "zeroing.b=7 (0x07) at derived offset");
+        // All other bytes in the two i64 slots must be zero (high bytes).
+        bool high_bytes_zero = true;
+        for (std::size_t i = 1; i < 8; ++i) {
+            if (page[base + off_a + i] != 0 || page[base + off_b + i] != 0) {
+                high_bytes_zero = false;
+            }
+        }
+        check(high_bytes_zero, "zeroing.i64 high bytes are zero");
     }
-    // a@0 (8 bytes) + b@8 (8 bytes) = 16 non-zero bytes (100 and 7 are small,
-    // but stored as little-endian i64, so only the first byte is non-zero).
-    // Actually 100 = 0x64 (1 byte), 7 = 0x07 (1 byte). So 2 non-zero bytes.
-    check(non_zero_in_reserved <= 16, "zeroing.reserved_regions_zeroed");
 
     // The collection backing region [16384, 65536) must NOT be zeroed by the
     // packer (it was 0xFF and stays 0xFF for p6_aggregate, which has no
@@ -631,7 +719,273 @@ void test_closure_fail_closed(const std::filesystem::path &repo_root) {
           "closure.pack_fails_closed");
 }
 
-} // namespace
+// --- page precondition (P2-6 review fix-forward) ------------------------------
+
+void test_page_precondition(const std::filesystem::path &repo_root) {
+    const auto source = repo_root / "tests/golden/wasm/p6_aggregate.ahfl";
+    auto fixture = emit_and_admit(source);
+    check(fixture.has_value(), "page-pre.emit_and_admit");
+    if (!fixture.has_value()) {
+        return;
+    }
+    auto input = value_from_json(
+        "{\"_type\":\"wasm::p6_aggregate::Frame\",\"a\":1,\"b\":2}");
+    check(input.has_value(), "page-pre.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    // A trimmed page (65535) must be rejected: the packer requires the whole
+    // fixed 64 KiB page, not a partial buffer.
+    {
+        std::vector<std::uint8_t> small(65535, 0);
+        auto r = wh::pack_p6_input(small, fixture->admitted.layout,
+                                   fixture->admitted.input_binding, *input);
+        check(!r.has_value() &&
+                  r.error() == wh::FramePackError::PageBoundsExceeded,
+              "page-pre.trimmed_65535_rejected");
+    }
+
+    // An oversized page (65537) must also be rejected.
+    {
+        std::vector<std::uint8_t> big(65537, 0);
+        auto r = wh::pack_p6_input(big, fixture->admitted.layout,
+                                   fixture->admitted.input_binding, *input);
+        check(!r.has_value() &&
+                  r.error() == wh::FramePackError::PageBoundsExceeded,
+              "page-pre.oversized_65537_rejected");
+    }
+
+    // The exact fixed page (65536) must succeed.
+    {
+        std::vector<std::uint8_t> exact(65536, 0);
+        auto r = wh::pack_p6_input(exact, fixture->admitted.layout,
+                                   fixture->admitted.input_binding, *input);
+        check(r.has_value(), "page-pre.exact_65536_accepted");
+    }
+}
+
+// --- duplicate placement rejection (P2-1 review fix-forward) ------------------
+
+void test_duplicate_placement_rejected(const std::filesystem::path &repo_root) {
+    // p6_frame_two_containers has two placements with DIFFERENT container
+    // layouts; it must still admit (the two-containers fixture is valid).
+    const auto source =
+        repo_root / "tests/golden/wasm/p6_frame_two_containers.ahfl";
+    auto fixture = emit_and_admit(source);
+    check(fixture.has_value(), "dup-place.two_containers_admits");
+    if (!fixture.has_value()) {
+        return;
+    }
+
+    // Clone the admitted section and add a THIRD placement that duplicates
+    // the first placement's container_layout. The local verifier must reject
+    // it at decode time (the packer/reader's backing_by_layout map is indexed
+    // by layout id, so a duplicate would silently shadow the first).
+    auto section = fixture->admitted.layout;
+    check(section.placements.size() >= 2, "dup-place.fixture has >=2 placements");
+    if (section.placements.size() < 2) {
+        return;
+    }
+    auto dup = section.placements[0];
+    dup.edge_index = static_cast<std::uint32_t>(section.placements.size());
+    section.placements.push_back(dup);
+
+    auto encoded = irc::encode_core_frame_layout_section(section);
+    check(encoded.ok(), "dup-place.duplicate section encodes");
+    if (!encoded.ok()) {
+        return;
+    }
+    auto decoded = irc::decode_core_frame_layout_section(*encoded.bytes);
+    check(!decoded.ok(), "dup-place.duplicate container_layout rejected at decode");
+}
+
+// --- nested-closure pack rejection (P2-4 review fix-forward) -------------------
+
+void test_nested_closure_pack_rejected(const std::filesystem::path &repo_root) {
+    // Each shape packs a closure nested inside a container. The packer must
+    // fail with ValueNotWireEncodable WITHOUT writing a tag byte (the P2-4
+    // fix packs the payload before the tag for Option/Enum; Struct/List
+    // elements are packed before any header). The packer zeroes
+    // [1024,16384) first, so the "no partial bytes" assertion checks that
+    // the input frame region is all zeros (no tag was written).
+    constexpr std::size_t kInputBase = 1024;
+    auto check_no_partial = [](const std::vector<std::uint8_t> &page,
+                               const std::string &label) {
+        bool clean = true;
+        for (std::size_t i = kInputBase; i < kInputBase + 8; ++i) {
+            if (page[i] != 0) { clean = false; break; }
+        }
+        check(clean, label);
+    };
+
+    // 1. Option<closure>: Some(closure) against a synthetic Option<Int>
+    //    schema. The payload (closure) fails before the Some tag is written.
+    {
+        irc::CoreFrameLayoutSection section;
+        section.table.target = irc::TargetDataLayout{};
+        // layout 0: Enum (Option) with tag@0, payload@4; layout 1: None
+        // payload (unused); layout 2: Some payload (Int i32).
+        section.table.layouts.push_back(
+            irc::CoreLayout{8, 4, false,
+                            irc::CoreLayoutEnum{4, 4, {{1}, {2}}, {0, 4}}});
+        section.table.layouts.push_back(
+            irc::CoreLayout{0, 1, true, irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
+        section.table.layouts.push_back(
+            irc::CoreLayout{4, 4, false, irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
+        section.input_layout = irc::CoreLayoutId{0};
+        section.output_layout = irc::CoreLayoutId{0};
+        section.payload_arena_base = 16384;
+        section.payload_arena_capacity = 4096;
+
+        irc::CoreWireSchemaTable wire;
+        wire.format_version = 1;
+        irc::CoreWireSchemaNode opt_node;
+        opt_node.shape = irc::CoreWireSchemaOption{irc::CoreWireSchemaNodeId{1}};
+        wire.nodes.push_back(opt_node);
+        irc::CoreWireSchemaNode int_node;
+        int_node.shape = irc::CoreWireSchemaInt{};
+        wire.nodes.push_back(int_node);
+        wire.frame_roots = irc::CoreWireFrameRoots{
+            irc::CoreWireSchemaNodeId{0}, irc::CoreWireSchemaNodeId{0}, {}, {}};
+
+        auto verified = irc::make_verified_wire_schema_table(std::move(wire));
+        check(verified.table.has_value(), "nested-closure.option.verified");
+        if (!verified.table.has_value()) {
+            return;
+        }
+        std::vector<irc::CoreLowerDiagnostic> diagnostics;
+        auto binding = irc::make_frame_binding_from_verified_table(
+            *verified.table, {irc::CoreWireFrameRootKind::Input}, diagnostics);
+        check(binding.has_value(), "nested-closure.option.binding");
+        if (!binding.has_value()) {
+            return;
+        }
+
+        auto some_closure = ahfl::runtime::make_option_some(
+            ahfl::runtime::make_interpreter_closure(nullptr));
+        std::vector<std::uint8_t> page(65536, 0xFF);
+        auto r = wh::pack_p6_input(page, section, *binding, some_closure);
+        check(!r.has_value() &&
+                  r.error() == wh::FramePackError::ValueNotWireEncodable,
+              "nested-closure.option_some_fails");
+        check_no_partial(page, "nested-closure.option_no_partial_bytes");
+    }
+
+    // 2. Struct field closure: {a: closure, b: 0} against p6_aggregate's
+    //    Frame{a: i64, b: i64}. Field a fails before field b is packed.
+    {
+        const auto source = repo_root / "tests/golden/wasm/p6_aggregate.ahfl";
+        auto fixture = emit_and_admit(source);
+        check(fixture.has_value(), "nested-closure.struct.emit_and_admit");
+        if (!fixture.has_value()) {
+            return;
+        }
+        std::unordered_map<std::string, ahfl::runtime::Value> fields;
+        fields.emplace("a", ahfl::runtime::make_interpreter_closure(nullptr));
+        fields.emplace("b", ahfl::runtime::make_int(0));
+        auto s = ahfl::runtime::make_struct("S", std::move(fields));
+        std::vector<std::uint8_t> page(65536, 0xFF);
+        auto r = wh::pack_p6_input(page, fixture->admitted.layout,
+                                   fixture->admitted.input_binding, s);
+        check(!r.has_value() &&
+                  r.error() == wh::FramePackError::ValueNotWireEncodable,
+              "nested-closure.struct_field_fails");
+        check_no_partial(page, "nested-closure.struct_no_partial_bytes");
+    }
+
+    // 3. List element closure: [closure] against p6_collection's
+    //    Frame{items: List<Int>(4)}. Element 0 fails before the (ptr,len)
+    //    header is written.
+    {
+        const auto source = repo_root / "tests/golden/wasm/p6_collection.ahfl";
+        auto fixture = emit_and_admit(source);
+        check(fixture.has_value(), "nested-closure.list.emit_and_admit");
+        if (!fixture.has_value()) {
+            return;
+        }
+        std::vector<ahfl::runtime::Value> items;
+        items.push_back(ahfl::runtime::make_interpreter_closure(nullptr));
+        std::unordered_map<std::string, ahfl::runtime::Value> fields;
+        fields.emplace("items", ahfl::runtime::make_list(std::move(items)));
+        auto frame = ahfl::runtime::make_struct("S", std::move(fields));
+        std::vector<std::uint8_t> page(65536, 0xFF);
+        auto r = wh::pack_p6_input(page, fixture->admitted.layout,
+                                   fixture->admitted.input_binding, frame);
+        check(!r.has_value() &&
+                  r.error() == wh::FramePackError::ValueNotWireEncodable,
+              "nested-closure.list_element_fails");
+        check_no_partial(page, "nested-closure.list_no_partial_bytes");
+    }
+
+    // 4. Enum payload closure: Match::Hit(closure) against a synthetic
+    //    enum schema with a Tuple variant. The payload (closure) fails
+    //    before the enum tag is written.
+    {
+        irc::CoreFrameLayoutSection section;
+        section.table.target = irc::TargetDataLayout{};
+        // layout 0: Enum (tag@0, payload@4); layout 1: unit variant payload
+        // (unused); layout 2: Tuple variant payload struct (one field);
+        // layout 3: the tuple field (Int i32).
+        section.table.layouts.push_back(
+            irc::CoreLayout{8, 4, false,
+                            irc::CoreLayoutEnum{4, 4, {{1}, {2}}, {0, 4}}});
+        section.table.layouts.push_back(
+            irc::CoreLayout{0, 1, true, irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
+        section.table.layouts.push_back(
+            irc::CoreLayout{4, 4, false,
+                            irc::CoreLayoutStruct{{0}, {{3}}}});
+        section.table.layouts.push_back(
+            irc::CoreLayout{4, 4, false, irc::CoreLayoutScalar{irc::CoreScalarRepr::I32}});
+        section.input_layout = irc::CoreLayoutId{0};
+        section.output_layout = irc::CoreLayoutId{0};
+        section.payload_arena_base = 16384;
+        section.payload_arena_capacity = 4096;
+
+        irc::CoreWireSchemaTable wire;
+        wire.format_version = 1;
+        irc::CoreWireSchemaNode enum_node;
+        irc::CoreWireSchemaEnum e_schema;
+        e_schema.wire_name = "E";
+        e_schema.variants.push_back(
+            {"A", irc::CoreWirePayloadKind::Unit, {}});
+        e_schema.variants.push_back(
+            {"B", irc::CoreWirePayloadKind::Tuple,
+             {{irc::CoreWireSchemaField{"", irc::CoreWireSchemaNodeId{1}}}}});
+        enum_node.shape = std::move(e_schema);
+        wire.nodes.push_back(enum_node);
+        irc::CoreWireSchemaNode int_node;
+        int_node.shape = irc::CoreWireSchemaInt{};
+        wire.nodes.push_back(int_node);
+        wire.frame_roots = irc::CoreWireFrameRoots{
+            irc::CoreWireSchemaNodeId{0}, irc::CoreWireSchemaNodeId{0}, {}, {}};
+
+        auto verified = irc::make_verified_wire_schema_table(std::move(wire));
+        check(verified.table.has_value(), "nested-closure.enum.verified");
+        if (!verified.table.has_value()) {
+            return;
+        }
+        std::vector<irc::CoreLowerDiagnostic> diagnostics;
+        auto binding = irc::make_frame_binding_from_verified_table(
+            *verified.table, {irc::CoreWireFrameRootKind::Input}, diagnostics);
+        check(binding.has_value(), "nested-closure.enum.binding");
+        if (!binding.has_value()) {
+            return;
+        }
+
+        std::vector<ahfl::runtime::Value> payload;
+        payload.push_back(ahfl::runtime::make_interpreter_closure(nullptr));
+        auto ev = ahfl::runtime::make_enum("E", "B", std::move(payload));
+        std::vector<std::uint8_t> page(65536, 0xFF);
+        auto r = wh::pack_p6_input(page, section, *binding, ev);
+        check(!r.has_value() &&
+                  r.error() == wh::FramePackError::ValueNotWireEncodable,
+              "nested-closure.enum_payload_fails");
+        check_no_partial(page, "nested-closure.enum_no_partial_bytes");
+    }
+}
+
+}  // namespace
 
 int main() {
     const auto repo = ahfl::test_support::repo_root_from_source_file(__FILE__);
@@ -645,6 +999,9 @@ int main() {
     test_region_zeroing(repo);
     test_oracle_parity(repo);
     test_closure_fail_closed(repo);
+    test_page_precondition(repo);
+    test_duplicate_placement_rejected(repo);
+    test_nested_closure_pack_rejected(repo);
 
     std::cout << g_pass_count << "/" << g_test_count << " checks passed\n";
     return g_pass_count == g_test_count ? 0 : 1;

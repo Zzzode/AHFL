@@ -36,7 +36,6 @@
 #include "runtime/value/value_json.hpp"
 
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
-#include "ahfl/compiler/ir/ir.hpp"
 
 #include <cstdint>
 #include <cstdlib>

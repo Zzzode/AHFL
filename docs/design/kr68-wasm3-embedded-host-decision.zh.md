@@ -352,6 +352,16 @@ runv 根授权需要 final_kind(identity → value_ptr 必须 == input_base 1024
 
 `CoreWireCapabilitySchema` 不携带 mode(opaque/bridge),schema_transport 看不到帧段的 `bridge_call_sites`。**决策**:schema_transport 把导入 functype 白名单扩展为两种 AHFL ABI functype——opaque `(i32,i32)->(i32,i32,i32)` 与 bridge `(i32)->(i32,i32)`;任一导入的 functype 不在白名单即拒绝(typed fixed diagnostic)。这是传输检查器在无 mode 信号下能施的最强检查:bridge 导入用错 functype(如 `(i32)->(i32)` 或 `(i32,i32)->(i32,i32)`)被拒,用对被接受。"哪个导入是 bridge"的模式对拍属于帧段准入(`verify_frame_bridge_sites`,它能看到 `bridge_call_sites`),不在 schema_transport 重复。A2(`core_wasm_schema_module.cpp`)的相同 opaque-only 检查不在本片改动(bridge 工作流模块走帧段准入,不走 A2;任务明确只点名 schema_transport)。
 
+### 11.4 WH-2 对抗评审 fix-forward(2026-09-30,BUILDER 代理,无人类 owner 门)
+
+独立对抗评审返回 LGTM + 8 项 P2;两项为 WH-3 门禁,全部在本次单一 bounded change 中修复。
+
+**P2-1(WH-3 门禁):重复 placement layout-id 在准入时拒绝。** JS oracle `backingByLayout` 用 `Map.has` 拒绝重复 layout-id;C++ 侧此前只在 `verify_local()` 的 placement 循环中检查 edge_index/valid_id/container 非空,未检查同一 `container_layout` 是否被多次 placement。**决策**:在 `core_frame_layout.cpp` 的 placement 循环中新增 `placed_layouts` 位图(vector<bool>,按 `CoreLayoutId.value` 索引),每个 placement 的 `container_layout` 已置位即 fail-closed("frame-layout backing placement names a container layout that already has a placement")。这是 admission-time 不变量,不是 pack-time 检查——与 JS oracle 的 `Map.has` 语义对齐,且在帧段准入(transport)层就拒绝,不留给运行时。
+
+**P2-2(WH-3 门禁)+ P2-8:runv 结果模型修正——host-abort 与 trap 分离,runv 执行错误不再归类为 FrameReadError。** 评审前 `RunvOutcome` 是二臂 `variant<RunvResult, Run2Trapped>`,host-abort 被映射为 trap;`P6FrameError` 把 runv trap/non-ok-status 塞进 `FrameReadError` 枚举。**决策**:(1) `RunvOutcome` 改为三臂 `variant<RunvResult, Run2Trapped, Run2HostAborted>`,`kHostAbortSentinel` 映射到 `Run2HostAborted` 而非 `Run2Trapped`;(2) 新增 `RunvError{Kind, raw_status}` 结构(Kind = Trapped | HostAborted | NonOkStatus),`P6FrameError` 改为四臂 `variant<FramePackError, FrameReadError, RunvError, EngineError>`;(3) `FrameReadError` 枚举移除 `RunvTrapped`/`RunvNonOkStatus`——帧读取错误与 runv 执行错误是不同抽象层,混在一个枚举里违反 Principle 4(variant 分层)。所有 visitor/test 同步更新。
+
+**P2-3/4/5/6 + hygiene**:runv root-auth 测试强化(identity strict success + 8 边界探针 + computed+12288 happy-path);嵌套 closure pack 拒绝测试(Option/Struct field/List element/Enum payload 四种形状,各验证零部分帧字节);region-zeroing 断言精确到 2 字节 + 派生偏移;`pack_p6_input` 前置条件从 `>= 16384` 收紧为恰好 `fixed_single_page_capacity().value`(65536);移除未使用 include/using-decl(frame_walk.hpp 的 `core_wasm_abi_constants.hpp` + `<cstddef>`;frame_reader.cpp 的 `CoreWireSchemaField` using-decl;frame_packer_reader.cpp 的 `value_to_json` using-decl + `<variant>`;native_wasm_differential.cpp 的 `ir.hpp` include)。
+
 ---
 
 ### Load-bearing file references (all absolute)

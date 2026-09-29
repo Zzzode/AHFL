@@ -31,6 +31,12 @@ map_engine_error(eng::EngineError e) noexcept {
     return P6FrameError{std::in_place_type<eng::EngineError>, e};
 }
 
+// Map a runv execution failure into the driver's error variant.
+[[nodiscard]] P6FrameError
+map_runv_error(RunvError e) noexcept {
+    return P6FrameError{std::in_place_type<RunvError>, e};
+}
+
 } // namespace
 
 std::expected<std::string, P6FrameError>
@@ -68,14 +74,19 @@ execute_p6_frame(Wasm3ResumeEngine &engine,
         return std::unexpected(map_engine_error(runv.error()));
     }
 
-    // 4. Classify the runv outcome. A trap (wasm trap or host abort) fails
-    //    closed; a non-OK status fails closed.
+    // 4. Classify the runv outcome. A trap (wasm trap) or host abort fails
+    //    closed; a non-OK status fails closed. These are execution failures,
+    //    not frame read failures, so they carry their own RunvError category.
     if (std::holds_alternative<eng::Run2Trapped>(*runv)) {
-        return std::unexpected(map_read_error(FrameReadError::RunvTrapped));
+        return std::unexpected(map_runv_error(RunvError{RunvError::Kind::Trapped}));
+    }
+    if (std::holds_alternative<eng::Run2HostAborted>(*runv)) {
+        return std::unexpected(map_runv_error(RunvError{RunvError::Kind::HostAborted}));
     }
     const auto &result = std::get<RunvResult>(*runv);
     if (result.raw_status != 0u) {
-        return std::unexpected(map_read_error(FrameReadError::RunvNonOkStatus));
+        return std::unexpected(
+            map_runv_error(RunvError{RunvError::Kind::NonOkStatus, result.raw_status}));
     }
 
     // 5. Re-acquire the page as const (the span discipline: the mutable span

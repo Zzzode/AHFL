@@ -30,10 +30,24 @@
 
 namespace ahfl::runtime::wasm_host {
 
+/// A runv execution failure, distinct from a frame pack/read failure. The
+/// driver classifies the RunvOutcome here so callers can distinguish a module
+/// trap, a host abort (the host's ImportAbort unwound runv), and a non-OK
+/// module status (which carries the raw status word for diagnostics).
+struct RunvError {
+    enum class Kind { Trapped, HostAborted, NonOkStatus };
+    Kind kind{Kind::Trapped};
+    /// The raw status word; meaningful only when kind == NonOkStatus.
+    std::uint32_t raw_status{0};
+
+    [[nodiscard]] friend bool operator==(const RunvError &,
+                                         const RunvError &) noexcept = default;
+};
+
 /// The union of every typed error the P6-frame driver can fail with. The
 /// caller visits to classify; no error carries a diagnostic string.
 using P6FrameError =
-    std::variant<FramePackError, FrameReadError,
+    std::variant<FramePackError, FrameReadError, RunvError,
                  core_wasm_resume_engine::EngineError>;
 
 /// Execute a P6-frame module in-process and return its canonical output JSON.

@@ -473,4 +473,64 @@ with_a2_admission(std::vector<std::uint8_t> module_bytes, std::uint64_t source_s
     return m;
 }
 
+// A module with run2 + alloc + runv exports and one ahfl_cap import that runv
+// calls. When the host callback aborts, invoke_runv must map the sentinel to
+// Run2HostAborted (distinct from Run2Trapped). When the callback replies, runv
+// returns the reply's (status, ptr) as a RunvResult. The runv body:
+//   i32.const 0; i32.const 0; call 0; drop; end
+// The import returns (status, ptr, len); drop len, return (status, ptr).
+[[nodiscard]] inline std::vector<std::uint8_t> runv_import_module() {
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    // type 0: (i32,i32)->(i32,i32,i32)  (import + run2)
+    // type 1: (i32)->i32                 (alloc)
+    // type 2: ()->(i32,i32)              (runv)
+    put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
+                                         func_type({kI32}, {kI32}),
+                                         func_type({}, {kI32, kI32})}));
+    // import: ahfl_cap.cap_0 : func type 0 (func index 0)
+    put_section(m, 2, rts::import_payload({{0, 0}}));
+    // defined funcs: run2 (func 1, type 0), alloc (func 2, type 1),
+    //               runv (func 3, type 2)
+    put_section(m, 3, function_section({0, 1, 2}));
+    put_section(m, 5, memory_section(1));
+    put_section(m, 6, global_i32_mut(static_cast<std::int32_t>(kHeapBase)));
+    // exports: memory, run2 (func 1), alloc (func 2), runv (func 3)
+    {
+        std::vector<std::uint8_t> payload;
+        put_uleb(payload, 4);
+        put_export(payload, "memory", kExportKindMemory, 0);
+        put_export(payload, "run2", kExportKindFunc, 1);
+        put_export(payload, "alloc", kExportKindFunc, 2);
+        put_export(payload, "runv", kExportKindFunc, 3);
+        put_section(m, 7, payload);
+    }
+    // code section: run2 (identity), alloc (checked bump), runv (calls import)
+    {
+        std::vector<std::uint8_t> code_payload;
+        put_uleb(code_payload, 3);
+        // run2 body: i32.const 0; local.get 0; local.get 1; end
+        std::vector<std::uint8_t> run2_body = locals_decl({});
+        put_i32_const(run2_body, 0);
+        put_op_uleb(run2_body, kOpLocalGet, 0);
+        put_op_uleb(run2_body, kOpLocalGet, 1);
+        run2_body.push_back(kOpEnd);
+        auto run2_entry = code_entry(run2_body);
+        code_payload.insert(code_payload.end(), run2_entry.begin(), run2_entry.end());
+        // alloc body
+        auto alloc_entry = code_entry(checked_alloc_body());
+        code_payload.insert(code_payload.end(), alloc_entry.begin(), alloc_entry.end());
+        // runv body: i32.const 0; i32.const 0; call 0; drop; end
+        std::vector<std::uint8_t> runv_body = locals_decl({});
+        put_i32_const(runv_body, 0);
+        put_i32_const(runv_body, 0);
+        put_op_uleb(runv_body, kOpCall, 0);
+        runv_body.push_back(kOpDrop);
+        runv_body.push_back(kOpEnd);
+        auto runv_entry = code_entry(runv_body);
+        code_payload.insert(code_payload.end(), runv_entry.begin(), runv_entry.end());
+        put_section(m, 10, code_payload);
+    }
+    return m;
+}
+
 } // namespace ahfl::runtime::wasm_host_test_support

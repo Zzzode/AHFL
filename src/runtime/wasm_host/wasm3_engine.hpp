@@ -53,11 +53,16 @@ struct Wasm3EngineImpl;
 // engine grows these two additive capabilities (runv invocation + mutable
 // whole-memory access for the host frame writer) without touching the port
 // header or changing WH-1 semantics (decision doc section 11.1).
+//
+// The three arms mirror Run2Outcome exactly: a host ImportAbort unwinds runv
+// as Run2HostAborted (the host, not the module, aborted -- distinct from a
+// Wasm trap), so the driver can classify the two failure modes separately.
 struct RunvResult {
     std::uint32_t raw_status{0};
     core_wasm_resume_engine::GuestPointer value_ptr{};
 };
-using RunvOutcome = std::variant<RunvResult, core_wasm_resume_engine::Run2Trapped>;
+using RunvOutcome = std::variant<RunvResult, core_wasm_resume_engine::Run2Trapped,
+                                 core_wasm_resume_engine::Run2HostAborted>;
 
 // One fresh-instance wasm3 engine session. Move-only; the Impl destructor is
 // the single owner of wasm3 teardown (the runtime, which owns the loaded

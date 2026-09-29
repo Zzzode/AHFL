@@ -30,7 +30,6 @@ using ir::core::CoreLayoutScalar;
 using ir::core::CoreLayoutStruct;
 using ir::core::CoreScalarRepr;
 using ir::core::CoreWireSchemaEnum;
-using ir::core::CoreWireSchemaField;
 using ir::core::CoreWireSchemaNodeId;
 using ir::core::CoreWireSchemaOption;
 using ir::core::CoreWireSchemaSequence;
