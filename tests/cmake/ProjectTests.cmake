@@ -1815,6 +1815,15 @@ if(AHFL_ENABLE_BACKEND_WASM)
         SKIP_RETURN_CODE 77
         LABELS "wasm;backend;execution;node"
     )
+
+    # RFC 0026 KR6.8 WH-3: the wasm3 e2e resume test. Same label family as the
+    # WH-1/WH-2/WH-3 unit tests (wasm-host).
+    add_test(NAME ahfl.runtime.core_wasm_resume_wasm3
+        COMMAND $<TARGET_FILE:ahfl_core_wasm_resume_wasm3_e2e>
+    )
+    set_tests_properties(ahfl.runtime.core_wasm_resume_wasm3 PROPERTIES
+        LABELS "wasm-host;wasm;runtime"
+    )
 endif()
 
 add_test(NAME ahfl.backends.registry_all

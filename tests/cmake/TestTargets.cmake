@@ -1765,6 +1765,30 @@ if(AHFL_ENABLE_BACKEND_WASM)
             ${PROJECT_SOURCE_DIR}/tests
     )
     ahfl_apply_project_warnings(ahfl_core_wasm_resume_node_e2e)
+
+    # RFC 0026 KR6.8 WH-3: end-to-end resume test over the REAL wasm3 engine
+    # with the production capability-import executor as the import callback.
+    # Drives the full invoke_run2 path (module -> import -> executor ->
+    # invoker -> reply -> classifier -> run2-return) for both lanes (opaque +
+    # bridge), the Suspended->Injected->Consumed replay flow, and ImportAbort
+    # on engine fault. Links the wasm host target (executor + engine), the
+    # engine (A2 admission + schema module), and the value SSOT (mock invoker
+    # results).
+    add_executable(ahfl_core_wasm_resume_wasm3_e2e
+        integration/core_wasm_resume_wasm3_e2e.cpp
+    )
+    target_link_libraries(ahfl_core_wasm_resume_wasm3_e2e
+        PRIVATE
+            ahfl_runtime_wasm_host
+            ahfl_runtime_engine
+            ahfl_runtime_value
+    )
+    target_include_directories(ahfl_core_wasm_resume_wasm3_e2e
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_core_wasm_resume_wasm3_e2e)
 endif()
 
 add_executable(ahfl_compiler_backends_registry_tests
