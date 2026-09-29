@@ -20,6 +20,7 @@
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "runtime/value/value.hpp"
+#include "runtime/wasm_host/frame_walk.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -58,5 +59,23 @@ pack_p6_input(std::span<std::uint8_t> page,
               const ahfl::ir::core::CoreFrameLayoutSection &section,
               const ahfl::ir::core::VerifiedWireSchemaBinding &input_binding,
               const Value &input);
+
+/// The generic P4-D value packer: write a host `runtime::Value` into the
+/// fixed-layout binary encoding at `addr` in `page`, walked against the wire
+/// node `wId` and layout root `lId`. String payload bytes are bump-allocated
+/// in the caller-specified arena `[arena_base, +arena_capacity)` via the
+/// in/out `arena_cursor` (initialized to `arena_base` by the caller).
+///
+/// Exposed (WH-3) so the capability-import bridge executor can pack a bridge
+/// result at the call site's disjoint result placement (its own
+/// result_payload arena, NOT the P6 input-payload arena). Every write is
+/// bounds- and schema-checked; a violation fails closed with a typed
+/// FramePackError (no echo of page bytes, names, or values).
+[[nodiscard]] std::expected<void, FramePackError>
+pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
+              ahfl::ir::core::CoreWireSchemaNodeId wId,
+              ahfl::ir::core::CoreLayoutId lId, const Value &value,
+              std::uint32_t addr, std::uint32_t &arena_cursor,
+              std::uint32_t arena_base, std::uint32_t arena_capacity);
 
 } // namespace ahfl::runtime::wasm_host

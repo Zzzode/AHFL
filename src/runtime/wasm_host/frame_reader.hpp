@@ -23,11 +23,13 @@
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "runtime/value/value.hpp"
+#include "runtime/wasm_host/frame_walk.hpp"
 
 #include <cstdint>
 #include <expected>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace ahfl::runtime::wasm_host {
 
@@ -67,5 +69,23 @@ encode_p6_output(std::span<const std::uint8_t> page,
                  const ahfl::ir::core::CoreFrameLayoutSection &section,
                  const ahfl::ir::core::VerifiedWireSchemaBinding &output_binding,
                  std::uint32_t value_ptr, P6FinalKind final_kind);
+
+/// The generic P4-D value reader: reconstruct a host `runtime::Value` from the
+/// fixed-layout binary encoding at `addr` in `page`, walked against the wire
+/// node `wId` and layout root `lId`. `string_regions` authorizes every
+/// module-written String PtrLen's payload bytes (the caller builds the set
+/// appropriate for the walk: the P6 output walk uses the input-payload arena +
+/// rodata + bridge result placements; the bridge-arg walk uses the
+/// input-payload arena + rodata + every OTHER call site's result placement).
+///
+/// Exposed (WH-3) so the capability-import bridge executor can walk bridge
+/// argument spans without re-implementing the P4-D reader. Every read is
+/// bounds- and schema-checked; a violation fails closed with a typed
+/// FrameReadError (no echo of page bytes, names, or values).
+[[nodiscard]] std::expected<Value, FrameReadError>
+read_value_at(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
+              ahfl::ir::core::CoreWireSchemaNodeId wId,
+              ahfl::ir::core::CoreLayoutId lId, std::uint32_t addr,
+              const std::vector<StringRegion> &string_regions);
 
 } // namespace ahfl::runtime::wasm_host

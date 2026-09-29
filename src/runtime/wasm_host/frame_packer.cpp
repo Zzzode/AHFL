@@ -20,8 +20,6 @@
 
 namespace ahfl::runtime::wasm_host {
 
-namespace {
-
 namespace ir = ::ahfl::ir;
 using ir::core::CoreLayoutContainer;
 using ir::core::CoreLayoutEnum;
@@ -38,6 +36,17 @@ using ir::core::CoreWireSchemaSequence;
 using ir::core::CoreWireSchemaString;
 using ir::core::CoreWireSchemaStruct;
 using ir::core::CoreWireSchemaTuple;
+
+// Forward declaration: the generic P4-D packer (defined after the anonymous-
+// namespace helpers). pack_slots (below, inside the anonymous namespace) calls
+// it, so it must be declared first.
+std::expected<void, FramePackError>
+pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
+              CoreWireSchemaNodeId wId, CoreLayoutId lId, const Value &value,
+              std::uint32_t addr, std::uint32_t &arena_cursor,
+              std::uint32_t arena_base, std::uint32_t arena_capacity);
+
+namespace {
 
 // --- bounds-checked page writes ---------------------------------------------
 
@@ -75,13 +84,6 @@ bool write_bytes(std::span<std::uint8_t> page, std::uint32_t offset,
     return true;
 }
 
-// --- the recursive pack ------------------------------------------------------
-
-std::expected<void, FramePackError>
-pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
-           CoreWireSchemaNodeId wId, CoreLayoutId lId, const Value &value,
-           std::uint32_t addr, std::uint32_t &arena_cursor);
-
 // Pack a sequence of wire slots into a struct layout at `addr`. `get(i)`
 // returns the i-th slot's value (by name for struct/named-payload, by position
 // for tuple/positional-payload), or nullptr when the slot is absent.
@@ -90,7 +92,8 @@ std::expected<void, FramePackError>
 pack_slots(FrameWalkContext &ctx, std::span<std::uint8_t> page,
            const std::vector<CoreWireSchemaField> &slots,
            const CoreLayoutStruct &struct_layout, Get &&get,
-           std::uint32_t addr, std::uint32_t &arena_cursor) {
+           std::uint32_t addr, std::uint32_t &arena_cursor,
+           std::uint32_t arena_base, std::uint32_t arena_capacity) {
     if (slots.size() != struct_layout.field_offsets.size() ||
         slots.size() != struct_layout.field_layouts.size()) {
         return std::unexpected(FramePackError::ShapeMismatch);
@@ -104,9 +107,9 @@ pack_slots(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         if (!field_addr.has_value()) {
             return std::unexpected(FramePackError::ArithmeticOverflow);
         }
-        auto result = pack_value(ctx, page, slots[i].type,
+        auto result = pack_value_at(ctx, page, slots[i].type,
                                  struct_layout.field_layouts[i], *child, *field_addr,
-                                 arena_cursor);
+                                 arena_cursor, arena_base, arena_capacity);
         if (!result.has_value()) {
             return result;
         }
@@ -114,10 +117,15 @@ pack_slots(FrameWalkContext &ctx, std::span<std::uint8_t> page,
     return {};
 }
 
+} // namespace
+
+// --- the recursive pack (public, shared with the bridge executor) -----------
+
 std::expected<void, FramePackError>
-pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
-           CoreWireSchemaNodeId wId, CoreLayoutId lId, const Value &value,
-           std::uint32_t addr, std::uint32_t &arena_cursor) {
+pack_value_at(FrameWalkContext &ctx, std::span<std::uint8_t> page,
+              CoreWireSchemaNodeId wId, CoreLayoutId lId, const Value &value,
+              std::uint32_t addr, std::uint32_t &arena_cursor,
+              std::uint32_t arena_base, std::uint32_t arena_capacity) {
     const auto *w = ctx.wire_node(wId);
     if (w == nullptr) {
         return std::unexpected(FramePackError::NodeIdOutOfRange);
@@ -209,8 +217,8 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         }
         // Arena bump: cursor + len <= base + capacity (checked, no wrap).
         const auto arena_end =
-            checked_add_u32(ctx.section.payload_arena_base,
-                            static_cast<std::uint64_t>(ctx.section.payload_arena_capacity));
+            checked_add_u32(arena_base,
+                            static_cast<std::uint64_t>(arena_capacity));
         if (!arena_end.has_value()) {
             return std::unexpected(FramePackError::ArithmeticOverflow);
         }
@@ -246,7 +254,7 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
                           [&](std::size_t i) -> const Value * {
                               return sv->fields.get(w_struct->fields[i].wire_name);
                           },
-                          addr, arena_cursor);
+                          addr, arena_cursor, arena_base, arena_capacity);
     }
 
     // Option: None=0 / Some=1 + inner at payload_offset.
@@ -280,9 +288,9 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
         }
         // Pack the payload BEFORE writing the tag, so a non-encodable inner
         // (e.g. a closure) fails closed without leaving a partial Some tag.
-        auto packed = pack_value(ctx, page, w_opt->value,
+        auto packed = pack_value_at(ctx, page, w_opt->value,
                                  l_enum->variant_payload_layouts[1], *inner,
-                                 *payload_addr, arena_cursor);
+                                 *payload_addr, arena_cursor, arena_base, arena_capacity);
         if (!packed.has_value()) {
             return packed;
         }
@@ -357,7 +365,7 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
                                     }
                                     return ev->payload[i].get();
                                 },
-                                *payload_addr, arena_cursor);
+                                *payload_addr, arena_cursor, arena_base, arena_capacity);
         } else {
             // Struct variant: named payload.
             packed = pack_slots(ctx, page, wire_variant.slots, *payload_struct,
@@ -365,7 +373,7 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
                                     return ev->named_payload.get(
                                         wire_variant.slots[i].wire_name);
                                 },
-                                *payload_addr, arena_cursor);
+                                *payload_addr, arena_cursor, arena_base, arena_capacity);
         }
         if (!packed.has_value()) {
             return packed;
@@ -414,9 +422,9 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
             if (!elem_addr.has_value()) {
                 return std::unexpected(FramePackError::ArithmeticOverflow);
             }
-            auto result = pack_value(ctx, page, w_seq->element,
+            auto result = pack_value_at(ctx, page, w_seq->element,
                                      l_container->element, *(*items)[i], *elem_addr,
-                                     arena_cursor);
+                                     arena_cursor, arena_base, arena_capacity);
             if (!result.has_value()) {
                 return result;
             }
@@ -449,9 +457,9 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
             if (!field_addr.has_value()) {
                 return std::unexpected(FramePackError::ArithmeticOverflow);
             }
-            auto result = pack_value(ctx, page, w_tuple->elements[i],
+            auto result = pack_value_at(ctx, page, w_tuple->elements[i],
                                      l_struct->field_layouts[i], *lv->items[i],
-                                     *field_addr, arena_cursor);
+                                     *field_addr, arena_cursor, arena_base, arena_capacity);
             if (!result.has_value()) {
                 return result;
             }
@@ -463,8 +471,6 @@ pack_value(FrameWalkContext &ctx, std::span<std::uint8_t> page,
     // the frame subset (or not a wire value) — fail closed.
     return std::unexpected(FramePackError::ValueNotWireEncodable);
 }
-
-} // namespace
 
 std::expected<void, FramePackError>
 pack_p6_input(std::span<std::uint8_t> page,
@@ -485,8 +491,9 @@ pack_p6_input(std::span<std::uint8_t> page,
 
     FrameWalkContext ctx(section, input_binding.table());
     std::uint32_t arena_cursor = section.payload_arena_base;
-    return pack_value(ctx, page, input_binding.root(), section.input_layout, input,
-                      ir::core::kP6AggregateInputBase, arena_cursor);
+    return pack_value_at(ctx, page, input_binding.root(), section.input_layout, input,
+                      ir::core::kP6AggregateInputBase, arena_cursor,
+                      section.payload_arena_base, section.payload_arena_capacity);
 }
 
 } // namespace ahfl::runtime::wasm_host

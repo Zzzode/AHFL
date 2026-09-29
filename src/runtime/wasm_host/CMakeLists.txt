@@ -11,11 +11,18 @@
 # wasm3_engine.cpp includes wasm3.h). The driver composes the engine + packer +
 # reader; it includes wasm3_engine.hpp (which includes the engine port header)
 # but not wasm3.h itself.
+#
+# WH-3 adds the capability-import executor (capability_import.cpp): the
+# production ImportCallback the engine delivers every ahfl_cap import to. It
+# composes the engine (alloc_then_write / mutable_whole_memory), the packer +
+# reader (bridge lane P4-D walk), and the wire-value SSOT (opaque lane JSON
+# envelope), and invokes capabilities through the ContextualCapabilityInvoker.
 add_library(ahfl_runtime_wasm_host STATIC
     wasm3_engine.cpp
     frame_packer.cpp
     frame_reader.cpp
     p6_frame_driver.cpp
+    capability_import.cpp
 )
 
 target_link_libraries(ahfl_runtime_wasm_host

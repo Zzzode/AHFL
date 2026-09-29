@@ -12,6 +12,7 @@
 #include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -85,6 +86,40 @@ checked_mul_u32(std::uint64_t a, std::uint64_t b) noexcept {
         return std::nullopt;
     }
     return static_cast<std::uint32_t>(a * b);
+}
+
+// --- String region authorization --------------------------------------------
+
+// One authorized String-byte region [lo, hi). A module-written PtrLen is
+// untrusted evidence; its bytes must lie entirely inside one of these.
+// Shared by the P6-frame reader (input-payload arena + rodata + bridge result
+// placements) and the capability-import bridge executor (input-payload arena
+// + rodata + every OTHER call site's result placement).
+struct StringRegion {
+    std::uint32_t lo{0};
+    std::uint32_t hi{0};
+};
+
+// Whether [ptr, ptr+len) lies entirely inside [lo, hi). Checked so a
+// wrap-around or a past-end pointer fails closed (the JS oracle's
+// `ptr >= lo && len <= hi - ptr` with signed subtraction).
+[[nodiscard]] inline bool
+region_contains(const StringRegion &region, std::uint32_t ptr,
+                std::uint32_t len) noexcept {
+    if (ptr < region.lo || ptr > region.hi) {
+        return false;
+    }
+    const auto end = checked_add_u32(ptr, len);
+    return end.has_value() && *end <= region.hi;
+}
+
+[[nodiscard]] inline bool
+string_in_regions(const std::vector<StringRegion> &regions, std::uint32_t ptr,
+                  std::uint32_t len) noexcept {
+    return std::any_of(regions.begin(), regions.end(),
+                       [ptr, len](const StringRegion &r) {
+                           return region_contains(r, ptr, len);
+                       });
 }
 
 } // namespace ahfl::runtime::wasm_host

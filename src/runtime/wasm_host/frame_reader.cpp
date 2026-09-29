@@ -19,8 +19,6 @@
 
 namespace ahfl::runtime::wasm_host {
 
-namespace {
-
 namespace ir = ::ahfl::ir;
 using ir::core::CoreLayoutContainer;
 using ir::core::CoreLayoutEnum;
@@ -36,6 +34,8 @@ using ir::core::CoreWireSchemaSequence;
 using ir::core::CoreWireSchemaString;
 using ir::core::CoreWireSchemaStruct;
 using ir::core::CoreWireSchemaTuple;
+
+namespace {
 
 // --- bounds-checked page reads ----------------------------------------------
 
@@ -72,33 +72,8 @@ read_bytes(std::span<const std::uint8_t> page, std::uint32_t offset,
 }
 
 // --- String region authorization --------------------------------------------
-
-// One authorized String-byte region [lo, hi). A module-written PtrLen is
-// untrusted evidence; its bytes must lie entirely inside one of these.
-struct StringRegion {
-    std::uint32_t lo{0};
-    std::uint32_t hi{0};
-};
-
-// Whether [ptr, ptr+len) lies entirely inside [lo, hi). Checked so a
-// wrap-around or a past-end pointer fails closed (the JS oracle's
-// `ptr >= lo && len <= hi - ptr` with signed subtraction).
-bool region_contains(const StringRegion &region, std::uint32_t ptr,
-                     std::uint32_t len) noexcept {
-    if (ptr < region.lo || ptr > region.hi) {
-        return false;
-    }
-    const auto end = checked_add_u32(ptr, len);
-    return end.has_value() && *end <= region.hi;
-}
-
-bool string_in_regions(const std::vector<StringRegion> &regions,
-                       std::uint32_t ptr, std::uint32_t len) noexcept {
-    return std::any_of(regions.begin(), regions.end(),
-                       [ptr, len](const StringRegion &r) {
-                           return region_contains(r, ptr, len);
-                       });
-}
+// StringRegion, region_contains, and string_in_regions live in frame_walk.hpp
+// (shared with the capability-import bridge executor).
 
 // Build the authorized String regions for an output-frame walk: the input
 // payload-arena span, the rodata span (when present), and every bridge
@@ -134,17 +109,14 @@ build_output_string_regions(const ir::core::CoreFrameLayoutSection &section) {
     return regions;
 }
 
-// --- the recursive read ------------------------------------------------------
+} // namespace
+
+// --- the recursive read (public, shared with the bridge executor) -----------
 
 std::expected<Value, FrameReadError>
-read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
-           CoreWireSchemaNodeId wId, CoreLayoutId lId, std::uint32_t addr,
-           const std::vector<StringRegion> &string_regions);
-
-std::expected<Value, FrameReadError>
-read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
-           CoreWireSchemaNodeId wId, CoreLayoutId lId, std::uint32_t addr,
-           const std::vector<StringRegion> &string_regions) {
+read_value_at(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
+              CoreWireSchemaNodeId wId, CoreLayoutId lId, std::uint32_t addr,
+              const std::vector<StringRegion> &string_regions) {
     const auto *w = ctx.wire_node(wId);
     if (w == nullptr) {
         return std::unexpected(FrameReadError::NodeIdOutOfRange);
@@ -251,7 +223,7 @@ read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
             if (!field_addr.has_value()) {
                 return std::unexpected(FrameReadError::ArithmeticOverflow);
             }
-            auto child = read_value(ctx, page, w_struct->fields[i].type,
+            auto child = read_value_at(ctx, page, w_struct->fields[i].type,
                                     l_struct->field_layouts[i], *field_addr,
                                     string_regions);
             if (!child.has_value()) {
@@ -287,7 +259,7 @@ read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
         if (!payload_addr.has_value()) {
             return std::unexpected(FrameReadError::ArithmeticOverflow);
         }
-        auto inner = read_value(ctx, page, w_opt->value,
+        auto inner = read_value_at(ctx, page, w_opt->value,
                                 l_enum->variant_payload_layouts[1], *payload_addr,
                                 string_regions);
         if (!inner.has_value()) {
@@ -343,7 +315,7 @@ read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
                     if (!slot_addr.has_value()) {
                         return std::unexpected(FrameReadError::ArithmeticOverflow);
                     }
-                    auto child = read_value(ctx, page, wire_variant.slots[i].type,
+                    auto child = read_value_at(ctx, page, wire_variant.slots[i].type,
                                             payload_struct->field_layouts[i],
                                             *slot_addr, string_regions);
                     if (!child.has_value()) {
@@ -358,7 +330,7 @@ read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
                     if (!slot_addr.has_value()) {
                         return std::unexpected(FrameReadError::ArithmeticOverflow);
                     }
-                    auto child = read_value(ctx, page, wire_variant.slots[i].type,
+                    auto child = read_value_at(ctx, page, wire_variant.slots[i].type,
                                             payload_struct->field_layouts[i],
                                             *slot_addr, string_regions);
                     if (!child.has_value()) {
@@ -416,7 +388,7 @@ read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
             if (!elem_addr.has_value()) {
                 return std::unexpected(FrameReadError::ArithmeticOverflow);
             }
-            auto child = read_value(ctx, page, w_seq->element,
+            auto child = read_value_at(ctx, page, w_seq->element,
                                     l_container->element, *elem_addr,
                                     string_regions);
             if (!child.has_value()) {
@@ -461,7 +433,7 @@ read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
             if (!field_addr.has_value()) {
                 return std::unexpected(FrameReadError::ArithmeticOverflow);
             }
-            auto child = read_value(ctx, page, w_tuple->elements[i],
+            auto child = read_value_at(ctx, page, w_tuple->elements[i],
                                     l_struct->field_layouts[i], *field_addr,
                                     string_regions);
             if (!child.has_value()) {
@@ -476,8 +448,6 @@ read_value(FrameWalkContext &ctx, std::span<const std::uint8_t> page,
     // subset — fail closed.
     return std::unexpected(FrameReadError::ShapeMismatch);
 }
-
-} // namespace
 
 std::expected<std::string, FrameReadError>
 encode_p6_output(std::span<const std::uint8_t> page,
@@ -497,7 +467,7 @@ encode_p6_output(std::span<const std::uint8_t> page,
 
     FrameWalkContext ctx(section, output_binding.table());
     const auto string_regions = build_output_string_regions(section);
-    auto value = read_value(ctx, page, output_binding.root(),
+    auto value = read_value_at(ctx, page, output_binding.root(),
                             section.output_layout, value_ptr, string_regions);
     if (!value.has_value()) {
         return std::unexpected(value.error());

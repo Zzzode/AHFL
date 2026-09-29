@@ -1651,6 +1651,29 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
     ahfl_apply_project_warnings(ahfl_wasm_host_frame_tests)
 
+    # RFC 0026 KR6.8 WH-3: the capability-import executor unit tests. Drives
+    # the production ImportCallback directly (hand-built ImportObservation
+    # values) against a real wasm3 engine session, proving both lanes (opaque
+    # wire-JSON envelope + bridge P4-D span walk) and the ImportAbort
+    # host-decision-failure contract. Links the wasm host target (executor +
+    # engine + packer/reader), the engine (A2 admission + schema module), and
+    # the value SSOT (mock invoker results).
+    add_executable(ahfl_wasm_host_capability_import_tests
+        unit/runtime/wasm_host/capability_import.cpp
+    )
+    target_link_libraries(ahfl_wasm_host_capability_import_tests
+        PRIVATE
+            ahfl_runtime_wasm_host
+            ahfl_runtime_engine
+            ahfl_runtime_value
+    )
+    target_include_directories(ahfl_wasm_host_capability_import_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_wasm_host_capability_import_tests)
+
     add_executable(ahfl_core_wasm_codegen_tests
         unit/compiler/backends/core_wasm_codegen.cpp
     )
