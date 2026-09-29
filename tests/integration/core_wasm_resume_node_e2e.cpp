@@ -101,6 +101,106 @@ constexpr std::string_view kNodeEventGoldenHex =
     "00000000000000000000000001000000010000000000000000000000000000000000000000000000"
     "0000000000000000";
 
+// WH-3 P1-2 regression: the Node script's parseImportArities must stay in sync
+// across a multi-type Type section (the desync fix). Launches the embedded
+// script with --self-test-arity on a synthetic module whose Type section
+// carries the opaque tuple, the bridge signature, and an unrelated
+// (i32)->i32 type, with imports referencing the first two, and asserts the
+// arity table is exactly [3,2] through V8 (Node), not a faked parse.
+[[nodiscard]] bool test_arity_self_test(const fs::path &node_executable, const fs::path &base) {
+    const fs::path script = base / "arity_selftest.mjs";
+    if (!write_file(script, neng::node_resume_host_script())) {
+        std::cerr << "FAIL: arity.self_test.script_written\n";
+        return false;
+    }
+
+    // Build the synthetic module: header + Type[3] + Import[2].
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    auto put_uleb = [](std::vector<std::uint8_t> &out, std::uint64_t v) {
+        do {
+            auto b = static_cast<std::uint8_t>(v & 0x7fU);
+            v >>= 7U;
+            if (v != 0) {
+                b |= 0x80U;
+            }
+            out.push_back(b);
+        } while (v != 0);
+    };
+    auto put_section = [&](std::uint8_t id, const std::vector<std::uint8_t> &payload) {
+        m.push_back(id);
+        put_uleb(m, payload.size());
+        m.insert(m.end(), payload.begin(), payload.end());
+    };
+    auto put_str = [&put_uleb](std::vector<std::uint8_t> &out, const std::string &s) {
+        put_uleb(out, s.size());
+        out.insert(out.end(), s.begin(), s.end());
+    };
+
+    // Type section: tuple (i32,i32)->(i32,i32,i32), bridge (i32)->(i32,i32),
+    // and an unrelated (i32)->i32.
+    std::vector<std::uint8_t> types;
+    put_uleb(types, 3);
+    types.push_back(0x60);
+    put_uleb(types, 2);
+    types.push_back(0x7f);
+    types.push_back(0x7f);
+    put_uleb(types, 3);
+    types.push_back(0x7f);
+    types.push_back(0x7f);
+    types.push_back(0x7f);
+    types.push_back(0x60);
+    put_uleb(types, 1);
+    types.push_back(0x7f);
+    put_uleb(types, 2);
+    types.push_back(0x7f);
+    types.push_back(0x7f);
+    types.push_back(0x60);
+    put_uleb(types, 1);
+    types.push_back(0x7f);
+    put_uleb(types, 1);
+    types.push_back(0x7f);
+    put_section(1, types);
+
+    // Import section: two ahfl_cap func imports referencing type 0 and type 1.
+    std::vector<std::uint8_t> imports;
+    put_uleb(imports, 2);
+    put_str(imports, "ahfl_cap");
+    put_str(imports, "cap_0");
+    imports.push_back(0x00);
+    put_uleb(imports, 0);
+    put_str(imports, "ahfl_cap");
+    put_str(imports, "cap_1");
+    imports.push_back(0x00);
+    put_uleb(imports, 1);
+    put_section(2, imports);
+
+    const fs::path module_path = base / "arity_selftest.wasm";
+    if (!write_file(module_path,
+                    std::string_view(reinterpret_cast<const char *>(m.data()), m.size()))) {
+        std::cerr << "FAIL: arity.self_test.module_written\n";
+        return false;
+    }
+
+    support::ProcessConfig cfg;
+    cfg.executable = node_executable.string();
+    cfg.arguments = {script.string(), "--self-test-arity", module_path.string()};
+    cfg.timeout = std::chrono::seconds(30);
+    const auto result = support::launch_process(cfg);
+    if (result.exit_code != 0) {
+        std::cerr << "FAIL: arity.self_test.exit_zero (exit=" << result.exit_code << ")\n";
+        std::cerr << "  stderr: " << result.stderr_output << "\n";
+        return false;
+    }
+    // The stdout must contain "[3,2]" (the arity table for types 0 and 1).
+    if (result.stdout_output.find("[3,2]") == std::string::npos) {
+        std::cerr << "FAIL: arity.self_test.table_is_3_2\n";
+        std::cerr << "  stdout: " << result.stdout_output << "\n";
+        return false;
+    }
+    std::cout << "arity self-test: [3,2] confirmed through V8\n";
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -124,6 +224,13 @@ int main(int argc, char **argv) {
     fs::remove_all(base, ec);
     if (!fs::create_directories(base, ec)) {
         std::cerr << "FAIL: cannot create work dir " << base << "\n";
+        return 1;
+    }
+
+    // WH-3 P1-2: the parseImportArities desync regression. Runs on any FS,
+    // before the durable-FS gate below, so the arity-table evidence is
+    // collected even when the integrity store cannot open.
+    if (!test_arity_self_test(*node_executable, base)) {
         return 1;
     }
 

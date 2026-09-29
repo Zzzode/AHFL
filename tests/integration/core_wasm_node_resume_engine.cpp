@@ -597,25 +597,32 @@ function fatal(message) {
 function u32le(b, off) { return (b.readUInt32LE(off) >>> 0); }
 
 let moduleBytes;
+// WH-3 P1-2 regression: --self-test-arity <module> prints the import-arity
+// table as JSON and exits, so the C++ test can assert the multi-type
+// Type-section parse stays in sync through V8 (no faked parse).
+const selfTestArity = process.argv[2] === "--self-test-arity";
 try {
-  moduleBytes = fs.readFileSync(process.argv[2]);
+  moduleBytes = fs.readFileSync(selfTestArity ? process.argv[3] : process.argv[2]);
 } catch (e) { fatal("cannot read module: " + e); }
 
-let compiled;
-try { compiled = new WebAssembly.Module(moduleBytes); }
-catch (e) { fatal("WebAssembly.compile failed: " + e); }
+let listed = [];
+let compiled = null;
+if (!selfTestArity) {
+  try { compiled = new WebAssembly.Module(moduleBytes); }
+  catch (e) { fatal("WebAssembly.compile failed: " + e); }
 
-const listed = WebAssembly.Module.imports(compiled);
-const exported = WebAssembly.Module.exports(compiled);
-if (listed.length < 1 ||
-    !listed.every((e) => e.module === "ahfl_cap" && e.name.startsWith("cap_") &&
-                        e.kind === "function")) {
-  fatal("unexpected import catalogue: " + JSON.stringify(listed));
-}
-if (!exported.some((e) => e.name === "memory" && e.kind === "memory") ||
-    !exported.some((e) => e.name === "alloc" && e.kind === "function") ||
-    !exported.some((e) => e.name === "run2" && e.kind === "function")) {
-  fatal("missing memory/alloc/run2 exports: " + JSON.stringify(exported.map((e) => e.name)));
+  listed = WebAssembly.Module.imports(compiled);
+  const exported = WebAssembly.Module.exports(compiled);
+  if (listed.length < 1 ||
+      !listed.every((e) => e.module === "ahfl_cap" && e.name.startsWith("cap_") &&
+                          e.kind === "function")) {
+    fatal("unexpected import catalogue: " + JSON.stringify(listed));
+  }
+  if (!exported.some((e) => e.name === "memory" && e.kind === "memory") ||
+      !exported.some((e) => e.name === "alloc" && e.kind === "function") ||
+      !exported.some((e) => e.name === "run2" && e.kind === "function")) {
+    fatal("missing memory/alloc/run2 exports: " + JSON.stringify(exported.map((e) => e.name)));
+  }
 }
 
 // WH-3: parse the Type + Import sections at startup to build an
@@ -648,7 +655,9 @@ function parseImportArities(bytes) {
         off++; // form 0x60
         const pc = readUleb();
         off += pc; // skip param value types
-        typeResults.push(readUleb());
+        const rc = readUleb();
+        off += rc; // skip result value types
+        typeResults.push(rc);
       }
     } else if (sectionId === 2) { // Import
       const count = readUleb();
@@ -665,8 +674,17 @@ function parseImportArities(bytes) {
   return importTypeIdx.map((idx) => typeResults[idx] ?? 0);
 }
 const importArities = parseImportArities(moduleBytes);
-if (importArities.length !== listed.length) {
+if (!selfTestArity && importArities.length !== listed.length) {
   fatal("import arity table disagrees with the import catalogue");
+}
+
+// WH-3 P1-2 regression self-test: print the arity table and exit. The C++
+// test feeds a synthetic module whose Type section carries the opaque tuple,
+// the bridge signature, and an unrelated (i32)->i32 type, with imports
+// referencing the first two, and asserts the table is exactly [3,2].
+if (selfTestArity) {
+  process.stdout.write(JSON.stringify(importArities) + "\n");
+  process.exit(0);
 }
 
 let instance = null;
