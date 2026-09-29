@@ -214,6 +214,36 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
         {"p6_nested_projection.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_nested_taken_high.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
         {"p6_unwrap_some.case.json", WasmEligibilityVerdict::RunnableOrchestration, "", ""},
+        // KR6.7 corpus widening (FB-5): the V2-A computed-final fixtures
+        // (scalar / nested-aggregate / tag-only-enum / if-let-return /
+        // payload-bearing-enum materialization) now run as manifest-driven
+        // p6-frame cases with real differential agreement, so each descriptor
+        // MUST carry P6Frame.
+        {"v2a_computed_aggregate.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"v2a_computed_enum.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"v2a_computed_if_let_return.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"v2a_computed_payload_enum.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"v2a_computed_scalar.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
         // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly as P6-7 p6-frame modules: they carry the core-layout +
         // boundary wire-schema sections and export runv, so their canonical

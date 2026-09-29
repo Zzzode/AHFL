@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/v2a_computed_aggregate.ahfl",
+  "kind": "agent",
+  "entry": "wasm::v2a::computed_aggregate::ComputedAggregateAgent",
+  "scenarios": [
+    {
+      "name": "nested",
+      "input": {"_type":"wasm::v2a::computed_aggregate::In","a":20,"b":3},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2a::computed_aggregate::Out","flag":true,"x":{"_type":"wasm::v2a::computed_aggregate::Inner","doubled":40,"sum":23}}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "V2-A computed AGGREGATE final expands the pointer-tree nested constructor into the inline output frame; p6-frame module on the orchestration lane"
+    }
+  }
+}

@@ -378,6 +378,45 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "std::option::UnwrapAgent",
             0, 1, WasmEligibility::Orchestration,
         },
+        // KR6.7 corpus widening (FB-5): V2-A computed-final agents migrated
+        // from bespoke Node probes. Their finals construct the output frame
+        // (scalar word, nested aggregate expansion, tag-only / payload-bearing
+        // enum), so the cases run under both engines as p6-frame modules.
+        {
+            "v2a_computed_scalar.case.json",
+            "tests/golden/wasm/v2a_computed_scalar.ahfl",
+            CaseKind::Agent,
+            "wasm::v2a::computed_scalar::ComputedScalarAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "v2a_computed_aggregate.case.json",
+            "tests/golden/wasm/v2a_computed_aggregate.ahfl",
+            CaseKind::Agent,
+            "wasm::v2a::computed_aggregate::ComputedAggregateAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "v2a_computed_enum.case.json",
+            "tests/golden/wasm/v2a_computed_enum.ahfl",
+            CaseKind::Agent,
+            "wasm::v2a::computed_enum::ComputedEnumAgent",
+            0, 2, WasmEligibility::Orchestration,
+        },
+        {
+            "v2a_computed_if_let_return.case.json",
+            "tests/golden/wasm/v2a_computed_if_let_return.ahfl",
+            CaseKind::Agent,
+            "wasm::v2a::computed_if_let_return::IfLetReturnAgent",
+            0, 3, WasmEligibility::Orchestration,
+        },
+        {
+            "v2a_computed_payload_enum.case.json",
+            "tests/golden/wasm/v2a_computed_payload_enum.ahfl",
+            CaseKind::Agent,
+            "wasm::v2a::computed_payload_enum::ComputedPayloadEnumAgent",
+            0, 2, WasmEligibility::Orchestration,
+        },
         // P4-D input-frame handlers: rung E packs their input frame, calls
         // runv, and encodes the output, so the Node lane now DIFFERENTIALLY
         // COMPARES them (engines.evaluator=true and blessed observations

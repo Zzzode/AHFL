@@ -1,0 +1,46 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/v2a_computed_if_let_return.ahfl",
+  "kind": "agent",
+  "entry": "wasm::v2a::computed_if_let_return::IfLetReturnAgent",
+  "scenarios": [
+    {
+      "name": "high_taken",
+      "input": {"_type":"wasm::v2a::computed_if_let_return::In","level":{"_enum":"wasm::v2a::computed_if_let_return::Level","_variant":"High"},"w":20},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2a::computed_if_let_return::Out","r":1}
+      }
+    },
+    {
+      "name": "high_not_taken",
+      "input": {"_type":"wasm::v2a::computed_if_let_return::In","level":{"_enum":"wasm::v2a::computed_if_let_return::Level","_variant":"High"},"w":5},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2a::computed_if_let_return::Out","r":2}
+      }
+    },
+    {
+      "name": "implicit_else",
+      "input": {"_type":"wasm::v2a::computed_if_let_return::In","level":{"_enum":"wasm::v2a::computed_if_let_return::Level","_variant":"Low"},"w":20},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2a::computed_if_let_return::Out","r":3}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "V2-A fix-forward: an if-let arm whose body ends in a structured if returning on both branches, with the implicit else falling through to the outer return; p6-frame module on the orchestration lane"
+    }
+  }
+}

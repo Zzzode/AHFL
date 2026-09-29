@@ -113,7 +113,13 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // nested_projection, unwrap_some, and the implies boolean fixture) move from
 // bespoke Node probe coverage to manifest-driven cases that AGREE under both
 // engines with identity-final borrowed frames: 26/0 -> 42/0.
-constexpr int kExpectedAgreed = 42;
+// FB-5 slice B: the five V2-A computed-final fixtures (computed_scalar,
+// computed_aggregate, computed_enum with two scenarios, computed_if_let_return
+// with three scenarios, computed_payload_enum with two scenarios) move from
+// bespoke probe-only coverage to nine differential scenarios whose finals
+// construct output frames (scalar materialization, nested aggregate pointer
+// expansion, tag-only and payload-bearing enum ladders): 42/0 -> 51/0.
+constexpr int kExpectedAgreed = 51;
 constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare

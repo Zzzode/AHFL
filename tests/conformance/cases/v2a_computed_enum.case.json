@@ -1,0 +1,36 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/v2a_computed_enum.ahfl",
+  "kind": "agent",
+  "entry": "wasm::v2a::computed_enum::ComputedEnumAgent",
+  "scenarios": [
+    {
+      "name": "high",
+      "input": {"_type":"wasm::v2a::computed_enum::In","v":20},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2a::computed_enum::Out","level":{"_enum":"wasm::v2a::computed_enum::Level","_variant":"High"}}
+      }
+    },
+    {
+      "name": "low",
+      "input": {"_type":"wasm::v2a::computed_enum::In","v":5},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2a::computed_enum::Out","level":{"_enum":"wasm::v2a::computed_enum::Level","_variant":"Low"}}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "V2-A computed final returning a tag-only enum on BOTH sides of a structured if; p6-frame module on the orchestration lane"
+    }
+  }
+}

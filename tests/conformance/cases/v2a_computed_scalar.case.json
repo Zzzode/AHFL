@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/v2a_computed_scalar.ahfl",
+  "kind": "agent",
+  "entry": "wasm::v2a::computed_scalar::ComputedScalarAgent",
+  "scenarios": [
+    {
+      "name": "doubled",
+      "input": {"_type":"wasm::v2a::computed_scalar::In","v":21},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2a::computed_scalar::Out","doubled":42}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "V2-A computed SCALAR final materializes input.v*2 into the output frame i64 word; p6-frame module on the orchestration lane"
+    }
+  }
+}
