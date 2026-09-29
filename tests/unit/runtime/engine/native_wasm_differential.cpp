@@ -435,6 +435,12 @@ std::vector<std::uint8_t> capability_tuple_type() {
     return func_type({0x7f, 0x7f}, {0x7f, 0x7f, 0x7f});
 }
 
+// WH-2: the bridge ahfl_cap signature (i32)->(i32,i32). The transport admission
+// accepts this alongside the opaque 3-result tuple (decision doc section 11.3).
+std::vector<std::uint8_t> bridge_signature_type() {
+    return func_type({0x7f}, {0x7f, 0x7f});
+}
+
 // Encode a real wire-schema table to its canonical payload via the C1 encoder, so
 // the wrapped module carries genuine `AHFLWS...` bytes (no hand-rolled table).
 std::vector<std::uint8_t> encode_table(const CoreWireSchemaTable &table) {
@@ -778,8 +784,36 @@ void test_wire_schema_module_inspector() {
         const auto module = build_module(spec);
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
-        check(fails_with(result, "does not use the ahfl_cap tuple signature"),
+        check(fails_with(result, "does not use the ahfl_cap tuple or bridge signature"),
               "c3.negative.typeidx4_wrong_signature");
+    }
+
+    // --- WH-2 positive: the bridge (i32)->(i32,i32) functype is accepted
+    // alongside the opaque 3-result tuple (decision doc section 11.3). --------
+    {
+        ModuleSpec spec;
+        spec.types = {bridge_signature_type()};
+        spec.imports = {{42, 0}};
+        spec.target_table = encode_table(single_int_table());
+        const auto module = build_module(spec);
+        const auto result = make_wire_binding_from_core_wasm(
+            module, 0, CoreWireRootKind::Result, 0);
+        check(result.ok(), "c3.positive.bridge_functype_accepted");
+    }
+
+    // --- WH-2 negative: a functype that is NEITHER the opaque tuple NOR the
+    // bridge signature (e.g. (i32)->(i32), one result) is rejected. ----------
+    {
+        ModuleSpec spec;
+        spec.types = {func_type({0x7f}, {0x7f}) /* i32->i32 */};
+        spec.imports = {{42, 0}};
+        spec.target_table = encode_table(single_int_table());
+        const auto module = build_module(spec);
+        const auto result = make_wire_binding_from_core_wasm(
+            module, 0, CoreWireRootKind::Result, 0);
+        check(fails_with(result,
+                         "does not use the ahfl_cap tuple or bridge signature"),
+              "c3.negative.neither_tuple_nor_bridge_rejected");
     }
 
     // --- negative: non-func type form (0x50 instead of 0x60). ----------------
@@ -1062,7 +1096,7 @@ void test_wire_schema_module_inspector() {
         const auto module = build_module(spec);
         const auto result = make_wire_binding_from_core_wasm(
             module, 0, CoreWireRootKind::Result, 0);
-        check(fails_with(result, "does not use the ahfl_cap tuple signature"),
+        check(fails_with(result, "does not use the ahfl_cap tuple or bridge signature"),
               "c3.negative.import_typeidx_out_of_range");
     }
 

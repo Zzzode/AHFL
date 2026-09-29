@@ -173,6 +173,13 @@ struct ParsedImport {
 // Populated only when framing fully succeeds.
 struct ModuleFraming {
     std::vector<bool> type_is_capability_tuple;
+    // WH-2: the bridge (i32)->(i32,i32) functype, accepted alongside the opaque
+    // capability tuple (decision doc section 11.3). The schema table carries no
+    // mode field, so the transport layer cannot distinguish a bridge capability
+    // from an opaque one; it accepts BOTH functypes and rejects anything else.
+    // The mode cross-check (bridge vs opaque) lives in the frame-section
+    // verify_frame_bridge_sites, which sees the bridge_call_sites.
+    std::vector<bool> type_is_bridge_signature;
     std::vector<ParsedImport> imports;
     std::span<const std::uint8_t> table_bytes;
 };
@@ -202,7 +209,32 @@ spans_are_capability_tuple(std::span<const std::uint8_t> params,
     return true;
 }
 
-// Parse the Type section payload, recording per entry whether it is the exact
+// The bridge ahfl_cap function signature: (i32) -> (i32, i32). The P6-frame
+// bridge lane (WH-2 String region authorization trusts the declared bridge
+// call sites/placements) uses this 2-result shape; the transport admission
+// layer must accept it alongside the opaque 3-result tuple (decision doc
+// section 11.3).
+[[nodiscard]] bool
+spans_are_bridge_signature(std::span<const std::uint8_t> params,
+                           std::span<const std::uint8_t> results) noexcept {
+    static constexpr std::array<std::uint8_t, 1> kParams{kValueTypeI32};
+    static constexpr std::array<std::uint8_t, 2> kResults{kValueTypeI32,
+                                                          kValueTypeI32};
+    if (params.size() != kParams.size() || results.size() != kResults.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < kParams.size(); ++i) {
+        if (params[i] != kParams[i]) {
+            return false;
+        }
+    }
+    for (std::size_t i = 0; i < kResults.size(); ++i) {
+        if (results[i] != kResults[i]) {
+            return false;
+        }
+    }
+    return true;
+}
 // ahfl_cap tuple signature. Only the func form 0x60 is supported; value-type bytes
 // are consumed as framing and NOT semantically validated (full type legality is
 // WebAssembly.validate's job).
@@ -221,6 +253,7 @@ parse_type_section(std::span<const std::uint8_t> payload, ModuleFraming &framing
         return false;
     }
     framing.type_is_capability_tuple.reserve(*count);
+    framing.type_is_bridge_signature.reserve(*count);
     for (std::uint32_t i = 0; i < *count; ++i) {
         const auto form = cursor.byte();
         if (!form.has_value() || *form != kFuncTypeForm) {
@@ -244,6 +277,8 @@ parse_type_section(std::span<const std::uint8_t> payload, ModuleFraming &framing
         }
         framing.type_is_capability_tuple.push_back(
             spans_are_capability_tuple(*params, *results));
+        framing.type_is_bridge_signature.push_back(
+            spans_are_bridge_signature(*params, *results));
     }
     return cursor.at_end(); // exact-consume
 }
@@ -492,8 +527,11 @@ make_wire_binding_from_core_wasm(std::span<const std::uint8_t> module_bytes,
             "transported module import count does not match the wire-schema table"));
         return result;
     }
-    // Every ordinal's source_symbol + capability-tuple signature must agree before
-    // we honor the requested ordinal.
+    // Every ordinal's source_symbol + capability-tuple/bridge signature must
+    // agree before we honor the requested ordinal. The schema table carries no
+    // mode field, so the transport layer accepts BOTH the opaque
+    // (i32,i32)->(i32,i32,i32) tuple and the bridge (i32)->(i32,i32) shape;
+    // anything else is rejected (decision doc section 11.3).
     for (std::size_t i = 0; i < framing->imports.size(); ++i) {
         const auto &imported = framing->imports[i];
         if (imported.source_symbol != table.capabilities[i].source_symbol) {
@@ -501,10 +539,15 @@ make_wire_binding_from_core_wasm(std::span<const std::uint8_t> module_bytes,
                 "transported module import source symbol does not match the wire-schema table"));
             return result;
         }
-        if (imported.type_index >= framing->type_is_capability_tuple.size() ||
-            !framing->type_is_capability_tuple[imported.type_index]) {
+        const bool type_in_range =
+            imported.type_index < framing->type_is_capability_tuple.size();
+        const bool is_tuple =
+            type_in_range && framing->type_is_capability_tuple[imported.type_index];
+        const bool is_bridge =
+            type_in_range && framing->type_is_bridge_signature[imported.type_index];
+        if (!is_tuple && !is_bridge) {
             result.diagnostics.push_back(framing_error(
-                "transported module capability import does not use the ahfl_cap tuple signature"));
+                "transported module capability import does not use the ahfl_cap tuple or bridge signature"));
             return result;
         }
     }
