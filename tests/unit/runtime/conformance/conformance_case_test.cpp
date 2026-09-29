@@ -417,6 +417,55 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::v2a::computed_payload_enum::ComputedPayloadEnumAgent",
             0, 2, WasmEligibility::Orchestration,
         },
+        // KR6.7 corpus widening (FB-5): V2-B String/computed-final and
+        // bounded-arena agents migrated from bespoke Node probes. The String
+        // tuple-variant fixture v2b_enum_string is deliberately absent: the
+        // evaluator misroutes Hit("hit") enum construction through its
+        // capability invoker while the wasm run is correct (tracked defect).
+        {
+            "v2b_string_passthrough.case.json",
+            "tests/golden/wasm/v2b_string_passthrough.ahfl",
+            CaseKind::Agent,
+            "wasm::v2b::string_passthrough::StringFinalAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "v2b_computed_string.case.json",
+            "tests/golden/wasm/v2b_computed_string.ahfl",
+            CaseKind::Agent,
+            "wasm::v2b::computed_string::ComputedStringAgent",
+            0, 2, WasmEligibility::Orchestration,
+        },
+        {
+            "v2b_bounded_string.case.json",
+            "tests/golden/wasm/v2b_bounded_string.ahfl",
+            CaseKind::Agent,
+            "wasm::v2b::bounded_string::BoundedStringAgent",
+            0, 2, WasmEligibility::Orchestration,
+        },
+        {
+            "v2b_list_string_arena.case.json",
+            "tests/golden/wasm/v2b_list_string_arena.ahfl",
+            CaseKind::Agent,
+            "std::collections::ListStringArenaAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        {
+            "v2b_list_nested_string_arena.case.json",
+            "tests/golden/wasm/v2b_list_nested_string_arena.ahfl",
+            CaseKind::Agent,
+            "std::collections::ListNestedStringArenaAgent",
+            0, 1, WasmEligibility::Orchestration,
+        },
+        // KR6.5 F5 bounded-String durable-resume replay workflow, now also a
+        // manifest-driven two-node capability DAG case.
+        {
+            "e3_capability_workflow_resume.case.json",
+            "tests/golden/wasm/e3_capability_workflow_resume.ahfl",
+            CaseKind::Workflow,
+            "wasm::e3_capability_workflow_resume::CapabilityPipeline",
+            1, 1, WasmEligibility::Orchestration,
+        },
         // P4-D input-frame handlers: rung E packs their input frame, calls
         // runv, and encodes the output, so the Node lane now DIFFERENTIALLY
         // COMPARES them (engines.evaluator=true and blessed observations

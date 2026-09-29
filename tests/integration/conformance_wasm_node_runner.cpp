@@ -119,7 +119,14 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // bespoke probe-only coverage to nine differential scenarios whose finals
 // construct output frames (scalar materialization, nested aggregate pointer
 // expansion, tag-only and payload-bearing enum ladders): 42/0 -> 51/0.
-constexpr int kExpectedAgreed = 51;
+// FB-5 slice C: the V2-B String/computed-final agents (string_passthrough 1,
+// computed_string 2, bounded_string 2 scenarios), the two bounded-list input
+// arena agents (list_string_arena, list_nested_string_arena), and the
+// bounded-String durable-resume capability workflow (e3_capability_workflow_
+// resume) add eight differential scenarios: 51/0 -> 59/0. v2b_enum_string is
+// excluded: the evaluator misroutes its String tuple-variant enum construction
+// through the capability invoker while the wasm run is correct.
+constexpr int kExpectedAgreed = 59;
 constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare

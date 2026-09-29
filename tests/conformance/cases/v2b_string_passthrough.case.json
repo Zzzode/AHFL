@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/v2b_string_passthrough.ahfl",
+  "kind": "agent",
+  "entry": "wasm::v2b::string_passthrough::StringFinalAgent",
+  "scenarios": [
+    {
+      "name": "through",
+      "input": {"_type":"wasm::v2b::string_passthrough::Frame","label":"through"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"wasm::v2b::string_passthrough::Frame","label":"through"}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "V2-B computed final projects the input String PtrLen straight into the output frame without a rodata region; p6-frame module on the orchestration lane"
+    }
+  }
+}

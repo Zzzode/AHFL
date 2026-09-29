@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/v2b_list_string_arena.ahfl",
+  "kind": "agent",
+  "entry": "std::collections::ListStringArenaAgent",
+  "scenarios": [
+    {
+      "name": "four_live",
+      "input": {"_type":"std::collections::In","labels":["a","bb","ccc","dddd"]},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"std::collections::Out","n":1}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "V2-B fix-forward: a packed input List<String(0,8)>(4) meters the input-payload arena at capacity*bound; the computed final itself is a constant scalar; p6-frame module on the orchestration lane"
+    }
+  }
+}

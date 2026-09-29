@@ -244,6 +244,43 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // KR6.7 corpus widening (FB-5): the V2-B String/computed-final and
+        // bounded-arena fixtures now run as manifest-driven p6-frame cases
+        // (String PtrLen projection / rodata literals / bounded list packing).
+        // v2b_enum_string stays OUT of the catalogue: its String tuple-variant
+        // construction misroutes through the evaluator's capability invoker
+        // (a tracked evaluator defect), even though the wasm run is correct.
+        {"v2b_bounded_string.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"v2b_computed_string.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"v2b_list_nested_string_arena.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"v2b_list_string_arena.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        {"v2b_string_passthrough.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
+        // The bounded-String durable-resume replay workflow is the opaque
+        // WireJson two-node capability DAG (same lane as e3_capability_workflow).
+        {"e3_capability_workflow_resume.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         ""},
         // P4-D input-frame handlers (P6-4 aggregate / P6-5 collection) emit
         // cleanly as P6-7 p6-frame modules: they carry the core-layout +
         // boundary wire-schema sections and export runv, so their canonical

@@ -1,0 +1,26 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/v2b_list_nested_string_arena.ahfl",
+  "kind": "agent",
+  "entry": "std::collections::ListNestedStringArenaAgent",
+  "scenarios": [
+    {
+      "name": "two_live",
+      "input": {"_type":"std::collections::In","entries":[{"_type":"std::collections::Entry","name":"abcd","tag":"ab"},{"_type":"std::collections::Entry","name":"xy","tag":"z"}]},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": ["Start", "Done"],
+        "capability_sequence": [],
+        "output_json": {"_type":"std::collections::Out","n":1}
+      }
+    }
+  ],
+  "capabilities": [],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "V2-B fix-forward: a packed input List<Entry>(3) whose element nests two bounded String slots meters the whole element subtree per occurrence; the computed final is a constant scalar; p6-frame module on the orchestration lane"
+    }
+  }
+}
