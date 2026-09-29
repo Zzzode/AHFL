@@ -39,13 +39,20 @@
 // resume.* catalogue (range-less, no-echo), the stable string production hosts
 // report.
 //
-// ENGINE EVIDENCE (WH-3, 2026-09-30): the driver is verified end-to-end on a
-// REAL Wasm VM -- the vendored wasm3 interpreter via Wasm3ResumeEngine
-// (core_wasm_resume_wasm3_e2e.cpp) -- in addition to the synchronous in-test
-// engine double and the Node embedded-engine port. The D2b live-result API
-// (ReadyForLive / dedup / recover) remains the blocked follow-on: this driver
-// never invokes a live capability and the live frontier stays
-// ReadyForLiveBlocked. B2 / KR6.5 stay false until that lands.
+// ENGINE EVIDENCE (WH-3, 2026-09-30): the driver is verified on three engine
+// ports: (1) the synchronous in-test double (FakeResumeEngine, F4 unit tests),
+// (2) the Node embedded-engine port (F5 Node e2e), and (3) the REAL vendored
+// wasm3 interpreter via Wasm3ResumeEngine (core_wasm_resume_wasm3_e2e.cpp).
+// On wasm3 the driver drives a real emitted capability-workflow module through
+// the full run_resume transaction: below-frontier memo replay (ReturnMemo,
+// zero live capability invocations), Suspended-frontier inject/publish/ack
+// (NeedInjectedSlot), module trap -> ModuleTrap, and host abort surfacing
+// state.abort_failure (CoordinateMismatch). The same TU also exercises the
+// capability-import executor on wasm3 (opaque + bridge lanes, live OK/ERROR/
+// PENDING, Suspended->Injected->Consumed replay, ImportAbort). The D2b
+// live-result API (ReadyForLive / dedup / recover) remains the blocked
+// follow-on: this driver never invokes a live capability and the live
+// frontier stays ReadyForLiveBlocked. B2 / KR6.5 stay false until that lands.
 
 #include <cstdint>
 #include <expected>

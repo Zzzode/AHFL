@@ -382,3 +382,137 @@ runv 根授权需要 final_kind(identity → value_ptr 必须 == input_base 1024
 - Fixture: `/tmp/tri.wasm` (67 bytes: `ahfl_cap.cap_0` with functype `(i32)->(i32,i32,i32)`, exported `call`)
 - wasm3 probes: `/tmp/wasm3_probe/tri9` (v0.9.0, source `tri3.c`) → `wasm3 results: 100 8 7`
 - WAMR probes: `/tmp/wamr_probe/tri` (raw native), `/tmp/wamr_probe/tri_capi` (C API) → callback receives 42, results `0 0 0`
+
+---
+
+## 12. WH-4 facade decisions (2026-09-30, dedicated decision agent, no human gate)
+
+WH-4 builds the session/event/trace/observation layer + the hook-compatible runtime facade consumed later by WH-6 (`ahflc run`) / WH-7 (REPL) / WH-8 (DAP). Two coupled decisions, both committed below. Verified facts this section rests on:
+
+- `WorkflowResult` (`src/runtime/engine/workflow_runtime.hpp:45-64`) is a bag of evaluator-FREE fields (`ExecutionMetadataStore` / `ExecutionEventStore` / `ExecutionReport` / `vector<Value>` / `DiagnosticBag` / `optional<WorkflowRecoverySnapshot>`); the evaluator coupling lives in `WorkflowRuntime::run`'s CONSTRUCTION (`eval_workflow_expression` returning `evaluator::EvalResult`, `workflow_runtime.hpp:22-23,173`), not in the struct. `WorkflowStatus::EvalError` is mapped from `WorkflowFailureKind::EvaluationFailed` (`workflow_runtime.cpp:569-570`).
+- The renderer + projections consume only the neutral fields (`execution_renderer.cpp` accesses `metadata/events/report/values/diagnostics/output()/has_errors()`; `execution_renderer.hpp:9` forward-declares `WorkflowResult`; `execution_projection.cpp:7` includes `workflow_runtime.hpp` only for the complete type, uses no evaluator symbol).
+- `workflow_runtime.hpp` includes `runtime/evaluator/evaluator.hpp` + `runtime/evaluator/eval_context.hpp` (`:22-23`) — a PUBLIC header that drags the evaluator into every TU including it.
+- The engine target PUBLIC-links `ahfl_runtime_evaluator` (`src/runtime/engine/CMakeLists.txt:47`) because of that public-header include.
+- The DAP installs `state_entered_hook` / `capability_invoked_hook` / `agent_input_hook` / `node_completed_hook` / `capability_result_observer` on `WorkflowRuntimeConfig` (`debug_session.cpp:217-291`), calls `runtime_->run(...)` on a worker thread (`:371`), and BLOCKS inside `on_state_entered`/`on_capability_invoked` on `resume_cv_` (`pause()`, `:660-680`). `capability_invoked_hook` fires BEFORE dispatch (`workflow_runtime.cpp:1096-1098` vs `:1100-1105`) — capability breakpoints depend on the pre-call pause.
+- The wasm3 `ImportObservation.whole_memory` is the whole fixed page at the moment of EVERY import (`core_wasm_resume_engine.hpp`), so the host can decode the state-trace ring prefix while `invoke_run2` is still running.
+- The state-trace ring: dynamic base from `CoreFrameLayoutSection.state_trace_base/state_trace_capacity` (`core_frame_layout.hpp:168-169`), u32 count at base + 8-byte `(runner,state)` records, guest TRAPS on overflow (`core_wasm_codegen.cpp:14597-14656`). No runtime decoder exists today.
+- Workflow modules' `step`/`current_state` TRAP by contract (`make_trapping_i32_body`, `core_wasm_codegen.cpp:~16440`); the JS oracle asserts `expectTraps`. Workflow `run2` is ONE guest invocation with the schedule baked in-guest (`append_workflow_schedule`, `core_wasm_codegen.cpp:15826`: per-node frame materialization via `WorkflowFrameMaterializer`, runner invocation, output-block checks, node-event records, completed counter).
+- The JS oracle `collectStatesViaStep` (`node_embedded_host.mjs:1035-1065`) drives a SEPARATE effects-free instance ("states" mode: bridge replays served, events discarded, only state names are evidence); the canonical instance runs effects exactly once.
+- `decode_node_events` exists (`core_wasm_node_events.hpp`); the observation emitter (`ahfl.node-observation.v1`) does NOT exist yet (only the oracle emits it, `node_embedded_host.mjs:531-549`).
+
+### 12.1 Decision 1 — hook timing / source of truth: **Option A (dual-mode facade)**
+
+**Chosen.** The facade guarantees two hook-timing classes, split by module kind.
+
+**AGENT modules** (export `step`/`current_state`/`transition_count`): the facade drives a SEPARATE effects-free wasm3 instance for the state step-walk, mirroring `collectStatesViaStep` exactly. The effects-free instance's imports are served by a states-mode invoker that replays the scenario results and discards its events; only state names are evidence. The CANONICAL instance runs `runv`/`run2` exactly once for effects + output.
+
+- `state_entered_hook` fires LIVE per `step()` transition on the effects-free instance — host-driven, exact; the DAP's pause/step semantics map 1:1 (the walk is host-driven, so pausing between steps is natural).
+- `capability_invoked_hook` + `capability_result_observer` fire LIVE at the canonical instance's imports (pre-call / post-invoker, truly live — the `ImportCallback` blocks on the host's return before the guest resumes).
+- `agent_input_hook` fires LIVE before the walk; `node_completed_hook` fires LIVE after the canonical run with the output read from the output frame.
+- For an agent WITHOUT capability call sites, the facade drives the CANONICAL instance via `step()` directly (no effects to double-fire), matching the oracle's non-bridge path.
+
+**WORKFLOW modules** (`step`/`current_state` trap by contract): `run2` is one guest invocation; the host gets control ONLY at capability imports and after `run2` returns. The facade wraps the WH-3 `capability_import` executor:
+
+- at EACH import, BEFORE invoking the capability, decode the state-trace ring PREFIX from `whole_memory` and fire `state_entered_hook` per NEW record since the last boundary (import-boundary-live; the guest is genuinely stopped inside the `ImportCallback`, so a blocking hook pauses the run);
+- fire `capability_invoked_hook` LIVE at the import, PRE-call — genuinely live for BOTH lanes (the DAP's capability breakpoints work exactly);
+- fire `capability_result_observer` LIVE post-invoker;
+- after `run2` returns: decode the FULL trace + node-event buffer, fire `state_entered_hook` for the remaining records (after the last import), and fire `node_completed_hook` per node in schedule order with the output read from the node's fixed `O_k` block.
+
+`agent_input_hook` is NOT fired for workflow nodes: the in-guest materialized node input (`WorkflowFrameMaterializer`) is not host-observable without re-implementing the frame materializer — the rejected Option C. The host packs the workflow input into the entry `I_k` block, but the evaluated/projected node input is a guest-internal value. WH-8's DAP adapts (Node frame pushed at `node_completed_hook`). Documented, honest degradation.
+
+**Hook timing GUARANTEE table:**
+
+| Hook | Agent (no cap sites) | Agent (with cap sites) | Workflow |
+|---|---|---|---|
+| `agent_input_hook` | LIVE before step-walk | LIVE before step-walk | not fired (in-guest input not host-observable) |
+| `state_entered_hook` | LIVE per `step()` on canonical instance | LIVE per `step()` on effects-free instance | IMPORT-BOUNDARY-LIVE (trace prefix at each cap import) + POST-run (remainder) |
+| `capability_invoked_hook` | (none) | LIVE at canonical `runv`/`run2` import, PRE-call | LIVE at `run2` import, PRE-call |
+| `capability_result_observer` | (none) | LIVE at import, post-invoker | LIVE at import, post-invoker |
+| `node_completed_hook` | LIVE after canonical run | LIVE after canonical run | POST-run (schedule order, `O_k` output) |
+
+**Rejected:**
+
+- **Option B (post-run replay only for ALL hooks):** rejected — it makes DAP over workflows post-mortem, contradicting WH-8's promise (decision doc §6: "DAP drives through the SAME hooks with state-level stepping mapped to WH-4 step-walk") and discarding the genuinely-live capability pre-call hook the `ImportCallback` makes possible. The capability hook CAN be truly live at the import for both lanes; throwing that away is dishonest.
+- **Option C (host-side workflow scheduling):** rejected — the schedule is baked into `run2` (`append_workflow_schedule:15826`: per-node frame materialization, runner invocation, output-block checks, node-event records, completed counter). Host-side scheduling requires (a) codegen changes to export per-node runners or a dispatch export, (b) host re-implementation of the frame materializer (project/construct/normalize node input frames — hundreds of lines of codegen logic), (c) re-defining node-event/counter/trace semantics around host-driven scheduling, (d) diverging from the JS oracle which drives `run2` as one invocation. Massive blast radius across node events/counters/trace; it trades a documented import-boundary-liveness limitation for a full scheduler re-implementation. Not clearly superior.
+
+**Reconciliation with JS oracle `collectStatesViaStep`:** the native facade mirrors the oracle exactly — a separate effects-free wasm3 instance for the state step-walk when the agent has capability call sites (the oracle's "states" mode), the canonical instance running effects exactly once. The bounded-walk guard (`states.size() + 2`), `current_state` consistency, and exactly-once `transition_count` bump are replicated. The `(runner,state) → (agent_name,state_name)` join for the workflow trace ring uses the `ir::Program` (runner → workflow node → target agent; state id → `FlowDecl` state-handlers dense order, the same ordering the codegen uses to assign dense state ids), pinned by a byte-parity test against the oracle's `all_states`.
+
+### 12.2 Decision 2 — facade result type: **Option Z (neutral core extraction)**
+
+**Chosen.** Extract the evaluator-free `WorkflowResult` + `WorkflowStatus` into a neutral header/TU that BOTH the evaluator runtime and the wasm facade produce. The renderer + projections already consume only the neutral fields (verified); the extraction is a mechanical MOVE, not a redesign.
+
+- NEW `include/ahfl/runtime/workflow_result.hpp`: `WorkflowResult` + `WorkflowStatus` (moved from `workflow_runtime.hpp:34-64`). Includes only evaluator-free headers: `execution_event.hpp`, `execution_report.hpp`, `execution_metadata.hpp`, `runtime/value/value.hpp`, `ahfl/base/support/diagnostics.hpp`, `workflow_recovery.hpp` (the D1b durable-resume authority — evaluator-free, includes only `execution_event`/`atomic_file`/`value`).
+- NEW `src/runtime/engine/workflow_result.cpp`: the 4 methods (`has_errors`/`status`/`value`/`output`, moved from `workflow_runtime.cpp:552-589`). Stays in the engine target — the survivor home (the engine holds the resume/wire authorities and survives WH-9).
+- `workflow_runtime.hpp`: includes the neutral header; keeps `WorkflowRuntime`/`WorkflowRuntimeConfig` (the evaluator-specific `eval_workflow_expression` + evaluator includes stay).
+- `execution_renderer.cpp` + `execution_projection.cpp`: include `ahfl/runtime/workflow_result.hpp` instead of `runtime/engine/workflow_runtime.hpp` (they use only the neutral type).
+- The wasm facade produces neutral `WorkflowResult` WITHOUT including `evaluator.hpp` — the wasm host's HEADER dependency on the evaluator is structurally impossible.
+
+**`WorkflowStatus::EvalError`:** stays in the enum (the wasm lane never produces it — a wasm trap/host-abort/non-OK maps to `NodeFailed`). It is deleted at WH-9 with its only producer (`WorkflowRuntime::run`'s `EvaluationFailed` path). A documented WH-9 deletion, not hidden coupling.
+
+**Rejected:**
+
+- **Option X (reuse `WorkflowResult` in place):** rejected — `workflow_runtime.hpp` includes `runtime/evaluator/evaluator.hpp` + `runtime/evaluator/eval_context.hpp` (`:22-23`) for the private `eval_workflow_expression` method. The wasm facade including `workflow_runtime.hpp` would drag the evaluator into `ahfl_runtime_wasm_host` — a NEW dependency edge in the WRONG direction (the replacement depending on the replaced). The "zero renderer churn" benefit is real but doesn't justify the inverted edge; the churn is a mechanical include-update, not a redesign. The "hidden evaluator coupling surviving until WH-9" risk is precisely this header edge.
+- **Option Y (new `WasmWorkflowResult` + own renderer):** rejected — two result types + two renderers until WH-9, duplicating the event/report/projection machinery; violates "one facade not two parallel dialects" and Principle 1.
+
+**Note on the engine's PUBLIC evaluator link edge:** `ahfl_runtime_engine` PUBLIC-links `ahfl_runtime_evaluator` (`src/runtime/engine/CMakeLists.txt:47`) because `workflow_runtime.hpp` includes `evaluator.hpp` in a PUBLIC header. This edge stays until WH-9 deletes `WorkflowRuntime`; the wasm host transitively links the evaluator but NO wasm-host TU includes it (the extraction breaks the header coupling). The link edge is a WH-9 deletion, not a WH-4 concern.
+
+### 12.3 Exact C++ shapes
+
+Files (all under `src/runtime/wasm_host/` unless noted):
+
+1. **`state_trace_decoder.{hpp,cpp}`** (NEW) — pure structural decoder, mirrors `decode_node_events`' fail-closed style:
+   ```cpp
+   struct StateTraceRecord { std::uint32_t runner; std::uint32_t state; };
+   enum class StateTraceError : std::uint8_t {
+       Truncated, BadCapacity, CountExceedsCapacity, /* ... */
+   };
+   [[nodiscard]] std::expected<std::vector<StateTraceRecord>, StateTraceError>
+   decode_state_trace(std::span<const std::uint8_t> whole_memory,
+                      std::uint32_t trace_base, std::uint32_t trace_capacity);
+   ```
+   u32 count at `trace_base`; `count*8 + 8 <= capacity`; records at `trace_base + 8`.
+
+2. **`agent_session.{hpp,cpp}`** (NEW) — the step-walk driver for AGENT modules. Owns the effects-free wasm3 instance + the states-mode invoker. Drives `step()` in a bounded loop (guard = `states.size() + 2`), asserts `current_state` consistency + exactly-once `transition_count`, fires `state_entered_hook` per transition.
+
+3. **`workflow_session.{hpp,cpp}`** (NEW) — the workflow `run2` driver + trace/node-event decode + hook firing. Wraps the WH-3 `capability_import` executor with trace-prefix decode + hook firing (import-boundary-live). Drives `run2`, fires hooks per the guarantee table, builds the neutral `WorkflowResult` (events from decoded trace/node-events, metadata from the `ir::Program`, values from frame reads, diagnostics from trap/abort classification).
+
+4. **`observation_emitter.{hpp,cpp}`** (NEW) — emit the canonical `ahfl.node-observation.v1` document (the SAME shape `node_embedded_host.mjs:531-549` emits and `observation_compare.hpp` consumes). Pure canonical JSON, sorted fields, byte-identical to the oracle's `emitObservation`.
+
+5. **`wasm_workflow_runtime.{hpp,cpp}`** (NEW) — the hook-compatible runtime facade:
+   ```cpp
+   struct WasmWorkflowRuntimeConfig {
+       // production invoker / native host binding (same seam as WorkflowRuntimeConfig)
+       std::function<void(AgentId, std::string_view, std::string_view, std::string_view)>
+           state_entered_hook;
+       std::function<void(AgentId, std::string_view)> capability_invoked_hook;
+       std::function<void(AgentId, std::string_view, std::string_view, const Value &)>
+           agent_input_hook;
+       std::function<void(AgentId, std::string_view, const Value &)> node_completed_hook;
+       std::function<void(const CapabilityInvocationContext &, const CapabilityCallResult &)>
+           capability_result_observer;
+       std::function<std::chrono::steady_clock::time_point()> monotonic_clock;
+       // ...
+   };
+   class WasmWorkflowRuntime {
+     public:
+       WasmWorkflowRuntime(const ir::Program &program, WasmWorkflowRuntimeConfig config);
+       // Compiles the workflow to wasm (wasm backend), admits the module,
+       // dispatches on module kind (agent -> agent_session + canonical
+       // runv/run2; workflow -> workflow_session), returns the neutral result.
+       [[nodiscard]] WorkflowResult run(const std::string &workflow_name, Value input);
+   };
+   ```
+   The hook signatures are IDENTICAL to `WorkflowRuntimeConfig` (`workflow_runtime.hpp:113-136`) so WH-8's DAP swaps `WorkflowRuntime` → `WasmWorkflowRuntime` with zero hook-code changes.
+
+6. **Neutral result extraction** (Decision 2): `include/ahfl/runtime/workflow_result.hpp` (NEW) + `src/runtime/engine/workflow_result.cpp` (NEW) + include updates in `workflow_runtime.hpp` / `execution_renderer.cpp` / `execution_projection.cpp` + CMake registration of the new TU in `ahfl_runtime_engine`.
+
+### 12.4 Acceptance / test criteria
+
+1. **State-trace decoder KAT**: hand-built memory spans with known trace rings decode byte-exactly; corrupt count (exceeds capacity) / truncation fail closed. Mirrors the node-event decoder KAT style.
+2. **Agent step-walk liveness + effects-once**: an agent with a bridge capability; the states-mode invoker counts calls (served, discarded); the production invoker counts calls; assert production count == 1 and states-mode count == walk count. A blocking `state_entered_hook` mutates a counter BEFORE the canonical run; prove the hook fires from the effects-free instance.
+3. **Capability pre-call hook liveness**: a blocking `capability_invoked_hook` sets a flag; the invoker asserts the flag is set (the hook fired BEFORE the effect). A capability breakpoint pauses the run inside the `ImportCallback` (the guest is genuinely stopped — `run2` has not returned when the hook blocks).
+4. **Workflow import-boundary state hook**: a workflow with a capability call after N state transitions; `state_entered_hook` fires at the import boundary with the trace prefix (records 0..N-1) BEFORE `capability_invoked_hook`; assert the hook ordering log.
+5. **Post-run replay ordering byte-parity with observation blessings**: the full decoded sequence (import-boundary prefix + post-run remainder) equals the JS oracle's `state_sequence`; the emitted `ahfl.node-observation.v1` document is byte-identical to the checked-in blessing for the WH-4 conformance subset (common-KAT fixture + a few p6 cases). The WH-5 gate's WH-4 precursor.
+6. **Breakpoint-pause semantics on agent step**: emulate the DAP's `pause()` — a `state_entered_hook` blocking on a condition variable; a separate thread resumes; prove the step-walk pauses between steps and resumes exactly (the next `step()` fires after resume).
+7. **Hook ordering guarantee**: for a workflow, the hook firing order matches the guarantee table (capability hooks live at imports interleaved with state-prefix hooks; post-run: remaining state hooks + `node_completed_hook` in schedule order). A hook log asserts the exact order.
+8. **Neutral result extraction**: no wasm-host TU includes `evaluator.hpp` (compile-time check — the wasm host's header dependency on the evaluator is structurally impossible); `render_execution_result` renders a wasm-produced `WorkflowResult` identically to an evaluator-produced one for the same case (byte-parity of human/json output for a no-capability case).
