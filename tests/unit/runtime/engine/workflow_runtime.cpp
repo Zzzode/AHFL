@@ -5,8 +5,8 @@
 #include "ahfl/runtime/execution_projection.hpp"
 #include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <cstdlib>
 #include <chrono>
@@ -2810,7 +2810,7 @@ void test_resume_fails_closed_on_nested_null_struct() {
                 .cap_id = cap_id,
                 // Must equal the real coordinate hash for probe()'s empty arg list,
                 // or the coordinate gate would fire FIRST and mask the value gate.
-                .arg_hash = evaluator::hash_values(std::vector<Value>{}),
+                .arg_hash = runtime::hash_values(std::vector<Value>{}),
                 .result = make_hostile_struct(),
                 .source = PersistedMemoResultSource::NativeOnly,
                 .authoritative_json = std::nullopt,
@@ -2918,7 +2918,7 @@ void test_resume_fails_closed_on_nested_null_struct() {
             record.memo.push_back(CapabilityMemoEntry{
                 .ordinal = 0,
                 .cap_id = cap_id,
-                .arg_hash = evaluator::hash_values(std::vector<Value>{}),
+                .arg_hash = runtime::hash_values(std::vector<Value>{}),
                 .result = make_none(), // non-authoritative placeholder
                 .source = PersistedMemoResultSource::ExactSidecar,
                 .authoritative_json = wire,
@@ -3459,7 +3459,7 @@ legacy_memo_resume(const std::string &workflow_name, std::size_t probe0_id, Type
                << hold_id << R"(,"pending_ordinal":1,"node_input":null,"memo":[{"ordinal":0,)"
                   R"("cap_id":)"
                << probe0_id << R"(,"arg_hash":")"
-               << evaluator::hash_values(std::vector<Value>{}) << R"(","result":)" << legacy_result
+               << runtime::hash_values(std::vector<Value>{}) << R"(","result":)" << legacy_result
                << "}]}}";
     }
     WorkflowRecoveryStore store(store_path);
@@ -3810,7 +3810,7 @@ void test_resume_consume_rejects_illformed_trust_state() {
         // Keep the real coordinate (ordinal 0, cap_id kProbe0Id, arg_hash of empty
         // args) so the coordinate + identity gates pass and the trust-state gate is
         // what fires.
-        entry.arg_hash = evaluator::hash_values(std::vector<Value>{});
+        entry.arg_hash = runtime::hash_values(std::vector<Value>{});
         mutate(entry);
 
         auto resume_program = make_two_call_memo_program(wf, kProbe0Id, int_type(), kHoldId);
@@ -3932,7 +3932,7 @@ void test_resume_p0_19_valueless_none_rejected_under_non_unit_binding() {
     }
     {
         auto &e = s1.suspended->suspended->memo[0];
-        e.arg_hash = evaluator::hash_values(std::vector<Value>{});
+        e.arg_hash = runtime::hash_values(std::vector<Value>{});
         e.source = PersistedMemoResultSource::NativeOnly;
         e.result = make_none(); // bare NoneValue (the deliberate true+None compat case)
         e.authoritative_json = std::nullopt;
@@ -4180,10 +4180,10 @@ void test_resume_raw_pending_wire_matrix() {
         check(o.result.status() == WorkflowStatus::Completed, "raw.option_none.completed");
         check(o.live_calls == 0, "raw.option_none.no_live_invoke");
         const auto *out = o.result.output();
-        check(out != nullptr && evaluator::is_optional_none(*out),
+        check(out != nullptr && runtime::is_optional_none(*out),
               "raw.option_none.is_optional_none");
-        check(out != nullptr && !std::holds_alternative<evaluator::NoneValue>(out->node) &&
-                  !std::holds_alternative<evaluator::UnitValue>(out->node),
+        check(out != nullptr && !std::holds_alternative<runtime::NoneValue>(out->node) &&
+                  !std::holds_alternative<runtime::UnitValue>(out->node),
               "raw.option_none.not_bare_none_or_unit");
     }
     // Option<Int> Some: raw `7` -> Option Some(7) (is_some + inner Int 7).
@@ -4193,8 +4193,8 @@ void test_resume_raw_pending_wire_matrix() {
         check(o.result.status() == WorkflowStatus::Completed, "raw.option_some.completed");
         check(o.live_calls == 0, "raw.option_some.no_live_invoke");
         const auto *out = o.result.output();
-        check(out != nullptr && evaluator::is_some(*out), "raw.option_some.is_some");
-        const auto *inner = out != nullptr ? evaluator::optional_inner(*out) : nullptr;
+        check(out != nullptr && runtime::is_some(*out), "raw.option_some.is_some");
+        const auto *inner = out != nullptr ? runtime::optional_inner(*out) : nullptr;
         check(inner != nullptr && std::holds_alternative<IntValue>(inner->node) &&
                   std::get<IntValue>(inner->node).value == 7,
               "raw.option_some.inner_int_7");
@@ -4208,7 +4208,7 @@ void test_resume_raw_pending_wire_matrix() {
         check(o.live_calls == 0, "raw.unit.no_live_invoke");
         const auto *out = o.result.output();
         // present=true: the resumed call yields a real UnitValue (not absent/None).
-        check(out != nullptr && std::holds_alternative<evaluator::UnitValue>(out->node),
+        check(out != nullptr && std::holds_alternative<runtime::UnitValue>(out->node),
               "raw.unit.is_unit_value");
     }
     // Float 1.0: raw `1.0` (FloatSyntax) accepted -> FloatValue.

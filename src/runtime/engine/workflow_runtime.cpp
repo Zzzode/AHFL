@@ -21,7 +21,7 @@
 #include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/engine/core_wire_codec_recovery.hpp"
 #include "runtime/evaluator/evaluator.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value_json.hpp"
 
 namespace ahfl::runtime {
 
@@ -448,7 +448,7 @@ build_wire_binding_cache(const ir::Program &program, const ir::ProgramIndex &ind
 // NativeOnly memo append. Carrying both preserves the historical observable
 // (valueless -> None at the call site) without losing the canonical shape.
 struct TrustedMemoResult {
-    evaluator::Value canonical;
+    runtime::Value canonical;
     bool present{true};
 };
 
@@ -459,37 +459,37 @@ struct TrustedMemoResult {
 // collection before the trust gate. Returns the canonical Value + resolved
 // presence, cloning ONLY after validation succeeds.
 [[nodiscard]] std::expected<TrustedMemoResult, std::string>
-validate_native_trusted_result(const evaluator::Value &original, bool present,
+validate_native_trusted_result(const runtime::Value &original, bool present,
                                const ir::core::VerifiedWireSchemaBinding &binding) {
-    const bool is_bare_none = std::holds_alternative<evaluator::NoneValue>(original.node);
-    const bool is_unit = std::holds_alternative<evaluator::UnitValue>(original.node);
+    const bool is_bare_none = std::holds_alternative<runtime::NoneValue>(original.node);
+    const bool is_unit = std::holds_alternative<runtime::UnitValue>(original.node);
     if (!present) {
         // Valueless: only NoneValue / UnitValue whose wire is exactly null, and
         // only under an exact Unit root. Canonicalize to Unit, keep present=false.
-        if (!(is_bare_none || is_unit) || evaluator::value_to_json(original) != "null") {
+        if (!(is_bare_none || is_unit) || runtime::value_to_json(original) != "null") {
             return std::unexpected(std::string("valueless memo result is not a null Unit"));
         }
-        auto probe = wire_codec::validate_value(evaluator::make_unit(), binding);
+        auto probe = wire_codec::validate_value(runtime::make_unit(), binding);
         if (!probe.valid) {
             return std::unexpected(probe.error);
         }
-        return TrustedMemoResult{evaluator::make_unit(), false};
+        return TrustedMemoResult{runtime::make_unit(), false};
     }
     // present==true: the established compat case (true + bare None) is a legacy
     // valueless success — normalize to Unit + present=false ONLY under an exact
     // Unit root (never a strict-None reject, never present=true).
     if (is_bare_none) {
-        auto probe = wire_codec::validate_value(evaluator::make_unit(), binding);
+        auto probe = wire_codec::validate_value(runtime::make_unit(), binding);
         if (!probe.valid) {
             return std::unexpected(probe.error);
         }
-        return TrustedMemoResult{evaluator::make_unit(), false};
+        return TrustedMemoResult{runtime::make_unit(), false};
     }
     auto validation = wire_codec::validate_value(original, binding);
     if (!validation.valid) {
         return std::unexpected(validation.error);
     }
-    return TrustedMemoResult{evaluator::clone_value(original), true};
+    return TrustedMemoResult{runtime::clone_value(original), true};
 }
 
 // Decode a persisted memo/pending result under its verified binding into a
@@ -520,7 +520,7 @@ decode_persisted_memo_result(const CapabilityMemoEntry &entry,
         if (!decoded.ok()) {
             return std::unexpected(decoded.error);
         }
-        if (!present && !std::holds_alternative<evaluator::UnitValue>(decoded.value->node)) {
+        if (!present && !std::holds_alternative<runtime::UnitValue>(decoded.value->node)) {
             return std::unexpected(
                 std::string("valueless memo result is not a Unit under its schema"));
         }
@@ -540,7 +540,7 @@ decode_persisted_memo_result(const CapabilityMemoEntry &entry,
         // Presence is irreversibly unknown for pre-sidecar bytes; resolve by the
         // chosen historical default: a decoded Unit -> present=false (old replay
         // presented NoneValue), any other value -> present=true.
-        const bool present = !std::holds_alternative<evaluator::UnitValue>(decoded.value->node);
+        const bool present = !std::holds_alternative<runtime::UnitValue>(decoded.value->node);
         return TrustedMemoResult{std::move(*decoded.value), present};
     }
     }
@@ -613,12 +613,12 @@ evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
     const CapabilityInvocationContext &context) const {
     evaluator::EvalContext ctx;
 
-    ctx.bind_local("input", evaluator::clone_value(workflow_input));
+    ctx.bind_local("input", runtime::clone_value(workflow_input));
 
-    if (const auto *sv = std::get_if<evaluator::StructValue>(&workflow_input.node)) {
+    if (const auto *sv = std::get_if<runtime::StructValue>(&workflow_input.node)) {
         for (const auto &[field_name, field_val] : sv->fields) {
             if (field_val) {
-                ctx.set_input(field_name, evaluator::clone_value(*field_val));
+                ctx.set_input(field_name, runtime::clone_value(*field_val));
             }
         }
     }
@@ -633,12 +633,12 @@ evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
         if (metadata == nullptr || node_value == nullptr) {
             continue;
         }
-        ctx.bind_local(metadata->display_name, evaluator::clone_value(*node_value));
-        if (const auto *sv = std::get_if<evaluator::StructValue>(&node_value->node)) {
+        ctx.bind_local(metadata->display_name, runtime::clone_value(*node_value));
+        if (const auto *sv = std::get_if<runtime::StructValue>(&node_value->node)) {
             for (const auto &[field_name, field_val] : sv->fields) {
                 if (field_val) {
                     ctx.set_node_output(
-                        metadata->display_name, field_name, evaluator::clone_value(*field_val));
+                        metadata->display_name, field_name, runtime::clone_value(*field_val));
                 }
             }
         }
@@ -761,7 +761,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         for (const auto &state : config_.recovery_snapshot->completed_nodes) {
             std::optional<RuntimeValueId> output;
             if (state.output.has_value()) {
-                output = add_runtime_value(result, evaluator::clone_value(*state.output));
+                output = add_runtime_value(result, runtime::clone_value(*state.output));
                 node_outputs[state.node.index()] = output;
             }
             restored_nodes[state.node.index()] = true;
@@ -816,7 +816,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             const std::uint64_t memo_ordinal = node_memo.next_ordinal++;
             const std::size_t cap_symbol_id =
                 context.source_capability_symbol_id.value_or(0);
-            const std::uint64_t arg_hash = evaluator::hash_values(arguments);
+            const std::uint64_t arg_hash = runtime::hash_values(arguments);
 
             // RFC 0022 (C7): resume replay. While replaying, calls at ordinals
             // below the pending one are served from the memo (never re-invoked),
@@ -909,7 +909,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     .ordinal = memo_ordinal,
                     .cap_id = cap_symbol_id,
                     .arg_hash = arg_hash,
-                    .result = evaluator::clone_value(decoded->canonical),
+                    .result = runtime::clone_value(decoded->canonical),
                     .source = PersistedMemoResultSource::NativeOnly,
                     .authoritative_json = std::nullopt,
                     .result_present = decoded->present,
@@ -985,7 +985,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     return missing;
                 }
 
-                TrustedMemoResult trusted{evaluator::make_unit(), false};
+                TrustedMemoResult trusted{runtime::make_unit(), false};
                 if (has_raw) {
                     // Raw wire path: a PRESENT flag is ALWAYS present=true. Parse the
                     // bytes and decode EXACTLY under the verified binding (schema-only
@@ -1023,7 +1023,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     .ordinal = memo_ordinal,
                     .cap_id = cap_symbol_id,
                     .arg_hash = arg_hash,
-                    .result = evaluator::clone_value(trusted.canonical),
+                    .result = runtime::clone_value(trusted.canonical),
                     .source = PersistedMemoResultSource::NativeOnly,
                     .authoritative_json = std::nullopt,
                     .result_present = trusted.present,
@@ -1176,7 +1176,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 std::optional<RuntimeValueId> output;
                 if (call_result.value.has_value()) {
                     output =
-                        add_runtime_value(result, evaluator::clone_value(*call_result.value));
+                        add_runtime_value(result, runtime::clone_value(*call_result.value));
                 }
                 // RFC 0022 (C5): record the completed call in the node memo so a
                 // later suspension in the same node can replay it deterministically
@@ -1191,8 +1191,8 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     .cap_id = cap_symbol_id,
                     .arg_hash = arg_hash,
                     .result = call_result.value.has_value()
-                                  ? evaluator::clone_value(*call_result.value)
-                                  : evaluator::make_none(),
+                                  ? runtime::clone_value(*call_result.value)
+                                  : runtime::make_none(),
                     .source = PersistedMemoResultSource::NativeOnly,
                     .authoritative_json = std::nullopt,
                     .result_present = call_result.value.has_value(),
@@ -1264,7 +1264,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             continue;
         }
 
-        evaluator::Value node_input = evaluator::make_none();
+        runtime::Value node_input = runtime::make_none();
         // RFC 0022 (C5): fresh memo table per node. Ordinals restart at 0 so the
         // memo key is stable and reproducible when this node is later resumed.
         node_memo.reset();
@@ -1399,7 +1399,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         // resume and its capability calls replayed from the memo (see the resume path
         // at the top of this loop). It is informational today, NOT a trust authority;
         // a reader must not assume it drives resume (residual risk if that changes).
-        evaluator::Value node_input_snapshot = evaluator::clone_value(node_input);
+        runtime::Value node_input_snapshot = runtime::clone_value(node_input);
         AgentResult agent_result = agent_rt.run(std::move(node_input));
 
         // RFC 0022 (C6): the agent suspended on a pending capability call.
@@ -1496,7 +1496,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                         const auto *value =
                             result.value(*node_outputs[completed_node.id.index()]);
                         if (value != nullptr) {
-                            state.output = evaluator::clone_value(*value);
+                            state.output = runtime::clone_value(*value);
                         }
                     }
                     snapshot.completed_nodes.push_back(std::move(state));
@@ -1588,7 +1588,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             if (node_outputs[completed_node.id.index()].has_value()) {
                 const auto *value = result.value(*node_outputs[completed_node.id.index()]);
                 if (value != nullptr) {
-                    node_state.output = evaluator::clone_value(*value);
+                    node_state.output = runtime::clone_value(*value);
                 }
             }
             snapshot.completed_nodes.push_back(std::move(node_state));

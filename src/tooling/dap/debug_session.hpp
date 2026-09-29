@@ -14,7 +14,7 @@
 
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 #include "tooling/dap/breakpoints.hpp"
 
 namespace ahfl::dap {
@@ -157,11 +157,11 @@ class DebugSession {
     [[nodiscard]] std::string evaluate_json(const std::string &expression, int frame_id);
 
   private:
-    void execute(std::string workflow_name, ahfl::evaluator::Value workflow_input);
+    void execute(std::string workflow_name, ahfl::runtime::Value workflow_input);
     void on_agent_input(ahfl::runtime::AgentId agent,
                         std::string_view agent_name,
                         std::string_view node_name,
-                        const ahfl::evaluator::Value &input);
+                        const ahfl::runtime::Value &input);
     void on_state_entered(ahfl::runtime::AgentId agent,
                           std::string_view agent_name,
                           std::string_view node_name,
@@ -191,12 +191,12 @@ class DebugSession {
     /// Register a structured value for chained DAP expansion and return its
     /// variablesReference. Scalar / empty values return 0 (no children).
     /// Caller must hold mutex_.
-    [[nodiscard]] int register_variable_locked(const ahfl::evaluator::Value &value);
+    [[nodiscard]] int register_variable_locked(const ahfl::runtime::Value &value);
 
     /// Serialize the children of a structured value as a DAP `variables`
     /// response body. Structured children receive their own
     /// variablesReference for chained expansion. Caller must hold mutex_.
-    [[nodiscard]] std::string expand_value_locked(const ahfl::evaluator::Value &value);
+    [[nodiscard]] std::string expand_value_locked(const ahfl::runtime::Value &value);
 
     DapServer &server_;
     BreakpointManager &breakpoints_;
@@ -236,21 +236,21 @@ class DebugSession {
     std::vector<DebugFrame> frames_;
     /// Live agent inputs observed via agent_input_hook, keyed by agent debug
     /// id. Guarded by mutex_.
-    std::unordered_map<std::string, ahfl::evaluator::Value> agent_inputs_;
+    std::unordered_map<std::string, ahfl::runtime::Value> agent_inputs_;
     /// Live agent outputs observed via node_completed_hook, keyed by agent
     /// debug id. Guarded by mutex_.
-    std::unordered_map<std::string, ahfl::evaluator::Value> agent_outputs_;
+    std::unordered_map<std::string, ahfl::runtime::Value> agent_outputs_;
     /// Live node results observed via node_completed_hook, keyed by node
     /// name, for the Workflow scope. Guarded by mutex_.
-    std::unordered_map<std::string, ahfl::evaluator::Value> node_results_;
+    std::unordered_map<std::string, ahfl::runtime::Value> node_results_;
     /// Workflow input (from the launch config) and output (set after run()
     /// returns). Guarded by mutex_.
-    ahfl::evaluator::Value workflow_input_;
-    std::optional<ahfl::evaluator::Value> workflow_output_;
+    ahfl::runtime::Value workflow_input_;
+    std::optional<ahfl::runtime::Value> workflow_output_;
     /// Registry for chained variable expansion: variablesReference -> cloned
     /// Value. Scope references (100-499) are computed, not stored. Guarded by
     /// mutex_.
-    std::unordered_map<int, ahfl::evaluator::Value> variable_store_;
+    std::unordered_map<int, ahfl::runtime::Value> variable_store_;
     int next_var_ref_ = 1000;
 };
 

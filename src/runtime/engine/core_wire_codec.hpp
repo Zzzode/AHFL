@@ -3,7 +3,7 @@
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "base/json/json_value.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <optional>
 #include <string>
@@ -68,12 +68,12 @@ namespace wire_codec {
 // from SchemaValidationResult because it carries the decoded Value, not just a
 // pass/fail verdict.
 struct WireDecodeResult {
-    std::optional<evaluator::Value> value;
+    std::optional<runtime::Value> value;
     std::string error; // empty iff `value` is set
 
     [[nodiscard]] bool ok() const noexcept { return value.has_value(); }
 
-    [[nodiscard]] static WireDecodeResult success(evaluator::Value v) {
+    [[nodiscard]] static WireDecodeResult success(runtime::Value v) {
         return {std::move(v), {}};
     }
     [[nodiscard]] static WireDecodeResult failure(std::string msg) {
@@ -87,7 +87,7 @@ decode_json(const json::JsonValue &json, const ir::core::VerifiedWireSchemaBindi
 
 // Policy 2: schema-guided structural validation of an existing native Value.
 [[nodiscard]] SchemaValidationResult
-validate_value(const evaluator::Value &value,
+validate_value(const runtime::Value &value,
                const ir::core::VerifiedWireSchemaBinding &binding);
 
 } // namespace wire_codec

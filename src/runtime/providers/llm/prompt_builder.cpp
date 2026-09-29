@@ -72,22 +72,22 @@ std::string PromptBuilder::describe_type_schema(const std::string &type_name) co
     return type_name;
 }
 
-std::string PromptBuilder::value_to_string(const evaluator::Value &val) const {
+std::string PromptBuilder::value_to_string(const runtime::Value &val) const {
     std::ostringstream oss;
     std::visit(
         [&](const auto &v) {
             using T = std::decay_t<decltype(v)>;
-            if constexpr (std::is_same_v<T, evaluator::NoneValue>) {
+            if constexpr (std::is_same_v<T, runtime::NoneValue>) {
                 oss << "none";
-            } else if constexpr (std::is_same_v<T, evaluator::BoolValue>) {
+            } else if constexpr (std::is_same_v<T, runtime::BoolValue>) {
                 oss << (v.value ? "true" : "false");
-            } else if constexpr (std::is_same_v<T, evaluator::IntValue>) {
+            } else if constexpr (std::is_same_v<T, runtime::IntValue>) {
                 oss << v.value;
-            } else if constexpr (std::is_same_v<T, evaluator::FloatValue>) {
+            } else if constexpr (std::is_same_v<T, runtime::FloatValue>) {
                 oss << v.value;
-            } else if constexpr (std::is_same_v<T, evaluator::StringValue>) {
+            } else if constexpr (std::is_same_v<T, runtime::StringValue>) {
                 oss << "\"" << v.value << "\"";
-            } else if constexpr (std::is_same_v<T, evaluator::EnumValue>) {
+            } else if constexpr (std::is_same_v<T, runtime::EnumValue>) {
                 if (v.enum_name == "std::option::Option") {
                     if (v.variant == "Some" && v.payload.size() == 1 && v.payload.front()) {
                         oss << "some(" << value_to_string(*v.payload.front()) << ")";
@@ -109,7 +109,7 @@ std::string PromptBuilder::value_to_string(const evaluator::Value &val) const {
                         oss << ")";
                     }
                 }
-            } else if constexpr (std::is_same_v<T, evaluator::StructValue>) {
+            } else if constexpr (std::is_same_v<T, runtime::StructValue>) {
                 oss << v.type_name << " { ";
                 bool first = true;
                 for (const auto &[key, field_val] : v.fields) {
@@ -123,9 +123,9 @@ std::string PromptBuilder::value_to_string(const evaluator::Value &val) const {
                     }
                 }
                 oss << " }";
-            } else if constexpr (std::is_same_v<T, evaluator::DecimalValue>) {
+            } else if constexpr (std::is_same_v<T, runtime::DecimalValue>) {
                 oss << v.spelling;
-            } else if constexpr (std::is_same_v<T, evaluator::DurationValue>) {
+            } else if constexpr (std::is_same_v<T, runtime::DurationValue>) {
                 oss << v.spelling;
             }
         },
@@ -135,7 +135,7 @@ std::string PromptBuilder::value_to_string(const evaluator::Value &val) const {
     // variant-type names out of this visitor so the module can be refactored
     // without touching call sites).
     if (oss.view().empty()) {
-        if (const auto *items = evaluator::list_items(val)) {
+        if (const auto *items = runtime::list_items(val)) {
             oss << "[";
             for (std::size_t i = 0; i < items->size(); ++i) {
                 if (i > 0) {
@@ -146,8 +146,8 @@ std::string PromptBuilder::value_to_string(const evaluator::Value &val) const {
                 }
             }
             oss << "]";
-        } else if (evaluator::is_optional(val)) {
-            if (const auto *inner = evaluator::optional_inner(val)) {
+        } else if (runtime::is_optional(val)) {
+            if (const auto *inner = runtime::optional_inner(val)) {
                 oss << "some(" << value_to_string(*inner) << ")";
             } else {
                 oss << "none";
@@ -189,7 +189,7 @@ std::string PromptBuilder::build_system_prompt(const std::string &capability_nam
 }
 
 std::string PromptBuilder::build_user_prompt(const std::string &capability_name,
-                                             const std::vector<evaluator::Value> &args) const {
+                                             const std::vector<runtime::Value> &args) const {
     const auto *cap = find_capability(capability_name);
     if (cap == nullptr) {
         return "No input provided.";

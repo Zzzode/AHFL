@@ -15,7 +15,7 @@ namespace ahfl::llm_provider {
 
 namespace {
 
-[[nodiscard]] ResponseParseResult parse_success(evaluator::Value value) {
+[[nodiscard]] ResponseParseResult parse_success(runtime::Value value) {
     return ResponseParseResult{
         .value = std::move(value),
         .error_message = {},
@@ -72,28 +72,28 @@ std::string ResponseParser::extract_json_value(const std::string &json_str,
 ResponseParseResult ResponseParser::parse_primitive(const std::string &value_str,
                                                     const std::string &type_name) const {
     if (type_name == "String") {
-        return parse_success(evaluator::make_string(value_str));
+        return parse_success(runtime::make_string(value_str));
     }
     if (type_name == "Int") {
         try {
-            return parse_success(evaluator::make_int(std::stoll(value_str)));
+            return parse_success(runtime::make_int(std::stoll(value_str)));
         } catch (const std::exception &) {
             return parse_error("expected Int but got '" + value_str + "'");
         }
     }
     if (type_name == "Float") {
         try {
-            return parse_success(evaluator::make_float(std::stod(value_str)));
+            return parse_success(runtime::make_float(std::stod(value_str)));
         } catch (const std::exception &) {
             return parse_error("expected Float but got '" + value_str + "'");
         }
     }
     if (type_name == "Bool") {
         if (value_str == "true") {
-            return parse_success(evaluator::make_bool(true));
+            return parse_success(runtime::make_bool(true));
         }
         if (value_str == "false") {
-            return parse_success(evaluator::make_bool(false));
+            return parse_success(runtime::make_bool(false));
         }
         return parse_error("expected Bool but got '" + value_str + "'");
     }
@@ -103,7 +103,7 @@ ResponseParseResult ResponseParser::parse_primitive(const std::string &value_str
         // Validate whether the variant is legal
         for (const auto &variant : enum_decl->variants) {
             if (variant.name == value_str) {
-                return parse_success(evaluator::make_enum(type_name, value_str));
+                return parse_success(runtime::make_enum(type_name, value_str));
             }
         }
         return parse_error("unknown variant '" + value_str + "' for enum '" + type_name + "'");
@@ -119,7 +119,7 @@ ResponseParseResult ResponseParser::parse_struct(const std::string &json_obj,
         return parse_error("expected JSON object for struct '" + decl.name + "'");
     }
 
-    std::unordered_map<std::string, evaluator::Value> fields;
+    std::unordered_map<std::string, runtime::Value> fields;
 
     for (const auto &field : decl.fields) {
         const auto *field_json = (*parsed)->get(field.name);
@@ -163,10 +163,10 @@ ResponseParseResult ResponseParser::parse_struct(const std::string &json_obj,
         }
     }
 
-    return parse_success(evaluator::make_struct(decl.name, std::move(fields)));
+    return parse_success(runtime::make_struct(decl.name, std::move(fields)));
 }
 
-std::optional<evaluator::Value> ResponseParser::parse(const std::string &json_str,
+std::optional<runtime::Value> ResponseParser::parse(const std::string &json_str,
                                                       const std::string &expected_type) const {
     auto result = parse_with_diagnostics(json_str, expected_type);
     if (result.success()) {

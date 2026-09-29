@@ -105,6 +105,7 @@ set(AHFL_INTERNAL_INSTALL_TARGETS
     ahfl_compiler_package_graph
     ahfl_compiler_project_discovery
     ahfl_compiler_core
+    ahfl_runtime_value
     ahfl_runtime_evaluator
     ahfl_runtime_engine
     ahfl_runtime_provider_llm

@@ -1,12 +1,14 @@
 #pragma once
 
 #include "ahfl/compiler/ir/expr.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <string>
 #include <unordered_map>
 
 namespace ahfl::evaluator {
+
+using ahfl::runtime::Value;
 
 using PatternBindings = std::unordered_map<std::string, Value>;
 

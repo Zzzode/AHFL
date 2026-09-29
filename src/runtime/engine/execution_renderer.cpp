@@ -10,8 +10,8 @@
 #include "ahfl/runtime/execution_projection.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 namespace ahfl::runtime {
 namespace {
@@ -86,11 +86,11 @@ node_metadata(const WorkflowResult &result, WorkflowNodeId node) {
     return result.metadata.node(node);
 }
 
-[[nodiscard]] std::unique_ptr<JsonValue> value_json(const evaluator::Value *value) {
+[[nodiscard]] std::unique_ptr<JsonValue> value_json(const runtime::Value *value) {
     if (value == nullptr) {
         return JsonValue::make_null();
     }
-    auto parsed = ahfl::json::parse_json(evaluator::value_to_json(*value));
+    auto parsed = ahfl::json::parse_json(runtime::value_to_json(*value));
     return parsed.has_value() && *parsed ? std::move(*parsed) : JsonValue::make_null();
 }
 
@@ -440,7 +440,7 @@ ExecutionRenderResult render_human(const WorkflowResult &result, std::ostream &o
 
     out << "\nResult\n  ";
     if (const auto *value = result.output(); value != nullptr) {
-        evaluator::print_value(*value, out);
+        runtime::print_value(*value, out);
     } else {
         out << "(none)";
     }
@@ -508,7 +508,7 @@ ExecutionRenderResult render_execution_result(const WorkflowResult &result,
         return render_json_lines(result, out);
     case ExecutionOutputFormat::Quiet:
         if (const auto *value = result.output(); value != nullptr) {
-            evaluator::write_value_json(*value, out);
+            runtime::write_value_json(*value, out);
             out << '\n';
         }
         return {};

@@ -2,6 +2,9 @@
 
 namespace ahfl::evaluator {
 
+using ahfl::runtime::Value;
+using ahfl::runtime::clone_value;
+
 namespace {
 
 [[nodiscard]] std::unordered_map<std::string, Value>

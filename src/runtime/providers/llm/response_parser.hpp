@@ -5,12 +5,12 @@
 
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 namespace ahfl::llm_provider {
 
 struct ResponseParseResult {
-    std::optional<evaluator::Value> value;
+    std::optional<runtime::Value> value;
     std::string error_message;
 
     [[nodiscard]] bool success() const noexcept {
@@ -24,7 +24,7 @@ class ResponseParser {
     explicit ResponseParser(const ir::Program &program);
 
     // Parse a JSON string into a Value of the specified type
-    [[nodiscard]] std::optional<evaluator::Value> parse(const std::string &json_str,
+    [[nodiscard]] std::optional<runtime::Value> parse(const std::string &json_str,
                                                         const std::string &expected_type) const;
     [[nodiscard]] ResponseParseResult
     parse_with_diagnostics(const std::string &json_str, const std::string &expected_type) const;

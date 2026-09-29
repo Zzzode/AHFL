@@ -70,7 +70,7 @@ void CapabilityRegistry::register_mock(const std::string &name, Value mock_resul
                           const std::vector<Value> & /*args*/) -> CapabilityCallResult {
         return CapabilityCallResult{
             .status = CapabilityCallStatus::Success,
-            .value = evaluator::clone_value(*result),
+            .value = runtime::clone_value(*result),
             .error_message = {},
             .attempts = 1,
         };

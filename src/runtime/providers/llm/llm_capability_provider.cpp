@@ -1117,14 +1117,14 @@ LLMCapabilityProvider::extract_content_from_response(const std::string &response
 
 runtime::CapabilityCallResult
 LLMCapabilityProvider::invoke(const std::string &capability_name,
-                              const std::vector<evaluator::Value> &args) {
+                              const std::vector<runtime::Value> &args) {
     return invoke_with_context(runtime::CapabilityInvocationContext{}, capability_name, args);
 }
 
 runtime::CapabilityCallResult
 LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationContext &context,
                                            const std::string &capability_name,
-                                           const std::vector<evaluator::Value> &args) {
+                                           const std::vector<runtime::Value> &args) {
     const auto health_event_start = provider_health_events_.size();
     auto result = invoke_with_context_impl(context, capability_name, args);
     for (std::size_t index = health_event_start; index < provider_health_events_.size(); ++index) {
@@ -1154,7 +1154,7 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
 runtime::CapabilityCallResult LLMCapabilityProvider::invoke_with_context_impl(
     const runtime::CapabilityInvocationContext &context,
     const std::string &capability_name,
-    const std::vector<evaluator::Value> &args) {
+    const std::vector<runtime::Value> &args) {
     // Look up the capability's return type
     std::string return_type;
     if (const auto *capability = index_.find_capability(capability_name); capability != nullptr) {
@@ -1446,7 +1446,7 @@ void LLMCapabilityProvider::register_all(runtime::CapabilityRegistry &registry) 
         std::string cap_name = capability->name;
         runtime::CapabilityBinding binding;
         binding.name = cap_name;
-        binding.handler = [this, cap_name](const std::vector<evaluator::Value> &args) {
+        binding.handler = [this, cap_name](const std::vector<runtime::Value> &args) {
             return this->invoke(cap_name, args);
         };
         registry.register_capability(std::move(binding));
@@ -1456,7 +1456,7 @@ void LLMCapabilityProvider::register_all(runtime::CapabilityRegistry &registry) 
 runtime::ContextualCapabilityInvoker LLMCapabilityProvider::as_contextual_invoker() {
     return [this](const runtime::CapabilityInvocationContext &context,
                   const std::string &capability_name,
-                  const std::vector<evaluator::Value> &args) -> runtime::CapabilityCallResult {
+                  const std::vector<runtime::Value> &args) -> runtime::CapabilityCallResult {
         return invoke_with_context(context, capability_name, args);
     };
 }

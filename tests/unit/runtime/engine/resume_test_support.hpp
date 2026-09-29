@@ -23,8 +23,8 @@
 #include "runtime/engine/core_wasm_schema_module.hpp"
 #include "runtime/engine/core_wire_codec.hpp"
 #include "runtime/engine/payload_store.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -326,9 +326,9 @@ inline std::uint64_t param_arg_hash(const VerifiedCoreWasmSchemaModule &mod,
     if (!decoded.ok()) {
         return 0;
     }
-    std::vector<ahfl::evaluator::Value> v;
+    std::vector<ahfl::runtime::Value> v;
     v.push_back(std::move(*decoded.value));
-    return ahfl::evaluator::hash_values(v);
+    return ahfl::runtime::hash_values(v);
 }
 
 // D2b-4: the controller's canonical typed Param digest for a call site --
@@ -342,7 +342,7 @@ inline ahfl::support::Sha256Digest param_canonical_digest(const VerifiedCoreWasm
     auto cs = mod.resolve(csm::ManifestCallSiteIndex{call_site});
     auto dom = ahfl::json::parse_json(param_json);
     auto decoded = ahfl::runtime::wire_codec::decode_json(**dom, cs.call_site->param_binding());
-    const std::string canonical = ahfl::evaluator::value_to_json(*decoded.value);
+    const std::string canonical = ahfl::runtime::value_to_json(*decoded.value);
     return ahfl::support::sha256(std::span<const std::uint8_t>(
         reinterpret_cast<const std::uint8_t *>(canonical.data()), canonical.size()));
 }

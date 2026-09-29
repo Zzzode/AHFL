@@ -9,9 +9,11 @@
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/evaluator.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 namespace ahfl::evaluator {
+
+using ahfl::runtime::Value;
 
 // ============================================================================
 // Execution Outcome - control-flow result after a statement executes

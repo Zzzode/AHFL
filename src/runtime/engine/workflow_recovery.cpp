@@ -3,7 +3,7 @@
 #include "ahfl/runtime/execution_projection.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <cstdint>
 #include <exception>
@@ -117,14 +117,14 @@ non_negative_id(const JsonValue &object, std::string_view key) {
         if (entry.authoritative_json.has_value() || !entry.result_present.has_value()) {
             return false; // ill-formed NativeOnly state
         }
-        const std::string wire = evaluator::value_to_json(entry.result);
+        const std::string wire = runtime::value_to_json(entry.result);
         bool present = *entry.result_present;
         // P0-19 save-local normalization (no caller mutation): a present bare
         // NoneValue is the established valueless-success compat case; persist it as
         // presence=false so a later Unit-binding decode does not fabricate a Unit.
         const bool is_bare_none =
-            std::holds_alternative<evaluator::NoneValue>(entry.result.node);
-        const bool is_unit = std::holds_alternative<evaluator::UnitValue>(entry.result.node);
+            std::holds_alternative<runtime::NoneValue>(entry.result.node);
+        const bool is_unit = std::holds_alternative<runtime::UnitValue>(entry.result.node);
         if (present && is_bare_none) {
             present = false;
         }
@@ -163,7 +163,7 @@ non_negative_id(const JsonValue &object, std::string_view key) {
         item->set("node_id", id_json(node.node.index()));
         item->set("agent_id", id_json(node.agent.index()));
         if (node.output.has_value()) {
-            auto output = ahfl::json::parse_json(evaluator::value_to_json(*node.output));
+            auto output = ahfl::json::parse_json(runtime::value_to_json(*node.output));
             if (!output.has_value() || !*output) {
                 return {};
             }
@@ -183,7 +183,7 @@ non_negative_id(const JsonValue &object, std::string_view key) {
         record->set("pending_cap_id", id_json(suspended.pending_cap_id));
         record->set("pending_ordinal", id_json(static_cast<std::size_t>(suspended.pending_ordinal)));
         if (suspended.node_input.has_value()) {
-            auto input = ahfl::json::parse_json(evaluator::value_to_json(*suspended.node_input));
+            auto input = ahfl::json::parse_json(runtime::value_to_json(*suspended.node_input));
             if (!input.has_value() || !*input) {
                 return {};
             }
@@ -305,7 +305,7 @@ WorkflowRecoveryStore::load() const {
             // instead of serialize_json -> value_from_json, so numeric provenance
             // is preserved and an ambiguous number in a corrupt snapshot fails
             // closed rather than silently degrading.
-            auto value = evaluator::value_from_json(*output);
+            auto value = runtime::value_from_json(*output);
             if (!value.has_value()) {
                 return std::unexpected(WorkflowRecoveryError::InvalidSnapshot);
             }
@@ -338,7 +338,7 @@ WorkflowRecoveryStore::load() const {
             .pending_ordinal = static_cast<std::uint64_t>(*pending_ordinal),
         };
         if (node_input->kind != ahfl::json::Kind::Null) {
-            auto value = evaluator::value_from_json(*node_input); // direct DOM (P0-10)
+            auto value = runtime::value_from_json(*node_input); // direct DOM (P0-10)
             if (!value.has_value()) {
                 return std::unexpected(WorkflowRecoveryError::InvalidSnapshot);
             }
@@ -445,10 +445,10 @@ WorkflowRecoveryStore::load() const {
             // placeholder and keep loading — the authoritative JSON still flows to
             // the per-ordinal exact binding decode at consume. Trust paths MUST NOT
             // read `entry.result` under Legacy/Sidecar.
-            if (auto projected = evaluator::value_from_json(*value); projected.has_value()) {
+            if (auto projected = runtime::value_from_json(*value); projected.has_value()) {
                 entry.result = std::move(*projected);
             } else {
-                entry.result = evaluator::make_none();
+                entry.result = runtime::make_none();
             }
             record.memo.push_back(std::move(entry));
         }
@@ -497,7 +497,7 @@ materialize_workflow_recovery_snapshot(const WorkflowResult &result,
             if (value == nullptr) {
                 return std::unexpected(WorkflowRecoveryError::InvalidSnapshot);
             }
-            state.output = evaluator::clone_value(*value);
+            state.output = runtime::clone_value(*value);
         }
         snapshot.completed_nodes.push_back(std::move(state));
     }

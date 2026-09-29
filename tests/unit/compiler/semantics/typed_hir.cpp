@@ -32,7 +32,7 @@
 #include "runtime/evaluator/evaluator.hpp"
 #include "runtime/evaluator/executor.hpp"
 #include "runtime/evaluator/runtime_fn_table.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -377,13 +377,14 @@ const ahfl::TypedExpr *find_by_range(const std::vector<ahfl::TypedExpr> &exprs,
 // via doctest MESSAGE so failures have an actionable cause.
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] std::optional<ahfl::evaluator::Value>
+[[nodiscard]] std::optional<ahfl::runtime::Value>
 run_project_caller(const ahfl::Frontend &frontend,
                    const std::filesystem::path &root,
                    const std::vector<std::filesystem::path> &entry_files,
                    std::string_view caller_name = "caller") {
     using namespace ahfl;
     using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
 
     const auto parse = ahfl::parse_project(
         frontend,
@@ -5045,21 +5046,21 @@ fn caller_float() -> String effect Pure decreases 0 {
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_bool");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "true");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_int");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "42");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_float");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "3.14");
     }
@@ -5104,21 +5105,21 @@ fn caller_emit() -> String effect Pure decreases 0 {
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_parse_valid");
         REQUIRE(r.has_value());
-        const auto *bv = std::get_if<ahfl::evaluator::BoolValue>(&r->node);
+        const auto *bv = std::get_if<ahfl::runtime::BoolValue>(&r->node);
         REQUIRE(bv != nullptr);
         CHECK(bv->value == true);
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_parse_invalid");
         REQUIRE(r.has_value());
-        const auto *bv = std::get_if<ahfl::evaluator::BoolValue>(&r->node);
+        const auto *bv = std::get_if<ahfl::runtime::BoolValue>(&r->node);
         REQUIRE(bv != nullptr);
         CHECK(bv->value == true);
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_emit");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "null");
     }
@@ -5147,7 +5148,7 @@ fn caller() -> String effect Pure decreases 0 {
 
     const auto result = run_project_caller(frontend, root, {caller_path});
     REQUIRE(result.has_value());
-    const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&result->node);
+    const auto *sv = std::get_if<ahfl::runtime::StringValue>(&result->node);
     REQUIRE(sv != nullptr);
     CHECK(sv->value == "5.14");
 }
@@ -5175,7 +5176,7 @@ fn caller() -> Int effect Pure decreases 0 {
 
     const auto result = run_project_caller(frontend, root, {caller_path});
     REQUIRE(result.has_value());
-    const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&result->node);
+    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&result->node);
     REQUIRE(iv != nullptr);
     CHECK(iv->value == 27);
 }
@@ -5229,21 +5230,21 @@ fn caller_no_args() -> String effect Pure decreases 0 {
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_hello");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "hello, world!");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_two");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "2 + 3 = 5");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_no_args");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "just-text");
     }
@@ -5291,28 +5292,28 @@ fn caller_float_arg() -> String effect Pure decreases 0 {
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_empty_tpl");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_consecutive");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "42");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_suffix_only");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "true tail");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_float_arg");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "v=3.14");
     }
@@ -5387,7 +5388,7 @@ fn caller_float_promote() -> String effect Pure decreases 0 {
         // as_int on JInt(7) → Some(7) → int_to_string(7) → "7".
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_int_ok");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "7");
     }
@@ -5395,7 +5396,7 @@ fn caller_float_promote() -> String effect Pure decreases 0 {
         // as_int on JFloat(3.5) → None → "REJECTED" (odd fraction fails is_whole_number).
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_int_reject");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "REJECTED");
     }
@@ -5403,7 +5404,7 @@ fn caller_float_promote() -> String effect Pure decreases 0 {
         // as_float on JInt(5) → Some(5.0) → float_to_string(5.0) → "5".
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_float_promote");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "5");
     }
@@ -5463,7 +5464,7 @@ fn caller_at_oob() -> String effect Pure decreases 0 {
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_is_array");
         REQUIRE(r.has_value());
-        const auto *bv = std::get_if<ahfl::evaluator::BoolValue>(&r->node);
+        const auto *bv = std::get_if<ahfl::runtime::BoolValue>(&r->node);
         REQUIRE(bv != nullptr);
         CHECK(bv->value == true);
     }
@@ -5471,14 +5472,14 @@ fn caller_at_oob() -> String effect Pure decreases 0 {
         // at(1) on [10,20,30] → JInt(20) → as_int → Some(20) → emit(JInt(20)).
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_at_1");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "20");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_at_oob");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "OOB");
     }
@@ -5537,7 +5538,7 @@ fn caller_get_missing() -> String effect Pure decreases 0 {
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_is_object");
         REQUIRE(r.has_value());
-        const auto *bv = std::get_if<ahfl::evaluator::BoolValue>(&r->node);
+        const auto *bv = std::get_if<ahfl::runtime::BoolValue>(&r->node);
         REQUIRE(bv != nullptr);
         CHECK(bv->value == true);
     }
@@ -5545,14 +5546,14 @@ fn caller_get_missing() -> String effect Pure decreases 0 {
         // get("b") on {"a":1,"b":2} → JInt(2) → as_int → Some(2) → emit(JInt(2)).
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_get_b");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "2");
     }
     {
         const auto r = run_project_caller(frontend, root, {caller_path}, "caller_get_missing");
         REQUIRE(r.has_value());
-        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        const auto *sv = std::get_if<ahfl::runtime::StringValue>(&r->node);
         REQUIRE(sv != nullptr);
         CHECK(sv->value == "MISSING");
     }

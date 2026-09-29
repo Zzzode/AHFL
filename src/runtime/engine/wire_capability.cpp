@@ -108,14 +108,14 @@ value_from_wire_response_body(std::string body,
         if (body.empty()) {
             return CapabilityCallResult{
                 .status = CapabilityCallStatus::Success,
-                .value = evaluator::make_none(),
+                .value = runtime::make_none(),
                 .error_message = {},
                 .attempts = 1,
             };
         }
         return CapabilityCallResult{
             .status = CapabilityCallStatus::Success,
-            .value = Value{evaluator::StringValue{std::move(body)}},
+            .value = Value{runtime::StringValue{std::move(body)}},
             .error_message = {},
             .attempts = 1,
         };
@@ -134,7 +134,7 @@ value_from_wire_response_body(std::string body,
     if (body.empty()) {
         return CapabilityCallResult{
             .status = CapabilityCallStatus::Success,
-            .value = evaluator::make_none(),
+            .value = runtime::make_none(),
             .error_message = {},
             .attempts = 1,
         };

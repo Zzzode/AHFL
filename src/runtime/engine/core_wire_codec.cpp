@@ -1,7 +1,7 @@
 #include "runtime/engine/core_wire_codec.hpp"
 
 #include "runtime/engine/core_wire_codec_recovery.hpp"
-#include "runtime/evaluator/scalar_spelling.hpp"
+#include "runtime/value/scalar_spelling.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -39,8 +39,7 @@ using ahfl::ir::core::CoreWireSchemaUuid;
 using ahfl::ir::core::CoreWireSchemaVariant;
 using ahfl::ir::core::CoreWireSequenceKind;
 
-using evaluator::Value;
-namespace scalar_spelling = evaluator::scalar_spelling;
+namespace scalar_spelling = runtime::scalar_spelling;
 
 constexpr std::string_view kOptionEnumName = "std::option::Option";
 
@@ -143,7 +142,7 @@ class Decoder {
         if (json.kind != json::Kind::Null) {
             return WireDecodeResult::failure("wire-codec: expected null for Unit");
         }
-        return WireDecodeResult::success(evaluator::make_unit());
+        return WireDecodeResult::success(runtime::make_unit());
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -151,7 +150,7 @@ class Decoder {
         if (json.kind != json::Kind::Bool) {
             return WireDecodeResult::failure("wire-codec: expected bool");
         }
-        return WireDecodeResult::success(evaluator::make_bool(json.bool_val));
+        return WireDecodeResult::success(runtime::make_bool(json.bool_val));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -167,7 +166,7 @@ class Decoder {
         if (!int_in_bounds(schema, *signed_int)) {
             return WireDecodeResult::failure("wire-codec: integer out of schema bounds");
         }
-        return WireDecodeResult::success(evaluator::make_int(*signed_int));
+        return WireDecodeResult::success(runtime::make_int(*signed_int));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -187,7 +186,7 @@ class Decoder {
             if (!std::isfinite(widened)) {
                 return WireDecodeResult::failure("wire-codec: float must be finite");
             }
-            return WireDecodeResult::success(evaluator::make_float(widened));
+            return WireDecodeResult::success(runtime::make_float(widened));
         }
         // Must be a JSON float with float syntax and finite — never an Int widened
         // to float, and never an IntegerFallback (an out-of-uint64 integer token the
@@ -200,7 +199,7 @@ class Decoder {
         if (!std::isfinite(json.float_val)) {
             return WireDecodeResult::failure("wire-codec: float must be finite");
         }
-        return WireDecodeResult::success(evaluator::make_float(json.float_val));
+        return WireDecodeResult::success(runtime::make_float(json.float_val));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -211,7 +210,7 @@ class Decoder {
         if (!string_len_in_bounds(schema, json.string_val)) {
             return WireDecodeResult::failure("wire-codec: string length out of schema bounds");
         }
-        return WireDecodeResult::success(evaluator::make_string(json.string_val));
+        return WireDecodeResult::success(runtime::make_string(json.string_val));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -227,7 +226,7 @@ class Decoder {
             return WireDecodeResult::failure("wire-codec: Decimal scale does not match schema");
         }
         // Preserve the input spelling verbatim; parsing was validation only.
-        return WireDecodeResult::success(evaluator::make_decimal(json.string_val));
+        return WireDecodeResult::success(runtime::make_decimal(json.string_val));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -239,7 +238,7 @@ class Decoder {
             return WireDecodeResult::failure("wire-codec: malformed Duration spelling");
         }
         // Preserve the input spelling verbatim; parsing was validation only.
-        return WireDecodeResult::success(evaluator::make_duration(json.string_val));
+        return WireDecodeResult::success(runtime::make_duration(json.string_val));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -259,7 +258,7 @@ class Decoder {
         if (!ts_int.has_value()) {
             return WireDecodeResult::failure("wire-codec: Timestamp _timestamp must be an integer");
         }
-        return WireDecodeResult::success(evaluator::make_timestamp(*ts_int));
+        return WireDecodeResult::success(runtime::make_timestamp(*ts_int));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -276,7 +275,7 @@ class Decoder {
             return WireDecodeResult::failure(
                 "wire-codec: UUID must be exactly 32 lowercase hex chars");
         }
-        auto uuid = evaluator::make_uuid(hex->string_val);
+        auto uuid = runtime::make_uuid(hex->string_val);
         if (!uuid.has_value()) {
             return WireDecodeResult::failure("wire-codec: malformed UUID spelling");
         }
@@ -289,13 +288,13 @@ class Decoder {
         // decoded under the Some child (the compact form, NOT value_json's
         // {"_enum":...} object).
         if (json.kind == json::Kind::Null) {
-            return WireDecodeResult::success(evaluator::make_option_none());
+            return WireDecodeResult::success(runtime::make_option_none());
         }
         auto inner = decode(json, schema.value);
         if (!inner.ok()) {
             return inner;
         }
-        return WireDecodeResult::success(evaluator::make_option_some(std::move(*inner.value)));
+        return WireDecodeResult::success(runtime::make_option_some(std::move(*inner.value)));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -325,14 +324,14 @@ class Decoder {
             // make_set would silently dedup, so the duplicate check must precede it.
             for (std::size_t i = 0; i < items.size(); ++i) {
                 for (std::size_t j = i + 1; j < items.size(); ++j) {
-                    if (evaluator::structurally_equal(items[i], items[j])) {
+                    if (runtime::structurally_equal(items[i], items[j])) {
                         return WireDecodeResult::failure("wire-codec: duplicate element in Set");
                     }
                 }
             }
-            return WireDecodeResult::success(evaluator::make_set(std::move(items)));
+            return WireDecodeResult::success(runtime::make_set(std::move(items)));
         }
-        return WireDecodeResult::success(evaluator::make_list(std::move(items)));
+        return WireDecodeResult::success(runtime::make_list(std::move(items)));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -368,9 +367,9 @@ class Decoder {
             if (!decoded_val.ok()) {
                 return decoded_val;
             }
-            entries.emplace_back(evaluator::make_string(key), std::move(*decoded_val.value));
+            entries.emplace_back(runtime::make_string(key), std::move(*decoded_val.value));
         }
-        return WireDecodeResult::success(evaluator::make_map(std::move(entries)));
+        return WireDecodeResult::success(runtime::make_map(std::move(entries)));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -414,7 +413,7 @@ class Decoder {
             }
             fields.emplace(field.wire_name, std::move(*decoded.value));
         }
-        return WireDecodeResult::success(evaluator::make_struct(schema.wire_name, std::move(fields)));
+        return WireDecodeResult::success(runtime::make_struct(schema.wire_name, std::move(fields)));
     }
 
     [[nodiscard]] WireDecodeResult decode_shape(const json::JsonValue &json,
@@ -459,7 +458,7 @@ class Decoder {
                 return WireDecodeResult::failure("wire-codec: unit variant must carry no payload");
             }
             return WireDecodeResult::success(
-                evaluator::make_enum(schema.wire_name, variant->wire_name));
+                runtime::make_enum(schema.wire_name, variant->wire_name));
         case CoreWirePayloadKind::Tuple: {
             // Exactly {_enum, _variant, _payload}.
             if (json.object_fields.size() != 3) {
@@ -484,7 +483,7 @@ class Decoder {
                 }
                 payload_values.push_back(std::move(*decoded.value));
             }
-            return WireDecodeResult::success(evaluator::make_enum(
+            return WireDecodeResult::success(runtime::make_enum(
                 schema.wire_name, variant->wire_name, std::move(payload_values)));
         }
         case CoreWirePayloadKind::Struct: {
@@ -523,7 +522,7 @@ class Decoder {
                 }
                 named_values.emplace(slot.wire_name, std::move(*decoded.value));
             }
-            return WireDecodeResult::success(evaluator::make_enum(
+            return WireDecodeResult::success(runtime::make_enum(
                 schema.wire_name, variant->wire_name, std::move(named_values)));
         }
         }
@@ -552,7 +551,7 @@ class Decoder {
             }
             items.push_back(std::move(*decoded.value));
         }
-        return WireDecodeResult::success(evaluator::make_list(std::move(items)));
+        return WireDecodeResult::success(runtime::make_list(std::move(items)));
     }
 };
 
@@ -577,7 +576,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaUnit &) {
-        if (!std::holds_alternative<evaluator::UnitValue>(value.node)) {
+        if (!std::holds_alternative<runtime::UnitValue>(value.node)) {
             return SchemaValidationResult::fail("wire-codec: expected Unit value");
         }
         return SchemaValidationResult::ok();
@@ -585,7 +584,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaBool &) {
-        if (!std::holds_alternative<evaluator::BoolValue>(value.node)) {
+        if (!std::holds_alternative<runtime::BoolValue>(value.node)) {
             return SchemaValidationResult::fail("wire-codec: expected Bool value");
         }
         return SchemaValidationResult::ok();
@@ -593,7 +592,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaInt &schema) {
-        const auto *iv = std::get_if<evaluator::IntValue>(&value.node);
+        const auto *iv = std::get_if<runtime::IntValue>(&value.node);
         if (iv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected Int value");
         }
@@ -605,7 +604,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaFloat &) {
-        const auto *fv = std::get_if<evaluator::FloatValue>(&value.node);
+        const auto *fv = std::get_if<runtime::FloatValue>(&value.node);
         if (fv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected Float value (no int widening)");
         }
@@ -617,7 +616,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaString &schema) {
-        const auto *sv = std::get_if<evaluator::StringValue>(&value.node);
+        const auto *sv = std::get_if<runtime::StringValue>(&value.node);
         if (sv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected String value");
         }
@@ -629,7 +628,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaDecimal &schema) {
-        const auto *dv = std::get_if<evaluator::DecimalValue>(&value.node);
+        const auto *dv = std::get_if<runtime::DecimalValue>(&value.node);
         if (dv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected Decimal value");
         }
@@ -645,7 +644,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaDuration &) {
-        const auto *dv = std::get_if<evaluator::DurationValue>(&value.node);
+        const auto *dv = std::get_if<runtime::DurationValue>(&value.node);
         if (dv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected Duration value");
         }
@@ -657,7 +656,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaTimestamp &) {
-        if (!std::holds_alternative<evaluator::TimestampValue>(value.node)) {
+        if (!std::holds_alternative<runtime::TimestampValue>(value.node)) {
             return SchemaValidationResult::fail("wire-codec: expected Timestamp value");
         }
         return SchemaValidationResult::ok();
@@ -665,7 +664,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaUuid &) {
-        const auto *uv = std::get_if<evaluator::UuidValue>(&value.node);
+        const auto *uv = std::get_if<runtime::UuidValue>(&value.node);
         if (uv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected Uuid value");
         }
@@ -679,7 +678,7 @@ class Validator {
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaOption &schema) {
         // Exact Option EnumValue only — a bare NoneValue is NOT an Option.
-        const auto *ev = std::get_if<evaluator::EnumValue>(&value.node);
+        const auto *ev = std::get_if<runtime::EnumValue>(&value.node);
         if (ev == nullptr || ev->enum_name != kOptionEnumName) {
             return SchemaValidationResult::fail("wire-codec: expected Option enum value");
         }
@@ -702,7 +701,7 @@ class Validator {
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaSequence &schema) {
         if (schema.kind == CoreWireSequenceKind::Set) {
-            const auto *sv = std::get_if<evaluator::SetValue>(&value.node);
+            const auto *sv = std::get_if<runtime::SetValue>(&value.node);
             if (sv == nullptr) {
                 return SchemaValidationResult::fail("wire-codec: expected Set value");
             }
@@ -726,7 +725,7 @@ class Validator {
             }
             return SchemaValidationResult::ok();
         }
-        const auto *lv = std::get_if<evaluator::ListValue>(&value.node);
+        const auto *lv = std::get_if<runtime::ListValue>(&value.node);
         if (lv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected List value");
         }
@@ -746,7 +745,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaMap &schema) {
-        const auto *mv = std::get_if<evaluator::MapValue>(&value.node);
+        const auto *mv = std::get_if<runtime::MapValue>(&value.node);
         if (mv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected Map value");
         }
@@ -767,7 +766,7 @@ class Validator {
             if (!key || !val) {
                 return SchemaValidationResult::fail("wire-codec: null Map key or value");
             }
-            const auto *key_str = std::get_if<evaluator::StringValue>(&key->node);
+            const auto *key_str = std::get_if<runtime::StringValue>(&key->node);
             if (key_str == nullptr) {
                 return SchemaValidationResult::fail("wire-codec: map key must be a String value");
             }
@@ -787,7 +786,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaStruct &schema) {
-        const auto *sv = std::get_if<evaluator::StructValue>(&value.node);
+        const auto *sv = std::get_if<runtime::StructValue>(&value.node);
         if (sv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected Struct value");
         }
@@ -812,7 +811,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaEnum &schema) {
-        const auto *ev = std::get_if<evaluator::EnumValue>(&value.node);
+        const auto *ev = std::get_if<runtime::EnumValue>(&value.node);
         if (ev == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected Enum value");
         }
@@ -873,7 +872,7 @@ class Validator {
 
     [[nodiscard]] SchemaValidationResult check_shape(const Value &value,
                                                      const CoreWireSchemaTuple &schema) {
-        const auto *lv = std::get_if<evaluator::ListValue>(&value.node);
+        const auto *lv = std::get_if<runtime::ListValue>(&value.node);
         if (lv == nullptr) {
             return SchemaValidationResult::fail("wire-codec: expected tuple (list) value");
         }
@@ -896,21 +895,21 @@ class Validator {
     // require the clone to be structurally equal to the original. No second
     // comparator, no public comparator API. Child/type/null checks read the
     // ORIGINAL Value directly (in the caller), not the canonical copy.
-    [[nodiscard]] SchemaValidationResult check_set_canonical(const evaluator::SetValue &sv) {
-        Value original{evaluator::SetValue{}};
+    [[nodiscard]] SchemaValidationResult check_set_canonical(const runtime::SetValue &sv) {
+        Value original{runtime::SetValue{}};
         std::vector<Value> clones;
         clones.reserve(sv.items.size());
-        auto &orig_items = std::get<evaluator::SetValue>(original.node).items;
+        auto &orig_items = std::get<runtime::SetValue>(original.node).items;
         orig_items.reserve(sv.items.size());
         for (const auto &item : sv.items) {
             if (!item) {
                 return SchemaValidationResult::fail("wire-codec: null Set element");
             }
-            clones.push_back(evaluator::clone_value(*item));
-            orig_items.push_back(std::make_unique<Value>(evaluator::clone_value(*item)));
+            clones.push_back(runtime::clone_value(*item));
+            orig_items.push_back(std::make_unique<Value>(runtime::clone_value(*item)));
         }
-        const Value canonical = evaluator::make_set(std::move(clones));
-        if (!evaluator::structurally_equal(original, canonical)) {
+        const Value canonical = runtime::make_set(std::move(clones));
+        if (!runtime::structurally_equal(original, canonical)) {
             return SchemaValidationResult::fail(
                 "wire-codec: Set is not canonical (unordered or has duplicates)");
         }
@@ -920,25 +919,25 @@ class Validator {
     // Map canonicality WITHOUT mutating the input (Codex C2b lock #1). Requires
     // every key to be a non-null exact StringValue before cloning, since
     // make_map's last-write-wins would otherwise silently collapse duplicates.
-    [[nodiscard]] SchemaValidationResult check_map_canonical(const evaluator::MapValue &mv) {
-        Value original{evaluator::MapValue{}};
+    [[nodiscard]] SchemaValidationResult check_map_canonical(const runtime::MapValue &mv) {
+        Value original{runtime::MapValue{}};
         std::vector<std::pair<Value, Value>> clones;
         clones.reserve(mv.entries.size());
-        auto &orig_entries = std::get<evaluator::MapValue>(original.node).entries;
+        auto &orig_entries = std::get<runtime::MapValue>(original.node).entries;
         orig_entries.reserve(mv.entries.size());
         for (const auto &[key, val] : mv.entries) {
             if (!key || !val) {
                 return SchemaValidationResult::fail("wire-codec: null Map key or value");
             }
-            if (!std::holds_alternative<evaluator::StringValue>(key->node)) {
+            if (!std::holds_alternative<runtime::StringValue>(key->node)) {
                 return SchemaValidationResult::fail("wire-codec: map key must be a String value");
             }
-            clones.emplace_back(evaluator::clone_value(*key), evaluator::clone_value(*val));
-            orig_entries.emplace_back(std::make_unique<Value>(evaluator::clone_value(*key)),
-                                      std::make_unique<Value>(evaluator::clone_value(*val)));
+            clones.emplace_back(runtime::clone_value(*key), runtime::clone_value(*val));
+            orig_entries.emplace_back(std::make_unique<Value>(runtime::clone_value(*key)),
+                                      std::make_unique<Value>(runtime::clone_value(*val)));
         }
-        const Value canonical = evaluator::make_map(std::move(clones));
-        if (!evaluator::structurally_equal(original, canonical)) {
+        const Value canonical = runtime::make_map(std::move(clones));
+        if (!runtime::structurally_equal(original, canonical)) {
             return SchemaValidationResult::fail(
                 "wire-codec: Map is not canonical (unordered or has duplicate keys)");
         }
@@ -962,7 +961,7 @@ WireDecodeResult decode_json_legacy_v2(const json::JsonValue &json,
     return decoder.decode(json, binding.root());
 }
 
-SchemaValidationResult validate_value(const evaluator::Value &value,
+SchemaValidationResult validate_value(const runtime::Value &value,
                                       const ir::core::VerifiedWireSchemaBinding &binding) {
     Validator validator(binding.table());
     return validator.check(value, binding.root());

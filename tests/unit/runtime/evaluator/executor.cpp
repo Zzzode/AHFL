@@ -2,7 +2,7 @@
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/evaluator/eval_context.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -13,6 +13,7 @@ namespace {
 
 using namespace ahfl;
 using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
 using namespace ahfl::ir;
 
 int test_count = 0;

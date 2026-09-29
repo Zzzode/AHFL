@@ -12,7 +12,6 @@
 namespace {
 
 using namespace ahfl::runtime;
-using namespace ahfl::evaluator;
 
 int test_count = 0;
 int pass_count = 0;

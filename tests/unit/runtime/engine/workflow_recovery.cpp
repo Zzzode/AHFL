@@ -2,7 +2,7 @@
 #include <doctest.h>
 
 #include "runtime/engine/workflow_recovery.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -11,7 +11,6 @@
 
 namespace {
 
-using namespace ahfl::evaluator;
 using namespace ahfl::runtime;
 
 [[nodiscard]] std::filesystem::path unique_store_path() {
@@ -271,7 +270,7 @@ TEST_CASE("workflow recovery v2 round-trips with suspended record and memo") {
 namespace {
 
 // Helper: build a v2 snapshot with a single memo entry carrying `result`.
-[[nodiscard]] WorkflowRecoverySnapshot memo_snapshot(ahfl::evaluator::Value result,
+[[nodiscard]] WorkflowRecoverySnapshot memo_snapshot(ahfl::runtime::Value result,
                                                      std::optional<bool> present = std::nullopt) {
     WorkflowRecoverySnapshot snap{
         .workflow = WorkflowId{5},
@@ -306,7 +305,7 @@ namespace {
 // authoritative_json preserved verbatim; the native `result` projection may be
 // lossy but is never the authority.
 TEST_CASE("workflow recovery memo sidecar preserves exact wire spelling") {
-    auto roundtrip_wire = [](ahfl::evaluator::Value v) -> std::string {
+    auto roundtrip_wire = [](ahfl::runtime::Value v) -> std::string {
         const auto path = unique_store_path();
         WorkflowRecoveryStore store(path);
         const std::string expected_wire = value_to_json(v);
@@ -331,13 +330,13 @@ TEST_CASE("workflow recovery memo sidecar preserves exact wire spelling") {
     CHECK(roundtrip_wire(make_option_none()) == "null");
     // Set / Map / Unit exact spellings.
     {
-        std::vector<ahfl::evaluator::Value> items;
+        std::vector<ahfl::runtime::Value> items;
         items.push_back(make_int(1));
         items.push_back(make_int(2));
         CHECK(roundtrip_wire(make_set(std::move(items))) == "[1,2]");
     }
     {
-        std::vector<std::pair<ahfl::evaluator::Value, ahfl::evaluator::Value>> entries;
+        std::vector<std::pair<ahfl::runtime::Value, ahfl::runtime::Value>> entries;
         entries.emplace_back(make_string("k"), make_string("v"));
         CHECK(roundtrip_wire(make_map(std::move(entries))) == R"({"k":"v"})");
     }
@@ -386,7 +385,7 @@ TEST_CASE("workflow recovery rejects presence=false with a non-null result") {
 TEST_CASE("workflow recovery loads a Map with a reserved-marker key via sidecar") {
     const auto path = unique_store_path();
     WorkflowRecoveryStore store(path);
-    std::vector<std::pair<ahfl::evaluator::Value, ahfl::evaluator::Value>> entries;
+    std::vector<std::pair<ahfl::runtime::Value, ahfl::runtime::Value>> entries;
     entries.emplace_back(make_string("_timestamp"), make_string("ordinary"));
     entries.emplace_back(make_string("plain"), make_string("value"));
     auto map_value = make_map(std::move(entries));
@@ -415,10 +414,10 @@ TEST_CASE("workflow recovery loads a Map with a reserved-marker key via sidecar"
 TEST_CASE("workflow recovery loads a Map with a nested rich value via sidecar") {
     const auto path = unique_store_path();
     WorkflowRecoveryStore store(path);
-    std::vector<std::pair<ahfl::evaluator::Value, ahfl::evaluator::Value>> inner_entries;
+    std::vector<std::pair<ahfl::runtime::Value, ahfl::runtime::Value>> inner_entries;
     inner_entries.emplace_back(make_string("amount"), make_decimal("9.99"));
     auto inner_map = make_map(std::move(inner_entries));
-    std::vector<std::pair<ahfl::evaluator::Value, ahfl::evaluator::Value>> entries;
+    std::vector<std::pair<ahfl::runtime::Value, ahfl::runtime::Value>> entries;
     entries.emplace_back(make_string("_enum"), std::move(inner_map));
     auto map_value = make_map(std::move(entries));
     const std::string expected_wire = value_to_json(map_value);

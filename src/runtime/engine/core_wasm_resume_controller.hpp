@@ -46,7 +46,7 @@
 #include "runtime/engine/durable_effect_authority.hpp"  // DurableEffectAuthority, ResultHandle
 #include "runtime/engine/payload_store.hpp"              // ResumeSnapshot, payload_store::Slot
 #include "runtime/engine/payload_store_codec.hpp"        // PayloadStoreError
-#include "runtime/evaluator/value.hpp"                   // evaluator::Value
+#include "runtime/value/value.hpp"                   // runtime::Value
 
 namespace ahfl::runtime::core_wasm_resume_controller {
 
@@ -256,7 +256,7 @@ struct NeedInjectedSlot {};
 struct ReadyForLive {
     core_wasm_schema_module::VerifiedCoreWasmCallSite call_site;
     std::uint64_t arg_hash{0};
-    std::vector<evaluator::Value> params; // exactly one element
+    std::vector<runtime::Value> params; // exactly one element
 };
 
 // D2b-4 decision: the D2b authority already has a SUCCEEDED terminal for this

@@ -20,7 +20,7 @@
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -35,11 +35,11 @@ using ahfl::runtime::CapabilityCallResult;
 using ahfl::runtime::CapabilityCallStatus;
 using ahfl::runtime::CapabilityInvocationContext;
 using ahfl::runtime::WorkflowRecoverySnapshot;
+using ahfl::runtime::Value;
 using ahfl::runtime::WorkflowRecoveryStore;
 using ahfl::runtime::WorkflowRuntime;
 using ahfl::runtime::WorkflowRuntimeConfig;
 using ahfl::runtime::WorkflowStatus;
-using Value = ahfl::evaluator::Value;
 
 int test_count = 0;
 int pass_count = 0;
@@ -98,20 +98,20 @@ compile_execution_demo(const std::filesystem::path &repo) {
 // The IncidentRequest input used by the demo (mirrors inputs/high-severity.json).
 [[nodiscard]] Value make_incident_input() {
     std::unordered_map<std::string, Value> fields;
-    fields.emplace("ticket_id", ahfl::evaluator::make_string("INC-1001"));
-    fields.emplace("service", ahfl::evaluator::make_string("checkout"));
+    fields.emplace("ticket_id", ahfl::runtime::make_string("INC-1001"));
+    fields.emplace("service", ahfl::runtime::make_string("checkout"));
     fields.emplace("severity",
-                   ahfl::evaluator::make_enum("execution_demo::types::Severity", "High"));
-    fields.emplace("customer_impact", ahfl::evaluator::make_bool(true));
-    return ahfl::evaluator::make_struct("execution_demo::types::IncidentRequest",
+                   ahfl::runtime::make_enum("execution_demo::types::Severity", "High"));
+    fields.emplace("customer_impact", ahfl::runtime::make_bool(true));
+    return ahfl::runtime::make_struct("execution_demo::types::IncidentRequest",
                                         std::move(fields));
 }
 
 // The GeneratedSummary the "LLM" eventually produces for DraftIncidentSummary.
 [[nodiscard]] Value make_summary(const std::string &text) {
     std::unordered_map<std::string, Value> fields;
-    fields.emplace("summary", ahfl::evaluator::make_string(text));
-    return ahfl::evaluator::make_struct("execution_demo::types::GeneratedSummary",
+    fields.emplace("summary", ahfl::runtime::make_string(text));
+    return ahfl::runtime::make_struct("execution_demo::types::GeneratedSummary",
                                         std::move(fields));
 }
 
@@ -121,7 +121,7 @@ summary_of(const ahfl::runtime::WorkflowResult &result) {
     if (output == nullptr) {
         return nullptr;
     }
-    const auto *sv = std::get_if<ahfl::evaluator::StructValue>(&output->node);
+    const auto *sv = std::get_if<ahfl::runtime::StructValue>(&output->node);
     if (sv == nullptr) {
         return nullptr;
     }
@@ -129,7 +129,7 @@ summary_of(const ahfl::runtime::WorkflowResult &result) {
     if (field == nullptr) {
         return nullptr;
     }
-    const auto *str = std::get_if<ahfl::evaluator::StringValue>(&field->node);
+    const auto *str = std::get_if<ahfl::runtime::StringValue>(&field->node);
     return str != nullptr ? &str->value : nullptr;
 }
 
@@ -145,7 +145,7 @@ run_synchronous(const ahfl::ir::Program &program) {
         CapabilityCallResult r;
         r.status = CapabilityCallStatus::Success;
         r.value = name.ends_with("DraftIncidentSummary") ? make_summary(kRecoveredText)
-                                                          : ahfl::evaluator::make_none();
+                                                          : ahfl::runtime::make_none();
         return r;
     };
     WorkflowRuntime runtime(program, std::move(config));
@@ -190,7 +190,7 @@ void test_capstone(const std::filesystem::path &repo, const std::filesystem::pat
                 r.status = CapabilityCallStatus::Pending; // async: host will answer later
             } else {
                 r.status = CapabilityCallStatus::Success;
-                r.value = ahfl::evaluator::make_none();
+                r.value = ahfl::runtime::make_none();
             }
             return r;
         };
@@ -239,7 +239,7 @@ void test_capstone(const std::filesystem::path &repo, const std::filesystem::pat
             }
             CapabilityCallResult r;
             r.status = CapabilityCallStatus::Success;
-            r.value = ahfl::evaluator::make_none();
+            r.value = ahfl::runtime::make_none();
             return r;
         };
         WorkflowRuntime runtime(*cold_program, std::move(config));

@@ -15,15 +15,15 @@
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/wire_value.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 namespace ahfl::conformance {
 
 namespace {
 
 using ahfl::ir::Program;
-using ahfl::evaluator::Value;
+using ahfl::runtime::Value;
 using ahfl::runtime::AgentId;
 using ahfl::runtime::AgentResult;
 using ahfl::runtime::AgentRuntime;
@@ -53,7 +53,7 @@ build_mock_registry(const ConformanceCase &manifest, std::string &error_out) {
                             "' is 'ok' without a result frame";
                 return std::nullopt;
             }
-            auto canned = evaluator::value_from_json(*capability.result_json);
+            auto canned = runtime::value_from_json(*capability.result_json);
             if (!canned.has_value()) {
                 error_out = "failed to decode result_json for capability '" + capability.name +
                             "'";
@@ -63,7 +63,7 @@ build_mock_registry(const ConformanceCase &manifest, std::string &error_out) {
             registry.register_function(
                 capability.name,
                 [shared](const std::vector<Value> &) -> Value {
-                    return evaluator::clone_value(*shared);
+                    return runtime::clone_value(*shared);
                 });
             break;
         }
@@ -193,7 +193,7 @@ build_mock_registry(const ConformanceCase &manifest, std::string &error_out) {
     if (output != nullptr) {
         // value_to_json is canonical compact wire JSON; re-parse only to embed
         // the value subtree (never as a string) into the observation DOM.
-        auto output_dom = json::parse_json(evaluator::value_to_json(*output));
+        auto output_dom = json::parse_json(runtime::value_to_json(*output));
         if (output_dom.has_value() && *output_dom) {
             root->set("output_json", std::move(*output_dom));
         }
@@ -328,7 +328,7 @@ EvaluatorScenarioResult run_evaluator_scenario(const LoadedConformanceCase &load
         return EvaluatorScenarioResult{.ok = false, .observation_json = {}, .error = error};
     }
 
-    auto input = evaluator::value_from_json(scenario.input_json);
+    auto input = runtime::value_from_json(scenario.input_json);
     if (!input.has_value()) {
         return EvaluatorScenarioResult{
             .ok = false,

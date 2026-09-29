@@ -14,8 +14,8 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "base/json/json_value.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 #include "tooling/dap/breakpoints.hpp"
 #include "tooling/dap/dap_server.hpp"
 
@@ -99,41 +99,41 @@ struct CompileResult {
 
 // Human-readable type name for a runtime value, used as the DAP variable
 // `type` field.
-[[nodiscard]] std::string value_type_name(const evaluator::Value &v) {
+[[nodiscard]] std::string value_type_name(const runtime::Value &v) {
     return std::visit(
         Overloaded{
-            [](const evaluator::StructValue &sv) -> std::string { return sv.type_name; },
-            [](const evaluator::EnumValue &ev) -> std::string { return ev.enum_name; },
-            [](const evaluator::ListValue &) -> std::string { return "List"; },
-            [](const evaluator::SetValue &) -> std::string { return "Set"; },
-            [](const evaluator::MapValue &) -> std::string { return "Map"; },
-            [](const evaluator::NoneValue &) -> std::string { return "None"; },
-            [](const evaluator::BoolValue &) -> std::string { return "Bool"; },
-            [](const evaluator::IntValue &) -> std::string { return "Int"; },
-            [](const evaluator::FloatValue &) -> std::string { return "Float"; },
-            [](const evaluator::StringValue &) -> std::string { return "String"; },
-            [](const evaluator::DecimalValue &) -> std::string { return "Decimal"; },
-            [](const evaluator::DurationValue &) -> std::string { return "Duration"; },
-            [](const evaluator::UuidValue &) -> std::string { return "Uuid"; },
-            [](const evaluator::TimestampValue &) -> std::string { return "Timestamp"; },
-            [](const evaluator::CallableValue &) -> std::string { return "Callable"; },
-            [](const evaluator::UnitValue &) -> std::string { return "Unit"; },
+            [](const runtime::StructValue &sv) -> std::string { return sv.type_name; },
+            [](const runtime::EnumValue &ev) -> std::string { return ev.enum_name; },
+            [](const runtime::ListValue &) -> std::string { return "List"; },
+            [](const runtime::SetValue &) -> std::string { return "Set"; },
+            [](const runtime::MapValue &) -> std::string { return "Map"; },
+            [](const runtime::NoneValue &) -> std::string { return "None"; },
+            [](const runtime::BoolValue &) -> std::string { return "Bool"; },
+            [](const runtime::IntValue &) -> std::string { return "Int"; },
+            [](const runtime::FloatValue &) -> std::string { return "Float"; },
+            [](const runtime::StringValue &) -> std::string { return "String"; },
+            [](const runtime::DecimalValue &) -> std::string { return "Decimal"; },
+            [](const runtime::DurationValue &) -> std::string { return "Duration"; },
+            [](const runtime::UuidValue &) -> std::string { return "Uuid"; },
+            [](const runtime::TimestampValue &) -> std::string { return "Timestamp"; },
+            [](const runtime::InterpreterClosureRef &) -> std::string { return "Callable"; },
+            [](const runtime::UnitValue &) -> std::string { return "Unit"; },
         },
         v.node);
 }
 
 // Whether a value has children that can be expanded via a chained
 // variables request.
-[[nodiscard]] bool is_expandable(const evaluator::Value &v) {
+[[nodiscard]] bool is_expandable(const runtime::Value &v) {
     return std::visit(
         Overloaded{
-            [](const evaluator::StructValue &sv) { return !sv.fields.empty(); },
-            [](const evaluator::EnumValue &ev) {
+            [](const runtime::StructValue &sv) { return !sv.fields.empty(); },
+            [](const runtime::EnumValue &ev) {
                 return !ev.payload.empty() || !ev.named_payload.empty();
             },
-            [](const evaluator::ListValue &lv) { return !lv.items.empty(); },
-            [](const evaluator::SetValue &sv) { return !sv.items.empty(); },
-            [](const evaluator::MapValue &mv) { return !mv.entries.empty(); },
+            [](const runtime::ListValue &lv) { return !lv.items.empty(); },
+            [](const runtime::SetValue &sv) { return !sv.items.empty(); },
+            [](const runtime::MapValue &mv) { return !mv.entries.empty(); },
             [](const auto &) { return false; },
         },
         v.node);
@@ -151,14 +151,14 @@ DebugSession::~DebugSession() {
 std::string DebugSession::launch(const std::string &config_json) {
     std::string program_path;
     std::string workflow_name;
-    std::optional<evaluator::Value> workflow_input;
+    std::optional<runtime::Value> workflow_input;
     if (const auto parsed = json::parse_json(config_json);
         parsed.has_value() && *parsed && (*parsed)->is_object()) {
         program_path = json_string_field(**parsed, "program");
         workflow_name = json_string_field(**parsed, "workflow");
         if (const auto *input_field = (*parsed)->get("input"); input_field != nullptr) {
             const std::string input_json = ahfl::json::serialize_json(*input_field);
-            workflow_input = evaluator::value_from_json(input_json);
+            workflow_input = runtime::value_from_json(input_json);
             if (!workflow_input.has_value()) {
                 emit_output("stderr", "launch config \"input\" is not a valid AHFL value");
             }
@@ -209,7 +209,7 @@ std::string DebugSession::launch(const std::string &config_json) {
         if (workflow_input.has_value()) {
             workflow_input_ = std::move(*workflow_input);
         } else {
-            workflow_input_ = evaluator::make_none();
+            workflow_input_ = runtime::make_none();
         }
     }
     push_workflow_frame(workflow_name);
@@ -239,8 +239,8 @@ std::string DebugSession::launch(const std::string &config_json) {
         if (stopping_) {
             return;
         }
-        agent_outputs_[agent_id] = evaluator::clone_value(output);
-        node_results_.emplace(std::string(node_name), evaluator::clone_value(output));
+        agent_outputs_[agent_id] = runtime::clone_value(output);
+        node_results_.emplace(std::string(node_name), runtime::clone_value(output));
     };
     // Capability output / failures -> DAP `output` events (RFC 0015 Slice 7).
     // Fires on the workflow thread right after the invoker returns, for every
@@ -259,7 +259,7 @@ std::string DebugSession::launch(const std::string &config_json) {
             }
             if (result.status == runtime::CapabilityCallStatus::Success &&
                 result.value.has_value()) {
-                emit_output("stdout", evaluator::value_to_json(*result.value) + "\n");
+                emit_output("stdout", runtime::value_to_json(*result.value) + "\n");
                 return;
             }
             if (result.status != runtime::CapabilityCallStatus::Success) {
@@ -281,7 +281,7 @@ std::string DebugSession::launch(const std::string &config_json) {
            const std::vector<runtime::Value> &) -> runtime::CapabilityCallResult {
         runtime::CapabilityCallResult result;
         result.status = runtime::CapabilityCallStatus::Success;
-        result.value = evaluator::make_none();
+        result.value = runtime::make_none();
         return result;
     };
     config.cancellation_requested = [this] {
@@ -296,7 +296,7 @@ std::string DebugSession::launch(const std::string &config_json) {
 
     worker_ = std::thread([this,
                            workflow_name = std::move(workflow_name),
-                           input = evaluator::clone_value(workflow_input_)]() mutable {
+                           input = runtime::clone_value(workflow_input_)]() mutable {
         execute(std::move(workflow_name), std::move(input));
     });
     return "{}";
@@ -367,13 +367,13 @@ bool DebugSession::is_running() const noexcept {
     return worker_.joinable();
 }
 
-void DebugSession::execute(std::string workflow_name, evaluator::Value workflow_input) {
+void DebugSession::execute(std::string workflow_name, runtime::Value workflow_input) {
     auto result = runtime_->run(workflow_name, std::move(workflow_input));
 
     {
         std::lock_guard lock(mutex_);
         if (const auto *output = result.output(); output != nullptr) {
-            workflow_output_ = evaluator::clone_value(*output);
+            workflow_output_ = runtime::clone_value(*output);
         }
     }
 
@@ -475,7 +475,7 @@ void DebugSession::push_workflow_frame(std::string workflow_name) {
 void DebugSession::on_agent_input(const runtime::AgentId agent,
                                   const std::string_view agent_name,
                                   const std::string_view node_name,
-                                  const evaluator::Value &input) {
+                                  const runtime::Value &input) {
     {
         std::lock_guard lock(mutex_);
         if (stopping_) {
@@ -500,7 +500,7 @@ void DebugSession::on_agent_input(const runtime::AgentId agent,
         // after push_back, and the input map is keyed by that id.
         const std::string agent_id = frame.agent_id;
         frames_.push_back(std::move(frame));
-        agent_inputs_[agent_id] = evaluator::clone_value(input);
+        agent_inputs_[agent_id] = runtime::clone_value(input);
     }
 }
 
@@ -785,13 +785,13 @@ std::string DebugSession::variables_json(const int variables_reference) {
     std::ostringstream oss;
     oss << R"({"variables":[)";
     bool first = true;
-    auto append_var = [&](const std::string &name, const evaluator::Value *value) {
+    auto append_var = [&](const std::string &name, const runtime::Value *value) {
         if (!first) {
             oss << ",";
         }
         first = false;
         oss << R"({"name":)" << json_escape(name) << R"(,"value":)"
-            << (value != nullptr ? json_escape(evaluator::value_to_json(*value))
+            << (value != nullptr ? json_escape(runtime::value_to_json(*value))
                                  : json_escape("null"))
             << R"(,"type":)"
             << json_escape(value != nullptr ? value_type_name(*value) : std::string("None"))
@@ -914,15 +914,15 @@ parse_value_path(const std::string &expression) {
 // Resolve a single `.field` segment against a value: struct fields and named
 // enum payloads are addressable by name. Returns nullptr when the value is not
 // a keyed aggregate or has no such member.
-[[nodiscard]] const evaluator::Value *resolve_member(const evaluator::Value &value,
+[[nodiscard]] const runtime::Value *resolve_member(const runtime::Value &value,
                                                      const std::string &field) {
-    if (const auto *sv = std::get_if<evaluator::StructValue>(&value.node)) {
+    if (const auto *sv = std::get_if<runtime::StructValue>(&value.node)) {
         if (const auto it = sv->fields.find(field); it != sv->fields.end()) {
             return it->value.get();
         }
         return nullptr;
     }
-    if (const auto *ev = std::get_if<evaluator::EnumValue>(&value.node)) {
+    if (const auto *ev = std::get_if<runtime::EnumValue>(&value.node)) {
         if (const auto it = ev->named_payload.find(field); it != ev->named_payload.end()) {
             return it->value.get();
         }
@@ -962,7 +962,7 @@ std::string DebugSession::evaluate_json(const std::string &expression, const int
     const std::string &root = path->front();
 
     // Resolve the root binding using the runtime's own scope semantics.
-    const evaluator::Value *current = nullptr;
+    const runtime::Value *current = nullptr;
     if (root == "input") {
         if (const auto it = agent_inputs_.find(agent_id); it != agent_inputs_.end()) {
             current = &it->second;
@@ -989,7 +989,7 @@ std::string DebugSession::evaluate_json(const std::string &expression, const int
 
     // Walk the remaining `.field` segments.
     for (std::size_t i = 1; i < path->size(); ++i) {
-        const evaluator::Value *next = resolve_member(*current, (*path)[i]);
+        const runtime::Value *next = resolve_member(*current, (*path)[i]);
         if (next == nullptr) {
             return R"({"error":)" +
                    json_escape("no field \"" + (*path)[i] + "\" on \"" +
@@ -1000,32 +1000,32 @@ std::string DebugSession::evaluate_json(const std::string &expression, const int
     }
 
     std::ostringstream oss;
-    oss << R"({"result":)" << json_escape(evaluator::value_to_json(*current)) << R"(,"type":)"
+    oss << R"({"result":)" << json_escape(runtime::value_to_json(*current)) << R"(,"type":)"
         << json_escape(value_type_name(*current)) << R"(,"variablesReference":)"
         << register_variable_locked(*current) << "}";
     return oss.str();
 }
 
-int DebugSession::register_variable_locked(const evaluator::Value &value) {
+int DebugSession::register_variable_locked(const runtime::Value &value) {
     if (!is_expandable(value)) {
         return 0;
     }
     const int ref = next_var_ref_++;
-    variable_store_.emplace(ref, evaluator::clone_value(value));
+    variable_store_.emplace(ref, runtime::clone_value(value));
     return ref;
 }
 
-std::string DebugSession::expand_value_locked(const evaluator::Value &value) {
+std::string DebugSession::expand_value_locked(const runtime::Value &value) {
     std::ostringstream oss;
     oss << R"({"variables":[)";
     bool first = true;
-    auto append_child = [&](const std::string &name, const evaluator::Value *child) {
+    auto append_child = [&](const std::string &name, const runtime::Value *child) {
         if (!first) {
             oss << ",";
         }
         first = false;
         oss << R"({"name":)" << json_escape(name) << R"(,"value":)"
-            << (child != nullptr ? json_escape(evaluator::value_to_json(*child))
+            << (child != nullptr ? json_escape(runtime::value_to_json(*child))
                                  : json_escape("null"))
             << R"(,"type":)"
             << json_escape(child != nullptr ? value_type_name(*child) : std::string("None"))
@@ -1035,13 +1035,13 @@ std::string DebugSession::expand_value_locked(const evaluator::Value &value) {
 
     std::visit(
         Overloaded{
-            [&](const evaluator::StructValue &sv) {
+            [&](const runtime::StructValue &sv) {
                 // FieldMap iterates in name-sorted order already.
                 for (const auto &[name, value] : sv.fields) {
                     append_child(name, value.get());
                 }
             },
-            [&](const evaluator::EnumValue &ev) {
+            [&](const runtime::EnumValue &ev) {
                 // Variant marker (scalar, no children).
                 if (!first) {
                     oss << ",";
@@ -1058,21 +1058,21 @@ std::string DebugSession::expand_value_locked(const evaluator::Value &value) {
                     append_child(name, value.get());
                 }
             },
-            [&](const evaluator::ListValue &lv) {
+            [&](const runtime::ListValue &lv) {
                 for (std::size_t i = 0; i < lv.items.size(); ++i) {
                     append_child(std::to_string(i), lv.items[i].get());
                 }
             },
-            [&](const evaluator::SetValue &sv) {
+            [&](const runtime::SetValue &sv) {
                 for (std::size_t i = 0; i < sv.items.size(); ++i) {
                     append_child(std::to_string(i), sv.items[i].get());
                 }
             },
-            [&](const evaluator::MapValue &mv) {
+            [&](const runtime::MapValue &mv) {
                 for (std::size_t i = 0; i < mv.entries.size(); ++i) {
                     const auto &[key, val] = mv.entries[i];
                     const std::string key_name =
-                        key != nullptr ? evaluator::value_to_json(*key) : "null";
+                        key != nullptr ? runtime::value_to_json(*key) : "null";
                     append_child(key_name, val.get());
                 }
             },

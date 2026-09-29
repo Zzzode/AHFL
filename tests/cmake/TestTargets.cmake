@@ -601,12 +601,13 @@ target_include_directories(ahfl_durable_resume_capstone
 ahfl_apply_project_warnings(ahfl_durable_resume_capstone)
 
 add_executable(ahfl_value_json_tests
-    unit/runtime/evaluator/value_json.cpp
+    unit/runtime/value/value_json.cpp
 )
 target_link_libraries(ahfl_value_json_tests
     PRIVATE
-        ahfl_runtime_evaluator
+        ahfl_runtime_value
 )
+target_include_directories(ahfl_value_json_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_value_json_tests)
 
 # RFC P7 runtime additions: Set / Map / UUID / Timestamp evaluation tests.

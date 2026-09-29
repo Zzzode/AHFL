@@ -1,12 +1,14 @@
 #pragma once
 
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <optional>
 #include <string>
 #include <unordered_map>
 
 namespace ahfl::evaluator {
+
+using ahfl::runtime::Value;
 
 // ============================================================================
 // EvalContext - Provides variable scopes for expression evaluation

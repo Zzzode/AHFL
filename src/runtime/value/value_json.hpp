@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "base/json/json_value.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
-namespace ahfl::evaluator {
+namespace ahfl::runtime {
 
 // Serialize Value to compact JSON string.
 [[nodiscard]] std::string value_to_json(const Value &v);
@@ -38,4 +38,4 @@ void write_value_json(const Value &v, std::ostream &out);
 // same schema-free decode as the string overload, minus the parse step.
 [[nodiscard]] std::optional<Value> value_from_json(const ahfl::json::JsonValue &json_value);
 
-} // namespace ahfl::evaluator
+} // namespace ahfl::runtime

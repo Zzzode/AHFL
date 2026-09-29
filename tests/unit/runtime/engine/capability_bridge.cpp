@@ -2,7 +2,7 @@
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/engine/capability_eval.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -1079,7 +1079,7 @@ void test_eval_with_capability_call() {
         eval_expr_with_capabilities(optional_expr, eval_ctx, registry.as_invoker());
     check(!optional_result.has_errors(), "eval_cap.optional_call_no_errors");
     // Option is represented canonically as a nominal EnumValue.
-    const auto *optional_result_inner = ahfl::evaluator::optional_inner(optional_result.value);
+    const auto *optional_result_inner = ahfl::runtime::optional_inner(optional_result.value);
     auto *optional_inner = optional_result_inner != nullptr
                                ? std::get_if<StringValue>(&optional_result_inner->node)
                                : nullptr;

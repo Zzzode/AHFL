@@ -1,4 +1,4 @@
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <charconv>
 #include <cstddef>
@@ -14,7 +14,7 @@
 #include "base/json/json_value.hpp"
 #include "base/support/json.hpp"
 
-namespace ahfl::evaluator {
+namespace ahfl::runtime {
 
 // ============================================================================
 // Serialization
@@ -140,12 +140,6 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     }
                     out << '}';
                 }
-                out << '}';
-            } else if constexpr (std::is_same_v<T, CallableValue>) {
-                out << '{';
-                ahfl::write_escaped_json_string(out, "_callable");
-                out << ':';
-                ahfl::write_escaped_json_string(out, "runtime");
                 out << '}';
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 // Serialize Set as a JSON array; canonical ordering is already
@@ -412,4 +406,4 @@ std::optional<Value> value_from_json(const ahfl::json::JsonValue &json_value) {
     return value_from_json_value(json_value);
 }
 
-} // namespace ahfl::evaluator
+} // namespace ahfl::runtime

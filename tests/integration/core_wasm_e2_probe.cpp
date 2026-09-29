@@ -13,8 +13,8 @@
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/core_wasm_schema_transport.hpp"
 #include "runtime/engine/core_wire_codec.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -59,10 +59,10 @@ using namespace ahfl;
     return lower_program_ir(*parse.program, resolve, typecheck);
 }
 
-[[nodiscard]] evaluator::Value frame(std::string type, std::string value) {
-    evaluator::FieldMap fields;
-    fields.set("value", std::make_unique<evaluator::Value>(evaluator::make_string(std::move(value))));
-    return evaluator::Value{evaluator::StructValue{std::move(type), std::move(fields)}};
+[[nodiscard]] runtime::Value frame(std::string type, std::string value) {
+    runtime::FieldMap fields;
+    fields.set("value", std::make_unique<runtime::Value>(runtime::make_string(std::move(value))));
+    return runtime::Value{runtime::StructValue{std::move(type), std::move(fields)}};
 }
 
 } // namespace
@@ -101,18 +101,18 @@ int main(int argc, char **argv) {
 
     auto input = frame("wasm::e2_capability::InputFrame", "input");
     const auto expected = frame("wasm::e2_capability::OutputFrame", "echo");
-    const auto input_json = evaluator::value_to_json(input);
-    const auto expected_json = evaluator::value_to_json(expected);
+    const auto input_json = runtime::value_to_json(input);
+    const auto expected_json = runtime::value_to_json(expected);
     std::size_t calls = 0;
     std::string called_name;
     std::string called_arg_json;
     runtime::AgentRuntime native(*agent, *flow);
     native.set_capability_invoker(
         [&](const std::string &name,
-            const std::vector<evaluator::Value> &args) -> runtime::CapabilityCallResult {
+            const std::vector<runtime::Value> &args) -> runtime::CapabilityCallResult {
             ++calls;
             called_name = name;
-            called_arg_json = args.size() == 1 ? evaluator::value_to_json(args[0]) : "";
+            called_arg_json = args.size() == 1 ? runtime::value_to_json(args[0]) : "";
             if (args.size() != 1 || called_arg_json != input_json) {
                 return {.status = runtime::CapabilityCallStatus::Error,
                         .value = std::nullopt,
@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
         final_it == agent->states.end() || native_result.stats.state_transitions != 1 ||
         calls != 1 || called_name.find("Echo") == std::string::npos ||
         !native_result.output.has_value() ||
-        evaluator::value_to_json(*native_result.output) != expected_json) {
+        runtime::value_to_json(*native_result.output) != expected_json) {
         std::cerr << "native AgentRuntime observation does not match E2 capability contract"
                   << " status=" << static_cast<int>(native_result.status)
                   << " state=" << native_result.current_state
@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
                   << " called_arg=" << called_arg_json
                   << " output="
                   << (native_result.output.has_value()
-                          ? evaluator::value_to_json(*native_result.output)
+                          ? runtime::value_to_json(*native_result.output)
                           : std::string{"<none>"})
                   << " expected=" << expected_json << "\n";
         return 1;
@@ -217,16 +217,16 @@ int main(int argc, char **argv) {
     // Assert the decoded native shape directly (not only canonical-JSON equality),
     // so a variant-folding regression cannot pass: it must be the OutputFrame
     // struct whose "value" field holds the echoed string.
-    const auto *decoded_struct = std::get_if<evaluator::StructValue>(&decoded.value->node);
+    const auto *decoded_struct = std::get_if<runtime::StructValue>(&decoded.value->node);
     const auto *decoded_field =
         decoded_struct != nullptr ? decoded_struct->fields.get("value") : nullptr;
     const auto *decoded_string =
-        decoded_field != nullptr ? std::get_if<evaluator::StringValue>(&decoded_field->node)
+        decoded_field != nullptr ? std::get_if<runtime::StringValue>(&decoded_field->node)
                                  : nullptr;
     if (decoded_struct == nullptr ||
         decoded_struct->type_name != "wasm::e2_capability::OutputFrame" ||
         decoded_string == nullptr || decoded_string->value != "echo" ||
-        evaluator::value_to_json(*decoded.value) != expected_json) {
+        runtime::value_to_json(*decoded.value) != expected_json) {
         std::cerr << "E2 reference host decode_json did not rebuild the Output native shape\n";
         return 1;
     }

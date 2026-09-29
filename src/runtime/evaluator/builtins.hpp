@@ -2,7 +2,7 @@
 
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/evaluator.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <functional>
 #include <optional>
@@ -12,6 +12,8 @@
 #include <vector>
 
 namespace ahfl::evaluator {
+
+using ahfl::runtime::Value;
 
 // ============================================================================
 // P5 @builtin runtime dispatch

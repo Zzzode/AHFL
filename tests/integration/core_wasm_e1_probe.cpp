@@ -11,8 +11,8 @@
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "runtime/engine/agent_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -57,10 +57,10 @@ using namespace ahfl;
     return lower_program_ir(*parse.program, resolve, typecheck);
 }
 
-[[nodiscard]] evaluator::Value fixture_input() {
-    evaluator::FieldMap fields;
-    fields.set("value", std::make_unique<evaluator::Value>(evaluator::make_string("identity")));
-    return evaluator::Value{evaluator::StructValue{"wasm::e1_identity::Frame",
+[[nodiscard]] runtime::Value fixture_input() {
+    runtime::FieldMap fields;
+    fields.set("value", std::make_unique<runtime::Value>(runtime::make_string("identity")));
+    return runtime::Value{runtime::StructValue{"wasm::e1_identity::Frame",
                                                     std::move(fields)}};
 }
 
@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
     }
 
     auto input = fixture_input();
-    const auto input_json = evaluator::value_to_json(input);
+    const auto input_json = runtime::value_to_json(input);
     runtime::AgentRuntime native(*agent, *flow);
     const auto native_result = native.run(std::move(input));
     const auto final_it = std::find(agent->states.begin(), agent->states.end(),
@@ -107,14 +107,14 @@ int main(int argc, char **argv) {
     if (native_result.status != runtime::AgentStatus::Completed ||
         final_it == agent->states.end() || native_result.stats.state_transitions != 1 ||
         !native_result.output.has_value() ||
-        evaluator::value_to_json(*native_result.output) != input_json) {
+        runtime::value_to_json(*native_result.output) != input_json) {
         std::cerr << "native AgentRuntime observation does not match E1 identity contract"
                   << " (status=" << static_cast<int>(native_result.status)
                   << ", state=" << native_result.current_state
                   << ", transitions=" << native_result.stats.state_transitions
                   << ", input=" << input_json << ", output="
                   << (native_result.output.has_value()
-                          ? evaluator::value_to_json(*native_result.output)
+                          ? runtime::value_to_json(*native_result.output)
                           : std::string{"<none>"})
                   << ")\n";
         return 1;

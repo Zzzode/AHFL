@@ -12,7 +12,7 @@
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
 #include "runtime/engine/capability_bridge.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 #include "runtime/providers/llm/http_client.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
 #include "runtime/providers/llm/prompt_builder.hpp"
@@ -177,11 +177,11 @@ class LLMCapabilityProvider {
 
     // Invoke a capability, obtaining results via the LLM
     [[nodiscard]] runtime::CapabilityCallResult invoke(const std::string &capability_name,
-                                                       const std::vector<evaluator::Value> &args);
+                                                       const std::vector<runtime::Value> &args);
     [[nodiscard]] runtime::CapabilityCallResult
     invoke_with_context(const runtime::CapabilityInvocationContext &context,
                         const std::string &capability_name,
-                        const std::vector<evaluator::Value> &args);
+                        const std::vector<runtime::Value> &args);
     [[nodiscard]] runtime::ContextualCapabilityInvoker as_contextual_invoker();
 
     // Register all capabilities with the registry
@@ -272,7 +272,7 @@ class LLMCapabilityProvider {
     [[nodiscard]] runtime::CapabilityCallResult invoke_with_context_impl(
         const runtime::CapabilityInvocationContext &context,
         const std::string &capability_name,
-        const std::vector<evaluator::Value> &args);
+        const std::vector<runtime::Value> &args);
 
     struct ProviderCandidate {
         std::string name;

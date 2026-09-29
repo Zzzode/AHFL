@@ -5,7 +5,7 @@
 
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 namespace ahfl::llm_provider {
 
@@ -19,7 +19,7 @@ class PromptBuilder {
 
     // Build the user prompt for the given argument values
     [[nodiscard]] std::string build_user_prompt(const std::string &capability_name,
-                                                const std::vector<evaluator::Value> &args) const;
+                                                const std::vector<runtime::Value> &args) const;
 
   private:
     const ir::Program &program_;
@@ -32,7 +32,7 @@ class PromptBuilder {
     // Generate a JSON schema description for a type
     [[nodiscard]] std::string describe_type_schema(const std::string &type_name) const;
     // Convert a Value into a human-readable string
-    [[nodiscard]] std::string value_to_string(const evaluator::Value &val) const;
+    [[nodiscard]] std::string value_to_string(const runtime::Value &val) const;
 };
 
 } // namespace ahfl::llm_provider

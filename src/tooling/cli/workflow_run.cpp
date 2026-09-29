@@ -11,8 +11,8 @@
 #include "runtime/engine/wire_capability_admission.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
 #include "runtime/providers/llm/tool_calling.hpp"
@@ -50,8 +50,8 @@
 namespace ahfl::cli {
 namespace {
 
-using ahfl::evaluator::value_from_json;
-using ahfl::evaluator::value_to_json;
+using ahfl::runtime::value_from_json;
+using ahfl::runtime::value_to_json;
 using ahfl::llm_provider::LLMCapabilityProvider;
 using ahfl::llm_provider::LLMTokenBudgetEventKind;
 using ahfl::llm_provider::load_config;
@@ -549,7 +549,7 @@ struct RuntimeToolCatalogEntry {
 
     struct Outcome {
         OutcomeKind kind{OutcomeKind::Result};
-        std::optional<ahfl::evaluator::Value> result{};
+        std::optional<ahfl::runtime::Value> result{};
         std::string error_message{};
         std::chrono::milliseconds timeout{0};
     };
@@ -1391,7 +1391,7 @@ load_tool_catalog_descriptor(const CommandLineOptions &options, std::ostream &er
 
 [[nodiscard]] bool add_runtime_tool(RuntimeToolSet &runtime_tools,
                                     ToolDefinition definition,
-                                    ahfl::evaluator::Value result,
+                                    ahfl::runtime::Value result,
                                     std::string_view source,
                                     std::ostream &err) {
     const auto tool_name = definition.name;
@@ -1428,7 +1428,7 @@ load_tool_catalog_descriptor(const CommandLineOptions &options, std::ostream &er
                     .description = std::move(description),
                     .params_schema_json = R"({"type":"object","additionalProperties":true})",
                 },
-                ahfl::evaluator::make_string(mock.result_fixture),
+                ahfl::runtime::make_string(mock.result_fixture),
                 "capability mocks",
                 err)) {
             return false;
@@ -1444,13 +1444,13 @@ make_catalog_capability_binding(std::string name, RuntimeToolCatalogEntry::Outco
     auto shared_outcome = std::make_shared<RuntimeToolCatalogEntry::Outcome>(std::move(outcome));
     binding.handler =
         [shared_outcome](
-            const std::vector<ahfl::evaluator::Value> &) -> ahfl::runtime::CapabilityCallResult {
+            const std::vector<ahfl::runtime::Value> &) -> ahfl::runtime::CapabilityCallResult {
         switch (shared_outcome->kind) {
         case RuntimeToolCatalogEntry::OutcomeKind::Result:
             if (shared_outcome->result.has_value()) {
                 return ahfl::runtime::CapabilityCallResult{
                     .status = CapabilityCallStatus::Success,
-                    .value = ahfl::evaluator::clone_value(*shared_outcome->result),
+                    .value = ahfl::runtime::clone_value(*shared_outcome->result),
                     .error_message = {},
                     .attempts = 1,
                 };
@@ -1512,7 +1512,7 @@ void install_runtime_tools(LLMCapabilityProvider &provider, RuntimeToolSet runti
         std::move(runtime_tools.tools),
         [tool_registry =
              std::move(runtime_tools.registry)](const ToolCall &tool_call) -> ToolCallResult {
-            std::vector<ahfl::evaluator::Value> args;
+            std::vector<ahfl::runtime::Value> args;
             if (!tool_call.arguments_json.empty()) {
                 auto parsed_args = value_from_json(tool_call.arguments_json);
                 if (!parsed_args.has_value()) {
@@ -1669,7 +1669,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         err << "error: failed to parse runtime input JSON\n";
         return 1;
     }
-    std::optional<ahfl::evaluator::Value> input_value;
+    std::optional<ahfl::runtime::Value> input_value;
     if (workflow != nullptr) {
         // Resolved workflow: exact-decode the raw DOM under the workflow input's
         // projected wire binding (a compat tightening vs the old schema-free
@@ -1700,7 +1700,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         // Missing workflow: preserve the historical schema-free materialization
         // (direct-DOM value_from_json / P0-10 admission); the run still reaches
         // WorkflowRuntime, which emits the canonical not-found failure.
-        auto materialized = ahfl::evaluator::value_from_json(**input_dom);
+        auto materialized = ahfl::runtime::value_from_json(**input_dom);
         if (!materialized.has_value()) {
             err << "error: failed to parse runtime input JSON\n";
             return 1;
@@ -1761,7 +1761,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
              llm_invoker =
                  std::move(llm_invoker)](const ahfl::runtime::CapabilityInvocationContext &context,
                                          const std::string &name,
-                                         const std::vector<ahfl::evaluator::Value> &args)
+                                         const std::vector<ahfl::runtime::Value> &args)
             -> ahfl::runtime::CapabilityCallResult {
             if (runtime_capability_bindings->has(name)) {
                 return binding_invoker(context, name, args);
@@ -1835,7 +1835,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
             [suspend_name = std::move(suspend_name), inner = std::move(inner)](
                 const ahfl::runtime::CapabilityInvocationContext &context,
                 const std::string &name,
-                const std::vector<ahfl::evaluator::Value> &args)
+                const std::vector<ahfl::runtime::Value> &args)
             -> ahfl::runtime::CapabilityCallResult {
             if (name == suspend_name) {
                 ahfl::runtime::CapabilityCallResult pending;

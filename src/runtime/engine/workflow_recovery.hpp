@@ -9,7 +9,7 @@
 
 #include "ahfl/runtime/execution_event.hpp"
 #include "base/support/atomic_file.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 namespace ahfl::runtime {
 
@@ -34,7 +34,7 @@ inline constexpr std::string_view kWorkflowRecoverySchemaV2{"ahfl.workflow-recov
 struct RecoveredNodeState {
     WorkflowNodeId node;
     AgentId agent;
-    std::optional<evaluator::Value> output{};
+    std::optional<runtime::Value> output{};
 };
 
 // RFC 0026 C2b stage3 (P0-14/16/17/18): how a memo result's TRUST AUTHORITY is
@@ -70,7 +70,7 @@ struct CapabilityMemoEntry {
     std::uint64_t ordinal{0};       // per-node invocation ordinal (memo key)
     std::size_t cap_id{0};          // capability SymbolId (integrity cross-check)
     std::uint64_t arg_hash{0};      // hash of resolved args (integrity cross-check)
-    evaluator::Value result{};      // native compat projection (authority iff NativeOnly)
+    runtime::Value result{};      // native compat projection (authority iff NativeOnly)
     // RFC 0026 C2b stage3 result trust-authority state (see PersistedMemoResultSource).
     PersistedMemoResultSource source{PersistedMemoResultSource::NativeOnly};
     std::optional<std::string> authoritative_json{}; // exact wire spelling (Legacy/Sidecar)
@@ -100,7 +100,7 @@ struct SuspendedNodeState {
     // therefore informational today; treating it as authoritative would be a future
     // change (and a residual risk if a reader assumes it drives resume). See the
     // node_input_snapshot capture site in workflow_runtime.cpp.
-    std::optional<evaluator::Value> node_input{};
+    std::optional<runtime::Value> node_input{};
     std::size_t pending_cap_id{0};                       // capability SymbolId of the pending call
     std::uint64_t pending_ordinal{0};                    // its per-node invocation ordinal
     std::vector<CapabilityMemoEntry> memo{};             // append-only, sorted by ordinal

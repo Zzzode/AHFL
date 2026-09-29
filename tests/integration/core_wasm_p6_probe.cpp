@@ -19,7 +19,7 @@
 #include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/engine/agent_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -150,21 +150,21 @@ constexpr std::uint32_t kCollectionInputLen = 2;
     return lower_program_ir(*parse.program, resolve, typecheck);
 }
 
-[[nodiscard]] evaluator::Value fixture_input() {
-    evaluator::FieldMap fields;
-    fields.set("value", std::make_unique<evaluator::Value>(evaluator::make_string("identity")));
-    return evaluator::Value{evaluator::StructValue{"wasm::p6::Frame", std::move(fields)}};
+[[nodiscard]] runtime::Value fixture_input() {
+    runtime::FieldMap fields;
+    fields.set("value", std::make_unique<runtime::Value>(runtime::make_string("identity")));
+    return runtime::Value{runtime::StructValue{"wasm::p6::Frame", std::move(fields)}};
 }
 
 // RFC 0026 P6-4: the aggregate fixture's input frame. The struct is
 // `{ a: Int; b: Int }` (both unbounded Int -> i64), so the frame is written with
 // those two typed values in DECLARATION order and the native run reads them
 // through the same `input.a` / `input.b` projections the wasm path uses.
-[[nodiscard]] evaluator::Value aggregate_input() {
-    evaluator::FieldMap fields;
-    fields.set("a", std::make_unique<evaluator::Value>(evaluator::make_int(kAggregateInputA)));
-    fields.set("b", std::make_unique<evaluator::Value>(evaluator::make_int(kAggregateInputB)));
-    return evaluator::Value{evaluator::StructValue{"wasm::p6::Frame", std::move(fields)}};
+[[nodiscard]] runtime::Value aggregate_input() {
+    runtime::FieldMap fields;
+    fields.set("a", std::make_unique<runtime::Value>(runtime::make_int(kAggregateInputA)));
+    fields.set("b", std::make_unique<runtime::Value>(runtime::make_int(kAggregateInputB)));
+    return runtime::Value{runtime::StructValue{"wasm::p6::Frame", std::move(fields)}};
 }
 
 // RFC 0026 P6-5: the bounded-collection fixture's input frame. The struct is
@@ -173,14 +173,14 @@ constexpr std::uint32_t kCollectionInputLen = 2;
 // through the same `input.items[i]` / `input.items.length` surfaces the wasm
 // path uses, so the branch it takes pins the element offsets AND the length word
 // end to end.
-[[nodiscard]] evaluator::Value collection_input() {
-    evaluator::FieldMap fields;
-    std::vector<evaluator::Value> items;
-    items.push_back(evaluator::make_int(kCollectionInputHigh));
-    items.push_back(evaluator::make_int(kCollectionInputLow));
+[[nodiscard]] runtime::Value collection_input() {
+    runtime::FieldMap fields;
+    std::vector<runtime::Value> items;
+    items.push_back(runtime::make_int(kCollectionInputHigh));
+    items.push_back(runtime::make_int(kCollectionInputLow));
     fields.set("items",
-               std::make_unique<evaluator::Value>(evaluator::make_list(std::move(items))));
-    return evaluator::Value{evaluator::StructValue{"wasm::p6::Frame", std::move(fields)}};
+               std::make_unique<runtime::Value>(runtime::make_list(std::move(items))));
+    return runtime::Value{runtime::StructValue{"wasm::p6::Frame", std::move(fields)}};
 }
 
 // CORE-GAPS: the bounded-Map keyed-lookup fixture's input frame. The struct is
@@ -228,21 +228,21 @@ struct MapSpec {
     return spec;
 }
 
-[[nodiscard]] evaluator::Value map_input(const MapSpec &spec) {
-    evaluator::FieldMap fields;
-    std::vector<std::pair<evaluator::Value, evaluator::Value>> entries;
+[[nodiscard]] runtime::Value map_input(const MapSpec &spec) {
+    runtime::FieldMap fields;
+    std::vector<std::pair<runtime::Value, runtime::Value>> entries;
     for (std::size_t i = 0; i < spec.keys.size(); ++i) {
-        auto key = spec.key_is_bool ? evaluator::make_bool(spec.keys[i] != 0)
-                                    : evaluator::make_int(spec.keys[i]);
+        auto key = spec.key_is_bool ? runtime::make_bool(spec.keys[i] != 0)
+                                    : runtime::make_int(spec.keys[i]);
         auto value = spec.value_is_bool
-                         ? evaluator::make_bool(spec.values[i] != 0)
-                         : evaluator::make_int(spec.values[i]);
+                         ? runtime::make_bool(spec.values[i] != 0)
+                         : runtime::make_int(spec.values[i]);
         entries.emplace_back(std::move(key), std::move(value));
     }
     fields.set(
         "table",
-        std::make_unique<evaluator::Value>(evaluator::make_map(std::move(entries))));
-    return evaluator::Value{evaluator::StructValue{"app::main::Frame", std::move(fields)}};
+        std::make_unique<runtime::Value>(runtime::make_map(std::move(entries))));
+    return runtime::Value{runtime::StructValue{"app::main::Frame", std::move(fields)}};
 }
 
 // The single argument-less nominal value type naming core type `type` (index

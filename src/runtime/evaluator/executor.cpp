@@ -12,6 +12,36 @@
 
 namespace ahfl::evaluator {
 
+using ahfl::runtime::Value;
+
+using ahfl::runtime::StringValue;
+
+using ahfl::runtime::BoolValue;
+
+using ahfl::runtime::clone_value;
+using ahfl::runtime::is_none;
+using ahfl::runtime::is_optional;
+using ahfl::runtime::is_optional_none;
+using ahfl::runtime::is_some;
+using ahfl::runtime::make_bool;
+using ahfl::runtime::make_decimal;
+using ahfl::runtime::make_duration;
+using ahfl::runtime::make_enum;
+using ahfl::runtime::make_float;
+using ahfl::runtime::make_int;
+using ahfl::runtime::make_list;
+using ahfl::runtime::make_map;
+using ahfl::runtime::make_none;
+using ahfl::runtime::make_option_none;
+using ahfl::runtime::make_option_some;
+using ahfl::runtime::make_set;
+using ahfl::runtime::make_string;
+using ahfl::runtime::make_struct;
+using ahfl::runtime::make_timestamp;
+using ahfl::runtime::make_unit;
+using ahfl::runtime::make_uuid;
+using ahfl::runtime::structurally_equal;
+
 // ============================================================================
 // ExecContext implementation
 // ============================================================================
@@ -285,7 +315,7 @@ namespace {
     }
     const bool is_some = [](const Value &v) {
         if (is_optional(v)) {
-            return ahfl::evaluator::is_some(v);
+            return ahfl::runtime::is_some(v);
         }
         return true;
     }(op_result.value);

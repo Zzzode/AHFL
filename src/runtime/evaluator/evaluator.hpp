@@ -3,14 +3,52 @@
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/evaluator/eval_context.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
 
+// ============================================================================
+// First-class closure descriptor (interpreter-only)
+// ============================================================================
+
+// The tree-walking interpreter's closure representation. `runtime::Value`
+// carries it as an opaque `InterpreterClosureRef` handle (see
+// src/runtime/value/value.hpp): the host wire layer only forward-declares the
+// type, so nothing there depends on evaluator machinery. The definition is
+// completed HERE because every member is interpreter state:
+//
+//   * `params` / `body`      -- the lambda in the IR the interpreter walks;
+//   * `captured_context`     -- the interpreter environment snapshot taken at
+//                               construction time (by value, so a closure
+//                               captures its environment, not a live binding).
+//
+// It lives in `ahfl::runtime` because that is the namespace of the handle that
+// owns it and of every other Value payload; the evaluator is the only layer
+// that constructs or unwraps it. RFC 0026 KR6.8 retires this struct together
+// with the evaluator, at which point the wire handle disappears from
+// `ValueNode` as well.
+//
+// Storage is shared and immutable: one `make_shared<const InterpreterClosure>`
+// is created at lambda evaluation, `clone_value` copies the handle rather than
+// the captured environment, and every invocation reads through it.
+namespace ahfl::runtime {
+
+struct InterpreterClosure {
+    std::vector<std::string> params;
+    const ir::Expr *body{nullptr};
+    ahfl::evaluator::EvalContext captured_context;
+};
+
+} // namespace ahfl::runtime
+
 namespace ahfl::evaluator {
+
+using ahfl::runtime::InterpreterClosureRef;
+using ahfl::runtime::make_interpreter_closure;
+using ahfl::runtime::Value;
 
 // ============================================================================
 // Evaluation Result

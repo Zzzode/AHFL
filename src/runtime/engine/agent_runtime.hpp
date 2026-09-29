@@ -12,11 +12,10 @@
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/evaluator/executor.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 namespace ahfl::runtime {
 
-using Value = evaluator::Value;
 
 // Agent runtime status
 enum class AgentStatus {

@@ -9,7 +9,7 @@
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/evaluator.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -341,7 +341,7 @@ int run_ok_stdlib_runtime_api(const std::filesystem::path &entry,
             print_diagnostics(result.diagnostics);
             return false;
         }
-        const auto *value = std::get_if<ahfl::evaluator::IntValue>(&result.value.node);
+        const auto *value = std::get_if<ahfl::runtime::IntValue>(&result.value.node);
         if (value == nullptr || value->value != expected) {
             std::cerr << "unexpected runtime result for function: expected " << expected;
             if (value != nullptr) {
@@ -424,7 +424,7 @@ int run_ok_trait_runtime_dispatch(const std::filesystem::path &entry,
         print_diagnostics(result.diagnostics);
         return 1;
     }
-    const auto *value = std::get_if<ahfl::evaluator::IntValue>(&result.value.node);
+    const auto *value = std::get_if<ahfl::runtime::IntValue>(&result.value.node);
     if (value == nullptr || value->value != 19) {
         std::cerr << "unexpected trait dispatch runtime result: expected 19";
         if (value != nullptr) {

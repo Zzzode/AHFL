@@ -1,5 +1,5 @@
-#include "runtime/evaluator/value_json.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value_json.hpp"
+#include "runtime/value/value.hpp"
 
 #include "base/json/json_value.hpp"
 
@@ -15,7 +15,7 @@
 
 namespace {
 
-using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
 
 int test_count = 0;
 int pass_count = 0;

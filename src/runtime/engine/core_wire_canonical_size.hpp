@@ -33,7 +33,7 @@ enum class MaxCanonicalSizeError : std::uint8_t {
 };
 
 // Return a conservative, never-underestimating upper bound (in bytes) on the
-// canonical wire JSON that `evaluator::value_to_json` can emit for any value
+// canonical wire JSON that `runtime::value_to_json` can emit for any value
 // conforming to `binding`'s verified schema. This D1a-4 authority is used only
 // with a Result binding (the durable-resume injected/live result); it adds no
 // runtime kind gate. Walks only the productive-edge subgraph reachable from

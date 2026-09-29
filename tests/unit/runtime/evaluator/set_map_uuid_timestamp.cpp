@@ -6,8 +6,8 @@
 
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/evaluator.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/base/support/ownership.hpp"
 
@@ -24,6 +24,7 @@ namespace {
 
 using namespace ahfl;
 using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
 using namespace ahfl::ir;
 
 int test_count = 0;

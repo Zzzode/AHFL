@@ -6,9 +6,9 @@
 #include "runtime/engine/core_wire_codec_recovery.hpp"
 #include "runtime/evaluator/builtins.hpp"
 #include "runtime/evaluator/eval_context.hpp"
-#include "runtime/evaluator/scalar_spelling.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/scalar_spelling.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <cstdint>
 #include <iostream>
@@ -39,12 +39,12 @@ namespace {
 
 using namespace ahfl;
 using namespace ahfl::ir::core;
+using ahfl::runtime::Value;
 using ahfl::runtime::wire_codec::decode_json;
 using ahfl::runtime::wire_codec::decode_json_legacy_v2;
 using ahfl::runtime::wire_codec::validate_value;
 using ahfl::runtime::wire_codec::WireDecodeResult;
 using ahfl::runtime::SchemaValidationResult;
-using evaluator::Value;
 
 int test_count = 0;
 int fail_count = 0;
@@ -92,11 +92,11 @@ mint_result_binding(std::vector<CoreWireSchemaNode> nodes, CoreWireSchemaNodeId 
 
 // Direct native constructors that bypass normalizing helpers, for hostile inputs.
 [[nodiscard]] Value raw_uuid(std::string hex) {
-    return Value{evaluator::UuidValue{std::move(hex)}};
+    return Value{runtime::UuidValue{std::move(hex)}};
 }
 
 [[nodiscard]] Value make_ptr_list(std::vector<Value> items) {
-    return evaluator::make_list(std::move(items));
+    return runtime::make_list(std::move(items));
 }
 
 // Value is move-only (holds unique_ptrs), so brace-init of a std::vector<Value>
@@ -135,7 +135,7 @@ template <typename... Ps>
 // scalar_spelling SSOT (C2b-1)
 // =========================================================================
 void test_scalar_spelling() {
-    using namespace ahfl::evaluator::scalar_spelling;
+    using namespace ahfl::runtime::scalar_spelling;
 
     // Decimal family A (source literal).
     {
@@ -207,14 +207,14 @@ void test_scalars() {
         auto b = mint_leaf(CoreWireSchemaUnit{});
         check(b && decode_json(*parse("null"), *b).ok(), "decode unit null");
         check(b && !decode_json(*parse("1"), *b).ok(), "decode unit rejects int");
-        check(b && validate_value(evaluator::make_unit(), *b).valid, "validate unit");
-        check(b && !validate_value(evaluator::make_int(1), *b).valid, "validate unit rejects int");
+        check(b && validate_value(runtime::make_unit(), *b).valid, "validate unit");
+        check(b && !validate_value(runtime::make_int(1), *b).valid, "validate unit rejects int");
     }
     { // Bool
         auto b = mint_leaf(CoreWireSchemaBool{});
         check(b && decode_json(*parse("true"), *b).ok(), "decode bool");
         check(b && !decode_json(*parse("1"), *b).ok(), "decode bool rejects int");
-        check(b && validate_value(evaluator::make_bool(true), *b).valid, "validate bool");
+        check(b && validate_value(runtime::make_bool(true), *b).valid, "validate bool");
     }
     { // Int + bounds
         CoreWireSchemaInt s;
@@ -223,8 +223,8 @@ void test_scalars() {
         check(b && decode_json(*parse("50"), *b).ok(), "decode int in bounds");
         check(b && !decode_json(*parse("101"), *b).ok(), "decode int out of bounds");
         check(b && !decode_json(*parse("1.5"), *b).ok(), "decode int rejects float");
-        check(b && validate_value(evaluator::make_int(50), *b).valid, "validate int in bounds");
-        check(b && !validate_value(evaluator::make_int(200), *b).valid, "validate int out of bounds");
+        check(b && validate_value(runtime::make_int(50), *b).valid, "validate int in bounds");
+        check(b && !validate_value(runtime::make_int(200), *b).valid, "validate int out of bounds");
     }
     { // Int provenance gate (P0-10): hostile numbers fail closed on the SignedInteger
       // gate, NOT merely on bounds. Use unbounded Int so the reject is provenance-
@@ -261,16 +261,16 @@ void test_scalars() {
         check(b && !decode_json(*parse("-99999999999999999999999"), *b).ok(),
               "decode float rejects negative integer-fallback");
         check(b && decode_json(*parse("1e3"), *b).ok(), "decode float accepts exponent syntax");
-        check(b && validate_value(evaluator::make_float(1.5), *b).valid, "validate finite float");
-        check(b && !validate_value(evaluator::make_float(std::numeric_limits<double>::quiet_NaN()),
+        check(b && validate_value(runtime::make_float(1.5), *b).valid, "validate finite float");
+        check(b && !validate_value(runtime::make_float(std::numeric_limits<double>::quiet_NaN()),
                                    *b)
                         .valid,
               "validate rejects NaN");
-        check(b && !validate_value(evaluator::make_float(std::numeric_limits<double>::infinity()),
+        check(b && !validate_value(runtime::make_float(std::numeric_limits<double>::infinity()),
                                    *b)
                         .valid,
               "validate rejects Inf");
-        check(b && !validate_value(evaluator::make_int(3), *b).valid,
+        check(b && !validate_value(runtime::make_int(3), *b).valid,
               "validate float rejects int (no widening)");
     }
     { // String length bounds
@@ -279,8 +279,8 @@ void test_scalars() {
         auto b = mint_leaf(s);
         check(b && decode_json(*parse("\"hi\""), *b).ok(), "decode string in bounds");
         check(b && !decode_json(*parse("\"toolong\""), *b).ok(), "decode string out of bounds");
-        check(b && validate_value(evaluator::make_string("ok"), *b).valid, "validate string");
-        check(b && !validate_value(evaluator::make_string("toolong"), *b).valid,
+        check(b && validate_value(runtime::make_string("ok"), *b).valid, "validate string");
+        check(b && !validate_value(runtime::make_string("toolong"), *b).valid,
               "validate string out of bounds");
     }
 }
@@ -291,18 +291,18 @@ void test_decimal_duration() {
         check(b.has_value(), "decimal binding minted");
         if (b) {
             auto ra = decode_json(*parse("\"1.23\""), *b);
-            check(ra.ok() && std::get<evaluator::DecimalValue>(ra.value->node).spelling == "1.23",
+            check(ra.ok() && std::get<runtime::DecimalValue>(ra.value->node).spelling == "1.23",
                   "decode decimal A preserves spelling");
             auto rb = decode_json(*parse("\"s2:123\""), *b);
-            check(rb.ok() && std::get<evaluator::DecimalValue>(rb.value->node).spelling == "s2:123",
+            check(rb.ok() && std::get<runtime::DecimalValue>(rb.value->node).spelling == "s2:123",
                   "decode decimal B preserves spelling");
             check(!decode_json(*parse("\"1.2\""), *b).ok(), "decode decimal scale mismatch");
             check(!decode_json(*parse("123"), *b).ok(), "decode decimal rejects int");
             check(!decode_json(*parse("1.23"), *b).ok(), "decode decimal rejects float");
-            check(validate_value(evaluator::make_decimal("1.23"), *b).valid, "validate decimal A");
-            check(!validate_value(evaluator::make_decimal("1.2"), *b).valid,
+            check(validate_value(runtime::make_decimal("1.23"), *b).valid, "validate decimal A");
+            check(!validate_value(runtime::make_decimal("1.2"), *b).valid,
                   "validate decimal scale mismatch");
-            check(!validate_value(evaluator::make_int(1), *b).valid, "validate decimal rejects int");
+            check(!validate_value(runtime::make_int(1), *b).valid, "validate decimal rejects int");
             // i64 mantissa overflow, one per family (scale 2 so fraction digits match).
             // Family A: 21 integer digits + 2 fraction digits -> 23-digit mantissa > INT64_MAX.
             check(!decode_json(*parse("\"992233720368547758080.99\""), *b).ok(),
@@ -325,7 +325,7 @@ void test_decimal_duration() {
         if (b) {
             check(!decode_json(*parse("\"s-2147483648:1\""), *b).ok(),
                   "decode decimal INT32 narrowing bypass rejected");
-            check(!validate_value(evaluator::make_decimal("s-2147483648:1"), *b).valid,
+            check(!validate_value(runtime::make_decimal("s-2147483648:1"), *b).valid,
                   "validate decimal INT32 narrowing bypass rejected");
         }
     }
@@ -334,14 +334,14 @@ void test_decimal_duration() {
         check(b.has_value(), "duration binding minted");
         if (b) {
             auto r = decode_json(*parse("\"5s\""), *b);
-            check(r.ok() && std::get<evaluator::DurationValue>(r.value->node).spelling == "5s",
+            check(r.ok() && std::get<runtime::DurationValue>(r.value->node).spelling == "5s",
                   "decode duration source-unit preserves spelling");
             check(decode_json(*parse("\"1500\""), *b).ok(), "decode duration bare-ms");
             check(decode_json(*parse("\"-500\""), *b).ok(), "decode duration negative bare-ms");
             check(!decode_json(*parse("\"+5s\""), *b).ok(), "decode duration rejects +unit");
             check(!decode_json(*parse("500"), *b).ok(), "decode duration rejects int");
-            check(validate_value(evaluator::make_duration("2m"), *b).valid, "validate duration m");
-            check(!validate_value(evaluator::make_duration("+5s"), *b).valid,
+            check(validate_value(runtime::make_duration("2m"), *b).valid, "validate duration m");
+            check(!validate_value(runtime::make_duration("+5s"), *b).valid,
                   "validate duration rejects +unit");
         }
     }
@@ -385,7 +385,7 @@ void test_uuid_timestamp() {
               "decode timestamp rejects positive integer-fallback");
         check(b && !decode_json(*parse("{\"_timestamp\":-99999999999999999999999}"), *b).ok(),
               "decode timestamp rejects negative integer-fallback");
-        check(b && validate_value(evaluator::make_timestamp(5), *b).valid, "validate timestamp");
+        check(b && validate_value(runtime::make_timestamp(5), *b).valid, "validate timestamp");
     }
 }
 
@@ -400,13 +400,13 @@ void test_option() {
     }
     // decode: compact form
     auto none = decode_json(*parse("null"), *b);
-    check(none.ok() && evaluator::is_optional_none(*none.value), "decode option null->None");
+    check(none.ok() && runtime::is_optional_none(*none.value), "decode option null->None");
     auto some = decode_json(*parse("99"), *b);
-    check(some.ok() && evaluator::is_some(*some.value), "decode option 99->Some");
+    check(some.ok() && runtime::is_some(*some.value), "decode option 99->Some");
     check(!decode_json(*parse("1.5"), *b).ok(), "decode option Some child type-checked");
     // validate: exact Option only
-    check(validate_value(evaluator::make_option_none(), *b).valid, "validate option None");
-    check(validate_value(evaluator::make_option_some(evaluator::make_int(1)), *b).valid,
+    check(validate_value(runtime::make_option_none(), *b).valid, "validate option None");
+    check(validate_value(runtime::make_option_some(runtime::make_int(1)), *b).valid,
           "validate option Some");
     // RFC 0026 C2b G4d: the two raw-fallback rejection markers migrated 1:1 from
     // the deleted response_schema_validator test — the authoritative proof that a
@@ -415,33 +415,33 @@ void test_option() {
     // scripts/generate-beta-stdlib-container-evidence.py reads these marker names.
     // (The bare-None reject already existed here; its label is renamed to the
     // stable marker rather than duplicating the check.)
-    check(!validate_value(evaluator::make_none(), *b).valid, "optional.raw_none_rejected");
-    check(!validate_value(evaluator::make_int(42), *b).valid, "optional.raw_inner_rejected");
+    check(!validate_value(runtime::make_none(), *b).valid, "optional.raw_none_rejected");
+    check(!validate_value(runtime::make_int(42), *b).valid, "optional.raw_inner_rejected");
     // Some with wrong child type.
-    check(!validate_value(evaluator::make_option_some(evaluator::make_bool(true)), *b).valid,
+    check(!validate_value(runtime::make_option_some(runtime::make_bool(true)), *b).valid,
           "validate option Some wrong child type");
     // None with a non-empty named_payload (hand-built) must be rejected.
     {
-        evaluator::EnumValue ev;
+        runtime::EnumValue ev;
         ev.enum_name = "std::option::Option";
         ev.variant = "None";
-        ev.named_payload.set("x", std::make_unique<Value>(evaluator::make_int(1)));
+        ev.named_payload.set("x", std::make_unique<Value>(runtime::make_int(1)));
         check(!validate_value(Value{std::move(ev)}, *b).valid,
               "validate option None with payload rejected");
     }
     // Some with arity 2 (hand-built) must be rejected.
     {
-        evaluator::EnumValue ev;
+        runtime::EnumValue ev;
         ev.enum_name = "std::option::Option";
         ev.variant = "Some";
-        ev.payload.push_back(std::make_unique<Value>(evaluator::make_int(1)));
-        ev.payload.push_back(std::make_unique<Value>(evaluator::make_int(2)));
+        ev.payload.push_back(std::make_unique<Value>(runtime::make_int(1)));
+        ev.payload.push_back(std::make_unique<Value>(runtime::make_int(2)));
         check(!validate_value(Value{std::move(ev)}, *b).valid,
               "validate option Some wrong arity rejected");
     }
     // Some with a NULL payload element (hand-built) must be rejected, not crash.
     {
-        evaluator::EnumValue ev;
+        runtime::EnumValue ev;
         ev.enum_name = "std::option::Option";
         ev.variant = "Some";
         ev.payload.push_back(std::unique_ptr<Value>{});
@@ -450,11 +450,11 @@ void test_option() {
     }
     // Some carrying a non-empty named_payload (hand-built) must be rejected.
     {
-        evaluator::EnumValue ev;
+        runtime::EnumValue ev;
         ev.enum_name = "std::option::Option";
         ev.variant = "Some";
-        ev.payload.push_back(std::make_unique<Value>(evaluator::make_int(1)));
-        ev.named_payload.set("x", std::make_unique<Value>(evaluator::make_int(2)));
+        ev.payload.push_back(std::make_unique<Value>(runtime::make_int(1)));
+        ev.named_payload.set("x", std::make_unique<Value>(runtime::make_int(2)));
         check(!validate_value(Value{std::move(ev)}, *b).valid,
               "validate option Some with named_payload rejected");
     }
@@ -486,41 +486,41 @@ void test_set_map() {
         check(b && !decode_json(*parse("[1,2,3,4]"), *b).ok(), "decode set capacity");
         check(b && !decode_json(*parse("{\"_type\":\"x\"}"), *b).ok(), "decode set rejects object");
         // native: canonical accepted; List instead of Set rejected.
-        check(b && validate_value(evaluator::make_set(vals(evaluator::make_int(1),
-                                                          evaluator::make_int(2))),
+        check(b && validate_value(runtime::make_set(vals(runtime::make_int(1),
+                                                          runtime::make_int(2))),
                                   *b)
                         .valid,
               "validate set canonical");
-        check(b && !validate_value(make_ptr_list(vals(evaluator::make_int(1))), *b).valid,
+        check(b && !validate_value(make_ptr_list(vals(runtime::make_int(1))), *b).valid,
               "validate set rejects List");
         // non-canonical (unordered) Set built by hand.
         {
-            evaluator::SetValue sv;
-            sv.items.push_back(std::make_unique<Value>(evaluator::make_int(2)));
-            sv.items.push_back(std::make_unique<Value>(evaluator::make_int(1)));
+            runtime::SetValue sv;
+            sv.items.push_back(std::make_unique<Value>(runtime::make_int(2)));
+            sv.items.push_back(std::make_unique<Value>(runtime::make_int(1)));
             check(b && !validate_value(Value{std::move(sv)}, *b).valid,
                   "validate set rejects unordered");
         }
         // native Set with a structurally-equal duplicate.
         {
-            evaluator::SetValue sv;
-            sv.items.push_back(std::make_unique<Value>(evaluator::make_int(1)));
-            sv.items.push_back(std::make_unique<Value>(evaluator::make_int(1)));
+            runtime::SetValue sv;
+            sv.items.push_back(std::make_unique<Value>(runtime::make_int(1)));
+            sv.items.push_back(std::make_unique<Value>(runtime::make_int(1)));
             check(b && !validate_value(Value{std::move(sv)}, *b).valid,
                   "validate set rejects duplicate");
         }
         // native Set with a NULL element must fail-closed (not crash).
         {
-            evaluator::SetValue sv;
+            runtime::SetValue sv;
             sv.items.push_back(std::unique_ptr<Value>{});
             check(b && !validate_value(Value{std::move(sv)}, *b).valid,
                   "validate set rejects null element");
         }
         // native Set over schema capacity (schema cap = 3).
         {
-            evaluator::SetValue sv;
+            runtime::SetValue sv;
             for (int i = 0; i < 4; ++i) {
-                sv.items.push_back(std::make_unique<Value>(evaluator::make_int(i)));
+                sv.items.push_back(std::make_unique<Value>(runtime::make_int(i)));
             }
             check(b && !validate_value(Value{std::move(sv)}, *b).valid,
                   "validate set rejects over-capacity");
@@ -537,20 +537,20 @@ void test_set_map() {
         auto b = mint_result_binding(std::move(nodes), CoreWireSchemaNodeId{1});
         check(b && decode_json(*parse("[1,1]"), *b).ok(), "decode list allows dup");
         check(b && !decode_json(*parse("[1,2,3]"), *b).ok(), "decode list capacity");
-        check(b && validate_value(make_ptr_list(vals(evaluator::make_int(1))), *b).valid,
+        check(b && validate_value(make_ptr_list(vals(runtime::make_int(1))), *b).valid,
               "validate list");
-        check(b && !validate_value(evaluator::make_set(vals(evaluator::make_int(1))), *b).valid,
+        check(b && !validate_value(runtime::make_set(vals(runtime::make_int(1))), *b).valid,
               "validate list rejects Set");
         // native List over schema capacity (schema cap = 2).
-        check(b && !validate_value(make_ptr_list(vals(evaluator::make_int(1),
-                                                      evaluator::make_int(2),
-                                                      evaluator::make_int(3))),
+        check(b && !validate_value(make_ptr_list(vals(runtime::make_int(1),
+                                                      runtime::make_int(2),
+                                                      runtime::make_int(3))),
                                    *b)
                         .valid,
               "validate list rejects over-capacity");
         // native List with a NULL element.
         {
-            evaluator::ListValue lv;
+            runtime::ListValue lv;
             lv.items.push_back(std::unique_ptr<Value>{});
             check(b && !validate_value(Value{std::move(lv)}, *b).valid,
                   "validate list rejects null element");
@@ -584,46 +584,46 @@ void test_set_map() {
             check(b && !decode_json(*dup, *b).ok(), "decode map rejects dup key");
         }
         // native canonical vs unordered vs wrong key variant vs null.
-        check(b && validate_value(evaluator::make_map(one_entry(evaluator::make_string("a"),
-                                                                evaluator::make_int(1))),
+        check(b && validate_value(runtime::make_map(one_entry(runtime::make_string("a"),
+                                                                runtime::make_int(1))),
                                   *b)
                         .valid,
               "validate map canonical");
         {
-            evaluator::MapValue mv; // unordered keys
-            mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_string("b")),
-                                    std::make_unique<Value>(evaluator::make_int(2)));
-            mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_string("a")),
-                                    std::make_unique<Value>(evaluator::make_int(1)));
+            runtime::MapValue mv; // unordered keys
+            mv.entries.emplace_back(std::make_unique<Value>(runtime::make_string("b")),
+                                    std::make_unique<Value>(runtime::make_int(2)));
+            mv.entries.emplace_back(std::make_unique<Value>(runtime::make_string("a")),
+                                    std::make_unique<Value>(runtime::make_int(1)));
             check(b && !validate_value(Value{std::move(mv)}, *b).valid,
                   "validate map rejects unordered");
         }
         {
-            evaluator::MapValue mv; // wrong key variant (int key)
-            mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_int(1)),
-                                    std::make_unique<Value>(evaluator::make_int(1)));
+            runtime::MapValue mv; // wrong key variant (int key)
+            mv.entries.emplace_back(std::make_unique<Value>(runtime::make_int(1)),
+                                    std::make_unique<Value>(runtime::make_int(1)));
             check(b && !validate_value(Value{std::move(mv)}, *b).valid,
                   "validate map rejects non-string key");
         }
         {
-            evaluator::MapValue mv; // duplicate key
-            mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_string("a")),
-                                    std::make_unique<Value>(evaluator::make_int(1)));
-            mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_string("a")),
-                                    std::make_unique<Value>(evaluator::make_int(2)));
+            runtime::MapValue mv; // duplicate key
+            mv.entries.emplace_back(std::make_unique<Value>(runtime::make_string("a")),
+                                    std::make_unique<Value>(runtime::make_int(1)));
+            mv.entries.emplace_back(std::make_unique<Value>(runtime::make_string("a")),
+                                    std::make_unique<Value>(runtime::make_int(2)));
             check(b && !validate_value(Value{std::move(mv)}, *b).valid,
                   "validate map rejects duplicate key");
         }
         {
-            evaluator::MapValue mv; // null key
+            runtime::MapValue mv; // null key
             mv.entries.emplace_back(std::unique_ptr<Value>{},
-                                    std::make_unique<Value>(evaluator::make_int(1)));
+                                    std::make_unique<Value>(runtime::make_int(1)));
             check(b && !validate_value(Value{std::move(mv)}, *b).valid,
                   "validate map rejects null key");
         }
         {
-            evaluator::MapValue mv; // null value
-            mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_string("a")),
+            runtime::MapValue mv; // null value
+            mv.entries.emplace_back(std::make_unique<Value>(runtime::make_string("a")),
                                     std::unique_ptr<Value>{});
             check(b && !validate_value(Value{std::move(mv)}, *b).valid,
                   "validate map rejects null value");
@@ -644,13 +644,13 @@ void test_set_map() {
         check(b && decode_json(*parse("{\"ok\":1}"), *b).ok(), "decode map key within bounds");
         check(b && !decode_json(*parse("{\"toolong\":1}"), *b).ok(),
               "decode map rejects over-long key");
-        check(b && validate_value(evaluator::make_map(one_entry(evaluator::make_string("ok"),
-                                                                evaluator::make_int(1))),
+        check(b && validate_value(runtime::make_map(one_entry(runtime::make_string("ok"),
+                                                                runtime::make_int(1))),
                                   *b)
                         .valid,
               "validate map key within bounds");
-        check(b && !validate_value(evaluator::make_map(one_entry(evaluator::make_string("toolong"),
-                                                                 evaluator::make_int(1))),
+        check(b && !validate_value(runtime::make_map(one_entry(runtime::make_string("toolong"),
+                                                                 runtime::make_int(1))),
                                    *b)
                         .valid,
               "validate map rejects over-long key");
@@ -667,17 +667,17 @@ void test_set_map() {
         auto b = mint_result_binding(std::move(nodes), CoreWireSchemaNodeId{2});
         check(b && decode_json(*parse("{\"a\":1}"), *b).ok(), "decode map within capacity");
         check(b && !decode_json(*parse("{\"a\":1,\"b\":2}"), *b).ok(), "decode map over capacity");
-        check(b && validate_value(evaluator::make_map(one_entry(evaluator::make_string("a"),
-                                                                evaluator::make_int(1))),
+        check(b && validate_value(runtime::make_map(one_entry(runtime::make_string("a"),
+                                                                runtime::make_int(1))),
                                   *b)
                         .valid,
               "validate map within capacity");
         {
-            evaluator::MapValue mv;
-            mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_string("a")),
-                                    std::make_unique<Value>(evaluator::make_int(1)));
-            mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_string("b")),
-                                    std::make_unique<Value>(evaluator::make_int(2)));
+            runtime::MapValue mv;
+            mv.entries.emplace_back(std::make_unique<Value>(runtime::make_string("a")),
+                                    std::make_unique<Value>(runtime::make_int(1)));
+            mv.entries.emplace_back(std::make_unique<Value>(runtime::make_string("b")),
+                                    std::make_unique<Value>(runtime::make_int(2)));
             check(b && !validate_value(Value{std::move(mv)}, *b).valid,
                   "validate map rejects over-capacity");
         }
@@ -697,10 +697,10 @@ void test_set_map() {
         nodes.push_back(CoreWireSchemaNode{seq}); // 3 set
         auto b = mint_result_binding(std::move(nodes), CoreWireSchemaNodeId{3});
         // Build a Set containing a Map whose single value is a NULL unique_ptr.
-        evaluator::MapValue mv;
-        mv.entries.emplace_back(std::make_unique<Value>(evaluator::make_string("k")),
+        runtime::MapValue mv;
+        mv.entries.emplace_back(std::make_unique<Value>(runtime::make_string("k")),
                                 std::unique_ptr<Value>{}); // NULL value
-        evaluator::SetValue sv;
+        runtime::SetValue sv;
         sv.items.push_back(std::make_unique<Value>(Value{std::move(mv)}));
         check(b && !validate_value(Value{std::move(sv)}, *b).valid,
               "validate nested null Map-in-Set fail-closed (no crash)");
@@ -734,36 +734,36 @@ void test_struct_enum() {
             check(b && !decode_json(*dup, *b).ok(), "decode struct rejects dup field");
         }
         // native: exact type + field set + non-null.
-        check(b && validate_value(evaluator::make_struct(
-                                      "app::Point", fields(field("n", evaluator::make_int(5)))),
+        check(b && validate_value(runtime::make_struct(
+                                      "app::Point", fields(field("n", runtime::make_int(5)))),
                                   *b)
                         .valid,
               "validate struct exact");
         check(b && !validate_value(
-                       evaluator::make_struct("wrong", fields(field("n", evaluator::make_int(5)))), *b)
+                       runtime::make_struct("wrong", fields(field("n", runtime::make_int(5)))), *b)
                         .valid,
               "validate struct wrong type_name");
-        check(b && !validate_value(evaluator::make_struct(
+        check(b && !validate_value(runtime::make_struct(
                                        "app::Point",
-                                       fields(field("n", evaluator::make_int(5)),
-                                              field("x", evaluator::make_int(1)))),
+                                       fields(field("n", runtime::make_int(5)),
+                                              field("x", runtime::make_int(1)))),
                                    *b)
                         .valid,
               "validate struct extra field");
         // native struct missing the declared field (empty field map).
-        check(b && !validate_value(evaluator::make_struct("app::Point", fields()), *b).valid,
+        check(b && !validate_value(runtime::make_struct("app::Point", fields()), *b).valid,
               "validate struct rejects missing field");
         // native struct with a NULL field value (hand-built).
         {
-            evaluator::StructValue sv;
+            runtime::StructValue sv;
             sv.type_name = "app::Point";
             sv.fields.set("n", std::unique_ptr<Value>{});
             check(b && !validate_value(Value{std::move(sv)}, *b).valid,
                   "validate struct rejects null child");
         }
         // native struct with a wrong-typed field.
-        check(b && !validate_value(evaluator::make_struct(
-                                       "app::Point", fields(field("n", evaluator::make_bool(true)))),
+        check(b && !validate_value(runtime::make_struct(
+                                       "app::Point", fields(field("n", runtime::make_bool(true)))),
                                    *b)
                         .valid,
               "validate struct rejects wrong child type");
@@ -825,20 +825,20 @@ void test_struct_enum() {
                        .ok(),
               "decode enum struct payload extra field");
         // native
-        check(b && validate_value(evaluator::make_enum("app::Shape", "Dot"), *b).valid,
+        check(b && validate_value(runtime::make_enum("app::Shape", "Dot"), *b).valid,
               "validate enum unit");
-        check(b && validate_value(evaluator::make_enum("app::Shape", "Line",
-                                                       vals(evaluator::make_int(3))),
+        check(b && validate_value(runtime::make_enum("app::Shape", "Line",
+                                                       vals(runtime::make_int(3))),
                                   *b)
                         .valid,
               "validate enum tuple");
-        check(b && !validate_value(evaluator::make_enum("app::Shape", "Line",
-                                                        vals(evaluator::make_int(3),
-                                                             evaluator::make_int(4))),
+        check(b && !validate_value(runtime::make_enum("app::Shape", "Line",
+                                                        vals(runtime::make_int(3),
+                                                             runtime::make_int(4))),
                                    *b)
                         .valid,
               "validate enum tuple wrong arity");
-        check(b && !validate_value(evaluator::make_enum("wrong", "Dot"), *b).valid,
+        check(b && !validate_value(runtime::make_enum("wrong", "Dot"), *b).valid,
               "validate enum wrong name");
         // hand-built enum DOM with a duplicated key.
         {
@@ -849,22 +849,22 @@ void test_struct_enum() {
             check(b && !decode_json(*dup, *b).ok(), "decode enum rejects dup DOM field");
         }
         // native struct-payload variant: correct.
-        check(b && validate_value(evaluator::make_enum("app::Shape", "Tag",
+        check(b && validate_value(runtime::make_enum("app::Shape", "Tag",
                                                        fields(field("label",
-                                                                    evaluator::make_string("hi")))),
+                                                                    runtime::make_string("hi")))),
                                   *b)
                         .valid,
               "validate enum struct payload");
         // native struct-payload variant: wrong field name.
-        check(b && !validate_value(evaluator::make_enum("app::Shape", "Tag",
+        check(b && !validate_value(runtime::make_enum("app::Shape", "Tag",
                                                         fields(field("wrong",
-                                                                     evaluator::make_string("hi")))),
+                                                                     runtime::make_string("hi")))),
                                    *b)
                         .valid,
               "validate enum struct payload wrong field");
         // native struct-payload variant: null field value (hand-built).
         {
-            evaluator::EnumValue ev;
+            runtime::EnumValue ev;
             ev.enum_name = "app::Shape";
             ev.variant = "Tag";
             ev.named_payload.set("label", std::unique_ptr<Value>{});
@@ -873,10 +873,10 @@ void test_struct_enum() {
         }
         // native unit variant carrying a payload (hand-built) must be rejected.
         {
-            evaluator::EnumValue ev;
+            runtime::EnumValue ev;
             ev.enum_name = "app::Shape";
             ev.variant = "Dot";
-            ev.payload.push_back(std::make_unique<Value>(evaluator::make_int(1)));
+            ev.payload.push_back(std::make_unique<Value>(runtime::make_int(1)));
             check(b && !validate_value(Value{std::move(ev)}, *b).valid,
                   "validate enum unit variant rejects payload");
         }
@@ -930,7 +930,7 @@ void test_error_no_payload_echo() {
         check(b && !r.ok(), "secret variant (decode) rejected");
         check(b && !contains_marker(r.error), "decode unknown-variant error omits secret marker");
         // native validate with an unknown, secret-named variant.
-        auto v = b ? validate_value(evaluator::make_enum("app::Color", kMarker), *b)
+        auto v = b ? validate_value(runtime::make_enum("app::Color", kMarker), *b)
                    : SchemaValidationResult::fail("no binding");
         check(b && !v.valid, "secret variant (validate) rejected");
         check(b && !contains_marker(v.error), "validate unknown-variant error omits secret marker");
@@ -942,6 +942,7 @@ void test_error_no_payload_echo() {
 // =========================================================================
 void test_builtin_callers() {
     using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
     const BuiltinTable &table = BuiltinTable::instance();
     EvalContext ctx;
 
@@ -1047,14 +1048,14 @@ void round_trip_case(const std::string &name, const Value &value,
         check(false, "round-trip binding: " + name);
         return;
     }
-    const std::string json_text = evaluator::value_to_json(value);
+    const std::string json_text = runtime::value_to_json(value);
     auto dom = parse(json_text);
     if (!dom) {
         check(false, "round-trip parse: " + name);
         return;
     }
     auto decoded = decode_json(*dom, *b);
-    check(decoded.ok() && evaluator::structurally_equal(*decoded.value, value),
+    check(decoded.ok() && runtime::structurally_equal(*decoded.value, value),
           "round-trip " + name);
     // plan §6: every Value a decode produces MUST pass validate_value under the
     // SAME binding, so per-shape round-trip is also a two-policy consistency proof.
@@ -1107,37 +1108,37 @@ void test_round_trip() {
         n.push_back(CoreWireSchemaNode{std::move(s)});
         return n;
     };
-    round_trip_case("unit", evaluator::make_unit(), leaf(CoreWireSchemaUnit{}),
+    round_trip_case("unit", runtime::make_unit(), leaf(CoreWireSchemaUnit{}),
                     CoreWireSchemaNodeId{0});
-    round_trip_case("bool", evaluator::make_bool(true), leaf(CoreWireSchemaBool{}),
+    round_trip_case("bool", runtime::make_bool(true), leaf(CoreWireSchemaBool{}),
                     CoreWireSchemaNodeId{0});
-    round_trip_case("int", evaluator::make_int(7), leaf(CoreWireSchemaInt{}),
+    round_trip_case("int", runtime::make_int(7), leaf(CoreWireSchemaInt{}),
                     CoreWireSchemaNodeId{0});
-    round_trip_case("float", evaluator::make_float(1.5), leaf(CoreWireSchemaFloat{}),
+    round_trip_case("float", runtime::make_float(1.5), leaf(CoreWireSchemaFloat{}),
                     CoreWireSchemaNodeId{0});
-    round_trip_case("string", evaluator::make_string("hi"), leaf(CoreWireSchemaString{}),
+    round_trip_case("string", runtime::make_string("hi"), leaf(CoreWireSchemaString{}),
                     CoreWireSchemaNodeId{0});
-    round_trip_case("decimal", evaluator::make_decimal("s2:123"), leaf(CoreWireSchemaDecimal{2}),
+    round_trip_case("decimal", runtime::make_decimal("s2:123"), leaf(CoreWireSchemaDecimal{2}),
                     CoreWireSchemaNodeId{0});
-    round_trip_case("duration", evaluator::make_duration("5s"), leaf(CoreWireSchemaDuration{}),
+    round_trip_case("duration", runtime::make_duration("5s"), leaf(CoreWireSchemaDuration{}),
                     CoreWireSchemaNodeId{0});
     {
-        auto uuid = evaluator::make_uuid("0123456789abcdef0123456789abcdef");
+        auto uuid = runtime::make_uuid("0123456789abcdef0123456789abcdef");
         if (uuid.has_value()) {
             round_trip_case("uuid", *uuid, leaf(CoreWireSchemaUuid{}), CoreWireSchemaNodeId{0});
         } else {
             check(false, "round-trip uuid construct");
         }
     }
-    round_trip_case("timestamp", evaluator::make_timestamp(1234), leaf(CoreWireSchemaTimestamp{}),
+    round_trip_case("timestamp", runtime::make_timestamp(1234), leaf(CoreWireSchemaTimestamp{}),
                     CoreWireSchemaNodeId{0});
     { // Option None + Some
         std::vector<CoreWireSchemaNode> nodes;
         nodes.push_back(CoreWireSchemaNode{CoreWireSchemaInt{}});
         nodes.push_back(CoreWireSchemaNode{CoreWireSchemaOption{CoreWireSchemaNodeId{0}}});
-        round_trip_case("option-none", evaluator::make_option_none(),
+        round_trip_case("option-none", runtime::make_option_none(),
                         std::vector<CoreWireSchemaNode>(nodes), CoreWireSchemaNodeId{1});
-        round_trip_case("option-some", evaluator::make_option_some(evaluator::make_int(9)),
+        round_trip_case("option-some", runtime::make_option_some(runtime::make_int(9)),
                         std::move(nodes), CoreWireSchemaNodeId{1});
     }
     { // List
@@ -1147,7 +1148,7 @@ void test_round_trip() {
         seq.kind = CoreWireSequenceKind::List;
         seq.element = CoreWireSchemaNodeId{0};
         nodes.push_back(CoreWireSchemaNode{seq});
-        round_trip_case("list", make_ptr_list(vals(evaluator::make_int(1), evaluator::make_int(2))),
+        round_trip_case("list", make_ptr_list(vals(runtime::make_int(1), runtime::make_int(2))),
                         std::move(nodes), CoreWireSchemaNodeId{1});
     }
     { // Set
@@ -1157,7 +1158,7 @@ void test_round_trip() {
         seq.kind = CoreWireSequenceKind::Set;
         seq.element = CoreWireSchemaNodeId{0};
         nodes.push_back(CoreWireSchemaNode{seq});
-        round_trip_case("set", evaluator::make_set(vals(evaluator::make_int(1), evaluator::make_int(2))),
+        round_trip_case("set", runtime::make_set(vals(runtime::make_int(1), runtime::make_int(2))),
                         std::move(nodes), CoreWireSchemaNodeId{1});
     }
     { // Map
@@ -1169,8 +1170,8 @@ void test_round_trip() {
         m.value = CoreWireSchemaNodeId{1};
         nodes.push_back(CoreWireSchemaNode{m});
         round_trip_case("map",
-                        evaluator::make_map(one_entry(evaluator::make_string("a"),
-                                                      evaluator::make_int(1))),
+                        runtime::make_map(one_entry(runtime::make_string("a"),
+                                                      runtime::make_int(1))),
                         std::move(nodes), CoreWireSchemaNodeId{2});
     }
     { // Struct
@@ -1180,9 +1181,10 @@ void test_round_trip() {
         st.wire_name = "app::Point";
         st.fields.push_back(CoreWireSchemaField{"n", CoreWireSchemaNodeId{0}});
         nodes.push_back(CoreWireSchemaNode{st});
-        round_trip_case("struct",
-                        evaluator::make_struct("app::Point", fields(field("n", evaluator::make_int(5)))),
-                        std::move(nodes), CoreWireSchemaNodeId{1});
+        round_trip_case(
+            "struct",
+            runtime::make_struct("app::Point", fields(field("n", runtime::make_int(5)))),
+            std::move(nodes), CoreWireSchemaNodeId{1});
     }
     { // Enum three payload kinds
         std::vector<CoreWireSchemaNode> nodes;
@@ -1202,16 +1204,16 @@ void test_round_trip() {
         tag.slots.push_back(CoreWireSchemaField{"label", CoreWireSchemaNodeId{1}});
         en.variants.push_back(tag);
         nodes.push_back(CoreWireSchemaNode{en}); // 2
-        round_trip_case("enum-unit", evaluator::make_enum("app::Shape", "Dot"),
+        round_trip_case("enum-unit", runtime::make_enum("app::Shape", "Dot"),
                         std::vector<CoreWireSchemaNode>(nodes), CoreWireSchemaNodeId{2});
         round_trip_case("enum-tuple",
-                        evaluator::make_enum("app::Shape", "Line",
-                                             vals(evaluator::make_int(3))),
+                        runtime::make_enum("app::Shape", "Line",
+                                             vals(runtime::make_int(3))),
                         std::vector<CoreWireSchemaNode>(nodes), CoreWireSchemaNodeId{2});
         round_trip_case(
             "enum-struct",
-            evaluator::make_enum("app::Shape", "Tag",
-                                 fields(field("label", evaluator::make_string("hi")))),
+            runtime::make_enum("app::Shape", "Tag",
+                                 fields(field("label", runtime::make_string("hi")))),
             std::move(nodes), CoreWireSchemaNodeId{2});
     }
     { // Tuple
@@ -1223,7 +1225,7 @@ void test_round_trip() {
         tup.elements.push_back(CoreWireSchemaNodeId{1});
         nodes.push_back(CoreWireSchemaNode{tup}); // 2
         round_trip_case("tuple",
-                        make_ptr_list(vals(evaluator::make_int(1), evaluator::make_bool(true))),
+                        make_ptr_list(vals(runtime::make_int(1), runtime::make_bool(true))),
                         std::move(nodes), CoreWireSchemaNodeId{2});
     }
 }
@@ -1243,7 +1245,7 @@ void test_legacy_v2_decoder() {
         }
         check(!decode_json(*parse("1"), *b).ok(), "legacy.exact_rejects_bare_int");
         auto legacy = decode_json_legacy_v2(*parse("1"), *b);
-        check(legacy.ok() && std::holds_alternative<evaluator::FloatValue>(legacy.value->node),
+        check(legacy.ok() && std::holds_alternative<runtime::FloatValue>(legacy.value->node),
               "legacy.accepts_bare_int_as_float");
         // A genuine float is accepted by both.
         check(decode_json(*parse("1.5"), *b).ok(), "legacy.exact_accepts_real_float");
@@ -1293,7 +1295,7 @@ void test_legacy_v2_decoder() {
             return;
         }
         auto legacy = decode_json_legacy_v2(*parse("7"), *b);
-        check(legacy.ok() && std::holds_alternative<evaluator::IntValue>(legacy.value->node),
+        check(legacy.ok() && std::holds_alternative<runtime::IntValue>(legacy.value->node),
               "legacy.int_node_stays_int");
         check(!decode_json_legacy_v2(*parse("1.5"), *b).ok(), "legacy.int_node_rejects_float");
     }

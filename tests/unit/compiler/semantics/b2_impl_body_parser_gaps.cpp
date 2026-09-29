@@ -39,8 +39,8 @@
 #include "compiler/ir/opt/opt_lower.hpp"
 #include "runtime/evaluator/executor.hpp"
 #include "runtime/evaluator/runtime_fn_table.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 #include "tooling/formatter/formatter.hpp"
 
 #include "common/test_support.hpp"
@@ -355,7 +355,7 @@ TEST_CASE("B-2 lambda param self shadows method receiver self") {
 //   - rejected by TYPE_MISMATCH where Unit is not expected;
 //   - const-evaluable (B6): `const X: Unit = {};` succeeds;
 //   - lowers to ir::UnitLiteralExpr, then to an SSA monostate constant (B2);
-//   - evaluates to evaluator::UnitValue at runtime;
+//   - evaluates to runtime::UnitValue at runtime;
 //   - serialises as JSON null (B3);
 //   - accepted by the response-schema validator against a Unit schema (B3).
 //
@@ -440,7 +440,7 @@ struct RuntimeProgram {
     return nullptr;
 }
 
-[[nodiscard]] std::optional<ahfl::evaluator::Value>
+[[nodiscard]] std::optional<ahfl::runtime::Value>
 run_caller(const RuntimeProgram &c, std::string_view caller_name = "caller") {
     const ahfl::ir::Block *body = find_fn_body(c, caller_name);
     if (body == nullptr) {
@@ -464,7 +464,7 @@ run_caller(const RuntimeProgram &c, std::string_view caller_name = "caller") {
         MESSAGE("caller body did not return a value");
         return std::nullopt;
     }
-    return ahfl::evaluator::clone_value(ret->value);
+    return ahfl::runtime::clone_value(ret->value);
 }
 
 // --- Opt-IR helpers (mirrors opt_ir.cpp) ------------------------------------
@@ -738,7 +738,7 @@ fn caller() -> Int effect Pure decreases 0 {
     auto result = run_caller(*compiled);
     REQUIRE(result.has_value());
 
-    const auto *int_val = std::get_if<ahfl::evaluator::IntValue>(&result->node);
+    const auto *int_val = std::get_if<ahfl::runtime::IntValue>(&result->node);
     REQUIRE(int_val != nullptr);
     CHECK_EQ(int_val->value, 1);
 }
@@ -859,8 +859,8 @@ TEST_CASE("P3-gaps-B opt lowering of unit literal produces monostate constant") 
 // ============================================================================
 
 TEST_CASE("P3-gaps-B value_to_json serializes unit as null") {
-    const auto unit = ahfl::evaluator::make_unit();
-    const std::string json = ahfl::evaluator::value_to_json(unit);
+    const auto unit = ahfl::runtime::make_unit();
+    const std::string json = ahfl::runtime::value_to_json(unit);
     CHECK_EQ(json, "null");
 }
 
@@ -943,9 +943,9 @@ TEST_CASE("P3-gaps-B let _: Unit = {} typechecks") {
 // ============================================================================
 
 TEST_CASE("P3-gaps-B structurally_equal on unit values") {
-    const auto a = ahfl::evaluator::make_unit();
-    const auto b = ahfl::evaluator::make_unit();
-    CHECK(ahfl::evaluator::structurally_equal(a, b));
+    const auto a = ahfl::runtime::make_unit();
+    const auto b = ahfl::runtime::make_unit();
+    CHECK(ahfl::runtime::structurally_equal(a, b));
 }
 
 // ============================================================================
@@ -988,7 +988,7 @@ fn caller() -> Int effect Pure decreases 0 {
 
     const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&r.outcome);
     REQUIRE(ret != nullptr);
-    const auto *int_val = std::get_if<ahfl::evaluator::IntValue>(&ret->value.node);
+    const auto *int_val = std::get_if<ahfl::runtime::IntValue>(&ret->value.node);
     REQUIRE(int_val != nullptr);
     CHECK_EQ(int_val->value, 0);
 

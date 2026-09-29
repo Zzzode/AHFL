@@ -16,12 +16,11 @@
 #include "ahfl/compiler/ir/types.hpp"
 #include "ahfl/runtime/execution_event.hpp"
 #include "runtime/engine/capability_transport_adapter.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 #include "runtime/providers/secret/auth_provider.hpp"
 
 namespace ahfl::runtime {
 
-using evaluator::Value;
 
 struct CapabilityInvocationContext {
     std::string workflow_name;

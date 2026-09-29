@@ -4,7 +4,7 @@
 #include "ahfl/compiler/semantics/builtin_hooks.hpp"
 #include "runtime/evaluator/builtins.hpp"
 #include "runtime/evaluator/eval_context.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -19,6 +19,7 @@ namespace {
 
 using namespace ahfl;
 using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
 using namespace ahfl::ir;
 
 int test_count = 0;

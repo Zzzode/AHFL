@@ -14,8 +14,8 @@
 #include "runtime/engine/core_wire_canonical_size.hpp"
 
 #include "runtime/engine/core_wire_codec.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
@@ -48,7 +48,7 @@ using ahfl::ir::core::CoreWireSequenceKind;
 using ahfl::ir::core::CoreLowerDiagnostic;
 using ahfl::ir::core::VerifiedWireSchemaBinding;
 namespace core = ahfl::ir::core;
-namespace eval = ahfl::evaluator;
+namespace eval = ahfl::runtime;
 
 int g_failures = 0;
 int g_total = 0;

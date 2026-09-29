@@ -1,4 +1,4 @@
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include "base/json/json_value.hpp"
 
@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace ahfl::evaluator {
+namespace ahfl::runtime {
 
 // ============================================================================
 // FieldMap: sorted-by-name flat storage for struct / struct-enum-variant fields
@@ -199,23 +199,15 @@ int compare_values(const Value &lhs, const Value &rhs) {
                     }
                 }
                 return 0;
-            } else if constexpr (std::is_same_v<T, CallableValue>) {
-                const auto *r = std::get_if<CallableValue>(&rhs.node);
-                if (inner.body != r->body) {
-                    return inner.body < r->body ? -1 : 1;
+            } else if constexpr (std::is_same_v<T, InterpreterClosureRef>) {
+                // Interpreter-only: closures are not wire values, so ordering
+                // only needs to be a strict weak ordering for canonicalization.
+                // The descriptor is opaque here, so compare handle identity.
+                const auto *r = std::get_if<InterpreterClosureRef>(&rhs.node);
+                if (inner.get() == r->get()) {
+                    return 0;
                 }
-                if (inner.captured_context.get() != r->captured_context.get()) {
-                    return inner.captured_context.get() < r->captured_context.get() ? -1 : 1;
-                }
-                if (inner.params.size() != r->params.size()) {
-                    return inner.params.size() < r->params.size() ? -1 : 1;
-                }
-                for (std::size_t i = 0; i < inner.params.size(); ++i) {
-                    if (int c = inner.params[i].compare(r->params[i]); c != 0) {
-                        return c;
-                    }
-                }
-                return 0;
+                return inner.get() < r->get() ? -1 : 1;
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // RFC 0013 P3-gaps-B: unit has exactly one value; trivially equal.
                 return 0;
@@ -323,11 +315,6 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
                     }
                 }
                 return true;
-            } else if constexpr (std::is_same_v<T, CallableValue>) {
-                const auto *r = std::get_if<CallableValue>(&rhs.node);
-                return inner.body == r->body &&
-                       inner.captured_context.get() == r->captured_context.get() &&
-                       inner.params == r->params;
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 const auto *r = std::get_if<SetValue>(&rhs.node);
                 if (inner.items.size() != r->items.size())
@@ -354,6 +341,12 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 const auto *r = std::get_if<TimestampValue>(&rhs.node);
                 return inner.unix_ms == r->unix_ms;
+            } else if constexpr (std::is_same_v<T, InterpreterClosureRef>) {
+                // Interpreter-only: two closure values are equal iff they wrap
+                // the same captured descriptor (the evaluator's former
+                // semantics compared body + captured context + params).
+                const auto *r = std::get_if<InterpreterClosureRef>(&rhs.node);
+                return inner.get() == r->get();
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // RFC 0013 P3-gaps-B: unit has exactly one value.
                 return true;
@@ -394,8 +387,6 @@ ValueKind value_kind(const Value &v) {
                     return ValueKind::Optional;
                 }
                 return ValueKind::Enum;
-            } else if constexpr (std::is_same_v<T, CallableValue>) {
-                return ValueKind::Callable;
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 return ValueKind::Set;
             } else if constexpr (std::is_same_v<T, MapValue>) {
@@ -404,6 +395,8 @@ ValueKind value_kind(const Value &v) {
                 return ValueKind::Uuid;
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 return ValueKind::Timestamp;
+            } else if constexpr (std::is_same_v<T, InterpreterClosureRef>) {
+                return ValueKind::Callable;
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 return ValueKind::Unit;
             }
@@ -511,8 +504,6 @@ void print_value(const Value &v, std::ostream &out) {
                         out << " }";
                     }
                 }
-            } else if constexpr (std::is_same_v<T, CallableValue>) {
-                out << "<lambda/" << inner.params.size() << ">";
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 out << "set{";
                 for (size_t i = 0; i < inner.items.size(); ++i) {
@@ -547,6 +538,10 @@ void print_value(const Value &v, std::ostream &out) {
                 out << "uuid(" << inner.hex << ")";
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 out << "timestamp(" << inner.unix_ms << ")";
+            } else if constexpr (std::is_same_v<T, InterpreterClosureRef>) {
+                // Interpreter-only: the descriptor is opaque here, so render the
+                // kind without dereferencing it.
+                out << "<lambda>";
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // RFC 0013 P3-gaps-B: the unit value renders as its literal spelling.
                 out << "{}";
@@ -559,14 +554,8 @@ void print_value(const Value &v, std::ostream &out) {
 // Convenience constructor implementations
 // ============================================================================
 
-Value make_callable(std::vector<std::string> params,
-                    const ir::Expr *body,
-                    std::shared_ptr<const EvalContext> captured_context) {
-    return Value{CallableValue{
-        .params = std::move(params),
-        .body = body,
-        .captured_context = std::move(captured_context),
-    }};
+Value make_interpreter_closure(InterpreterClosureRef closure) {
+    return Value{std::move(closure)};
 }
 
 Value make_struct(std::string type_name, std::unordered_map<std::string, Value> fields) {
@@ -754,8 +743,6 @@ Value clone_value(const Value &v) {
                     }
                 }
                 return Value{std::move(ev)};
-            } else if constexpr (std::is_same_v<T, CallableValue>) {
-                return make_callable(inner.params, inner.body, inner.captured_context);
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 SetValue sv;
                 sv.items.reserve(inner.items.size());
@@ -779,6 +766,9 @@ Value clone_value(const Value &v) {
                 return Value{UuidValue{inner.hex}};
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 return Value{TimestampValue{inner.unix_ms}};
+            } else if constexpr (std::is_same_v<T, InterpreterClosureRef>) {
+                // Interpreter-only: the handle is shared, not deep-copied.
+                return Value{inner};
             } else if constexpr (std::is_same_v<T, UnitValue>) {
                 // RFC 0013 P3-gaps-B: zero-sized; clone is a fresh unit value.
                 return make_unit();
@@ -787,4 +777,4 @@ Value clone_value(const Value &v) {
         v.node);
 }
 
-} // namespace ahfl::evaluator
+} // namespace ahfl::runtime

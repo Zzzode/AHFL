@@ -1,7 +1,4 @@
 add_library(ahfl_runtime_evaluator STATIC
-    value.cpp
-    value_json.cpp
-    scalar_spelling.cpp
     eval_context.cpp
     pattern_match.cpp
     evaluator.cpp
@@ -10,11 +7,14 @@ add_library(ahfl_runtime_evaluator STATIC
     runtime_fn_table.cpp
 )
 
+# The tree-walking evaluator (RFC 0026 P8 retirement target) consumes the host
+# wire-value layer, which is a peer target now that the survivors live in
+# src/runtime/value/. ahfl_base_json is no longer needed here: the JSON edges
+# (value_json / scalar_spelling) moved with the survivor target.
 target_link_libraries(ahfl_runtime_evaluator
     PUBLIC
+        ahfl_runtime_value
         ahfl_compiler_ir
-    PRIVATE
-        ahfl_base_json
 )
 
 target_include_directories(ahfl_runtime_evaluator PRIVATE ${PROJECT_SOURCE_DIR}/src)

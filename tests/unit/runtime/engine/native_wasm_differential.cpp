@@ -32,8 +32,8 @@
 #include "runtime/engine/native_host_binding.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/compiler/ir/ir.hpp"

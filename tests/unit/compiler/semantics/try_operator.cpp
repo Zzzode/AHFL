@@ -30,7 +30,7 @@
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/evaluator/executor.hpp"
 #include "runtime/evaluator/runtime_fn_table.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include "common/project_input_support.hpp"
 #include "common/test_support.hpp"
@@ -111,6 +111,7 @@ struct EvaluatorRun {
 
 [[nodiscard]] EvaluatorRun run_function_body(const CompileArtifacts &a, std::string_view fn_name) {
     using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
     EvaluatorRun r;
     if (a.parse.has_errors() || a.resolve.has_errors() || a.tc.has_errors()) {
         return r;
@@ -152,12 +153,12 @@ struct EvaluatorRun {
 
 /// Extract the EnumValue from an ExecReturn, or nullptr if the outcome is
 /// not a return of an enum value.
-[[nodiscard]] const ahfl::evaluator::EnumValue *
+[[nodiscard]] const ahfl::runtime::EnumValue *
 expect_enum_return(const ahfl::evaluator::ExecResult &result) {
     const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&result.outcome);
     if (ret == nullptr)
         return nullptr;
-    return std::get_if<ahfl::evaluator::EnumValue>(&ret->value.node);
+    return std::get_if<ahfl::runtime::EnumValue>(&ret->value.node);
 }
 
 } // anonymous namespace
@@ -187,7 +188,7 @@ fn try_some() -> Option<Int> {
     CHECK(ev->variant == "Some");
     REQUIRE(ev->payload.size() == 1);
     REQUIRE(ev->payload.front() != nullptr);
-    const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ev->payload.front()->node);
+    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ev->payload.front()->node);
     REQUIRE(iv != nullptr);
     CHECK(iv->value == 43);
 }
@@ -239,7 +240,7 @@ fn try_ok() -> Result<Int, String> {
     CHECK(ev->variant == "Ok");
     REQUIRE(ev->payload.size() == 1);
     REQUIRE(ev->payload.front() != nullptr);
-    const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ev->payload.front()->node);
+    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ev->payload.front()->node);
     REQUIRE(iv != nullptr);
     CHECK(iv->value == 43);
 }
@@ -265,7 +266,7 @@ fn try_err() -> Result<Int, String> {
     CHECK(ev->variant == "Err");
     REQUIRE(ev->payload.size() == 1);
     REQUIRE(ev->payload.front() != nullptr);
-    const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&ev->payload.front()->node);
+    const auto *sv = std::get_if<ahfl::runtime::StringValue>(&ev->payload.front()->node);
     REQUIRE(sv != nullptr);
     CHECK(sv->value == "boom");
 }

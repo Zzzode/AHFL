@@ -34,6 +34,8 @@
 
 namespace ahfl::evaluator {
 
+using ahfl::runtime::Value;
+
 /// Logging verbosity: the evaluator writes instance dispatches to the
 /// supplied stream when this is enabled. The "-v 日志能打出实例名" acceptance
 /// criterion is exercised by passing `std::cerr` or a stringstream-backed

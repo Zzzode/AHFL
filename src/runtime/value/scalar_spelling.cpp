@@ -1,10 +1,10 @@
-#include "runtime/evaluator/scalar_spelling.hpp"
+#include "runtime/value/scalar_spelling.hpp"
 
 #include <charconv>
 #include <limits>
 #include <system_error>
 
-namespace ahfl::evaluator::scalar_spelling {
+namespace ahfl::runtime::scalar_spelling {
 
 namespace {
 
@@ -215,4 +215,4 @@ std::optional<DurationDecoded> parse_duration(std::string_view spelling) {
     return std::nullopt;
 }
 
-} // namespace ahfl::evaluator::scalar_spelling
+} // namespace ahfl::runtime::scalar_spelling

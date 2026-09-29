@@ -24,6 +24,7 @@ add_library(ahfl_pipeline_validation INTERFACE)
 target_include_directories(ahfl_pipeline_validation INTERFACE ${PROJECT_SOURCE_DIR}/src)
 
 add_subdirectory(pipeline/execution)
+add_subdirectory(runtime/value)
 add_subdirectory(runtime/evaluator)
 add_subdirectory(runtime/engine)
 add_subdirectory(runtime/providers/llm)
@@ -67,6 +68,7 @@ target_link_libraries(ahfl_runtime_bundle
     INTERFACE
         ahfl_compiler_handoff
         ahfl_pipeline_execution
+        ahfl_runtime_value
         ahfl_runtime_evaluator
         ahfl_runtime_engine
         ahfl_verification_formal

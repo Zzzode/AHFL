@@ -298,7 +298,7 @@ std::string default_eval_handler(const std::string &input) {
             auto eval_result = ahfl::evaluator::eval_expr(*constant->value, ctx);
             if (!eval_result.has_errors()) {
                 std::ostringstream val_oss;
-                ahfl::evaluator::print_value(eval_result.value, val_oss);
+                ahfl::runtime::print_value(eval_result.value, val_oss);
                 return val_oss.str();
             }
         }

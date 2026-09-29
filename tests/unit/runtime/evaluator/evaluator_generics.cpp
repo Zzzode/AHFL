@@ -23,7 +23,7 @@
 #include "runtime/evaluator/evaluator.hpp"
 #include "runtime/evaluator/executor.hpp"
 #include "runtime/evaluator/runtime_fn_table.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -38,6 +38,7 @@ namespace {
 
 using namespace ahfl;
 using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
 
 struct CompiledProgram {
     ParseResult parse_result;

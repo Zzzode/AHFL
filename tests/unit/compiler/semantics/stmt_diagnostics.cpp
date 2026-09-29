@@ -34,7 +34,7 @@
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/evaluator/executor.hpp"
 #include "runtime/evaluator/runtime_fn_table.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include "common/project_input_support.hpp"
 #include "common/test_support.hpp"
@@ -140,6 +140,7 @@ struct EvaluatorRun {
 
 [[nodiscard]] EvaluatorRun run_function_body(const CompileArtifacts &a, std::string_view fn_name) {
     using namespace ahfl::evaluator;
+using namespace ahfl::runtime;
     EvaluatorRun r;
     if (a.parse.has_errors() || a.resolve.has_errors() || a.tc.has_errors()) {
         return r;
@@ -236,7 +237,7 @@ fn caller_none() -> Int {
         // Should reach the `return 7` without hitting ExecAssertFailed.
         const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&run.exec_result->outcome);
         REQUIRE(ret != nullptr);
-        const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ret->value.node);
+        const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ret->value.node);
         REQUIRE(iv != nullptr);
         CHECK(iv->value == 7);
     }
@@ -359,7 +360,7 @@ fn never_pass_direct() -> Int {
         CHECK_FALSE(run.exec_result->has_errors());
         const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&run.exec_result->outcome);
         REQUIRE(ret != nullptr);
-        const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ret->value.node);
+        const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ret->value.node);
         REQUIRE(iv != nullptr);
         CHECK(iv->value == 6);
     }
@@ -430,7 +431,7 @@ fn entry() -> Int {
     CHECK_FALSE(run.exec_result->has_errors());
     const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&run.exec_result->outcome);
     REQUIRE(ret != nullptr);
-    const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ret->value.node);
+    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ret->value.node);
     REQUIRE(iv != nullptr);
     CHECK(iv->value == 7);
 }
@@ -501,7 +502,7 @@ fn caller() -> Int {
     CHECK_FALSE(run.exec_result->has_errors());
     const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&run.exec_result->outcome);
     REQUIRE(ret != nullptr);
-    const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ret->value.node);
+    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ret->value.node);
     REQUIRE(iv != nullptr);
     CHECK(iv->value == 42);
 }
@@ -523,7 +524,7 @@ fn caller() -> Int {
     CHECK_FALSE(run.exec_result->has_errors());
     const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&run.exec_result->outcome);
     REQUIRE(ret != nullptr);
-    const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ret->value.node);
+    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ret->value.node);
     REQUIRE(iv != nullptr);
     CHECK(iv->value == 10);
 }
@@ -566,7 +567,7 @@ fn caller() -> Int {
     CHECK_FALSE(run.exec_result->has_errors());
     const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&run.exec_result->outcome);
     REQUIRE(ret != nullptr);
-    const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ret->value.node);
+    const auto *iv = std::get_if<ahfl::runtime::IntValue>(&ret->value.node);
     REQUIRE(iv != nullptr);
     CHECK(iv->value == 99);
 }

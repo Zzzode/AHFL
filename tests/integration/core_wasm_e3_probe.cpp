@@ -10,8 +10,8 @@
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -54,11 +54,11 @@ using namespace ahfl;
     return lower_program_ir(*parse.program, resolve, typecheck);
 }
 
-[[nodiscard]] evaluator::Value fixture_input() {
-    evaluator::FieldMap fields;
-    fields.set("value", std::make_unique<evaluator::Value>(evaluator::make_string("identity")));
-    return evaluator::Value{
-        evaluator::StructValue{"wasm::e3_workflow::Frame", std::move(fields)}};
+[[nodiscard]] runtime::Value fixture_input() {
+    runtime::FieldMap fields;
+    fields.set("value", std::make_unique<runtime::Value>(runtime::make_string("identity")));
+    return runtime::Value{
+        runtime::StructValue{"wasm::e3_workflow::Frame", std::move(fields)}};
 }
 
 } // namespace
@@ -93,14 +93,14 @@ int main(int argc, char **argv) {
         };
 
     auto input = fixture_input();
-    const auto input_json = evaluator::value_to_json(input);
+    const auto input_json = runtime::value_to_json(input);
     runtime::WorkflowRuntime native(*program, std::move(config));
     const auto native_result =
         native.run("wasm::e3_workflow::IdentityPipeline", std::move(input));
     const std::vector<std::string> expected_schedule{"first", "second"};
     if (native_result.status() != runtime::WorkflowStatus::Completed ||
         native_result.output() == nullptr ||
-        evaluator::value_to_json(*native_result.output()) != input_json ||
+        runtime::value_to_json(*native_result.output()) != input_json ||
         schedule != expected_schedule || completed_nodes != 2 || state_entries != 4) {
         std::cerr << "native WorkflowRuntime observation does not match E3 identity contract"
                   << " status=" << static_cast<int>(native_result.status())

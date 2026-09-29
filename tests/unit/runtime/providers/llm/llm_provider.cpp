@@ -6,7 +6,7 @@
 #include "base/support/atomic_file.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/engine/capability_bridge.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 #include "runtime/providers/llm/http_client.hpp"
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
@@ -29,7 +29,6 @@
 namespace {
 
 using namespace ahfl;
-using namespace ahfl::evaluator;
 using namespace ahfl::ir;
 using namespace ahfl::llm_provider;
 using namespace ahfl::runtime;

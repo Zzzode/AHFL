@@ -11,16 +11,33 @@
 #include <variant>
 #include <vector>
 
-namespace ahfl::ir {
-struct Expr;
-}
-
-namespace ahfl::evaluator {
-
-class EvalContext;
+namespace ahfl::runtime {
 
 // Forward declaration for recursive variant
 struct Value;
+
+// Interpreter-only closure alternative. A first-class closure is an opaque
+// handle to storage OWNED by the tree-walking evaluator; this translation unit
+// never dereferences it, so the descriptor stays incomplete here and the host
+// wire layer keeps zero dependency on evaluator internals (no EvalContext, no
+// ir::Expr, no executor). The definition lives in the evaluator
+// (src/runtime/evaluator/evaluator.hpp) and is reachable only from there.
+//
+// It is carried in `Value` because the interpreter stores user bindings --
+// including closures passed as arguments to user-defined functions
+// (`apply(|\y| add_one(y), 41)`) and to higher-order stdlib wrappers
+// (`option.map(f)`, `collections.fold`) -- in the same `Value`-typed scope
+// maps as every other kind. A closure therefore has to be representable in
+// `ValueNode`; the alternative is a second, parallel scope type in the
+// evaluator.
+//
+// Wire discipline: this is NOT a wire kind. Closures never cross the frame
+// boundary (RFC 0026 KR6.8), so `value_to_json` has no arm for it and printing
+// renders it opaquely. Only the interpreter's own `value_kind`,
+// `structurally_equal` and `clone_value` know about it, for the closure-typed
+// stdlib argument checks and Set/Map canonicalization.
+struct InterpreterClosure;
+using InterpreterClosureRef = std::shared_ptr<const InterpreterClosure>;
 
 // ============================================================================
 // Value Variants
@@ -126,12 +143,6 @@ struct EnumValue {
     FieldMap named_payload;
 };
 
-struct CallableValue {
-    std::vector<std::string> params;
-    const ir::Expr *body{nullptr};
-    std::shared_ptr<const EvalContext> captured_context;
-};
-
 // Set value: ordered + de-duplicated vector of items (RFC P7).
 // Ordering enables deterministic equality / printing independent of insertion
 // order; de-duplication mirrors mathematical set semantics.
@@ -180,7 +191,7 @@ using ValueNode = std::variant<NoneValue,
                                MapValue,
                                UuidValue,
                                TimestampValue,
-                               CallableValue,
+                               InterpreterClosureRef,
                                UnitValue>;
 
 struct Value {
@@ -376,9 +387,9 @@ make_enum(std::string enum_name,
     return make_enum("std::option::Option", "None");
 }
 
-[[nodiscard]] Value make_callable(std::vector<std::string> params,
-                                  const ir::Expr *body,
-                                  std::shared_ptr<const EvalContext> captured_context);
+/// Wrap an evaluator-owned closure handle in a Value. The handle is opaque
+/// here; only the evaluator layer constructs or unwraps it.
+[[nodiscard]] Value make_interpreter_closure(InterpreterClosureRef closure);
 
 [[nodiscard]] Value make_struct(std::string type_name,
                                 std::unordered_map<std::string, Value> fields);
@@ -407,4 +418,4 @@ make_enum(std::string enum_name,
 // Deep copy
 [[nodiscard]] Value clone_value(const Value &v);
 
-} // namespace ahfl::evaluator
+} // namespace ahfl::runtime

@@ -10,17 +10,17 @@
 // wire codec parse/validate spellings through THIS module so there is exactly one
 // grammar per family in the runtime trust paths (Codex C2b policy rev2, P0-2).
 //
-// Scope boundary: this is the runtime evaluator's Value-spelling authority ONLY.
-// The compiler's const-evaluator keeps its own `parse_duration_milliseconds` /
-// decimal-scale helpers (compiler-owned); unifying compiler + runtime would cross
-// a layer boundary and must go through a separate protected-base shared-change
-// gate, not C2b.
+// Scope boundary: this is the runtime host-value layer's Value-spelling
+// authority ONLY. The compiler's const-evaluator keeps its own
+// `parse_duration_milliseconds` / decimal-scale helpers (compiler-owned);
+// unifying compiler + runtime would cross a layer boundary and must go through
+// a separate protected-base shared-change gate, not C2b.
 //
 // This module NEVER normalizes or rewrites a spelling. Parsing yields
 // mantissa/scale/milliseconds ONLY for validity, scale, and overflow checks; the
 // runtime Value keeps the caller's original spelling bytes verbatim (P0-1).
 
-namespace ahfl::evaluator::scalar_spelling {
+namespace ahfl::runtime::scalar_spelling {
 
 // ---------------------------------------------------------------------------
 // Decimal
@@ -80,7 +80,7 @@ struct DecimalDecoded {
 enum class DurationFamily { SourceUnit, BareMillis };
 
 // Parse a source-unit `DIGIT+ (ms|s|m|h)` spelling to i64 milliseconds. Mirrors
-// the current evaluator millisecond semantics (ms=1, s=1000, m=60000,
+// the live evaluator millisecond semantics (ms=1, s=1000, m=60000,
 // h=3600000). Rejects a missing/unknown unit, a non-digit body, a sign, or a
 // value whose unit conversion overflows i64. Leading zeros are accepted.
 [[nodiscard]] std::optional<std::int64_t> parse_source_duration_millis(std::string_view spelling);
@@ -98,4 +98,4 @@ struct DurationDecoded {
 };
 [[nodiscard]] std::optional<DurationDecoded> parse_duration(std::string_view spelling);
 
-} // namespace ahfl::evaluator::scalar_spelling
+} // namespace ahfl::runtime::scalar_spelling

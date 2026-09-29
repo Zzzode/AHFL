@@ -11,7 +11,7 @@
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value_json.hpp"
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
 
@@ -321,7 +321,7 @@ int main(int argc, char **argv) {
     if (!input_text.has_value()) {
         return 1;
     }
-    auto input = ahfl::evaluator::value_from_json(*input_text);
+    auto input = ahfl::runtime::value_from_json(*input_text);
     if (!input.has_value()) {
         return 1;
     }
@@ -393,7 +393,7 @@ int main(int argc, char **argv) {
             ahfl::runtime::WorkflowRuntime runtime(*program, std::move(soak_config));
             auto iteration_result = runtime.run(
                 "execution_demo::main::IncidentWorkflow",
-                ahfl::evaluator::clone_value(*input));
+                ahfl::runtime::clone_value(*input));
             if (iteration_result.status() !=
                     ahfl::runtime::WorkflowStatus::Completed ||
                 iteration_result.has_errors() ||

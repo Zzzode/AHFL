@@ -1,6 +1,6 @@
 #include "runtime/engine/agent_runtime.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "runtime/value/value.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -126,7 +126,7 @@ StateHandler make_conditional_handler(const std::string &state,
 Value make_input_struct(const std::string &type_name,
                         const std::string &field_name,
                         Value field_value) {
-    evaluator::FieldMap fields;
+    runtime::FieldMap fields;
     fields.set(field_name, std::make_unique<Value>(std::move(field_value)));
     return Value{StructValue{type_name, std::move(fields)}};
 }

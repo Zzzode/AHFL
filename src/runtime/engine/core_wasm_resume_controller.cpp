@@ -17,7 +17,7 @@
 #include "runtime/engine/core_wire_canonical_size.hpp" // max_canonical_json_size
 #include "runtime/engine/core_wire_codec.hpp"          // wire_codec::decode_json
 #include "runtime/engine/durable_effect_intent.hpp"    // FrozenAuthorityNamespaceBuilder
-#include "runtime/evaluator/value_json.hpp"            // hash_values, value_to_json
+#include "runtime/value/value_json.hpp"            // hash_values, value_to_json
 
 namespace ahfl::runtime::core_wasm_resume_controller {
 namespace {
@@ -789,8 +789,8 @@ namespace {
 // same deterministic serialization `hash_values` length-delimits): it is what a
 // future host seals and what this controller consults under, so there is exactly
 // one canonicalization authority.
-[[nodiscard]] support::Sha256Digest canonical_param_digest(const evaluator::Value &param) {
-    const std::string canonical = evaluator::value_to_json(param);
+[[nodiscard]] support::Sha256Digest canonical_param_digest(const runtime::Value &param) {
+    const std::string canonical = runtime::value_to_json(param);
     return support::sha256(
         std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(canonical.data()),
                                       canonical.size()));
@@ -808,7 +808,7 @@ namespace {
 [[nodiscard]] std::expected<ImportStepDecision, ResumeStepError>
 consult_live_dedup(const DedupContext &dedup,
                    const core_wasm_schema_module::VerifiedCoreWasmCallSite &call_site,
-                   std::uint64_t arg_hash, std::vector<evaluator::Value> params) {
+                   std::uint64_t arg_hash, std::vector<runtime::Value> params) {
     namespace dea = durable_effect_authority;
     namespace dei = durable_effect_intent;
 
@@ -914,9 +914,9 @@ next_import(PreparedResume &prepared, const ImportStepInput &input) {
         st.phase = Phase::Failed;
         return std::unexpected(ResumeStepError{ResumeStepReason::PayloadSchemaInvalid});
     }
-    std::vector<evaluator::Value> params;
+    std::vector<runtime::Value> params;
     params.push_back(std::move(*decoded.value));
-    const std::uint64_t arg_hash = evaluator::hash_values(params);
+    const std::uint64_t arg_hash = runtime::hash_values(params);
 
     const std::size_t j = st.replay_cursor;
     const bool below_frontier = j < st.frontier_call_site;

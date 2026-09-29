@@ -77,7 +77,7 @@ def main() -> int:
     if "Container types (Option / List / Set / Map) are encoded through nominal" not in types_text:
         raise RuntimeError("semantic type model does not declare nominal container representation")
 
-    value_header = repo / "src/runtime/evaluator/value.hpp"
+    value_header = repo / "src/runtime/value/value.hpp"
     require_absent(
         value_header,
         [

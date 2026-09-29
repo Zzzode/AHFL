@@ -19,6 +19,62 @@
 
 namespace ahfl::evaluator {
 
+using ahfl::runtime::InterpreterClosure;
+
+using ahfl::runtime::Value;
+
+using ahfl::runtime::UuidValue;
+
+using ahfl::runtime::TimestampValue;
+
+using ahfl::runtime::StructValue;
+
+using ahfl::runtime::StringValue;
+
+using ahfl::runtime::SetValue;
+
+using ahfl::runtime::MapValue;
+
+using ahfl::runtime::ListValue;
+
+using ahfl::runtime::IntValue;
+
+using ahfl::runtime::FloatValue;
+
+using ahfl::runtime::FieldMap;
+
+using ahfl::runtime::EnumValue;
+
+using ahfl::runtime::DurationValue;
+
+using ahfl::runtime::DecimalValue;
+
+using ahfl::runtime::BoolValue;
+
+using ahfl::runtime::clone_value;
+using ahfl::runtime::is_none;
+using ahfl::runtime::is_optional;
+using ahfl::runtime::is_optional_none;
+using ahfl::runtime::is_some;
+using ahfl::runtime::make_bool;
+using ahfl::runtime::make_decimal;
+using ahfl::runtime::make_duration;
+using ahfl::runtime::make_enum;
+using ahfl::runtime::make_float;
+using ahfl::runtime::make_int;
+using ahfl::runtime::make_list;
+using ahfl::runtime::make_map;
+using ahfl::runtime::make_none;
+using ahfl::runtime::make_option_none;
+using ahfl::runtime::make_option_some;
+using ahfl::runtime::make_set;
+using ahfl::runtime::make_string;
+using ahfl::runtime::make_struct;
+using ahfl::runtime::make_timestamp;
+using ahfl::runtime::make_unit;
+using ahfl::runtime::make_uuid;
+using ahfl::runtime::structurally_equal;
+
 namespace {
 
 [[nodiscard]] EvalResult
@@ -216,12 +272,16 @@ EvalResult eval_lambda_expr(const ir::LambdaExpr &expr, const EvalContext &ctx) 
         return make_error("LambdaExpr has null body");
     }
     return EvalResult{
-        make_callable(expr.params, expr.body.get(), std::make_shared<EvalContext>(ctx)),
+        make_interpreter_closure(std::make_shared<const InterpreterClosure>(InterpreterClosure{
+            .params = expr.params,
+            .body = expr.body.get(),
+            .captured_context = ctx,
+        })),
         {},
     };
 }
 
-EvalResult invoke_callable_value(const CallableValue &callable,
+EvalResult invoke_callable_value(const InterpreterClosure &callable,
                                  const std::vector<Value> &args,
                                  const CallEvalFn *call_eval) {
     if (callable.body == nullptr) {
@@ -232,7 +292,7 @@ EvalResult invoke_callable_value(const CallableValue &callable,
                           " arguments, got " + std::to_string(args.size()));
     }
 
-    EvalContext context = callable.captured_context ? *callable.captured_context : EvalContext{};
+    EvalContext context = callable.captured_context;
     for (std::size_t index = 0; index < callable.params.size(); ++index) {
         context.bind_local(callable.params[index], clone_value(args[index]));
     }
@@ -316,8 +376,9 @@ struct OptionReader {
     return result;
 }
 
-[[nodiscard]] const CallableValue *as_callable(const Value &value) noexcept {
-    return std::get_if<CallableValue>(&value.node);
+[[nodiscard]] const InterpreterClosure *as_callable(const Value &value) noexcept {
+    const auto *handle = std::get_if<InterpreterClosureRef>(&value.node);
+    return handle == nullptr ? nullptr : handle->get();
 }
 
 [[nodiscard]] Value make_result_value(std::string variant, Value payload) {
@@ -326,7 +387,7 @@ struct OptionReader {
     return make_enum("std::result::Result", std::move(variant), std::move(payloads));
 }
 
-[[nodiscard]] EvalResult invoke_unary_callable(const CallableValue &callable,
+[[nodiscard]] EvalResult invoke_unary_callable(const InterpreterClosure &callable,
                                                const Value &arg,
                                                const CallEvalFn *call_eval) {
     std::vector<Value> args;
@@ -334,7 +395,7 @@ struct OptionReader {
     return invoke_callable_value(callable, args, call_eval);
 }
 
-[[nodiscard]] EvalResult invoke_binary_callable(const CallableValue &callable,
+[[nodiscard]] EvalResult invoke_binary_callable(const InterpreterClosure &callable,
                                                 const Value &lhs,
                                                 const Value &rhs,
                                                 const CallEvalFn *call_eval) {
@@ -430,7 +491,8 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         return result;
     };
     const auto require_callable_arg = [&](std::size_t index,
-                                          std::string_view operation) -> const CallableValue * {
+                                          std::string_view operation)
+        -> const InterpreterClosure * {
         const auto *callable = index < args.size() ? as_callable(args[index]) : nullptr;
         if (callable == nullptr) {
             std::move(diagnostics.error())
@@ -1739,7 +1801,7 @@ eval_call_expr(const ir::CallExpr &expr,
         return result;
     };
     if (auto callee_value = ctx.get_local(expr.callee); callee_value.has_value()) {
-        const auto *callable = std::get_if<CallableValue>(&callee_value->node);
+        const auto *callable = as_callable(*callee_value);
         if (callable != nullptr) {
             std::vector<Value> args;
             args.reserve(expr.arguments.size());

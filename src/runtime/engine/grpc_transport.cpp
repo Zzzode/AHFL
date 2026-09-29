@@ -177,11 +177,11 @@ parse_grpc_message_from_headers(const std::vector<std::pair<std::string, std::st
 // serialize helpers
 // ============================================================================
 
-std::string serialize_value_for_grpc_json_transcoding(const evaluator::Value &value) {
+std::string serialize_value_for_grpc_json_transcoding(const runtime::Value &value) {
     return serialize_value_for_wire_json(value);
 }
 
-std::string serialize_args_for_grpc_json_transcoding(const std::vector<evaluator::Value> &args) {
+std::string serialize_args_for_grpc_json_transcoding(const std::vector<runtime::Value> &args) {
     return serialize_args_for_wire_json(args);
 }
 

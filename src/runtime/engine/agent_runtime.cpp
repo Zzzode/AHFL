@@ -111,13 +111,13 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
     // field scope. The frontend accepts a bare `return input;`; without this
     // binding the evaluator treated that canonical identity path as an
     // unresolved local even though `input.field` worked.
-    exec_ctx.eval_ctx.bind_local("input", evaluator::clone_value(input));
+    exec_ctx.eval_ctx.bind_local("input", runtime::clone_value(input));
 
     // Inject input fields for the existing input.field lookup path.
-    if (auto *sv = std::get_if<evaluator::StructValue>(&input.node)) {
+    if (auto *sv = std::get_if<runtime::StructValue>(&input.node)) {
         for (auto &[field_name, field_value] : sv->fields) {
             if (field_value) {
-                exec_ctx.eval_ctx.set_input(field_name, evaluator::clone_value(*field_value));
+                exec_ctx.eval_ctx.set_input(field_name, runtime::clone_value(*field_value));
             }
         }
     }

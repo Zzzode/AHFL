@@ -32,7 +32,7 @@ namespace {
 [[nodiscard]] evaluator::EvalResult make_capability_error(std::string message,
                                                           std::string diagnostic_code = {}) {
     evaluator::EvalResult result;
-    result.value = evaluator::make_none();
+    result.value = runtime::make_none();
     if (diagnostic_code.empty()) {
         result.diagnostics.error()
             .message(std::move(message))
@@ -49,7 +49,7 @@ namespace {
 
 [[nodiscard]] evaluator::EvalResult make_unknown_capability_error(std::string message) {
     evaluator::EvalResult result;
-    result.value = evaluator::make_none();
+    result.value = runtime::make_none();
     std::move(result.diagnostics)
         .error()
         .message(std::move(message))
@@ -72,7 +72,7 @@ namespace {
 // builtin precedence is unconditional. Writes the result and returns true when
 // the callee is a registered builtin hook; otherwise returns false.
 [[nodiscard]] bool try_eval_builtin_hook(std::string_view callee,
-                                         const std::vector<evaluator::Value> &args,
+                                         const std::vector<runtime::Value> &args,
                                          const evaluator::EvalContext &current_ctx,
                                          evaluator::EvalResult &hook_result) {
     const evaluator::BuiltinFn *fn = evaluator::BuiltinTable::instance().find(callee);
@@ -87,7 +87,7 @@ namespace {
 capability_call_result_to_eval_result(const std::string &callee, CapabilityCallResult call_result) {
     if (call_result.status == CapabilityCallStatus::Success) {
         evaluator::EvalResult result{
-            call_result.value.has_value() ? std::move(*call_result.value) : evaluator::make_none(),
+            call_result.value.has_value() ? std::move(*call_result.value) : runtime::make_none(),
             {},
         };
         if (call_result.usage.has_value()) {
@@ -107,7 +107,7 @@ capability_call_result_to_eval_result(const std::string &callee, CapabilityCallR
     // persists a resume record rather than terminating.
     if (call_result.status == CapabilityCallStatus::Pending) {
         evaluator::EvalResult result;
-        result.value = evaluator::make_none();
+        result.value = runtime::make_none();
         result.suspension = evaluator::EvalSuspension{
             .pending_cap_id = call_result.pending_cap_id,
             .pending_ordinal = call_result.pending_ordinal,
@@ -137,7 +137,7 @@ template <typename InvokeCall>
         // Step 1: evaluate arguments using the full call dispatcher so that
         // nested capability calls inside stdlib constructor arguments still go
         // through the runtime registry.
-        std::vector<evaluator::Value> arg_values;
+        std::vector<runtime::Value> arg_values;
         for (const auto &arg_ptr : call.arguments) {
             if (!arg_ptr) {
                 return make_capability_error("call '" + call.callee +
@@ -197,7 +197,7 @@ evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
         expr,
         eval_ctx,
         [registry](const ir::CallExpr &call,
-                   const std::vector<evaluator::Value> &arg_values) -> evaluator::EvalResult {
+                   const std::vector<runtime::Value> &arg_values) -> evaluator::EvalResult {
             if (registry == nullptr) {
                 return make_unknown_capability_error("capability registry is null when invoking '" +
                                                      call.callee + "'");
@@ -217,7 +217,7 @@ evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
         expr,
         eval_ctx,
         [&invoker](const ir::CallExpr &call,
-                   const std::vector<evaluator::Value> &arg_values) -> evaluator::EvalResult {
+                   const std::vector<runtime::Value> &arg_values) -> evaluator::EvalResult {
             if (!invoker) {
                 return make_unknown_capability_error("capability invoker is empty when invoking '" +
                                                      call.callee + "'");
@@ -236,7 +236,7 @@ evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
         eval_ctx,
         [&invoker,
          &context](const ir::CallExpr &call,
-                   const std::vector<evaluator::Value> &arg_values) -> evaluator::EvalResult {
+                   const std::vector<runtime::Value> &arg_values) -> evaluator::EvalResult {
             if (!invoker) {
                 return make_unknown_capability_error("capability invoker is empty when invoking '" +
                                                      call.callee + "'");

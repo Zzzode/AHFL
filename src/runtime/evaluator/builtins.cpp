@@ -1,6 +1,6 @@
 #include "runtime/evaluator/builtins.hpp"
 #include "runtime/evaluator/evaluator.hpp"
-#include "runtime/evaluator/scalar_spelling.hpp"
+#include "runtime/value/scalar_spelling.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -17,6 +17,58 @@
 #include <vector>
 
 namespace ahfl::evaluator {
+
+using ahfl::runtime::UuidValue;
+
+using ahfl::runtime::TimestampValue;
+
+using ahfl::runtime::StringValue;
+
+using ahfl::runtime::SetValue;
+
+using ahfl::runtime::NoneValue;
+
+using ahfl::runtime::MapValue;
+
+using ahfl::runtime::ListValue;
+
+using ahfl::runtime::IntValue;
+
+using ahfl::runtime::FloatValue;
+
+using ahfl::runtime::EnumValue;
+
+using ahfl::runtime::DurationValue;
+
+using ahfl::runtime::DecimalValue;
+
+using ahfl::runtime::BoolValue;
+
+using ahfl::runtime::clone_value;
+using ahfl::runtime::is_none;
+using ahfl::runtime::is_optional;
+using ahfl::runtime::is_optional_none;
+using ahfl::runtime::is_some;
+using ahfl::runtime::make_bool;
+using ahfl::runtime::make_decimal;
+using ahfl::runtime::make_duration;
+using ahfl::runtime::make_enum;
+using ahfl::runtime::make_float;
+using ahfl::runtime::make_int;
+using ahfl::runtime::make_list;
+using ahfl::runtime::make_map;
+using ahfl::runtime::make_none;
+using ahfl::runtime::make_option_none;
+using ahfl::runtime::make_option_some;
+using ahfl::runtime::make_set;
+using ahfl::runtime::make_string;
+using ahfl::runtime::make_struct;
+using ahfl::runtime::make_timestamp;
+using ahfl::runtime::make_unit;
+using ahfl::runtime::make_uuid;
+using ahfl::runtime::structurally_equal;
+
+namespace scalar_spelling = ahfl::runtime::scalar_spelling;
 
 namespace {
 

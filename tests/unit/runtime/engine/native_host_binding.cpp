@@ -13,8 +13,8 @@
 //   - an unconfigured binding fails closed rather than crashing.
 
 #include "runtime/engine/native_host_binding.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/value/value.hpp"
+#include "runtime/value/value_json.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -27,7 +27,6 @@
 namespace {
 
 using namespace ahfl;
-using namespace ahfl::evaluator;
 using namespace ahfl::runtime;
 
 int test_count = 0;
