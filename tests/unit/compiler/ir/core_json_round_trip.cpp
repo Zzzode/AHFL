@@ -626,6 +626,9 @@ lower_golden_file(const std::filesystem::path &path) {
         // WH-4: the trace-ring KAT fixture lowers to a verifier-clean Core
         // program, so it belongs in the lowering corpus.
         "wasm/wh4_trace_workflow.ahfl",
+        // WH-4: the trap fixture (divide-by-zero in Done) is a runtime trap,
+        // not a compile-time rejection; the Core program is verifier-clean.
+        "wasm/wh4_trap_workflow.ahfl",
     };
 }
 
