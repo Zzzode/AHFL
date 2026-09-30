@@ -32,6 +32,11 @@ if(AHFL_ENABLE_BACKEND_WASM)
     # runtime/engine). Gated with the wasm emitter it consumes; deliberately
     # NOT in ahfl_runtime_bundle, which must stay linkable under WASM=OFF.
     add_subdirectory(runtime/wasm_host)
+    # RFC 0026 KR6.8 WH-4 fix-forward D-A: the wasm3-backed runtime FACADE
+    # (compile-to-wasm + class facade). The ONLY runtime-tier target that
+    # links a compiler backend (ahfl_compiler_backend_wasm); the wasm_host
+    # free functions stay backend-free.
+    add_subdirectory(runtime/wasm_runner)
 endif()
 add_subdirectory(runtime/providers/llm)
 add_subdirectory(compiler/backends)
