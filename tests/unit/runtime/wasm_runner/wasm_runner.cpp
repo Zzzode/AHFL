@@ -896,6 +896,82 @@ void test_states_invoker_multi_call(const std::filesystem::path &repo_root) {
     check(result->states.size() == 4, "multi.state_count");
 }
 
+// ==== 6c. P2-12: shared-import attribution (two nodes, one capability) ====
+
+void test_shared_import_attribution(const std::filesystem::path &repo_root) {
+    // Two workflow nodes share the SAME Echo capability import. The
+    // symbol_to_runner map uses last-wins attribution; this test verifies
+    // the workflow runs correctly and both invocations are observed.
+    const auto source =
+        repo_root / "tests/golden/wasm/p2_12_shared_import.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "shared.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    int cap_invoked_count = 0;
+    std::vector<std::string> hook_node_names;
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.hooks.capability_invoked_hook =
+        [&cap_invoked_count](AgentId, std::string_view name) {
+            ++cap_invoked_count;
+            check(name == "Echo", "shared.hook_cap_name");
+        };
+    config.hooks.state_entered_hook =
+        [&hook_node_names](
+            AgentId, std::string_view, std::string_view node_name,
+            std::string_view) {
+            hook_node_names.emplace_back(node_name);
+        };
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::p2_12_shared_import::Frame","value":"hello"})");
+    check(input.has_value(), "shared.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run(
+        "wasm::p2_12_shared_import::SharedEchoPipeline", std::move(*input));
+    check(result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "shared.completed");
+
+    // The Echo capability was invoked exactly twice (once per node).
+    check(cap_invoked_count == 2, "shared.cap_invoked_count");
+
+    // The output should equal the input (Echo echoes through both nodes).
+    const auto *output = result.output();
+    check(output != nullptr, "shared.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json ==
+                  R"({"_type":"wasm::p2_12_shared_import::Frame","value":"hello"})",
+              "shared.output_value");
+    }
+
+    // Each node walks Start -> Done (4 state entries total).
+    check(hook_node_names.size() == 4, "shared.hook_node_names_count");
+}
+
 // ==== 7. P1-7: v2c bridge fixtures through WH-3 executor on wasm3 ====
 
 // Helper: drive a v2c bridge agent through the facade (which uses the WH-3
@@ -1263,6 +1339,7 @@ int main() {
     test_agent_host_abort(repo_root);
     test_states_invoker_separation(repo_root);
     test_states_invoker_multi_call(repo_root);
+    test_shared_import_attribution(repo_root);
     test_v2c_bridge_fixtures(repo_root);
     test_byte_compare(repo_root);
 

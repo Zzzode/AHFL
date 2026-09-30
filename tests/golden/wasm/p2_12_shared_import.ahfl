@@ -1,0 +1,42 @@
+module wasm::p2_12_shared_import;
+
+// P2-12: two workflow nodes that share the SAME capability import (Echo).
+// The symbol_to_runner map uses last-wins attribution; this fixture verifies
+// the workflow runs correctly and both invocations are observed.
+
+pub struct Frame {
+    value: String;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow SharedEchoPipeline {
+    input: Frame;
+    output: Frame;
+
+    node first: EchoAgent(input);
+    node second: EchoAgent(first) after [first];
+
+    return: second;
+}
