@@ -641,6 +641,13 @@ lower_golden_file(const std::filesystem::path &path) {
         // not a compile-time rejection; the Core program is verifier-clean.
         "wasm/wh4_trap_pipeline.ahfl",
         "wasm/wh4_trap_workflow.ahfl",
+        // WH-5b.1: hybrid P6 + opaque capability workflow fixtures lower to
+        // verifier-clean Core (the wasm codegen's P6-only node_blocks and
+        // event-record attribution are codegen-level, not Core-verifier
+        // gates), so they belong in the lowering corpus.
+        "wasm/wh5b_hybrid_cap_before_p6.ahfl",
+        "wasm/wh5b_hybrid_kahn_reordered.ahfl",
+        "wasm/wh5b_hybrid_p6_before_cap.ahfl",
     };
 }
 

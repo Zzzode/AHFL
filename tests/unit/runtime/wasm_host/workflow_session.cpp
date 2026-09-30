@@ -1104,6 +1104,124 @@ void test_capability_ordinal_oor_fail_closed(
     }
 }
 
+// ==== WH-5b.1: hybrid P6 + opaque capability workflow (P6-before-cap) ====
+//
+// Emission/descriptor-only: the control-plane contract (P6-only dense
+// node_blocks, per-node is_p6 + p6_block_ordinal, tag-0 identity event
+// records for P6 nodes in capability-bearing mixed modules). Runtime
+// execution of hybrid workflows is WH-5b.3 scope (host transcode).
+
+void test_hybrid_p6_before_cap(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_p6_before_cap.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "hybrid_p6cap.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    const auto &desc = wf->descriptor;
+    check(desc.is_workflow, "hybrid_p6cap.is_workflow");
+    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "hybrid_p6cap.p6_frame");
+    check(desc.workflow_node_count == 2, "hybrid_p6cap.two_nodes");
+    check(desc.imports.size() == 1, "hybrid_p6cap.one_import");
+
+    // Per-node is_p6 flags: node 0 (compute) is P6, node 1 (echo) is opaque.
+    check(desc.nodes.size() == 2, "hybrid_p6cap.nodes_size");
+    if (desc.nodes.size() == 2) {
+        check(desc.nodes[0].is_p6, "hybrid_p6cap.node0_is_p6");
+        check(!desc.nodes[1].is_p6, "hybrid_p6cap.node1_is_opaque");
+        // The P6 node's dense node_blocks ordinal is 0 (only P6 runner).
+        check(desc.nodes[0].p6_block_ordinal == 0,
+              "hybrid_p6cap.node0_p6_ordinal");
+    }
+
+    // P6-only dense node_blocks: exactly 1 entry (the P6 runner).
+    check(desc.frame_section.has_value(), "hybrid_p6cap.frame_section");
+    if (desc.frame_section.has_value()) {
+        check(desc.frame_section->node_blocks.size() == 1,
+              "hybrid_p6cap.node_blocks_count");
+    }
+    check(desc.wire_schema.has_value(), "hybrid_p6cap.wire_schema");
+}
+
+// ==== WH-5b.1: hybrid P6 + opaque capability workflow (cap-before-P6) ====
+
+void test_hybrid_cap_before_p6(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_cap_before_p6.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "hybrid_capp6.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    const auto &desc = wf->descriptor;
+    check(desc.is_workflow, "hybrid_capp6.is_workflow");
+    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "hybrid_capp6.p6_frame");
+    check(desc.workflow_node_count == 2, "hybrid_capp6.two_nodes");
+    check(desc.imports.size() == 1, "hybrid_capp6.one_import");
+
+    // Per-node is_p6 flags: node 0 (echo) is opaque, node 1 (compute) is P6.
+    check(desc.nodes.size() == 2, "hybrid_capp6.nodes_size");
+    if (desc.nodes.size() == 2) {
+        check(!desc.nodes[0].is_p6, "hybrid_capp6.node0_is_opaque");
+        check(desc.nodes[1].is_p6, "hybrid_capp6.node1_is_p6");
+        check(desc.nodes[1].p6_block_ordinal == 0,
+              "hybrid_capp6.node1_p6_ordinal");
+    }
+
+    check(desc.frame_section.has_value(), "hybrid_capp6.frame_section");
+    if (desc.frame_section.has_value()) {
+        check(desc.frame_section->node_blocks.size() == 1,
+              "hybrid_capp6.node_blocks_count");
+    }
+    check(desc.wire_schema.has_value(), "hybrid_capp6.wire_schema");
+}
+
+// ==== WH-5b.1: hybrid 3-node Kahn-reordered workflow ====
+
+void test_hybrid_kahn_reordered(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_kahn_reordered.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "hybrid_kahn.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    const auto &desc = wf->descriptor;
+    check(desc.is_workflow, "hybrid_kahn.is_workflow");
+    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "hybrid_kahn.p6_frame");
+    check(desc.workflow_node_count == 3, "hybrid_kahn.three_nodes");
+    check(desc.imports.size() == 1, "hybrid_kahn.one_import");
+
+    // Kahn schedule is [echo1, compute, echo2]: opaque, P6, opaque.
+    // The declaration order is [echo2, compute, echo1]; the `after` edges
+    // force echo1 first. Verify both the lane flags and the schedule order.
+    check(desc.nodes.size() == 3, "hybrid_kahn.nodes_size");
+    if (desc.nodes.size() == 3) {
+        check(desc.nodes[0].name == "echo1", "hybrid_kahn.node0_name");
+        check(!desc.nodes[0].is_p6, "hybrid_kahn.node0_is_opaque");
+        check(desc.nodes[1].name == "compute", "hybrid_kahn.node1_name");
+        check(desc.nodes[1].is_p6, "hybrid_kahn.node1_is_p6");
+        check(desc.nodes[1].p6_block_ordinal == 0,
+              "hybrid_kahn.node1_p6_ordinal");
+        check(desc.nodes[2].name == "echo2", "hybrid_kahn.node2_name");
+        check(!desc.nodes[2].is_p6, "hybrid_kahn.node2_is_opaque");
+    }
+
+    check(desc.frame_section.has_value(), "hybrid_kahn.frame_section");
+    if (desc.frame_section.has_value()) {
+        check(desc.frame_section->node_blocks.size() == 1,
+              "hybrid_kahn.node_blocks_count");
+    }
+    check(desc.wire_schema.has_value(), "hybrid_kahn.wire_schema");
+}
+
 } // namespace
 
 int main() {
@@ -1121,6 +1239,10 @@ int main() {
     test_completed_count_fail_closed(repo_root);
     test_capability_kind_fail_closed(repo_root);
     test_capability_ordinal_oor_fail_closed(repo_root);
+    // WH-5b.1: hybrid P6 + opaque emission/descriptor-only tests.
+    test_hybrid_p6_before_cap(repo_root);
+    test_hybrid_cap_before_p6(repo_root);
+    test_hybrid_kahn_reordered(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;

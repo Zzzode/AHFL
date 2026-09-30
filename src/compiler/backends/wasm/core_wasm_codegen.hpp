@@ -93,6 +93,12 @@ struct CoreWasmNodeDescriptor {
     std::uint32_t runner{0};       // index into CoreWasmExecutionDescriptor::agents
     std::string name;              // source-level node name (display / hooks)
     bool has_capability{false};
+    // WH-5b.1: P6-packaged node (fixed I_k/C_k/scratch_k/O_k frame block).
+    // Opaque capability-final nodes are false. When true, p6_block_ordinal is
+    // the node_blocks / dense_node_*_layouts / frame_roots.node_* index (P6-only
+    // dense order). When false, p6_block_ordinal is unused.
+    bool is_p6{false};
+    std::uint32_t p6_block_ordinal{0};
     // First capability ordinal + source symbol (for event-record cross-check).
     // A P6 bridge node can call multiple capabilities; all_capabilities carries
     // every (ordinal, source_symbol) pair so the runtime can resolve any call.

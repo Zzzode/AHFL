@@ -947,6 +947,11 @@ struct WorkflowNodeBlock {
     std::uint32_t output_base{0};
 };
 
+// WH-5b.1: sentinel for p6_block_by_runner when a packaged-instance runner is
+// opaque (no fixed node-frame block).
+constexpr std::uint32_t kInvalidP6Block =
+    std::numeric_limits<std::uint32_t>::max();
+
 struct WorkflowPlan {
     CoreWorkflowId workflow{};
     std::vector<CoreWorkflowNodeId> schedule;
@@ -967,9 +972,15 @@ struct WorkflowPlan {
     // Gates the computed runners, node blocks, frame sections and the Data
     // section; an all-opaque workflow stays byte-identical.
     bool has_p6_nodes{false};
-    // V2-D: per-packaged-instance node blocks, indexed parallel to
-    // agent_plans / packaged_instances.
+    // WH-5b.1: node blocks are P6-RUNNER-ONLY dense order (packaged-instance
+    // order with opaque runners skipped). An opaque capability-final runner
+    // keeps its heap tuple and owns no fixed node-frame block, so the frame
+    // section's node_blocks array carries only nonzero P6 spans (the
+    // transport verifier's honesty guarantee needs no special-casing).
     std::vector<WorkflowNodeBlock> node_blocks;
+    // Maps every packaged-instance runner index to its P6-only node_blocks
+    // ordinal, or kInvalidP6Block when the runner is opaque.
+    std::vector<std::uint32_t> p6_block_by_runner;
     // V2-D module-level physical coordinates (all compile-time constants).
     std::uint32_t bridge_control_base{0};
     std::uint32_t bridge_block_stride{0};
@@ -12228,12 +12239,14 @@ validate_workflow_region(const CoreProgram &program,
         cursor += control_extent;
     }
 
-    // (2) Per-packaged-instance node-frame blocks (only P6 instances occupy a
-    // block; opaque capability-final nodes keep their heap tuple). Each block is
-    // I_k / C_k / scratch_k / O_k, every sub-span 8-aligned and sized from the
-    // finalized boundary layouts + the gathered scratch high-water.
+    // (2) Per-P6-runner node-frame blocks (only P6 instances occupy a block;
+    // opaque capability-final nodes keep their heap tuple and own no fixed
+    // block). Each block is I_k / C_k / scratch_k / O_k, every sub-span
+    // 8-aligned and sized from the finalized boundary layouts + the gathered
+    // scratch high-water.
     plan.node_blocks_base = static_cast<std::uint32_t>(cursor);
-    plan.node_blocks.resize(plan.packaged_instances.size());
+    // p6_block_by_runner is already initialized to kInvalidP6Block in
+    // build_workflow_plan; the loop below assigns P6 ordinals.
     auto layout_size = [&](CoreValueTypeId vt) -> std::optional<std::uint64_t> {
         if (vt.value >= layouts.value_layouts.size()) {
             return std::nullopt;
@@ -12244,16 +12257,21 @@ validate_workflow_region(const CoreProgram &program,
         }
         return layouts.layouts[id.value].size;
     };
-    // Gather each P6 runner's aligned block parts (opaque runners keep a
-    // zero-spaced block slot parallel to the packaged-instance table), then
+    // Gather each P6 runner's aligned block parts in P6-only dense order, then
     // derive the dense cursor through the shared pure arithmetic.
-    std::vector<CoreWasmP6NodeBlockParts> block_parts(
-        plan.packaged_instances.size());
+    std::vector<std::uint32_t> p6_runners;
+    p6_runners.reserve(plan.packaged_instances.size());
     for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
-        plan.node_blocks[runner].instance = plan.packaged_instances[runner];
         if (!gathered[runner].p6) {
             continue;
         }
+        plan.p6_block_by_runner[runner] =
+            static_cast<std::uint32_t>(p6_runners.size());
+        p6_runners.push_back(runner);
+    }
+    std::vector<CoreWasmP6NodeBlockParts> block_parts(p6_runners.size());
+    for (std::uint32_t p6 = 0; p6 < p6_runners.size(); ++p6) {
+        const std::uint32_t runner = p6_runners[p6];
         const auto *instance = agent_instance(program, plan.packaged_instances[runner]);
         if (instance == nullptr || instance->dispatch_types.size() != 3) {
             add_diag(result,
@@ -12272,7 +12290,7 @@ validate_workflow_region(const CoreProgram &program,
         }
         const std::uint64_t scratch_size =
             align8(std::max<std::uint64_t>(gathered[runner].scratch_high, 16u));
-        block_parts[runner] = CoreWasmP6NodeBlockParts{
+        block_parts[p6] = CoreWasmP6NodeBlockParts{
             static_cast<std::uint32_t>(align8(*input_size)),
             static_cast<std::uint32_t>(align8(*context_size)),
             static_cast<std::uint32_t>(scratch_size),
@@ -12283,13 +12301,13 @@ validate_workflow_region(const CoreProgram &program,
         overflow("node-frame block region");
         return false;
     }
-    for (std::uint32_t runner = 0; runner < plan.packaged_instances.size(); ++runner) {
-        if (!gathered[runner].p6) {
-            continue;
-        }
+    plan.node_blocks.resize(p6_runners.size());
+    for (std::uint32_t p6 = 0; p6 < p6_runners.size(); ++p6) {
+        const std::uint32_t runner = p6_runners[p6];
         const auto *instance = agent_instance(program, plan.packaged_instances[runner]);
-        const CoreWasmP6NodeBlockParts &parts = block_parts[runner];
-        WorkflowNodeBlock &block = plan.node_blocks[runner];
+        const CoreWasmP6NodeBlockParts &parts = block_parts[p6];
+        WorkflowNodeBlock &block = plan.node_blocks[p6];
+        block.instance = plan.packaged_instances[runner];
         const ir::core::CoreLayoutId in_id =
             layouts.value_layouts[instance->dispatch_types[0].value];
         const ir::core::CoreLayoutId ctx_id =
@@ -12306,11 +12324,11 @@ validate_workflow_region(const CoreProgram &program,
         block.input_size = parts.input;
         block.context_size = parts.context;
         block.output_size = parts.output;
-        block.input_base = block_cursor->bases[runner][0];
-        block.context_base = block_cursor->bases[runner][1];
-        block.scratch_base = block_cursor->bases[runner][2];
+        block.input_base = block_cursor->bases[p6][0];
+        block.context_base = block_cursor->bases[p6][1];
+        block.scratch_base = block_cursor->bases[p6][2];
         block.scratch_size = parts.scratch;
-        block.output_base = block_cursor->bases[runner][3];
+        block.output_base = block_cursor->bases[p6][3];
     }
     const std::uint64_t node_blocks_extent = block_cursor->extent;
     cursor += node_blocks_extent;
@@ -12981,6 +12999,13 @@ build_workflow_plan(const CoreProgram &program,
         }
     }
 
+    // WH-5b.1: p6_block_by_runner must be populated for EVERY workflow (not
+    // just P6 ones) so the scheduler's unconditional p6_node check never
+    // dereferences an empty vector. All-opaque workflows keep every entry at
+    // kInvalidP6Block; plan_workflow_p6_capacity_family assigns P6 ordinals.
+    plan.p6_block_by_runner.assign(
+        plan.packaged_instances.size(), kInvalidP6Block);
+
     // V2-D physical planning: run the D6 compile-time single-page capacity
     // family over the node-frame blocks, the merged bridge control page frame,
     // the merged rodata image, the host-packed entry arena and the per-call-site
@@ -13052,7 +13077,6 @@ build_workflow_plan(const CoreProgram &program,
                          "packaged workflow target is not an agent instance");
                 return std::nullopt;
             }
-            const WorkflowNodeBlock &block = plan.node_blocks[runner];
             const AgentPlan &runner_fact = plan.agent_plans[runner];
             const bool p6 =
                 runner_fact.has_computed_final ||
@@ -13062,6 +13086,10 @@ build_workflow_plan(const CoreProgram &program,
             if (!p6) {
                 continue;
             }
+            // WH-5b.1: the block lookup is P6-only; opaque runners have no
+            // node_block entry (p6_block_by_runner[runner] == kInvalidP6Block).
+            const WorkflowNodeBlock &block =
+                plan.node_blocks[plan.p6_block_by_runner[runner]];
             // V2-D emission half 2: the generic handler-dispatch P6 runner can
             // only observe a COMPUTED RETURN terminal (it materializes O_k and
             // returns it). A scalar computed-goto preamble that feeds an opaque
@@ -13189,13 +13217,19 @@ build_workflow_plan(const CoreProgram &program,
                                                  CoreWasmCodegenResult &result) {
     const std::uint32_t runner_count =
         static_cast<std::uint32_t>(plan.packaged_instances.size());
+    // WH-5b.1: node_blocks, dense node layouts, and wire-schema node roots are
+    // P6-RUNNER-ONLY dense order. Opaque runners have no fixed frame block and
+    // no P4-D layout; their wire-JSON encoding is handled through the capability
+    // param/result binding, not frame_roots.
+    const std::uint32_t p6_count = static_cast<std::uint32_t>(
+        plan.node_blocks.size());
 
     std::vector<CoreValueTypeId> node_input_vts;
     std::vector<CoreValueTypeId> node_context_vts;
     std::vector<CoreValueTypeId> node_output_vts;
-    node_input_vts.reserve(runner_count);
-    node_context_vts.reserve(runner_count);
-    node_output_vts.reserve(runner_count);
+    node_input_vts.reserve(p6_count);
+    node_context_vts.reserve(p6_count);
+    node_output_vts.reserve(p6_count);
     for (std::uint32_t runner = 0; runner < runner_count; ++runner) {
         const auto *instance =
             agent_instance(program, plan.packaged_instances[runner]);
@@ -13203,6 +13237,9 @@ build_workflow_plan(const CoreProgram &program,
             add_diag(result, core_wasm_diag::kInvalidCore,
                      "a packaged workflow instance has no exact dispatch triplet");
             return false;
+        }
+        if (plan.p6_block_by_runner[runner] == kInvalidP6Block) {
+            continue;
         }
         const auto nominal_base = [&](CoreValueTypeId vt) -> std::optional<CoreTypeId> {
             if (vt.value >= program.value_types.size()) {
@@ -13257,11 +13294,11 @@ build_workflow_plan(const CoreProgram &program,
         return false;
     }
 
-    // Dense layout table.
+    // Dense layout table (P6-runner-only dense order, matching node_blocks).
     BoundaryTableBuilder builder(layouts);
-    plan.dense_node_input_layouts.resize(runner_count);
-    plan.dense_node_context_layouts.resize(runner_count);
-    plan.dense_node_output_layouts.resize(runner_count);
+    plan.dense_node_input_layouts.resize(p6_count);
+    plan.dense_node_context_layouts.resize(p6_count);
+    plan.dense_node_output_layouts.resize(p6_count);
     const ir::core::CoreLayoutId wf_input_full =
         layouts.value_layouts[wf_input_vt->value];
     const ir::core::CoreLayoutId wf_output_full =
@@ -13271,19 +13308,19 @@ build_workflow_plan(const CoreProgram &program,
     (void)builder.emit_fixed(wf_input_full, /*from_input=*/true);
     const ir::core::CoreLayoutId wf_output_dense =
         builder.emit_fixed(wf_output_full, /*from_input=*/false);
-    for (std::uint32_t runner = 0; runner < runner_count; ++runner) {
+    for (std::uint32_t p6 = 0; p6 < p6_count; ++p6) {
         const ir::core::CoreLayoutId input_full =
-            layouts.value_layouts[node_input_vts[runner].value];
+            layouts.value_layouts[node_input_vts[p6].value];
         const ir::core::CoreLayoutId context_full =
-            layouts.value_layouts[node_context_vts[runner].value];
+            layouts.value_layouts[node_context_vts[p6].value];
         const ir::core::CoreLayoutId output_full =
-            layouts.value_layouts[node_output_vts[runner].value];
-        plan.dense_node_input_layouts[runner] =
+            layouts.value_layouts[node_output_vts[p6].value];
+        plan.dense_node_input_layouts[p6] =
             builder.emit_fixed(input_full, /*from_input=*/true);
         // A context root is never a container-bearing fixed frame in this rung.
-        plan.dense_node_context_layouts[runner] =
+        plan.dense_node_context_layouts[p6] =
             builder.emit_fixed(context_full, /*from_input=*/false);
-        plan.dense_node_output_layouts[runner] =
+        plan.dense_node_output_layouts[p6] =
             builder.emit_fixed(output_full, /*from_input=*/false);
         if (builder.failed()) {
             add_diag(result,
@@ -13519,12 +13556,12 @@ build_workflow_plan(const CoreProgram &program,
     section.state_trace_base = plan.state_trace_base;
     section.state_trace_capacity = plan.state_trace_capacity;
     section.node_blocks.reserve(plan.node_blocks.size());
-    for (std::uint32_t runner = 0; runner < plan.node_blocks.size(); ++runner) {
-        const WorkflowNodeBlock &block = plan.node_blocks[runner];
+    for (std::uint32_t p6 = 0; p6 < plan.node_blocks.size(); ++p6) {
+        const WorkflowNodeBlock &block = plan.node_blocks[p6];
         ir::core::CoreFrameLayoutSection::NodeBlock out;
-        out.input_layout = plan.dense_node_input_layouts[runner];
-        out.context_layout = plan.dense_node_context_layouts[runner];
-        out.output_layout = plan.dense_node_output_layouts[runner];
+        out.input_layout = plan.dense_node_input_layouts[p6];
+        out.context_layout = plan.dense_node_context_layouts[p6];
+        out.output_layout = plan.dense_node_output_layouts[p6];
         out.input_size = block.input_size;
         out.context_size = block.context_size;
         out.output_size = block.output_size;
@@ -13550,22 +13587,22 @@ build_workflow_plan(const CoreProgram &program,
         }
         return false;
     }
-    // Boundary layout/wire consistency on every node root and the workflow
+    // Boundary layout/wire consistency on every P6 node root and the workflow
     // output root.
     const auto &roots = projection.table->frame_roots;
-    if (roots->node_inputs.size() != runner_count ||
-        roots->node_outputs.size() != runner_count) {
+    if (roots->node_inputs.size() != p6_count ||
+        roots->node_outputs.size() != p6_count) {
         add_diag(result, core_wasm_diag::kInvalidLayout,
-                 "the workflow wire schema node root count disagrees with the runner table");
+                 "the workflow wire schema node root count disagrees with the P6 runner table");
         return false;
     }
-    for (std::uint32_t runner = 0; runner < runner_count; ++runner) {
+    for (std::uint32_t p6 = 0; p6 < p6_count; ++p6) {
         auto in_diags = ir::core::verify_frame_layout_wire_consistency(
-            section.table, plan.dense_node_input_layouts[runner],
-            *projection.table, roots->node_inputs[runner]);
+            section.table, plan.dense_node_input_layouts[p6],
+            *projection.table, roots->node_inputs[p6]);
         auto out_diags = ir::core::verify_frame_layout_wire_consistency(
-            section.table, plan.dense_node_output_layouts[runner],
-            *projection.table, roots->node_outputs[runner]);
+            section.table, plan.dense_node_output_layouts[p6],
+            *projection.table, roots->node_outputs[p6]);
         if (!in_diags.empty() || !out_diags.empty()) {
             add_diag(result,
                      core_wasm_diag::kUnsupportedWorkflowFrame,
@@ -14896,9 +14933,12 @@ class WorkflowFrameMaterializer {
             if (!plan.schedule.empty()) {
                 const auto &node = plan.nodes[plan.schedule.front().value];
                 if (auto r = workflow_runner_index(plan, node.target_instance);
-                    r.has_value() && *r < plan.node_blocks.size()) {
-                    consider_layout(CoreLayoutId{plan.node_blocks[*r].input_layout},
-                                    normalize_depth);
+                    r.has_value() &&
+                    plan.p6_block_by_runner[*r] != kInvalidP6Block) {
+                    consider_layout(
+                        CoreLayoutId{plan.node_blocks[plan.p6_block_by_runner[*r]]
+                                         .input_layout},
+                        normalize_depth);
                 }
             }
         }
@@ -15356,7 +15396,10 @@ class WorkflowFrameMaterializer {
     }
 
     // Push the ABSOLUTE base of a path root: the entry input pointer or an
-    // upstream node's O_k block base.
+    // upstream P6 node's O_k block base. An upstream OPAQUE node owns no fixed
+    // output block (its result lives in the bump heap as wire JSON), so a
+    // frame region that roots an opaque output is not materializable on this
+    // rung.
     [[nodiscard]] bool emit_root_base(const WorkflowFrameSource &source) {
         if (source.kind == WorkflowFrameSourceKind::Input) {
             append_indexed_op(*body_, kOpLocalGet, entry_ptr_local_);
@@ -15364,10 +15407,12 @@ class WorkflowFrameMaterializer {
         }
         const auto runner =
             workflow_runner_index(plan_, plan_.nodes[source.node.value].target_instance);
-        if (!runner.has_value() || *runner >= plan_.node_blocks.size()) {
+        if (!runner.has_value() ||
+            plan_.p6_block_by_runner[*runner] == kInvalidP6Block) {
             return false;
         }
-        emit_const(plan_.node_blocks[*runner].output_base);
+        emit_const(
+            plan_.node_blocks[plan_.p6_block_by_runner[*runner]].output_base);
         return true;
     }
 
@@ -15827,12 +15872,16 @@ class WorkflowFrameMaterializer {
 // schedule_pos*40. tag 0 (identity) zeroes capability/source_symbol/
 // invocation_ordinal and sets status = OK; tag 1 (capability) carries the node's
 // capability identity. All pad and reserved bytes are explicitly zeroed.
+// `identity_tag` forces tag-0 for P6-packaged nodes: a bridge P6 node may carry
+// capabilities, but its scheduler-level completion is an identity event (the
+// capability call happens inside the runner, not at the scheduler boundary).
 void append_event_record_write(ByteBuffer &body,
                                const WorkflowNodePlan &node,
-                               std::uint32_t status_local) {
+                               std::uint32_t status_local,
+                               bool identity_tag) {
     const std::uint32_t record_addr =
         kNodeEventRecordsBase + node.schedule_pos * kNodeEventRecordBytes;
-    const bool has_cap = !node.capabilities.empty();
+    const bool has_cap = !identity_tag && !node.capabilities.empty();
     const std::uint8_t tag = has_cap ? kEventTagCapability : kEventTagIdentity;
     // [0..3]: tag u8 in byte 0, pad[1..3] == 0 (one aligned 4-byte store).
     append_i32_store_const(body, record_addr + 0u, static_cast<std::uint32_t>(tag));
@@ -15948,10 +15997,11 @@ void append_word_zero_fill(ByteBuffer &body,
         if (!runner.has_value() || !ptr_local.has_value() || !len_local.has_value()) {
             return false;
         }
-        const bool p6_node = *runner < plan.node_blocks.size() &&
-                             plan.node_blocks[*runner].input_base != 0;
+        const bool p6_node =
+            plan.p6_block_by_runner[*runner] != kInvalidP6Block;
         if (p6_node) {
-            const WorkflowNodeBlock &block = plan.node_blocks[*runner];
+            const WorkflowNodeBlock &block =
+                plan.node_blocks[plan.p6_block_by_runner[*runner]];
             // V2-D: every packaged runner starts from a zeroed context frame
             // (scalar defaults are zero; a String default PtrLen is not in this
             // rung, so no Data segment is materialized into C_k).
@@ -15963,8 +16013,7 @@ void append_word_zero_fill(ByteBuffer &body,
             // into its fixed I_k block, then invoke the packaged P6 runner
             // with (I_k, input_size). It walks the plain-goto chain and invokes
             // the relocated computed-final handler, returning
-            // (OK, O_k, output_size); anything else traps. P6 nodes carry no
-            // capability import and never write a node-event record. A BARE
+            // (OK, O_k, output_size); anything else traps. A BARE
             // forward needs no materialization: the host packed the entry
             // directly into I_k, so emitting the region would zero-fill the
             // host-packed bytes.
@@ -16043,6 +16092,20 @@ void append_word_zero_fill(ByteBuffer &body,
             body.byte(kEmptyBlock);
             body.byte(kOpUnreachable);
             body.byte(kOpEnd);
+            // WH-5b.1 fix (b): in a hybrid module (event region exists) a P6
+            // node writes its tag-0 identity record and publishes
+            // event_count = schedule_pos + 1, so the next cap node's defensive
+            // bound sees event_count == its own dense schedule_pos. Pure P6
+            // modules (no imports, no event region) keep the old behavior.
+            if (capability_workflow) {
+                append_event_record_write(body, node, status_local,
+                                          /*identity_tag=*/true);
+                append_const(body, kNodeEventLogBase + 0u);
+                append_const(body, node.schedule_pos + 1u);
+                body.byte(kOpI32Store);
+                body.u32(2u);
+                body.u32(0u);
+            }
             append_indexed_op(body, kOpGlobalGet, kWorkflowGlobalCompletedCount);
             append_const(body, 1);
             body.byte(kOpI32Add);
@@ -16138,7 +16201,8 @@ void append_word_zero_fill(ByteBuffer &body,
         // OK: write the single node-event record (full body first), then publish
         // event_count = schedule_pos + 1 AFTER the full 40-byte body store (so the
         // host never reads a partial record), and bump completed_count.
-        append_event_record_write(body, node, status_local);
+        append_event_record_write(body, node, status_local,
+                                  /*identity_tag=*/false);
         append_const(body, kNodeEventLogBase + 0u);
         append_const(body, node.schedule_pos + 1u);
         body.byte(kOpI32Store);
@@ -16531,7 +16595,8 @@ encode_workflow_module(const CoreProgram &program,
             r < plan.relocated_handlers.size() && !plan.relocated_handlers[r].empty();
         if (runner_is_p6) {
             auto runner = make_workflow_p6_runner_body(
-                plan.agent_plans[r], r, plan.node_blocks[r],
+                plan.agent_plans[r], r,
+                plan.node_blocks[plan.p6_block_by_runner[r]],
                 /*handler_base=*/functions.handler(handler_offset[r]),
                 /*state_global=*/(plan.imports.empty() ? 5u : 6u) + r,
                 plan.state_trace_base,
@@ -17126,6 +17191,13 @@ build_import_descriptors(const CoreProgram &program,
         node_descriptor.schedule_pos = node.schedule_pos;
         node_descriptor.runner = workflow_runner_index(plan, node.target_instance).value_or(0);
         node_descriptor.name = workflow_decl.nodes[node.node.value].node_name;
+        // WH-5b.1: per-node P6 flag + P6-only node_blocks ordinal.
+        const auto p6_ordinal =
+            plan.p6_block_by_runner[node_descriptor.runner];
+        node_descriptor.is_p6 = p6_ordinal != kInvalidP6Block;
+        if (node_descriptor.is_p6) {
+            node_descriptor.p6_block_ordinal = p6_ordinal;
+        }
         // WH-4 fix-forward P1-3: carry the DAG predecessor node ids (the
         // workflow `after` edges) so an embedded host emits
         // NodeScheduled.dependencies without re-deriving the DAG. The after

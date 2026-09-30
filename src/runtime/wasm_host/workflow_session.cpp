@@ -1011,7 +1011,12 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     eng::GuestPointer entry_ptr{};
     std::uint32_t entry_len = 0;
 
-    if (is_p6) {
+    // WH-5b.1: in a hybrid (P6Frame) module the first scheduled node may be
+    // opaque. Pack the P4-D entry frame only when the entry node is P6;
+    // otherwise serialize to wire JSON for the opaque runner.
+    const bool entry_node_p6 =
+        is_p6 && !descriptor.nodes.empty() && descriptor.nodes[0].is_p6;
+    if (entry_node_p6) {
         if (!descriptor.frame_section.has_value() ||
             !descriptor.wire_schema.has_value()) {
             return std::unexpected(
@@ -1030,8 +1035,9 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 "run_workflow_session: P6-frame workflow missing node_inputs");
         }
 
-        const auto &block = section.node_blocks[0];
-        const auto w_id = wire.frame_roots->node_inputs[0];
+        const auto p6_ord = descriptor.nodes[0].p6_block_ordinal;
+        const auto &block = section.node_blocks[p6_ord];
+        const auto w_id = wire.frame_roots->node_inputs[p6_ord];
         const auto l_id = block.input_layout;
 
         auto page = engine.mutable_whole_memory();
@@ -1287,21 +1293,26 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     }
 
                     // P6-frame: read the node output from its runner's O_k
-                    // block. WireJson: individual node outputs are not
+                    // block. WireJson/opaque: individual node outputs are not
                     // host-observable (the module's compiled code passes them
                     // through its own heap), so fire with Unit.
+                    // WH-5b.1: guard on the per-node is_p6 flag (not the
+                    // module-level frame contract) and index node_blocks /
+                    // node_outputs by the P6-only ordinal.
                     Value node_output{NoneValue{}};
-                    if (is_p6 && descriptor.frame_section.has_value() &&
+                    if (node_desc->is_p6 &&
+                        descriptor.frame_section.has_value() &&
                         descriptor.wire_schema.has_value()) {
                         const auto &section = *descriptor.frame_section;
                         const auto &wire = *descriptor.wire_schema;
-                        if (runner < section.node_blocks.size() &&
+                        const auto p6_ord = node_desc->p6_block_ordinal;
+                        if (p6_ord < section.node_blocks.size() &&
                             wire.frame_roots.has_value() &&
-                            runner <
+                            p6_ord <
                                 wire.frame_roots->node_outputs.size()) {
-                            const auto &block = section.node_blocks[runner];
+                            const auto &block = section.node_blocks[p6_ord];
                             const auto w_id =
-                                wire.frame_roots->node_outputs[runner];
+                                wire.frame_roots->node_outputs[p6_ord];
                             const auto l_id = block.output_layout;
                             FrameWalkContext ctx(section, wire);
                             auto output = read_value_at(
