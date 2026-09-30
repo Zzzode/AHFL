@@ -310,6 +310,11 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         };
     }
 
+    // D-D: fire agent_input_hook LIVE before the step-walk (agent lane only).
+    if (hooks.agent_input_hook) {
+        hooks.agent_input_hook(AgentId{0}, descriptor.agent_name, input);
+    }
+
     auto walk = run_agent_step_walk(module_bytes, walk_desc, input,
                                     std::move(walk_factory), walk_hook,
                                     AgentId{0}, "");

@@ -156,6 +156,79 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     return std::nullopt;
 }
 
+// Populate the ExecutionMetadataStore + ExecutionReport from the descriptor.
+// Called once per session run so the WorkflowResult carries the same metadata
+// shape as the evaluator-backed WorkflowRuntime (P1-5).
+void populate_metadata_and_report(
+    WorkflowResult &result,
+    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
+    RunTerminalStatus status,
+    std::optional<WorkflowFailureKind> failure_kind) {
+    auto wf_id = result.metadata.add_workflow("workflow");
+    result.report.workflow = wf_id;
+    result.report.status = status;
+    result.report.failure_kind = failure_kind;
+
+    // Agents + agent states.
+    std::vector<AgentId> agent_ids;
+    agent_ids.reserve(descriptor.agents.size());
+    for (const auto &agent : descriptor.agents) {
+        auto agent_id = result.metadata.add_agent(agent.agent);
+        agent_ids.push_back(agent_id);
+        for (const auto &state_name : agent.all_states) {
+            (void)result.metadata.add_agent_state(agent_id, state_name);
+        }
+    }
+
+    // Nodes.
+    for (const auto &node : descriptor.nodes) {
+        const auto agent_id =
+            node.runner < agent_ids.size() ? agent_ids[node.runner] : AgentId{};
+        (void)result.metadata.add_node(node.name, wf_id, agent_id);
+        ExecutionNodeReport node_report;
+        node_report.node = WorkflowNodeId{node.node_id};
+        node_report.agent = agent_id;
+        node_report.status =
+            (status == RunTerminalStatus::Completed)
+                ? NodeReportStatus::Completed
+                : NodeReportStatus::Failed;
+        result.report.nodes.push_back(std::move(node_report));
+        result.report.execution_order.push_back(
+            WorkflowNodeId{node.node_id});
+    }
+
+    // Capabilities.
+    for (const auto &import : descriptor.imports) {
+        (void)result.metadata.add_capability(import.canonical_name);
+    }
+}
+
+// D-D: build a failed WorkflowSessionResult for a terminal run failure
+// (trap / host-abort / engine error). Populates the metadata + report from
+// the descriptor and adds a diagnostic with the given code + message. The
+// collected observation data is preserved (states/capabilities gathered
+// before the terminal failure are still valid evidence).
+[[nodiscard]] WorkflowSessionResult make_failed_session_result(
+    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
+    std::string diagnostic_code, std::string diagnostic_message,
+    std::vector<StateEntry> states,
+    std::vector<std::string> capabilities,
+    std::vector<std::string> capability_arguments,
+    std::vector<CapabilityFailureKind> capability_failures) {
+    WorkflowSessionResult session_result;
+    populate_metadata_and_report(session_result.result, descriptor,
+                                 RunTerminalStatus::Failed,
+                                 WorkflowFailureKind::NodeFailed);
+    session_result.result.diagnostics.error()
+        .code(std::move(diagnostic_code))
+        .message(std::move(diagnostic_message));
+    session_result.states = std::move(states);
+    session_result.capabilities = std::move(capabilities);
+    session_result.capability_arguments = std::move(capability_arguments);
+    session_result.capability_failures = std::move(capability_failures);
+    return session_result;
+}
+
 } // namespace
 
 std::expected<WorkflowSessionResult, std::string>
@@ -423,9 +496,17 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     }
 
     // --- 8. Invoke run2 ---
+    // D-D: trap / host-abort / engine error map to NodeFailed + DiagnosticBag
+    // (codes wasm.trap / wasm.host-abort), NOT a bare std::string error. The
+    // facade maps the WorkflowResult status; std::unexpected is reserved for
+    // pre-run setup failures (admission, instantiation, pack).
     auto outcome = engine.invoke_run2(entry_ptr, entry_len);
     if (!outcome.has_value()) {
-        return std::unexpected("run_workflow_session: invoke_run2 failed");
+        return make_failed_session_result(
+            descriptor, "wasm.trap",
+            "run_workflow_session: invoke_run2 failed (engine error)",
+            std::move(collected_states), std::move(collected_capabilities),
+            std::move(collected_cap_args), std::move(collected_failures));
     }
 
     const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*outcome);
@@ -436,12 +517,20 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 "failure)";
             if (import_state.last_error.has_value()) {
                 msg += " (CapabilityImportError=";
-                msg += std::to_string(static_cast<int>(*import_state.last_error));
+                msg += std::to_string(
+                    static_cast<int>(*import_state.last_error));
                 msg += ")";
             }
-            return std::unexpected(std::move(msg));
+            return make_failed_session_result(
+                descriptor, "wasm.host-abort", std::move(msg),
+                std::move(collected_states), std::move(collected_capabilities),
+                std::move(collected_cap_args),
+                std::move(collected_failures));
         }
-        return std::unexpected("run_workflow_session: run2 trapped");
+        return make_failed_session_result(
+            descriptor, "wasm.trap", "run_workflow_session: run2 trapped",
+            std::move(collected_states), std::move(collected_capabilities),
+            std::move(collected_cap_args), std::move(collected_failures));
     }
 
     const bool run_ok = (tuple->raw_status == 0);
@@ -608,11 +697,22 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     }
 
     // --- 13. Build the WorkflowResult ---
+    // P1-5: populate the ExecutionMetadataStore + ExecutionReport from the
+    // descriptor so the result carries the same metadata shape as the
+    // evaluator-backed WorkflowRuntime. D-D: a non-zero run2 status maps to
+    // NodeFailed + a wasm.run-failed diagnostic.
     WorkflowResult result;
-    result.report.status =
-        run_ok ? RunTerminalStatus::Completed : RunTerminalStatus::Failed;
-    if (!run_ok) {
-        result.report.failure_kind = WorkflowFailureKind::NodeFailed;
+    if (run_ok) {
+        populate_metadata_and_report(result, descriptor,
+                                     RunTerminalStatus::Completed, std::nullopt);
+    } else {
+        populate_metadata_and_report(result, descriptor,
+                                     RunTerminalStatus::Failed,
+                                     WorkflowFailureKind::NodeFailed);
+        result.diagnostics.error()
+            .code("wasm.run-failed")
+            .message("run_workflow_session: run2 returned non-zero status " +
+                     std::to_string(tuple->raw_status));
     }
     if (workflow_output.has_value()) {
         result.values.push_back(std::move(*workflow_output));

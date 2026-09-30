@@ -10,6 +10,8 @@
 //   * state_entered_hook   -- per state entry (agent: step-walk on the
 //                             effects-free instance; workflow: trace-ring
 //                             import-boundary + post-run)
+//   * agent_input_hook     -- agent lane only, LIVE before the step-walk,
+//                             with the agent's input Value
 //   * capability_invoked_hook  -- PRE-call, before the capability invoker
 //   * capability_result_observer -- POST-call, after the invoker returns
 //   * node_completed_hook  -- per node, after the run completes (workflow only)
@@ -37,6 +39,12 @@ struct WasmRuntimeHooks {
     std::function<void(AgentId, std::string_view agent_name,
                        std::string_view node_name, std::string_view state_name)>
         state_entered_hook;
+
+    // Debug/test hook invoked LIVE before the agent step-walk with the
+    // agent's input Value (agent lane only; not fired for workflow nodes,
+    // whose in-guest materialized input is not host-observable).
+    std::function<void(AgentId, std::string_view agent_name, const Value &)>
+        agent_input_hook;
 
     // Debug/test hook invoked right before a capability call is dispatched.
     std::function<void(AgentId, std::string_view)> capability_invoked_hook;
