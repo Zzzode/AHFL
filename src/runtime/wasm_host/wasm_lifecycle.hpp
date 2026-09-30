@@ -97,11 +97,16 @@ struct WasmWorkflowRunFacts {
 // Populate metadata + emit lifecycle events + build report for an AGENT run.
 // The agent lane wraps the bare agent in a synthetic single-node workflow
 // (workflow + node named after the agent). walk_states are the state names
-// in entry order (from the effects-free step-walk).
+// in entry order (from the effects-free step-walk). capability_calls are
+// the capability calls observed during the run (in call order); the helper
+// emits CapabilityStarted / CapabilityCompleted events for each, matching
+// the evaluator's event order (between AgentStateEntered and the node
+// terminal).
 [[nodiscard]] bool finalize_wasm_agent_run(
     WorkflowResult &result,
     const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
     const std::vector<std::string> &walk_states,
+    std::vector<WasmCapabilityCall> capability_calls,
     std::optional<Value> output,
     RunTerminalStatus status,
     std::optional<WorkflowFailureKind> failure_kind,

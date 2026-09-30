@@ -224,12 +224,18 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     std::vector<std::string> collected_capabilities;
     std::vector<std::string> collected_cap_args;
     std::vector<CapabilityFailureKind> collected_failures;
+    // P2-4: collect full capability call records (name + success + output)
+    // so the lifecycle helper can emit CapabilityStarted /
+    // CapabilityCompleted events on the agent lane. node_id is 0: the
+    // agent lane wraps the bare agent in a synthetic single-node workflow.
+    std::vector<WasmCapabilityCall> collected_cap_calls;
 
     ContextualCapabilityInvoker wrapped_invoker =
         [hooks, invoker, &collected_capabilities, &collected_cap_args,
-         &collected_failures](const CapabilityInvocationContext &ctx,
-                              const std::string &name,
-                              const std::vector<Value> &args)
+         &collected_failures, &collected_cap_calls](
+            const CapabilityInvocationContext &ctx,
+            const std::string &name,
+            const std::vector<Value> &args)
         -> CapabilityCallResult {
         if (hooks.capability_invoked_hook) {
             hooks.capability_invoked_hook(ctx.agent_id, name);
@@ -245,6 +251,14 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         if (result.failure_kind.has_value()) {
             collected_failures.push_back(*result.failure_kind);
         }
+        collected_cap_calls.push_back(WasmCapabilityCall{
+            .node_id = 0,
+            .capability_name = name,
+            .success = result.status == CapabilityCallStatus::Success,
+            .output = result.value.has_value()
+                          ? std::optional{clone_value(*result.value)}
+                          : std::nullopt,
+        });
         return result;
     };
 
@@ -522,7 +536,8 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     // single-node workflow.
     WasmAgentRunResult result;
     const bool report_ok = finalize_wasm_agent_run(
-        result.result, descriptor, walk->states, std::move(output_value),
+        result.result, descriptor, walk->states,
+        std::move(collected_cap_calls), std::move(output_value),
         run_status, run_failure_kind, std::move(run_failure_code),
         std::move(run_failure_message));
     if (!report_ok) {

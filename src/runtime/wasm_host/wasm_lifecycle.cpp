@@ -302,6 +302,7 @@ bool finalize_wasm_agent_run(
     WorkflowResult &result,
     const bd::CoreWasmExecutionDescriptor &descriptor,
     const std::vector<std::string> &walk_states,
+    std::vector<WasmCapabilityCall> capability_calls,
     std::optional<Value> output,
     RunTerminalStatus status,
     std::optional<WorkflowFailureKind> failure_kind,
@@ -318,9 +319,13 @@ bool finalize_wasm_agent_run(
     const auto agent_id = result.metadata.add_agent(descriptor.agent_name);
     const auto node_id =
         result.metadata.add_node(descriptor.agent_name, workflow_id, agent_id);
+    std::unordered_map<std::string, CapabilityId> capability_by_name;
     for (const auto &import : descriptor.imports) {
-        (void)result.metadata.add_capability(import.canonical_name);
+        const auto cap_id =
+            result.metadata.add_capability(import.canonical_name);
+        capability_by_name[import.canonical_name] = cap_id;
     }
+    const auto provider = result.metadata.add_provider("runtime");
 
     emit(RunStarted{.run = RunId{0}});
     emit(WorkflowStarted{.run = RunId{0}, .workflow = workflow_id});
@@ -331,17 +336,51 @@ bool finalize_wasm_agent_run(
         .execution_slot = 0,
     });
 
-    if (status == RunTerminalStatus::Completed) {
-        emit(NodeStarted{.node = node_id, .agent = agent_id});
-        for (const auto &state_name : walk_states) {
-            const auto state_id =
-                result.metadata.add_agent_state(agent_id, state_name);
-            emit(AgentStateEntered{
-                .node = node_id,
-                .agent = agent_id,
-                .state = state_id,
-            });
+    emit(NodeStarted{.node = node_id, .agent = agent_id});
+    for (const auto &state_name : walk_states) {
+        const auto state_id =
+            result.metadata.add_agent_state(agent_id, state_name);
+        emit(AgentStateEntered{
+            .node = node_id,
+            .agent = agent_id,
+            .state = state_id,
+        });
+    }
+
+    // Capability lifecycle: emit CapabilityStarted / CapabilityCompleted
+    // for each capability call, matching the evaluator's event order
+    // (between AgentStateEntered and the node terminal). This is the same
+    // simplified pattern as emit_workflow_events: one attempt, no
+    // CapabilityFailed (the failure is reflected in the node terminal,
+    // not the capability event). P2-5 will populate real attempts /
+    // cache_hit / usage.
+    for (auto &cap_call : capability_calls) {
+        const auto cap_id =
+            capability_by_name.count(cap_call.capability_name)
+                ? capability_by_name.at(cap_call.capability_name)
+                : CapabilityId{};
+        const auto invocation =
+            result.metadata.add_invocation(node_id, cap_id);
+        emit(CapabilityStarted{
+            .invocation = invocation,
+            .node = node_id,
+            .capability = cap_id,
+            .provider = provider,
+            .attempt = 1,
+        });
+        std::optional<RuntimeValueId> cap_output_id;
+        if (cap_call.success && cap_call.output.has_value()) {
+            cap_output_id = add_value(result, std::move(*cap_call.output));
         }
+        emit(CapabilityCompleted{
+            .invocation = invocation,
+            .output = cap_output_id,
+            .attempts = 1,
+            .cache_hit = false,
+        });
+    }
+
+    if (status == RunTerminalStatus::Completed) {
         std::optional<RuntimeValueId> output_id;
         if (output.has_value()) {
             output_id = add_value(result, std::move(*output));
@@ -352,16 +391,6 @@ bool finalize_wasm_agent_run(
         const auto diag_id =
             add_error(result, std::move(failure_code),
                       std::move(failure_message));
-        emit(NodeStarted{.node = node_id, .agent = agent_id});
-        for (const auto &state_name : walk_states) {
-            const auto state_id =
-                result.metadata.add_agent_state(agent_id, state_name);
-            emit(AgentStateEntered{
-                .node = node_id,
-                .agent = agent_id,
-                .state = state_id,
-            });
-        }
         emit(NodeFailed{
             .node = node_id,
             .diagnostic = diag_id,

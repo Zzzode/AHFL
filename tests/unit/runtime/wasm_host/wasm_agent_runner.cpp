@@ -52,7 +52,9 @@ namespace conf = ahfl::conformance;
 using ahfl::runtime::AgentId;
 using ahfl::runtime::CapabilityCallResult;
 using ahfl::runtime::CapabilityCallStatus;
+using ahfl::runtime::CapabilityCompleted;
 using ahfl::runtime::CapabilityInvocationContext;
+using ahfl::runtime::CapabilityStarted;
 using ahfl::runtime::Value;
 using ahfl::runtime::value_from_json;
 using ahfl::runtime::value_to_json;
@@ -389,6 +391,20 @@ void test_wirejson_capability_agent(
     // No failures.
     check(result->capability_failures.empty(),
           "wirejson_cap.no_failures");
+
+    // P2-4: the agent lane must emit CapabilityStarted /
+    // CapabilityCompleted lifecycle events for each capability call.
+    int cap_started_count = 0;
+    int cap_completed_count = 0;
+    for (const auto &event : result->result.events.events()) {
+        if (std::holds_alternative<CapabilityStarted>(event.payload)) {
+            ++cap_started_count;
+        } else if (std::holds_alternative<CapabilityCompleted>(event.payload)) {
+            ++cap_completed_count;
+        }
+    }
+    check(cap_started_count == 1, "wirejson_cap.cap_started_count");
+    check(cap_completed_count == 1, "wirejson_cap.cap_completed_count");
 
     // The run completed successfully.
     check(result->result.status() ==
