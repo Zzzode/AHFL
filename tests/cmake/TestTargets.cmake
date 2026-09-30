@@ -471,6 +471,8 @@ ahfl_apply_project_warnings(ahfl_conformance_case_tests)
 # both over the checked-in case catalogue.
 add_executable(ahfl_conformance_evaluator_runner
     conformance/evaluator_engine.cpp
+    conformance/conformance_mock_registry.cpp
+    conformance/observation_document.cpp
     integration/conformance_evaluator_runner.cpp
 )
 target_link_libraries(ahfl_conformance_evaluator_runner
@@ -519,6 +521,8 @@ endif()
 if(AHFL_ENABLE_BACKEND_WASM)
     add_executable(ahfl_conformance_wasm_node_runner
         conformance/evaluator_engine.cpp
+        conformance/conformance_mock_registry.cpp
+        conformance/observation_document.cpp
         conformance/wasm_engine.cpp
         integration/conformance_wasm_node_runner.cpp
     )
@@ -534,6 +538,38 @@ if(AHFL_ENABLE_BACKEND_WASM)
             ${PROJECT_SOURCE_DIR}/tests
     )
     ahfl_apply_project_warnings(ahfl_conformance_wasm_node_runner)
+endif()
+
+# KR6.8 WH-5 (RFC 0026): native embedded-host conformance census runner.
+# Drives the wasm3-backed facade (WasmWorkflowRuntime / WasmAgentRunner)
+# directly in-process over the committed case catalogue and compares the
+# native observation against the evaluator observation (or the manifest's
+# blessed expectation for the 7 node-only cases). Pure in-process: no Node
+# subprocess, no artifact staging, no SKIP_RETURN_CODE 77. Links the wasm_runner
+# facade (which transitively links the wasm backend); only registered when the
+# executable wasm backend exists.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_executable(ahfl_conformance_wasm_native_runner
+        conformance/evaluator_engine.cpp
+        conformance/conformance_mock_registry.cpp
+        conformance/observation_document.cpp
+        conformance/native_engine.cpp
+        integration/conformance_wasm_native_runner.cpp
+    )
+    target_link_libraries(ahfl_conformance_wasm_native_runner
+        PRIVATE
+            ahfl_runtime_wasm_runner
+            ahfl_runtime_engine
+            ahfl_runtime_value
+            ahfl_base_json
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_conformance_wasm_native_runner
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_conformance_wasm_native_runner)
 endif()
 
 add_executable(ahfl_payload_store_tests

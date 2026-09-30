@@ -1349,6 +1349,78 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
 endif()
 
+# KR6.8 WH-5 (RFC 0026): native embedded-host conformance census. For every
+# orchestration-eligible committed case it drives the wasm3-backed facade
+# (WasmWorkflowRuntime / WasmAgentRunner) directly in-process and asserts the
+# native observation (status + state_sequence + capability_sequence +
+# capability_arguments + output_json) equals the evaluator observation. The 7
+# evaluator_surface_awaits_kr68 (node-only) cases are compared directly against
+# the manifest's blessed expectation. This is NATIVE wasm3 evidence, NOT Node
+# and NOT wasmtime evidence. Pure in-process: no SKIP_RETURN_CODE 77.
+if(AHFL_ENABLE_BACKEND_WASM)
+    add_test(NAME ahfl.conformance.wasm_native_differential
+        COMMAND $<TARGET_FILE:ahfl_conformance_wasm_native_runner>
+                verify
+                "${PROJECT_SOURCE_DIR}"
+                "${AHFL_CONFORMANCE_CASES_DIR}"
+    )
+    set_tests_properties(ahfl.conformance.wasm_native_differential PROPERTIES
+        PASS_REGULAR_EXPRESSION "native differential agreed"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;native"
+        RUN_SERIAL TRUE
+    )
+
+    # Blessing-determinism: the native observation must be byte-identical
+    # across two runs of the same scenario.
+    add_test(NAME ahfl.conformance.wasm_native_determinism
+        COMMAND $<TARGET_FILE:ahfl_conformance_wasm_native_runner>
+                blessing-determinism
+                "${PROJECT_SOURCE_DIR}"
+                "${AHFL_CONFORMANCE_CASES_DIR}"
+    )
+    set_tests_properties(ahfl.conformance.wasm_native_determinism PROPERTIES
+        PASS_REGULAR_EXPRESSION "native observation is deterministic"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;native"
+        RUN_SERIAL TRUE
+    )
+
+    # Mutation gate: the comparator must FAIL on a deliberately mutated native
+    # observation (flipped terminal status). e1_identity_agent is the simplest
+    # orchestration-eligible case.
+    add_test(NAME ahfl.conformance.wasm_native_mutation
+        COMMAND $<TARGET_FILE:ahfl_conformance_wasm_native_runner>
+                mutation
+                "${PROJECT_SOURCE_DIR}"
+                "${AHFL_CONFORMANCE_CASES_DIR}"
+                e1_identity_agent
+    )
+    set_tests_properties(ahfl.conformance.wasm_native_mutation PROPERTIES
+        PASS_REGULAR_EXPRESSION "comparator detected mutated expectation"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;native"
+        RUN_SERIAL TRUE
+    )
+
+    # FB-3b node-only lane mutation gate: with no in-process evaluator
+    # reference, node_observation_matches_expectation is the comparator under
+    # test. fb3_higher_order is the (pinned) node-only case.
+    add_test(NAME ahfl.conformance.wasm_native_mutation_node_only
+        COMMAND $<TARGET_FILE:ahfl_conformance_wasm_native_runner>
+                mutation
+                "${PROJECT_SOURCE_DIR}"
+                "${AHFL_CONFORMANCE_CASES_DIR}"
+                fb3_higher_order
+    )
+    set_tests_properties(ahfl.conformance.wasm_native_mutation_node_only PROPERTIES
+        PASS_REGULAR_EXPRESSION "node-only comparator detected mutated expectation"
+        FAIL_REGULAR_EXPRESSION "FAIL:"
+        LABELS "wasm;backend;conformance;execution;native"
+        RUN_SERIAL TRUE
+    )
+endif()
+
 add_test(NAME ahfl.runtime.payload_store
     COMMAND $<TARGET_FILE:ahfl_payload_store_tests>
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/payload-store"
