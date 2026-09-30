@@ -68,7 +68,18 @@ void test_identity_workflow(const std::filesystem::path &repo_root) {
         return;
     }
 
+    std::vector<std::string> hook_states;
+    std::vector<std::string> hook_node_names;
+
     wr::WasmWorkflowRuntimeConfig config;
+    config.hooks.state_entered_hook =
+        [&hook_states, &hook_node_names](
+            AgentId, std::string_view, std::string_view node_name,
+            std::string_view state_name) {
+            hook_states.emplace_back(state_name);
+            hook_node_names.emplace_back(node_name);
+        };
+
     wr::WasmWorkflowRuntime runtime(*program, std::move(config));
 
     auto input = value_from_json(
@@ -90,6 +101,28 @@ void test_identity_workflow(const std::filesystem::path &repo_root) {
         check(json ==
                   R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})",
               "identity_wf.output_value");
+    }
+
+    // P2-5: elementwise state_sequence for the WireJson reconstruction set.
+    // Each node walks Start -> Done; the flat sequence is schedule-order.
+    check(hook_states.size() == 4, "identity_wf.hook_states_count");
+    if (hook_states.size() == 4) {
+        check(hook_states[0] == "Start", "identity_wf.hook_state_0");
+        check(hook_states[1] == "Done", "identity_wf.hook_state_1");
+        check(hook_states[2] == "Start", "identity_wf.hook_state_2");
+        check(hook_states[3] == "Done", "identity_wf.hook_state_3");
+    }
+    check(hook_node_names.size() == 4,
+          "identity_wf.hook_node_names_count");
+    if (hook_node_names.size() == 4) {
+        check(hook_node_names[0] == "first",
+              "identity_wf.hook_node_name_0");
+        check(hook_node_names[1] == "first",
+              "identity_wf.hook_node_name_1");
+        check(hook_node_names[2] == "second",
+              "identity_wf.hook_node_name_2");
+        check(hook_node_names[3] == "second",
+              "identity_wf.hook_node_name_3");
     }
 }
 
@@ -179,6 +212,163 @@ void test_capability_workflow(const std::filesystem::path &repo_root) {
         check(hook_node_names[1] == "first", "cap_wf.hook_node_name_1");
         check(hook_node_names[2] == "second", "cap_wf.hook_node_name_2");
         check(hook_node_names[3] == "second", "cap_wf.hook_node_name_3");
+    }
+}
+
+// ==== 2b. P2-5: WireJson reconstruction set -- resume fixture ====
+
+void test_capability_workflow_resume(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_capability_workflow_resume.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "resume_wf.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    int cap_invoked_count = 0;
+    std::vector<std::string> hook_states;
+    std::vector<std::string> hook_node_names;
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.hooks.capability_invoked_hook =
+        [&cap_invoked_count](AgentId, std::string_view name) {
+            ++cap_invoked_count;
+            check(name == "Echo", "resume_wf.hook_cap_name");
+        };
+    config.hooks.state_entered_hook =
+        [&hook_states, &hook_node_names](
+            AgentId, std::string_view, std::string_view node_name,
+            std::string_view state_name) {
+            hook_states.emplace_back(state_name);
+            hook_node_names.emplace_back(node_name);
+        };
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_capability_workflow_resume::Frame","value":"resume-echo"})");
+    check(input.has_value(), "resume_wf.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run(
+        "wasm::e3_capability_workflow_resume::CapabilityPipeline",
+        std::move(*input));
+    check(result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "resume_wf.completed");
+
+    check(cap_invoked_count == 1, "resume_wf.cap_invoked_count");
+
+    const auto *output = result.output();
+    check(output != nullptr, "resume_wf.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json ==
+                  R"({"_type":"wasm::e3_capability_workflow_resume::Frame","value":"resume-echo"})",
+              "resume_wf.output_value");
+    }
+
+    // P2-5: elementwise state_sequence for the WireJson reconstruction set.
+    check(hook_states.size() == 4, "resume_wf.hook_states_count");
+    if (hook_states.size() == 4) {
+        check(hook_states[0] == "Start", "resume_wf.hook_state_0");
+        check(hook_states[1] == "Done", "resume_wf.hook_state_1");
+        check(hook_states[2] == "Start", "resume_wf.hook_state_2");
+        check(hook_states[3] == "Done", "resume_wf.hook_state_3");
+    }
+    check(hook_node_names.size() == 4,
+          "resume_wf.hook_node_names_count");
+    if (hook_node_names.size() == 4) {
+        check(hook_node_names[0] == "first",
+              "resume_wf.hook_node_name_0");
+        check(hook_node_names[1] == "first",
+              "resume_wf.hook_node_name_1");
+        check(hook_node_names[2] == "second",
+              "resume_wf.hook_node_name_2");
+        check(hook_node_names[3] == "second",
+              "resume_wf.hook_node_name_3");
+    }
+}
+
+// ==== 2c. P2-5: WireJson reconstruction set -- float output fixture ====
+
+void test_float_output_e2e(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/runtime/float_output_e2e.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "float_wf.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    std::vector<std::string> hook_states;
+    std::vector<std::string> hook_node_names;
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.hooks.state_entered_hook =
+        [&hook_states, &hook_node_names](
+            AgentId, std::string_view, std::string_view node_name,
+            std::string_view state_name) {
+            hook_states.emplace_back(state_name);
+            hook_node_names.emplace_back(node_name);
+        };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+    auto input = value_from_json(
+        R"({"_type":"runtime::float_output_e2e::Sample","ratio":2.0})");
+    check(input.has_value(), "float_wf.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run(
+        "runtime::float_output_e2e::FloatPipeline", std::move(*input));
+    check(result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "float_wf.completed");
+
+    const auto *output = result.output();
+    check(output != nullptr, "float_wf.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json ==
+                  R"({"_type":"runtime::float_output_e2e::Sample","ratio":2.0})",
+              "float_wf.output_value");
+    }
+
+    // P2-5: elementwise state_sequence for the WireJson reconstruction set.
+    // Single agent, single node: Start -> Done.
+    check(hook_states.size() == 2, "float_wf.hook_states_count");
+    if (hook_states.size() == 2) {
+        check(hook_states[0] == "Start", "float_wf.hook_state_0");
+        check(hook_states[1] == "Done", "float_wf.hook_state_1");
+    }
+    check(hook_node_names.size() == 2,
+          "float_wf.hook_node_names_count");
+    if (hook_node_names.size() == 2) {
+        check(hook_node_names[0] == "sample",
+              "float_wf.hook_node_name_0");
+        check(hook_node_names[1] == "sample",
+              "float_wf.hook_node_name_1");
     }
 }
 
@@ -622,6 +812,8 @@ int main() {
 
     test_identity_workflow(repo_root);
     test_capability_workflow(repo_root);
+    test_capability_workflow_resume(repo_root);
+    test_float_output_e2e(repo_root);
     test_agent_runner(repo_root);
     test_agent_trap(repo_root);
     test_agent_host_abort(repo_root);

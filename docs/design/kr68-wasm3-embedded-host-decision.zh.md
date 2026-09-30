@@ -853,6 +853,51 @@ big-bang).
    has no dangling includes).
 4. All in-tree consumers build unchanged (include path flip only).
 
+### D-F. Branching-walk honesty — fail-closed rejection of WireJson agents with computed-goto terminals (2026-09-30 addendum, P2-6)
+
+**Problem.** The D-B WireJson state reconstruction joins node-event records to
+the descriptor's `agents[].walk`. The walk is a LINEAR chain of `GotoAction`
+edges built by `workflow_initial_transitions` / `runner_walk_names`. When the
+walk reaches a `ComputedGotoAction` (a branching / computed-routing terminal),
+the walk stops and treats that state as a terminal — but the agent actually
+takes a runtime-dependent branch the linear walk cannot represent. The D-B
+reconstruction would emit a dishonest `state_sequence` (truncated at the branch
+point, missing the states the agent actually entered).
+
+**Chosen: fail-closed rejection at codegen.** `encode_workflow_module` checks
+each non-P6 (WireJson) runner's walk terminal: if the terminal action is a
+`ComputedGotoAction`, the module is NOT emitted and a
+`wasm.UNSUPPORTED_ORCHESTRATION` diagnostic is raised ("WireJson agent has a
+computed-goto (branching) terminal; the linear walk cannot represent
+runtime-dependent branches. Use a P6-frame agent for computed routing.").
+
+**Why not emit a walk covering branch joins:** the walk is a static descriptor
+structure; it cannot know which branch the agent takes at runtime. Emitting a
+walk that covers all possible branches would produce a state_sequence that
+includes states the agent never entered — equally dishonest. The honest options
+are (a) reject the module (chosen) or (b) make the agent P6Frame (which has the
+trace ring for real runtime state observation).
+
+**Scope:** the check applies ONLY to non-P6 (WireJson) runners. P6Frame agents
+use the P6 frame runner (`make_workflow_p6_runner_body`), which has the trace
+ring and does not rely on the linear walk for state observation. The
+`runner_walk_names` function is unchanged: for P6Frame agents the walk is a
+best-effort prefix (unreachable if-else arms are never observed, as documented
+in the comment at `core_wasm_codegen.cpp:16805-16810`); for WireJson agents the
+module is rejected before the descriptor is built, so `runner_walk_names` is
+never called for a branching WireJson agent.
+
+**Acceptance:**
+
+1. A WireJson agent with a `ComputedGotoAction` terminal is NOT emitted; the
+   codegen result carries `wasm.UNSUPPORTED_ORCHESTRATION`.
+2. P6Frame agents with `ComputedGotoAction` (e.g. `e2e_multi_agent`) are
+   unaffected — they use the P6 frame runner.
+3. The 4 WireJson reconstruction fixtures (`e3_capability_workflow`,
+   `e3_capability_workflow_resume`, `e3_identity_workflow`, `float_output_e2e`)
+   have elementwise `state_sequence` assertions through the facade
+   (`wasm_runner.cpp`).
+
 ### Resulting ordered fix-forward worklist
 
 1. **D-E install move** (unblocks everything; mechanical): move
@@ -885,8 +930,11 @@ big-bang).
 - **WH-5:** the native adapter drives through the NEW `WasmWorkflowRuntime`
   facade (not the free functions). The compile-then-drive pattern
   (`wasm_engine.cpp:554-619`) moves into the facade. WireJson state
-  reconstruction (D-B) is required for the 7 workflow cases (e2e_multi_agent
-  first). The 4 v2c bridge fixtures need the D-C collapse.
+  reconstruction (D-B) is required for the 4 WireJson workflow cases
+  (e3_capability_workflow, e3_capability_workflow_resume,
+  e3_identity_workflow, float_output_e2e). e2e_multi_agent is P6Frame, not
+  WireJson, so it uses the P6 trace ring, not node-event reconstruction.
+  The 4 v2c bridge fixtures need the D-C collapse.
 - **WH-6:** the CLI flips to `WasmWorkflowRuntime`. The four config fields map
   to `WasmWorkflowRuntimeConfig`. Suspend / resume waits for WH-4b. The suspend
   fixture MUST switch to an opaque-lane capability (bridge Pending traps).

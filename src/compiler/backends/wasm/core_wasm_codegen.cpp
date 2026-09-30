@@ -16540,6 +16540,27 @@ encode_workflow_module(const CoreProgram &program,
                 return std::nullopt;
             }
         } else {
+            // P2-6 branching-walk honesty: a WireJson (non-P6) agent whose
+            // walk terminal is a ComputedGotoAction has a branching / computed
+            // action. The descriptor walk is a linear chain of GotoAction
+            // edges; a ComputedGotoAction terminal means the agent takes a
+            // runtime-dependent branch the walk cannot represent. The D-B
+            // state reconstruction would emit a dishonest sequence, so reject
+            // the module at codegen time rather than emit a broken walk.
+            auto walk = workflow_initial_transitions(plan.agent_plans[r]);
+            if (walk.has_value() &&
+                walk->terminal.value < plan.agent_plans[r].actions.size()) {
+                const auto &terminal_action =
+                    plan.agent_plans[r].actions[walk->terminal.value];
+                if (std::holds_alternative<ComputedGotoAction>(terminal_action)) {
+                    add_diag(result,
+                             core_wasm_diag::kUnsupportedOrchestration,
+                             "WireJson agent has a computed-goto (branching) terminal; "
+                             "the linear walk cannot represent runtime-dependent branches. "
+                             "Use a P6-frame agent for computed routing.");
+                    return std::nullopt;
+                }
+            }
             auto runner = make_workflow_runner_body(plan.agent_plans[r], plan.imports);
             if (!runner.has_value() || !code.sized(*runner)) {
                 return std::nullopt;
