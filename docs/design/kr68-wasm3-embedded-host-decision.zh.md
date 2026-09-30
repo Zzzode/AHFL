@@ -2182,3 +2182,133 @@ WH-5b 解决 hybrid workflow module(P6 打包节点 + opaque capability-final �
 
 - **§12.6(WH-4b suspend/resume):** 保留,不重写。归一化使 hybrid schedule 与 event_count 不变量兼容——capability 调用在 bridge 车道,写 event record,memo 身份 `(WorkflowNodeId, ordinal)` 成立。
 - **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。归一化消除 evaluator/wasm parity gap——wasm 车道不再拒绝 evaluator 接受的模块,无需 evaluator fallback。WASM=OFF 策略不变。
+
+## 12.12 WH-5b decision revision (2026-10-01, dedicated decision agent, no human gate)
+
+§12.11 的 Option C(big-bang 归一化 opaque capability-final 为 bridge 调用)经协调者审计后被发现**致命缺陷**。本节是修订记录,§12.11 原样保留作历史档案。事实已对 HEAD `f42842ba` 逐条复核。
+
+### 12.12.0 修订摘要
+
+**§12.11 Option C 被否决。选择 Option A':修复 hybrid 的两个机械缺陷,保留两种终端形状。** 两种终端形状不是冗余 special-case——它们编码不同的 ABI 契约:opaque terminal = pending-capable(D2b suspend 权威);in-handler bridge = single-run(组合)。修复:(a) frame section 诚实性(混合模块中 opaque runner 不发 node_blocks 条目,加 per-node `is_p6` 标志);(b) 混合模块中 P6 scheduler 节点也写 tag-0 event record 并发布 event_count,使 event_count == dense schedule_pos 在每个 cap 节点成立。**Bridge-pending parity gap 是独立的 mandatory pre-WH-6 slice(WH-5b.2),不在本切片范围。**
+
+### 12.12.1 Bridge PENDING trap 复现(runtime + source)
+
+**Runtime 复现:** bridge fixture(`scratch_p6f_bridge.ahfl`,两个 P6 节点,capability `A(n: Int) -> Frame` 在非 final `Calling` state 调用)在 Pending invoker 下运行:wasm session 返回 `NodeFailed`(status=1),**不是** `Suspended`(status=4)。guest 在 bridge 调用处 trap。
+
+**Source 证据链:**
+1. `core_wasm_codegen.cpp:6703-6710`:bridge guest arm 编译 `if (status != 0) unreachable`——任何非 OK 状态 trap。注释原文:"Single-run contract: any non-OK status traps (durable replay / pending arm stays the D2b authority)."
+2. `capability_import.cpp:292-296`:host 把 `CapabilityCallStatus::Pending` 映射为 `AHFL_CAP_PENDING`(非零 raw)。
+3. `workflow_session.cpp:708-713`:host 对 bridge imports(`param_frame.empty()`)直接 `return inner(obs)`,**跳过 WH-4b memo/replay 逻辑**。注释原文:"WH-4b: opaque lane only. Bridge imports (empty param_frame) pass through to inner live: the bridge ABI traps on Pending, so there is no suspend/resume on that lane."
+
+**结论:** bridge 车道是 single-run-only,无 durable suspend/resume。Option C("opaque 终端形状消失,所有能力调用走 bridge 车道")会**摧毁所有 capability workflow 的 durable suspend/resume**。
+
+### 12.12.2 Evaluator non-final pending semantics(source 验证)
+
+**关键发现:evaluator 对 Pending 的处理不是 terminal-structural 的——它对 ANY statement position 的 capability 调用(包括 in-handler non-final 调用)统一挂起节点。**
+
+1. `capability_eval.cpp:108-116`:Pending → `EvalResult::suspension`(携带 `pending_cap_id` + `pending_ordinal`),`has_errors()` 保持 false。注释原文:"a pending capability call suspends evaluation. Carry the suspension (which call, which ordinal) up the eval recursion instead of an error diagnostic, so has_errors() stays false and the workflow node loop persists a resume record rather than terminating."
+2. `workflow_runtime.cpp:1057-1064`:Pending → `node_memo.suspended = true`,stamp `(pending_cap_id, pending_ordinal)`,return BEFORE failure-classification loop。注释原文:"a pending call suspends the node... Pending is not a failure, so no CapabilityFailed event and no node_capability_failures entry."
+
+**结论:bridge suspension 是 NEW CODEGEN,不是 new semantics。** evaluator 已经支持在 non-final capability 调用处挂起;wasm bridge 车道的 trap 是 codegen 限制,不是语义差异。
+
+### 12.12.3 更广泛的 WH-6 parity gap(独立于 hybrid 问题)
+
+Bridge-pending trap 影响**所有 bridge workflow**,不仅是 hybrid:
+- 一个纯 P6/bridge workflow(无 opaque 节点)中,in-handler capability 返回 Pending → guest trap(`NodeFailed`),evaluator 会挂起(`Suspended`)。
+- **Latent 原因:** conformance census 的 58 个 manifest 中没有 scenario 期望 `suspended` 状态——所有 scenario 期望 `completed`。e2e_multi_agent 的 bridge 调用(`ClassifyMessage`、`HandleGeneral` 等)在 census 中全部返回 Success。没有 fixture 触发 bridge-pending 路径。
+
+**Bridge-pending rung 是 mandatory pre-WH-6 slice,在 Option A' 或 C' 下都需要。** Option B'(只拒绝 hybrid)不关闭此 gap——一个纯 computed agent 在 mid-handler 调用 capability 并 pending 时,不经过任何 hybrid 节点就会 hit 此 trap。
+
+### 12.12.4 被否方案(修订)
+
+**Option C(§12.11,big-bang 归一化):** 致命缺陷——bridge 车道在 Pending 上 trap(§12.12.1),归一化摧毁所有 capability workflow 的 durable suspend/resume。§12.11.8 声称"归一化后与 WH-4b 兼容"是错误的:normalized call 在旧 call 挂起的地方 trap。
+
+**Option B'(slice gate:拒绝 hybrid + 后续 KR):** 否。(1) 不关闭 hybrid parity gap(evaluator 接受,wasm 拒绝);(2) 不关闭 bridge-pending parity gap(§12.12.3);(3) WH-6 gated on parity——拒绝不是 parity。B' 是最低风险但留下最多 gap。
+
+**Option C'(full normalization + generalized suspension):** 否。(1) 把两个独立问题(hybrid codegen 缺陷 + bridge-pending codegen 限制)捆绑成一个大变更;(2) 需要泛化 WH-4b recorder 到 bridge ordinals(bridge 调用在 runner 内部,不写 node-event record),改变 recorder 的 node-boundary identity 模型;(3) 最高 regression 风险;(4) evaluator 消费 AHFL-IR(`workflow_runtime.hpp:120,126` `const ir::Program&`,从不调用 `lower_ahfl_to_core`),Core-IR 归一化不能删除 evaluator 路径——evaluator 继续 tree-walk AHFL-IR capability 调用直到 WH-9。C' 是正确的长期方向但不是本切片。
+
+### 12.12.5 选择方案:Option A'(修复 hybrid,保留两种终端形状)
+
+**两种终端形状编码不同的 ABI 契约,不是冗余:**
+
+| 形状 | ABI | Pending 行为 | WH-4b | 用途 |
+|------|-----|-------------|-------|------|
+| Opaque terminal | `(i32,i32)->(i32,i32,i32)` | graceful PENDING latch + null-result suspension | 完整支持(memo + replay) | D2b suspend 权威 |
+| In-handler bridge | `(i32)->(i32,i32)` | trap(unreachable) | 不支持(skip) | single-run 组合 |
+
+**修复 (a) — frame section 诚实性:** `node_blocks` 数组只包含 P6-packaged runner 的条目(packaged-instance order,与 header 注释 "parallel to the workflow module's sorted packaged-instance table" 一致)。opaque runner 不发条目。在 `CoreWasmNodeDescriptor` 加 `bool is_p6` 标志(P6-packaged 节点为 true,opaque 节点为 false),host 用此标志守卫 `node_blocks[runner]` 访问(`workflow_session.cpp:1298`)。verifier 无需 special-case——它只看到 P6 条目的非零 size。
+
+**修复 (b) — P6 节点写 event record:** 在混合模块中(`!plan.imports.empty()` => event region 存在,`core_wasm_codegen.cpp:12176`),P6 scheduler 节点在 `continue`(`:16050`)之前调用 `append_event_record_write`(tag 0 = identity,status = OK)并发布 `event_count = schedule_pos + 1`。纯 P6 模块(无 import,无 event region)保持当前行为。`append_event_record_write`(`:15830`)已支持 tag 0(zero capability fields + status OK)。
+
+**Reference Hierarchy 依据:** Rust(extern "C" vs Rust ABI)、Swift(ownership conventions)、Clang(calling conventions)都为不同目的维护不同 ABI 契约。两种终端形状是不同的 ABI 契约,不是 old-and-new coexistence。
+
+### 12.12.6 成本与风险
+
+**成本:**
+- `CoreWasmNodeDescriptor` 加 `is_p6` 字段(descriptor + codegen 填充 + host 消费)
+- `node_blocks` 发射跳过 opaque runner(codegen `:13521-13537` 改为只发 P6 runner)
+- host `node_blocks[runner]` 访问改用 `is_p6` 守卫 + P6-runner ordinal 映射
+- P6 节点在混合模块中写 tag-0 event record + 发布 event_count(codegen `:16050` 前插入)
+
+**风险:**
+- **Host node_blocks 索引:** `workflow_session.cpp:1298` 当前用 `runner` 索引 `node_blocks`。改为 P6-only 后需要 per-node `is_p6` + P6-runner ordinal。影响面:post-run event decoding 的 node output 读取。
+- **Event record layout:** tag-0 record 的 `capability`/`source_symbol`/`invocation_ordinal` 字段为零(已由 `append_event_record_write` 处理)。`decode_node_events` 的 `IdentityFieldsNonZero` 检查确保 tag-0 record 无 capability 字段。
+- **e3/e4/e5/e6 resume 测试:** 不受影响——它们是 all-opaque workflow(无 P6 节点,无 tag-0 record)。event_count 行为不变。
+- **v2d 测试:** 不受影响——single-agent hybrid 是不同问题(见 §12.12.9)。
+
+### 12.12.7 验收标准(修订)
+
+1. **P6-before-cap fixture:** emit P6Frame(2 nodes, 1 import),wasm session `Completed`,输出 `{"_type":"...Frame","n":7}`,capability 调用一次
+2. **Cap-before-P6 fixture**(反转 Kahn 顺序):emit 并运行,行为与 #1 一致
+3. **Kahn-reordered variant**(3+ 节点混合顺序):emit 并运行,所有节点完成
+4. **Event record 完整性:** 混合模块中 P6 节点写 tag-0 record,cap 节点写 tag-1 record;`decode_node_events` 验证通过;每个 cap 节点的 event_count == dense schedule_pos
+5. **WH-4b resume on hybrid:** 在 cap 节点的 PENDING latch 处 suspend,resume 后完成,输出正确;memo 身份 `(WorkflowNodeId, ordinal)` 正确
+6. **Frame section 诚实性:** `node_blocks` 只含 P6 条目;opaque runner 无条目;host 用 `is_p6` 守卫;`verify_workflow_spans` 无 special-case
+7. **Conformance census:** `ahfl.conformance.wasm_native` 报告 `66 agreed, 0 skipped`(不回归)
+8. **e3/e4/e5/e6 resume 测试:** 不变(all-opaque,无 P6 节点)
+9. **v2d 测试:** 不变(single-agent hybrid 保持 rejection)
+10. **ASan:** ctest 全绿、无 leak
+11. **WASM=OFF:** §12.7 策略不变
+12. **Fresh `-Werror` dev build:** 零警告
+13. **精确 gate 列表:**
+    - `ahflc run` on hybrid module → wasm lane 成功
+    - `ahflc build --target wasm` on hybrid module → emit P6Frame
+    - `grep -rn "is_p6" src/compiler/backends/wasm/core_wasm_codegen.hpp` 非零(新字段存在)
+    - `grep -rn "node_blocks\[runner\]" src/runtime/wasm_host/` 为零(旧索引消除)
+
+### 12.12.8 Fixture/blessing/census 影响
+
+| 类别 | 文件 | 影响 |
+|------|------|------|
+| Golden wasm tests(14 个 opaque-terminal) | e2/e3/e4/e5/e6/p2_12/p2_15/fb4_* | **不变**——all-opaque,不是 hybrid |
+| v2d rejection test | `v2d_computed_goto_preamble_reject.ahfl` | **不变**——single-agent hybrid 保持 rejection |
+| Conformance manifests(58 个) | `tests/conformance/cases/*.json` | **不变**——census 中无 hybrid case |
+| Observation blessings(59 个) | `tests/conformance/observations/*.json` | **不变**——census 中无 hybrid case |
+| 新 hybrid fixtures | P6-before-cap, cap-before-P6, Kahn-reordered | **新增**——3 个测试 fixture(不加入 census,作为独立 ctest) |
+
+**净影响:零现有 fixture/blessing/census 变更。** 3 个新 fixture 作为独立 ctest 加入,不改变 66-census 基线。
+
+### 12.12.9 v2d fixture 命运
+
+**保持 rejection test,不变。** v2d fixture 是 single-agent hybrid(computed-goto + opaque capability final 在同一 agent)。这与 multi-agent hybrid(P6 agent + 独立 opaque agent)是不同问题:
+
+- **Multi-agent hybrid(本切片修复):** P6 agent 和 opaque agent 是独立 runner,各自有正确的 ABI。缺陷在 frame section 发射和 event record 发布。
+- **Single-agent hybrid(v2d,保持 rejection):** 同一 agent 同时有 computed-goto(P6 打包)和 opaque capability final。P6 runner 的 ABI 是 `(i32)->(i32,i32)`,opaque terminal 的 ABI 是 `(i32,i32)->(i32,i32,i32)`——P6 runner 无法调用 opaque terminal import(函数签名不匹配)。修复需要:(a) P6 runner 支持 opaque terminal 调用(新 ABI),或 (b) lowerer 在同一 agent 内把 opaque final 归一化为 bridge 调用。这是 follow-up KR,不在本切片范围。
+
+### 12.12.10 Bridge-pending parity gap(独立 mandatory slice)
+
+**WH-5b.2(独立切片,mandatory pre-WH-6):** 泛化 bridge 车道的 PENDING/ERROR 处理,使 in-handler capability 调用返回 Pending 时 guest 优雅挂起(而非 trap)。范围:
+
+1. Guest status dispatch(`core_wasm_codegen.cpp:6703-6710`):非 OK 状态不再 `unreachable`,改为 PENDING latch + null-result suspension(与 opaque terminal `:16080-16101` 对齐)
+2. Scheduler-level suspension at in-handler boundaries:bridge 调用在 runner 内部,scheduler 需要感知 bridge-level pending
+3. WH-4b recorder 泛化:bridge 调用不写 node-event record,recorder 的 `(schedule_pos, ordinal)` identity 模型需要扩展到 bridge ordinals
+4. Fresh-instance replay across bridge sites
+5. Snapshot v2 schema 影响(若 bridge suspension 需要新字段)
+
+**此切片独立于 WH-5b.1(hybrid 修复)。** WH-5b.1 不依赖 WH-5b.2;WH-5b.2 不依赖 WH-5b.1。但 WH-6 gated on 两者:WH-5b.1 关闭 hybrid parity gap,WH-5b.2 关闭 bridge-pending parity gap。
+
+### 12.12.11 先前决策保留声明
+
+- **§12.6(WH-4b suspend/resume):** 保留,不重写。Option A' 保持 opaque terminal 的 PENDING latch 和 WH-4b memo/replay 完整。bridge-pending 泛化(WH-5b.2)是独立切片,不改变 §12.6 的 recorder 设计。
+- **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。Option A' 关闭 hybrid parity gap;WH-5b.2 关闭 bridge-pending parity gap。WASM=OFF 策略不变。
+- **§12.11(Option C):** 原样保留作历史档案。其事实复现(§12.11.1-12.11.3)和根因分析(§12.11.2)仍然正确;致命缺陷在 §12.12.1-12.12.3 中记录。
