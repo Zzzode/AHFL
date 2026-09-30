@@ -2080,3 +2080,105 @@ builder 按序执行,全部须通过:
 **Commit 形状:**
 - **把 WH-9 拆成多个 commit(先删 evaluator、再删 closure arm、再清测试)**——否。evaluator 与 closure arm 相互依赖(evaluator 是唯一 closure 生产者),拆开产生不编译/测试失败的中间态。一个原子 commit 是唯一安全形状。
 - **保留 `engines.evaluator` 字段作 no-op 兼容**——否。Principle 1 禁止前向兼容 shim。evaluator runner 死后该字段无消费者,同 commit 移除。
+
+## 12.11 WH-5b decisions (2026-10-01, dedicated decision agent, no human gate)
+
+WH-5b 解决 hybrid workflow module(P6 打包节点 + opaque capability-final 节点共存于同一 workflow)在 wasm 车道的 codegen 失败。事实已对 HEAD `1be8bc82` 逐条复现。本节是一个连贯设计,不是菜单。
+
+### 12.11.0 决策摘要
+
+**选择 Option C:big-bang 在 lowerer 层把 opaque capability-final 归一化为 frame-bridge 调用。** opaque 终端形状(`return Cap(args)` 在 final state)从 wasm 车道的 IR 中完全消失;所有能力调用经 bridge 车道(非 final handler 内调用,结果暂存 context,final state 返回构造值)。hybrid module 不再是一个需要"支持"的形状——它在 lowerer 层被归一化为 canonical P6Frame。v2d rejection test 更新为锁定归一化成功。evaluator 的 opaque-final 快路径在同一变更中删除(Principle 1)。
+
+### 12.11.1 事实复现(三个事实)
+
+**Fact 1 — hybrid emit 失败(INVALID_LAYOUT):** fixture `P6BeforeCap`(RouteAgent = computed-goto P6 节点;CapAgent = opaque capability-final 节点,`return A(input)` 在 Done state)。codegen 产出 `wasm.INVALID_LAYOUT`:"a workflow node block size disagrees with the aligned size of its named layout root"。
+
+**Fact 2 — evaluator 车道执行同一源码成功:** evaluator `WorkflowRuntime` 执行 hybrid fixture 到 `Completed`,capability 调用一次,输出 `{"_type":"wasm::scratch_p6f::Frame","n":7}`。这是 WH-6 parity regression:evaluator 接受,wasm 拒绝。
+
+**Fact 3 — all-bridge rewrite 在 wasm 车道运行成功:** 把 CapAgent 的 capability 调用从 final state 移到非 final `Calling` state(`let result = A(input.n); ctx.out_n = result.n; goto Done;`),final state 返回 `Frame { n: ctx.out_n }`。两个节点均 P6 打包。codegen 产出 P6Frame(2 nodes, 1 import),wasm session 执行到 `Completed`,capability 调用一次,输出 `{"_type":"wasm::scratch_p6f_bridge::Frame","n":7}`。
+
+### 12.11.2 根因链
+
+1. `gathered[runner].p6 = has_computed_final || has_computed_goto || !bridge_calls.empty()`(`core_wasm_codegen.cpp:12795`)。opaque capability-final agent 三个条件全 false → `p6 = false`。
+2. `plan.has_p6_nodes = any_of(gathered, p6)`(`:12906-12908`)。任一 runner 是 p6 → module 标记 P6Frame。
+3. P6 runner 获得真实 node block(`:12254-12317`);opaque runner 保持零值 `WorkflowNodeBlock`(`input_base==0, input_size==0`)。
+4. Dense `node_blocks` 发射包含所有 runner(`:13521-13537`),包括零值 opaque block。
+5. `verify_workflow_spans`(`core_frame_layout.cpp:1371-1377`)检查 `block.input_size != expected_input`——opaque block 的 `input_size==0` 但 `expected_input = align8(layouts[input_layout.value].size) > 0` → 拒绝。
+
+**共存设计已存在但不完整:** `:12862-12905` 的 `!p6 && region.constructed` 检查拒绝 opaque 节点接收 constructed input,但未覆盖 hybrid module 中 opaque 节点接收 simple input 的情形。这是 Fact 1 暴露的缺口。
+
+**已有相关测试:** `v2d_computed_goto_preamble_reject.ahfl` 锁定单 agent hybrid(computed-goto + opaque final 在同一 agent)的 rejection(`UNSUPPORTED_WORKFLOW_FRAME`)。这是同一根因的不同表现:单 agent hybrid 在 codegen 早期被拒,多 agent hybrid 在 frame-layout 验证期被拒。
+
+### 12.11.3 第二 bug:event_count 不变量破坏
+
+即使修复 Fact 1 的 codegen 缺口使 hybrid module 能 emit,hybrid schedule 在 guest scheduler 层面仍有独立 bug:
+
+1. **P6 节点不写 event record:** guest scheduler(`:15940-16150`)中,P6 节点在 `:16050` 处 `continue`——跳过 event record 写入和 event_count 检查。
+2. **Cap 节点检查 event_count:** cap 节点在 `:16127-16137` 检查 `event_count == node.schedule_pos`(dense over ALL nodes),不匹配则返回 `(ERROR,0,0)`。
+3. **P6-before-cap 顺序:** event_count=0(P6 节点未写),cap 节点 schedule_pos=1 → guest 返回 `(ERROR,0,0)`。
+4. **Host import-boundary 归属:** `workflow_session.cpp:715-764` 用 `event_count` 作为 `schedule_pos` 推导当前节点。注释(`:716-719`)明确假设"scheduler walks nodes in Kahn order and writes event_count = schedule_pos + 1 on each node's completion"——此假设在 P6 节点不写 event record 时不成立。
+5. **WH-4b memo 身份破坏:** `(WorkflowNodeId, ordinal)` 坐标和 `wasm_resume_recorder` schedule-space 分类假设每个节点写 event record。hybrid schedule 破坏此假设。
+
+**结论:** hybrid schedule 不是"codegen 有缺口但运行时正确"——它在 scheduler 层面有根本性的 event_count 不变量破坏。修复需要要么(a)让 P6 节点也写 event record(改变 P6 快路径),要么(b)让 cap 节点用不同的 schedule position(破坏 dense 不变量)。两者都是对 scheduler 热路径的侵入式变更。
+
+### 12.11.4 被否方案
+
+**Option A — 使 hybrid 成为一等公民(支持 P6 + opaque 共存):**
+- 否。需要:(1) 为 opaque runner 发射真实 node block 或让其共享 P6 frame layout;(2) 修复 event_count 不变量(P6 节点写 event record 或 cap 节点用非 dense position);(3) 修复 host import-boundary 归属;(4) 修复 WH-4b memo 身份。这是在 scheduler 热路径上维护两种物理终端形状,违反 Principle 1(一个 canonical 形状,无 special-case 分支)。event_count 不变量破坏(§12.11.3)使 hybrid schedule 在 replay 层面不健全——不是"更多工程"能修复的,是设计层面不兼容。
+
+**Option B — 拒绝 + 可选归一化:**
+- 否。如果归一化是可能的(Fact 3 证明),它应该是自动的,不是可选的。Principle 1 禁止 old-and-new coexistence:保留 opaque 终端形状作为"可选"路径意味着维护两套 codegen/scheduler/replay 逻辑。拒绝诊断对用户无 actionable 价值——用户无法手动修复 codegen 内部缺口。
+
+### 12.11.5 选择方案与 AHFL-specific 分叉理由
+
+**选择 Option C:big-bang 在 lowerer 层把 opaque capability-final 归一化为 frame-bridge 调用。**
+
+**归一化变换(机械、语义保持):**
+1. **检测:** final state 的 body 是单个 `return <capability_call>` 语句
+2. **合成 context:** 若 agent context 是 Unit,合成含 capability 返回类型字段的 context struct;若已是 struct,添加字段(或复用匹配类型的现有字段)
+3. **重命名 final state:** 原 final state 改名为 `Calling`(或 fresh name),移除 `final` 标记
+4. **移动 capability 调用:** `Calling` 中 `return A(args)` 替换为 `let result = A(args); ctx.<field> = result; goto Done;`
+5. **添加新 final state:** 新 `Done` state 返回 `ctx.<field>`
+6. **重连 transitions:** `Start -> Done` 改为 `Start -> Calling`,添加 `Calling -> Done`
+
+**AHFL-specific 分叉理由:** opaque capability-final 形状是 evaluator-only 优化——evaluator 的 tree-walk 可以直接 `return Cap(input)` 而无需 context round-trip。wasm 车道的 ABI 要求 bridge 调用(capability 在非 final handler 内调用,结果经 context 流转)。不在 wasm scheduler 维护两种终端形状,而是在 lowerer 层归一化为 canonical bridge 形状。参考 Rust:一个 canonical IR 形状(MIR),一个 fast path(monomorphization),不为 evaluator 优化保留第二形状。这与 §12.7 的"无 evaluator fallback"决策一致:归一化消除 parity gap,而非在 wasm 车道复制 evaluator 行为。
+
+### 12.11.6 成本与风险
+
+**成本:**
+- Lowerer 变换:检测 opaque final、合成 context、移动调用、添加 state——机械但非平凡
+- `v2d_computed_goto_preamble_reject.ahfl` 更新:从锁定 rejection 改为锁定归一化成功
+- Evaluator 的 opaque-final 快路径在同一变更中删除(Principle 1:grep-zero non-test production callers)
+- 现有 all-opaque golden tests(e2/e3/e4/e5/e6/p2_12 等)的 IR 形状变化:lowerer 归一化后,这些 fixture 的 agent 从 opaque 变为 bridge。golden 文件需重新生成
+
+**风险:**
+- **Capability 返回类型不可存储:** 若返回类型是 Reject(float/decimal/duration/timestamp/uuid/map/sequence),归一化无法 proceed。诊断:
+  ```
+  [wasm.UNSUPPORTED_CAPABILITY_FINAL] capability '<name>' returns <type> which cannot be routed through the bridge lane; rewrite as a bridge call in a non-final state with a storable context field
+  ```
+  这与 bridge 车道的 `bridge_param_kind` Reject 分类一致。
+- **State machine 拓扑变化:** 归一化添加一个 state(`Calling`),但 workflow 级 schedule(Kahn order)不变——新 state 在同一 agent 内,不影响节点间依赖。
+- **WH-4b resume 兼容性:** 归一化后,capability 调用在 bridge 车道,写 event record,与 WH-4b 的 event_count 不变量兼容。
+
+### 12.11.7 验收标准
+
+1. **P6-before-cap fixture**(`scratch_p6f_mixed.ahfl` 模式):归一化后 emit P6Frame(2 nodes, 1 import),wasm session 执行到 `Completed`,输出 `{"_type":"...Frame","n":7}`,capability 调用一次
+2. **Cap-before-P6 fixture**(反转 Kahn 顺序):归一化后 emit 并运行,行为与 #1 一致
+3. **Kahn-reordered variant**(3+ 节点混合顺序):归一化后 emit 并运行,所有节点完成
+4. **Conformance census:** `ahfl.conformance.wasm_native` 报告 `66 agreed, 0 skipped`(不回归)
+5. **WH-4b resume on normalized hybrid:** 在 capability 调用处 suspend,resume 后完成,输出正确;memo 身份 `(WorkflowNodeId, ordinal)` 正确
+6. **Run-report byte parity:** evaluator 与 wasm 车道对归一化后模块的 run-report 字节一致
+7. **ASan:** ctest 全绿、无 leak
+8. **WASM=OFF:** §12.7 策略不变——`ahflc run` 以可行动诊断拒绝,无 evaluator fallback
+9. **v2d test 更新:** `v2d_computed_goto_preamble_reject.ahfl` 不再 rejection;锁定归一化后 emit + run 成功
+10. **Fresh `-Werror` dev build:** 零警告
+11. **精确 gate 列表:**
+    - `ahflc run` on hybrid module → wasm lane 成功
+    - `ahflc build --target wasm` on hybrid module → emit P6Frame
+    - `grep -rn "opaque.*final\|capability.*final.*return" src/compiler/ir/` 为零(opaque 终端形状从 IR 消失)
+    - `grep -rn "UNSUPPORTED_WORKFLOW_FRAME.*opaque\|opaque.*UNSUPPORTED" src/` 为零(v2d rejection 路径删除)
+
+### 12.11.8 先前决策保留声明
+
+- **§12.6(WH-4b suspend/resume):** 保留,不重写。归一化使 hybrid schedule 与 event_count 不变量兼容——capability 调用在 bridge 车道,写 event record,memo 身份 `(WorkflowNodeId, ordinal)` 成立。
+- **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。归一化消除 evaluator/wasm parity gap——wasm 车道不再拒绝 evaluator 接受的模块,无需 evaluator fallback。WASM=OFF 策略不变。
