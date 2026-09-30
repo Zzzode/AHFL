@@ -60,6 +60,17 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
         regions.push_back(
             {section.rodata_base, section.rodata_base + section.rodata_extent});
     }
+    // The agent frame-payload arena (packed input String bytes). A computed
+    // final that passes an input String through to the output (e.g.
+    // v2b_string_passthrough) points the output PtrLen at THIS region, not at
+    // rodata or a bridge result payload.
+    if (section.payload_arena_capacity > 0) {
+        regions.push_back({section.payload_arena_base,
+                           section.payload_arena_base +
+                               section.payload_arena_capacity});
+    }
+    // The workflow entry payload arena (host-packed String bytes for the
+    // entry node's I frame). Zero on an agent section.
     if (section.entry_payload_capacity > 0) {
         regions.push_back({section.entry_payload_base,
                            section.entry_payload_base +
@@ -406,6 +417,34 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             return std::unexpected(
                 "run_wasm_agent: input is not wire-encodable");
         }
+
+        // FB-1 construct-heap aliasing guard: a module with outlined-fn
+        // aggregate constructs (construct_heap_enabled) initializes heap_next
+        // at construct_heap_base and RESETS it there on every computed-handler
+        // entry. On a fresh canonical instance the host's first alloc() would
+        // land the input frame exactly at construct_heap_base, and the first
+        // handler reset would overwrite the input JSON with construct scratch,
+        // corrupting the identity-final output the run2 tuple points back at.
+        // The Node embedded host avoids this by driving step() on the SAME
+        // instance before writeInput(), advancing heap_next past the
+        // construct-scratch high-water. The D1 dual-mode discipline walks on a
+        // SEPARATE effects-free instance, so the canonical instance starts
+        // fresh; replay the walk's probed heap_next advancement here.
+        if (walk->heap_next_after_walk != 0) {
+            auto current = engine.alloc_then_write({});
+            if (current.has_value() &&
+                walk->heap_next_after_walk > current->value) {
+                const auto advance =
+                    walk->heap_next_after_walk - current->value;
+                std::vector<std::uint8_t> scratch(advance, 0);
+                auto advanced = engine.alloc_then_write(scratch);
+                if (!advanced.has_value()) {
+                    return std::unexpected(
+                        "run_wasm_agent: heap_next advancement failed");
+                }
+            }
+        }
+
         const auto input_span = std::span<const std::uint8_t>(
             reinterpret_cast<const std::uint8_t *>(input_json->data()),
             input_json->size());
