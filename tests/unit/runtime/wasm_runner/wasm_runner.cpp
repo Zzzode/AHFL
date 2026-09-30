@@ -775,21 +775,25 @@ void test_states_invoker_separation(const std::filesystem::path &repo_root) {
 // Helper: drive a v2c bridge agent through the facade (which uses the WH-3
 // capability_import executor on real wasm3) and assert elementwise:
 // state_sequence, capability_sequence, capability_arguments, output.
+// Every fixture must compile and run; a compile or run failure is a test
+// failure, not a silent skip.
 void run_v2c_bridge_fixture(
     const std::filesystem::path &repo_root, std::string_view fixture_name,
     std::string_view agent_name, std::string_view input_json,
     std::string_view capability_result_json,
     std::span<const std::string_view> expected_states,
     std::span<const std::string_view> expected_capabilities,
+    std::span<const std::string_view> expected_cap_args,
     std::string_view expected_output_json) {
     const auto source =
         repo_root / "tests/golden/wasm" /
         (std::string(fixture_name) + ".ahfl");
     std::string error;
     auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(),
+          std::string(fixture_name) + ": compile");
     if (!program.has_value()) {
-        // Some v2c fixtures are rejected by A2 (e.g. multi-arg). That is a
-        // fail-closed admission rejection, not a runtime failure. Skip.
+        std::cerr << "  compile failed: " << error << "\n";
         return;
     }
 
@@ -805,14 +809,16 @@ void run_v2c_bridge_fixture(
     };
 
     auto input = value_from_json(std::string(input_json));
+    check(input.has_value(), std::string(fixture_name) + ": input");
     if (!input.has_value()) {
         return;
     }
 
     auto result = wr::run_wasm_agent(
         *program, std::string(agent_name), *input, std::move(config));
+    check(result.has_value(), std::string(fixture_name) + ": run");
     if (!result.has_value()) {
-        // Admission rejection (A2) is acceptable for some fixtures.
+        std::cerr << "  error: " << result.error() << "\n";
         return;
     }
 
@@ -838,8 +844,20 @@ void run_v2c_bridge_fixture(
                   "]");
     }
 
+    // Elementwise: capability_arguments envelope (BYTE comparison).
+    check(result->capability_arguments.size() == expected_cap_args.size(),
+          std::string(fixture_name) + ": cap_args_count");
+    for (std::size_t i = 0; i < expected_cap_args.size() &&
+                           i < result->capability_arguments.size();
+         ++i) {
+        check(result->capability_arguments[i] == expected_cap_args[i],
+              std::string(fixture_name) + ": cap_args[" + std::to_string(i) +
+                  "]");
+    }
+
     // Elementwise: output.
     const auto *output = result->result.output();
+    check(output != nullptr, std::string(fixture_name) + ": has_output");
     if (output != nullptr) {
         const auto json = value_to_json(*output);
         check(json == expected_output_json,
@@ -849,67 +867,81 @@ void run_v2c_bridge_fixture(
 
 void test_v2c_bridge_fixtures(const std::filesystem::path &repo_root) {
     // v2c_single_enum_bridge: Init -> Classify -> Done, one ClassifyChannel
-    // call with a tag-only-enum argument.
+    // call with a tag-only-enum argument. The envelope wraps the non-Struct
+    // single argument as {"value":..}.
     {
         static constexpr std::string_view states[] = {"Init", "Classify",
                                                       "Done"};
         static constexpr std::string_view caps[] = {
             "wasm::v2c_single_enum_bridge::ClassifyChannel"};
+        static constexpr std::string_view cap_args[] = {
+            R"({"value":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})"};
         run_v2c_bridge_fixture(
             repo_root, "v2c_single_enum_bridge",
             "wasm::v2c_single_enum_bridge::RoutingAgent",
             R"({"_type":"wasm::v2c_single_enum_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})",
             R"({"_type":"wasm::v2c_single_enum_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})",
-            states, caps,
+            states, caps, cap_args,
             R"({"_type":"wasm::v2c_single_enum_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})");
     }
 
     // v2c_route_then_bridge: Init -> Routing -> Done, one RouteTicket call
-    // with (String, Int, Bool) args.
+    // with (String, Int, Bool) args. The envelope is the multi-arg
+    // {"args":[...]} form.
     {
         static constexpr std::string_view states[] = {"Init", "Routing",
                                                       "Done"};
         static constexpr std::string_view caps[] = {
             "wasm::v2c_route_then_bridge::RouteTicket"};
+        static constexpr std::string_view cap_args[] = {
+            R"({"args":["TKT-42",1,true]})"};
         run_v2c_bridge_fixture(
             repo_root, "v2c_route_then_bridge",
             "wasm::v2c_route_then_bridge::RoutingAgent",
             R"({"_type":"wasm::v2c_route_then_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
             R"({"_type":"wasm::v2c_route_then_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"}})",
-            states, caps,
+            states, caps, cap_args,
             R"({"_type":"wasm::v2c_route_then_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"}})");
     }
 
     // v2c_bridge_chain: Init -> Routing -> Routing2 -> Done, TWO RouteTicket
-    // calls (same capability, chained handlers).
+    // calls (same capability, chained handlers). Both calls carry identical
+    // argument envelopes.
     {
         static constexpr std::string_view states[] = {
             "Init", "Routing", "Routing2", "Done"};
         static constexpr std::string_view caps[] = {
             "wasm::v2c_bridge_chain::RouteTicket",
             "wasm::v2c_bridge_chain::RouteTicket"};
+        static constexpr std::string_view cap_args[] = {
+            R"({"args":["TKT-42",{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},true]})",
+            R"({"args":["TKT-42",{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},true]})"};
         run_v2c_bridge_fixture(
             repo_root, "v2c_bridge_chain",
             "wasm::v2c_bridge_chain::RoutingAgent",
             R"({"_type":"wasm::v2c_bridge_chain::TicketRequest","channel":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
             R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"}})",
-            states, caps,
+            states, caps, cap_args,
             R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"}})");
     }
 
     // v2c_multi_arg_bridge: Init -> Routing -> Done, one RouteTicket call
-    // with (String, Enum, Bool) args. May be rejected by A2.
+    // with (String, Enum, Bool) args. The envelope is the multi-arg
+    // {"args":[...]} form. This fixture was previously rejected by A2
+    // (params != 1); the P2-8 bridge-source-symbol relaxation admits it.
     {
         static constexpr std::string_view states[] = {"Init", "Routing",
                                                       "Done"};
         static constexpr std::string_view caps[] = {
             "wasm::v2c_multi_arg_bridge::RouteTicket"};
+        static constexpr std::string_view cap_args[] = {
+            R"({"args":["TKT-42",{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"},true]})"};
         run_v2c_bridge_fixture(
             repo_root, "v2c_multi_arg_bridge",
             "wasm::v2c_multi_arg_bridge::RoutingAgent",
             R"({"_type":"wasm::v2c_multi_arg_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
             R"({"_type":"wasm::v2c_multi_arg_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"}})",
-            states, caps,
+            states, caps, cap_args,
             R"({"_type":"wasm::v2c_multi_arg_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"}})");
     }
 }
