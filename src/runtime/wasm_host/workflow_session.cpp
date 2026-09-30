@@ -857,7 +857,17 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     }
 
     WorkflowResult result;
-    (void)finalize_wasm_workflow_run(result, descriptor, std::move(facts));
+    const bool report_ok =
+        finalize_wasm_workflow_run(result, descriptor, std::move(facts));
+    if (!report_ok) {
+        // build_report already emitted wasm.event-stream-invalid and left
+        // the report fail-closed (status=Failed,
+        // failure_kind=EvaluationFailed). The event stream is constructed
+        // by emit_workflow_events (correct by construction); a false
+        // return means an internal invariant was violated. The fail-closed
+        // report is the correct response.
+        result.report.status = RunTerminalStatus::Failed;
+    }
 
     return WorkflowSessionResult{
         .result = std::move(result),

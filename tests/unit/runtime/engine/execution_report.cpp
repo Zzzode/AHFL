@@ -105,6 +105,95 @@ void test_report_rejects_invalid_lifecycle() {
     check(!result.has_value(), "report rejects event stream without terminal events");
 }
 
+// RFC 0026 KR6.8 WH-5 P2-3: impossible event orders that the wasm lane's
+// build_report wrapper depends on build_execution_report to reject. Each
+// case constructs a stream that no correct emitter should ever produce.
+
+void test_report_rejects_terminal_without_start() {
+    ExecutionEventStore store;
+    // RunCompleted without RunStarted: TerminalWithoutStart on the Run
+    // lifecycle key.
+    append_event(store,
+                 RunCompleted{.run = RunId{0}, .status = RunTerminalStatus::Completed},
+                 0ns);
+
+    const auto result = build_execution_report(store.events());
+    check(!result.has_value(), "report rejects terminal without start");
+    if (result.has_value()) {
+        return;
+    }
+    check(result.error().kind == ExecutionReportBuildIssueKind::InvalidEventStream,
+          "terminal-without-start is an invalid stream, not a missing run");
+}
+
+void test_report_rejects_duplicate_start() {
+    ExecutionEventStore store;
+    const RunId run{0};
+    const WorkflowId workflow{0};
+    const WorkflowNodeId node{0};
+
+    append_event(store, RunStarted{.run = run}, 0ns);
+    append_event(store, WorkflowStarted{.run = run, .workflow = workflow}, 1ns);
+    append_event(store,
+                 NodeScheduled{
+                     .workflow = workflow,
+                     .node = node,
+                     .dependencies = {},
+                     .execution_slot = 0,
+                 },
+                 2ns);
+    // Duplicate RunStarted: DuplicateStart on the Run lifecycle key.
+    append_event(store, RunStarted{.run = run}, 3ns);
+    append_event(store,
+                 NodeSkipped{.node = node, .blocking_dependencies = {}}, 4ns);
+    append_event(store,
+                 WorkflowFailed{.workflow = workflow, .diagnostic = DiagnosticId{0}},
+                 5ns);
+    append_event(store, RunCompleted{.run = run, .status = RunTerminalStatus::Failed}, 6ns);
+
+    const auto result = build_execution_report(store.events());
+    check(!result.has_value(), "report rejects duplicate start");
+    if (result.has_value()) {
+        return;
+    }
+    check(result.error().kind == ExecutionReportBuildIssueKind::InvalidEventStream,
+          "duplicate-start is an invalid stream");
+}
+
+void test_report_rejects_duplicate_terminal() {
+    ExecutionEventStore store;
+    const RunId run{0};
+    const WorkflowId workflow{0};
+    const WorkflowNodeId node{0};
+
+    append_event(store, RunStarted{.run = run}, 0ns);
+    append_event(store, WorkflowStarted{.run = run, .workflow = workflow}, 1ns);
+    append_event(store,
+                 NodeScheduled{
+                     .workflow = workflow,
+                     .node = node,
+                     .dependencies = {},
+                     .execution_slot = 0,
+                 },
+                 2ns);
+    append_event(store,
+                 NodeSkipped{.node = node, .blocking_dependencies = {}}, 3ns);
+    append_event(store,
+                 WorkflowFailed{.workflow = workflow, .diagnostic = DiagnosticId{0}},
+                 4ns);
+    append_event(store, RunCompleted{.run = run, .status = RunTerminalStatus::Failed}, 5ns);
+    // Duplicate RunCompleted: DuplicateTerminal on the Run lifecycle key.
+    append_event(store, RunCompleted{.run = run, .status = RunTerminalStatus::Failed}, 6ns);
+
+    const auto result = build_execution_report(store.events());
+    check(!result.has_value(), "report rejects duplicate terminal");
+    if (result.has_value()) {
+        return;
+    }
+    check(result.error().kind == ExecutionReportBuildIssueKind::InvalidEventStream,
+          "duplicate-terminal is an invalid stream");
+}
+
 void test_skipped_node_is_projected_without_agent_start() {
     ExecutionEventStore store;
     const RunId run{0};
@@ -144,6 +233,9 @@ void test_skipped_node_is_projected_without_agent_start() {
 int main() {
     test_report_is_aggregated_from_events();
     test_report_rejects_invalid_lifecycle();
+    test_report_rejects_terminal_without_start();
+    test_report_rejects_duplicate_start();
+    test_report_rejects_duplicate_terminal();
     test_skipped_node_is_projected_without_agent_start();
 
     std::printf("%d/%d tests passed\n", pass_count, test_count);

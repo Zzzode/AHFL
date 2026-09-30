@@ -521,10 +521,19 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     // evaluator uses). The agent lane wraps the bare agent in a synthetic
     // single-node workflow.
     WasmAgentRunResult result;
-    (void)finalize_wasm_agent_run(
+    const bool report_ok = finalize_wasm_agent_run(
         result.result, descriptor, walk->states, std::move(output_value),
         run_status, run_failure_kind, std::move(run_failure_code),
         std::move(run_failure_message));
+    if (!report_ok) {
+        // build_report already emitted wasm.event-stream-invalid and left
+        // the report fail-closed (status=Failed,
+        // failure_kind=EvaluationFailed). The event stream is constructed
+        // by finalize_wasm_agent_run (correct by construction); a false
+        // return means an internal invariant was violated. The fail-closed
+        // report is the correct response.
+        result.result.report.status = RunTerminalStatus::Failed;
+    }
 
     // Collect the state entries from the step-walk.
     for (const auto &state_name : walk->states) {

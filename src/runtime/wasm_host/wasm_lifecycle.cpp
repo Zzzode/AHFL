@@ -40,7 +40,10 @@ add_error(WorkflowResult &result, std::string code, std::string message) {
 
 // Build the report from the event stream via the SAME projection the
 // evaluator uses (finalize_report in workflow_runtime.cpp). Returns false
-// if the event stream violated the lifecycle contract.
+// if the event stream violated the lifecycle contract. On failure the
+// report is left fail-closed: status=Failed (default) +
+// failure_kind=EvaluationFailed, and a wasm.event-stream-invalid
+// diagnostic is emitted.
 bool build_report(WorkflowResult &result) {
     auto report = build_execution_report(result.events.events());
     if (report.has_value()) {
@@ -51,6 +54,7 @@ bool build_report(WorkflowResult &result) {
         .code(std::string{wasm_diag::kEventStreamInvalid})
         .message("wasm lane event stream violated the accepted lifecycle contract")
         .emit();
+    result.report.failure_kind = WorkflowFailureKind::EvaluationFailed;
     return false;
 }
 
