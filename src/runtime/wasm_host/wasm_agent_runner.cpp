@@ -313,8 +313,12 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     }
 
     // D-D: fire agent_input_hook LIVE before the step-walk (agent lane only).
+    // Signature parity with WorkflowRuntimeConfig::agent_input_hook: the wasm
+    // agent lane has no workflow node, so `node_name` is always empty (the
+    // descriptor.agent_name string outlives the call, so the agent_name view
+    // does not dangle).
     if (hooks.agent_input_hook) {
-        hooks.agent_input_hook(AgentId{0}, descriptor.agent_name, input);
+        hooks.agent_input_hook(AgentId{0}, descriptor.agent_name, "", input);
     }
 
     auto walk = run_agent_step_walk(module_bytes, walk_desc, input,

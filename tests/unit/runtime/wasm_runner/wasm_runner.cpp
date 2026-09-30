@@ -200,10 +200,13 @@ void test_agent_runner(const std::filesystem::path &repo_root) {
     wr::WasmAgentRunnerConfig config;
     config.hooks.agent_input_hook =
         [&agent_input_count](AgentId, std::string_view agent_name,
-                             const Value &) {
+                             std::string_view node_name, const Value &) {
             ++agent_input_count;
             check(agent_name == "wasm::e1_identity::IdentityAgent",
                   "agent.hook_agent_name");
+            // P1-1: signature parity with WorkflowRuntimeConfig. The wasm
+            // agent lane has no workflow node, so node_name is always empty.
+            check(node_name.empty(), "agent.hook_node_name_empty");
         };
     config.hooks.state_entered_hook =
         [&hook_states](AgentId, std::string_view, std::string_view,
