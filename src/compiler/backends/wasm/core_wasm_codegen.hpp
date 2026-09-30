@@ -95,6 +95,11 @@ struct CoreWasmNodeDescriptor {
     bool has_capability{false};
     std::uint32_t capability_ordinal{0}; // index into imports when has_capability
     std::uint64_t source_symbol{0};      // source SymbolId carried in the event record
+    // WH-4 fix-forward P1-3: the node's DAG predecessor node ids (the workflow
+    // `after` edges), as dense source-order node ids. Populated so an embedded
+    // host can emit NodeScheduled.dependencies without a second derivation of
+    // the DAG. Empty for an entry node.
+    std::vector<std::uint32_t> dependencies;
 };
 
 struct CoreWasmCapabilityImport {
@@ -209,6 +214,7 @@ struct CoreWasmExecutionDescriptor {
     std::uint32_t initial_state{0};
 
     // Workflow lane.
+    std::string workflow_name; // canonical workflow name (metadata parity)
     std::vector<CoreWasmStateWalk> agents;     // runner index -> walk
     std::vector<CoreWasmNodeDescriptor> nodes; // schedule order
 

@@ -16958,6 +16958,15 @@ build_import_descriptors(const CoreProgram &program,
                                                                     const WorkflowPlan &plan) {
     CoreWasmExecutionDescriptor descriptor;
     descriptor.is_workflow = true;
+    // WH-4 fix-forward P1-2: carry the canonical workflow name so the wasm
+    // lane populates ExecutionMetadataStore with the SAME display name the
+    // evaluator uses (metadata parity for ahfl.run-report byte-compare).
+    {
+        const auto &workflow_decl = program.workflows[plan.workflow.value];
+        descriptor.workflow_name = workflow_decl.symbol_ref.canonical_name.empty()
+                                       ? workflow_decl.name
+                                       : workflow_decl.symbol_ref.canonical_name;
+    }
     // V2-D: a workflow with a packaged computed node is a P6-frame module: the
     // host packs the entry into the entry node's I block, run2 drives the
     // in-module scheduler/runner lane, and the workflow output slot is encoded
@@ -17091,6 +17100,15 @@ build_import_descriptors(const CoreProgram &program,
         node_descriptor.schedule_pos = node.schedule_pos;
         node_descriptor.runner = workflow_runner_index(plan, node.target_instance).value_or(0);
         node_descriptor.name = workflow_decl.nodes[node.node.value].node_name;
+        // WH-4 fix-forward P1-3: carry the DAG predecessor node ids (the
+        // workflow `after` edges) so an embedded host emits
+        // NodeScheduled.dependencies without re-deriving the DAG. The after
+        // list is dense source-order node ids, the same id space as node_id.
+        node_descriptor.dependencies.reserve(
+            workflow_decl.nodes[node.node.value].after.size());
+        for (const auto dependency : workflow_decl.nodes[node.node.value].after) {
+            node_descriptor.dependencies.push_back(dependency.value);
+        }
         node_descriptor.has_capability = node.has_capability;
         if (node.has_capability) {
             node_descriptor.capability_ordinal =
