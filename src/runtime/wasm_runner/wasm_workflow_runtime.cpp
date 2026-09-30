@@ -3,13 +3,14 @@
 
 #include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 
-#include "runtime/wasm_host/wasm_workflow_runtime.hpp"
 #include "runtime/wasm_host/wasm_error_codes.hpp"
+#include "runtime/wasm_host/workflow_session.hpp"
 
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
+#include "ahfl/compiler/ir/program_view.hpp"
 
 #include <utility>
 
@@ -21,6 +22,16 @@ namespace bd = ahfl::backends;
 WasmWorkflowRuntime::WasmWorkflowRuntime(const ir::Program &program,
                                          WasmWorkflowRuntimeConfig config)
     : config_(std::move(config)) {
+    // WH-4b: pre-compute the capability effect map for the intent-emitting
+    // wrapper (avoids storing a ProgramIndex, which would require the program
+    // to outlive the facade).
+    ir::ProgramIndex prog_index(program);
+    for (const auto *cap : prog_index.capabilities()) {
+        if (cap != nullptr) {
+            capability_effects_.emplace(cap->name, cap->effect.kind);
+        }
+    }
+
     // Lower AHFL-IR to Core-IR.
     auto core = irc::lower_ahfl_to_core(program);
     if (!core.ok()) {
@@ -98,10 +109,72 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         return result;
     }
 
+    // WH-4b: build the session config directly (the run_wasm_workflow
+    // convenience function does not carry the recovery/intent fields).
+    wasm_host::WorkflowSessionConfig session_config;
+    session_config.state_entered_hook =
+        std::move(config_.hooks.state_entered_hook);
+    session_config.capability_invoked_hook =
+        std::move(config_.hooks.capability_invoked_hook);
+    session_config.capability_result_observer =
+        std::move(config_.hooks.capability_result_observer);
+    session_config.node_completed_hook =
+        std::move(config_.hooks.node_completed_hook);
+    session_config.name_resolver = config_.name_resolver;
+
+    // WH-4b: intent-emitting wrapper. Mirrors the evaluator at
+    // workflow_runtime.cpp:1050-1058: right BEFORE a durable_write /
+    // financial_write capability is dispatched, fire the write-ahead intent
+    // with the idempotency key stamped by the session. Memo hits and
+    // frontier injections never reach the invoker, so a resumed run emits
+    // zero intents.
+    ContextualCapabilityInvoker session_invoker = config_.invoker;
+    if (config_.durable_write_intent_sink) {
+        auto inner = std::move(session_invoker);
+        session_invoker =
+            [inner = std::move(inner), &effects = capability_effects_,
+             &sink = config_.durable_write_intent_sink](
+                const CapabilityInvocationContext &ctx,
+                const std::string &name,
+                const std::vector<Value> &args) -> CapabilityCallResult {
+            if (ctx.source_capability_symbol_id.has_value()) {
+                auto it = effects.find(name);
+                if (it != effects.end() &&
+                    (it->second == ir::CapabilityEffectKind::DurableWrite ||
+                     it->second ==
+                         ir::CapabilityEffectKind::FinancialWrite)) {
+                    sink(ctx.idempotency_key, name);
+                }
+            }
+            return inner(ctx, name, args);
+        };
+    }
+    session_config.invoker = std::move(session_invoker);
+
+    // WH-4b: thread the recovery fields. The snapshot + pending result are
+    // move-only and are consumed on the first resume run (reset after move
+    // so a subsequent run() is a fresh run, not a stale resume).
+    if (config_.recovery_snapshot.has_value()) {
+        session_config.recovery_snapshot =
+            std::move(config_.recovery_snapshot);
+        config_.recovery_snapshot.reset();
+    }
+    session_config.recovery_store = config_.recovery_store;
+    if (config_.resume_pending_result.has_value()) {
+        session_config.resume_pending_result =
+            std::move(config_.resume_pending_result);
+        config_.resume_pending_result.reset();
+    }
+    if (config_.resume_pending_result_wire_json.has_value()) {
+        session_config.resume_pending_result_wire_json =
+            std::move(config_.resume_pending_result_wire_json);
+        config_.resume_pending_result_wire_json.reset();
+    }
+
     // Drive the wasm_host workflow session.
-    auto session_result = wasm_host::run_wasm_workflow(
+    auto session_result = wasm_host::run_workflow_session(
         it->second.module_bytes, it->second.descriptor, input,
-        config_.hooks, config_.invoker, config_.name_resolver);
+        std::move(session_config));
 
     if (!session_result.has_value()) {
         // Pre-run setup failure (admission, instantiation, pack). Map to a

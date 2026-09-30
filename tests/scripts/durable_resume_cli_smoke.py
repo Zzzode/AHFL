@@ -52,14 +52,13 @@ class OkHandler(BaseHTTPRequestHandler):
 SOURCE = """module smoke;
 
 struct Request { value: String; }
-struct Context { value: String = "pending"; }
 struct Response { value: String; }
 
 capability Echo(request: Request) -> Response;
 
 agent EchoAgent {
     input: Request;
-    context: Context;
+    context: Unit;
     output: Response;
     states: [Init, Done];
     initial: Init;
@@ -69,12 +68,8 @@ agent EchoAgent {
 }
 
 flow for EchoAgent {
-    state Init {
-        let reply = Echo(Request { value: input.value });
-        ctx.value = reply.value;
-        goto Done;
-    }
-    state Done { return Response { value: ctx.value }; }
+    state Init { goto Done; }
+    state Done { return Echo(Request { value: input.value }); }
 }
 
 workflow SmokeWorkflow {

@@ -17,6 +17,7 @@
 #include "runtime/wasm_host/wasm_runtime_hooks.hpp"
 
 #include "runtime/engine/capability_bridge.hpp"
+#include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/engine/workflow_result.hpp"
 #include "runtime/value/value.hpp"
 
@@ -27,6 +28,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -40,6 +42,34 @@ struct WasmWorkflowRuntimeConfig {
     ContextualCapabilityInvoker invoker;
     // Resolves a capability's source_symbol to its canonical name.
     std::function<std::optional<std::string>(std::uint64_t)> name_resolver;
+
+    // WH-4b: recovery snapshot for a resume run. When set, the session loads
+    // the snapshot's memo + pending frontier and replays (memo-supply /
+    // inject / live). Mirrors WorkflowRuntimeConfig::recovery_snapshot.
+    std::optional<WorkflowRecoverySnapshot> recovery_snapshot;
+
+    // WH-4b: the store to persist the recovery snapshot on suspend. Null
+    // means no persistence (the snapshot rides back in the result; a save
+    // failure downgrades Suspended to NodeFailed).
+    const WorkflowRecoveryStore *recovery_store{nullptr};
+
+    // WH-4b: the pending capability result for a resume run, as a native
+    // Value. Mutually exclusive with resume_pending_result_wire_json.
+    std::optional<Value> resume_pending_result;
+
+    // WH-4b: the pending capability result for a resume run, as raw wire
+    // JSON. Mutually exclusive with resume_pending_result.
+    std::optional<std::string> resume_pending_result_wire_json;
+
+    // WH-4b: write-ahead intent sink for durable_write / financial_write
+    // effects. The facade wraps the user invoker with an intent-emitting
+    // wrapper that fires this sink with the idempotency key right before a
+    // durable effect is dispatched (mirrors the evaluator at
+    // workflow_runtime.cpp:1050-1058). Memo hits and frontier injections
+    // never reach the invoker, so a resumed run emits zero intents.
+    std::function<void(std::uint64_t idempotency_key,
+                       std::string_view capability_name)>
+        durable_write_intent_sink;
 };
 
 // The wasm3-backed workflow runtime. Compiles every workflow in the program
@@ -66,6 +96,11 @@ class WasmWorkflowRuntime {
 
     // Populated by the constructor. Empty when compilation failed.
     std::unordered_map<std::string, CompiledWorkflow> workflows_;
+    // WH-4b: capability name -> effect kind, pre-computed from the IR program
+    // for the intent-emitting wrapper (avoids storing a ProgramIndex, which
+    // would require the program to outlive the facade).
+    std::unordered_map<std::string, ir::CapabilityEffectKind>
+        capability_effects_;
     // Set when compilation fails; every run() returns a failed result.
     std::optional<std::string> compile_error_;
     WasmWorkflowRuntimeConfig config_;

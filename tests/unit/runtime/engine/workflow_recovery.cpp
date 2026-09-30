@@ -267,6 +267,53 @@ TEST_CASE("workflow recovery v2 round-trips with suspended record and memo") {
     std::filesystem::remove_all(path.parent_path());
 }
 
+// WH-4b: the append-only `node` memo coordinate round-trips when set (wasm
+// whole-workflow memo) and stays nullopt when absent (evaluator per-node memo).
+TEST_CASE("workflow recovery memo node coordinate round-trips present and absent") {
+    const auto path = unique_store_path();
+    WorkflowRecoveryStore store(path);
+
+    WorkflowRecoverySnapshot snap{
+        .workflow = WorkflowId{5},
+        .checkpoint = CheckpointId{9},
+    };
+    SuspendedNodeState suspended{
+        .node = WorkflowNodeId{2},
+        .agent = AgentId{1},
+        .pending_cap_id = 3,
+        .pending_ordinal = 1,
+    };
+    // Entry 0: wasm-lane entry WITH a node coordinate (a completed node's call).
+    suspended.memo.push_back(CapabilityMemoEntry{
+        .ordinal = 0,
+        .cap_id = 4,
+        .arg_hash = 111,
+        .result = make_string("from-node-0"),
+        .node = WorkflowNodeId{0},
+    });
+    // Entry 1: evaluator-lane entry WITHOUT a node coordinate (nullopt == the
+    // suspended node).
+    suspended.memo.push_back(CapabilityMemoEntry{
+        .ordinal = 1,
+        .cap_id = 5,
+        .arg_hash = 222,
+        .result = make_string("from-suspended-node"),
+    });
+    snap.suspended = std::move(suspended);
+    REQUIRE(store.save(snap).has_value());
+
+    const auto loaded = store.load();
+    REQUIRE(loaded.has_value());
+    REQUIRE(loaded->suspended.has_value());
+    REQUIRE(loaded->suspended->memo.size() == 2);
+    CHECK(loaded->suspended->memo[0].node.has_value());
+    if (loaded->suspended->memo[0].node.has_value()) {
+        CHECK(*loaded->suspended->memo[0].node == WorkflowNodeId{0});
+    }
+    CHECK_FALSE(loaded->suspended->memo[1].node.has_value());
+    std::filesystem::remove_all(path.parent_path());
+}
+
 namespace {
 
 // Helper: build a v2 snapshot with a single memo entry carrying `result`.

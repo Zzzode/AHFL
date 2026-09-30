@@ -1167,6 +1167,17 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm-host;wasm;runtime"
     )
 
+    # RFC 0026 KR6.8 WH-4b: facade-level durable-resume end-to-end test.
+    # Takes the repo root + a work dir (snapshot persistence).
+    add_test(NAME ahfl.runtime.wasm_workflow_resume_e2e
+        COMMAND $<TARGET_FILE:ahfl_wasm_workflow_resume_e2e>
+                "${PROJECT_SOURCE_DIR}"
+                "${CMAKE_CURRENT_BINARY_DIR}/runtime/wasm-workflow-resume-e2e"
+    )
+    set_tests_properties(ahfl.runtime.wasm_workflow_resume_e2e PROPERTIES
+        LABELS "wasm-host;wasm;runtime"
+    )
+
     add_test(NAME ahfl.runtime.core_wasm_schema_module
         COMMAND $<TARGET_FILE:ahfl_core_wasm_schema_module_tests>
     )

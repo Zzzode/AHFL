@@ -20,7 +20,7 @@ add_library(ahfl_runtime_wasm_runner STATIC
 
 target_link_libraries(ahfl_runtime_wasm_runner
     PUBLIC
-        # The wasm_host engine-session layer (run_wasm_workflow /
+        # The wasm_host engine-session layer (run_workflow_session /
         # run_wasm_agent). The facade delegates to these free functions.
         ahfl_runtime_wasm_host
         # The neutral WorkflowResult / execution-event types.

@@ -212,6 +212,13 @@ non_negative_id(const JsonValue &object, std::string_view key) {
             memo_item->set("cap_id", id_json(entry.cap_id));
             memo_item->set("arg_hash",
                            JsonValue::make_string(std::to_string(entry.arg_hash)));
+            // WH-4b: append-only whole-workflow memo coordinate. The evaluator
+            // never sets it (per-node memo == the suspended node); the wasm lane
+            // sets it on every entry. Absent on write == nullopt on read (older
+            // readers ignore the unknown field).
+            if (entry.node.has_value()) {
+                memo_item->set("node_id", id_json(entry.node->index()));
+            }
             // RFC 0026 C2b stage3: write the result trust-authority (legacy field +
             // append-only sidecar/presence) with the P0-19 save-local presence
             // normalization; fail-closed on an ill-formed entry state.
@@ -404,6 +411,14 @@ WorkflowRecoveryStore::load() const {
                 .cap_id = *cap_id,
                 .arg_hash = arg_hash_value,
             };
+            // WH-4b: append-only whole-workflow memo coordinate. Absent on an
+            // evaluator-originated snapshot (per-node memo == the suspended
+            // node); the wasm consumer requires it on every entry and fails
+            // closed at its own load if missing.
+            if (const auto memo_node = non_negative_id(*memo_item, "node_id");
+                memo_node.has_value()) {
+                entry.node = WorkflowNodeId{*memo_node};
+            }
 
             if (wire_field == nullptr && present_field == nullptr) {
                 // LegacyV2: authority = the exact `result` substring; presence
@@ -516,6 +531,27 @@ materialize_workflow_recovery_snapshot(const WorkflowResult &result,
         snapshot.completed_nodes.push_back(std::move(state));
     }
     return snapshot;
+}
+
+std::uint64_t compute_idempotency_key(std::size_t workflow_index,
+                                      std::size_t node_index,
+                                      std::uint64_t ordinal,
+                                      std::size_t cap_symbol_id,
+                                      std::uint64_t arg_hash) {
+    constexpr std::uint64_t kPrime = 1099511628211ULL;
+    std::uint64_t hash = 1469598103934665603ULL;
+    const auto mix = [&hash](std::uint64_t value) {
+        for (int shift = 0; shift < 64; shift += 8) {
+            hash ^= (value >> shift) & 0xFFULL;
+            hash *= kPrime;
+        }
+    };
+    mix(static_cast<std::uint64_t>(workflow_index));
+    mix(static_cast<std::uint64_t>(node_index));
+    mix(ordinal);
+    mix(static_cast<std::uint64_t>(cap_symbol_id));
+    mix(arg_hash);
+    return hash;
 }
 
 } // namespace ahfl::runtime

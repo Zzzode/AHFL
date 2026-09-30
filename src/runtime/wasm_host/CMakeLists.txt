@@ -34,6 +34,13 @@
 # dual-mode discipline (step-walk on a separate instance + canonical runv/run2);
 # the workflow runtime is a thin facade over the workflow session that accepts
 # the shared WasmRuntimeHooks (hook signatures identical to WorkflowRuntimeConfig).
+#
+# WH-4b adds the suspended-snapshot recorder (wasm_resume_recorder.cpp): the
+# session-local state holder the workflow session wraps the WH-3 import callback
+# with to originate the recovery snapshot (per-node import ordinals, ExactSidecar
+# memo, pending coordinate) on a suspend run and to classify + serve the memo /
+# inject the frontier on a resume run. It is pure state: the session wrapper owns
+# the engine / binding / diagnostic machinery and drives the recorder.
 add_library(ahfl_runtime_wasm_host STATIC
     wasm3_engine.cpp
     frame_packer.cpp
@@ -44,8 +51,8 @@ add_library(ahfl_runtime_wasm_host STATIC
     observation_emitter.cpp
     agent_session.cpp
     workflow_session.cpp
+    wasm_resume_recorder.cpp
     wasm_agent_runner.cpp
-    wasm_workflow_runtime.cpp
     wasm_lifecycle.cpp
 )
 

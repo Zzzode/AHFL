@@ -66,6 +66,18 @@ enum class PersistedMemoResultSource {
 // (mismatch => fail-closed, never a live re-invoke). All identity is index/id-
 // based (Principle 2): cap_id is a capability SymbolId, ordinal an InvocationId
 // ordinal, never a name.
+//
+// WH-4b (RFC 0026 KR6.8): the optional `node` coordinate generalizes the memo
+// from a single suspended node to the WHOLE workflow. The evaluator suspends
+// per node and its memo covers only the suspended node, so it never sets this
+// field (every entry is nullopt == the suspended node, unchanged semantics).
+// The wasm lane resumes on a FRESH instance that re-runs the whole module, so
+// it must memo-supply capability calls from EVERY node before the pending one;
+// it sets `node` on every entry. The wasm consumer REQUIRES it (an entry
+// without `node` fails closed at load); the evaluator consumer ignores it.
+// `node` is orthogonal to the result three-state (NativeOnly/LegacyV2/
+// ExactSidecar): it records WHERE the call happened, not how its result is
+// trusted.
 struct CapabilityMemoEntry {
     std::uint64_t ordinal{0};       // per-node invocation ordinal (memo key)
     std::size_t cap_id{0};          // capability SymbolId (integrity cross-check)
@@ -75,6 +87,10 @@ struct CapabilityMemoEntry {
     PersistedMemoResultSource source{PersistedMemoResultSource::NativeOnly};
     std::optional<std::string> authoritative_json{}; // exact wire spelling (Legacy/Sidecar)
     std::optional<bool> result_present{true};         // presence bit (P0-17/18); nullopt iff LegacyV2
+    // WH-4b: the workflow node this call belongs to. nullopt == the suspended
+    // node (evaluator per-node memo semantics, unchanged). The wasm lane always
+    // sets it (whole-workflow memo for fresh-instance replay).
+    std::optional<WorkflowNodeId> node{};
 };
 
 // P0-18 three-state well-formedness (structural only — parseability of
@@ -84,6 +100,10 @@ struct CapabilityMemoEntry {
 //  NativeOnly   => authoritative_json ABSENT, result_present SET
 //  LegacyV2     => authoritative_json PRESENT (non-empty), result_present ABSENT
 //  ExactSidecar => authoritative_json PRESENT (non-empty), result_present SET
+//
+// WH-4b: the optional `node` coordinate is orthogonal to this three-state — it
+// records WHERE the call happened (whole-workflow memo for the wasm lane), not
+// how its result is trusted. The well-formedness gate does not inspect `node`.
 [[nodiscard]] bool memo_result_state_well_formed(const CapabilityMemoEntry &entry);
 
 // The resume record for a node suspended on a pending capability call. Captures
@@ -143,5 +163,18 @@ class WorkflowRecoveryStore final {
 [[nodiscard]] std::expected<WorkflowRecoverySnapshot, WorkflowRecoveryError>
 materialize_workflow_recovery_snapshot(const WorkflowResult &result,
                                        const ExecutionCheckpointProjection &checkpoint);
+
+// RFC 0022 slice 4 (exactly-once): a stable per-invocation idempotency key. The
+// same FNV-1a mix used for arg hashing, folded over the invocation coordinate.
+// Must be reproducible across resume — every input is index/id-based (workflow,
+// node, the stable per-node ordinal, capability SymbolId) plus the
+// resolved-argument hash — so a host can dedup a durable_write effect that
+// committed before a crash. Shared by the evaluator and the wasm lane (WH-4b)
+// so a host sees the same key for the same invocation on either engine.
+[[nodiscard]] std::uint64_t compute_idempotency_key(std::size_t workflow_index,
+                                                    std::size_t node_index,
+                                                    std::uint64_t ordinal,
+                                                    std::size_t cap_symbol_id,
+                                                    std::uint64_t arg_hash);
 
 } // namespace ahfl::runtime

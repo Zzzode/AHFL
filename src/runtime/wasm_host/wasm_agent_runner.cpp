@@ -556,6 +556,15 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
                     }
                 }
             } else if (!run_ok) {
+                // WH-4b: a Pending (raw_status==2) capability call on the
+                // agent lane lands here and is classified as NodeFailed.
+                // Agent-lane suspend is NOT a CLI contract (the CLI runs
+                // workflows; --recovery-store drives WorkflowRuntime), the
+                // agent runner has no recovery-snapshot consumer, and the
+                // conformance census has zero pending mocks (no alignment
+                // pressure). Agent-lane suspend belongs to WH-7/WH-8 (the
+                // REPL/DAP agent-runner contract); see the design doc
+                // §12.6.10.
                 run_status = RunTerminalStatus::Failed;
                 run_failure_kind = WorkflowFailureKind::NodeFailed;
                 run_failure_code = wasm_diag::kRunFailed;

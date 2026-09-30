@@ -270,6 +270,19 @@ void emit_workflow_events(WorkflowResult &result,
                 output_id = add_value(result, std::move(*node_facts.output));
             }
             emit(NodeCompleted{.node = node_id, .output = output_id});
+        } else if (node_facts.terminal ==
+                   WasmNodeRunFacts::Terminal::Suspended) {
+            // WH-4b: the node suspended on a pending capability call. No
+            // CapabilityStarted was emitted for the pending call (it has no
+            // terminal yet; it completes on resume), matching the evaluator
+            // (workflow_runtime.cpp:1079-1082). The node-level NodeSuspended
+            // terminal records the pause.
+            emit(NodeSuspended{
+                .node = node_id,
+                .agent = agent_id,
+                .pending_cap_id = node_facts.pending_cap_id,
+                .pending_ordinal = node_facts.pending_ordinal,
+            });
         } else {
             const auto diag_id =
                 add_error(result, node_facts.failure_code,
@@ -289,6 +302,30 @@ void emit_workflow_events(WorkflowResult &result,
             output_id = add_value(result, std::move(*facts.workflow_output));
         }
         emit(WorkflowCompleted{.workflow = plan.workflow, .output = output_id});
+    } else if (facts.status == RunTerminalStatus::Suspended) {
+        // WH-4b: the workflow suspended on a pending capability call. Find
+        // the suspended node (the one with Terminal::Suspended) to carry its
+        // pending identity into the workflow-level event.
+        WorkflowNodeId suspended_node;
+        std::size_t pending_cap_id = 0;
+        std::uint64_t pending_ordinal = 0;
+        WasmNodeRunFacts suspended_default;
+        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+            const WasmNodeRunFacts &nf =
+                i < facts.nodes.size() ? facts.nodes[i] : suspended_default;
+            if (nf.terminal == WasmNodeRunFacts::Terminal::Suspended) {
+                suspended_node = plan.node_by_schedule[i];
+                pending_cap_id = nf.pending_cap_id;
+                pending_ordinal = nf.pending_ordinal;
+                break;
+            }
+        }
+        emit(WorkflowSuspended{
+            .workflow = plan.workflow,
+            .node = suspended_node,
+            .pending_cap_id = pending_cap_id,
+            .pending_ordinal = pending_ordinal,
+        });
     } else {
         const auto diag_id =
             add_error(result, facts.failure_code, facts.failure_message);

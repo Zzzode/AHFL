@@ -37,8 +37,9 @@ struct WasmNodeRunFacts {
     // lane; the module passes them through its own heap).
     std::optional<Value> output;
     // The node terminal. Completed = NodeCompleted, Failed = NodeFailed,
-    // Skipped = NodeSkipped (never executed because a prior node failed).
-    enum class Terminal { Completed, Failed, Skipped };
+    // Skipped = NodeSkipped (never executed because a prior node failed),
+    // Suspended = NodeSuspended (suspended on a pending capability call).
+    enum class Terminal { Completed, Failed, Skipped, Suspended };
     Terminal terminal{Terminal::Completed};
     NodeFailureKind failure_kind{NodeFailureKind::AgentFailed};
     // For Failed: the diagnostic code + message (the helper adds it to the
@@ -47,6 +48,10 @@ struct WasmNodeRunFacts {
     std::string failure_message;
     // For Skipped: blocking dependency node_ids (dense source-order).
     std::vector<std::uint32_t> blocking_dependencies;
+    // WH-4b: for Suspended, the pending capability identity + per-node ordinal
+    // (carried into the NodeSuspended event).
+    std::size_t pending_cap_id{0};
+    std::uint64_t pending_ordinal{0};
 };
 
 // One capability call observed during the run, in call order. The workflow
@@ -74,6 +79,13 @@ struct WasmCapabilityCall {
 };
 
 // All facts for one wasm workflow lane run.
+//
+// WH-4b: a Suspended run sets status=RunTerminalStatus::Suspended, the
+// suspended node's facts to Terminal::Suspended (with pending_cap_id +
+// pending_ordinal), and every node after it in schedule order to
+// Terminal::Skipped (blocking dependency = the suspended node). The helper
+// emits NodeSuspended / WorkflowSuspended / RunCompleted{Suspended}, matching
+// the evaluator's suspend terminal (workflow_runtime.cpp:1585-1591).
 struct WasmWorkflowRunFacts {
     std::vector<WasmNodeRunFacts> nodes; // schedule order
     std::vector<WasmCapabilityCall> capability_calls; // call order
@@ -87,9 +99,9 @@ struct WasmWorkflowRunFacts {
 
 // Populate metadata from the descriptor, emit the lifecycle event stream
 // (RunStarted / WorkflowStarted / NodeScheduled / NodeStarted /
-// AgentStateEntered / NodeCompleted|NodeFailed|NodeSkipped /
-// WorkflowCompleted|WorkflowFailed / RunCompleted), and build the report
-// from those events via build_execution_report.
+// AgentStateEntered / NodeCompleted|NodeFailed|NodeSkipped|NodeSuspended /
+// WorkflowCompleted|WorkflowFailed|WorkflowSuspended / RunCompleted), and
+// build the report from those events via build_execution_report.
 //
 // AgentId assignment matches the evaluator's build_runtime_plan:
 // first-appearance by agent NAME in node_id (source) order, NOT runner

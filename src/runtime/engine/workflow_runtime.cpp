@@ -266,32 +266,6 @@ build_runtime_plan(const ir::WorkflowDecl &workflow,
     return id;
 }
 
-// RFC 0022 slice 4 (exactly-once): a stable per-invocation idempotency key. Same
-// FNV-1a mix used for arg hashing, folded over the invocation coordinate. Must be
-// reproducible across resume — every input is index/id-based (workflow, node, the
-// stable per-node ordinal, capability SymbolId) plus the resolved-argument hash —
-// so a host can dedup a durable_write effect that committed before a crash.
-[[nodiscard]] std::uint64_t compute_idempotency_key(std::size_t workflow_index,
-                                                    std::size_t node_index,
-                                                    std::uint64_t ordinal,
-                                                    std::size_t cap_symbol_id,
-                                                    std::uint64_t arg_hash) {
-    constexpr std::uint64_t kPrime = 1099511628211ULL;
-    std::uint64_t hash = 1469598103934665603ULL;
-    const auto mix = [&hash](std::uint64_t value) {
-        for (int shift = 0; shift < 64; shift += 8) {
-            hash ^= (value >> shift) & 0xFFULL;
-            hash *= kPrime;
-        }
-    };
-    mix(static_cast<std::uint64_t>(workflow_index));
-    mix(static_cast<std::uint64_t>(node_index));
-    mix(ordinal);
-    mix(static_cast<std::uint64_t>(cap_symbol_id));
-    mix(arg_hash);
-    return hash;
-}
-
 void finalize_report(WorkflowResult &result) {
     auto report = build_execution_report(result.events.events());
     if (report.has_value()) {

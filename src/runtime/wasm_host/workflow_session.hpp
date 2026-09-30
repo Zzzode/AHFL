@@ -19,6 +19,7 @@
 // and the per-call CapabilityFailureKind vector for the facade.
 
 #include "runtime/engine/capability_bridge.hpp"
+#include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/wasm_host/observation_emitter.hpp"
 #include "runtime/wasm_host/state_trace_decoder.hpp"
 #include "runtime/wasm_host/wasm3_engine.hpp"
@@ -62,6 +63,30 @@ struct WorkflowSessionConfig {
 
     // Resolves a capability's source_symbol to its canonical name.
     std::function<std::optional<std::string>(std::uint64_t)> name_resolver;
+
+    // WH-4b: recovery snapshot for a resume run. When set, the session loads
+    // the snapshot's memo + pending frontier into its recorder and replays:
+    // memo-supply calls before the frontier, inject the pending result at the
+    // frontier, and go live after it (ReadyForLive). The invoker is never
+    // called for a memo hit or the frontier, so a resumed run has zero live
+    // side effects before the pending call.
+    std::optional<WorkflowRecoverySnapshot> recovery_snapshot;
+
+    // WH-4b: the store to persist the recovery snapshot on suspend. Null means
+    // no persistence: a suspend downgrades to NodeFailed (mirrors the evaluator
+    // at workflow_runtime.cpp:1582-1603).
+    const WorkflowRecoveryStore *recovery_store{nullptr};
+
+    // WH-4b: the pending capability result for a resume run, as a native Value.
+    // Mutually exclusive with resume_pending_result_wire_json. The wasm lane
+    // serializes it via the canonical wire encoder before injecting.
+    std::optional<Value> resume_pending_result;
+
+    // WH-4b: the pending capability result for a resume run, as raw wire JSON.
+    // Mutually exclusive with resume_pending_result. The wasm lane parses +
+    // schema-decodes it under the pending capability's result binding (type
+    // gate) and then supplies the ORIGINAL bytes verbatim.
+    std::optional<std::string> resume_pending_result_wire_json;
 };
 
 // The result of a successful workflow session run.

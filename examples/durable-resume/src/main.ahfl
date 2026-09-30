@@ -34,7 +34,7 @@ capability DraftReply(request: DraftInput) -> Reply {
 
 pub agent ReplyAgent {
     input: Ticket;
-    context: Reply;
+    context: Unit;
     output: Reply;
     states: [Init, Compose, Done];
     initial: Init;
@@ -51,20 +51,14 @@ flow for ReplyAgent {
     }
 
     state Compose {
-        let draft = DraftReply(DraftInput {
-                id: input.id,
-                question: input.question,
-        });
-        ctx.id = draft.id;
-        ctx.answer = draft.answer;
         goto Done;
     }
 
     state Done {
-        return Reply {
-            id: ctx.id,
-            answer: ctx.answer,
-        };
+        return DraftReply(DraftInput {
+            id: input.id,
+            question: input.question,
+        });
     }
 }
 

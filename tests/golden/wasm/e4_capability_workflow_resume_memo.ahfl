@@ -1,0 +1,71 @@
+// RFC 0026 KR6.8 WH-4b: durable-resume memo-replay fixture. A 2-node opaque
+// pipeline: `first` calls capability A (OK, memoized on suspend), `second`
+// calls capability B (forced Pending by the test's counting wrapper). On
+// resume, A is memo-supplied (zero live calls), B is injected (zero live
+// calls), and the workflow completes. Bounded String(0,64) so the F1
+// preflight's canonical-size bound is finite. Both capability calls are in
+// the final state (opaque lane); context is Unit on both agents.
+
+module wasm::e4_capability_workflow_resume_memo;
+
+pub struct Frame {
+    value: String(0, 64);
+}
+
+capability A(request: Frame) -> Frame;
+capability B(request: Frame) -> Frame {
+    effect: durable_write;
+    retry: safe_if_idempotent;
+}
+
+pub agent FirstAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [A];
+    transition Start -> Done;
+}
+
+flow for FirstAgent {
+    state Done {
+        return A(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub agent SecondAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [B];
+    transition Start -> Done;
+}
+
+flow for SecondAgent {
+    state Done {
+        return B(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow MemoPipeline {
+    input: Frame;
+    output: Frame;
+
+    node first: FirstAgent(input);
+    node second: SecondAgent(first) after [first];
+
+    return: second;
+}

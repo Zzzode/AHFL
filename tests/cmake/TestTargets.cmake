@@ -1953,6 +1953,31 @@ if(AHFL_ENABLE_BACKEND_WASM)
             ${PROJECT_SOURCE_DIR}/tests
     )
     ahfl_apply_project_warnings(ahfl_wasm_runner_tests)
+
+    # RFC 0026 KR6.8 WH-4b: facade-level durable-resume end-to-end test.
+    # Drives WasmWorkflowRuntime through suspend -> persist -> cold-start
+    # -> resume: e3 round-trip, e4 memo round-trip (zero live side effects
+    # on resume), fail-closed family, and intent alignment (durable_write
+    # intent sink fires on origination, zero on resume). Links the wasm
+    # runner facade (which transitively brings wasm_host + engine + wasm
+    # backend) and the conformance compile seam.
+    add_executable(ahfl_wasm_workflow_resume_e2e
+        integration/wasm_workflow_resume_e2e.cpp
+    )
+    target_link_libraries(ahfl_wasm_workflow_resume_e2e
+        PRIVATE
+            ahfl_runtime_wasm_runner
+            ahfl_runtime_engine
+            ahfl_runtime_value
+            ahfl_base_json
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_wasm_workflow_resume_e2e
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_wasm_workflow_resume_e2e)
 endif()
 
 add_executable(ahfl_compiler_backends_registry_tests

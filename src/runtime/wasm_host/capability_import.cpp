@@ -48,23 +48,6 @@ map_status_to_raw(runtime::CapabilityCallStatus status) noexcept {
     return AHFL_CAP_ERROR; // fail-closed: any unrecognized status is ERROR
 }
 
-// Resolve the call site for an import ordinal. Returns nullopt if no call site
-// in the module matches.
-[[nodiscard]] std::optional<sm::VerifiedCoreWasmCallSite>
-resolve_call_site(const sm::VerifiedCoreWasmSchemaModule &module,
-                  std::uint32_t import_ordinal) {
-    for (std::size_t i = 0; i < module.call_site_count(); ++i) {
-        auto result = module.resolve(sm::ManifestCallSiteIndex{i});
-        if (!result.ok()) {
-            continue;
-        }
-        if (result.call_site->import_ordinal().value == import_ordinal) {
-            return *result.call_site;
-        }
-    }
-    return std::nullopt;
-}
-
 // Find the wire-schema capability record for a source_symbol. Returns nullptr
 // if not found.
 [[nodiscard]] const ir::core::CoreWireCapabilitySchema *
@@ -614,12 +597,58 @@ std::string_view to_string(CapabilityImportError error) noexcept {
     return "Unknown";
 }
 
+// WH-4b: exposed for the session memo-replay layer (see the header comment).
+std::optional<sm::VerifiedCoreWasmCallSite>
+resolve_import_call_site(const sm::VerifiedCoreWasmSchemaModule &module,
+                         std::uint32_t import_ordinal) {
+    for (std::size_t i = 0; i < module.call_site_count(); ++i) {
+        auto result = module.resolve(sm::ManifestCallSiteIndex{i});
+        if (!result.ok()) {
+            continue;
+        }
+        if (result.call_site->import_ordinal().value == import_ordinal) {
+            return *result.call_site;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<OpaqueImportArgs>
+decode_opaque_import_args(const sm::VerifiedCoreWasmSchemaModule &module,
+                          std::uint32_t import_ordinal,
+                          std::span<const std::uint8_t> param_frame) {
+    auto call_site = resolve_import_call_site(module, import_ordinal);
+    if (!call_site.has_value()) {
+        return std::nullopt;
+    }
+    const auto param_binding = call_site->param_binding();
+    const auto &wire = param_binding.table();
+    const auto *cap = find_capability(wire, call_site->source_symbol());
+    if (cap == nullptr) {
+        return std::nullopt;
+    }
+    const std::string_view json_text(
+        reinterpret_cast<const char *>(param_frame.data()), param_frame.size());
+    auto parsed_env = parse_args_from_wire_json(json_text, wire, cap->params);
+    if (!parsed_env.has_value() || parsed_env->args.size() != 1) {
+        return std::nullopt;
+    }
+    auto decoded = wire_codec::decode_json(*parsed_env->args[0], param_binding);
+    if (!decoded.ok()) {
+        return std::nullopt;
+    }
+    OpaqueImportArgs result;
+    result.source_symbol = call_site->source_symbol();
+    result.args.push_back(std::move(*decoded.value));
+    return result;
+}
+
 eng::ImportCallback
 make_capability_import_callback(CapabilityImportConfig config) {
     return [config = std::move(config)](const eng::ImportObservation &obs)
                -> eng::ImportCallbackResult {
         // Resolve the call site from the import ordinal.
-        auto call_site = resolve_call_site(config.module, obs.import_ordinal);
+        auto call_site = resolve_import_call_site(config.module, obs.import_ordinal);
         if (!call_site.has_value()) {
             config.state.last_error = CapabilityImportError::CallSiteNotFound;
             return eng::ImportAbort{};

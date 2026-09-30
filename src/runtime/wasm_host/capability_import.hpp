@@ -37,7 +37,9 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace ahfl::runtime::wasm_host {
 
@@ -122,5 +124,35 @@ struct CapabilityImportConfig {
 /// bridge.
 [[nodiscard]] core_wasm_resume_engine::ImportCallback
 make_capability_import_callback(CapabilityImportConfig config);
+
+/// WH-4b: resolve the call site for an import ordinal (first match). Exposed
+/// for the session memo-replay layer, which needs the call site's
+/// source_symbol + result binding to cross-check memo hits and inject the
+/// frontier without invoking the capability. Returns nullopt if no call site
+/// in the module matches.
+[[nodiscard]] std::optional<core_wasm_schema_module::VerifiedCoreWasmCallSite>
+resolve_import_call_site(
+    const core_wasm_schema_module::VerifiedCoreWasmSchemaModule &module,
+    std::uint32_t import_ordinal);
+
+/// WH-4b: the decoded opaque-lane arguments for an import. The session
+/// memo-replay layer uses this to cross-check a memo hit's arg_hash without
+/// invoking the capability (the invoker is never called on a memo hit, so the
+/// arg_hash must be computed from the import observation itself).
+struct OpaqueImportArgs {
+    std::uint64_t source_symbol{0};
+    std::vector<runtime::Value> args;
+};
+
+/// WH-4b: decode the opaque-lane argument envelope for an import. Resolves the
+/// call site, finds the capability in the wire schema, parses the envelope,
+/// and schema-bound decodes the single arity-1 argument. Returns nullopt on
+/// any resolution / parse / decode failure (fail-closed: the caller treats it
+/// as a replay divergence, never a live re-invoke).
+[[nodiscard]] std::optional<OpaqueImportArgs>
+decode_opaque_import_args(
+    const core_wasm_schema_module::VerifiedCoreWasmSchemaModule &module,
+    std::uint32_t import_ordinal,
+    std::span<const std::uint8_t> param_frame);
 
 } // namespace ahfl::runtime::wasm_host
