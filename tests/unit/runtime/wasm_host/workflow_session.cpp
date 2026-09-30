@@ -26,6 +26,8 @@
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
+#include "ahfl/runtime/execution_event.hpp"
+#include "ahfl/runtime/execution_report.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 #include "conformance/compile_source.hpp"
 
@@ -38,6 +40,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -63,6 +66,76 @@ void check(bool condition, std::string_view label) {
     if (!condition) {
         std::cerr << "FAIL: " << label << "\n";
         std::exit(1);
+    }
+}
+
+// P1-2: return the event type name for sequence assertions. Only the types
+// the wasm lane emits are listed; any other type is "Other".
+[[nodiscard]] std::string_view
+event_type_name(const ahfl::runtime::ExecutionEventPayload &p) {
+    return std::visit(
+        [](const auto &e) -> std::string_view {
+            using T = std::decay_t<decltype(e)>;
+            if constexpr (std::is_same_v<T, ahfl::runtime::RunStarted>)
+                return "RunStarted";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::WorkflowStarted>)
+                return "WorkflowStarted";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::NodeScheduled>)
+                return "NodeScheduled";
+            else if constexpr (std::is_same_v<T, ahfl::runtime::NodeStarted>)
+                return "NodeStarted";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::AgentStateEntered>)
+                return "AgentStateEntered";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::NodeCompleted>)
+                return "NodeCompleted";
+            else if constexpr (std::is_same_v<T, ahfl::runtime::NodeFailed>)
+                return "NodeFailed";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::NodeSkipped>)
+                return "NodeSkipped";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::WorkflowCompleted>)
+                return "WorkflowCompleted";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::WorkflowFailed>)
+                return "WorkflowFailed";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::RunCompleted>)
+                return "RunCompleted";
+            else
+                return "Other";
+        },
+        p);
+}
+
+// P1-2: assert the exact event variant-type sequence (and order) emitted by
+// the wasm lane. The wasm lane emits a fixed subset of the 24 payload types.
+void check_event_sequence(const ahfl::runtime::WorkflowResult &result,
+                          std::span<const std::string_view> expected,
+                          std::string_view label) {
+    const auto events = result.events.events();
+    check(events.size() == expected.size(),
+          std::string(label) + ": event count " +
+              std::to_string(events.size()) + " != expected " +
+              std::to_string(expected.size()));
+    if (events.size() != expected.size()) {
+        std::cerr << "  actual sequence:\n";
+        for (std::size_t i = 0; i < events.size(); ++i) {
+            std::cerr << "    [" << i << "] "
+                      << event_type_name(events[i].payload) << "\n";
+        }
+        return;
+    }
+    for (std::size_t i = 0; i < events.size(); ++i) {
+        const auto name = event_type_name(events[i].payload);
+        check(name == expected[i],
+              std::string(label) + ": event[" + std::to_string(i) + "] " +
+                  std::string(name) + " != expected " +
+                  std::string(expected[i]));
     }
 }
 
@@ -415,6 +488,295 @@ void test_p6_trace_low_branch(const std::filesystem::path &repo_root) {
     }
 }
 
+// ==== 4. P1-2: event variant sequence + order on linear workflow ====
+
+void test_event_sequence_identity(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "seq_identity.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
+    check(input.has_value(), "seq_identity.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "seq_identity.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    // P1-2: the wasm lane emits the SAME event variant sequence + order as
+    // the evaluator: RunStarted, WorkflowStarted, NodeScheduled (all, in
+    // schedule order), per node: NodeStarted/AgentStateEntered/NodeCompleted,
+    // WorkflowCompleted, RunCompleted.
+    static constexpr std::string_view expected[] = {
+        "RunStarted",
+        "WorkflowStarted",
+        "NodeScheduled", // first, deps=[], slot=0
+        "NodeScheduled", // second, deps=[first], slot=1
+        "NodeStarted",   // first
+        "AgentStateEntered", // first: Start
+        "AgentStateEntered", // first: Done
+        "NodeCompleted",  // first
+        "NodeStarted",    // second
+        "AgentStateEntered", // second: Start
+        "AgentStateEntered", // second: Done
+        "NodeCompleted",  // second
+        "WorkflowCompleted",
+        "RunCompleted",
+    };
+    check_event_sequence(result->result, expected, "seq_identity");
+}
+
+// ==== 5. P1-2/P1-3: event sequence + report fields on capability workflow ====
+
+void test_event_sequence_and_report_fields(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_capability_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "seq_cap.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})");
+    check(input.has_value(), "seq_cap.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+    // P1-3: node_completed_hook must be set so the node-event buffer is
+    // decoded and node outputs are populated (WireJson: NoneValue, the
+    // documented observability gap; P6: the actual decoded output).
+    config.node_completed_hook =
+        [](AgentId, std::string_view, const Value &) {};
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "seq_cap.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    // P1-2: same event sequence as the evaluator (the wasm lane does not
+    // emit CapabilityStarted/CapabilityCompleted in the basic path).
+    static constexpr std::string_view expected[] = {
+        "RunStarted",
+        "WorkflowStarted",
+        "NodeScheduled",
+        "NodeScheduled",
+        "NodeStarted",
+        "AgentStateEntered",
+        "AgentStateEntered",
+        "NodeCompleted",
+        "NodeStarted",
+        "AgentStateEntered",
+        "AgentStateEntered",
+        "NodeCompleted",
+        "WorkflowCompleted",
+        "RunCompleted",
+    };
+    check_event_sequence(result->result, expected, "seq_cap");
+
+    // P1-3: assert all ExecutionNodeReport fields.
+    const auto &report = result->result.report;
+    check(report.status == ahfl::runtime::RunTerminalStatus::Completed,
+          "seq_cap.report_completed");
+    check(report.nodes.size() == 2, "seq_cap.report_node_count");
+    if (report.nodes.size() == 2) {
+        // Node 0: first, execution_slot=0, no dependencies, has output.
+        const auto &n0 = report.nodes[0];
+        check(n0.status == ahfl::runtime::NodeReportStatus::Completed,
+              "seq_cap.n0_status");
+        check(n0.execution_slot == 0, "seq_cap.n0_slot");
+        check(n0.dependencies.empty(), "seq_cap.n0_deps");
+        check(n0.output.has_value(), "seq_cap.n0_has_output");
+        check(n0.agent != ahfl::runtime::AgentId{}, "seq_cap.n0_has_agent");
+
+        // Node 1: second, execution_slot=1, depends on first, has output.
+        const auto &n1 = report.nodes[1];
+        check(n1.status == ahfl::runtime::NodeReportStatus::Completed,
+              "seq_cap.n1_status");
+        check(n1.execution_slot == 1, "seq_cap.n1_slot");
+        check(n1.dependencies.size() == 1, "seq_cap.n1_deps_count");
+        if (n1.dependencies.size() == 1) {
+            check(n1.dependencies[0] == n0.node,
+                  "seq_cap.n1_deps[0]_is_n0");
+        }
+        check(n1.output.has_value(), "seq_cap.n1_has_output");
+        check(n1.agent != ahfl::runtime::AgentId{}, "seq_cap.n1_has_agent");
+        // The two nodes have DIFFERENT agents (FirstAgent vs SecondAgent).
+        check(n0.agent != n1.agent, "seq_cap.agents_differ");
+    }
+    // The workflow output is the second node's output.
+    check(report.output.has_value(), "seq_cap.report_has_output");
+}
+
+// ==== 6. P1-4: host-abort on workflow lane (wrong capability name) ====
+
+void test_host_abort_workflow(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_capability_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "host_abort_wf.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})");
+    check(input.has_value(), "host_abort_wf.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    // Resolve the capability to a name NOT in the wire schema. The
+    // capability_import executor sets last_error and host-aborts.
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "WrongCapability";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    // P1-4: host-abort maps to a FAILED WorkflowResult, NOT std::unexpected.
+    check(result.has_value(), "host_abort_wf.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "host_abort_wf.node_failed");
+
+    // The report should show the first node Failed, second Skipped.
+    const auto &report = result->result.report;
+    check(report.status == ahfl::runtime::RunTerminalStatus::Failed,
+          "host_abort_wf.report_failed");
+    check(report.nodes.size() == 2, "host_abort_wf.report_node_count");
+    if (report.nodes.size() == 2) {
+        check(report.nodes[0].status == ahfl::runtime::NodeReportStatus::Failed,
+              "host_abort_wf.n0_failed");
+        check(report.nodes[1].status ==
+                  ahfl::runtime::NodeReportStatus::Skipped,
+              "host_abort_wf.n1_skipped");
+    }
+
+    // P1-4: the diagnostic code is wasm.host-abort.
+    bool found_host_abort = false;
+    for (const auto &diag : result->result.diagnostics.entries()) {
+        if (diag.code.has_value() && *diag.code == "wasm.host-abort") {
+            found_host_abort = true;
+            // P2-1: the message carries the CapabilityImportError ENUM NAME.
+            check(diag.message.find("CapabilityImportError=") !=
+                      std::string::npos,
+                  "host_abort_wf.enum_name_in_message");
+            // The enum name should be a known identifier, not a raw integer.
+            check(diag.message.find("CapabilityImportError=0") ==
+                      std::string::npos,
+                  "host_abort_wf.no_raw_int");
+            break;
+        }
+    }
+    check(found_host_abort, "host_abort_wf.found_diagnostic");
+}
+
+// ==== 7. P1-4: trap on workflow lane (divide by zero) ====
+
+void test_trap_workflow(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh4_trap_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "trap_wf.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input = value_from_json(R"({"_type":"wasm::wh4_trap_workflow::Frame","n":1})");
+    check(input.has_value(), "trap_wf.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    // P1-4: trap maps to a FAILED WorkflowResult with wasm.trap, NOT
+    // std::unexpected (which is reserved for pre-run setup failures).
+    check(result.has_value(), "trap_wf.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "trap_wf.node_failed");
+
+    const auto &report = result->result.report;
+    check(report.status == ahfl::runtime::RunTerminalStatus::Failed,
+          "trap_wf.report_failed");
+
+    // P1-4: the diagnostic code is wasm.trap.
+    bool found_trap = false;
+    for (const auto &diag : result->result.diagnostics.entries()) {
+        if (diag.code.has_value() && *diag.code == "wasm.trap") {
+            found_trap = true;
+            break;
+        }
+    }
+    check(found_trap, "trap_wf.found_diagnostic");
+}
+
 } // namespace
 
 int main() {
@@ -423,6 +785,10 @@ int main() {
     test_p6_trace_workflow(repo_root);
     test_wirejson_capability_workflow(repo_root);
     test_p6_trace_low_branch(repo_root);
+    test_event_sequence_identity(repo_root);
+    test_event_sequence_and_report_fields(repo_root);
+    test_host_abort_workflow(repo_root);
+    test_trap_workflow(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;

@@ -1,0 +1,52 @@
+module wasm::wh4_trap_workflow;
+
+// RFC 0026 KR6.8 WH-4 fix-forward P1-4: trap-on-workflow-lane fixture.
+// The single agent divides by zero in its Done state, so step() raises a
+// real WebAssembly.RuntimeError (the documented P6 integer semantics). The
+// workflow session must map the trap to a FAILED WorkflowResult with
+// diagnostic code wasm.trap, NOT a bare std::string error.
+//
+// This follows the wh4_trace_workflow P6-frame pattern: a simple if-else
+// branch (not a computed-goto) and a COMPUTED Frame return in Done (not an
+// opaque identity terminal), so the P6 workflow emitter accepts it.
+
+pub struct Frame {
+    n: Int;
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+pub agent TrapAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for TrapAgent {
+    state Decide {
+        goto Done;
+    }
+
+    state Done {
+        let x: Int = 1;
+        let y: Int = 0;
+        let z: Int = x / y;
+        return Frame { n: z };
+    }
+}
+
+pub workflow TrapPipeline {
+    input: Frame;
+    output: Frame;
+
+    node first: TrapAgent(input);
+
+    return: first;
+}
