@@ -85,6 +85,11 @@ enum class CapabilityImportError {
     EngineMemoryFailed,
 };
 
+/// WH-4 fix-forward P2-1: the stable enum name for a CapabilityImportError,
+/// for diagnostics and fail-closed messages. Never the raw integer.
+[[nodiscard]] std::string_view
+to_string(CapabilityImportError error) noexcept;
+
 /// Shared error state: the callback writes the precise reason here before
 /// returning ImportAbort, so the driver can classify the host-decision failure.
 struct CapabilityImportState {
@@ -98,7 +103,11 @@ struct CapabilityImportConfig {
     const core_wasm_schema_module::VerifiedCoreWasmSchemaModule &module;
     const ir::core::CoreFrameLayoutSection &frame_section;
     const ContextualCapabilityInvoker &invoker;
-    const CapabilityInvocationContext &context;
+    /// Mutable per-call context: the executor sets `source_capability_symbol_id`
+    /// from the resolved call site before each invoker call so the session
+    /// layer can resolve the owning agent/node per-import (P2-2), not by
+    /// name-keyed first-wins.
+    CapabilityInvocationContext &context;
     /// Resolves a capability's source_symbol to its canonical name. The wire
     /// schema carries source_symbol (u64) but NOT the canonical name; the
     /// executor needs the name to invoke through the invoker.

@@ -288,6 +288,9 @@ handle_opaque(const CapabilityImportConfig &config,
     }
 
     // Invoke the capability with the single arity-1 decoded parameter.
+    // P2-2: set the per-call source_symbol so the session layer resolves the
+    // owning agent/node per-import, not by name-keyed first-wins.
+    config.context.source_capability_symbol_id = call_site.source_symbol();
     std::vector<runtime::Value> args;
     args.push_back(std::move(*decoded.value));
     auto result = config.invoker(config.context, *name, args);
@@ -515,6 +518,9 @@ handle_bridge(const CapabilityImportConfig &config,
     }
 
     // Invoke the capability.
+    // P2-2: set the per-call source_symbol so the session layer resolves the
+    // owning agent/node per-import, not by name-keyed first-wins.
+    config.context.source_capability_symbol_id = call_site.source_symbol();
     auto result = config.invoker(config.context, *name, args);
     const auto raw_status = map_status_to_raw(result.status);
 
@@ -559,6 +565,44 @@ handle_bridge(const CapabilityImportConfig &config,
 }
 
 } // anonymous namespace
+
+std::string_view to_string(CapabilityImportError error) noexcept {
+    switch (error) {
+    case CapabilityImportError::CallSiteNotFound:
+        return "CallSiteNotFound";
+    case CapabilityImportError::CapabilityNotInWireSchema:
+        return "CapabilityNotInWireSchema";
+    case CapabilityImportError::CapabilityNameUnknown:
+        return "CapabilityNameUnknown";
+    case CapabilityImportError::BridgeBlockOutOfRange:
+        return "BridgeBlockOutOfRange";
+    case CapabilityImportError::BridgeBlockStride:
+        return "BridgeBlockStride";
+    case CapabilityImportError::BridgeCallSiteIdMismatch:
+        return "BridgeCallSiteIdMismatch";
+    case CapabilityImportError::BridgeArgCountMismatch:
+        return "BridgeArgCountMismatch";
+    case CapabilityImportError::BridgeSiteNotFound:
+        return "BridgeSiteNotFound";
+    case CapabilityImportError::BridgeWireSchemaMismatch:
+        return "BridgeWireSchemaMismatch";
+    case CapabilityImportError::ArgDecodeFailed:
+        return "ArgDecodeFailed";
+    case CapabilityImportError::ParamSchemaInvalid:
+        return "ParamSchemaInvalid";
+    case CapabilityImportError::ResultSchemaInvalid:
+        return "ResultSchemaInvalid";
+    case CapabilityImportError::ResultEncodeFailed:
+        return "ResultEncodeFailed";
+    case CapabilityImportError::BridgeResultPackFailed:
+        return "BridgeResultPackFailed";
+    case CapabilityImportError::EngineAllocFailed:
+        return "EngineAllocFailed";
+    case CapabilityImportError::EngineMemoryFailed:
+        return "EngineMemoryFailed";
+    }
+    return "Unknown";
+}
 
 eng::ImportCallback
 make_capability_import_callback(CapabilityImportConfig config) {
