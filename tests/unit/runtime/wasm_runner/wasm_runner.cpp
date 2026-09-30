@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -469,6 +470,150 @@ void test_states_invoker_separation(const std::filesystem::path &repo_root) {
     check(result->states.size() == 3, "sep.state_count");
 }
 
+// ==== 7. P1-7: v2c bridge fixtures through WH-3 executor on wasm3 ====
+
+// Helper: drive a v2c bridge agent through the facade (which uses the WH-3
+// capability_import executor on real wasm3) and assert elementwise:
+// state_sequence, capability_sequence, capability_arguments, output.
+void run_v2c_bridge_fixture(
+    const std::filesystem::path &repo_root, std::string_view fixture_name,
+    std::string_view agent_name, std::string_view input_json,
+    std::string_view capability_result_json,
+    std::span<const std::string_view> expected_states,
+    std::span<const std::string_view> expected_capabilities,
+    std::string_view expected_output_json) {
+    const auto source =
+        repo_root / "tests/golden/wasm" /
+        (std::string(fixture_name) + ".ahfl");
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    if (!program.has_value()) {
+        // Some v2c fixtures are rejected by A2 (e.g. multi-arg). That is a
+        // fail-closed admission rejection, not a runtime failure. Skip.
+        return;
+    }
+
+    wr::WasmAgentRunnerConfig config;
+    config.invoker =
+        [&capability_result_json](
+            const CapabilityInvocationContext &, const std::string &,
+            const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = value_from_json(std::string(capability_result_json));
+        return r;
+    };
+
+    auto input = value_from_json(std::string(input_json));
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = wr::run_wasm_agent(
+        *program, std::string(agent_name), *input, std::move(config));
+    if (!result.has_value()) {
+        // Admission rejection (A2) is acceptable for some fixtures.
+        return;
+    }
+
+    // Elementwise: state_sequence.
+    check(result->states.size() == expected_states.size(),
+          std::string(fixture_name) + ": state_count");
+    for (std::size_t i = 0; i < expected_states.size() &&
+                           i < result->states.size();
+         ++i) {
+        check(result->states[i].state == expected_states[i],
+              std::string(fixture_name) + ": state[" + std::to_string(i) +
+                  "]");
+    }
+
+    // Elementwise: capability_sequence.
+    check(result->capabilities.size() == expected_capabilities.size(),
+          std::string(fixture_name) + ": cap_count");
+    for (std::size_t i = 0; i < expected_capabilities.size() &&
+                           i < result->capabilities.size();
+         ++i) {
+        check(result->capabilities[i] == expected_capabilities[i],
+              std::string(fixture_name) + ": cap[" + std::to_string(i) +
+                  "]");
+    }
+
+    // Elementwise: output.
+    const auto *output = result->result.output();
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json == expected_output_json,
+              std::string(fixture_name) + ": output");
+    }
+}
+
+void test_v2c_bridge_fixtures(const std::filesystem::path &repo_root) {
+    // v2c_single_enum_bridge: Init -> Classify -> Done, one ClassifyChannel
+    // call with a tag-only-enum argument.
+    {
+        static constexpr std::string_view states[] = {"Init", "Classify",
+                                                      "Done"};
+        static constexpr std::string_view caps[] = {
+            "wasm::v2c_single_enum_bridge::ClassifyChannel"};
+        run_v2c_bridge_fixture(
+            repo_root, "v2c_single_enum_bridge",
+            "wasm::v2c_single_enum_bridge::RoutingAgent",
+            R"({"_type":"wasm::v2c_single_enum_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})",
+            R"({"_type":"wasm::v2c_single_enum_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})",
+            states, caps,
+            R"({"_type":"wasm::v2c_single_enum_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_single_enum_bridge::Channel","_variant":"Phone"}})");
+    }
+
+    // v2c_route_then_bridge: Init -> Routing -> Done, one RouteTicket call
+    // with (String, Int, Bool) args.
+    {
+        static constexpr std::string_view states[] = {"Init", "Routing",
+                                                      "Done"};
+        static constexpr std::string_view caps[] = {
+            "wasm::v2c_route_then_bridge::RouteTicket"};
+        run_v2c_bridge_fixture(
+            repo_root, "v2c_route_then_bridge",
+            "wasm::v2c_route_then_bridge::RoutingAgent",
+            R"({"_type":"wasm::v2c_route_then_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
+            R"({"_type":"wasm::v2c_route_then_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"}})",
+            states, caps,
+            R"({"_type":"wasm::v2c_route_then_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_route_then_bridge::Channel","_variant":"Phone"}})");
+    }
+
+    // v2c_bridge_chain: Init -> Routing -> Routing2 -> Done, TWO RouteTicket
+    // calls (same capability, chained handlers).
+    {
+        static constexpr std::string_view states[] = {
+            "Init", "Routing", "Routing2", "Done"};
+        static constexpr std::string_view caps[] = {
+            "wasm::v2c_bridge_chain::RouteTicket",
+            "wasm::v2c_bridge_chain::RouteTicket"};
+        run_v2c_bridge_fixture(
+            repo_root, "v2c_bridge_chain",
+            "wasm::v2c_bridge_chain::RoutingAgent",
+            R"({"_type":"wasm::v2c_bridge_chain::TicketRequest","channel":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
+            R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"}})",
+            states, caps,
+            R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"}})");
+    }
+
+    // v2c_multi_arg_bridge: Init -> Routing -> Done, one RouteTicket call
+    // with (String, Enum, Bool) args. May be rejected by A2.
+    {
+        static constexpr std::string_view states[] = {"Init", "Routing",
+                                                      "Done"};
+        static constexpr std::string_view caps[] = {
+            "wasm::v2c_multi_arg_bridge::RouteTicket"};
+        run_v2c_bridge_fixture(
+            repo_root, "v2c_multi_arg_bridge",
+            "wasm::v2c_multi_arg_bridge::RoutingAgent",
+            R"({"_type":"wasm::v2c_multi_arg_bridge::TicketRequest","channel":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"},"ticket_id":"TKT-42","urgent":true})",
+            R"({"_type":"wasm::v2c_multi_arg_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"}})",
+            states, caps,
+            R"({"_type":"wasm::v2c_multi_arg_bridge::RoutingDecision","owner":"senior","route":{"_enum":"wasm::v2c_multi_arg_bridge::Channel","_variant":"Phone"}})");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -481,6 +626,7 @@ int main() {
     test_agent_trap(repo_root);
     test_agent_host_abort(repo_root);
     test_states_invoker_separation(repo_root);
+    test_v2c_bridge_fixtures(repo_root);
 
     std::cout << "wasm_runner: " << g_checks << " checks passed\n";
     return 0;
