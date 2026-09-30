@@ -1,0 +1,72 @@
+module wasm::wh4_trace;
+
+// RFC 0026 KR6.8 WH-4: the minimal P6-frame WORKFLOW fixture for the
+// state-trace-ring decoder KAT. RouteAgent reads the scalar `input.n` field and
+// routes on it (a raw-frame projection that latches reads_raw_input_frame), so
+// the workflow emitter packages it as a P6 node and plans the state-entry trace
+// ring (plan_workflow_p6_capacity_family). The workflow has ONE node and NO
+// capabilities, so the ring is produced by a real wasm3 runv with no import
+// callback. n=1 routes Decide -> High -> Done; n=0 routes Decide -> Low -> Done.
+// Both paths enter exactly three states, so the decoded ring is a three-record
+// (runner,state) sequence the KAT pins against the descriptor's all_states.
+//
+// The Done state returns a COMPUTED Frame (not `return input`): the P6 workflow
+// emitter's generic computed runner supports a relocated computed-final handler
+// but rejects an opaque identity terminal fed by a scalar computed-goto
+// preamble (v2d_computed_goto_preamble_reject).
+
+pub struct Frame {
+    n: Int;
+}
+
+// A nominal context struct: the P6-frame workflow path requires every packaged
+// instance dispatch type (input/context/output) to be a nominal, and Unit is
+// not represented as CoreVtNominal in the type system.
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+pub agent RouteAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, High, Low, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> High;
+    transition Decide -> Low;
+    transition High -> Done;
+    transition Low -> Done;
+}
+
+flow for RouteAgent {
+    state Decide {
+        if (input.n > 0) {
+            goto High;
+        } else {
+            goto Low;
+        }
+    }
+
+    state High {
+        goto Done;
+    }
+
+    state Low {
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: input.n };
+    }
+}
+
+pub workflow TracePipeline {
+    input: Frame;
+    output: Frame;
+
+    node route: RouteAgent(input);
+
+    return: route;
+}

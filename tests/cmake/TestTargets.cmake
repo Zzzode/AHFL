@@ -1674,6 +1674,31 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
     ahfl_apply_project_warnings(ahfl_wasm_host_capability_import_tests)
 
+    # RFC 0026 KR6.8 WH-4: the state-trace ring decoder tests. Emits REAL
+    # P6-frame and WireJson workflow modules in-process through the wasm
+    # backend, drives them on the real wasm3 engine through run2, and decodes
+    # the guest-written trace ring + node-event buffer. Links the wasm host
+    # target (decoder + packer + engine), the wasm backend (emit_core_wasm),
+    # the engine (node-event decoder), and the value SSOT (input construction).
+    add_executable(ahfl_wasm_host_state_trace_tests
+        unit/runtime/wasm_host/state_trace_decoder.cpp
+    )
+    target_link_libraries(ahfl_wasm_host_state_trace_tests
+        PRIVATE
+            ahfl_runtime_wasm_host
+            ahfl_compiler_backend_wasm
+            ahfl_runtime_engine
+            ahfl_runtime_value
+            ahfl_base_json
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_wasm_host_state_trace_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_wasm_host_state_trace_tests)
+
     add_executable(ahfl_core_wasm_codegen_tests
         unit/compiler/backends/core_wasm_codegen.cpp
     )

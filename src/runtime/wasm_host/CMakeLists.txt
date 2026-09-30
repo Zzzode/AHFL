@@ -17,12 +17,18 @@
 # composes the engine (alloc_then_write / mutable_whole_memory), the packer +
 # reader (bridge lane P4-D walk), and the wire-value SSOT (opaque lane JSON
 # envelope), and invokes capabilities through the ContextualCapabilityInvoker.
+#
+# WH-4 adds the state-trace decoder (state_trace_decoder.cpp): the host-side
+# reader for the guest-written state-entry trace ring (u32 count + 8-byte
+# (runner,state) records at the dynamic frame-section coords). It is a pure
+# span transform with no wasm3 dependency, mirroring frame_packer/frame_reader.
 add_library(ahfl_runtime_wasm_host STATIC
     wasm3_engine.cpp
     frame_packer.cpp
     frame_reader.cpp
     p6_frame_driver.cpp
     capability_import.cpp
+    state_trace_decoder.cpp
 )
 
 target_link_libraries(ahfl_runtime_wasm_host
