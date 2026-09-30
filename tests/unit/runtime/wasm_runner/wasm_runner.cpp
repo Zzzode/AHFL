@@ -1374,6 +1374,17 @@ void test_byte_compare(const std::filesystem::path &repo_root) {
         R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})",
         /*has_capability=*/true,
         /*is_p6_frame=*/false);
+
+    // P2-14: diamond DAG (WireJson, four identity agents, no capabilities):
+    // p2_14_diamond_dag. Topology A -> B, A -> C, B+C -> D. Verifies
+    // byte-parity across the evaluator and wasm lanes for a diamond merge.
+    byte_compare_fixture(
+        repo_root, "tests/golden/wasm/p2_14_diamond_dag.ahfl",
+        "wasm::p2_14_diamond_dag::DiamondPipeline",
+        R"({"_type":"wasm::p2_14_diamond_dag::Frame","value":"diamond"})",
+        R"({"_type":"wasm::p2_14_diamond_dag::Frame","value":"diamond"})",
+        /*has_capability=*/false,
+        /*is_p6_frame=*/false);
 }
 
 } // namespace

@@ -1,0 +1,44 @@
+module wasm::p2_14_diamond_dag;
+
+// P2-14: diamond DAG byte-parity fixture.
+// Topology: A -> B, A -> C, B -> D, C -> D.
+// The workflow has a diamond shape where two parallel branches merge.
+// Both the evaluator lane and the wasm lane must produce identical
+// output bytes.
+
+pub struct Frame {
+    value: String;
+}
+
+pub agent PassAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [];
+    transition Start -> Done;
+}
+
+flow for PassAgent {
+    state Done {
+        return input;
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow DiamondPipeline {
+    input: Frame;
+    output: Frame;
+
+    node a: PassAgent(input);
+    node b: PassAgent(a) after [a];
+    node c: PassAgent(a) after [a];
+    node d: PassAgent(b) after [b, c];
+
+    return: d;
+}
