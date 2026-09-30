@@ -110,8 +110,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     std::size_t last_trace_count = 0;
 
     // --- 3. Build the wrapped invoker (fires hooks, collects data) ---
+    // Capture config by VALUE (copy): the lambda is stored in a
+    // ContextualCapabilityInvoker that the CapabilityImportConfig references,
+    // and ASan's stack-use-after-scope detection flags the by-reference
+    // capture when the lambda is invoked through the import callback chain.
+    // WorkflowSessionConfig is copyable (all std::function members).
     ContextualCapabilityInvoker wrapped_invoker =
-        [&config, &collected_capabilities, &collected_cap_args,
+        [config, &collected_capabilities, &collected_cap_args,
          &collected_failures](const CapabilityInvocationContext &ctx,
                               const std::string &name,
                               const std::vector<Value> &args)
@@ -145,6 +150,14 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     eng::ImportCallback wrapped_callback;
     CapabilityImportState import_state;
     csm::VerifiedCoreWasmSchemaModuleResult admitted;
+    // These MUST outlive the callback: the CapabilityImportConfig holds
+    // references to them, and the config is moved into the
+    // make_capability_import_callback lambda that is called during
+    // invoke_run2 (long after the else block below ends). Declaring them
+    // inside the else block would dangle the references.
+    irc::CoreFrameLayoutSection default_section;
+    CapabilityInvocationContext invocation_context;
+    invocation_context.agent_id = AgentId{0};
 
     if (descriptor.imports.empty()) {
         wrapped_callback =
@@ -161,15 +174,10 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // A default frame section for WireJson workflows (the opaque lane
         // does not use it, but the CapabilityImportConfig requires a
         // reference).
-        irc::CoreFrameLayoutSection default_section;
-
         const irc::CoreFrameLayoutSection &frame_section =
             is_p6 && descriptor.frame_section.has_value()
                 ? *descriptor.frame_section
                 : default_section;
-
-        CapabilityInvocationContext invocation_context;
-        invocation_context.agent_id = AgentId{0};
 
         // Build a fallback name_resolver from the descriptor if the caller
         // did not supply one.
@@ -209,8 +217,11 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
 
         // --- 5. Wrap the import callback to fire state_entered_hook at
         //        import boundaries (P6-frame trace ring only) ---
+        // Capture config by VALUE (copy) for the same ASan stack-use-after-
+        // scope reason as the wrapped_invoker above.
         wrapped_callback =
-            [&, inner = std::move(inner_callback)](
+            [config, &descriptor, &last_trace_count, &collected_states,
+             has_trace, inner = std::move(inner_callback)](
                 const eng::ImportObservation &obs)
             -> eng::ImportCallbackResult {
                 if (has_trace) {
