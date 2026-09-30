@@ -62,18 +62,22 @@ struct AgentWalkResult {
 //
 // `module_bytes` is the compiled wasm module. `descriptor` carries the state
 // name table and (for P6-frame) the packing authorities. `input` is the agent
-// input (packed for P6-frame, ignored for WireJson). `import_callback` serves
-// capability imports on the effects-free instance: its results drive the state
-// walk but its events are discarded (the canonical instance fires the real
-// capability hooks). `hook` fires per transition. `agent_id`/`node_name` are
-// passed through to the hook.
+// input (packed for P6-frame, ignored for WireJson). `import_callback_factory`
+// builds the import callback that serves capability imports on the
+// effects-free instance: it is invoked with the session's engine reference
+// AFTER the engine is created (the WH-3 capability_import executor needs an
+// engine& to construct), and its results drive the state walk but its events
+// are discarded (the canonical instance fires the real capability hooks).
+// `hook` fires per transition. `agent_id`/`node_name` are passed through to
+// the hook.
 //
 // Returns the walked state sequence (including the initial state) and the
 // final transition_count, or a human-readable error string on failure.
 [[nodiscard]] std::expected<AgentWalkResult, std::string>
 run_agent_step_walk(std::span<const std::uint8_t> module_bytes,
                     const AgentWalkDescriptor &descriptor, const Value &input,
-                    core_wasm_resume_engine::ImportCallback import_callback,
+                    std::function<core_wasm_resume_engine::ImportCallback(
+                        Wasm3ResumeEngine &)> import_callback_factory,
                     StateEnteredHook hook, AgentId agent_id,
                     std::string_view node_name);
 

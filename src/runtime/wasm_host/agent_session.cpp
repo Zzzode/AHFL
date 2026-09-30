@@ -57,12 +57,18 @@ pack_p6_input_for_walk(Wasm3ResumeEngine &engine,
 std::expected<AgentWalkResult, std::string>
 run_agent_step_walk(std::span<const std::uint8_t> module_bytes,
                     const AgentWalkDescriptor &descriptor, const Value &input,
-                    eng::ImportCallback import_callback, StateEnteredHook hook,
+                    std::function<eng::ImportCallback(
+                        Wasm3ResumeEngine &)> import_callback_factory,
+                    StateEnteredHook hook,
                     AgentId agent_id, std::string_view node_name) {
-    // 1. Create the effects-free instance. The import callback serves
-    //    capability imports; its results drive the state walk but its events
-    //    are discarded (the canonical instance fires the real hooks).
+    // 1. Create the effects-free instance. The import callback factory builds
+    //    the callback that serves capability imports; its results drive the
+    //    state walk but its events are discarded (the canonical instance
+    //    fires the real hooks). The factory is invoked with the engine
+    //    reference because the WH-3 capability_import executor needs an
+    //    engine& to construct.
     Wasm3ResumeEngine engine;
+    auto import_callback = import_callback_factory(engine);
     auto inst = engine.fresh_instance(module_bytes, std::move(import_callback));
     if (!inst.has_value()) {
         return std::unexpected("failed to instantiate effects-free wasm3 instance");

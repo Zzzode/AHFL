@@ -14318,22 +14318,27 @@ encode_module(const CoreProgram &program,
         }
     }
 
-    // RFC 0026 KR6.8 WH-4 fix-forward D-C: a NON-FRAME capability agent ends
-    // with the exec-manifest custom section (AHFLXM) EXACTLY ONCE, IMMEDIATELY
-    // BEFORE the wire-schema custom section (AHFLWS), mirroring the capability-
+    // RFC 0026 KR6.8 WH-4 fix-forward D-C: a capability agent ends with the
+    // exec-manifest custom section (AHFLXM) EXACTLY ONCE, IMMEDIATELY BEFORE
+    // the wire-schema custom section (AHFLWS), mirroring the capability-
     // workflow emission. The manifest is the flat capability list the A2
     // decoder's agent arm turns into call sites (one per capability).
     //
-    // The predicate is `!p6_frame && !plan.imports.empty()`, NOT just
-    // `!plan.imports.empty()`: a FRAME module may carry a BRIDGE import (the
-    // bridge lane is part of the frame lane -- a bridge handler's bytes embed
-    // the control-block coordinates), and such a module is driven by the frame
-    // driver, not by A2 call sites. Emitting the manifest there would (a) break
-    // the frame admit's exactly-two-custom-sections contract (the AHFLXM would
-    // sit between the core-layout and the wire-schema) and (b) be dead weight.
-    // The wire-JSON (opaque) capability lane and the frame lane never mix, so a
-    // non-frame agent with imports is always an opaque-lane capability agent.
-    if (!p6_frame && !plan.imports.empty()) {
+    // The predicate is `!plan.imports.empty()`: EVERY capability agent carries
+    // the manifest -- both the opaque-lane WireJson agent AND the bridge-lane
+    // P6-frame agent. The WH-3 capability_import executor
+    // (make_capability_import_callback) is the single production import path
+    // for both lanes, and it requires the A2-admitted module (which requires
+    // the manifest). A bridge agent is a FRAME module (it carries the
+    // core-layout custom + bridge control-block coordinates) WITH a bridge
+    // import; its section order is [core-layout, AHFLXM, AHFLWS]. A2 tolerates
+    // the core-layout custom before the manifest (an unknown custom before the
+    // manifest is skipped), so A2 admission succeeds. The frame admit path
+    // (admit_core_wasm_frame_sections, exactly-two-custom-sections) is for
+    // PURE frame agents (no imports) only; a bridge agent never goes through
+    // it -- it goes through A2 + the WH-3 executor, which walks the bridge
+    // control block from the descriptor's frame_section.
+    if (!plan.imports.empty()) {
         auto manifest = encode_agent_exec_manifest(program, plan);
         if (!manifest.has_value()) {
             return std::nullopt;
@@ -14479,10 +14484,10 @@ encode_exec_manifest(const WorkflowPlan &plan) {
 // agent arm. Grammar: magic(6) + version(1) + entry_kind=1 + agent_id(4) +
 // capability_count(4) + capabilities[] { capability_id(4) + source_symbol(8)
 // }. An agent has no workflow schedule / nodes, so the manifest is a flat
-// capability list; each capability becomes one A2 call site. Only a NON-FRAME
-// capability agent reaches here: a frame module may carry a bridge import (the
-// bridge lane is part of the frame lane) and is driven by the frame driver, so
-// the caller gates emission on `!p6_frame && !plan.imports.empty()`.
+// capability list; each capability becomes one A2 call site. EVERY capability
+// agent reaches here (opaque-lane WireJson AND bridge-lane P6-frame): the WH-3
+// executor is the single production import path for both lanes and needs the
+// A2-admitted module, so the caller gates emission on `!plan.imports.empty()`.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
 encode_agent_exec_manifest(const CoreProgram &program, const AgentPlan &plan) {
     if (plan.agent.value == CoreAgentId::kInvalid) {

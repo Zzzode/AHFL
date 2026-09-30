@@ -49,7 +49,13 @@ struct WasmAgentRunResult {
 // `module_bytes` is the compiled wasm module. `descriptor` carries the
 // agent's state table, frame section, and wire schema. `input` is the agent
 // input. `hooks` carry the debug/test hooks. `invoker` dispatches capability
-// calls.
+// calls on the CANONICAL instance (real effects). `states_invoker` (optional)
+// dispatches capability calls on the EFFECTS-FREE step-walk instance: its
+// results are scripted replay (never a live side effect), while bridge
+// control-block resolution and schema validation still run host-side. When
+// empty, the canonical `invoker` is used for the step-walk too (the
+// conformance case, where the harness supplies a side-effect-free mock as
+// both).
 //
 // Returns the run result (status, output, observation data, failure kinds),
 // or a human-readable error string on failure.
@@ -57,6 +63,7 @@ struct WasmAgentRunResult {
 run_wasm_agent(std::span<const std::uint8_t> module_bytes,
                const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
                const Value &input, WasmRuntimeHooks hooks,
-               ContextualCapabilityInvoker invoker);
+               ContextualCapabilityInvoker invoker,
+               ContextualCapabilityInvoker states_invoker = {});
 
 } // namespace ahfl::runtime::wasm_host

@@ -304,11 +304,11 @@ void test_wirejson_capability_agent(
     if (desc.imports.empty()) {
         return;
     }
-    // The canonical name may include the module prefix; check it ends with
-    // "Echo" rather than exact equality.
+    // WH-4 fix-forward D-C: the hook and invoker receive the FULLY-QUALIFIED
+    // canonical capability name (no local-name stripping). The descriptor's
+    // imports table carries it; the assertions below compare against it.
     const auto &echo_name = desc.imports[0].canonical_name;
-    check(echo_name.size() >= 4 &&
-              echo_name.substr(echo_name.size() - 4) == "Echo",
+    check(echo_name == "wasm::e2_capability::Echo",
           "wirejson_cap.echo_name");
 
     auto input = value_from_json(
@@ -330,9 +330,9 @@ void test_wirejson_capability_agent(
             hook_states.emplace_back(state_name);
         };
     hooks.capability_invoked_hook =
-        [&cap_invoked_count](AgentId, std::string_view name) {
+        [&cap_invoked_count, echo_name](AgentId, std::string_view name) {
             ++cap_invoked_count;
-            check(name == "Echo", "wirejson_cap.hook_cap_name");
+            check(name == echo_name, "wirejson_cap.hook_cap_name");
         };
     hooks.capability_result_observer =
         [&cap_result_count](const CapabilityInvocationContext &,
@@ -340,14 +340,21 @@ void test_wirejson_capability_agent(
             ++cap_result_count;
         };
 
-    // Echo mock: returns the input unchanged.
+    // Echo mock: returns an OutputFrame with the same `value` field as the
+    // InputFrame. The WH-3 executor validates the result against the
+    // OutputFrame schema binding, so the type tag must match (the old
+    // simplified handler skipped schema-bound validation).
     auto invoker = [](const CapabilityInvocationContext &,
                       const std::string &,
                       const std::vector<Value> &args) -> CapabilityCallResult {
         CapabilityCallResult r;
         r.status = CapabilityCallStatus::Success;
         if (!args.empty()) {
-            r.value = ahfl::runtime::clone_value(args[0]);
+            auto cloned = ahfl::runtime::clone_value(args[0]);
+            if (auto *sv = std::get_if<ahfl::runtime::StructValue>(&cloned.node)) {
+                sv->type_name = "wasm::e2_capability::OutputFrame";
+            }
+            r.value = std::move(cloned);
         }
         return r;
     };
@@ -375,7 +382,7 @@ void test_wirejson_capability_agent(
     check(result->capabilities.size() == 1,
           "wirejson_cap.capabilities_size");
     if (!result->capabilities.empty()) {
-        check(result->capabilities[0] == "Echo",
+        check(result->capabilities[0] == echo_name,
               "wirejson_cap.capabilities[0]");
     }
 
@@ -388,14 +395,15 @@ void test_wirejson_capability_agent(
               ahfl::runtime::WorkflowStatus::Completed,
           "wirejson_cap.completed");
 
-    // The output should equal the input (Echo echoes, returning the
-    // InputFrame value unchanged through the OutputFrame-typed agent).
+    // The output should be the OutputFrame-typed echo of the input value
+    // (the agent's output type is OutputFrame; the WH-3 executor validates
+    // the mock's result against the OutputFrame schema binding).
     const auto *output = result->result.output();
     check(output != nullptr, "wirejson_cap.has_output");
     if (output != nullptr) {
         const auto json = value_to_json(*output);
         check(json ==
-                  R"({"_type":"wasm::e2_capability::InputFrame","value":"hello"})",
+                  R"({"_type":"wasm::e2_capability::OutputFrame","value":"hello"})",
               "wirejson_cap.output_value");
     }
 }

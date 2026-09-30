@@ -147,7 +147,11 @@ void test_wirejson_agent(const std::filesystem::path &repo_root) {
     }
 
     auto result = wh::run_agent_step_walk(
-        emitted->module_bytes, walk_desc, *input, noop_import, hook,
+        emitted->module_bytes, walk_desc, *input,
+        [](wh::Wasm3ResumeEngine &) {
+            return eng::ImportCallback{noop_import};
+        },
+        hook,
         AgentId{0}, "node");
     check(result.has_value(), "wirejson.step_walk");
     if (!result.has_value()) {
@@ -211,7 +215,11 @@ void test_p6frame_agent(const std::filesystem::path &repo_root) {
     }
 
     auto result = wh::run_agent_step_walk(
-        emitted->module_bytes, walk_desc, *input, noop_import, hook,
+        emitted->module_bytes, walk_desc, *input,
+        [](wh::Wasm3ResumeEngine &) {
+            return eng::ImportCallback{noop_import};
+        },
+        hook,
         AgentId{0}, "node");
     check(result.has_value(), "p6frame.step_walk");
     if (!result.has_value()) {
@@ -262,7 +270,11 @@ void test_hook_liveness(const std::filesystem::path &repo_root) {
     }
 
     auto result = wh::run_agent_step_walk(
-        emitted->module_bytes, walk_desc, *input, noop_import, hook,
+        emitted->module_bytes, walk_desc, *input,
+        [](wh::Wasm3ResumeEngine &) {
+            return eng::ImportCallback{noop_import};
+        },
+        hook,
         AgentId{0}, "node");
     check(result.has_value(), "liveness.step_walk");
     if (!result.has_value()) {

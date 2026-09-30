@@ -9,19 +9,21 @@
 //      once. capability_invoked_hook / capability_result_observer fire LIVE at
 //      its imports.
 //
-// Agent modules do NOT emit the exec-manifest (AHFLXM) section that the WH-3
-// capability_import executor requires, so the canonical instance's import
-// callback is a simplified opaque-lane handler: it decodes the wire-JSON
-// argument envelope directly from the param_frame, resolves the capability
-// name from the descriptor's imports table, invokes through the contextual
-// invoker, and writes the serialized result back via alloc_then_write. This
-// covers the WireJson opaque lane; the P6-frame bridge lane (control-block
-// frame walk) is not exercised by WH-4 agent fixtures and returns a
-// fail-closed error.
+// WH-4 fix-forward D-C: BOTH instances reuse the WH-3 capability_import
+// executor (make_capability_import_callback) -- the single production import
+// path for the opaque (wire-JSON) AND bridge (P4-D control-block) lanes. The
+// module is A2-admitted ONCE (make_verified_core_wasm_schema_module); the
+// admitted module + descriptor frame_section + a source_symbol->canonical_name
+// resolver feed both callbacks. The canonical instance's invoker fires hooks
+// and collects observation data; the effects-free step instance's invoker is
+// the scripted states_invoker (defaults to the canonical invoker for
+// side-effect-free mock invokers -- the conformance case).
 
 #include "runtime/wasm_host/wasm_agent_runner.hpp"
 
+#include "runtime/engine/core_wasm_schema_module.hpp"
 #include "runtime/engine/wire_value.hpp"
+#include "runtime/wasm_host/capability_import.hpp"
 #include "runtime/wasm_host/frame_packer.hpp"
 #include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
@@ -31,6 +33,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -43,19 +46,7 @@ namespace {
 namespace irc = ::ahfl::ir::core;
 namespace eng = ::ahfl::runtime::core_wasm_resume_engine;
 namespace bd = ::ahfl::backends;
-
-// Extract the local capability name from a fully-qualified canonical name
-// (e.g. "wasm::e2_capability::Echo" -> "Echo"). The evaluator's capability
-// name is the local declaration name, so the hook and invoker receive the
-// same spelling the conformance comparator expects.
-[[nodiscard]] std::string
-local_capability_name(std::string_view canonical) {
-    const auto pos = canonical.rfind("::");
-    if (pos == std::string_view::npos) {
-        return std::string(canonical);
-    }
-    return std::string(canonical.substr(pos + 2));
-}
+namespace csm = ::ahfl::runtime::core_wasm_schema_module;
 
 // Build the string regions for P6-frame output reading (mirrors the JS
 // oracle's stringRegions construction in node_embedded_host.mjs).
@@ -170,7 +161,8 @@ std::expected<WasmAgentRunResult, std::string>
 run_wasm_agent(std::span<const std::uint8_t> module_bytes,
                const bd::CoreWasmExecutionDescriptor &descriptor,
                const Value &input, WasmRuntimeHooks hooks,
-               ContextualCapabilityInvoker invoker) {
+               ContextualCapabilityInvoker invoker,
+               ContextualCapabilityInvoker states_invoker) {
     if (descriptor.is_workflow) {
         return std::unexpected(
             "run_wasm_agent: descriptor is a workflow, not an agent");
@@ -178,10 +170,92 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
 
     const bool is_p6 =
         descriptor.frame_contract == bd::CoreWasmFrameContract::P6Frame;
+    const bool has_imports = !descriptor.imports.empty();
+
+    // === A2-admit the module ONCE (if capability-bearing) ===
+    // The WH-3 capability_import executor requires the digest-authenticated
+    // VerifiedCoreWasmSchemaModule (the exec-manifest + wire-schema admission
+    // that every capability agent now carries -- WH-4 fix-forward D-C). The
+    // admitted module MUST outlive both callbacks (the config holds a
+    // reference to it), so it is declared here, outside the callback builds.
+    csm::VerifiedCoreWasmSchemaModuleResult admitted;
+    if (has_imports) {
+        admitted = csm::make_verified_core_wasm_schema_module(module_bytes);
+        if (!admitted.ok() || !admitted.module.has_value()) {
+            return std::unexpected(
+                "run_wasm_agent: wire-schema admission failed");
+        }
+    }
+
+    // === Build the source_symbol -> canonical_name resolver ===
+    // The agent descriptor has no workflow nodes, so the workflow_session's
+    // node-based fallback does not apply. Join the A2 call sites
+    // (source_symbol -> import_ordinal) with the descriptor's imports
+    // (ordinal -> canonical_name).
+    std::function<std::optional<std::string>(std::uint64_t)> name_resolver =
+        [&admitted, &descriptor, has_imports](
+            std::uint64_t source_symbol) -> std::optional<std::string> {
+        if (!has_imports || !admitted.module.has_value()) {
+            return std::nullopt;
+        }
+        for (std::size_t i = 0; i < admitted.module->call_site_count(); ++i) {
+            auto cs = admitted.module->resolve(csm::ManifestCallSiteIndex{i});
+            if (cs.ok() && cs.call_site.has_value() &&
+                cs.call_site->source_symbol() == source_symbol) {
+                const auto ord = cs.call_site->import_ordinal().value;
+                if (ord < descriptor.imports.size()) {
+                    return descriptor.imports[ord].canonical_name;
+                }
+            }
+        }
+        return std::nullopt;
+    };
+
+    // === Build the wrapped canonical invoker (fires hooks, collects data) ===
+    // Capture hooks + invoker by VALUE (copy): the lambda is stored in a
+    // ContextualCapabilityInvoker that the CapabilityImportConfig references,
+    // and ASan's stack-use-after-scope detection flags by-reference capture
+    // when the lambda is invoked through the import callback chain (the same
+    // discipline as workflow_session).
+    std::vector<std::string> collected_capabilities;
+    std::vector<std::string> collected_cap_args;
+    std::vector<CapabilityFailureKind> collected_failures;
+
+    ContextualCapabilityInvoker wrapped_invoker =
+        [hooks, invoker, &collected_capabilities, &collected_cap_args,
+         &collected_failures](const CapabilityInvocationContext &ctx,
+                              const std::string &name,
+                              const std::vector<Value> &args)
+        -> CapabilityCallResult {
+        if (hooks.capability_invoked_hook) {
+            hooks.capability_invoked_hook(ctx.agent_id, name);
+        }
+        collected_capabilities.push_back(name);
+        if (auto envelope = serialize_args_for_wire_json(args)) {
+            collected_cap_args.push_back(std::move(*envelope));
+        }
+        auto result = invoker(ctx, name, args);
+        if (hooks.capability_result_observer) {
+            hooks.capability_result_observer(ctx, result);
+        }
+        if (result.failure_kind.has_value()) {
+            collected_failures.push_back(*result.failure_kind);
+        }
+        return result;
+    };
+
+    // === Build the effective states invoker (scripted replay) ===
+    // The effects-free step instance's invoker returns scripted results (never
+    // a live side effect). Defaults to the canonical invoker for
+    // side-effect-free mock invokers (the conformance case, where the harness
+    // supplies the mock as both).
+    ContextualCapabilityInvoker effective_states_invoker =
+        states_invoker ? std::move(states_invoker) : invoker;
 
     // === 1. Step-walk on a SEPARATE effects-free instance ===
-    // The import callback on this instance drives the state walk but its
-    // events are discarded (the canonical instance fires the real hooks).
+    // The import callback factory builds a WH-3 callback with the states
+    // invoker; its results drive the state walk but its events are discarded
+    // (the canonical instance fires the real hooks).
     AgentWalkDescriptor walk_desc;
     walk_desc.agent_name = descriptor.agent_name;
     walk_desc.states = descriptor.states;
@@ -193,15 +267,39 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         walk_desc.wire_schema = &*descriptor.wire_schema;
     }
 
-    // Effects-free import callback: for agents with no capabilities this is a
-    // fail-closed abort (the step-walk never triggers an import). For agents
-    // WITH capabilities the walk needs effects to drive computed handlers,
-    // but WH-4 agent fixtures have none, so an abort is the correct
-    // fail-closed discipline.
-    eng::ImportCallback walk_callback =
-        [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
-            return eng::ImportAbort{};
+    // These MUST outlive the step-walk callback: the CapabilityImportConfig
+    // holds references to them, and the callback is invoked during
+    // invoke_step (long after the factory lambda ends).
+    CapabilityImportState walk_import_state;
+    CapabilityInvocationContext walk_context;
+    walk_context.agent_id = AgentId{0};
+    irc::CoreFrameLayoutSection walk_default_section;
+
+    auto walk_factory =
+        [&admitted, &descriptor, &name_resolver, &effective_states_invoker,
+         &walk_import_state, &walk_context, &walk_default_section,
+         has_imports, is_p6](Wasm3ResumeEngine &engine) -> eng::ImportCallback {
+        if (!has_imports || !admitted.module.has_value()) {
+            return [](const eng::ImportObservation &)
+                       -> eng::ImportCallbackResult {
+                return eng::ImportAbort{};
+            };
+        }
+        const irc::CoreFrameLayoutSection &frame_section =
+            is_p6 && descriptor.frame_section.has_value()
+                ? *descriptor.frame_section
+                : walk_default_section;
+        CapabilityImportConfig cap_config{
+            .engine = engine,
+            .module = *admitted.module,
+            .frame_section = frame_section,
+            .invoker = effective_states_invoker,
+            .context = walk_context,
+            .name_resolver = name_resolver,
+            .state = walk_import_state,
         };
+        return make_capability_import_callback(std::move(cap_config));
+    };
 
     StateEnteredHook walk_hook;
     if (hooks.state_entered_hook) {
@@ -213,7 +311,7 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     }
 
     auto walk = run_agent_step_walk(module_bytes, walk_desc, input,
-                                    std::move(walk_callback), walk_hook,
+                                    std::move(walk_factory), walk_hook,
                                     AgentId{0}, "");
     if (!walk.has_value()) {
         return std::unexpected("run_wasm_agent: step-walk failed: " +
@@ -223,118 +321,34 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     // === 2. Canonical run on a FRESH instance ===
     Wasm3ResumeEngine engine;
 
-    // Collect observation data + fire capability hooks.
-    std::vector<std::string> collected_capabilities;
-    std::vector<std::string> collected_cap_args;
-    std::vector<CapabilityFailureKind> collected_failures;
+    // These MUST outlive the canonical callback (same discipline as above).
+    CapabilityImportState canonical_import_state;
+    CapabilityInvocationContext canonical_context;
+    canonical_context.agent_id = AgentId{0};
+    irc::CoreFrameLayoutSection canonical_default_section;
 
-    // Build the canonical instance's import callback. Agents with no
-    // capabilities never call ahfl_cap, so the callback is a fail-closed
-    // abort. Agents WITH capabilities use a simplified opaque-lane handler
-    // (agent modules do not emit the exec-manifest the WH-3 executor
-    // requires).
     eng::ImportCallback canonical_callback;
-    if (descriptor.imports.empty()) {
+    if (!has_imports) {
         canonical_callback =
             [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
                 return eng::ImportAbort{};
             };
     } else {
-        // Simplified opaque-lane handler for WireJson agents with
-        // capabilities. P6-frame bridge-lane agents are not supported in
-        // WH-4 (the bridge control-block walk needs the frame section's
-        // bridge_call_sites, which the simplified handler does not walk).
+        const irc::CoreFrameLayoutSection &frame_section =
+            is_p6 && descriptor.frame_section.has_value()
+                ? *descriptor.frame_section
+                : canonical_default_section;
+        CapabilityImportConfig cap_config{
+            .engine = engine,
+            .module = *admitted.module,
+            .frame_section = frame_section,
+            .invoker = wrapped_invoker,
+            .context = canonical_context,
+            .name_resolver = name_resolver,
+            .state = canonical_import_state,
+        };
         canonical_callback =
-            [&engine, &descriptor, &invoker, &hooks,
-             &collected_capabilities, &collected_cap_args,
-             &collected_failures](
-                const eng::ImportObservation &obs)
-            -> eng::ImportCallbackResult {
-                if (obs.import_ordinal >= descriptor.imports.size()) {
-                    return eng::ImportAbort{};
-                }
-                const auto &cap_import =
-                    descriptor.imports[obs.import_ordinal];
-
-                // Resolve the capability name. The descriptor's imports table
-                // carries the fully-qualified canonical name; the hook and
-                // invoker receive the local declaration name (the same
-                // spelling the evaluator produces).
-                const std::string cap_name =
-                    local_capability_name(cap_import.canonical_name);
-
-                // Decode the wire-JSON argument envelope.
-                const std::string_view json_text(
-                    reinterpret_cast<const char *>(obs.param_frame.data()),
-                    obs.param_frame.size());
-                auto parsed = value_from_json(json_text);
-                if (!parsed.has_value()) {
-                    return eng::ImportAbort{};
-                }
-
-                // The opaque lane is arity-1: the envelope is either a bare
-                // struct JSON or a {"value":..} wrapper. Unwrap to a single
-                // arg.
-                std::vector<Value> args;
-                // Try to detect the {"value":..} wrapper vs bare struct.
-                // A bare struct has a "_type" field; a wrapper has "value".
-                // The simplest correct approach: pass the parsed value as a
-                // single arg. The invoker receives the envelope value.
-                args.push_back(std::move(*parsed));
-
-                // Fire capability_invoked_hook PRE-call.
-                if (hooks.capability_invoked_hook) {
-                    hooks.capability_invoked_hook(AgentId{0}, cap_name);
-                }
-                collected_capabilities.push_back(cap_name);
-
-                // Serialize the argument envelope for observation.
-                if (auto envelope = serialize_args_for_wire_json(args)) {
-                    collected_cap_args.push_back(std::move(*envelope));
-                }
-
-                // Invoke the capability.
-                CapabilityInvocationContext ctx;
-                ctx.agent_id = AgentId{0};
-                auto result = invoker(ctx, cap_name, args);
-
-                // Fire capability_result_observer POST-call.
-                if (hooks.capability_result_observer) {
-                    hooks.capability_result_observer(ctx, result);
-                }
-                if (result.failure_kind.has_value()) {
-                    collected_failures.push_back(*result.failure_kind);
-                }
-
-                // Map the status to the raw ahfl_cap_status word.
-                const std::uint32_t raw_status =
-                    result.status == CapabilityCallStatus::Success ? 0u : 1u;
-                if (result.status != CapabilityCallStatus::Success) {
-                    return eng::ImportReply{
-                        raw_status, eng::GuestPointer{0}, 0};
-                }
-
-                // Serialize the result to wire JSON.
-                auto value = std::move(result.value)
-                                 .value_or(Value{NoneValue{}});
-                auto body = serialize_value_for_wire_json(value);
-                if (!body.has_value()) {
-                    return eng::ImportAbort{};
-                }
-
-                // alloc_then_write the result frame.
-                const std::span<const std::uint8_t> bytes(
-                    reinterpret_cast<const std::uint8_t *>(body->data()),
-                    body->size());
-                auto ptr = engine.alloc_then_write(bytes);
-                if (!ptr.has_value()) {
-                    return eng::ImportAbort{};
-                }
-
-                return eng::ImportReply{
-                    raw_status, *ptr,
-                    static_cast<std::uint32_t>(body->size())};
-            };
+            make_capability_import_callback(std::move(cap_config));
     }
 
     // Instantiate the canonical module.
@@ -406,9 +420,16 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
                 "run_wasm_agent: invoke_run2 failed (engine error)");
         }
         if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
-            return std::unexpected(
+            std::string msg =
                 "run_wasm_agent: run2 host-aborted (capability import "
-                "failure)");
+                "failure)";
+            if (canonical_import_state.last_error.has_value()) {
+                msg += " (CapabilityImportError=";
+                msg += std::to_string(
+                    static_cast<int>(*canonical_import_state.last_error));
+                msg += ")";
+            }
+            return std::unexpected(std::move(msg));
         }
         if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
             return std::unexpected("run_wasm_agent: run2 trapped");
