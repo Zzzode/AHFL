@@ -384,6 +384,91 @@ void test_agent_host_abort(const std::filesystem::path &repo_root) {
     check(found_host_abort, "agent_host_abort.found_diagnostic");
 }
 
+// ==== 6. P1-6: states_invoker scripted-replay separation ====
+
+void test_states_invoker_separation(const std::filesystem::path &repo_root) {
+    // Use the v2c_single_arg_bridge P6-frame agent: on the bridge lane, the
+    // step function executes the capability call in the Routing state, so
+    // the states_invoker IS called during the effects-free step-walk (unlike
+    // the WireJson opaque lane, where step() only transitions).
+    const auto source =
+        repo_root / "tests/golden/wasm/v2c_single_arg_bridge.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "sep.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    // Track which invoker was called and how many times.
+    int walk_calls = 0;
+    int canonical_calls = 0;
+
+    // The states_invoker (effects-free step-walk) returns a SCRIPTED result.
+    // It must be DISTINCT from the canonical invoker.
+    wr::WasmAgentRunnerConfig config;
+    config.states_invoker =
+        [&walk_calls](const CapabilityInvocationContext &,
+                      const std::string &,
+                      const std::vector<Value> &) -> CapabilityCallResult {
+        ++walk_calls;
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = value_from_json(
+            R"({"_type":"wasm::v2c_single_arg_bridge::RoutingDecision","owner":"scripted"})");
+        return r;
+    };
+    // The canonical invoker returns a DIFFERENT result.
+    config.invoker =
+        [&canonical_calls](const CapabilityInvocationContext &,
+                           const std::string &,
+                           const std::vector<Value> &) -> CapabilityCallResult {
+        ++canonical_calls;
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = value_from_json(
+            R"({"_type":"wasm::v2c_single_arg_bridge::RoutingDecision","owner":"canonical"})");
+        return r;
+    };
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::v2c_single_arg_bridge::TicketRequest","ticket_id":"T-123"})");
+    check(input.has_value(), "sep.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = wr::run_wasm_agent(
+        *program, "wasm::v2c_single_arg_bridge::RoutingAgent", *input,
+        std::move(config));
+    check(result.has_value(), "sep.run");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    // The step-walk called the states_invoker exactly once (one capability
+    // call in the Routing state).
+    check(walk_calls == 1, "sep.walk_calls");
+    // The canonical run called the canonical invoker exactly once.
+    check(canonical_calls == 1, "sep.canonical_calls");
+
+    // The output reflects the CANONICAL invoker's result, not the scripted
+    // walk result.
+    const auto *output = result->result.output();
+    check(output != nullptr, "sep.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json ==
+                  R"({"_type":"wasm::v2c_single_arg_bridge::RoutingDecision","owner":"canonical"})",
+              "sep.output_is_canonical");
+    }
+
+    // The step-walk collected the state sequence (Init -> Routing -> Done).
+    check(result->states.size() == 3, "sep.state_count");
+}
+
 } // namespace
 
 int main() {
@@ -395,6 +480,7 @@ int main() {
     test_agent_runner(repo_root);
     test_agent_trap(repo_root);
     test_agent_host_abort(repo_root);
+    test_states_invoker_separation(repo_root);
 
     std::cout << "wasm_runner: " << g_checks << " checks passed\n";
     return 0;
