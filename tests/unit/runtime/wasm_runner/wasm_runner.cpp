@@ -376,6 +376,112 @@ void test_float_output_e2e(const std::filesystem::path &repo_root) {
     }
 }
 
+// ==== 2d. P2-8: e2e_multi_agent through the FACADE ====
+//
+// Drives the real e2e_multi_agent fixture (3 agents, 5 capabilities,
+// branching routing) through WasmWorkflowRuntime, verifying the facade
+// compiles and runs a multi-agent workflow with capability dispatch,
+// constructed-input nodes, and branching.
+
+void test_e2e_multi_agent_facade(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/runtime/e2e_multi_agent.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "e2e_multi.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    int cap_invoked_count = 0;
+    std::vector<std::string> invoked_caps;
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.hooks.capability_invoked_hook =
+        [&cap_invoked_count, &invoked_caps](AgentId,
+                                            std::string_view name) {
+            ++cap_invoked_count;
+            invoked_caps.emplace_back(name);
+        };
+    // Mock invoker: returns the canned result for each capability,
+    // matching the conformance case manifest.
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &name,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (name == "runtime::e2e_multi_agent::ClassifyMessage") {
+            auto v = value_from_json(
+                R"({"_type":"runtime::e2e_multi_agent::ClassifyResult","category":{"_enum":"runtime::e2e_multi_agent::Category","_variant":"Technical"},"confidence":"high"})");
+            if (v.has_value()) {
+                r.value = std::move(*v);
+            }
+        } else if (name == "runtime::e2e_multi_agent::HandleGeneral") {
+            auto v = value_from_json(
+                R"({"_type":"runtime::e2e_multi_agent::SupportResult","resolved":true,"response":"Your issue has been resolved"})");
+            if (v.has_value()) {
+                r.value = std::move(*v);
+            }
+        } else if (name == "runtime::e2e_multi_agent::HandleTechnical") {
+            auto v = value_from_json(
+                R"({"_type":"runtime::e2e_multi_agent::SupportResult","resolved":true,"response":"Escalated to senior engineer"})");
+            if (v.has_value()) {
+                r.value = std::move(*v);
+            }
+        } else if (name == "runtime::e2e_multi_agent::GenerateSummary") {
+            auto v = value_from_json(
+                R"({"_type":"runtime::e2e_multi_agent::SummaryResult","category":{"_enum":"runtime::e2e_multi_agent::Category","_variant":"Technical"},"resolved":true,"summary":"Case resolved successfully"})");
+            if (v.has_value()) {
+                r.value = std::move(*v);
+            }
+        } else {
+            r.status = CapabilityCallStatus::Error;
+            r.error_message = "unknown capability: " + name;
+        }
+        return r;
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+    // priority_low scenario: SupportAgent routes to Handling (not
+    // Escalated), so HandleGeneral is called (not HandleTechnical).
+    auto input = value_from_json(
+        R"({"_type":"runtime::e2e_multi_agent::SupportRequest","message":"My server is crashing","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"Low"},"user_id":"user_123"})");
+    check(input.has_value(), "e2e_multi.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run(
+        "runtime::e2e_multi_agent::CustomerSupportWorkflow",
+        std::move(*input));
+    check(result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "e2e_multi.completed");
+
+    // 3 capabilities invoked: ClassifyMessage, HandleGeneral,
+    // GenerateSummary (priority_low routes to Handling).
+    check(cap_invoked_count == 3, "e2e_multi.cap_invoked_count");
+    if (invoked_caps.size() == 3) {
+        check(invoked_caps[0] == "runtime::e2e_multi_agent::ClassifyMessage",
+              "e2e_multi.cap_0");
+        check(invoked_caps[1] == "runtime::e2e_multi_agent::HandleGeneral",
+              "e2e_multi.cap_1");
+        check(invoked_caps[2] == "runtime::e2e_multi_agent::GenerateSummary",
+              "e2e_multi.cap_2");
+    }
+
+    // The output should be the SummaryResult from GenerateSummary.
+    const auto *output = result.output();
+    check(output != nullptr, "e2e_multi.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json ==
+                  R"({"_type":"runtime::e2e_multi_agent::SummaryResult","category":{"_enum":"runtime::e2e_multi_agent::Category","_variant":"Technical"},"resolved":true,"summary":"Case resolved successfully"})",
+              "e2e_multi.output_value");
+    }
+}
+
 // ==== 3. WasmAgentRunner: one-shot compile+run + agent_input_hook ====
 
 void test_agent_runner(const std::filesystem::path &repo_root) {
@@ -992,6 +1098,7 @@ int main() {
     test_capability_workflow(repo_root);
     test_capability_workflow_resume(repo_root);
     test_float_output_e2e(repo_root);
+    test_e2e_multi_agent_facade(repo_root);
     test_agent_runner(repo_root);
     test_agent_trap(repo_root);
     test_agent_host_abort(repo_root);

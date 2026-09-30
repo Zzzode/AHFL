@@ -153,6 +153,16 @@ build_bridge_string_regions(const ir::core::CoreFrameLayoutSection &section,
     if (arena_end.has_value()) {
         regions.push_back({section.payload_arena_base, *arena_end});
     }
+    // The workflow entry payload arena holds the packed input frame; String
+    // arguments spilled from a bridge call site point into it.
+    if (section.entry_payload_capacity > 0) {
+        const auto entry_end =
+            checked_add_u32(section.entry_payload_base,
+                            static_cast<std::uint64_t>(section.entry_payload_capacity));
+        if (entry_end.has_value()) {
+            regions.push_back({section.entry_payload_base, *entry_end});
+        }
+    }
     if (section.rodata_base != 0) {
         const auto rodata_end =
             checked_add_u32(section.rodata_base,

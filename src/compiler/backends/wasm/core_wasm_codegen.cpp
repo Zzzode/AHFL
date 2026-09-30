@@ -877,13 +877,12 @@ struct WorkflowNodePlan {
     CoreInstanceId target_instance{};
     WorkflowFrameSource input;
     // RFC 0026 E4-B2-C carriers. schedule_pos is the node's dense position in the
-    // Kahn schedule (== its manifest array index). A node reachable to a single
-    // capability carries that capability + its source SymbolId; identity nodes
-    // leave has_capability == false.
+    // Kahn schedule (== its manifest array index). A node reachable to one or
+    // more capabilities carries them + their source SymbolIds; identity nodes
+    // leave capabilities empty. A P6 bridge node can call multiple capabilities
+    // across different branches.
     std::uint32_t schedule_pos{0};
-    bool has_capability{false};
-    CoreCapabilityId capability{};
-    std::uint64_t source_symbol{0};
+    std::vector<std::pair<CoreCapabilityId, std::uint64_t>> capabilities;
 };
 
 // One value-binding let of a workflow frame region in the form the in-module
@@ -12882,21 +12881,20 @@ build_workflow_plan(const CoreProgram &program,
             node_plan.input = region.source;
             node_plan.schedule_pos = schedule_position[id];
             if (!fact_plans[runner_id].imports.empty()) {
-                // The legacy node-event capability identity: the first reachable
-                // import. This keeps an opaque capability-final workflow
-                // byte-identical; an in-handler multi-bridge P6 node records its
-                // dense bridge sites instead in the V2-D module-emission slice
-                // (such a workflow is rejected before encoding until then).
-                const CoreCapabilityId capability = fact_plans[runner_id].imports.front();
-                const auto &symbol = program.capabilities[capability.value].symbol_ref;
-                if (!symbol.id.has_value()) {
-                    add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
-                             "workflow node capability has no source SymbolId");
-                    return std::nullopt;
+                // Record ALL reachable capabilities for this node. A P6 bridge
+                // node can call multiple capabilities across different branches
+                // (e.g. HandleGeneral and HandleTechnical in a routing flow);
+                // the exec-manifest must account for every one so the wire-schema
+                // admission's set-equality check sees them as referenced.
+                for (const CoreCapabilityId cap : fact_plans[runner_id].imports) {
+                    const auto &symbol = program.capabilities[cap.value].symbol_ref;
+                    if (!symbol.id.has_value()) {
+                        add_diag(result, core_wasm_diag::kInvalidCapabilityAbi,
+                                 "workflow node capability has no source SymbolId");
+                        return std::nullopt;
+                    }
+                    node_plan.capabilities.emplace_back(cap, *symbol.id);
                 }
-                node_plan.has_capability = true;
-                node_plan.capability = capability;
-                node_plan.source_symbol = *symbol.id;
             }
             plan.nodes[id] = std::move(node_plan);
         }
@@ -14467,13 +14465,13 @@ encode_exec_manifest(const WorkflowPlan &plan) {
         }
         out.u32(node.node.value);
         out.u32(index); // schedule_pos == array index
-        out.byte(node.has_capability ? std::uint8_t{1} : std::uint8_t{0});
-        if (node.has_capability) {
-            if (node.capability.value == CoreCapabilityId::kInvalid) {
+        out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
+        for (const auto &[cap, sym] : node.capabilities) {
+            if (cap.value == CoreCapabilityId::kInvalid) {
                 return std::nullopt;
             }
-            out.u32(node.capability.value);
-            out.u64(node.source_symbol);
+            out.u32(cap.value);
+            out.u64(sym);
         }
     }
     return std::move(out).take();
@@ -15834,25 +15832,28 @@ void append_event_record_write(ByteBuffer &body,
                                std::uint32_t status_local) {
     const std::uint32_t record_addr =
         kNodeEventRecordsBase + node.schedule_pos * kNodeEventRecordBytes;
-    const std::uint8_t tag = node.has_capability ? kEventTagCapability : kEventTagIdentity;
+    const bool has_cap = !node.capabilities.empty();
+    const std::uint8_t tag = has_cap ? kEventTagCapability : kEventTagIdentity;
     // [0..3]: tag u8 in byte 0, pad[1..3] == 0 (one aligned 4-byte store).
     append_i32_store_const(body, record_addr + 0u, static_cast<std::uint32_t>(tag));
     // [4..7]: workflow_node_id.
     append_i32_store_const(body, record_addr + 4u, node.node.value);
     // [8..11]: schedule_pos.
     append_i32_store_const(body, record_addr + 8u, node.schedule_pos);
-    // [12..15]: capability (0 for identity).
+    // [12..15]: capability (0 for identity). For a multi-capability node the
+    // event record carries the first capability (the legacy node-event identity);
+    // the exec-manifest accounts for all of them.
     append_i32_store_const(
-        body, record_addr + 12u, node.has_capability ? node.capability.value : 0u);
+        body, record_addr + 12u, has_cap ? node.capabilities.front().first.value : 0u);
     // [16..23]: source_symbol u64 (0 for identity). A capability source SymbolId
     // is a non-negative value bounded by the existing E2 host-ABI contract
     // (build_agent_plan rejects SymbolId > UINT32_MAX), so it is always < 2^63
     // and the canonical ByteBuffer::s64 signed-LEB128 emitter needs no special
     // sign extension here.
-    if (node.has_capability) {
+    if (has_cap) {
         append_const(body, record_addr + 16u);
         body.byte(kOpI64Const);
-        body.s64(static_cast<std::int64_t>(node.source_symbol));
+        body.s64(static_cast<std::int64_t>(node.capabilities.front().second));
         body.byte(kOpI64Store);
         body.u32(3u);
         body.u32(0u);
@@ -17130,11 +17131,18 @@ build_import_descriptors(const CoreProgram &program,
         for (const auto dependency : workflow_decl.nodes[node.node.value].after) {
             node_descriptor.dependencies.push_back(dependency.value);
         }
-        node_descriptor.has_capability = node.has_capability;
-        if (node.has_capability) {
+        if (!node.capabilities.empty()) {
+            node_descriptor.has_capability = true;
             node_descriptor.capability_ordinal =
-                workflow_import_function_index(plan.imports, node.capability).value_or(0);
-            node_descriptor.source_symbol = node.source_symbol;
+                workflow_import_function_index(plan.imports, node.capabilities.front().first)
+                    .value_or(0);
+            node_descriptor.source_symbol = node.capabilities.front().second;
+            for (const auto &[cap, sym] : node.capabilities) {
+                auto ordinal = workflow_import_function_index(plan.imports, cap);
+                if (ordinal.has_value()) {
+                    node_descriptor.all_capabilities.emplace_back(*ordinal, sym);
+                }
+            }
         }
         descriptor.nodes.push_back(std::move(node_descriptor));
     }

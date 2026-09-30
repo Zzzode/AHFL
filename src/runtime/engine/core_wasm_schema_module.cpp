@@ -622,24 +622,25 @@ frame_module(std::span<const std::uint8_t> module_bytes,
     return framing;
 }
 
+// One decoded agent-manifest capability (the agent arm's flat list).
+struct ManifestCapability {
+    CoreCapabilityId capability{};
+    std::uint64_t source_symbol = 0;
+};
+
 // One decoded exec-manifest node.
 struct ManifestNode {
     CoreWorkflowNodeId workflow_node_id{};
     std::uint32_t schedule_pos = 0;
     std::uint8_t cap_call_count = 0;
-    CoreCapabilityId capability{}; // valid only when cap_call_count == 1
-    std::uint64_t source_symbol = 0;
+    // One entry per capability call site on this node (cap_call_count entries).
+    // A P6 bridge node can call multiple capabilities across different branches.
+    std::vector<ManifestCapability> capabilities;
 };
 
 struct DecodedWorkflowManifest {
     CoreWorkflowId entry_id{};
     std::vector<ManifestNode> nodes;
-};
-
-// One decoded agent-manifest capability (the agent arm's flat list).
-struct ManifestCapability {
-    CoreCapabilityId capability{};
-    std::uint64_t source_symbol = 0;
 };
 
 struct DecodedAgentManifest {
@@ -780,25 +781,26 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
             return std::nullopt;
         }
         const auto cap_call_count = cursor.byte();
-        if (!cap_call_count.has_value() || *cap_call_count > 1) {
+        if (!cap_call_count.has_value()) {
             diagnostics.push_back(error("exec-manifest cap_call_count is out of range"));
             return std::nullopt;
         }
         node.cap_call_count = *cap_call_count;
-        if (*cap_call_count == 1) {
+        node.capabilities.reserve(*cap_call_count);
+        for (std::uint8_t c = 0; c < *cap_call_count; ++c) {
             const auto capability = cursor.u32();
             if (!capability.has_value() || *capability == CoreCapabilityId::kInvalid) {
                 diagnostics.push_back(
                     error("exec-manifest capability is missing or the invalid sentinel"));
                 return std::nullopt;
             }
-            node.capability = CoreCapabilityId{*capability};
             const auto source_symbol = cursor.u64();
             if (!source_symbol.has_value()) {
                 diagnostics.push_back(error("exec-manifest source symbol is malformed"));
                 return std::nullopt;
             }
-            node.source_symbol = *source_symbol;
+            node.capabilities.push_back(
+                ManifestCapability{CoreCapabilityId{*capability}, *source_symbol});
         }
         manifest.nodes.push_back(node);
     }
@@ -906,9 +908,9 @@ void encode_exec_manifest(std::vector<std::uint8_t> &out, const DecodedManifest 
                     put_u32(node.workflow_node_id.value);
                     put_u32(node.schedule_pos);
                     out.push_back(node.cap_call_count);
-                    if (node.cap_call_count == 1) {
-                        put_u32(node.capability.value);
-                        put_u64(node.source_symbol);
+                    for (const ManifestCapability &cap : node.capabilities) {
+                        put_u32(cap.capability.value);
+                        put_u64(cap.source_symbol);
                     }
                 }
             }
@@ -1099,6 +1101,12 @@ struct SchemaModuleFactory {
             result.diagnostics.push_back(error("module import count does not match the table"));
             return result;
         }
+        // Bridge-signature imports carry multi-argument capabilities (the
+        // bridge control block holds N arg ptr/len pairs). The opaque
+        // (tuple) lane is always arity-1. Track which source_symbols use
+        // the bridge signature so the call-site resolver below accepts
+        // their multi-param schema entries.
+        std::unordered_set<std::uint64_t> bridge_source_symbols;
         for (std::size_t i = 0; i < framing->imports.size(); ++i) {
             const auto &imported = framing->imports[i];
             if (imported.source_symbol != table.capabilities[i].source_symbol) {
@@ -1121,6 +1129,9 @@ struct SchemaModuleFactory {
                 result.diagnostics.push_back(error(
                     "module capability import does not use the ahfl_cap tuple or bridge signature"));
                 return result;
+            }
+            if (is_bridge) {
+                bridge_source_symbols.insert(imported.source_symbol);
             }
         }
 
@@ -1177,9 +1188,21 @@ struct SchemaModuleFactory {
                 static_cast<std::uint32_t>(it - table.capabilities.begin());
             referenced.insert(capability.value);
 
-            // 6. Emitter contract: exactly one Param today. Eagerly mint Param{0} +
-            //    Result through the shared authority; any failure fails the module.
-            if (it->params.size() != 1) {
+            // Emitter contract: the opaque (tuple) lane is always arity-1, so
+            // exactly one Param is minted. The bridge lane carries
+            // multi-argument capabilities (the bridge control block holds N
+            // arg ptr/len pairs); the bridge handler resolves all params from
+            // the wire schema table at runtime, so the single Param{0}
+            // binding minted here is sufficient (it is only used to access
+            // the shared table, not as the sole arg descriptor).
+            const bool is_bridge =
+                bridge_source_symbols.count(source_symbol) > 0;
+            if (it->params.empty()) {
+                result.diagnostics.push_back(
+                    error("exec-manifest capability has no parameters"));
+                return false;
+            }
+            if (!is_bridge && it->params.size() != 1) {
                 result.diagnostics.push_back(
                     error("exec-manifest capability does not have exactly one parameter"));
                 return false;
@@ -1238,18 +1261,18 @@ struct SchemaModuleFactory {
                     }
                 } else {
                     // Workflow arm: identity + nodes, then one call site per
-                    // cap-bearing node.
+                    // capability call on each cap-bearing node. A P6 bridge
+                    // node can call multiple capabilities across branches.
                     payload->entry_id = arm.entry_id;
                     payload->nodes = arm.nodes;
                     for (std::size_t n = 0; n < arm.nodes.size(); ++n) {
                         const ManifestNode &node = arm.nodes[n];
-                        if (node.cap_call_count == 0) {
-                            continue;
-                        }
-                        if (!resolve_capability_call_site(node.capability,
-                                                          node.source_symbol, n)) {
-                            call_sites_ok = false;
-                            return;
+                        for (const ManifestCapability &cap : node.capabilities) {
+                            if (!resolve_capability_call_site(cap.capability,
+                                                              cap.source_symbol, n)) {
+                                call_sites_ok = false;
+                                return;
+                            }
                         }
                     }
                 }

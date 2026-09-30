@@ -93,8 +93,12 @@ struct CoreWasmNodeDescriptor {
     std::uint32_t runner{0};       // index into CoreWasmExecutionDescriptor::agents
     std::string name;              // source-level node name (display / hooks)
     bool has_capability{false};
-    std::uint32_t capability_ordinal{0}; // index into imports when has_capability
-    std::uint64_t source_symbol{0};      // source SymbolId carried in the event record
+    // First capability ordinal + source symbol (for event-record cross-check).
+    // A P6 bridge node can call multiple capabilities; all_capabilities carries
+    // every (ordinal, source_symbol) pair so the runtime can resolve any call.
+    std::uint32_t capability_ordinal{0};
+    std::uint64_t source_symbol{0};
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> all_capabilities;
     // WH-4 fix-forward P1-3: the node's DAG predecessor node ids (the workflow
     // `after` edges), as dense source-order node ids. Populated so an embedded
     // host can emit NodeScheduled.dependencies without a second derivation of

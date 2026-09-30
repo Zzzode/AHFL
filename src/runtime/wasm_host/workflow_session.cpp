@@ -262,10 +262,23 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     std::unordered_map<std::string, std::uint32_t> cap_name_to_node;
     for (const auto &node : descriptor.nodes) {
         if (node.has_capability) {
-            symbol_to_runner[node.source_symbol] = node.runner;
-            if (node.capability_ordinal < descriptor.imports.size()) {
-                cap_name_to_node[descriptor.imports[node.capability_ordinal]
-                                     .canonical_name] = node.node_id;
+            // Map ALL capabilities to this node's runner (a P6 bridge node can
+            // call multiple capabilities across branches).
+            if (node.all_capabilities.empty()) {
+                // Legacy single-capability descriptor.
+                symbol_to_runner[node.source_symbol] = node.runner;
+                if (node.capability_ordinal < descriptor.imports.size()) {
+                    cap_name_to_node[descriptor.imports[node.capability_ordinal]
+                                         .canonical_name] = node.node_id;
+                }
+            } else {
+                for (const auto &[ordinal, sym] : node.all_capabilities) {
+                    symbol_to_runner[sym] = node.runner;
+                    if (ordinal < descriptor.imports.size()) {
+                        cap_name_to_node[descriptor.imports[ordinal]
+                                             .canonical_name] = node.node_id;
+                    }
+                }
             }
         }
     }
@@ -383,13 +396,26 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             fallback_resolver = [&descriptor](std::uint64_t source_symbol)
                 -> std::optional<std::string> {
                 for (const auto &node : descriptor.nodes) {
-                    if (node.has_capability &&
-                        node.source_symbol == source_symbol &&
-                        node.capability_ordinal <
-                            descriptor.imports.size()) {
-                        return descriptor
-                            .imports[node.capability_ordinal]
-                            .canonical_name;
+                    if (!node.has_capability) {
+                        continue;
+                    }
+                    // Check all capabilities on this node (a P6 bridge node can
+                    // call multiple capabilities across branches).
+                    const auto resolve_ordinal = [&](std::uint32_t ordinal)
+                        -> std::optional<std::string> {
+                        if (ordinal < descriptor.imports.size()) {
+                            return descriptor.imports[ordinal].canonical_name;
+                        }
+                        return std::nullopt;
+                    };
+                    if (!node.all_capabilities.empty()) {
+                        for (const auto &[ordinal, sym] : node.all_capabilities) {
+                            if (sym == source_symbol) {
+                                return resolve_ordinal(ordinal);
+                            }
+                        }
+                    } else if (node.source_symbol == source_symbol) {
+                        return resolve_ordinal(node.capability_ordinal);
                     }
                 }
                 return std::nullopt;
