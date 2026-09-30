@@ -17,15 +17,19 @@
 #include "runtime/wasm_runner/wasm_agent_runner.hpp"
 #include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 
+#include "ahfl/runtime/execution_renderer.hpp"
+#include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 
 #include "conformance/compile_source.hpp"
 #include "common/project_input_support.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -804,6 +808,180 @@ void test_v2c_bridge_fixtures(const std::filesystem::path &repo_root) {
     }
 }
 
+// ==== 8. P1-2: byte-compare ahfl.run-report JSON wasm vs evaluator ====
+
+// Render a WorkflowResult as ahfl.run-report JSON and return the string.
+[[nodiscard]] std::string render_report_json(
+    const ahfl::runtime::WorkflowResult &result) {
+    ahfl::runtime::ExecutionOutputOptions opts;
+    opts.format = ahfl::runtime::ExecutionOutputFormat::Json;
+    std::ostringstream out;
+    auto rendered = ahfl::runtime::render_execution_result(result, opts, out);
+    check(rendered.has_value(), "byte_compare.render_ok");
+    return out.str();
+}
+
+// For WireJson workflows the wasm lane cannot observe individual node outputs
+// (the module passes them through its own heap; only the workflow output is
+// host-observable via run2). The evaluator stores node outputs in its value
+// store, so output_value_id differs. This helper strips that field from both
+// JSON strings so the rest of the report can be byte-compared.
+[[nodiscard]] std::string strip_output_value_id(std::string json) {
+    const std::string key = "\"output_value_id\":";
+    std::size_t pos = 0;
+    while ((pos = json.find(key, pos)) != std::string::npos) {
+        // Find the value start (skip the key and any whitespace).
+        std::size_t val_start = pos + key.size();
+        // Skip the value (null, number, ...) up to the next comma or brace.
+        std::size_t val_end = val_start;
+        while (val_end < json.size() && json[val_end] != ',' &&
+               json[val_end] != '}') {
+            ++val_end;
+        }
+        json.replace(pos, val_end - pos, "\"output_value_id\":null");
+        pos = pos + key.size() + 4; // skip past the replaced null
+    }
+    return json;
+}
+
+// Byte-compare the ahfl.run-report JSON from the evaluator-backed
+// WorkflowRuntime and the wasm-backed WasmWorkflowRuntime on a shared
+// fixture. The evaluator gets a deterministic monotonic clock (all offsets
+// 0, matching the wasm lane's std::chrono::nanoseconds{0}).
+//
+// For P6-frame fixtures node outputs ARE host-observable (O_k blocks), so
+// the full report byte-compares. For WireJson fixtures node outputs are not
+// host-observable, so output_value_id is stripped before comparison.
+void byte_compare_fixture(
+    const std::filesystem::path &repo_root, std::string_view fixture_path,
+    std::string_view workflow_name, std::string_view input_json,
+    std::string_view expected_output_json, bool has_capability,
+    bool is_p6_frame) {
+    const auto source = repo_root / fixture_path;
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "byte_compare.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    auto input = value_from_json(std::string(input_json));
+    check(input.has_value(), "byte_compare.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    // --- Evaluator lane ---
+    ahfl::runtime::WorkflowRuntimeConfig eval_config;
+    // Deterministic clock: always return the same time point so all offsets
+    // are 0 (matching the wasm lane).
+    eval_config.monotonic_clock = []() -> std::chrono::steady_clock::time_point {
+        return std::chrono::steady_clock::time_point{};
+    };
+    if (has_capability) {
+        eval_config.contextual_capability_invoker =
+            [](const CapabilityInvocationContext &, const std::string &,
+               const std::vector<Value> &args) -> CapabilityCallResult {
+            CapabilityCallResult r;
+            r.status = CapabilityCallStatus::Success;
+            if (!args.empty()) {
+                r.value = ahfl::runtime::clone_value(args[0]);
+            }
+            return r;
+        };
+    }
+    ahfl::runtime::WorkflowRuntime eval_runtime(*program, std::move(eval_config));
+    auto eval_result = eval_runtime.run(std::string(workflow_name),
+                                        ahfl::runtime::clone_value(*input));
+    check(eval_result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "byte_compare.eval_completed");
+
+    // --- Wasm lane ---
+    wr::WasmWorkflowRuntimeConfig wasm_config;
+    // The wasm lane decodes P6-frame node outputs only when
+    // node_completed_hook is set (the decode is gated on the hook to avoid
+    // reading guest memory when no consumer wants it). Set a no-op hook so
+    // the lifecycle events carry real output_value_ids for P6-frame fixtures.
+    int hook_count = 0;
+    if (is_p6_frame) {
+        wasm_config.hooks.node_completed_hook =
+            [&hook_count](AgentId, std::string_view, const Value &) {
+                ++hook_count;
+            };
+    }
+    if (has_capability) {
+        wasm_config.invoker =
+            [](const CapabilityInvocationContext &, const std::string &,
+               const std::vector<Value> &args) -> CapabilityCallResult {
+            CapabilityCallResult r;
+            r.status = CapabilityCallStatus::Success;
+            if (!args.empty()) {
+                r.value = ahfl::runtime::clone_value(args[0]);
+            }
+            return r;
+        };
+        wasm_config.name_resolver =
+            [](std::uint64_t) -> std::optional<std::string> {
+            return "Echo";
+        };
+    }
+    wr::WasmWorkflowRuntime wasm_runtime(*program, std::move(wasm_config));
+    auto wasm_result = wasm_runtime.run(std::string(workflow_name),
+                                        ahfl::runtime::clone_value(*input));
+    check(wasm_result.status() == ahfl::runtime::WorkflowStatus::Completed,
+          "byte_compare.wasm_completed");
+    if (is_p6_frame) {
+        check(hook_count > 0, "byte_compare.node_completed_hook_fired");
+    }
+
+    // --- Byte-compare ---
+    auto eval_json = render_report_json(eval_result);
+    auto wasm_json = render_report_json(wasm_result);
+    if (!is_p6_frame) {
+        // WireJson: node outputs are not host-observable on the wasm lane.
+        eval_json = strip_output_value_id(std::move(eval_json));
+        wasm_json = strip_output_value_id(std::move(wasm_json));
+    }
+    if (eval_json != wasm_json) {
+        std::cerr << "  EVAL: " << eval_json << "\n";
+        std::cerr << "  WASM: " << wasm_json << "\n";
+    }
+    check(eval_json == wasm_json,
+          std::string("byte_compare.parity: ") + std::string(fixture_path));
+
+    // Also verify the output value matches the expected.
+    const auto *output = wasm_result.output();
+    check(output != nullptr, "byte_compare.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json == expected_output_json, "byte_compare.output_value");
+    }
+}
+
+void test_byte_compare(const std::filesystem::path &repo_root) {
+    // Agent-direct (WireJson, two identity agents, no capabilities):
+    // e3_identity_workflow. Node outputs are not host-observable on the
+    // WireJson lane, so output_value_id is stripped before comparison.
+    byte_compare_fixture(
+        repo_root, "tests/golden/wasm/e3_identity_workflow.ahfl",
+        "wasm::e3_workflow::IdentityPipeline",
+        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})",
+        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})",
+        /*has_capability=*/false,
+        /*is_p6_frame=*/false);
+
+    // Workflow with capability (WireJson, two agents, one Echo):
+    // e3_capability_workflow. Same output_value_id stripping.
+    byte_compare_fixture(
+        repo_root, "tests/golden/wasm/e3_capability_workflow.ahfl",
+        "wasm::e3_capability_workflow::CapabilityPipeline",
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})",
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})",
+        /*has_capability=*/true,
+        /*is_p6_frame=*/false);
+}
+
 } // namespace
 
 int main() {
@@ -819,6 +997,7 @@ int main() {
     test_agent_host_abort(repo_root);
     test_states_invoker_separation(repo_root);
     test_v2c_bridge_fixtures(repo_root);
+    test_byte_compare(repo_root);
 
     std::cout << "wasm_runner: " << g_checks << " checks passed\n";
     return 0;

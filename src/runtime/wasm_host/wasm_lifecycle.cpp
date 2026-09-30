@@ -62,6 +62,10 @@ struct WorkflowMetadataPlan {
     std::vector<WorkflowNodeId> node_by_schedule;
     // node_id (dense source-order) -> WorkflowNodeId.
     std::unordered_map<std::uint32_t, WorkflowNodeId> node_by_id;
+    // Capability canonical name -> CapabilityId (import ordinal order).
+    std::unordered_map<std::string, CapabilityId> capability_by_name;
+    // The runtime provider (matches the evaluator's "runtime" provider).
+    ProviderId provider;
 };
 
 // Populate the metadata store from the descriptor. Agents are assigned by
@@ -117,8 +121,12 @@ populate_workflow_metadata(WorkflowResult &result,
 
     // Capabilities: in import ordinal order.
     for (const auto &import : descriptor.imports) {
-        (void)result.metadata.add_capability(import.canonical_name);
+        const auto cap_id =
+            result.metadata.add_capability(import.canonical_name);
+        plan.capability_by_name[import.canonical_name] = cap_id;
     }
+
+    plan.provider = result.metadata.add_provider("runtime");
 
     return plan;
 }
@@ -199,6 +207,40 @@ void emit_workflow_events(WorkflowResult &result,
                 .node = node_id,
                 .agent = agent_id,
                 .state = state_id,
+            });
+        }
+
+        // Capability lifecycle: emit CapabilityStarted / CapabilityCompleted
+        // for each capability call from this node, matching the evaluator's
+        // event order (between AgentStateEntered and the node terminal).
+        for (auto &cap_call : facts.capability_calls) {
+            auto node_it = plan.node_by_id.find(cap_call.node_id);
+            if (node_it == plan.node_by_id.end() ||
+                node_it->second != node_id) {
+                continue;
+            }
+            const auto cap_id =
+                plan.capability_by_name.count(cap_call.capability_name)
+                    ? plan.capability_by_name.at(cap_call.capability_name)
+                    : CapabilityId{};
+            const auto invocation =
+                result.metadata.add_invocation(node_id, cap_id);
+            emit(CapabilityStarted{
+                .invocation = invocation,
+                .node = node_id,
+                .capability = cap_id,
+                .provider = plan.provider,
+                .attempt = 1,
+            });
+            std::optional<RuntimeValueId> output_id;
+            if (cap_call.success && cap_call.output.has_value()) {
+                output_id = add_value(result, std::move(*cap_call.output));
+            }
+            emit(CapabilityCompleted{
+                .invocation = invocation,
+                .output = output_id,
+                .attempts = 1,
+                .cache_hit = false,
             });
         }
 

@@ -246,11 +246,20 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // invocation context per-call, so the session resolves the owning
     // agent/node per-import (not name-keyed first-wins).
     std::unordered_map<std::uint64_t, std::uint32_t> symbol_to_runner;
+    // P1-2: capability name -> descriptor node_id (for lifecycle events).
+    std::unordered_map<std::string, std::uint32_t> cap_name_to_node;
     for (const auto &node : descriptor.nodes) {
         if (node.has_capability) {
             symbol_to_runner[node.source_symbol] = node.runner;
+            if (node.capability_ordinal < descriptor.imports.size()) {
+                cap_name_to_node[descriptor.imports[node.capability_ordinal]
+                                     .canonical_name] = node.node_id;
+            }
         }
     }
+
+    // P1-2: collected capability calls for lifecycle events.
+    std::vector<WasmCapabilityCall> collected_cap_calls;
 
     // --- 3. Build the wrapped invoker (fires hooks, collects data) ---
     // Capture config by VALUE (copy): the lambda is stored in a
@@ -260,7 +269,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // WorkflowSessionConfig is copyable (all std::function members).
     ContextualCapabilityInvoker wrapped_invoker =
         [config, &collected_capabilities, &collected_cap_args,
-         &collected_failures, &symbol_to_runner](
+         &collected_failures, &symbol_to_runner, &collected_cap_calls,
+         &cap_name_to_node](
             const CapabilityInvocationContext &ctx,
             const std::string &name,
             const std::vector<Value> &args)
@@ -290,6 +300,20 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         if (result.failure_kind.has_value()) {
             collected_failures.push_back(*result.failure_kind);
         }
+        // P1-2: collect for lifecycle events (CapabilityStarted /
+        // CapabilityCompleted). Resolve the descriptor node_id from the
+        // capability name.
+        WasmCapabilityCall cap_call;
+        cap_call.capability_name = name;
+        cap_call.success = result.status == CapabilityCallStatus::Success;
+        if (cap_call.success && result.value.has_value()) {
+            cap_call.output = clone_value(*result.value);
+        }
+        auto node_it = cap_name_to_node.find(name);
+        cap_call.node_id = node_it != cap_name_to_node.end()
+                               ? node_it->second
+                               : std::uint32_t{0};
+        collected_cap_calls.push_back(std::move(cap_call));
         return result;
     };
 
@@ -769,6 +793,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     facts.failure_code = run_failure_code;
     facts.failure_message = run_failure_message;
     facts.workflow_output = std::move(workflow_output);
+    facts.capability_calls = std::move(collected_cap_calls);
     facts.nodes.reserve(descriptor.nodes.size());
 
     // On a failed run, the first non-completed node (in schedule order) is

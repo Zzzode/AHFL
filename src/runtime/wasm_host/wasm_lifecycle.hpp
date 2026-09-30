@@ -48,9 +48,24 @@ struct WasmNodeRunFacts {
     std::vector<std::uint32_t> blocking_dependencies;
 };
 
+// One capability call observed during the run, in call order. The workflow
+// session collects these from the import callback; the lifecycle helper emits
+// CapabilityStarted / CapabilityCompleted events between NodeStarted and
+// NodeCompleted for the calling node, matching the evaluator's event order.
+// node_id is the descriptor's dense source-order node id (NOT the
+// WorkflowNodeId assigned by the metadata store); the lifecycle helper
+// resolves it via plan.node_by_id.
+struct WasmCapabilityCall {
+    std::uint32_t node_id;
+    std::string capability_name;
+    bool success{true};
+    std::optional<Value> output;
+};
+
 // All facts for one wasm workflow lane run.
 struct WasmWorkflowRunFacts {
     std::vector<WasmNodeRunFacts> nodes; // schedule order
+    std::vector<WasmCapabilityCall> capability_calls; // call order
     std::optional<Value> workflow_output;
     RunTerminalStatus status{RunTerminalStatus::Completed};
     std::optional<WorkflowFailureKind> failure_kind;
