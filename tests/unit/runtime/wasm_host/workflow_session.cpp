@@ -32,6 +32,7 @@
 #include "conformance/compile_source.hpp"
 
 #include "common/project_input_support.hpp"
+#include "unit/runtime/wasm_host/wasm_host_test_support.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -865,6 +866,78 @@ void test_trap_pipeline(const std::filesystem::path &repo_root) {
     check(found_trap, "trap_pipe.found_diagnostic");
 }
 
+// ==== 7c. P2-2: corrupted WireJson output fails closed ====
+
+void test_corrupted_output_workflow() {
+    namespace whts = ahfl::runtime::wasm_host_test_support;
+    // A hand-built module whose run2 reports success but returns a pointer
+    // to invalid JSON bytes.
+    const auto module_bytes = whts::corrupted_output_module();
+
+    // Minimal 1-node WireJson identity-workflow descriptor.
+    ahfl::backends::CoreWasmExecutionDescriptor descriptor;
+    descriptor.is_workflow = true;
+    descriptor.frame_contract =
+        ahfl::backends::CoreWasmFrameContract::WireJson;
+    descriptor.workflow_name = "corrupt_output";
+    descriptor.workflow_node_count = 1;
+    descriptor.agents.push_back(
+        ahfl::backends::CoreWasmStateWalk{
+            .agent = "A", .walk = {"Done"}, .all_states = {"Done"}});
+    ahfl::backends::CoreWasmNodeDescriptor node_desc;
+    node_desc.node_id = 0;
+    node_desc.schedule_pos = 0;
+    node_desc.runner = 0;
+    node_desc.name = "n0";
+    descriptor.nodes.push_back(std::move(node_desc));
+
+    auto input = value_from_json("42");
+    check(input.has_value(), "corrupt_out.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+
+    auto result = wh::run_workflow_session(module_bytes, descriptor, *input,
+                                           std::move(config));
+    // The session itself ran (no pre-run setup failure); the run must be
+    // Failed, not Completed-with-null.
+    check(result.has_value(), "corrupt_out.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::EvalError,
+          "corrupt_out.eval_error");
+
+    const auto &report = result->result.report;
+    check(report.status == ahfl::runtime::RunTerminalStatus::Failed,
+          "corrupt_out.report_failed");
+
+    // The diagnostic code is wasm.output-decode-failed.
+    bool found_decode_failed = false;
+    for (const auto &diag : result->result.diagnostics.entries()) {
+        if (diag.code.has_value() &&
+            *diag.code == "wasm.output-decode-failed") {
+            found_decode_failed = true;
+            break;
+        }
+    }
+    check(found_decode_failed, "corrupt_out.found_diagnostic");
+
+    // The output must NOT be present (never Completed-with-null).
+    check(!report.output.has_value(), "corrupt_out.no_output");
+}
+
 // ==== 8. P1-5/P2-4: workflow_completed_count fail-closed ====
 
 void test_completed_count_fail_closed(
@@ -975,6 +1048,7 @@ int main() {
     test_host_abort_workflow(repo_root);
     test_trap_workflow(repo_root);
     test_trap_pipeline(repo_root);
+    test_corrupted_output_workflow();
     test_completed_count_fail_closed(repo_root);
     test_capability_kind_fail_closed(repo_root);
 

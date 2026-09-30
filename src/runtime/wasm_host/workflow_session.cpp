@@ -704,6 +704,9 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     }
 
     // --- 11. Read the workflow output ---
+    // P2-2: fail CLOSED on a successful run whose output bytes fail to
+    // decode. A module that reports success but writes unparseable output
+    // is corrupt; never return Completed with a null output.
     std::optional<Value> workflow_output;
     if (run_ok) {
         auto mem = engine.read_whole_memory();
@@ -722,6 +725,15 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         string_regions);
                     if (output.has_value()) {
                         workflow_output = std::move(*output);
+                    } else {
+                        run_ok = false;
+                        run_status = RunTerminalStatus::Failed;
+                        run_failure_kind = WorkflowFailureKind::EvaluationFailed;
+                        run_failure_code =
+                            std::string{wasm_diag::kOutputDecodeFailed};
+                        run_failure_message =
+                            "run_workflow_session: P6-frame workflow output "
+                            "failed to decode";
                     }
                 }
             } else if (tuple != nullptr &&
@@ -735,6 +747,15 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 auto parsed = value_from_json(output_json);
                 if (parsed.has_value()) {
                     workflow_output = std::move(*parsed);
+                } else {
+                    run_ok = false;
+                    run_status = RunTerminalStatus::Failed;
+                    run_failure_kind = WorkflowFailureKind::EvaluationFailed;
+                    run_failure_code =
+                        std::string{wasm_diag::kOutputDecodeFailed};
+                    run_failure_message =
+                        "run_workflow_session: WireJson workflow output "
+                        "failed to parse";
                 }
             }
         }

@@ -67,6 +67,7 @@ constexpr std::uint8_t kBlockTypeVoid = 0x40;
 constexpr std::uint8_t kI32 = 0x7f;
 constexpr std::uint8_t kExportKindFunc = 0x00;
 constexpr std::uint8_t kExportKindMemory = 0x02;
+constexpr std::uint8_t kExportKindGlobal = 0x03;
 
 // Signed LEB128 (i32.const operands). The unsigned put_uleb comes from
 // resume_test_support.hpp.
@@ -270,6 +271,76 @@ identity_module(std::uint32_t memory_min_pages = 1, bool emit_run2 = true,
     put_op_uleb(run2_body, kOpLocalGet, 1);
     run2_body.push_back(kOpEnd);
     append_standard_code(m, run2_body);
+    return m;
+}
+
+// P2-2: a workflow module whose run2 reports SUCCESS (status 0) but returns
+// a pointer to a data segment containing INVALID JSON bytes. The workflow
+// session must fail closed (Failed + wasm.output-decode-failed), never
+// Completed with a null output. The module exports
+// workflow_completed_count=1 so the session's count validation passes on
+// the (false) success path, forcing the output decode to be the failure
+// that surfaces.
+[[nodiscard]] inline std::vector<std::uint8_t>
+corrupted_output_module() {
+    constexpr std::uint32_t kCorruptOffset = 256;
+    const std::string corrupt_json = R"({"value":)";
+    std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+    // type 0: (i32,i32)->(i32,i32,i32); type 1: (i32)->i32
+    put_section(m, 1, rts::type_payload({func_type({kI32, kI32}, {kI32, kI32, kI32}),
+                                         func_type({kI32}, {kI32})}));
+    // no imports
+    put_section(m, 3, function_section({0, 1})); // func 0 = run2, func 1 = alloc
+    put_section(m, 5, memory_section(1));
+    // 3 mutable i32 globals: heap_next (0), transition_count (1),
+    // workflow_completed_count (2).
+    {
+        std::vector<std::uint8_t> payload;
+        put_uleb(payload, 3);
+        payload.push_back(kI32);
+        payload.push_back(0x01); // mutable
+        put_i32_const(payload, static_cast<std::int32_t>(kHeapBase));
+        payload.push_back(kOpEnd);
+        payload.push_back(kI32);
+        payload.push_back(0x01);
+        put_i32_const(payload, 0);
+        payload.push_back(kOpEnd);
+        payload.push_back(kI32);
+        payload.push_back(0x01);
+        put_i32_const(payload, 1); // workflow_completed_count = 1
+        payload.push_back(kOpEnd);
+        put_section(m, 6, payload);
+    }
+    // exports: memory, run2, alloc, transition_count, workflow_completed_count
+    {
+        std::vector<std::uint8_t> payload;
+        put_uleb(payload, 5);
+        put_export(payload, "memory", kExportKindMemory, 0);
+        put_export(payload, "run2", kExportKindFunc, 0);
+        put_export(payload, "alloc", kExportKindFunc, 1);
+        put_export(payload, "transition_count", kExportKindGlobal, 1);
+        put_export(payload, "workflow_completed_count", kExportKindGlobal, 2);
+        put_section(m, 7, payload);
+    }
+    // run2 body: return (0, kCorruptOffset, corrupt_json.size()) — success
+    // status but the output bytes are invalid JSON.
+    std::vector<std::uint8_t> run2_body = locals_decl({});
+    put_i32_const(run2_body, 0); // status = 0 (success)
+    put_i32_const(run2_body, static_cast<std::int32_t>(kCorruptOffset));
+    put_i32_const(run2_body, static_cast<std::int32_t>(corrupt_json.size()));
+    run2_body.push_back(kOpEnd);
+    append_standard_code(m, run2_body);
+    // data section: active segment at kCorruptOffset with the corrupt JSON.
+    {
+        std::vector<std::uint8_t> payload;
+        put_uleb(payload, 1); // 1 segment
+        payload.push_back(0x00); // flags: active, memory 0
+        put_i32_const(payload, static_cast<std::int32_t>(kCorruptOffset));
+        payload.push_back(kOpEnd);
+        put_uleb(payload, corrupt_json.size());
+        payload.insert(payload.end(), corrupt_json.begin(), corrupt_json.end());
+        put_section(m, 11, payload);
+    }
     return m;
 }
 
