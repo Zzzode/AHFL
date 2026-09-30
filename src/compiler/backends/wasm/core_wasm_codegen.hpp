@@ -219,6 +219,13 @@ struct CoreWasmExecutionDescriptor {
 
     // Workflow lane.
     std::string workflow_name; // canonical workflow name (metadata parity)
+    // WH-4b: the workflow's dense index in the CoreProgram (stable across
+    // runs of the same program). The wasm lane originates this as the
+    // recovery snapshot's WorkflowId and fail-closes on a resume-time
+    // mismatch (design 12.6.5 step 1), mirroring the evaluator's
+    // plan.workflow cross-check. 0 for agent descriptors (agents never
+    // originate recovery snapshots).
+    std::uint32_t workflow_index{0};
     std::vector<CoreWasmStateWalk> agents;     // runner index -> walk
     std::vector<CoreWasmNodeDescriptor> nodes; // schedule order
 

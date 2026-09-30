@@ -28,6 +28,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -105,5 +106,17 @@ enum class NodeEventLayoutError : std::uint8_t {
 // the common-KAT).
 [[nodiscard]] std::expected<std::uint64_t, NodeEventLayoutError>
 event_region_heap_base(std::size_t node_count) noexcept;
+
+// WH-4b P1-1: read the node-event completion counter (event_count) from the buffer
+// header. The guest scheduler walks nodes in Kahn order and writes
+// `event_count = schedule_pos + 1` on each node's completion, so at an import
+// boundary during node K's execution nodes 0..K-1 have completed and
+// `event_count == K` (the CURRENT node's schedule position). This is a
+// header-only read for the per-import replay classification path; the full
+// `decode_node_events` validates every record and is the post-run authority.
+// Returns nullopt if the span is too small to hold the 8-byte header. The
+// caller bounds-checks the returned count against its own node count.
+[[nodiscard]] std::optional<std::uint32_t>
+read_event_count(std::span<const std::uint8_t> linear_memory) noexcept;
 
 } // namespace ahfl::runtime::core_wasm_node_events

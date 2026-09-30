@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -36,8 +37,11 @@ class WasmResumeRecorder {
   public:
     // The pending-call coordinate stamped when an import returns Pending.
     // arg_hash is filled by the wrapped invoker from the decoded args.
+    // schedule_pos is the node's dense position in the Kahn schedule (the
+    // coordinate classification compares; see classify).
     struct PendingCoordinate {
         WorkflowNodeId node;
+        std::size_t schedule_pos{0};
         std::uint64_t ordinal{0};
         std::size_t cap_id{0};
         std::uint64_t arg_hash{0};
@@ -105,19 +109,34 @@ class WasmResumeRecorder {
     // memo vector (CapabilityMemoEntry is move-only: its native result Value
     // holds unique_ptr-backed alternatives). The session loads the snapshot
     // from the store and hands it over; the recorder becomes the replay
-    // authority and the caller does not read it again. Returns false
-    // (fail-closed) if any memo entry lacks a node coordinate (the wasm
-    // consumer requires it on every entry; an evaluator-originated snapshot
-    // has none and is rejected here, not silently re-run).
-    [[nodiscard]] bool load_replay(WorkflowRecoverySnapshot snapshot);
+    // authority and the caller does not read it again. `node_to_schedule`
+    // maps each WorkflowNodeId (dense source-order index) to its schedule
+    // position; the recorder translates every persisted node coordinate to
+    // schedule space ONCE here, so classify/memo_entry compare schedule
+    // positions (the Kahn order the session actually walks), never source
+    // order. Returns false (fail-closed) if any memo entry lacks a node
+    // coordinate (the wasm consumer requires it on every entry; an
+    // evaluator-originated snapshot has none and is rejected here, not
+    // silently re-run) or a node coordinate is out of range for the
+    // mapping.
+    [[nodiscard]] bool
+    load_replay(WorkflowRecoverySnapshot snapshot,
+                std::span<const std::size_t> node_to_schedule);
 
     // Classify an import coordinate against the loaded memo + frontier.
-    [[nodiscard]] ReplayClass classify(WorkflowNodeId node,
+    // schedule_pos is the node's dense position in the Kahn schedule (the
+    // session derives it from the guest's node-event completion counter at
+    // the import boundary), NOT the source-order WorkflowNodeId: the memo
+    // hit / frontier / post-frontier decision must follow the order the
+    // session actually walks (design 12.6.5 step 4: "nodes after the
+    // suspended node in the schedule"), which can differ from declaration
+    // order when a node depends on a later-declared node.
+    [[nodiscard]] ReplayClass classify(std::size_t schedule_pos,
                                        std::uint64_t ordinal) const;
 
     // The memo entry for a MemoHit coordinate (nullptr on miss / wrong class).
     [[nodiscard]] const CapabilityMemoEntry *
-    memo_entry(WorkflowNodeId node, std::uint64_t ordinal) const;
+    memo_entry(std::size_t schedule_pos, std::uint64_t ordinal) const;
 
     // The frontier (pending coordinate). nullptr when not a resume run.
     [[nodiscard]] const PendingCoordinate *frontier() const noexcept;
@@ -143,7 +162,7 @@ class WasmResumeRecorder {
 
     // Replay state (populated by load_replay).
     struct ReplayIndexEntry {
-        WorkflowNodeId node;
+        std::size_t schedule_pos{0}; // Kahn schedule position (classification key)
         std::uint64_t ordinal{0};
         std::size_t memo_index{0}; // into memo_
     };

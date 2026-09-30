@@ -60,6 +60,17 @@ event_region_heap_base(std::size_t node_count) noexcept {
     return heap_base;
 }
 
+std::optional<std::uint32_t>
+read_event_count(std::span<const std::uint8_t> linear_memory) noexcept {
+    // The header is 8 bytes at kEventLogBase; event_count is the u32-LE at
+    // [0..3]. Require the full header to fit (the same truncation bound the
+    // full decoder uses, so a too-small span is rejected identically).
+    if (linear_memory.size() < kEventLogBase + kEventHeaderBytes) {
+        return std::nullopt;
+    }
+    return load_u32(linear_memory, kEventLogBase);
+}
+
 std::expected<std::vector<NodeEventRecord>, NodeEventError>
 decode_node_events(std::span<const std::uint8_t> linear_memory, std::size_t node_count) {
     // (1) The header must fit. Checked BEFORE the layout authority so a too-small span

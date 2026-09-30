@@ -16988,6 +16988,10 @@ build_import_descriptors(const CoreProgram &program,
         descriptor.workflow_name = workflow_decl.symbol_ref.canonical_name.empty()
                                        ? workflow_decl.name
                                        : workflow_decl.symbol_ref.canonical_name;
+        // WH-4b: carry the dense workflow index so the wasm lane originates a
+        // REAL recovery-snapshot WorkflowId (not {0}) and fail-closes on a
+        // resume-time mismatch (design 12.6.5 step 1).
+        descriptor.workflow_index = plan.workflow.value;
     }
     // V2-D: a workflow with a packaged computed node is a P6-frame module: the
     // host packs the entry into the entry node's I block, run2 drives the

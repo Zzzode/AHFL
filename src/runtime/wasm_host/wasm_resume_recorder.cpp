@@ -58,6 +58,7 @@ void WasmResumeRecorder::stamp_pending() {
     }
     pending_ = PendingCoordinate{
         .node = current_->node,
+        .schedule_pos = current_->schedule_pos,
         .ordinal = current_->ordinal,
         .cap_id = current_->cap_id,
         .arg_hash = current_->arg_hash,
@@ -73,13 +74,21 @@ std::vector<CapabilityMemoEntry> WasmResumeRecorder::take_memo() {
     return std::move(memo_);
 }
 
-bool WasmResumeRecorder::load_replay(WorkflowRecoverySnapshot snapshot) {
+bool WasmResumeRecorder::load_replay(
+    WorkflowRecoverySnapshot snapshot,
+    std::span<const std::size_t> node_to_schedule) {
     if (!snapshot.suspended.has_value()) {
         return false;
     }
     auto suspended = std::move(*snapshot.suspended);
+    // Translate the suspended node's source-order WorkflowNodeId to its
+    // schedule position ONCE (classification compares schedule positions).
+    if (suspended.node.index() >= node_to_schedule.size()) {
+        return false;
+    }
     frontier_ = PendingCoordinate{
         .node = suspended.node,
+        .schedule_pos = node_to_schedule[suspended.node.index()],
         .ordinal = suspended.pending_ordinal,
         .cap_id = suspended.pending_cap_id,
         .arg_hash = 0, // the pending record carries no arg_hash
@@ -95,15 +104,19 @@ bool WasmResumeRecorder::load_replay(WorkflowRecoverySnapshot snapshot) {
         if (!entry.node.has_value()) {
             return false;
         }
+        if (entry.node->index() >= node_to_schedule.size()) {
+            return false;
+        }
         replay_index_.push_back(
-            ReplayIndexEntry{.node = *entry.node,
+            ReplayIndexEntry{.schedule_pos =
+                                 node_to_schedule[entry.node->index()],
                              .ordinal = entry.ordinal,
                              .memo_index = i});
     }
     std::sort(replay_index_.begin(), replay_index_.end(),
               [](const ReplayIndexEntry &lhs, const ReplayIndexEntry &rhs) {
-                  if (lhs.node != rhs.node) {
-                      return lhs.node < rhs.node;
+                  if (lhs.schedule_pos != rhs.schedule_pos) {
+                      return lhs.schedule_pos < rhs.schedule_pos;
                   }
                   return lhs.ordinal < rhs.ordinal;
               });
@@ -112,33 +125,42 @@ bool WasmResumeRecorder::load_replay(WorkflowRecoverySnapshot snapshot) {
 }
 
 WasmResumeRecorder::ReplayClass
-WasmResumeRecorder::classify(WorkflowNodeId node, std::uint64_t ordinal) const {
+WasmResumeRecorder::classify(std::size_t schedule_pos,
+                             std::uint64_t ordinal) const {
     if (!frontier_.has_value()) {
         return ReplayClass::PostFrontier; // not a resume run: everything live
     }
     // Frontier hit?
-    if (frontier_->node == node && frontier_->ordinal == ordinal) {
+    if (frontier_->schedule_pos == schedule_pos &&
+        frontier_->ordinal == ordinal) {
         return ReplayClass::Frontier;
     }
     // Before the frontier (same node, lower ordinal; or a node that precedes
-    // the suspended node in schedule order)?
+    // the suspended node in SCHEDULE order)? The comparison is on schedule
+    // positions, not source-order WorkflowNodeIds: the Kahn schedule can
+    // differ from declaration order (design 12.6.5 step 4), and a memoized
+    // call on an earlier-EXECUTED node with a higher source id must still be
+    // a MemoHit, not a PostFrontier live re-execution.
     const bool before_frontier =
-        node < frontier_->node ||
-        (node == frontier_->node && ordinal < frontier_->ordinal);
+        schedule_pos < frontier_->schedule_pos ||
+        (schedule_pos == frontier_->schedule_pos &&
+         ordinal < frontier_->ordinal);
     if (!before_frontier) {
         return ReplayClass::PostFrontier;
     }
     // Before the frontier: must be a memo hit, else divergence.
-    return memo_entry(node, ordinal) != nullptr ? ReplayClass::MemoHit
-                                                 : ReplayClass::PreFrontierMiss;
+    return memo_entry(schedule_pos, ordinal) != nullptr
+               ? ReplayClass::MemoHit
+               : ReplayClass::PreFrontierMiss;
 }
 
 const CapabilityMemoEntry *
-WasmResumeRecorder::memo_entry(WorkflowNodeId node,
+WasmResumeRecorder::memo_entry(std::size_t schedule_pos,
                                std::uint64_t ordinal) const {
     // Linear scan over the (small) sorted replay index.
     for (const auto &entry : replay_index_) {
-        if (entry.node == node && entry.ordinal == ordinal) {
+        if (entry.schedule_pos == schedule_pos &&
+            entry.ordinal == ordinal) {
             return &memo_[entry.memo_index];
         }
     }

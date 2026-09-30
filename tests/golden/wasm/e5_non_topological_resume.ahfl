@@ -1,0 +1,85 @@
+// RFC 0026 KR6.8 WH-4b P1-2: non-topological durable-resume fixture.
+//
+// The workflow declares `second` BEFORE `first`, but `second` depends on
+// `first` (after [first]). The Kahn schedule is [first, second] (first must
+// run before second), which DIFFERS from the declaration order [second,
+// first]. This exercises the schedule-position classification fix (P1-2):
+// the memo identity and replay classification must compare Kahn schedule
+// positions, not source-order WorkflowNodeIds.
+//
+// On the wasm lane:
+//   first  (node_id=1, schedule_pos=0) calls A -> OK, memoized
+//   second (node_id=0, schedule_pos=1) calls B -> Pending, suspends
+//
+// On resume, first's A call is at schedule_pos 0 (before the frontier at
+// schedule_pos 1) -> MemoHit. A source-order comparison would see
+// first (node_id=1) > second (node_id=0) and misclassify it as PostFrontier
+// (live), which the zero-live-calls assertion catches.
+//
+// Bounded String(0,64) so the F1 preflight's canonical-size bound is finite.
+
+module wasm::e5_non_topological_resume;
+
+pub struct Frame {
+    value: String(0, 64);
+}
+
+capability A(request: Frame) -> Frame;
+capability B(request: Frame) -> Frame {
+    effect: durable_write;
+    retry: safe_if_idempotent;
+}
+
+pub agent FirstAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [A];
+    transition Start -> Done;
+}
+
+flow for FirstAgent {
+    state Done {
+        return A(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub agent SecondAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [B];
+    transition Start -> Done;
+}
+
+flow for SecondAgent {
+    state Done {
+        return B(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow NonTopological {
+    input: Frame;
+    output: Frame;
+
+    // Declared in NON-schedule order: second depends on first but is
+    // declared first. The Kahn schedule is [first, second].
+    node second: SecondAgent(first) after [first];
+    node first: FirstAgent(input);
+
+    return: second;
+}

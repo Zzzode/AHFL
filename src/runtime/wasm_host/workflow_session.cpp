@@ -231,6 +231,16 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     if (!snapshot.workflow.valid()) {
         return "recovery snapshot workflow ID is invalid";
     }
+    // WH-4b P1-4: workflow-id cross-check (design 12.6.5 step 1, mirroring
+    // the evaluator's snapshot.workflow != plan.workflow gate at
+    // workflow_runtime.cpp:85). The descriptor carries the workflow's dense
+    // program index (stable across runs of the same program); a mismatch
+    // means the snapshot belongs to a different workflow.
+    if (snapshot.workflow !=
+        WorkflowId{static_cast<std::size_t>(descriptor.workflow_index)}) {
+        return "recovery snapshot workflow ID does not match the selected "
+               "workflow";
+    }
     if (!snapshot.suspended.has_value()) {
         return "recovery snapshot has no suspended node record";
     }
@@ -312,6 +322,40 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
         if (entry.node == suspended.node &&
             entry.ordinal >= suspended.pending_ordinal) {
             return "recovery snapshot memo ordinal is not below the pending ordinal";
+        }
+    }
+
+    // WH-4b P2-5: the pending capability must be resolvable in the
+    // descriptor (design 12.6.5 step 1: "pending cap_id 在 wire schema
+    // 可解析"). A pending SymbolId that no node in this module calls means
+    // the snapshot cannot be replayed (the frontier would never match a live
+    // import), so fail closed at load rather than diverging mid-run.
+    {
+        bool cap_resolvable = false;
+        for (const auto &node : descriptor.nodes) {
+            if (!node.has_capability) {
+                continue;
+            }
+            if (node.all_capabilities.empty()) {
+                if (node.source_symbol == suspended.pending_cap_id) {
+                    cap_resolvable = true;
+                    break;
+                }
+            } else {
+                for (const auto &[ordinal, sym] : node.all_capabilities) {
+                    if (sym == suspended.pending_cap_id) {
+                        cap_resolvable = true;
+                        break;
+                    }
+                }
+                if (cap_resolvable) {
+                    break;
+                }
+            }
+        }
+        if (!cap_resolvable) {
+            return "recovery snapshot pending capability is not resolvable in "
+                   "this module";
         }
     }
 
@@ -400,29 +444,14 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // P1-2: collected capability calls for lifecycle events.
     std::vector<WasmCapabilityCall> collected_cap_calls;
 
-    // WH-4b: import_ordinal -> schedule position (descriptor.nodes index) and
-    // source_symbol -> schedule position. The wrapped import callback derives
-    // (node, ordinal) per import from the import ordinal via these maps (the
-    // design's symbol_to_schedule, extended from P2-2's symbol_to_runner).
-    // One capability per node on the opaque lane (a capability final); a
-    // shared capability across nodes is last-wins, the same limitation the
-    // evaluator's per-node memo accepts.
-    std::unordered_map<std::uint32_t, std::size_t> import_to_schedule;
-    std::unordered_map<std::uint64_t, std::size_t> symbol_to_schedule;
+    // WH-4b: node_id (dense source-order) -> schedule position. The recorder
+    // translates the snapshot's persisted WorkflowNodeId coordinates to
+    // schedule space ONCE at load_replay, so classify/memo_entry compare
+    // schedule positions (the Kahn order the session walks), never source
+    // order (design 12.6.5 step 4; P1-2).
+    std::vector<std::size_t> node_to_schedule(descriptor.nodes.size());
     for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
-        const auto &node = descriptor.nodes[i];
-        if (!node.has_capability) {
-            continue;
-        }
-        if (node.all_capabilities.empty()) {
-            import_to_schedule[node.capability_ordinal] = i;
-            symbol_to_schedule[node.source_symbol] = i;
-        } else {
-            for (const auto &[ordinal, sym] : node.all_capabilities) {
-                import_to_schedule[ordinal] = i;
-                symbol_to_schedule[sym] = i;
-            }
-        }
+        node_to_schedule[descriptor.nodes[i].node_id] = i;
     }
 
     // WH-4b: the session-local suspended-snapshot recorder. Origination mode
@@ -433,13 +462,19 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // Set when a resume run's replay diverged (pre-frontier miss, frontier
     // never hit, or a memo/inject failure). The run fails closed post-run.
     std::optional<std::string> replay_divergence;
+    // Set when an origination run hit a host-side invariant violation (e.g.
+    // the guest returned a bogus result pointer that cannot be read for the
+    // memo). The run fails closed rather than producing a Suspended snapshot
+    // that cannot resume (P2-4).
+    std::optional<std::string> origination_failure;
     if (config.recovery_snapshot.has_value()) {
         if (auto err = validate_wasm_recovery_snapshot(
                 *config.recovery_snapshot, descriptor);
             err.has_value()) {
             return std::unexpected("run_workflow_session: " + std::move(*err));
         }
-        if (!recorder.load_replay(std::move(*config.recovery_snapshot))) {
+        if (!recorder.load_replay(std::move(*config.recovery_snapshot),
+                                  node_to_schedule)) {
             return std::unexpected(
                 "run_workflow_session: recovery snapshot memo entry is missing "
                 "its node coordinate (an evaluator-originated snapshot cannot "
@@ -461,7 +496,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
          capability_result_observer = config.capability_result_observer,
          &recorder, &collected_capabilities, &collected_cap_args,
          &collected_failures, &symbol_to_runner, &collected_cap_calls,
-         &cap_name_to_node](
+         &cap_name_to_node,
+         workflow_index = descriptor.workflow_index](
             const CapabilityInvocationContext &ctx,
             const std::string &name,
             const std::vector<Value> &args)
@@ -487,7 +523,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 current->arg_hash = *arg_hash;
                 current->arg_hash_set = true;
                 real_ctx.idempotency_key = compute_idempotency_key(
-                    /*workflow_index=*/0, current->node.index(),
+                    /*workflow_index=*/workflow_index, current->node.index(),
                     current->ordinal, current->cap_id, *arg_hash);
             }
         }
@@ -645,9 +681,9 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
              &resume_pending_result = config.resume_pending_result,
              resume_pending_result_wire_json =
                  config.resume_pending_result_wire_json,
-             &engine, &recorder, &replay_divergence, &descriptor,
-             &last_trace_count, &collected_states, &states_per_node,
-             &runner_to_schedule, &trace_error, &symbol_to_schedule, &admitted,
+             &engine, &recorder, &replay_divergence, &origination_failure,
+             &descriptor, &last_trace_count, &collected_states,
+             &states_per_node, &runner_to_schedule, &trace_error, &admitted,
              has_trace, inner = std::move(inner_callback)](
                 const eng::ImportObservation &obs)
             -> eng::ImportCallbackResult {
@@ -676,9 +712,16 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     return inner(obs);
                 }
 
-                // Derive (node, ordinal) from the import's call site. The
-                // call site's source_symbol maps O(1) to the schedule
-                // position (the design's symbol_to_schedule).
+                // P1-1: derive the CURRENT node's schedule position from the
+                // guest's node-event completion counter. The scheduler walks
+                // nodes in Kahn order and writes event_count = schedule_pos +
+                // 1 on each node's completion, so at an import boundary
+                // event_count == the executing node's schedule position.
+                // This replaces the unsound capability->node map (which
+                // mis-attributed the memo identity when two nodes shared a
+                // capability: last-wins). The call site's source_symbol is
+                // still needed for cap_id (the integrity cross-check) and for
+                // the result-binding decode on the frontier path.
                 const auto call_site = resolve_import_call_site(
                     *admitted.module, obs.import_ordinal);
                 if (!call_site.has_value()) {
@@ -694,22 +737,28 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     return inner(obs);
                 }
                 const auto source_symbol = call_site->source_symbol();
-                const auto schedule_it =
-                    symbol_to_schedule.find(source_symbol);
-                if (schedule_it == symbol_to_schedule.end()) {
-                    // Replay: a source_symbol the origination run did not
-                    // record is a divergence. Origination: the descriptor
-                    // is corrupt (post-run validation catches it); skip the
-                    // recorder drive and let inner proceed.
+                const auto event_count =
+                    ne::read_event_count(obs.whole_memory);
+                if (!event_count.has_value() ||
+                    *event_count >= descriptor.nodes.size()) {
+                    // The guest's node-event header is unreadable or reports a
+                    // completion count past the schedule. Replay: divergence.
+                    // Origination: a host-side invariant violation (the module
+                    // is corrupt or the ABI drifted) -- fail the run rather
+                    // than originating a snapshot with a bogus node coordinate
+                    // (P2-4).
                     if (recorder.is_replay()) {
                         replay_divergence =
-                            "durable resume replay diverged: import "
-                            "source_symbol not in schedule";
+                            "durable resume replay diverged: node-event "
+                            "completion counter unreadable or out of range";
                         return eng::ImportAbort{};
                     }
-                    return inner(obs);
+                    origination_failure =
+                        "node-event completion counter unreadable or out of "
+                        "range at import boundary";
+                    return eng::ImportAbort{};
                 }
-                const std::size_t schedule_pos = schedule_it->second;
+                const std::size_t schedule_pos = *event_count;
                 const WorkflowNodeId node{
                     static_cast<std::size_t>(
                         descriptor.nodes[schedule_pos].node_id)};
@@ -724,13 +773,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 if (recorder.is_replay()) {
                     // Replay mode: classify the coordinate and serve.
                     const auto replay_class =
-                        recorder.classify(node, ordinal);
+                        recorder.classify(schedule_pos, ordinal);
                     switch (replay_class) {
                     case WasmResumeRecorder::ReplayClass::MemoHit: {
                         // Cross-check cap_id + arg_hash against the live
                         // import (fail-closed on mismatch).
                         const auto *entry =
-                            recorder.memo_entry(node, ordinal);
+                            recorder.memo_entry(schedule_pos, ordinal);
                         if (entry == nullptr ||
                             entry->cap_id != cap_id) {
                             replay_divergence =
@@ -894,22 +943,36 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         std::get_if<eng::ImportReply>(&reply)) {
                     if (import_reply->raw_status == AHFL_CAP_PENDING) {
                         recorder.stamp_pending();
-                    } else if (import_reply->raw_status == AHFL_CAP_OK &&
-                               import_reply->result_len > 0) {
+                    } else if (import_reply->raw_status == AHFL_CAP_OK) {
+                        // P2-3: record the memo even for a zero-length OK
+                        // result (an empty-but-valid reply is still a
+                        // deterministic outcome the resume must replay).
                         // Read the exact reply wire bytes from guest
                         // memory (never re-serialized: no spelling drift).
                         const auto offset =
                             import_reply->result_ptr.value;
                         const auto len = import_reply->result_len;
-                        if (offset + len <=
+                        // P2-4: a bogus guest offset+len that names bytes
+                        // outside linear memory is a host-side invariant
+                        // violation. Fail the origination run rather than
+                        // silently skipping the memo (which would produce a
+                        // snapshot that cannot resume). Widen to size_t
+                        // before adding so a u32 wrap cannot bypass the
+                        // bounds check.
+                        if (static_cast<std::size_t>(offset) +
+                                static_cast<std::size_t>(len) >
                             obs.whole_memory.size()) {
-                            std::string bytes(
-                                reinterpret_cast<const char *>(
-                                    obs.whole_memory.data() + offset),
-                                len);
-                            recorder.append_memo_entry(
-                                std::move(bytes));
+                            origination_failure =
+                                "capability reply pointer is out of bounds "
+                                "for the module linear memory";
+                            return eng::ImportAbort{};
                         }
+                        std::string bytes(
+                            reinterpret_cast<const char *>(
+                                obs.whole_memory.data() + offset),
+                            len);
+                        recorder.append_memo_entry(
+                            std::move(bytes));
                     }
                 }
                 return reply;
@@ -1021,6 +1084,15 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         run_failure_code = wasm_diag::kHostAbort;
         run_failure_message =
             "run_workflow_session: " + std::move(*replay_divergence);
+    } else if (origination_failure.has_value()) {
+        // P2-4: an origination run hit a host-side invariant violation
+        // (bogus guest result pointer, unreadable node-event counter). Fail
+        // closed rather than originating a snapshot that cannot resume.
+        run_status = RunTerminalStatus::Failed;
+        run_failure_kind = WorkflowFailureKind::NodeFailed;
+        run_failure_code = wasm_diag::kHostAbort;
+        run_failure_message =
+            "run_workflow_session: " + std::move(*origination_failure);
     } else if (!outcome.has_value()) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
@@ -1253,7 +1325,12 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 "coordinate was recorded";
         } else {
             WorkflowRecoverySnapshot snapshot;
-            snapshot.workflow = WorkflowId{0}; // wasm-lane convention
+            // P1-4: originate the REAL workflow identity (the descriptor's
+            // dense CoreProgram workflow index, stable across runs of the
+            // same program), not a placeholder {0}. The resume-time
+            // validator fail-closes on a mismatch (design 12.6.5 step 1).
+            snapshot.workflow =
+                WorkflowId{static_cast<std::size_t>(descriptor.workflow_index)};
             snapshot.checkpoint = CheckpointId{0};
             // completed_nodes: nodes that completed before the suspension
             // (from the node-event buffer decoded above).
