@@ -946,3 +946,174 @@ never called for a branching WireJson agent.
   `verified:true` breakpoint claim on a no-import WireJson node would lie; the
   DAP must classify breakpoints as live / post-run using descriptor
   observability).
+
+## 12.6 WH-4b decisions (2026-09-30, dedicated decision agent, no human gate)
+
+WH-4b 在 wasm 车道起源挂起(suspension)并打通 suspend/resume 往返,门控于 WH-6(`ahflc run` 切换)之前。prep map(`$CLAUDE_JOB_DIR/tmp/wh4b-prep-map.md`)的事实已对 HEAD `161666db` 逐条复核。本节是一个连贯设计,不是菜单。
+
+### 12.6.0 决策摘要
+
+**两个引擎共用一个挂起工件:`WorkflowRecoverySnapshot` v2 JSON(`src/runtime/engine/workflow_recovery.hpp:109-118`),wasm 车道由 `run_workflow_session` 内一个新的会话级 memo-replay 层消费——不走 WH-3 `run_resume` / D1b controller driver。** wasm 车道起源与 evaluator 相同的快照,对 v2 做一处 append-only 扩展:`CapabilityMemoEntry` 增加可选 `node` 坐标(§12.6.3),把 memo 从"单挂起节点"泛化到"整工作流"——因为 wasm resume 是 FRESH instance 重跑整个模块,需要 pending 之前跨所有节点全部能力调用的 memo。HMAC 二进制机制(`CoreWasmResumeRecord` / `IntegrityPayloadStore` / D1b controller / `run_resume`)保持 test-only FOUNDATION,并绑定日落条款(§12.6.9):D2b 切片必须给它第一个生产调用者,否则一次性 big-bang 删除。
+
+**ReadyForLive 在 WH-4b 范围内且可用**——通过会话设计而非 D1b driver,见 §12.6.8 的诚实裁决。
+
+### 12.6.1 Fork 1+2 — 快照格式与 resume 消费者:复用 JSON v2;新建会话级消费者;HMAC 机制保留为 test-only FOUNDATION
+
+**选择。**
+- **格式**:`WorkflowRecoverySnapshot` v2 JSON + `WorkflowRecoveryStore`(单原子文件,`workflow_recovery.cpp:244-271`)是两个引擎唯一的挂起工件。wasm 车道既起源(§12.6.4)也消费(§12.6.5)它。
+- **消费者**:`run_workflow_session`(`src/runtime/wasm_host/workflow_session.cpp`)内新的 memo-replay 层。run 开始时若带 `recovery_snapshot`,会话把它翻译为内存 memo map,键为 `(WorkflowNodeId, 节点内 ordinal)`。每个同步 import 边界用 import 的 `source_symbol` O(1) 导出 `(node, ordinal)`(复用 P2-2 的 `symbol_to_runner` 并扩展到 schedule position,§12.6.5),提供 memo 字节 / 注入 / 放行 live。无 HMAC store、无密钥管理、无 `run_resume`。
+- **HMAC 机制**:维持 test-only FOUNDATION 现状,日落条款见 §12.6.9。
+
+**拒绝。**
+- **转码 JSON 快照为 `CoreWasmResumeRecord` 并委托 `run_resume`(fork 2b)。** 三个 HEAD 事实击败它:① `run_resume` 对 `ReadyForLive` fail-closed(`core_wasm_resume_host.hpp:145` `ReadyForLiveBlocked`;driver 注释 :30-31),pending 之后还有能力调用的工作流无法经它 resume——evaluator 对这类调用是 LIVE 执行的(`workflow_runtime.cpp:1016` 置 `replaying=false`,live 路径在 `:1025+`),委托会造成相对 evaluator 的回归;② 本地单用户文件需要 `IntegrityPayloadStore` root + HMAC 密钥,而该威胁模型(对抗性篡改者)不是今天的;③ JSON/HMAC 双快照并行,违反 Principle 1。
+- **JSON + HMAC 双写(fork 1c)。** 拒绝——双工件一致性负担 + Principle 1 并行实现。
+- **按 Principle 1 立即删除 HMAC 机制。** 在 WH-4b 中考虑并拒绝:它是已落地的 D2b 基底(record codec + 机密 payload store + decision-only controller + `run_resume` driver + WH-3 真实 wasm3 引擎端口),注释明确命名未来消费者("the first is the future B2-D host",`core_wasm_resume_record.hpp:12`)。D2b(durable-effect authority / KMS store)是 WH-6 切换后的紧邻前沿;WH-4b 删除、D2b 重建纯属 churn;永久不链接则被日落条款禁止。这是带死线的判断,不是"以防万一"的无限保留。
+
+**AHFL-specific 理由。** recovery store 今天是本地单用户文件;JSON v2 已在损坏时 fail-closed(id/闭包/memo 交叉校验 `workflow_runtime.cpp:82-144`;binding 门控解码 `:871-888`)。HMAC/SHA-256 防的是对抗性 store 写入者——那是 D2b durable-effect-authority 前沿的威胁模型。CLI 既有标志契约与 smoke 都讲 JSON v2;单一格式让 WH-6 切换成为 CLI 契约不变下的纯引擎替换。参照层级一致:event-sourced checkpoint(Temporal/Cadence/Restate 主流持久工作流模式)在宿主原生 store 持久化 replay log,盘上编码是宿主关切。
+
+### 12.6.2 身份元组与等价性证明
+
+memo 键与 pending 坐标与 evaluator 使用同一元组,每个分量在 HEAD 都是引擎中立的:
+
+| 分量 | Evaluator | Wasm 会话 | 等价证据 |
+|---|---|---|---|
+| node | `WorkflowNodeId`(稠密 source-order 索引) | `WorkflowNodeId{descriptor.nodes[K].node_id}` | `wasm_lifecycle.hpp:96-97` 注释:node_id 按序分配,等于 evaluator 稠密索引 |
+| ordinal | 节点内计数器,dispatch 前自增(`workflow_runtime.cpp:780`) | import 边界的节点内计数器 | 两者都按程序序计数每节点能力调用,节点间重置 |
+| cap_id | `context.source_capability_symbol_id`(`:782`) | `call_site.source_symbol()` | codegen `core_wasm_codegen.cpp:9917` 写同一 SymbolId 空间 |
+| arg_hash | `runtime::hash_values(arguments)`(`:787`) | `wrapped_invoker` 对解码后的 Value 参数 `hash_values(args)` | 结构相等 Value 上的同一函数(opaque 车道在 wire binding 下解码参数,`capability_import.cpp:294`) |
+
+**等价性证明。** 两引擎都按稠密 Kahn schedule 序执行节点(node-event buffer 是稠密前缀:记录 `i` 的 `schedule_pos == i`,由 D1b join `core_wasm_resume_controller.cpp:641` 与会话 post-run 交叉检查强制)。节点内能力调用按程序序发生,两引擎都按 `0,1,2,…` 计数。故 wasm 会话节点 K 的第 N 个能力 import 与 evaluator 节点 K 的第 N 次 dispatch 是同一 `(node, ordinal)` 调用。`cap_id` 与 `arg_hash` 是每次 memo 命中都断言的完整性交叉检查;不匹配 fail-closed,绝不静默重新 live 调用。
+
+**跨引擎 resume 出范围且 fail-closed。** 引擎 X 起源的快照只能由引擎 X 消费。wasm 消费者要求每条 memo 带 `node` 坐标;evaluator 起源的快照没有 → wasm 消费者在加载时以定向诊断拒绝(WH-6 后 evaluator 被删除,反向不可能发生;WH-6 前 CLI 无法产生 wasm 起源的快照)。无兼容 shim。
+
+### 12.6.3 Fork 5 — 粒度:用一个 append-only v2 字段把 memo 泛化到整工作流
+
+**已验证的问题。** evaluator 恢复已完成节点、只重跑挂起节点(`workflow_runtime.cpp:724-740` NodeRestored),其 memo 只覆盖挂起节点。wasm resume 是 FRESH instance 重跑整个模块(wasm3 无法停泊调用栈)。已完成节点的 guest 内计算是确定性且无副作用的,但其能力调用是带效果的宿主 import——resume 时必须 memo 供给,绝不重新 live 调用(重放 `durable_write` 违反 exactly-once)。JSON v2 的 `SuspendedNodeState.memo` 没有节点坐标,无法放置已完成节点的 memo 条目。
+
+**选择。** 给 `CapabilityMemoEntry` 增加一个 append-only 字段:
+
+```cpp
+// WH-4b: 该 memo 条目所属节点。缺省(nullopt)表示挂起节点——evaluator 的
+// 每节点 memo 语义,不变。wasm 车道总是设置它:wasm resume 在 fresh
+// instance 上重跑整个模块,memo 覆盖 pending 之前每个节点的调用。
+std::optional<WorkflowNodeId> node{};
+```
+
+append-only v2 演进(`workflow_recovery.hpp:27-31` 的稳定规则:新字段可选,旧读取者忽略)。wasm 消费者要求每条都带(缺失则加载 fail-closed);evaluator 消费者不变(从不设置,全 nullopt = 挂起节点,即今天的行为)。HMAC record 已正确建模这一点——`CoreWasmResumeRecord.nodes` 是所有节点的逐节点 memo 向量(`core_wasm_resume_record.hpp:80-87`)——证实 whole-workflow memo 是正确的 wasm 语义。
+
+**拒绝:** 仅挂起节点 memo(已完成节点调用 resume 时 live 重跑——重放效果,违反 exactly-once);快照上并行 `wasm_memo` 结构(双 memo 向量,Principle 1);新 schema v3 字符串(一个可选字段应走 v2 append-only)。
+
+**wasm 车道上的 `completed_nodes`:** 为记录与闭包校验而写,但不用于跳过节点:wasm 消费者重跑全部节点并 memo 供给其调用;记录的 `output` 仅信息性(evaluator 恢复它,wasm 车道从 memo 供给的输入确定性重算)。
+
+### 12.6.4 起源 — 会话在何处捕获挂起坐标(fork 4)
+
+**选择:会话级 recorder 包裹 import callback(fork 4c)。** 捕获点是 `wrapped_callback`(`workflow_session.cpp:451-476`)——唯一同时看到 `ImportObservation`(import ordinal、`whole_memory`)与 `ImportReply`(status + `result_ptr`/`result_len`)的最外层;经其内部同步调用的既有 `wrapped_invoker`(`:304-355`)还能看到解码后的 `args`、`CapabilityCallResult` 与 `ctx.source_capability_symbol_id`。
+
+新文件 `src/runtime/wasm_host/wasm_resume_recorder.{hpp,cpp}` 中的会话局部 `WasmResumeRecorder` 持有:逐节点 import 计数器(按 schedule position 索引的 `vector<uint64_t>`);在途 memo 向量 + pending 坐标;"当前 import 坐标"(wrapper 在 `inner(obs)` 前设置,供 `wrapped_invoker` 消费 args→arg_hash/result/cap_id,wrapper 在 `inner` 返回后从 `obs.whole_memory` 的 `(result_ptr, result_len)` 读取回复的精确 wire 字节)。
+
+每个 OK opaque 调用,recorder 追加 `CapabilityMemoEntry{ node=<当前 WorkflowNodeId>, ordinal=<计数器值>, cap_id=source_symbol, arg_hash=hash_values(args), result=<native 投影,clone>, source=ExactSidecar, authoritative_json=<精确回复字节>, result_present=<来自调用结果> }`。精确字节即 opaque 车道 `serialize_value_for_wire_json` 的输出(`capability_import.cpp:327-342`)——逐字捕获,绝不重新序列化(无拼写漂移);这正是 v2 sidecar 字段为之设计的 `ExactSidecar` 状态(`workflow_recovery.hpp:54-56`)。
+
+invoker 返回 Pending 时,`handle_opaque` 回复 `(AHFL_CAP_PENDING=2, 0, 0)`(`capability_import.cpp:309-313`),guest latch 且 run2 返回 `(2,0,0)`。recorder 在该 import 盖戳 pending 坐标 `(node, ordinal, cap_id, arg_hash)`;会话 run2 臂(`workflow_session.cpp:597-608`)增加 `raw_status == 2` 分支:从 recorder 构造 `SuspendedNodeState`,`node_input = nullopt`(宿主不可观察——workflow 车道不发 `agent_input_hook`,`workflow_session.hpp:13`;evaluator 中该字段也仅信息性,`workflow_recovery.hpp:96-102`),以 Suspended 终止。
+
+**facade 产出:** `WorkflowResult` 的 `report.status = Suspended`、`result.suspended` 填充,生命周期事件 `NodeSuspended` / `WorkflowSuspended` / `RunCompleted{Suspended}`(`execution_event.hpp:218-269`)经扩展了 Suspended 终止臂的既有 `finalize_wasm_workflow_run` 路径发出。渲染器已中立(`execution_renderer.cpp:31-32,49-50,121,127,231-236,254-259`)。挂起时保存:会话经 `WorkflowSessionConfig::recovery_store` 保存(镜像 evaluator `workflow_runtime.cpp:1582-1603`:保存失败把 Suspended 降级为 `NodeFailed`)。
+
+**拒绝:** 在 `handle_opaque` 内捕获(车道特定管道穿过必须保持引擎会话中立的 WH-3 executor,且看不到逐节点计数器);仅在 `wrapped_invoker` 捕获(看不到 `ImportReply` 字节——结果帧在 invoker 返回后由 `handle_opaque` 写出,重新序列化 Value 有拼写漂移风险)。
+
+**仅 opaque 车道。** bridge 车道 Pending 按密封 ABI trap(无优雅 PENDING 臂;`capability_import.cpp:537-542` 返回原始状态后 guest trap),WH-4b 不在 bridge 车道起源挂起,trap 路径不变并记录。
+
+### 12.6.5 wasm 车道重放语义(精确算法)
+
+resume run(带 `recovery_snapshot`)时会话:
+
+1. **按 descriptor 校验快照**(evaluator `workflow_runtime.cpp:82-144` 的 wasm 镜像):workflow id 匹配;`suspended.node` 在 descriptor 中存在且 agent 匹配;与 `completed_nodes` 不相交;`completed_nodes` 依赖闭包;每条 memo 带 `node` 坐标;逐节点 memo ordinal 唯一且挂起节点上 `< pending_ordinal`;pending `cap_id` 在 wire schema 可解析。失败 → 失败的 `WorkflowResult`,绝不静默全新运行。
+2. **构造 memo map** `(WorkflowNodeId, ordinal) -> CapabilityMemoEntry`,标记前沿 `(suspended.node, pending_ordinal)`。
+3. **Fresh instance**(会话每 run 已新建;pending latch 是 per-instance 的,`core_wasm_codegen.cpp:13905-13909`,fresh 即清零)。
+4. **逐 import**(`wrapped_callback` 中,`inner` 之前):O(1) 导出 `(node, ordinal)`——call site 的 `source_symbol` → runner → schedule position(把既有 `symbol_to_runner` `workflow_session.cpp:260-293` 扩展为 `symbol_to_schedule`);`ordinal = per_node_counter[schedule]++`。然后:
+   - **Memo 命中**(`(node, ordinal)` 在 map 且位于该节点前沿之前):对 live 调用交叉校验 `cap_id` + `arg_hash`;不匹配 → fail-closed `"durable resume replay diverged from the recorded memo (ordinal N)"`(引擎中立消息,`workflow_runtime.cpp:832`);匹配 → 逐字 `alloc_then_write` `authoritative_json` 字节,回复 `(AHFL_CAP_OK, ptr, len)`。绝不调用 invoker → 零 live 副作用、零 intent 重发(§12.6.7)。
+   - **前沿**(`(node, ordinal) == (suspended.node, pending_ordinal)`):先身份门(`cap_id == pending_cap_id`,镜像 `:930-940` P0-15)→ 解析 pending 能力的结果 binding → 在该 binding 下 parse + `decode_json` `resume_pending_result_wire_json`(镜像 `:981-989`)→ 逐字供给;清除该节点前沿(后续调用 live)。缺注入结果 → `"durable resume is missing the pending capability result"`(`:967`)。
+   - **前沿之后 live**(schedule 中挂起节点之后的节点,或同节点 ordinal > pending):放行 `inner` → 正常 live invoker 路径,即 ReadyForLive(§12.6.8)。
+   - **前沿之前未命中**:分歧 → fail-closed。
+5. **run2 返回**:OK 且前沿被注入 → 正常 Completed;OK 但前沿从未被命中(fresh instance 走了不同分支、未发生 pending 调用)→ 分歧 fail-closed(镜像 `workflow_runtime.cpp:1422-1434`);trap/error → 既有失败臂。
+
+**不做逐 import node-event 前缀 join。** 会话从 import 自身的 `source_symbol` O(1) 导出 `(node, ordinal)`,而非每个 import 重解 node-event buffer。D1b controller 需要 O(N²) 前缀 join(`core_wasm_resume_controller.cpp:619-658`,复杂度注释 `:394-396`)是因为它是没有 invoker 上下文的纯决策权威;会话有上下文。node-event buffer 仍是 run 后完成性权威(P2-3 交叉检查不变)。共享原语是 `core_wasm_node_events::decode_node_events`——两层使用的 SSOT,无重复解码器。
+
+### 12.6.6 Fork 3 — CLI / fixture / 标志:本切片不加 CLI 路由;facade 字段与 fixture 迁移现在落地
+
+**选择 option (a):facade 配置字段 + WH-4b 新增 facade 级 ctest;fixture 立即迁移;`--recovery-store` 端到端 CLI 证明随 WH-6 切换落地。零并行 CLI 路径。**
+
+- **WH-4b 不加任何 CLI 路由**(无 `--runtime` flag、无 `run-wasm` 子命令)。CLI 在 WH-6 big-bang 前继续构造 evaluator(`workflow_run.cpp:1849`)。
+- **facade 配置字段**(`WasmWorkflowRuntimeConfig`,`src/runtime/wasm_runner/wasm_workflow_runtime.hpp:36-43`)对齐 `WorkflowRuntimeConfig`(`workflow_runtime.hpp:52-77`)增加:`recovery_snapshot`、`recovery_store`(裸指针)、`resume_pending_result`(native Value,表面对齐)、`resume_pending_result_wire_json`、`durable_write_intent_sink`。会话配置透传前三 + intent sink。
+- **Fixture big-bang 迁移(现在)**:
+  - `tests/scripts/durable_resume_cli_smoke.py` 内嵌 `SOURCE`(`:52-86`):`Echo` 现在在非 final 的 `Init` handler 调用 = bridge 车道。迁为 opaque:`context: Unit`,`state Init { goto Done; }`,`state Done { return Echo(Request { value: input.value }); }`;workflow 返回 `Response { value: only.value }` 不变。evaluator smoke 保持绿(opaque 形状 evaluator 兼容)。
+  - rich package(`:96-159`)已是 opaque(`DraftReply` 在 final `Done`),不动。
+  - `examples/durable-resume/src/main.ahfl`:`DraftReply` 在非 final `Compose` handler = bridge。big-bang 迁为 `state Compose { goto Done; }`、`state Done { return DraftReply(DraftInput { id: input.id, question: input.question }); }`、`context: Unit`;`effect: durable_write` 声明、安全/活性规约、README 两步法不变。WH-6 若不改它,该示例在 wasm 上必坏(bridge Pending trap),故在 WH-4b 改。
+- **`--recovery-store` 端到端 CLI 证明落在 WH-6**:CLI 切到 wasm facade 时,迁移后的 smoke 场景(2b/2c/2d/4)在不变标志契约下驱动 wasm 车道。WH-4b 的门是 facade 级 ctest。
+
+**拒绝:** WH-4b 临时 CLI 路由(过渡性 coexistence,Principle 1 禁止);把 fixture 迁移推迟到 WH-6(切换 + 迁移 + CLI 证明挤在一片,且示例此前在 wasm 上是坏的)。
+
+### 12.6.7 `--suspend-capability` 语义 + intent-log 对齐 + 失败矩阵
+
+**`--suspend-capability`:** 最外层 force-Pending 包装器与 evaluator 同构地包在 contextual invoker 外(`workflow_run.cpp:1830-1847`):按 canonical 名匹配、返回 `CapabilityCallStatus::Pending`、最外层先见名。wasm 车道上它位于 facade(包 `WasmWorkflowRuntimeConfig::invoker`),WH-4b facade 测试直接安装。加载快照时**惰性**:memo/inject 路径在 import 边界供给,从不到达 invoker。
+
+**Intent-log 对齐(已核实 evaluator 行为):** write-ahead intent 只在 live dispatch 路径触发(`workflow_runtime.cpp:1050-1058`),在 replay 分支之后——memo 命中在 `:902-910` 返回,consult 不到 intent sink。wasm 车道:① 会话盖戳 `invocation_context.idempotency_key`(同一 `compute_idempotency_key(workflow, node, ordinal, cap_id, arg_hash)`,`:274`,`:1032-1035`;workflow 索引取程序中稠密索引,同一程序跨运行稳定);② FACADE 用 intent-emitting 包装器包用户 invoker(镜像 `:1050-1058`:在 `ir::Program` 查能力 effect kind,盖戳时对 `DurableWrite`/`FinancialWrite` 发到 `durable_write_intent_sink`)。memo 命中不调用 invoker → 包装器不运行 → 零 intent 重发。CLI 在 WH-6 接 `--intent-log`(场景 4 证明挂起时恰好一条 intent、resume 时零条)。
+
+**失败/UX 矩阵(evaluator 对齐):** 挂起无 `--recovery-store` → exit 1(`:1865-1868`);保存失败 → 降级 NodeFailed,exit 1(`:1593-1603`);挂起并持久化成功 → stderr note、stdout 干净报告、exit 0(`:1893-1894`);`--resume-pending-result` 畸形/重复键 → Phase A.3 定向诊断;快照损坏/id 不匹配/闭包失败 → 失败结果;memo cap_id/arg_hash 不匹配 → "durable resume replay diverged" fail-closed;注入结果缺失/类型错/身份不匹配 → fail-closed;重放分歧(未命中 pending ordinal 就完成)→ fail-closed;双重 resume → 重跑(memo+注入+前沿后 live),与 evaluator 同——JSON store 无 consume-once CAS(那是 D2b 前沿);bridge Pending → trap,exit 1。审计投影无 suspended 计数器,挂起经 `run.status` + 事件观察,不变。
+
+### 12.6.8 ReadyForLive 的诚实裁决
+
+**D1b `run_resume` driver 按设计阻塞 `ReadyForLive`,而 WH-4b 不使用该 driver——故 ReadyForLive 在范围内且可用。**
+
+已核实:evaluator resume 在前沿下 memo 重放、前沿注入,然后**前沿之后全部 LIVE**——`workflow_runtime.cpp:1016` 注入后立即置 `node_memo.replaying = false`,`:1025+` 是正常 live dispatch(intent 触发、效果发生)。挂起后这些调用从未执行过,必须 live,语义正确。D1b controller **能决定** `ReadyForLive`(`core_wasm_resume_controller.hpp:256-260`,携带 call site + arg_hash + 解码参数),但 `run_resume` driver 对其 fail-closed(`core_wasm_resume_host.hpp:145`;`:30-31` 注释 "ReadyForLive / dedup arms -> fail closed";`:54-55` "this driver never invokes a live capability")。该 driver 的职责是零 live 调用(其 memo 字节来自机密 `IntegrityPayloadStore`,live 供给需要尚不存在的 D2b durable-effect authority + 幂等令牌去重)。
+
+**WH-4b 会话级消费者是不受该职责约束的不同设计**:其 memo 字节来自已在手的 JSON 快照,前沿后路径就是会话既有 live invoker(全新运行的同一路径)。注入前沿后,后续 import 放行 `inner` → `wrapped_invoker` → contextual invoker,与非 resume 运行完全一致;ReadyForLive 不需要新机制,它就是"不拦截"。D1b driver 的阻塞前沿保持原样;解封它(`AwaitingLiveResult` 状态 + live-response API + D2b-4 去重)是 D2b durable-effect authority 前沿——关于崩溃/重开下 exactly-once live 效果的独立议题,与"前沿后能否运行"无关。
+
+**范围含义:** WH-4b 支持一般 opaque 车道工作流的 suspend/resume——包括 pending 之后(挂起节点内或后续节点)还有能力调用的工作流。e3 fixture(pending 调用是唯一能力调用)证明 inject-to-completion;新 e4 fixture(§12.6.10/12)证明 memo-replay + 注入 + 前沿后完成。唯一硬限制是车道:仅 opaque(WireJson)。
+
+### 12.6.9 HMAC 机制的命运(test-only FOUNDATION + 日落条款)
+
+`CoreWasmResumeRecord` codec、`IntegrityPayloadStore`、D1b controller、`run_resume` 在 HEAD 零生产调用者(仅 `core_wasm_resume_wasm3_e2e.cpp` 与 F4/F5 测试)。WH-4b 不新增对它们的依赖。它们是已落地的 D2b 基底:机密 payload store + HMAC record + decision-only controller 正是 D2b durable-effect authority(幂等令牌去重、机密静态结果、consume-once CAS)的构建件,WH-3 wasm3 引擎端口是其生产引擎适配器。
+
+**日落条款(约束性):** D2b 切片(WH-6 切换后的紧邻 durable-resume 前沿)必须 (a) 接入 `run_resume` 的第一个生产调用者(durable-effect authority 下供给 live 效果的 D2b host),或 (b) 在一个 big-bang 变更中删除 record codec、payload store、controller、driver 及其专属测试。没有第三选项。
+
+### 12.6.10 Fork 6 — agent 车道:不在 WH-4b 范围
+
+**仅 workflow 车道。** `WasmAgentRunner` 的 run2 Pending 臂(`src/runtime/wasm_host/wasm_agent_runner.cpp:544,560-564` 非零 → `NodeFailed`)保持不变并加诚实注释:agent 车道挂起不是 CLI 契约(CLI 跑 workflow;`--recovery-store` 驱动 `WorkflowRuntime`),agent runner 没有 recovery-snapshot 消费者,conformance 普查有零个 pending mock(无对齐压力)。evaluator 的 agent suspend(`agent_runtime.cpp:172-176`)服务 REPL/DAP agent-runner 契约,那是 WH-7/WH-8 的领地,由它们决定 agent 车道挂起。
+
+### 12.6.11 WASM=OFF
+
+WH-4b 全部新增位于 gated 目标内:会话 memo 层在 `ahfl_runtime_wasm_host`,facade 字段在 `ahfl_runtime_wasm_runner`,新 ctest 在 `if(AHFL_ENABLE_BACKEND_WASM)` 内。WH-4b 不改 CLI(CLI `#ifdef` 分叉由 WH-6 决定)。smoke fixture 迁移是源码级、引擎中立的(evaluator smoke 在 WASM=OFF 下保持绿)。
+
+### 12.6.12 有序工作清单
+
+1. `workflow_recovery.{hpp,cpp}`:`CapabilityMemoEntry` 加 `std::optional<WorkflowNodeId> node`;序列化/解析(evaluator 条目写出时缺省;读入缺省 → nullopt);更新 three-state 注释。v2 append-only,不改 schema 字符串。
+2. 新 `src/runtime/wasm_host/wasm_resume_recorder.{hpp,cpp}`:逐节点计数器、memo 向量、pending 坐标、当前 import 关联。
+3. `workflow_session.{hpp,cpp}`:`WorkflowSessionConfig` 加 recovery/intent 透传;`wrapped_callback` 经 `symbol_to_schedule` 导出 `(node, ordinal)`、驱动 recorder、resume 时按 §12.6.5 供给 memo/inject/live;run2 臂加 `raw_status == 2` → Suspended(构造快照、`recovery_store` 保存、失败降级);finalize 加 Suspended 终止臂;盖 idempotency_key。
+4. `wasm_lifecycle.{hpp,cpp}`:`WasmWorkflowRunFacts` 加 Suspended 路径;发 NodeSuspended/WorkflowSuspended/RunCompleted{Suspended}。
+5. `wasm_workflow_runtime.{hpp,cpp}`:config 加五个 recovery/intent 字段;`run()` 透传;用 intent-emitting 包装器包用户 invoker(镜像 `workflow_runtime.cpp:1050-1058`,effect kind 在 `ir::Program` 查)。
+6. 新 `tests/golden/wasm/e4_capability_workflow_resume_memo.ahfl`:2 节点 opaque 流水线——`first` 调 `A`(OK,被 memo),`second` 调 `B`(经计数包装器 Pending);有界 `String(0,64)`;`context: Unit`;两个调用都在 final state。
+7. 新 `tests/integration/wasm_workflow_resume_e2e.cpp`(TestTargets.cmake WASM gate 注册):facade 级往返家族(§12.6.13)。
+8. `tests/scripts/durable_resume_cli_smoke.py`:SOURCE 迁 opaque;rich package 不动。
+9. `examples/durable-resume/src/main.ahfl`:DraftReply 迁 final `Done`,`context: Unit`;README 不变。
+10. 本决策节 + RFC 0026 Decision History 条目。
+
+### 12.6.13 验收 / 验证标准
+
+1. **e3 往返**(`e3_capability_workflow_resume.ahfl`):计数 invoker;强制 Echo Pending → `Suspended` + 快照存入临时 `WorkflowRecoveryStore` + `workflow_completed == 0`;以注入 wire JSON resume → `Completed`,输出等于注入结果,计数 invoker 记录**零次 live 调用**。
+2. **e4 memo 往返**:`A` OK 然后 `B` 强制 Pending → Suspended,memo 含 `(first, 0, A, …)`;resume → Completed,`A` 零 live(memo 供给)、`B` 零 live(注入)——证明 memo ordinal 零 live + 恰好一次注入;若 e4 有前沿后调用,它恰好 live 一次。
+3. **Fail-closed 家族**:损坏快照 JSON;workflow-id 不匹配;挂起节点不在 descriptor;memo cap_id 不匹配;memo arg_hash 不匹配;注入结果缺失;注入 wire 类型错;pending 身份不匹配;重放分歧(快照的 pending 调用在未被走取的分支上)——各自产出带引擎中立诊断的失败 `WorkflowResult`,绝不静默新跑或 live 重调。
+4. **Intent 对齐**:e4 resume 时 intent sink 记录零条(memo 的 `A` 与注入的 `B` 从不到达 invoker);挂起运行对 live 的 `A`(durable_write)恰好一条。
+5. **Smoke 迁移**:迁移后 evaluator CLI 上 `durable_resume_cli_smoke.py` 场景 1/2/2b/3/3b 绿;rich package 2c/2d 不变绿。
+6. **示例**:`examples/durable-resume` 迁移后 evaluator CLI 场景 4 往返(挂起一条 intent、resume 零条)。
+7. **WASM=OFF**:configure + build 干净(facade 与新 ctest 缺席;evaluator smoke 绿)。
+8. **ASan**:新 ctest + wasm 阶梯绿。
+9. **全量 ctest** 绿,含既有 `ahfl_core_wasm_resume_wasm3_e2e`(HMAC FOUNDATION 证据不动)。
+10. **零新增 HMAC 依赖**:WH-4b diff 中改动的 wasm_host/wasm_runner TU 对 `core_wasm_resume_host` / `core_wasm_resume_controller` / `payload_store` 的 include 为零。
+
+### 12.6.14 诚实声明边界 — WH-4b 后仍未证明 / 推迟的事项
+
+- CLI 端到端 wasm suspend/resume 随 WH-6 切换落地;WH-4b 仅在 facade 级证明。
+- Bridge 车道 suspend/resume 不支持(bridge Pending 按密封 ABI trap)。
+- 跨引擎 resume 不支持且 fail-closed;WH-6 前 evaluator 快照不能在 wasm 上 resume。
+- Consume-once / 崩溃重开下 exactly-once(`IntegrityPayloadStore` generation CAS、幂等令牌去重、机密静态结果)是 D2b 前沿;JSON store 无 consume-once CAS(双重 resume 重跑,与 evaluator 今天一致)。
+- Agent 车道挂起属 WH-7/WH-8。
+- HMAC 机制的生产命运由 §12.6.9 日落在 D2b 绑定。
