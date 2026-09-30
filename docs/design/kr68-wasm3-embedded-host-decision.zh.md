@@ -1468,3 +1468,219 @@ Error: evaluation requires the embedded wasm engine; this build was configured w
 ---
 
 **跨切片注记(WH-8 继承):** DAP 的 WASM=OFF 策略(§12.7.1)、facade config 的 hooks/cancellation/monotonic_clock 字段(§12.7.2 推迟项)、ctor 编译失败语义(§12.7.8)均由 WH-8 继承,不再重开决策。DAP 切换(`debug_session.cpp:291` `unique_ptr<WorkflowRuntime>` → `WasmWorkflowRuntime`)是 hooks 同签名的机械替换(`WasmRuntimeHooks` 已携带全部 5 个 hook,`wasm_runtime_hooks.hpp`),加 cancellation 在 import 边界检查。
+
+## 12.9 WH-8 decisions (2026-09-30, dedicated decision agent, no human gate)
+
+本节是 WH-8(DAP 从 evaluator `WorkflowRuntime` 切换到 `WasmWorkflowRuntime` facade)的书面决策。决策代理只读地对照 HEAD `9bca5507` 复核了源码,未运行构建/测试。**继承不重议**:WASM=OFF 策略(launch/execute 拒绝、非执行功能可用、gate 只在 composition edge)、facade config hooks/cancellation/monotonic_clock 在 WH-8 引入、facade ctor 编译失败语义 = `run()` 时以 DiagnosticBag 浮现(§12.7.8)、link-edge flip(§12.7.3 表 WH-8 行:`ahfl_tooling_dap` 翻到 `WasmWorkflowRuntime`;`ahfl_runtime_engine` 的 evaluator edge 在 DAP 成为最后一个外部生产 includer 后 PUBLIC→PRIVATE)。
+
+**复核事实(vs HEAD 9bca5507)**:5 个 hook 签名逐字节相同(`wasm_runtime_hooks.hpp:45-75` vs `workflow_runtime.hpp:84-107`);hook 触发语义——P6 `state_entered` = import-boundary trace prefix + post-run,WireJson = post-run only(`workflow_session.cpp:135-220`),capability hooks 在 import 处 LIVE(`wrapped_invoker:495-504`),`node_completed` post-run 且在 state hooks 之后(`:1143-1237`),`agent_input_hook` 在 workflow lane 不触发;evaluator 取消检查在 node loop 顶部(`workflow_runtime.cpp:1180-1200`,Cancelled/Interrupted + `"workflow execution cancelled"`/`"workflow execution interrupted"`);grammar 无用户循环(`AHFL.g4` statement 无 while/for),递归由 `core_recursion.hpp` R1/R2/R3 编译期封闭;DAP 无 pause/terminate/attach(`dap_server.cpp:69-113`);生产 includer of `workflow_runtime.hpp` 仅剩 `dap/debug_session.hpp`(WH-8)与 `cli/workflow_run.cpp`(WH-6);`compile_error_` 仍是 `std::optional<std::string>`(§12.7.8 DiagnosticBag 未落地)。
+
+**wh8-prep-map.md 中的过时声明(stale)**:(1) "session 不填充 diagnostics"——过时,`wasm_lifecycle.cpp:31-39` `add_error` 填充 code+message;(2) "facade 是自由函数不是类"——过时,`WasmWorkflowRuntime` 类已存在(`wasm_workflow_runtime.hpp:82`);(3) "hook 语义 bug:agent_name 占 node 槽、AgentId{0}、node_name 空"——过时,fix-forward 已全部修复(P1-6 agent_name、P2-2 真实 AgentId、P2-7 `runner_to_schedule` 解析 node_name);(4) "monotonic_clock 推迟到 WH-8 供 DAP 时序"——前提过时,DAP 源码中 `monotonic_clock` 引用为零,无物可对齐;(5) "cancellation 缺失"——确认(wasm_host grep 为空),必须新增。
+
+### 12.9.0 决策总览
+
+WH-8 是一次 big-bang 切换:`src/tooling/dap/` 不再 include `runtime/engine/workflow_runtime.hpp`,改为持有 `runtime/wasm_runner/wasm_workflow_runtime.hpp` 的 `WasmWorkflowRuntime`。**不保留 evaluator 回退路径、不并行实现**(Principle 1)。切换后 `src/tooling/dap/` 对 evaluator 的 include 为零,`ahfl_runtime_engine` 的 `ahfl_runtime_evaluator` edge 从 PUBLIC 翻为 PRIVATE(WH-6 已切 CLI,DAP 是最后一个外部生产 includer)。
+
+核心分叉是**断点活性(breakpoint liveness)**:evaluator 在每个 state entry 同步触发 hook,任何 state/line 断点都能 LIVE 暂停;wasm lane 的 host 只能在 import boundary(capability 调用)观察 guest,state 断点的活性取决于该 state 是否在某次 capability 调用之前进入。决策见 12.9.1。其余决策:cancellation 在 import boundary 检查(12.9.2);monotonic_clock 不引入(12.9.3);hook 签名零差异、语义缺口三项、其中 `node_completed` 触发顺序修订(12.9.4);变量/作用域/栈的诚实契约(12.9.5);阻塞 hook/线程机制不变且无死锁(12.9.6);编译/启动错误(12.9.7);CMake link-edge diff(12.9.8);WASM=OFF 策略具体化(12.9.9);测试计划(12.9.10);有序 worklist(12.9.11);验收标准(12.9.12);被否方案(12.9.13)。
+
+### 12.9.1 断点活性模型(核心决策)
+
+**分类权威**:facade descriptor(`CoreWasmExecutionDescriptor`)。新增 facade 访问器 `descriptor_for(workflow_name) -> const CoreWasmExecutionDescriptor*`(当前 descriptor 是 `CompiledWorkflow` 私有成员,需暴露)。DAP 在 `setBreakpoints` 时(launch 之后、run 之前)调用它做精确分类。
+
+**descriptor 扩展(一处)**:`CoreWasmStateWalk` 新增 `std::uint32_t last_cap_walk_index{0}`——该 agent 的 walk 中、包含最后一次 capability 调用的 state handler 的 walk 下标(无 capability 调用时为 0)。codegen 已知道 walk 与 capability call site,填充此字段是举手之劳。这是让断点验证精确的权威来源;DAP 不应近似 codegen 已知的事实(Principle 1/5)。
+
+**分类规则**(`setBreakpoints` 的 `verified` + `message`):
+
+| 断点位置 | 分类 | verified | message(pinned) |
+|---|---|---|---|
+| capability 调用行 | **LIVE**(总是) | `true` | (无 message) |
+| state handler 行,该 state 在 agent walk 中且 walk-index ≤ `last_cap_walk_index`,且该 agent 有 node `has_capability` | **LIVE** | `true` | `"state entered before capability boundary (live pause)"` |
+| state handler 行,该 agent 无 node `has_capability` | **POST-MORTEM** | `false` | `"state has no capability boundary in its runner; pauses after run completes (post-mortem)"` |
+| state handler 行,walk-index > `last_cap_walk_index` | **POST-MORTEM** | `false` | `"state is entered after the last capability boundary; pauses after run completes (post-mortem)"` |
+| state handler 行,state 不在 walk 中(`all_states` 有但 walk 无,computed-goto 未取分支) | **NEVER** | `false` | `"state is not on the runner's walk (untaken branch); never paused"` |
+| 非 state-handler 行(agent/workflow/node 声明行) | **NOT BREAKABLE** | `false` | `"line is not a state handler; only state handlers and capability calls are breakable"` |
+
+**`breakable_lines_` 收窄**:当前 `build_breakable_lines`(`debug_session.cpp:406-463`)把 state handler 行 + agent/workflow/node 声明行都加入 `breakable_lines_`,导致声明行断点 `verified:true` 但永不暂停——这是 evaluator 时代就存在的诚实性缺陷。WH-8 收窄为**仅 state-handler 行**(capability 调用行通过 state handler 行映射,因为 capability 调用在 state handler 内)。声明行断点按上表 NOT BREAKABLE 拒绝。
+
+**DAP deferred-binding 诚实**:`setBreakpoints` 在 launch 之前也可能被调用(DAP 客户端常在 initialize 后、launch 前设断点)。此时 session 尚未持有 facade,descriptor 不可用。处理:`setBreakpoints` 先按 `breakable_lines_`(源码级,不依赖 descriptor)做粗筛;launch 完成、facade 构造后,DAP 主动向客户端发送 unsolicited `"breakpoint"` 事件,携带按 descriptor 精化后的 `verified`/`message`。这是 DAP 标准的 deferred breakpoint binding 模式,保证客户端最终看到精确的验证状态。
+
+**POST-MORTEM 断点的暂停语义**:分类为 POST-MORTEM 的断点 `verified:false`,但 DAP 仍注册它。run 完成后(post-run state hooks 触发时),若该 state 在 post-run 重建中出现,DAP 触发 stopped 事件(reason `"pause"`),栈/变量按 12.9.5 的 post-mortem 契约呈现。客户端通过 `verified:false` + message 已知这是 run 完成后的暂停,不被误导。
+
+**单步语义**:`next`/`stepIn`/`stepOut` 的步进目标是下一个 state entry。在 wasm lane 上,"下一个 state entry" 只在 import boundary(trace prefix 的下一条)或 post-run(下一条重建 state)可观察。因此单步在 LIVE 区间(capability boundary 之前)逐 import-boundary 推进;越过最后一个 capability boundary 后,单步直接到 post-run 的下一条重建 state(或 run 结束)。这是诚实的:单步粒度 = host 可观察粒度。`stepIn` 不进入 capability 实现(capability 是 host 侧调用,非 guest 代码);`stepOut` 从当前 state 走到该 node 的下一个可观察点。与 evaluator 时代的差异(evaluator 逐 state entry 同步步进)通过 `verified`/message 与文档说明,不伪装。
+
+**WireJson vs P6 差异**:断点活性分类对两条 lane 相同(都基于 descriptor 的 walk/capability 结构)。差异在变量呈现(12.9.5):P6 lane 的 node 输出在 `node_completed` 时可读(O_k),WireJson lane 为 `NoneValue`(不透明,run 结束才解码)。
+
+### 12.9.2 Cancellation / interruption 检查点 + DAP 请求映射
+
+**新增 config 字段**(顶层,与 evaluator 对齐,**不**放进 `WasmRuntimeHooks`——hook 是值观察通道,不是控制通道;evaluator 也把 cancellation 放在 config 而非 hook):
+
+```cpp
+// WasmWorkflowRuntimeConfig + WorkflowSessionConfig
+std::function<bool()> cancellation_requested;
+std::function<bool()> interruption_requested;
+```
+
+**检查点**(wasm lane):
+1. **`wrapped_callback` 顶部**(`workflow_session.cpp:643-670`,import boundary):在 trace decode / inner 之前检查。若 `cancellation_requested()` → 置 `cancelled=true`,返回 `eng::ImportAbort{}` 终止 run2;run2 返回后 session 构建 `RunTerminalStatus::Cancelled` + `WorkflowFailureKind::Cancelled` + diagnostic `"workflow execution cancelled"`(与 evaluator `workflow_runtime.cpp:1196-1200` 对齐)。`interruption_requested` 同理 → `Interrupted` + `"workflow execution interrupted"`。此检查覆盖 WH-4b memo/replay boundary(memo 命中也走 `wrapped_callback`,顶部检查在 memo 分类之前)。
+2. **`run_workflow_session` 入口**(pre-run):在 admission/instantiation 之前检查,若已请求取消则直接返回 Cancelled 结果(不启动 wasm 实例)。
+
+**无 import 的 workflow**:没有任何 mid-run 取消点。这类 workflow 的 guest 计算是**有界的**——grammar 无用户循环(`AHFL.g4` statement 仅 exprStmt/ifStmt/gotoStmt/returnStmt 等),递归由 `core_recursion.hpp` R1/R2/R3 格编译期封闭(静态深度来自有界容器容量),wasm `kOpLoop` 仅用于有界内部扫描。因此无 import workflow 必然运行到有界完成,cancellation 请求在 run 完成后才被观察(pre-run 检查除外)。这是诚实的:没有可挂起的边界,就没有 mid-run 取消。DAP 文档说明此契约。
+
+**DAP 请求映射**:
+- `disconnect` → 置 `stopping_` → `cancellation_requested` 返回 true → wasm lane 在下一个 import boundary 终止(或无 import 时运行到完成)→ `run()` 返回 → `execute()` 见 `stopping_` → 跳过 diagnostics → `terminated` 事件。worker join 及时完成(有界)。
+- **不新增** `pause`/`terminate`/`attach` 请求(evaluator 时代 DAP 也没有,`dap_server.cpp:69-113`)。断点/单步的暂停机制(阻塞 hook)是唯一的 pause。
+- `continue`/`next`/`stepIn`/`stepOut` → resume/arm step(不变,notify `resume_cv_`)。
+- DAP 只接 `cancellation_requested`;`interruption_requested` 默认空(facade 为 parity 与未来 host 保留)。
+
+**结果映射**:wasm lane 的 `Cancelled`/`Interrupted` 终端(`RunTerminalStatus`)映射到 neutral `WorkflowStatus::NodeFailed`(`workflow_result.cpp` 既有映射),renderer 渲染 `RunTerminalStatus::Cancelled`。DAP 在 `!stopping_` 时把 diagnostic 发到 stderr + `terminated`;`stopping_` 路径静默。
+
+### 12.9.3 monotonic_clock
+
+**不引入** facade config。复核确认 DAP 源码中 `monotonic_clock` 引用为零——evaluator 时代 DAP 就从未设置过此字段,§12.7.2 "推迟到 WH-8 供 DAP 时序" 的前提不成立。facade 的事件存储使用 lifecycle helper 内部时钟,DAP 不消费 execution event 流(DAP 用 hook,不用 event store)。若未来有 host 需要确定性 event offset,那是独立 slice,不在 WH-8。此条同时更正 §12.7.2 的过时 deferral 理由。
+
+### 12.9.4 Hooks 签名对齐与语义缺口
+
+**签名**:5 个 hook(`state_entered`、`agent_input`、`capability_invoked`、`capability_result_observer`、`node_completed`)在 `WasmRuntimeHooks` 与 `WorkflowRuntimeConfig` 之间逐字节相同(已复核)。DAP 的 hook lambda 从 `config.*` 平移到 `config.hooks.*`,签名零改动。
+
+**语义缺口与决策**:
+
+1. **`agent_input_hook` 在 workflow lane 不触发**。evaluator 在每个 node 的 agent 运行前触发(`workflow_runtime.cpp:1351-1352`,真实 node_name + node_input);wasm lane 的 node 输入在 guest 内部物化,host 不可观察,故不触发。**决策**:删除 DAP 的 `on_agent_input` + `agent_inputs_` 成员 + hook 安装(workflow lane 上是死代码,Principle 1)。Node frame 改由 `on_state_entered` 合成(见下)。Input/Output 作用域的 `"input"` 不可得(诚实契约,12.9.5)。
+
+2. **`node_completed_hook` post-run 且在 state hooks 之后**(`workflow_session.cpp:1143-1237`)。这导致任何 state 暂停点都拿不到 node 输出(node_completed 在所有 state hook 之后才触发)。**决策:facade 修订触发顺序**——post-run 按 node(schedule 顺序)逐 node 触发:先 `node_completed(node, output)`,再触发该 node 的 `state_entered` hooks。这使 post-mortem 暂停点携带已完成 node 的输出。**§12.1 保证表修订(dated)**:post-run 触发顺序由 "state hooks 全部 → node_completed 全部" 改为 "per node(schedule 顺序):node_completed(node) → 该 node 的 state_entered hooks"。WireJson lane 的 node 输出在 `node_completed` 时为 `NoneValue`(不透明,run 结束才解码);P6 lane 为真实 O_k。suspend 路径同样适用:已完成 node 的 node_completed 在其 state hooks 之前;pending node 无 node_completed(未完成),其 state hooks 从 suspend 点的 trace prefix 触发。
+
+3. **`state_entered_hook` 的 node_name 现已始终解析**(P2-7 `runner_to_schedule`,`workflow_session.cpp:103-113`;WireJson 重建用 `node_desc->name`,`:156,211`)。`wasm_runtime_hooks.hpp` 头注释 "empty for import-boundary workflow fires" 过时,需更正。DAP 可依赖 node_name 合成 Node frame。
+
+4. **`capability_invoked_hook` 携带真实 AgentId**(P2-2,`wrapped_invoker:469-479`)——DAP 的 `agent_debug_id` 可用,无缺口。
+
+5. **`capability_result_observer`** 在 invoker 返回后 LIVE 触发——无缺口。
+
+**Node frame 合成**:`on_state_entered` 中,若 hook 的 node_name 非空且与当前 Node frame 的 node 不同(或无 Node frame),则弹出 Workflow 之上的帧、压入新 Node frame(source 取自 `node_line_map_`),再压入/替换 State frame。这使栈形为 `[Workflow, Node, State]`(capability 暂停时再加 Capability frame),与 evaluator 时代一致。Node frame 在该 node 的首个 state entry 时压入(evaluator 在 agent_input 时压入,时机略早于首个 state,但形状一致;诚实差异:wasm lane 的 Node frame 在首个可观察 state 时出现)。
+
+### 12.9.5 变量 / 作用域 / 栈在暂停点的诚实契约
+
+| 暂停点类型 | Workflow 作用域 (400) | Input/Output 作用域 (300+a) | Context 作用域 | 栈帧 |
+|---|---|---|---|---|
+| **LIVE capability 暂停** | workflow input(仅) | 空(agent_input 不可得;node_completed 未触发) | 空(不变) | `[Workflow, Node, State, Capability]` |
+| **LIVE state 暂停**(import-boundary trace prefix) | workflow input(仅) | 空 | 空(不变) | `[Workflow, Node, State]` |
+| **POST-MORTEM state 暂停**(node_completed 重排后) | workflow input + 已完成 node 的输出(node_results_) | `"output"`(该 node 的输出,P6=真实值 / WireJson=null) | 空(不变) | `[Workflow, Node, State]` |
+| **run 完成后** | workflow input + 全部 node 输出 + workflow output | `"output"`(末 node) | 空(不变) | `[Workflow]`(worker 已 join) |
+
+**不可得项(诚实)**:
+- `"input"`(agent/node 输入):wasm lane 不触发 `agent_input_hook`,node 输入在 guest 内物化,host 不可观察。`evaluate("input")` 返回 `"unknown identifier input"`。**不**从 workflow input 合成(node 输入是投影,非 workflow input,合成即说谎)。
+- Handler 局部变量:guest 栈帧内,host 不可见(evaluator 时代也不可见,不变)。
+- WireJson lane 的 node 输出:`node_completed` 时为 `NoneValue`(不透明 wire JSON,run 结束才解码)。变量栏显示 `null`。P6 lane 为真实值。DAP 可通过 `descriptor.frame_contract` 告知用户当前 lane。
+
+**evaluate**:identifier-path 解析(不变)。`"input"` → unknown(诚实);node 名 → 该 node 输出(post-mortem,P6=真实/WireJson=null);`"output"` → 当前 agent 输出(post-mortem)。
+
+### 12.9.6 阻塞 hook / 线程机制
+
+**机制不变,且在 wasm lane 上安全**。DebugSession 的 worker 线程运行 workflow;hook 在 worker 上阻塞于 `resume_cv_`(`pause()`,`debug_session.cpp:660-680`);主线程处理 DAP 请求;`mutex_` 保护 frames/variable 状态。wasm lane 的阻塞发生在 `ImportCallback` 内(`wrapped_callback`/`wrapped_invoker`),阻塞的是 worker 上的同步 wasm3 实例——主线程从不触碰 wasm 实例,无竞争。
+
+**死锁检查**:worker 在 CV 等待期间释放 `mutex_`(`pause()` 在持锁期间 check `stopping_`/step 状态后释放锁等待);主线程的 DAP 请求(stackTrace/scopes/variables/continue)获取 `mutex_` 读状态、`continue` notify CV——不与 worker 互锁。`disconnect` 置 `stopping_` + notify + join:worker 见 `stopping_` 后 `pause()` 立即返回(不阻塞),wasm lane 在 cancellation 请求后于下一个 import boundary 终止,join 及时完成。无死锁路径。
+
+**与 evaluator 时代的唯一差异**:evaluator 的 hook 在 node loop 内同步触发(worker 阻塞在 evaluator 调用栈中);wasm lane 的 hook 在 import callback 内触发(worker 阻塞在 wasm3 host callback 中)。两者都是 worker 阻塞、主线程服务 DAP,线程模型相同。
+
+### 12.9.7 编译 / 启动错误
+
+- **前端错误**(parse/resolve/typecheck/validate):不变——`compile_source_file`(`debug_session.cpp:51-94`)失败 → stderr diagnostics + `terminated`(worker 启动前)。
+- **facade wasm 编译错误**(lowering/layout/codegen):facade ctor 存 `compile_error_`;`run()` 返回 failed `WorkflowResult`(`wasm.compile-failed`,`wasm_workflow_runtime.cpp:87-96`)+ diagnostics。DAP 的 `execute()` 渲染 `result.diagnostics` → stderr + `terminated`。**§12.7.8 DiagnosticBag 升级是前置**:当前 `compile_error_` 是 `std::optional<std::string>`(无 SourceRange);若 WH-6 未落地 DiagnosticBag,WH-8 worklist 包含它(`compile_error_` → `DiagnosticBag`,`run()` 浮现 bag,DAP 渲染保留 SourceRange)。
+- **sibling workflow codegen 失败**(compile-all 语义,§12.7.4):facade ctor 编译**所有** workflow(`wasm_workflow_runtime.cpp:58-81`),任一失败 → `compile_error_` 指名失败 workflow → DAP `run()` 返回 failed → stderr + `terminated`。诚实:程序不可编译,阻塞调试。DAP 不支持"只编译被调试 workflow"(facade 是 compile-all)。
+- **workflow 名不存在**:DAP 在 launch 时按 IR 校验名字(`debug_session.cpp:189-196`),不存在 → `"no workflow found"` stderr + `terminated`(facade 构造前)。facade 的 `kWorkflowNotFound` 是防御路径。
+- **session pre-run 失败**(admission/instantiation/pack):`run()` 返回 failed(`wasm.session-failed`,`:186-190`)→ stderr + `terminated`。
+
+### 12.9.8 Big-bang + CMake link-edge diff
+
+**源码翻转**(big-bang,同一变更):
+- `debug_session.hpp`:include `runtime/engine/workflow_runtime.hpp` → `runtime/wasm_runner/wasm_workflow_runtime.hpp`;成员 `std::unique_ptr<ahfl::runtime::WorkflowRuntime> runtime_` → `std::unique_ptr<ahfl::runtime::wasm_runner::WasmWorkflowRuntime> runtime_`(#ifdef 门控,见 12.9.9)。
+- `debug_session.cpp`:`config.state_entered_hook` → `config.hooks.state_entered_hook`(5 个 hook 同理);`config.capability_invoker` → `config.invoker`;新增 `config.cancellation_requested = [this]{ return stopping_.load(); }`;删除 `on_agent_input`/`agent_inputs_`;`on_state_entered` 合成 Node frame;断点分类器接入 `descriptor_for`。
+- **删除** evaluator 专属路径:无并行保留。
+
+**CMake diff**:
+- `src/tooling/dap/CMakeLists.txt`:`ahfl_tooling_dap` 的 link 从 `ahfl_runtime_engine`(evaluator)翻到 gated `ahfl_runtime_wasm_runner`:
+  ```cmake
+  target_link_libraries(ahfl_tooling_dap
+      PUBLIC
+          ahfl_base_public
+          ahfl_compiler_ir
+      PRIVATE
+          ahfl_base_json
+          ahfl_compiler_syntax
+          ahfl_compiler_semantics
+  )
+  if(AHFL_ENABLE_BACKEND_WASM)
+      target_link_libraries(ahfl_tooling_dap PRIVATE ahfl_runtime_wasm_runner)
+      target_compile_definitions(ahfl_tooling_dap PRIVATE AHFL_ENABLE_BACKEND_WASM=1)
+  endif()
+  ```
+  注意:`ahfl_runtime_wasm_runner` PUBLIC 依赖 `ahfl_runtime_engine`(neutral WorkflowResult 类型),故 DAP 仍间接获得 engine 的**类型**头文件,但不再链接 evaluator 实现。`ahfl_runtime_value` 由 wasm_runner PRIVATE 传递——DAP 用 `Value` 类型,需显式 link `ahfl_runtime_value`(wasm_runner 的 PRIVATE 不传播)。
+- `src/runtime/engine/CMakeLists.txt:46-54`:`ahfl_runtime_evaluator` 从 PUBLIC 翻为 **PRIVATE**(WH-6 切 CLI + WH-8 切 DAP 后,生产 includer 为零)。
+- **测试目标补 explicit evaluator link**(edge flip 后不再传递):`tests/unit/runtime/wasm_runner/wasm_runner.cpp`(evaluator differential)、`tests/integration/durable_resume_capstone.cpp`、`tests/unit/runtime/engine/workflow_runtime.cpp`、`tests/conformance/evaluator_engine.cpp`、`tests/integration/reference_workflow_recovery_worker.cpp`、`tests/integration/core_wasm_e3_probe.cpp`。
+
+### 12.9.9 WASM=OFF 继承策略(DAP 具体化)
+
+继承 §12.7 策略:**launch/execute 拒绝,非执行功能可用,gate 只在 composition edge**。
+
+- `ahfl_tooling_dap` 在 WASM=OFF 下**不链接** `ahfl_runtime_wasm_runner`(gated)。`runtime_` 成员、config+ctor、`execute()` 用 `#ifdef AHFL_ENABLE_BACKEND_WASM` 门控。
+- **WASM=OFF launch 拒绝**(pinned diagnostic):
+  ```
+  ahfl-dap launch requires the embedded wasm engine; this build was configured with -DAHFL_ENABLE_BACKEND_WASM=OFF. Rebuild with the default (ON) to debug workflows.
+  ```
+  发到 stderr(`emit_output("stderr", ...)`)+ `terminated` 事件,返回 `"{}"`。
+- **非执行功能可用**:`initialize`、`setBreakpoints`(BreakpointManager 仍工作;但 `breakable_lines_` 由 session 注册,session 不存在 → `verified:false`,诚实)、`threads`(返回单 ahfl-main)、`disconnect`。`stackTrace`/`scopes`/`variables`/`evaluate` 返回空/错误(无 session)。
+- **gate 边界**:仅 `runtime_` 成员 + launch 内 config/ctor + worker 启动 + `execute()`。hook lambda 与 `on_*` 方法编译(不引用 `runtime_`),是 DAP 自身逻辑(WASM=ON/OFF 共享),不散落 `#ifdef`。
+
+### 12.9.10 测试计划
+
+**既有 `dap_basic.cpp`(27 tests)分诊**:
+
+| 类别 | tests | 处置 |
+|---|---|---|
+| PASS 不变 | 6, 9, 10, 11, 15, 17, 20, 23-27 | 验证通过 |
+| PASS-but-degraded(post-mortem state 暂停) | 7, 8, 12, 13, 14, 16 | 重写断言:stopped 事件触发、栈显示 state,但断言这是 post-mortem(run 已完成);16 断言 Node frame 由 `on_state_entered` 合成(形状 `[Workflow, Node, State]`) |
+| BREAK(agent input / node 输出) | 18, 19, 21, 22 | 见下 |
+
+**BREAK tests 重写**:
+- **18/19**(`variables(301)` 期望 `"input"`):wasm lane 无 `agent_input_hook` → `"input"` 不可得。重写:在 post-mortem 暂停点断言 Input/Output 作用域暴露 `"output"`(node_completed 重排后),或断言 LIVE 暂停点该作用域为空。删除 `"input"` 断言。
+- **21**(Workflow 作用域在 second Done 暂停时有 `"first"`):node_completed 重排后,second Done post-mortem 暂停时 `first` 与 `second` 的 node_completed 均已触发 → `"first"` 可用。断言通过。**lane 断言**:通过 `descriptor.frame_contract` 钉住 vars workflow 的 lane——若 P6,断言真实输出值;若 WireJson,断言 `null`。实现者运行时确认 lane 并钉死(codegen 改 lane 决策时测试会破,这是正确的告警)。
+- **22**(`evaluate("input.tag")`):`"input"` 不可得。重写:`evaluate("input.tag")` 断言 `"unknown identifier input"`;改断言 `evaluate("first.tag")`(node 输出,post-mortem)或 `"output.tag"`。
+
+**新增测试**:
+1. **capability 断点 LIVE 暂停**:`kCapabilityWorkflowSource`,在 `DoWork` 调用行设断点 → `verified:true`,stopped 事件在 capability 调用前触发,栈含 Capability frame,`continue` 后 run 完成。
+2. **state 断点分类**:`kStepperAgent`(无 capability)的 state 断点 → `verified:false` + post-mortem message;`kCapabilityWorkflowSource` 的 capability 前 state → `verified:true` + live message;capability 后 state → `verified:false` + post-mortem message。
+3. **cancellation**:capability workflow 运行中 `disconnect` → worker join 在有界时间内完成(下一个 import boundary 终止);无 import workflow `disconnect` → run 完成后 join(有界)。
+4. **WASM=OFF launch 拒绝**:WASM=OFF 构建下 launch → pinned diagnostic + `terminated`;`setBreakpoints`/`threads` 仍响应。
+5. **post-mortem node 输出**:node_completed 重排后,post-mortem 暂停点 Workflow 作用域含已完成 node 输出。
+6. **sibling codegen 失败**:程序含一个 codegen 失败的 sibling workflow → launch 后 run 返回 failed,diagnostic 指名失败 workflow。
+
+### 12.9.11 有序 worklist
+
+1. **facade cancellation**:`WasmWorkflowRuntimeConfig` + `WorkflowSessionConfig` 加 `cancellation_requested`/`interruption_requested`;`wrapped_callback` 顶部 + `run_workflow_session` 入口检查;取消时构建 `Cancelled`/`Interrupted` 结果 + pinned diagnostic。(wasm_runner + wasm_host)
+2. **facade descriptor 访问器**:`descriptor_for(workflow_name)`。(wasm_workflow_runtime.hpp)
+3. **codegen descriptor 扩展**:`CoreWasmStateWalk::last_cap_walk_index` 填充。(core_wasm_codegen.hpp/.cpp)
+4. **facade node_completed 重排**:post-run per-node(schedule 顺序)`node_completed` → 该 node 的 state hooks;§12.1 保证表 dated 修订。(workflow_session.cpp:1087-1237)
+5. **§12.7.8 DiagnosticBag**(若 WH-6 未落地):`compile_error_` → `DiagnosticBag`,`run()` 浮现。(wasm_workflow_runtime)
+6. **DAP 翻转**:include/成员/config hooks/invoker/cancellation;删 `on_agent_input`/`agent_inputs_`;`on_state_entered` 合成 Node frame。(debug_session.hpp/.cpp)
+7. **DAP 断点分类器**:`breakable_lines_` 收窄为 state-handler 行;`descriptor_for` + `last_cap_walk_index` 精确分类;`setBreakpoints` verified/message;launch 后 unsolicited breakpoint 事件。(debug_session.cpp + dap_server.cpp)
+8. **DAP WASM=OFF gate**:`runtime_`/config/ctor/execute `#ifdef`;launch 拒绝 pinned diagnostic。(debug_session.cpp)
+9. **CMake**:`ahfl_tooling_dap` gated wasm_runner link + `AHFL_ENABLE_BACKEND_WASM=1` + explicit `ahfl_runtime_value`;engine evaluator edge PUBLIC→PRIVATE;测试目标补 explicit evaluator link。
+10. **测试**:dap_basic 分诊重写 + 6 个新增测试。
+
+### 12.9.12 验收 / 验证标准
+
+- `src/tooling/dap/` 对 `runtime/engine/workflow_runtime.hpp` 的 include 为 **零**(grep 验证);`ahfl-dap` 链接 `ahfl_runtime_wasm_runner`(gated)。
+- `ahfl_runtime_engine` 的 `ahfl_runtime_evaluator` edge 为 **PRIVATE**;WH-6+WH-8 后生产 includer of `workflow_runtime.hpp` 为零(grep 验证,测试目标除外)。
+- `dap_basic` 全部测试通过(按 12.9.10 重写后的诚实契约);6 个新增测试通过。
+- WASM=OFF 构建:launch 拒绝并输出 pinned diagnostic;`setBreakpoints`/`threads`/`disconnect` 仍响应。
+- Cancellation:capability workflow 运行中 `disconnect` → worker join 有界完成;无 import workflow → run 完成后 join。
+- 断点验证:capability 断点总是 `verified:true`;state 断点按 descriptor 精确分类(live/post-mortem/never),无静默接受不可验证断点(Principle 5)。
+- 新鲜构建 `-Wall -Wextra -Werror` 干净;asan 干净。
+- `ctest --preset test-dev -L dap` 全绿。
+
+### 12.9.13 被否方案(按分叉)
+
+- **断点活性**:(a) 所有 state 断点 `verified:true`(evaluator 时代的谎言,违反 Principle 5)——否;(b) 保守 LIVE + 运行时纠正(DAP 重新发明 codegen 权威,不精确)——否;(c) dry-run 观察 prefix(副作用、重)——否。**选**:descriptor 扩展 `last_cap_walk_index` + 精确分类。
+- **Cancellation**:(a) 放进 `WasmRuntimeHooks`(hook 是值观察通道,非控制通道;evaluator 也在 config)——否;(b) wasm3 指令级中断(wasm3 无 mid-instruction interrupt,需注入轮询,重且不可靠)——否;(c) 不支持 cancellation(disconnect 在长计算上挂起——但无 import 计算有界,可接受;capability workflow 仍需边界取消)——部分否。**选**:config 级 flag,import boundary 检查(与 evaluator 对齐,粒度更细)。
+- **node_completed 时机**:(a) 保持 post-run-after-states(暂停点无 node 输出,调试器致盲)——否;(b) LIVE node_completed(不可能——输出在 guest 内直到 run 结束)——否;(c) per-node 重排——**选**。
+- **monotonic_clock**:(a) 为"DAP 时序"加入 facade(前提过时,DAP 从不使用)——否;(b) 为 event offset 加入(DAP 不消费 event 流,独立 slice)——否。**选**:不引入。
+- **agent_input_hook**:(a) 保留 `on_agent_input`(workflow lane 死代码,Principle 1)——否;(b) 从 workflow input 合成 node 输入(node 输入是投影,合成即说谎)——否;(c) 删除 + 诚实"input 不可得"契约——**选**。
+- **WASM=OFF**:(a) evaluator 回退(禁止并行路径,Principle 1)——否;(b) 构建失败(破坏非执行功能)——否;(c) launch 拒绝——**选**(继承)。
