@@ -1138,6 +1138,14 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm-host;wasm;runtime"
     )
 
+    # RFC 0026 KR6.8 WH-4: the agent step-walk session tests.
+    add_test(NAME ahfl.runtime.wasm_host_agent_session
+        COMMAND $<TARGET_FILE:ahfl_wasm_host_agent_session_tests>
+    )
+    set_tests_properties(ahfl.runtime.wasm_host_agent_session PROPERTIES
+        LABELS "wasm-host;wasm;runtime"
+    )
+
     add_test(NAME ahfl.runtime.core_wasm_schema_module
         COMMAND $<TARGET_FILE:ahfl_core_wasm_schema_module_tests>
     )

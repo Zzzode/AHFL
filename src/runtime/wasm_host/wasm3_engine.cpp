@@ -353,6 +353,12 @@ struct Wasm3EngineImpl {
     // WH-2: found lazily on the first invoke_runv (a non-P6 module does not
     // export runv and still instantiates, so fresh_instance never requires it).
     IM3Function runv{nullptr};
+    // WH-4: found lazily on the first invoke_step / invoke_current_state /
+    // read_transition_count (a workflow module does not export these and
+    // still instantiates, so fresh_instance never requires them).
+    IM3Function step{nullptr};
+    IM3Function current_state{nullptr};
+    IM3Global transition_count{nullptr};
 
     // m3_ParseModule requires the module bytes to outlive the parsed module;
     // the runtime owns the module, so they live as long as this Impl.
@@ -806,6 +812,79 @@ Wasm3ResumeEngine::invoke_runv() {
         return RunvOutcome{eng::Run2Trapped{}};
     }
     return std::unexpected(eng::EngineError::InstanceUnavailable);
+}
+
+std::expected<std::uint32_t, eng::EngineError>
+Wasm3ResumeEngine::invoke_step() {
+    if (!impl_->instantiated) {
+        return std::unexpected(eng::EngineError::InvalidSequence);
+    }
+    // Lazily find + signature-check step. m3_FindFunction compiles eagerly.
+    if (impl_->step == nullptr) {
+        if (m3_FindFunction(&impl_->step, impl_->runtime, "step") != nullptr ||
+            !export_has_i32_signature(impl_->step, 0, 1)) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+    }
+    const M3Result result = m3_Call(impl_->step, 0, nullptr);
+    if (result != nullptr) {
+        if (is_wasm_trap(result)) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+        return std::unexpected(eng::EngineError::InstanceUnavailable);
+    }
+    std::uint32_t state = 0;
+    const void *retptrs[1] = {&state};
+    if (m3_GetResults(impl_->step, 1, retptrs) != nullptr) {
+        return std::unexpected(eng::EngineError::InstanceUnavailable);
+    }
+    return state;
+}
+
+std::expected<std::uint32_t, eng::EngineError>
+Wasm3ResumeEngine::invoke_current_state() {
+    if (!impl_->instantiated) {
+        return std::unexpected(eng::EngineError::InvalidSequence);
+    }
+    if (impl_->current_state == nullptr) {
+        if (m3_FindFunction(&impl_->current_state, impl_->runtime,
+                            "current_state") != nullptr ||
+            !export_has_i32_signature(impl_->current_state, 0, 1)) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+    }
+    const M3Result result = m3_Call(impl_->current_state, 0, nullptr);
+    if (result != nullptr) {
+        return std::unexpected(eng::EngineError::InstanceUnavailable);
+    }
+    std::uint32_t state = 0;
+    const void *retptrs[1] = {&state};
+    if (m3_GetResults(impl_->current_state, 1, retptrs) != nullptr) {
+        return std::unexpected(eng::EngineError::InstanceUnavailable);
+    }
+    return state;
+}
+
+std::expected<std::uint32_t, eng::EngineError>
+Wasm3ResumeEngine::read_transition_count() {
+    if (!impl_->instantiated) {
+        return std::unexpected(eng::EngineError::InvalidSequence);
+    }
+    if (impl_->transition_count == nullptr) {
+        impl_->transition_count =
+            m3_FindGlobal(impl_->module, "transition_count");
+        if (impl_->transition_count == nullptr) {
+            return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+    }
+    M3TaggedValue value{};
+    if (m3_GetGlobal(impl_->transition_count, &value) != nullptr) {
+        return std::unexpected(eng::EngineError::InstanceUnavailable);
+    }
+    if (value.type != c_m3Type_i32) {
+        return std::unexpected(eng::EngineError::InstanceUnavailable);
+    }
+    return value.value.i32;
 }
 
 } // namespace ahfl::runtime::wasm_host

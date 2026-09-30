@@ -1716,6 +1716,28 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
     ahfl_apply_project_warnings(ahfl_wasm_host_observation_emitter_tests)
 
+    # RFC 0026 KR6.8 WH-4: the agent step-walk session tests. Drives REAL
+    # wasm3 agent modules (WireJson + P6-frame) through the step-walk and
+    # pins the walked state sequence, hook liveness, and transition_count.
+    add_executable(ahfl_wasm_host_agent_session_tests
+        unit/runtime/wasm_host/agent_session.cpp
+    )
+    target_link_libraries(ahfl_wasm_host_agent_session_tests
+        PRIVATE
+            ahfl_runtime_wasm_host
+            ahfl_compiler_backend_wasm
+            ahfl_runtime_engine
+            ahfl_runtime_value
+            ahfl_base_json
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_wasm_host_agent_session_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_wasm_host_agent_session_tests)
+
     add_executable(ahfl_core_wasm_codegen_tests
         unit/compiler/backends/core_wasm_codegen.cpp
     )

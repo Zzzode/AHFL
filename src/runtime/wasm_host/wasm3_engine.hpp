@@ -113,6 +113,27 @@ class Wasm3ResumeEngine final : public core_wasm_resume_engine::CoreWasmResumeEn
     [[nodiscard]] std::expected<RunvOutcome, core_wasm_resume_engine::EngineError>
     invoke_runv();
 
+    // WH-4 additive: invoke the module's `step() -> i32` export. Drives one
+    // state transition and returns the new state index. Found lazily on first
+    // call (like runv); a module that does not export step (a workflow module,
+    // whose step/current_state trap by contract) returns InstanceUnavailable.
+    // NOT gated by run_started: the agent_session drives step() in a bounded
+    // loop on a separate effects-free instance before the canonical runv/run2.
+    [[nodiscard]] std::expected<std::uint32_t, core_wasm_resume_engine::EngineError>
+    invoke_step();
+
+    // WH-4 additive: invoke the module's `current_state() -> i32` export.
+    // Returns the current state index without driving a transition. Found
+    // lazily like invoke_step.
+    [[nodiscard]] std::expected<std::uint32_t, core_wasm_resume_engine::EngineError>
+    invoke_current_state();
+
+    // WH-4 additive: read the module's `transition_count` exported mutable
+    // i32 global. Found lazily like invoke_step. The agent_session asserts
+    // exactly-once bump per step() transition.
+    [[nodiscard]] std::expected<std::uint32_t, core_wasm_resume_engine::EngineError>
+    read_transition_count();
+
   private:
     std::unique_ptr<detail::Wasm3EngineImpl> impl_;
 };
