@@ -75,10 +75,11 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
     if (compile_error_.has_value()) {
         WorkflowResult result;
         result.report.status = RunTerminalStatus::Failed;
-        result.report.failure_kind = WorkflowFailureKind::EvaluationFailed;
+        result.report.failure_kind = WorkflowFailureKind::NodeFailed;
         result.diagnostics.error()
             .code("wasm.compile-failed")
-            .message(*compile_error_);
+            .message(*compile_error_)
+            .emit();
         return result;
     }
 
@@ -87,11 +88,12 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
     if (it == workflows_.end()) {
         WorkflowResult result;
         result.report.status = RunTerminalStatus::Failed;
-        result.report.failure_kind = WorkflowFailureKind::EvaluationFailed;
+        result.report.failure_kind = WorkflowFailureKind::NodeFailed;
         result.diagnostics.error()
             .code("wasm.workflow-not-found")
             .message("wasm workflow runtime: workflow '" + workflow_name +
-                     "' not found");
+                     "' not found")
+            .emit();
         return result;
     }
 
@@ -106,10 +108,11 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         // to facade callers).
         WorkflowResult result;
         result.report.status = RunTerminalStatus::Failed;
-        result.report.failure_kind = WorkflowFailureKind::EvaluationFailed;
+        result.report.failure_kind = WorkflowFailureKind::NodeFailed;
         result.diagnostics.error()
             .code("wasm.session-failed")
-            .message("wasm workflow runtime: " + session_result.error());
+            .message("wasm workflow runtime: " + session_result.error())
+            .emit();
         return result;
     }
 

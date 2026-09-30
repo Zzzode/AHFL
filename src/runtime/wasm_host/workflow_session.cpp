@@ -222,7 +222,8 @@ void populate_metadata_and_report(
                                  WorkflowFailureKind::NodeFailed);
     session_result.result.diagnostics.error()
         .code(std::move(diagnostic_code))
-        .message(std::move(diagnostic_message));
+        .message(std::move(diagnostic_message))
+        .emit();
     session_result.states = std::move(states);
     session_result.capabilities = std::move(capabilities);
     session_result.capability_arguments = std::move(capability_arguments);
@@ -714,7 +715,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         result.diagnostics.error()
             .code("wasm.run-failed")
             .message("run_workflow_session: run2 returned non-zero status " +
-                     std::to_string(tuple->raw_status));
+                     std::to_string(tuple->raw_status))
+            .emit();
     }
     if (workflow_output.has_value()) {
         result.values.push_back(std::move(*workflow_output));

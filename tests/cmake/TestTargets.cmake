@@ -1896,6 +1896,27 @@ if(AHFL_ENABLE_BACKEND_WASM)
             ${PROJECT_SOURCE_DIR}/tests
     )
     ahfl_apply_project_warnings(ahfl_core_wasm_resume_wasm3_e2e)
+
+    # RFC 0026 KR6.8 WH-4 fix-forward D-A: the wasm_runner facade tests.
+    # Drives WasmWorkflowRuntime + WasmAgentRunner end-to-end (compile-to-wasm
+    # + run) and pins the result status, output, and hook firing.
+    add_executable(ahfl_wasm_runner_tests
+        unit/runtime/wasm_runner/wasm_runner.cpp
+    )
+    target_link_libraries(ahfl_wasm_runner_tests
+        PRIVATE
+            ahfl_runtime_wasm_runner
+            ahfl_runtime_engine
+            ahfl_runtime_value
+            ahfl_base_json
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_wasm_runner_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_wasm_runner_tests)
 endif()
 
 add_executable(ahfl_compiler_backends_registry_tests

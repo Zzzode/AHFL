@@ -1160,6 +1160,13 @@ if(AHFL_ENABLE_BACKEND_WASM)
         LABELS "wasm-host;wasm;runtime"
     )
 
+    add_test(NAME ahfl.runtime.wasm_runner
+        COMMAND $<TARGET_FILE:ahfl_wasm_runner_tests>
+    )
+    set_tests_properties(ahfl.runtime.wasm_runner PROPERTIES
+        LABELS "wasm-host;wasm;runtime"
+    )
+
     add_test(NAME ahfl.runtime.core_wasm_schema_module
         COMMAND $<TARGET_FILE:ahfl_core_wasm_schema_module_tests>
     )
