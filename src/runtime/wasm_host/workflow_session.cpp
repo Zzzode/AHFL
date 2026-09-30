@@ -20,6 +20,7 @@
 #include "runtime/value/value_json.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -58,8 +59,10 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     return regions;
 }
 
-// Fire state_entered_hook for a batch of new trace records.
-void fire_state_entries(
+// Fire state_entered_hook for a batch of new trace records. Fail-closed:
+// a record whose runner or state is out of range is evidence of a corrupt
+// module (D-B: no silent OOR skip); returns an error string instead.
+[[nodiscard]] std::optional<std::string> fire_state_entries(
     const std::vector<StateTraceRecord> &records, std::size_t from,
     const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
     const WorkflowSessionConfig &config,
@@ -67,11 +70,11 @@ void fire_state_entries(
     for (std::size_t i = from; i < records.size(); ++i) {
         const auto &rec = records[i];
         if (rec.runner >= descriptor.agents.size()) {
-            continue;
+            return "state-trace record runner index out of range";
         }
         const auto &agent = descriptor.agents[rec.runner];
         if (rec.state >= agent.all_states.size()) {
-            continue;
+            return "state-trace record state id out of range";
         }
         const std::string &agent_name = agent.agent;
         const std::string &state_name = agent.all_states[rec.state];
@@ -81,6 +84,73 @@ void fire_state_entries(
         }
         collected_states.push_back({agent_name, state_name});
     }
+    return std::nullopt;
+}
+
+// Reconstruct the state_sequence for a WireJson workflow from decoded
+// node-event records joined to the descriptor's agent walks (schedule order).
+// Identity workflows (no capability imports, no event buffer) reconstruct from
+// the descriptor nodes directly. Fail-closed on any out-of-range runner or
+// unknown node (D-B: mirrors the JS oracle's recordStates, which fails rather
+// than skips).
+[[nodiscard]] std::optional<std::string> reconstruct_wirejson_states(
+    std::span<const std::uint8_t> linear_memory,
+    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
+    const WorkflowSessionConfig &config,
+    std::vector<StateEntry> &collected_states) {
+    const auto &nodes = descriptor.nodes;
+    const auto &agents = descriptor.agents;
+
+    // Identity workflow: no event buffer. The descriptor nodes (in Kahn
+    // schedule order) ARE the schedule; join each to its runner's walk.
+    if (descriptor.imports.empty()) {
+        for (const auto &node : nodes) {
+            if (node.runner >= agents.size()) {
+                return "identity workflow node runner index out of range";
+            }
+            const auto &agent = agents[node.runner];
+            for (const auto &state_name : agent.walk) {
+                if (config.state_entered_hook) {
+                    config.state_entered_hook(
+                        AgentId{node.runner}, agent.agent, "", state_name);
+                }
+                collected_states.push_back({agent.agent, state_name});
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Capability workflow: decode node-event records from the event buffer.
+    auto events =
+        ne::decode_node_events(linear_memory, descriptor.workflow_node_count);
+    if (!events.has_value()) {
+        return "node-event decode failed";
+    }
+    for (const auto &event : *events) {
+        // Join to the descriptor node by workflow_node_id.
+        const ahfl::backends::CoreWasmNodeDescriptor *node_desc = nullptr;
+        for (const auto &nd : nodes) {
+            if (nd.node_id == event.workflow_node_id.value) {
+                node_desc = &nd;
+                break;
+            }
+        }
+        if (node_desc == nullptr) {
+            return "node-event record names unknown node";
+        }
+        if (node_desc->runner >= agents.size()) {
+            return "node-event record runner index out of range";
+        }
+        const auto &agent = agents[node_desc->runner];
+        for (const auto &state_name : agent.walk) {
+            if (config.state_entered_hook) {
+                config.state_entered_hook(
+                    AgentId{node_desc->runner}, agent.agent, "", state_name);
+            }
+            collected_states.push_back({agent.agent, state_name});
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace
@@ -108,6 +178,9 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     std::vector<std::string> collected_cap_args;
     std::vector<CapabilityFailureKind> collected_failures;
     std::size_t last_trace_count = 0;
+    // Set when the P6 trace-ring prefix decode at an import boundary hits an
+    // out-of-range record (D-B fail-closed). Checked post-run.
+    std::optional<std::string> trace_error;
 
     // --- 3. Build the wrapped invoker (fires hooks, collects data) ---
     // Capture config by VALUE (copy): the lambda is stored in a
@@ -221,7 +294,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // scope reason as the wrapped_invoker above.
         wrapped_callback =
             [config, &descriptor, &last_trace_count, &collected_states,
-             has_trace, inner = std::move(inner_callback)](
+             &trace_error, has_trace, inner = std::move(inner_callback)](
                 const eng::ImportObservation &obs)
             -> eng::ImportCallbackResult {
                 if (has_trace) {
@@ -230,10 +303,14 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         obs.whole_memory, section.state_trace_base,
                         section.state_trace_capacity);
                     if (decoded.has_value()) {
-                        fire_state_entries(*decoded, last_trace_count,
-                                           descriptor, config,
-                                           collected_states);
-                        last_trace_count = decoded->size();
+                        auto err = fire_state_entries(
+                            *decoded, last_trace_count, descriptor, config,
+                            collected_states);
+                        if (err.has_value()) {
+                            trace_error = std::move(*err);
+                        } else {
+                            last_trace_count = decoded->size();
+                        }
                     }
                 }
                 return inner(obs);
@@ -345,15 +422,43 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // --- 9. Post-run: decode the FULL trace ring and fire remaining
     //        state_entered_hook ---
     if (has_trace) {
+        if (trace_error.has_value()) {
+            return std::unexpected(
+                "run_workflow_session: " + std::move(*trace_error));
+        }
         const auto &section = *descriptor.frame_section;
         auto mem = engine.read_whole_memory();
         if (mem.has_value()) {
             auto decoded = decode_state_trace(
                 *mem, section.state_trace_base, section.state_trace_capacity);
             if (decoded.has_value() && decoded->size() > last_trace_count) {
-                fire_state_entries(*decoded, last_trace_count, descriptor,
-                                   config, collected_states);
+                auto err = fire_state_entries(*decoded, last_trace_count,
+                                              descriptor, config,
+                                              collected_states);
+                if (err.has_value()) {
+                    return std::unexpected(
+                        "run_workflow_session: " + std::move(*err));
+                }
                 last_trace_count = decoded->size();
+            }
+        }
+    }
+
+    // --- 9b. Post-run: reconstruct WireJson state_sequence from node-event
+    //         records joined to agent walks (D-B) ---
+    // P6 workflows use the trace ring (section 9); WireJson workflows have no
+    // trace ring, so the state sequence is reconstructed from the node-event
+    // buffer (capability workflows) or the descriptor nodes (identity
+    // workflows), joined to each runner's declared walk. Fires
+    // state_entered_hook POST-RUN for every reconstructed state.
+    if (!is_p6 && run_ok) {
+        auto mem = engine.read_whole_memory();
+        if (mem.has_value()) {
+            auto err = reconstruct_wirejson_states(
+                *mem, descriptor, config, collected_states);
+            if (err.has_value()) {
+                return std::unexpected(
+                    "run_workflow_session: " + std::move(*err));
             }
         }
     }
@@ -373,22 +478,25 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
 
                 for (const auto &event : *events) {
                     // Find the node descriptor by schedule_pos.
-                    const auto *node_desc = &descriptor.nodes[0];
-                    bool found = false;
+                    const ahfl::backends::CoreWasmNodeDescriptor *node_desc =
+                        nullptr;
                     for (const auto &nd : descriptor.nodes) {
                         if (nd.schedule_pos == event.schedule_pos.value) {
                             node_desc = &nd;
-                            found = true;
                             break;
                         }
                     }
-                    if (!found) {
-                        continue;
+                    if (node_desc == nullptr) {
+                        return std::unexpected(
+                            "run_workflow_session: node-event record references "
+                            "unknown schedule_pos");
                     }
 
                     const auto runner = node_desc->runner;
                     if (runner >= descriptor.agents.size()) {
-                        continue;
+                        return std::unexpected(
+                            "run_workflow_session: node-event record runner "
+                            "index out of range");
                     }
                     const auto &agent_name = descriptor.agents[runner].agent;
 
