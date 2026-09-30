@@ -1226,12 +1226,21 @@ void test_hybrid_kahn_reordered(const std::filesystem::path &repo_root) {
 
 // ==== WH-5b.1 fix-forward: hybrid P6-bridge + opaque cap manifest test ====
 //
-// Emission/descriptor-only: the exec-manifest must encode a P6-packaged node
-// as an IDENTITY scheduler-boundary event (cap_call_count 0, zero capability
-// entries) even when the P6 agent has in-handler bridge imports, while the
-// opaque capability-final node keeps cap_call_count 1. Also covers the
-// multi-P6 ordinal case (two P6 runners -> p6_block_ordinal 0 and 1,
-// node_blocks count == 2).
+// Emission/descriptor-only: the exec-manifest references ALL imported
+// capabilities for every node (including in-handler bridge imports of P6
+// nodes), because the manifest cap set doubles as the A2 import/admission
+// authority and run_workflow_session admits unconditionally through it.
+// Both P6 bridge nodes and the opaque cap node therefore encode
+// cap_call_count 1. Also covers the multi-P6 ordinal case (two P6 runners
+// -> p6_block_ordinal 0 and 1, node_blocks count == 2).
+//
+// KNOWN latent gap (WH-5b.2): a bridge P6 node writes a tag-0 identity
+// event record (zero capability fields) yet its manifest cap byte counts
+// its in-handler bridge import. This tag-0-vs-cap-byte disagreement is a
+// resume-coordinate inconsistency owned by WH-5b.2 (separate in-runner
+// site table + admission-set semantics + resume classifier, design
+// 12.12.5/12.12.10). The resume gates are unreachable for this module
+// today; this test does NOT assert they accept it.
 //
 // End-to-end suspend/resume of this configuration is WH-5b.2/5b.3 scope.
 
@@ -1431,10 +1440,12 @@ void test_hybrid_p6_bridge_manifest(const std::filesystem::path &repo_root) {
     }
     check(desc.wire_schema.has_value(), "hybrid_bridge.wire_schema");
 
-    // P1: decode the exec-manifest and assert scheduler-boundary cap
-    // accounting. Both P6 nodes (bridge_a, bridge_b) have in-handler bridge
-    // imports but must encode cap_call_count 0 (identity); the opaque echo
-    // node encodes cap_call_count 1 (capability).
+    // Decode the exec-manifest and assert the current byte shape: ALL nodes
+    // reference their capabilities (including P6 nodes' in-handler bridge
+    // imports) so the manifest-referenced set equals the import set for A2
+    // admission. Both P6 bridge nodes have 1 Bridge cap; the opaque echo node
+    // has 1 Echo cap. The tag-0-record-vs-cap-byte disagreement for P6 nodes
+    // is the WH-5b.2 latent gap (see header comment).
     auto manifest_payload =
         extract_exec_manifest(std::span<const std::uint8_t>(wf->module_bytes));
     check(manifest_payload.has_value(), "hybrid_bridge.manifest_extracted");
@@ -1461,29 +1472,28 @@ void test_hybrid_p6_bridge_manifest(const std::filesystem::path &repo_root) {
               "hybrid_bridge.manifest_node2_id");
         check((*nodes)[2].schedule_pos == 2,
               "hybrid_bridge.manifest_node2_pos");
-        // P6 nodes: identity (cap_call_count 0) despite in-handler bridge caps.
-        check((*nodes)[0].cap_call_count == 0,
-              "hybrid_bridge.manifest_node0_identity");
-        check((*nodes)[1].cap_call_count == 0,
-              "hybrid_bridge.manifest_node1_identity");
-        // Opaque cap node: capability (cap_call_count 1).
+        // P6 bridge nodes: cap_call_count 1 (bridge cap referenced for A2
+        // admission; the tag-0 record disagreement is WH-5b.2 latent gap).
+        check((*nodes)[0].cap_call_count == 1,
+              "hybrid_bridge.manifest_node0_bridge_cap");
+        check((*nodes)[1].cap_call_count == 1,
+              "hybrid_bridge.manifest_node1_bridge_cap");
+        // Opaque cap node: cap_call_count 1 (Echo cap).
         check((*nodes)[2].cap_call_count == 1,
               "hybrid_bridge.manifest_node2_capability");
     }
 
-    // Document the A2 admission gap: the full A2 admission
-    // (make_verified_core_wasm_schema_module) enforces exact set equality
-    // between the wire-schema/import capability set and the manifest-
-    // referenced set. The P6 nodes' in-handler bridge caps are imported but
-    // not scheduler-boundary call sites, so they are unreferenced by the
-    // manifest and A2 admission fails closed. This is the WH-5b.2 gap (the
-    // in-runner site/memo representation, design 12.12.10); the manifest
-    // layer itself is now self-consistent.
+    // A2 admission SUCCEEDS: the manifest references all imported caps
+    // (including the P6 nodes' in-handler bridge imports), so the
+    // manifest-referenced set equals the wire-schema/import set. The
+    // tag-0-record-vs-cap-byte disagreement for P6 nodes is the WH-5b.2
+    // latent gap (see header comment); the resume classifier is unreachable
+    // for this module today.
     auto admitted = ahfl::runtime::core_wasm_schema_module::
         make_verified_core_wasm_schema_module(
             std::span<const std::uint8_t>(wf->module_bytes));
-    check(!admitted.ok(),
-          "hybrid_bridge.a2_admission_fails_closed_bridge_caps_unreferenced");
+    check(admitted.ok(),
+          "hybrid_bridge.a2_admission_succeeds_all_caps_referenced");
 }
 
 } // namespace
@@ -1507,7 +1517,7 @@ int main() {
     test_hybrid_p6_before_cap(repo_root);
     test_hybrid_cap_before_p6(repo_root);
     test_hybrid_kahn_reordered(repo_root);
-    // WH-5b.1 fix-forward: P6-bridge manifest identity + multi-P6 ordinals.
+    // WH-5b.1 fix-forward: P6-bridge manifest byte shape + multi-P6 ordinals.
     test_hybrid_p6_bridge_manifest(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";

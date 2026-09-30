@@ -14477,15 +14477,22 @@ void append_i64_store_zero(ByteBuffer &body, std::uint32_t addr) {
 // the A2 decoder's canonical grammar. Private to this TU; no runtime code shared.
 // Nodes are emitted in schedule order so schedule_pos == array index.
 //
-// WH-5b.1 fix-forward: the node array models SCHEDULER-BOUNDARY completion
-// events (design 12.12.5: a bridge P6 node may carry capabilities, but its
-// scheduler-level completion is an identity event). A P6-packaged node's
-// in-handler bridge calls are NOT scheduler call sites, so it emits
-// cap_call_count 0 and ZERO capability entries regardless of its in-handler
-// imports; the in-runner site/memo representation is WH-5b.2 scope (design
-// 12.12.10). Opaque nodes keep exactly their byte/entries. is-p6 is determined
-// from the SAME authority as the scheduler branch (p6_block_by_runner), never
-// a second heuristic.
+// The workflow manifest currently references ALL imported capabilities,
+// including in-runner bridge call sites of P6-packaged nodes. This is
+// required because the manifest capability set doubles as the A2
+// import/admission authority: make_verified_core_wasm_schema_module enforces
+// exact set equality between the wire-schema/import capability set and the
+// manifest-referenced set, and run_workflow_session admits the module
+// unconditionally through that factory. Dropping bridge caps from P6 nodes
+// would make every hybrid P6-bridge module fail admission closed.
+//
+// KNOWN latent gap (owned by WH-5b.2): a bridge P6 node's scheduler-level
+// completion is an identity event (design 12.12.5: tag-0 record, zero
+// capability fields), yet its per-node manifest cap byte below counts its
+// in-handler bridge imports. The tag-0 record vs cap-byte distinction is a
+// resume-coordinate inconsistency. WH-5b.2 must introduce a separate
+// in-runner site table (the scheduler-boundary byte stays binary) jointly
+// with admission-set semantics and the resume classifier (design 12.12.10).
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
 encode_exec_manifest(const WorkflowPlan &plan) {
     if (plan.schedule.size() >
@@ -14513,23 +14520,16 @@ encode_exec_manifest(const WorkflowPlan &plan) {
         }
         out.u32(node.node.value);
         out.u32(index); // schedule_pos == array index
-        const auto runner = workflow_runner_index(plan, node.target_instance);
-        const bool is_p6 =
-            runner.has_value() &&
-            plan.p6_block_by_runner[*runner] != kInvalidP6Block;
-        if (is_p6) {
-            // Identity at the scheduler boundary: no scheduler-boundary
-            // capability call sites (design 12.12.5 + WH-5b.2).
-            out.byte(0);
-        } else {
-            out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
-            for (const auto &[cap, sym] : node.capabilities) {
-                if (cap.value == CoreCapabilityId::kInvalid) {
-                    return std::nullopt;
-                }
-                out.u32(cap.value);
-                out.u64(sym);
+        // Emit ALL node capabilities (including in-handler bridge imports of
+        // P6 nodes) so the manifest-referenced set equals the import set for
+        // A2 admission. See the WH-5b.2 latent-gap note above.
+        out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
+        for (const auto &[cap, sym] : node.capabilities) {
+            if (cap.value == CoreCapabilityId::kInvalid) {
+                return std::nullopt;
             }
+            out.u32(cap.value);
+            out.u64(sym);
         }
     }
     return std::move(out).take();

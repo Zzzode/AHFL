@@ -1,17 +1,21 @@
 // WH-5b.1 fix-forward fixture: hybrid workflow with TWO P6-packaged agents
 // that each HAVE an in-handler capability bridge call, plus one opaque
-// capability-final node. A P6 node's scheduler-level completion is an
-// identity event (design 12.12.5); its in-handler bridge call is NOT a
-// scheduler call site (WH-5b.2 adds the in-runner site/memo representation,
-// design 12.12.10).
+// capability-final node. The exec-manifest references ALL imported caps for
+// every node (including P6 bridge imports), because the manifest cap set
+// doubles as the A2 import/admission authority.
 //
-// The module emits P6Frame (3 nodes, 2 imports). Both P6 nodes write a tag-0
-// identity record; the opaque cap node writes a tag-1 capability record.
+// KNOWN latent gap (WH-5b.2): a bridge P6 node's scheduler-level completion
+// is an identity event (design 12.12.5, tag-0 record), yet its manifest cap
+// byte counts its in-handler bridge import. This tag-0-vs-cap-byte
+// disagreement is owned by WH-5b.2 (separate in-runner site table +
+// admission-set semantics + resume classifier, design 12.12.10).
+//
+// The module emits P6Frame (3 nodes, 2 imports).
 //
 // This fixture serves two tests:
-//   * P1 manifest: the exec-manifest encodes both P6 nodes with
-//     cap_call_count 0 (identity) and the opaque node with cap_call_count 1
-//     (capability), despite both P6 agents importing Bridge in-handler.
+//   * manifest byte shape: the exec-manifest encodes both P6 nodes with
+//     cap_call_count 1 (bridge cap referenced for A2 admission) and the
+//     opaque node with cap_call_count 1 (capability); A2 admission succeeds.
 //   * P2-5 ordinals: two P6 runners yield p6_block_ordinal 0 and 1 in P6
 //     dense order, node_blocks count == 2, Kahn schedule order correct.
 //
