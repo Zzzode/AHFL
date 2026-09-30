@@ -1117,3 +1117,354 @@ WH-4b 全部新增位于 gated 目标内:会话 memo 层在 `ahfl_runtime_wasm_h
 - Consume-once / 崩溃重开下 exactly-once(`IntegrityPayloadStore` generation CAS、幂等令牌去重、机密静态结果)是 D2b 前沿;JSON store 无 consume-once CAS(双重 resume 重跑,与 evaluator 今天一致)。
 - Agent 车道挂起属 WH-7/WH-8。
 - HMAC 机制的生产命运由 §12.6.9 日落在 D2b 绑定。
+
+## 12.7 WH-6 decisions (2026-09-30, dedicated decision agent, no human gate)
+
+WH-6 把 `ahflc run` 的唯一生产构造点(`src/runtime/cli/workflow_run.cpp:1849-1850`)从 evaluator-backed `WorkflowRuntime` 切到 WH-4 `WasmWorkflowRuntime` facade。prep map(`$CLAUDE_JOB_DIR/tmp/wh6-prep-map.md`)的事实已对 HEAD `6b5374a5` 逐条复核。本节是一个连贯设计,不是菜单。WH-4b 的 facade recovery/intent 字段(§12.6.6)与 fixture 迁移是 WH-6 的硬前置;WH-5 原生 conformance 普查(66/0)是符合性地板。
+
+### 12.7.0 决策摘要
+
+**`ahflc run` 在 WASM=ON 下无条件切到 wasm facade;WASM=OFF 下 `run` 以可行动诊断拒绝(exit 1),其余编译/验证命令照常工作。** facade config 是**诚实子集**(非逐字段镜像):CLI 设的 4 个字段直接映射,hooks/name_resolver 留空,quota/non-contextual-invoker/native-host-binding/checkpoint 省略,cancellation/interruption/monotonic_clock 推迟到 WH-8。切换是一个 big-bang commit(include/using/ctor + CMake gated link);evaluator 目标保留到 WH-9(DAP 仍需)。LLM tool-calling 重入接受(smoke 门控)。挂起/恢复标志零改动。facade ctor 编译失败语义(与 WH-7 共享,§12.7.8):保留 ctor + run()-surfaces-failure 形状,把 `compile_error_` 从 `optional<string>` 升级为 `DiagnosticBag`(Principle 5)。
+
+### 12.7.1 跨切决策 — WASM=OFF 产品策略(与 WH-7 联合;WH-8 继承)
+
+**选择 option (a):构建工具与运行时动词;WASM=OFF 下运行时动词以可行动诊断拒绝,非运行时编译命令照常工作。evaluator fallback 永久禁止(Principle 1)。**
+
+**终态(WH-9 后):** evaluator 在 WH-9 一次性 big-bang 删除。此后 WASM=OFF 不为 `run`/REPL eval/DAP launch 留下任何执行引擎。WASM=OFF 构建产出完整编译器/验证器/LSP(`ahflc check`/`compile`/`verify`/`emit`/`format` 等全部可用),但三个运行时动词拒绝:
+
+| 动词 | WASM=OFF 行为 | 退出码 / 输出 |
+|---|---|---|
+| `ahflc run` | stderr 诊断 + 拒绝 | exit 1 |
+| `ahfl-repl` eval | handler 返回 Error 字符串 | REPL 继续 |
+| `ahfl-dap` launch/execute | DAP error 事件 | WH-8 继承 |
+
+**精确诊断(CLI):**
+```
+error: ahflc run requires the embedded wasm engine; this build was configured with -DAHFL_ENABLE_BACKEND_WASM=OFF. Rebuild with the default (ON) to run workflows.
+```
+退出码 1(`ExitCode::CompileError`,`cli_driver.cpp:3987` 把 `run_workflow_with_llm` 非零映射为 CompileError)。无诊断 code(这是构建配置拒绝,不是编译器诊断);消息命名重建 flag,可行动。
+
+**门控位置(组合边缘,零业务逻辑 #ifdef):** CMake 把 `AHFL_ENABLE_BACKEND_WASM=1` 作为 compile-definition 传播给 `ahflc`(WASM=ON 时)。`workflow_run.cpp` 的 `run_workflow_with_llm` 函数体整体在 `#ifdef AHFL_ENABLE_BACKEND_WASM` ... `#else` stub(打印诊断 + return 1)... `#endif` 内。函数签名、`cli_driver.cpp:3986` 的 dispatch、usage 校验(在 gate 内)不变。业务逻辑(LLM 配置、能力绑定、输入解码、恢复存储、intent sink、suspend 包装器)全部在 gate 内,零 #ifdef 散落。`ahflc` 目标始终链接(无 target 缺席导致的链接断裂);WASM=OFF 下函数是 stub,满足 §8 acceptance 4(两矩阵 CONFIGURE+BUILD)。
+
+**过渡期(WH-6..WH-8):** evaluator 仍链接(DAP 直到 WH-8;`ahfl_runtime_engine` PUBLIC 边 `src/runtime/engine/CMakeLists.txt:47` 保留)。WH-6 后 `ahflc run` 是 wasm-only;evaluator 不再是 `run` 的 fallback。WASM=OFF 下 `run` 立即拒绝(stub),不触碰 LLM/能力路径。
+
+**REPL 因子:** `ahfl-repl` 今天不作为 RUNTIME 安装(`cmake/modules/AhflInstall.cmake:57-61` 仅安装 `ahflc` + `ahfl-lsp`;`ahfl_tooling_repl` 在 INTERNAL 安装集 `:118`,仅 `AHFL_INSTALL_INTERNAL_TARGETS=ON`)。故 WASM=OFF 下 `ahfl-repl` 的 eval 拒绝是开发工具便利,不是部署契约——但策略一致(构建 + eval 拒绝),因为 §8 #4 要求两矩阵 CONFIGURE+BUILD,且 REPL 的 `:type`/`:verify`/`:simulate`/`:help` 在 WASM=OFF 下必须可用(它们不依赖执行引擎)。
+
+**DAP(WH-8)继承同一策略:** `ahfl-dap` 也不安装;WH-8 切换后 WASM=OFF 下 launch/execute 拒绝(DAP error 事件),断点/栈/变量等非执行特性照常。
+
+**拒绝:**
+- **option (b)(WASM=OFF 下不构建 run-capable 二进制 / ahfl-repl)。** 击败证据:① §8 acceptance 4 明文要求 `AHFL_ENABLE_BACKEND_WASM` ON/OFF 两矩阵都 CONFIGURE+BUILD——`ahflc` 是安装的 RUNTIME 工具,WASM=OFF 下链接断裂直接违反;② `ahflc` 的 `check`/`compile`/`verify` 等命令与 `run` 同一二进制,不构建 `ahflc` 等于 WASM=OFF 下无编译器——不可接受;③ REPL 虽不安装,但其 `:type`/`:verify` 是编译器前端消费者,不应因 eval 缺席而整体不构建。
+- **option (c)(evaluator fallback)。** 永久禁止——Principle 1 禁止 coexistence/parallel path;evaluator 在 WH-9 删除,fallback 会无限期延长其生命;引擎决策(2026-09-30,RFC 0026 History)明文 "no engine-select flag ever"。
+
+**AHFL-specific 理由:** AHFL 的北极星是可嵌入的可验证 agent-workflow DSL(RFC 0020);执行引擎是 wasm3 单一引擎(引擎决策 2026-09-30:wasm3 走完 WH-9,无 engine-select flag)。WASM=OFF 是"只要编译器"的构建配置,不是"另一个引擎"的配置。运行时动词在 WASM=OFF 下拒绝是诚实的:该构建不含执行引擎,不应假装含。参照层级一致:rustc 的 `--emit=metadata` 产出编译器产物但不运行;一个不含 codegen 的 rustc 不能 `cargo run`。
+
+### 12.7.2 Facade config 形状 — 诚实子集,非逐字段镜像(fork 2)
+
+**选择:诚实子集。** `WasmWorkflowRuntimeConfig`(HEAD `src/runtime/wasm_runner/wasm_workflow_runtime.hpp:36-43` 有 `hooks`/`invoker`/`name_resolver`;WH-4b 按 §12.6.6 加 `recovery_snapshot`/`recovery_store`/`resume_pending_result`/`resume_pending_result_wire_json`/`durable_write_intent_sink`)携带 CLI/DAP 实际使用的字段,不携带 evaluator-only 概念。
+
+逐字段裁决(evaluator `WorkflowRuntimeConfig` 全表面,`workflow_runtime.hpp:38-114`):
+
+| evaluator 字段 | facade 裁决 | 理由 |
+|---|---|---|
+| `contextual_capability_invoker` | **映射为 `invoker`** | CLI 唯一设的 invoker;wasm 车道的 dispatch seam |
+| `recovery_snapshot` | **映射(WH-4b)** | CLI `:1789` 设 |
+| `recovery_store` | **映射(WH-4b)** | CLI `:1785-1791` 本地 optional,取裸指针 |
+| `resume_pending_result_wire_json` | **映射(WH-4b)** | CLI `:1796` 设 |
+| `durable_write_intent_sink` | **映射(WH-4b)** | CLI `:1813` 设 |
+| `resume_pending_result`(native Value) | **映射(WH-4b,表面对齐)** | CLI 不设(只用 wire_json 形式);facade 保留供其他 host |
+| `state_entered_hook` | **在 `WasmRuntimeHooks` 内** | DAP WH-8 接线;CLI 留空 |
+| `capability_invoked_hook` | **在 `WasmRuntimeHooks` 内** | 同上 |
+| `agent_input_hook` | **在 `WasmRuntimeHooks` 内** | 同上 |
+| `node_completed_hook` | **在 `WasmRuntimeHooks` 内** | 同上 |
+| `capability_result_observer` | **在 `WasmRuntimeHooks` 内** | 同上 |
+| `name_resolver` | **保留(optional),CLI 不设** | 会话从 descriptor 建 fallback(`workflow_session.cpp:398-403`);CLI 的 invoker 链按 canonical 名匹配,fallback 产生的 canonical 名与 codegen descriptor 一致 |
+| `cancellation_requested` | **推迟到 WH-8** | DAP 需要;CLI 不设(同步运行,无取消) |
+| `interruption_requested` | **推迟到 WH-8** | 同上;wasm 车道在 import 边界检查 |
+| `monotonic_clock` | **推迟到 WH-8** | DAP 时序;CLI 不设 |
+| `default_agent_quota` | **省略** | evaluator 的 host 侧步数配额;wasm 车道无 host 侧配额(wasm3 跑模块,受固定 64KiB 页 + 有界递归约束)。无 wasm 等价物 |
+| `capability_invoker`(non-contextual) | **省略** | evaluator 时代无上下文 invoker;wasm 车道的 import 回调总有上下文,只用 contextual 形式 |
+| `native_host_binding` | **省略** | RFC 0021 slice 2 的 C ABI 函数指针表,服务 evaluator 嵌入;wasm 车道的 host binding 就是 contextual invoker(std::function seam)。C ABI 表是 evaluator 时代嵌入,WH-9 随 evaluator 删除 |
+| `resume_checkpoint` / `checkpoint_after_node` | **省略** | evaluator 时代检查点机制;wasm 车道的 resume 是 `recovery_snapshot`(WH-4b)。无 wasm 等价物 |
+
+**拒绝逐字段镜像:** 镜像会携带 evaluator-only 概念(quota、non-contextual invoker、C ABI binding、checkpoint),它们在 wasm 车道无意义——一个对引擎撒谎的 config(Principle 1:目录/结构诚实)。D-A 已裁决 facade 在独立 peer 目标;config 形状应反映 wasm 车道的真实表面,不是 evaluator 表面的回声。
+
+**切换的类型兼容性:** CLI 把 `runtime_config` 从 `WorkflowRuntimeConfig` 改为 `WasmWorkflowRuntimeConfig`,设 4 个字段(`invoker` = 原 `contextual_capability_invoker` 链;`recovery_snapshot`;`recovery_store` = `recovery_store.has_value() ? &*recovery_store : nullptr`;`resume_pending_result_wire_json`;`durable_write_intent_sink`),`hooks`/`name_resolver` 留空。suspend 包装器(`:1830-1847`)包 `config.invoker`(原 `config.contextual_capability_invoker`);`with_standard_capabilities`(`:1778`)同理。字段语义不变,仅结构体/字段名变更。
+
+### 12.7.3 Big-bang 切换面 + 链接边编排(WH-6 → WH-7 → WH-8 → WH-9)
+
+**WH-6 切换 diff 面(一个 commit):**
+
+1. `src/runtime/cli/workflow_run.cpp`:
+   - `:13` include `runtime/engine/workflow_runtime.hpp` → `runtime/wasm_runner/wasm_workflow_runtime.hpp`
+   - `:72-73` using-decls `WorkflowRuntime`/`WorkflowRuntimeConfig` → `wasm_runner::WasmWorkflowRuntime`/`WasmWorkflowRuntimeConfig`
+   - `:1849-1850` 构造 + run:类型替换(§12.7.2 字段映射)
+   - 函数体整体 `#ifdef AHFL_ENABLE_BACKEND_WASM` gate(§12.7.1)
+2. `src/runtime/cli/CMakeLists.txt`:`ahflc` 在 `if(AHFL_ENABLE_BACKEND_WASM)` 内链接 `ahfl_runtime_wasm_runner` + `target_compile_definitions(ahflc PRIVATE AHFL_ENABLE_BACKEND_WASM=1)`。
+3. 无 evaluator TU 删除(保留到 WH-9)。
+
+**链接边编排:**
+
+| 切片 | `ahflc` 链接变化 | `ahfl_tooling_repl` | `ahfl_tooling_dap` | `ahfl_runtime_engine` evaluator 边 |
+|---|---|---|---|---|
+| WH-6 | +gated `ahfl_runtime_wasm_runner`;evaluator 经 `ahfl_runtime` bundle 保留 | 不变(仍 DIRECT 链接 evaluator) | 不变 | PUBLIC 保留(DAP `debug_session.hpp:205` 仍 include `workflow_runtime.hpp`) |
+| WH-7 | 不变 | **DROP direct evaluator**;+gated `ahfl_runtime_wasm_runner` | 不变 | PUBLIC 保留 |
+| WH-8 | 不变 | 不变 | 翻转为 `WasmWorkflowRuntime`(hooks 经 `WasmRuntimeHooks` 同签名) | **PUBLIC → PRIVATE**(无外部生产 includer;`workflow_runtime.hpp` 仅 engine 内部 + 测试 include) |
+| WH-9 | bundle 去 evaluator | 传递依赖消失 | 传递依赖消失 | **删除** evaluator 目标 + `WorkflowRuntime`/`agent_runtime`/`capability_eval` + 专用测试/CMake 边,一个原子 big-bang + `BREAKING CHANGE:` |
+
+**关键事实(HEAD 复核):** 生产 TU 中 evaluator 的直接构造点仅两个——`workflow_run.cpp:1849`(WH-6)与 `repl.cpp:297-298`(WH-7);DAP 持有 `unique_ptr<WorkflowRuntime>`(`debug_session.hpp:205`,构造于 `debug_session.cpp:291`,WH-8)。`ahfl_runtime_engine` PUBLIC 链接 evaluator(`src/runtime/engine/CMakeLists.txt:47`)因 `workflow_runtime.hpp:20-21` include `evaluator.hpp`;WH-8 后无外部生产 includer,边可降 PRIVATE;WH-9 删除。`ahfl_runtime_wasm_runner` PUBLIC 链接 `ahfl_runtime_wasm_host` + `ahfl_runtime_engine`(`src/runtime/wasm_runner/CMakeLists.txt:21-27`),故 WASM=ON 下 evaluator 经 engine 传递链接到 WH-9——这是预期的(evaluator 仍存活供 DAP),不是泄漏。
+
+### 12.7.4 退出码 / 报告 / 错误对齐
+
+**`render_execution_result` 原样复用**(中立 `WorkflowResult`,`src/runtime/engine/execution_renderer.cpp`;WH-4 D-E 已把 `workflow_result.hpp` 移 src-internal,渲染器只消费中立字段)。
+
+**状态臂映射(evaluator → wasm):**
+
+| evaluator `WorkflowStatus` | wasm 车道 | 备注 |
+|---|---|---|
+| `Completed` | `Completed` | 会话 finalize 设 `RunTerminalStatus::Completed` |
+| `NodeFailed` | `NodeFailed` | trap/host-abort/non-OK → `NodeFailed` + `wasm.trap`/`wasm.host-abort`/`wasm.run-failed` 诊断(D-D) |
+| `DependencyFailed` | **不产生** | wasm 车道只报根因节点失败(`NodeFailed`);下游节点不标记 DependencyFailed(它们未运行)。接受的语义收窄:wasm 诚实报告根因,不标记未运行的下游。CLI 退出码不变(非 Completed 即 1) |
+| `EvalError` | **不产生** | wasm 车道无 evaluator;`EvalError` 枚举保留到 WH-9(`workflow_result.hpp:48` 注释明文) |
+| `Suspended` | `Suspended`(WH-4b) | 会话 `raw_status==2` 臂(§12.6.4);`result.suspended` 填充 |
+
+**编译错误(facade ctor):** CLI 在 `cli_driver.cpp:3958-3963` 已把源码 lower 到 IR(parse/resolve/typecheck 错误更早以 SourceRange 诊断 + exit 1 暴露)。facade ctor 的编译是 IR→Core→wasm(`lower_ahfl_to_core` → `compute_core_layouts` → `emit_core_wasm`),其失败是 lowering/codegen 错误(如 wasm 不支持的构造),携带 Core IR SourceRange。按 §12.7.8 裁决,ctor 把诊断存入 `DiagnosticBag`,run() 返回带该 bag 的失败 `WorkflowResult`;CLI 经 `:1888-1890` `diagnostics.render` 渲染(SourceRange 保留,Principle 5),exit 1。evaluator ctor 假设已编译 Program、不失败——wasm ctor 可能失败,但失败在 run() 诚实暴露(与 evaluator 的 run()-surfaces-failure 形状对齐)。
+
+**compile-all 语义:** facade ctor 编译程序中**所有** workflow(`wasm_workflow_runtime.cpp:47-70` 循环)。若 sibling workflow 用了 wasm 不支持的构造,整个 run 失败(诊断命名失败的 workflow)。接受:① 程序是一个编译单元,typechecker 已拒绝坏掉的 sibling,wasm codegen 子集更窄,诚实报告 codegen 失败而非静默跳过;② per-entry 过滤(只编译目标)是隐藏 sibling 失败的并行路径,不诚实。参照 Rustc(编译整个 crate)。
+
+**`ahfl.run-report` v1 JSON 字节对齐:** 事件/元数据/审计存储由会话填充(D-D P1-5);WH-5 普查钉死观察对齐。WH-6 用 `ahfl.run-report` JSON 测试验证字节对齐(risk #2)。
+
+### 12.7.5 LLM 重入 — 接受,smoke 门控
+
+**接受,无设计变更。** LLM tool-calling 循环(`src/runtime/providers/llm/llm_capability_provider.cpp:1303` 同步 round 循环;tool_executor `std::function` `:171` 经 `install_runtime_tools` `workflow_run.cpp:1506-1548` 安装)在 contextual invoker 内运行。wasm 车道上 invoker 从 `m3_Call` 的 import 回调内调用——阻塞 HTTP + tool registry 分发在 wasm3 解释器栈上同步执行。
+
+**约束(明文记录):** contextual invoker **不得重入同一 wasm3 runtime 实例**(`m3_Call` 在同一 `IM3Runtime` 上不可重入)。LLM/tool 路径是纯宿主侧(HTTP/gRPC 能力、tool registry),不触碰 wasm 实例——满足约束。tool registry 调用的是宿主能力(`make_http_capability`/`make_grpc_json_transcoding_capability`),不是 wasm。
+
+**门控:** `llm_provider_runtime.smoke`(mock HTTP LLM + tool 往返)是重入门。若 smoke 暴露 wasm3 重入问题,再开决策门;当前不预判。
+
+### 12.7.6 测试门控顺序 + 切换 commit 形状
+
+**门控顺序(逐级解锁):**
+
+1. **WH-4b 落地**(facade recovery/intent 字段 + fixture 迁移到 opaque 车道)——硬前置。
+2. **WH-5 原生普查 66/0**(`ahfl.conformance.wasm_native_differential`,`ProjectTests.cmake:1352+`)——符合性地板。
+3. `ahflc.run.manifest.entry_workflow_default`(`ProjectTests.cmake:963-972`,human regex `ir::workflow_value_flow::ValueFlowWorkflow  completed`,两空格,`execution_renderer.cpp:427`)+ `ahflc.run.default_manifest.entry_workflow_default`(`:974-981`)——基本 run。
+4. `durable_resume_flags.smoke`——硬 suspend/resume 往返(WH-4b 后 opaque fixture;钉 `audit.workflow_completed` 0/1 + `result.value "resumed-ok"`,`durable_resume_cli_smoke.py:234-274`)。
+5. `llm_provider_runtime.smoke`——LLM 重入(§12.7.5)。
+6. `capability_bindings`——能力跨 wasm 边界。
+7. `profile_and_output_contract`——输出契约。
+8. `llm_failure_matrix`——失败映射。
+9. `fail_*` 预运行时测试(`SingleFileCliTests.cmake:353-471`:LLM secret/budget/vault/mock/input-schema)——不受引擎切换影响,保持绿。
+10. `ahfl.run-report` v1 JSON——字节对齐(§12.7.4)。
+11. 全量 ctest + ASan + `-Werror` WASM=ON;WASM=OFF configure+build(§12.7.1)。
+
+**切换 commit 形状:** 一个 big-bang flip + 测试更新。evaluator TU 保留到 WH-9。无并行 run 路径,无 flag。commit 内含:workflow_run.cpp(include/using/ctor/gate)+ cli/CMakeLists.txt(gated link + compile-def)+ §12.7.8 facade DiagnosticBag 升级 + 本决策节 + RFC 0026 Decision History 条目。
+
+### 12.7.7 挂起路径对齐 + `--wasm-profile` 裁决
+
+**挂起/恢复标志零改动。** `--recovery-store`/`--resume-pending-result`/`--suspend-capability`/`--intent-log`(`workflow_run.cpp:1785-1847`)是引擎中立的:它们操作 contextual invoker 与 config 字段,不触碰引擎。WH-4b 后 facade 消费这些字段(§12.6.6);CLI 把它们映射到 `WasmWorkflowRuntimeConfig`(§12.7.2)。迁移后的 smoke 场景(2b/2c/2d/4)在不变标志契约下驱动 wasm 端到端。`--suspend-capability` 包装器(`:1830-1847`)包 `config.invoker`,在 wasm import 边界强制 Pending;会话观察 `raw_status==2` 挂起(§12.6.4)。`--intent-log` sink 经 facade 的 intent-emitting 包装器(§12.6.7)。
+
+**`--wasm-profile` 裁决:不接线到 `run`;facade 硬编码 `WasmProfileKind::Wasi`。** 理由:① 内嵌 wasm3 宿主只承认 Wasi/内嵌 ABI 形状(引擎决策:模块仅导入 `ahfl_cap`,无 WASI env;browser profile 面向外部宿主,不能在内嵌 wasm3 上运行);② `--wasm-profile` 今天是 `emit wasm` 的选项(`option_table.cpp:293` 帮助文本 "WASM deployment profile for emit wasm";`cli_analysis_helpers.cpp:197-201` 仅 `emit wasm` 消费),`run` 从不消费(evaluator 不编译 wasm)——切换后 `run` 仍不消费,无行为变更;③ 接线它到 facade 会暗示 `run --wasm-profile browser` 有意义,但 browser 模块在内嵌宿主上不可部署——不诚实。facade config 不加 `profile` 字段(YAGNI,诚实子集)。
+
+### 12.7.8 共享决策 — facade ctor 编译失败语义(与 WH-7 联合)
+
+**选择:保留 ctor + run()-surfaces-failure 形状;把 `compile_error_` 从 `optional<string>` 升级为 `DiagnosticBag`。**
+
+**现状(HEAD):** `WasmWorkflowRuntime` ctor 编译所有 workflow,失败时存 `std::optional<std::string> compile_error_`(`wasm_workflow_runtime.hpp:70`),run() 返回带 `wasm.compile-failed` + 拼接字符串的失败 `WorkflowResult`(`wasm_workflow_runtime.cpp:76-85`)。字符串拼接丢失 `CoreWasmDiagnostic.source_range`(`core_wasm_codegen.hpp:58-62` 携带 SourceRange)。
+
+**升级(big-bang,现在,在 WH-6/WH-7 两个调用者存在之前):**
+- `compile_error_` 改为 `DiagnosticBag`(或等价);ctor 把 lowering/layout/codegen 诊断(每条带 code + message + SourceRange)存入 bag。
+- run() 的失败臂返回带该 bag 的 `WorkflowResult`(不再拼接字符串)。
+- CLI 经 `:1888-1890` `diagnostics.render` 渲染——SourceRange 保留(Principle 5)。
+
+**`WasmAgentRunner` 保留 `expected<_, std::string>`。** REPL handler 契约是 string-in/string-out;字符串已拼接 `[code] message`;REPL 按 code 模式匹配产出不支持 UX(§12.8.2)。`DiagnosticBag` 会被 REPL 拍平成字符串,无收益。agent runner 的消费者是 REPL(WH-7)+ conformance 测试;string 是 one-shot runner 的诚实契约。
+
+**拒绝工厂模式(`static expected<WasmWorkflowRuntime, DiagnosticBag> create(...)`):** 它偏离 facade 镜像的 evaluator 表面(evaluator ctor 不失败;失败在 run() 暴露)。失败已在 run() 诚实暴露,每个调用者都处理 run() 的失败结果(CLI:渲染 + exit 1;REPL:error 字符串)。工厂要求每个调用者重构(先查工厂再 run),更大 diff,无诚实收益。
+
+**不对称的理由:** workflow facade 镜像 evaluator 的 `WorkflowRuntime`(ctor + run → `WorkflowResult` 带 `DiagnosticBag`),CLI 渲染 bag 的 SourceRange;agent runner 是 one-shot 自由函数,消费者拍平成字符串。不同消费者契约,不同诚实形状。
+
+### 12.7.9 有序工作清单
+
+1. `wasm_workflow_runtime.{hpp,cpp}`:`compile_error_` 升级为 `DiagnosticBag`(§12.7.8);run() 失败臂带 bag。
+2. `workflow_run.cpp`:include/using/ctor 切换(§12.7.2 字段映射);函数体 `#ifdef` gate(§12.7.1);suspend/standard 包装器改包 `config.invoker`。
+3. `src/runtime/cli/CMakeLists.txt`:gated `ahfl_runtime_wasm_runner` 链接 + `AHFL_ENABLE_BACKEND_WASM=1` compile-definition。
+4. 测试:§12.7.6 门控顺序全绿;WASM=OFF configure+build;ASan。
+5. 本决策节 + RFC 0026 Decision History 条目。
+
+### 12.7.10 验收 / 验证标准
+
+1. WASM=ON:`ahflc run` 经 wasm facade 运行;`entry_workflow_default` human "  completed" regex 绿;`durable_resume_flags.smoke` 场景 1/2/2b/2c/2d/3/3b/4 绿(opaque fixture)。
+2. WASM=OFF:`ahflc run` 打印 §12.7.1 诊断 + exit 1;`ahflc check`/`compile`/`verify`/`emit` 等照常;configure+build 干净。
+3. `llm_provider_runtime.smoke` 绿(LLM 重入)。
+4. `ahfl.run-report` v1 JSON 字节对齐(event/metadata/audit 存储)。
+5. facade ctor 编译失败:lowering/codegen 错误以 SourceRange 诊断渲染,exit 1(非拼接字符串)。
+6. 零业务逻辑 #ifdef(gate 仅在 `run_workflow_with_llm` 函数体边界)。
+7. ASan + `-Werror` 绿。
+8. evaluator 目标/TU 保留(WH-9 删除);无 engine-select flag/env var。
+
+### 12.7.11 拒绝的替代方案(按 fork)
+
+- **fork 1 option (b)(WASM=OFF 不构建 run-capable 二进制):** 见 §12.7.1——违反 §8 #4 两矩阵构建 + `ahflc` 是安装的编译器工具。
+- **fork 1 option (c)(evaluator fallback):** 永久禁止(Principle 1;引擎决策 no engine-select)。
+- **fork 2 逐字段镜像:** 见 §12.7.2——携带 evaluator-only 概念,config 对引擎撒谎。
+- **工厂 ctor:** 见 §12.7.8——偏离镜像表面,无诚实收益。
+- **`--wasm-profile` 接线到 run:** 见 §12.7.7——browser 模块在内嵌宿主不可部署,接线不诚实。
+- **per-entry 编译(只编译目标 workflow):** 见 §12.7.4——隐藏 sibling codegen 失败,不诚实。
+
+## 12.8 WH-7 decisions (2026-09-30, dedicated decision agent, no human gate)
+
+WH-7 把 REPL 的唯一 tree-walk 调用点(`src/tooling/repl/repl.cpp:297-298` `EvalContext ctx; eval_expr(...)`)替换为 compile-to-wasm + 内嵌求值合成 agent;`print_value` 存活;drop direct evaluator 链接。prep map(`$CLAUDE_JOB_DIR/tmp/wh7-prep-map.md`)的事实已对 HEAD `6b5374a5` 逐条复核。WH-7 门控于 WH-6 之后(阶梯 §6),依赖 WH-4 `WasmAgentRunner`。
+
+### 12.8.0 决策摘要
+
+**REPL eval 用源码级合成 agent 包装用户表达式(A1),经 `WasmAgentRunner` 编译 + 运行;不支持的种类由 codegen fail-closed 诊断直接暴露(B1),无预分类门、无 evaluator fallback。** 包装器是两态 agent(`Init → Done`,`return <expr>` 在 `Done`),匹配已证的 `e3_identity_workflow` agent 形状;输出类型经第一轮 const 包装 typecheck 推断 + `describe()` 拼写(语法验证可 round-trip)。P6/WireJson 车道由 codegen `frame_contract` 决定,REPL 不选。`print_value` 存活;闭包输出是 codegen 拒绝(非 print_value 情形)。WASM=OFF 继承 §12.7.1(eval 拒绝,非 eval 命令可用)。
+
+### 12.8.1 Fork A — 包装器放置:源码级合成 agent(A1)
+
+**选择 A1:源码级合成 agent 字符串,复用 parser/typechecker。**
+
+**包装器形状(两态,匹配 `tests/golden/wasm/e3_identity_workflow.ahfl` 的 `FirstAgent`):**
+```
+agent __repl__ {
+    input: Unit;
+    context: Unit;
+    output: <describe(inferred_type)>;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    transition Init -> Done;
+}
+flow for __repl__ {
+    state Init { goto Done; }
+    state Done { return <expr>; }
+}
+```
+
+**求值流程:**
+1. 第一轮:`const __repl_result__ = <input>;`(现状 `:272`)→ `run_pipeline` → typecheck + 推断类型(从 `typecheck_result.typed_program.expressions.back().type`,与 `:type` handler `:83-91` 同路径)。
+2. `describe()` 拼写输出类型(§12.8.1 类型 round-trip 验证)。
+3. 构造合成 agent 源码(上形状,`<expr>` = 用户原文)。
+4. 第二轮:`run_pipeline` 合成 agent → `lower_program_ir` → `wasm_runner::run_wasm_agent(program, "__repl__", Value{UnitValue{}}, config)`。
+5. `result.result.output()` → `print_value`(`:301` 存活)。
+
+**主流先例:** Swift REPL 把表达式包进合成上下文;GHCi 绑 `it`;rustc `--extern`。REPL 已在 `:type`(`:76` `const __repl_expr__ = <input>`)与现状 eval(`:272`)做源码级包装——A1 是既有 REPL 模式的延续,不是新发明。
+
+**诊断保真度(Principle 5):** 用户表达式的类型错误由第一轮 const 包装的 typechecker 捕获(用户原文在已知偏移),REPL 返回 `Error: <type error>`(现状行为,不回归)。codegen 拒绝(字符串拼接、f64 算术等)由第二轮 wasm 路径捕获(§12.8.2)。REPL 的 `run_pipeline` 把诊断拍平成字符串(`:40-67`,不渲染 SourceRange)——这是 REPL 既有行为,A1 不回归也不改善。合成 SourceRange 不丢失 REPL 当前有的保真度。
+
+**不变量安全:** A2(IR 级注入 AgentDecl/FlowDecl)要求手工构造 agent/flow/const 的全部不变量(initial/final/transition/context/input/output 类型),是与 parser 并行的 IR 构造,会漂移。A1 复用 parser(agent/flow 不变量的 SSOT)。A3(Core 级注入)最接近 emitter 但最 opaque,跳过 typechecker——类型错误无法在用户原文上捕获。
+
+**双解析成本:** 接受。REPL 输入小,parser 快;GHCi 也重解析。第一轮是类型推断(必须,因 grammar `outputDecl` 强制显式类型,`grammar/AHFL.g4:219`);第二轮是 codegen。第一轮成功则第二轮必成功(同一表达式,同一类型规则)。
+
+**REPL 无状态:** 确认(`repl.cpp` 每输入 fresh `EvalContext` + fresh pipeline;仅 `history_` 持久)。one-shot wasm 模型精确匹配;无状态累积。
+
+**类型 round-trip 验证(已对 HEAD grammar 核实):** `describe()`(`include/ahfl/compiler/semantics/types.hpp:232-330`)产出:`Unit`/`Bool`/`Int`/`String`/`Float` → `primitiveType`;`Int(lo,hi)`/`String(lo,hi)`/`Decimal(scale)` → `primitiveType` 带界;`Request`/`module::Request` → `qualifiedIdent`;`Option<Int>`/`List<Int>`/`Set<Int>`/`Tuple<...>` → `qualifiedIdent<type_>`;`List<Int>(16)` → `qualifiedIdent<type_>(INT)`。grammar `type_`(`AHFL.g4:89-93`)= `primitiveType | fnType | qualifiedIdent ('<' type_ (',' type_)* '>')? collectionCapacity?`。P6 子集(Unit/None/Bool/Int/String/Struct/Option/Enum/List/Set/Tuple)的 `describe()` 拼写全部 round-trip。闭包类型(`Fn(...) -> ...`)可解析但 codegen 拒绝闭包跨 fn 边界(§12.8.2)——在 wasm 路径捕获,不在拼写阶段。
+
+**拒绝:**
+- **A2(IR 级注入):** 手工 IR 构造与 parser 并行,不变量漂移风险;类型错误的 SourceRange 需手工映射回用户原文(易错)。
+- **A3(Core 级注入):** 跳过 typechecker,类型错误无法在用户原文上捕获(违反 Principle 5);最 opaque。
+- **单态零过渡 agent(`states: [Done]; initial: Done; final: [Done]`):** 拒绝作为主形状——golden fixture 中无此形状先例(全部两态+),codegen planner 对零过渡 agent 的支持未证;两态形状(`Init → Done`)是 `e3_identity_workflow`/`e2_capability_agent` 已证形状,风险最低。实现时若探针证明零过渡可行,可简化,但不在本决策预设。
+
+### 12.8.2 Fork B — 不支持种类:可行动 codegen 诊断(B1),无预分类门
+
+**选择 B1:让 codegen 说话。** REPL 捕获 `run_wasm_agent` 的 `unexpected(string)` 错误,字符串已拼接 `[code] message`;REPL 打印可行动消息,不 trap 字符串,不 fallback。
+
+**今天 wasm 上工作的(P6 车道):** Unit/None/Bool/Int/String/Struct/Option/Enum/List/Set/Tuple。
+
+**codegen fail-closed 拒绝的(HEAD file:line):**
+- f64 算术:`core_wasm_codegen.cpp:1992`(`p6_scalar_kind` 对 F64 返回 nullopt)
+- 字符串拼接/比较:`:7851-7857`(`emit_binary` 拒绝 `P6ScalarKind::String`:"binary arithmetic/comparison is defined for Int/Bool only on the P6 frame lane")
+- 无界集合:`:2009`(`p6_container_layout` 返回 null → `core.layout.UNBOUNDED`)
+- Map/Decimal/Duration/Timestamp/Uuid 帧走:`frame_packer.cpp:470-472`(`ValueNotWireEncodable`)
+- 闭包跨 fn 边界:`core_wasm_codegen.cpp:4188`(call argument)/`:4363`(call result)/`:4288`(capture);`frame_packer.cpp:140-141`(packer 拒绝闭包)
+- f64/多词跨 fn 边界:同 `:4188`/`:4363`
+
+**UX 方向(精确措辞由实现定,方向约束):** REPL 打印 `Error: ` + codegen 诊断消息(已具体,如 "binary arithmetic/comparison is defined for Int/Bool only on the P6 frame lane"),可选稳定后缀指向跟踪 KR(如 "; see RFC 0026 KR6.8 (wasm-gc post-WH-9)")。不硬编码 kind 名(codegen 消息已命名构造)。不暴露 wasm3 trap 字符串。
+
+**拒绝 B2(预分类 eligibility 门):** ① `wasm_eligibility` 分类器在 `tests/conformance/`(测试侧机械),拖入生产工具会反转分层(测试 conformance → 生产);② 其自身头注释明文 "never a second, parallel re-derivation of the codegen subset predicates — CLAUDE.md forbids a second SSOT"——REPL 预分类门正是第二个 SSOT;③ codegen 已是 fail-closed 的权威,分类器会漂移。
+
+**拒绝 B3(evaluator fallback):** 永久禁止(Principle 1;引擎决策 no engine-select)。
+
+### 12.8.3 车道选择 — codegen `frame_contract` 决定,REPL 不选
+
+P6 vs WireJson 由 codegen 的 `CoreWasmFrameContract`(`core_wasm_codegen.hpp:195`)决定,descriptor 携带。`wasm_host::run_wasm_agent` 按车道驱动(runv for P6,run2 for WireJson)。REPL 不选择、不感知车道。
+
+**零能力 agent 的 invoker:** REPL 传 fail-closed noop invoker(若被调用则返回错误——但零能力 agent 无 import,永不调用)。`wasm_agent_runner.cpp` 的无导入路径不调用 invoker(import 回调仅在模块有 import 时触发)。合成 agent 无 `capabilities:` 声明 → 无 import → invoker 是防御性的,永不触达。
+
+**字符串/struct 往返:** WireJson 车道(零能力 agent 的默认)经 `value_from_json` 解码输出(`wasm_agent_runner.cpp:447` 区域);String rodata 经 Data 段(已证,e2e/`v2b_string`)。REPL 的 `print_value` 渲染解码后的 Value。
+
+### 12.8.4 Fork D — 输出:`print_value` 存活
+
+**`print_value` 存活(阶梯 D1)。** `WasmAgentRunResult.result.output()` 给 Value;REPL 经 `runtime::print_value`(`src/runtime/value/value.hpp:252`)渲染。
+
+**闭包输出:** wasm 车道不能产生闭包输出(codegen 拒绝闭包跨 fn 边界,§12.8.2)——在运行前捕获,不是 `print_value` 情形。`print_value` 的闭包拼写(`<lambda/id>`,`value.cpp:543-546`)在 wasm 车道永不触达。
+
+**不支持的输出种类(Float 等):** 同 §12.8.2——codegen 在发射前拒绝,不产生输出。行为与 B 一致。
+
+**拒绝 `value_to_json`:** 用户可见格式变更(REPL 今天用 `print_value` 的人类拼写);无收益。
+
+### 12.8.5 Big-bang 面 + WASM=OFF(继承 §12.7.1)
+
+**repl.cpp:**
+- `:8` 删 `#include "runtime/evaluator/evaluator.hpp"`。
+- `:3-7` 加:`ahfl/compiler/ir/core_ir.hpp`、`ahfl/compiler/ir/core_layout.hpp`、`compiler/backends/wasm/core_wasm_codegen.hpp`、`runtime/wasm_runner/wasm_agent_runner.hpp`、`runtime/engine/capability_bridge.hpp`(Value/UnitValue 已在 `value.hpp`)。
+- `:270-307` `default_eval_handler` 重写:§12.8.1 流程;`#ifdef AHFL_ENABLE_BACKEND_WASM` 门(组合边缘)。
+- `:280-285` 声明 fallback(declaration 输入 → `print_program_ir`)存活。
+- `:type`/`:verify`/`:simulate`/`:help` handler 不动。
+
+**CMakeLists.txt:**
+- 删 `ahfl_runtime_evaluator` PUBLIC 链接(`:7`)。
+- 加 `ahfl_compiler`(frontend/ir/semantics bundle)+ `ahfl_verification_formal` + `ahfl_runtime_value`(print_value;今天经 evaluator 传递,drop 后需显式)。
+- `if(AHFL_ENABLE_BACKEND_WASM)`:加 `ahfl_runtime_wasm_runner` + `target_compile_definitions(ahfl_tooling_repl PUBLIC AHFL_ENABLE_BACKEND_WASM=1)`。
+- `ahfl-repl` exe 不变(链 `ahfl_tooling_repl`)。
+
+**WASM=OFF(继承 §12.7.1):** `ahfl-repl` 始终构建(不 gated)。eval handler 的 `#else` 臂返回:
+```
+Error: evaluation requires the embedded wasm engine; this build was configured with -DAHFL_ENABLE_BACKEND_WASM=OFF. Rebuild with the default (ON) to evaluate expressions.
+```
+非 eval 命令(`:type`/`:verify`/`:simulate`/`:help`/`:quit`)可用(它们只依赖编译器前端 + verification,不依赖执行引擎)。eval handler 是唯一的 `#ifdef` 站点(组合边缘);wasm eval 逻辑在 gate 内,零 #ifdef 散落。
+
+**诚实裁决(无 wasm_runner target 时 exe 不能链接 wasm 符号):** 解法是 compile-definition seam——eval handler 的 wasm 路径整体在 `#ifdef AHFL_ENABLE_BACKEND_WASM` 内,WASM=OFF 下该臂不编译,无 wasm 符号引用,exe 正常链接(链编译器/verification/value,无 wasm_runner)。不需要 skip-77(REPL 不是 ctest;`ahfl.repl.process_smoke` 在 WASM=OFF 下跑 `:help`+`:quit`,仍绿)。
+
+### 12.8.6 测试
+
+新增(`tests/unit/tooling/repl/repl.cpp`,注册于 `ProjectTests.cmake:1880` `ahfl.repl.repl_all`):
+1. P6 算术:`1+2` → `3`;`1+2*3` → `7`。
+2. struct/enum/option:构造 + 字段访问/模式 → `print_value` 拼写。
+3. 字符串字面量 rodata:`"hello"` → `hello`(经 Data 段)。
+4. 不支持表达式 UX:`1.5+2.5` → `Error: ...`(codegen 诊断,非 trap);`"a"+"b"` 同。
+5. 声明 fallback:`const x = 5;` → `print_program_ir` 输出(存活)。
+6. `:type` 回归(`1+2` → `Int`)。
+
+`ahfl.repl.process_smoke`(`repl_smoke.py`):加 eval 用例(WASM=ON 下 `1+2` → `3`;WASM=OFF 下 eval → 拒绝消息)。现状 smoke 仅 `:help`+`:quit`——扩展。
+
+### 12.8.7 有序工作清单
+
+1. `wasm_agent_runner.{hpp,cpp}`:确认 `expected<_, string>` 契约不变(§12.7.8);REPL 按 code 模式匹配。
+2. `repl.cpp`:重写 `default_eval_handler`(§12.8.1);`#ifdef` gate(§12.8.5);删 evaluator include。
+3. `src/tooling/repl/CMakeLists.txt`:drop evaluator;加 compiler/verification/value;gated wasm_runner + compile-definition。
+4. 测试:§12.8.6 新增 + smoke 扩展。
+5. WASM=OFF configure+build;ASan;全量 ctest。
+6. 本决策节 + RFC 0026 Decision History 条目。
+
+### 12.8.8 验收 / 验证标准
+
+1. WASM=ON:`1+2` → `3`;struct/enum/option/string 字面量经 wasm 求值 + `print_value` 渲染正确。
+2. 不支持表达式(`1.5+2.5`、`"a"+"b"`、map 字面量、闭包输出)→ `Error: <codegen 诊断>`,非 trap 字符串,非 evaluator fallback。
+3. 声明输入(`const x = 5;`)→ `print_program_ir`(存活)。
+4. `:type`/`:verify`/`:simulate`/`:help` 不变。
+5. WASM=OFF:eval → §12.8.5 拒绝消息;非 eval 命令可用;configure+build 干净。
+6. `ahfl_tooling_repl` 不直接链接 `ahfl_runtime_evaluator`(grep-zero 直接边;传递边经 wasm_runner→engine 保留到 WH-9)。
+7. ASan + `-Werror` 绿。
+8. 零业务逻辑 #ifdef(gate 仅在 `default_eval_handler`)。
+
+### 12.8.9 拒绝的替代方案(按 fork)
+
+- **fork A2(IR 级注入):** 见 §12.8.1——并行 IR 构造,不变量漂移,SourceRange 手工映射易错。
+- **fork A3(Core 级注入):** 跳过 typechecker,类型错误无法在用户原文上捕获。
+- **fork B2(预分类门):** 见 §12.8.2——第二个 SSOT,测试侧机械拖入生产。
+- **fork B3(evaluator fallback):** 永久禁止。
+- **fork D `value_to_json`:** 用户可见格式变更,无收益。
+- **单态零过渡 agent:** 无 golden 先例,codegen 支持未证;两态形状已证。
+
+---
+
+**跨切片注记(WH-8 继承):** DAP 的 WASM=OFF 策略(§12.7.1)、facade config 的 hooks/cancellation/monotonic_clock 字段(§12.7.2 推迟项)、ctor 编译失败语义(§12.7.8)均由 WH-8 继承,不再重开决策。DAP 切换(`debug_session.cpp:291` `unique_ptr<WorkflowRuntime>` → `WasmWorkflowRuntime`)是 hooks 同签名的机械替换(`WasmRuntimeHooks` 已携带全部 5 个 hook,`wasm_runtime_hooks.hpp`),加 cancellation 在 import 边界检查。
