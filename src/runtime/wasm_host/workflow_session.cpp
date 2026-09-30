@@ -3,8 +3,18 @@
 // Runs a WORKFLOW module end-to-end on the wasm3 engine, wrapping the WH-3
 // capability_import executor with the D1 hook-firing discipline (see the
 // header comment for the full contract).
+//
+// WH-4 fix-forward P1-2/P1-3: the session populates the
+// ExecutionMetadataStore, emits the lifecycle event stream, and builds the
+// ExecutionReport from those events via the shared wasm_lifecycle helper --
+// the SAME projection the evaluator-backed WorkflowRuntime uses. No
+// hand-populated report path survives. P2-2: per-import runner resolution
+// via source_symbol (not name-keyed first-wins). P2-3: node-event record
+// cross-checks against the descriptor. P2-4: workflow_completed_count
+// validation against descriptor.workflow_node_count.
 
 #include "runtime/wasm_host/workflow_session.hpp"
+#include "runtime/wasm_host/wasm_lifecycle.hpp"
 
 #include "runtime/engine/core_wasm_node_events.hpp"
 #include "runtime/engine/core_wasm_schema_module.hpp"
@@ -61,14 +71,17 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     return regions;
 }
 
-// Fire state_entered_hook for a batch of new trace records. Fail-closed:
-// a record whose runner or state is out of range is evidence of a corrupt
-// module (D-B: no silent OOR skip); returns an error string instead.
+// Fire state_entered_hook for a batch of new trace records. Also populates
+// states_per_node for lifecycle event emission. Fail-closed: a record whose
+// runner or state is out of range is evidence of a corrupt module (D-B: no
+// silent OOR skip); returns an error string instead.
 [[nodiscard]] std::optional<std::string> fire_state_entries(
     const std::vector<StateTraceRecord> &records, std::size_t from,
     const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
     const WorkflowSessionConfig &config,
-    std::vector<StateEntry> &collected_states) {
+    std::vector<StateEntry> &collected_states,
+    std::vector<std::vector<WasmNodeStateEntry>> &states_per_node,
+    const std::unordered_map<std::uint32_t, std::size_t> &runner_to_schedule) {
     for (std::size_t i = from; i < records.size(); ++i) {
         const auto &rec = records[i];
         if (rec.runner >= descriptor.agents.size()) {
@@ -85,6 +98,11 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
                                       state_name);
         }
         collected_states.push_back({agent_name, state_name});
+        // P1-2: also collect per-node for lifecycle event emission.
+        auto it = runner_to_schedule.find(rec.runner);
+        if (it != runner_to_schedule.end()) {
+            states_per_node[it->second].push_back({rec.runner, state_name});
+        }
     }
     return std::nullopt;
 }
@@ -94,19 +112,22 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
 // Identity workflows (no capability imports, no event buffer) reconstruct from
 // the descriptor nodes directly. Fail-closed on any out-of-range runner or
 // unknown node (D-B: mirrors the JS oracle's recordStates, which fails rather
-// than skips).
+// than skips). P2-3: cross-checks event capability/source_symbol against the
+// descriptor node. Also populates states_per_node for lifecycle events.
 [[nodiscard]] std::optional<std::string> reconstruct_wirejson_states(
     std::span<const std::uint8_t> linear_memory,
     const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
     const WorkflowSessionConfig &config,
-    std::vector<StateEntry> &collected_states) {
+    std::vector<StateEntry> &collected_states,
+    std::vector<std::vector<WasmNodeStateEntry>> &states_per_node) {
     const auto &nodes = descriptor.nodes;
     const auto &agents = descriptor.agents;
 
     // Identity workflow: no event buffer. The descriptor nodes (in Kahn
     // schedule order) ARE the schedule; join each to its runner's walk.
     if (descriptor.imports.empty()) {
-        for (const auto &node : nodes) {
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            const auto &node = nodes[i];
             if (node.runner >= agents.size()) {
                 return "identity workflow node runner index out of range";
             }
@@ -118,6 +139,7 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
                         state_name);
                 }
                 collected_states.push_back({agent.agent, state_name});
+                states_per_node[i].push_back({node.runner, state_name});
             }
         }
         return std::nullopt;
@@ -132,9 +154,11 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
     for (const auto &event : *events) {
         // Join to the descriptor node by workflow_node_id.
         const ahfl::backends::CoreWasmNodeDescriptor *node_desc = nullptr;
-        for (const auto &nd : nodes) {
-            if (nd.node_id == event.workflow_node_id.value) {
-                node_desc = &nd;
+        std::size_t node_schedule = 0;
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            if (nodes[i].node_id == event.workflow_node_id.value) {
+                node_desc = &nodes[i];
+                node_schedule = i;
                 break;
             }
         }
@@ -144,6 +168,24 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
         if (node_desc->runner >= agents.size()) {
             return "node-event record runner index out of range";
         }
+
+        // P2-3: cross-check event capability kind + source_symbol against
+        // the descriptor node. A mismatch is evidence of a corrupt module.
+        const bool event_is_capability =
+            event.kind == core_wasm_resume::NodeKind::Capability;
+        if (event_is_capability != node_desc->has_capability) {
+            return "node-event record capability kind disagrees with descriptor";
+        }
+        if (node_desc->has_capability) {
+            if (event.source_symbol != node_desc->source_symbol) {
+                return "node-event record source_symbol disagrees with descriptor";
+            }
+        } else {
+            if (event.source_symbol != 0) {
+                return "identity node-event record has nonzero source_symbol";
+            }
+        }
+
         const auto &agent = agents[node_desc->runner];
         for (const auto &state_name : agent.walk) {
             if (config.state_entered_hook) {
@@ -152,83 +194,11 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
                     state_name);
             }
             collected_states.push_back({agent.agent, state_name});
+            states_per_node[node_schedule].push_back(
+                {node_desc->runner, state_name});
         }
     }
     return std::nullopt;
-}
-
-// Populate the ExecutionMetadataStore + ExecutionReport from the descriptor.
-// Called once per session run so the WorkflowResult carries the same metadata
-// shape as the evaluator-backed WorkflowRuntime (P1-5).
-void populate_metadata_and_report(
-    WorkflowResult &result,
-    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
-    RunTerminalStatus status,
-    std::optional<WorkflowFailureKind> failure_kind) {
-    auto wf_id = result.metadata.add_workflow("workflow");
-    result.report.workflow = wf_id;
-    result.report.status = status;
-    result.report.failure_kind = failure_kind;
-
-    // Agents + agent states.
-    std::vector<AgentId> agent_ids;
-    agent_ids.reserve(descriptor.agents.size());
-    for (const auto &agent : descriptor.agents) {
-        auto agent_id = result.metadata.add_agent(agent.agent);
-        agent_ids.push_back(agent_id);
-        for (const auto &state_name : agent.all_states) {
-            (void)result.metadata.add_agent_state(agent_id, state_name);
-        }
-    }
-
-    // Nodes.
-    for (const auto &node : descriptor.nodes) {
-        const auto agent_id =
-            node.runner < agent_ids.size() ? agent_ids[node.runner] : AgentId{};
-        (void)result.metadata.add_node(node.name, wf_id, agent_id);
-        ExecutionNodeReport node_report;
-        node_report.node = WorkflowNodeId{node.node_id};
-        node_report.agent = agent_id;
-        node_report.status =
-            (status == RunTerminalStatus::Completed)
-                ? NodeReportStatus::Completed
-                : NodeReportStatus::Failed;
-        result.report.nodes.push_back(std::move(node_report));
-        result.report.execution_order.push_back(
-            WorkflowNodeId{node.node_id});
-    }
-
-    // Capabilities.
-    for (const auto &import : descriptor.imports) {
-        (void)result.metadata.add_capability(import.canonical_name);
-    }
-}
-
-// D-D: build a failed WorkflowSessionResult for a terminal run failure
-// (trap / host-abort / engine error). Populates the metadata + report from
-// the descriptor and adds a diagnostic with the given code + message. The
-// collected observation data is preserved (states/capabilities gathered
-// before the terminal failure are still valid evidence).
-[[nodiscard]] WorkflowSessionResult make_failed_session_result(
-    const ahfl::backends::CoreWasmExecutionDescriptor &descriptor,
-    std::string diagnostic_code, std::string diagnostic_message,
-    std::vector<StateEntry> states,
-    std::vector<std::string> capabilities,
-    std::vector<std::string> capability_arguments,
-    std::vector<CapabilityFailureKind> capability_failures) {
-    WorkflowSessionResult session_result;
-    populate_metadata_and_report(session_result.result, descriptor,
-                                 RunTerminalStatus::Failed,
-                                 WorkflowFailureKind::NodeFailed);
-    session_result.result.diagnostics.error()
-        .code(std::move(diagnostic_code))
-        .message(std::move(diagnostic_message))
-        .emit();
-    session_result.states = std::move(states);
-    session_result.capabilities = std::move(capabilities);
-    session_result.capability_arguments = std::move(capability_arguments);
-    session_result.capability_failures = std::move(capability_failures);
-    return session_result;
 }
 
 } // namespace
@@ -260,17 +230,25 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // out-of-range record (D-B fail-closed). Checked post-run.
     std::optional<std::string> trace_error;
 
-    // P1-6: build a map from canonical capability name to runner (agent_id)
-    // so the capability hooks receive the REAL per-import agent_id instead of
-    // a hardcoded AgentId{0}. Each capability node's runner is the agent that
-    // invokes the capability.
-    std::unordered_map<std::string, std::uint32_t> name_to_runner;
+    // P1-2: per-node state collection for lifecycle event emission.
+    std::vector<std::vector<WasmNodeStateEntry>> states_per_node(
+        descriptor.nodes.size());
+
+    // P6-frame: map runner -> schedule index (each runner maps to exactly one
+    // node; codegen rejects runner reuse for P6-frame workflows).
+    std::unordered_map<std::uint32_t, std::size_t> runner_to_schedule;
+    for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+        runner_to_schedule[descriptor.nodes[i].runner] = i;
+    }
+
+    // P2-2: per-import runner resolution via source_symbol. Each capability
+    // node carries a unique source_symbol; the WH-3 executor sets it in the
+    // invocation context per-call, so the session resolves the owning
+    // agent/node per-import (not name-keyed first-wins).
+    std::unordered_map<std::uint64_t, std::uint32_t> symbol_to_runner;
     for (const auto &node : descriptor.nodes) {
-        if (node.has_capability &&
-            node.capability_ordinal < descriptor.imports.size()) {
-            name_to_runner.emplace(
-                descriptor.imports[node.capability_ordinal].canonical_name,
-                node.runner);
+        if (node.has_capability) {
+            symbol_to_runner[node.source_symbol] = node.runner;
         }
     }
 
@@ -282,19 +260,21 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // WorkflowSessionConfig is copyable (all std::function members).
     ContextualCapabilityInvoker wrapped_invoker =
         [config, &collected_capabilities, &collected_cap_args,
-         &collected_failures, &name_to_runner](
+         &collected_failures, &symbol_to_runner](
             const CapabilityInvocationContext &ctx,
             const std::string &name,
             const std::vector<Value> &args)
         -> CapabilityCallResult {
-        // P1-6: resolve the REAL per-import agent_id from the capability's
-        // canonical name. The WH-3 executor passes a single context for all
-        // calls; the session layer overrides agent_id per-call so the hooks
-        // and invoker see the agent that actually invokes the capability.
+        // P2-2: resolve the REAL per-import agent_id from the capability's
+        // source_symbol (set by the WH-3 executor per-call). Falls back to
+        // the context's agent_id when the symbol is not in the map (e.g.,
+        // a capability not called from a workflow node).
         CapabilityInvocationContext real_ctx = ctx;
-        if (auto it = name_to_runner.find(name);
-            it != name_to_runner.end()) {
-            real_ctx.agent_id = AgentId{it->second};
+        if (ctx.source_capability_symbol_id.has_value()) {
+            auto it = symbol_to_runner.find(*ctx.source_capability_symbol_id);
+            if (it != symbol_to_runner.end()) {
+                real_ctx.agent_id = AgentId{it->second};
+            }
         }
         collected_capabilities.push_back(name);
         if (config.capability_invoked_hook) {
@@ -396,7 +376,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         // scope reason as the wrapped_invoker above.
         wrapped_callback =
             [config, &descriptor, &last_trace_count, &collected_states,
-             &trace_error, has_trace, inner = std::move(inner_callback)](
+             &states_per_node, &runner_to_schedule, &trace_error, has_trace,
+             inner = std::move(inner_callback)](
                 const eng::ImportObservation &obs)
             -> eng::ImportCallbackResult {
                 if (has_trace) {
@@ -407,7 +388,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     if (decoded.has_value()) {
                         auto err = fire_state_entries(
                             *decoded, last_trace_count, descriptor, config,
-                            collected_states);
+                            collected_states, states_per_node,
+                            runner_to_schedule);
                         if (err.has_value()) {
                             trace_error = std::move(*err);
                         } else {
@@ -499,91 +481,118 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     }
 
     // --- 8. Invoke run2 ---
-    // D-D: trap / host-abort / engine error map to NodeFailed + DiagnosticBag
-    // (codes wasm.trap / wasm.host-abort), NOT a bare std::string error. The
-    // facade maps the WorkflowResult status; std::unexpected is reserved for
-    // pre-run setup failures (admission, instantiation, pack).
+    // D-D: trap / host-abort / engine error map to a FAILED WorkflowResult
+    // with diagnostic codes wasm.trap / wasm.host-abort / wasm.run-failed,
+    // NOT a bare std::string error. std::unexpected is reserved for PRE-RUN
+    // setup failures (admission, instantiation, pack).
     auto outcome = engine.invoke_run2(entry_ptr, entry_len);
+
+    RunTerminalStatus run_status = RunTerminalStatus::Completed;
+    std::optional<WorkflowFailureKind> run_failure_kind;
+    std::string run_failure_code;
+    std::string run_failure_message;
+    bool run_ok = false;
+    const eng::Run2ResultTuple *tuple = nullptr;
+
     if (!outcome.has_value()) {
-        return make_failed_session_result(
-            descriptor, "wasm.trap",
-            "run_workflow_session: invoke_run2 failed (engine error)",
-            std::move(collected_states), std::move(collected_capabilities),
-            std::move(collected_cap_args), std::move(collected_failures));
-    }
-
-    const auto *tuple = std::get_if<eng::Run2ResultTuple>(&*outcome);
-    if (tuple == nullptr) {
-        if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
-            std::string msg =
-                "run_workflow_session: run2 host-aborted (capability import "
-                "failure)";
-            if (import_state.last_error.has_value()) {
-                msg += " (CapabilityImportError=";
-                msg += std::to_string(
-                    static_cast<int>(*import_state.last_error));
-                msg += ")";
-            }
-            return make_failed_session_result(
-                descriptor, "wasm.host-abort", std::move(msg),
-                std::move(collected_states), std::move(collected_capabilities),
-                std::move(collected_cap_args),
-                std::move(collected_failures));
+        run_status = RunTerminalStatus::Failed;
+        run_failure_kind = WorkflowFailureKind::NodeFailed;
+        run_failure_code = "wasm.trap";
+        run_failure_message =
+            "run_workflow_session: invoke_run2 failed (engine error)";
+    } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
+        run_status = RunTerminalStatus::Failed;
+        run_failure_kind = WorkflowFailureKind::NodeFailed;
+        run_failure_code = "wasm.host-abort";
+        run_failure_message =
+            "run_workflow_session: run2 host-aborted (capability import "
+            "failure)";
+        // P2-1: use the CapabilityImportError ENUM NAME, not the raw integer.
+        if (import_state.last_error.has_value()) {
+            run_failure_message +=
+                " (CapabilityImportError=";
+            run_failure_message +=
+                std::string(to_string(*import_state.last_error));
+            run_failure_message += ")";
         }
-        return make_failed_session_result(
-            descriptor, "wasm.trap", "run_workflow_session: run2 trapped",
-            std::move(collected_states), std::move(collected_capabilities),
-            std::move(collected_cap_args), std::move(collected_failures));
+    } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
+        run_status = RunTerminalStatus::Failed;
+        run_failure_kind = WorkflowFailureKind::NodeFailed;
+        run_failure_code = "wasm.trap";
+        run_failure_message = "run_workflow_session: run2 trapped";
+    } else {
+        tuple = &std::get<eng::Run2ResultTuple>(*outcome);
+        run_ok = (tuple->raw_status == 0);
+        if (!run_ok) {
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::NodeFailed;
+            run_failure_code = "wasm.run-failed";
+            run_failure_message =
+                "run_workflow_session: run2 returned non-zero status " +
+                std::to_string(tuple->raw_status);
+        }
     }
-
-    const bool run_ok = (tuple->raw_status == 0);
 
     // --- 9. Post-run: decode the FULL trace ring and fire remaining
-    //        state_entered_hook ---
+    //        state_entered_hook (P6-frame) ---
     if (has_trace) {
         if (trace_error.has_value()) {
-            return std::unexpected(
-                "run_workflow_session: " + std::move(*trace_error));
-        }
-        const auto &section = *descriptor.frame_section;
-        auto mem = engine.read_whole_memory();
-        if (mem.has_value()) {
-            auto decoded = decode_state_trace(
-                *mem, section.state_trace_base, section.state_trace_capacity);
-            if (decoded.has_value() && decoded->size() > last_trace_count) {
-                auto err = fire_state_entries(*decoded, last_trace_count,
-                                              descriptor, config,
-                                              collected_states);
-                if (err.has_value()) {
-                    return std::unexpected(
-                        "run_workflow_session: " + std::move(*err));
+            // D-B fail-closed: a trace-ring OOR record is evidence of a
+            // corrupt module. On the success path this is a hard error; on
+            // the failure path the run already failed, so the collection
+            // error is secondary (proceed with whatever was collected).
+            if (run_ok) {
+                return std::unexpected(
+                    "run_workflow_session: " + std::move(*trace_error));
+            }
+        } else {
+            const auto &section = *descriptor.frame_section;
+            auto mem = engine.read_whole_memory();
+            if (mem.has_value()) {
+                auto decoded = decode_state_trace(
+                    *mem, section.state_trace_base,
+                    section.state_trace_capacity);
+                if (decoded.has_value() && decoded->size() > last_trace_count) {
+                    auto err = fire_state_entries(
+                        *decoded, last_trace_count, descriptor, config,
+                        collected_states, states_per_node,
+                        runner_to_schedule);
+                    if (err.has_value() && run_ok) {
+                        return std::unexpected(
+                            "run_workflow_session: " + std::move(*err));
+                    }
+                    if (!err.has_value()) {
+                        last_trace_count = decoded->size();
+                    }
                 }
-                last_trace_count = decoded->size();
             }
         }
     }
 
     // --- 9b. Post-run: reconstruct WireJson state_sequence from node-event
     //         records joined to agent walks (D-B) ---
-    // P6 workflows use the trace ring (section 9); WireJson workflows have no
-    // trace ring, so the state sequence is reconstructed from the node-event
-    // buffer (capability workflows) or the descriptor nodes (identity
-    // workflows), joined to each runner's declared walk. Fires
-    // state_entered_hook POST-RUN for every reconstructed state.
-    if (!is_p6 && run_ok) {
+    if (!is_p6) {
         auto mem = engine.read_whole_memory();
         if (mem.has_value()) {
             auto err = reconstruct_wirejson_states(
-                *mem, descriptor, config, collected_states);
-            if (err.has_value()) {
+                *mem, descriptor, config, collected_states, states_per_node);
+            if (err.has_value() && run_ok) {
                 return std::unexpected(
                     "run_workflow_session: " + std::move(*err));
+            }
+            if (err.has_value()) {
+                // On the failure path, a reconstruction error is secondary.
+                // Proceed with whatever was collected (might be empty).
             }
         }
     }
 
-    // --- 10. Post-run: decode node events and fire node_completed_hook ---
-    if (run_ok && config.node_completed_hook &&
+    // --- 10. Post-run: decode node events, fire node_completed_hook, and
+    //         decode P6-frame node outputs (reuse for lifecycle events) ---
+    std::vector<std::optional<Value>> node_outputs(descriptor.nodes.size());
+    std::vector<bool> node_completed(descriptor.nodes.size(), false);
+
+    if (config.node_completed_hook &&
         descriptor.workflow_node_count > 0) {
         auto mem = engine.read_whole_memory();
         if (mem.has_value()) {
@@ -599,23 +608,34 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                     // Find the node descriptor by schedule_pos.
                     const ahfl::backends::CoreWasmNodeDescriptor *node_desc =
                         nullptr;
-                    for (const auto &nd : descriptor.nodes) {
-                        if (nd.schedule_pos == event.schedule_pos.value) {
-                            node_desc = &nd;
+                    std::size_t node_schedule = 0;
+                    for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+                        if (descriptor.nodes[i].schedule_pos ==
+                            event.schedule_pos.value) {
+                            node_desc = &descriptor.nodes[i];
+                            node_schedule = i;
                             break;
                         }
                     }
                     if (node_desc == nullptr) {
-                        return std::unexpected(
-                            "run_workflow_session: node-event record references "
-                            "unknown schedule_pos");
+                        if (run_ok) {
+                            return std::unexpected(
+                                "run_workflow_session: node-event record "
+                                "references unknown schedule_pos");
+                        }
+                        continue;
                     }
+
+                    node_completed[node_schedule] = true;
 
                     const auto runner = node_desc->runner;
                     if (runner >= descriptor.agents.size()) {
-                        return std::unexpected(
-                            "run_workflow_session: node-event record runner "
-                            "index out of range");
+                        if (run_ok) {
+                            return std::unexpected(
+                                "run_workflow_session: node-event record "
+                                "runner index out of range");
+                        }
+                        continue;
                     }
 
                     // P6-frame: read the node output from its runner's O_k
@@ -644,9 +664,31 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                             }
                         }
                     }
+                    // P1-3: store the decoded output for lifecycle events
+                    // (reuse, don't decode twice).
+                    node_outputs[node_schedule] = std::move(node_output);
+                    Value none_value{NoneValue{}};
+                    const Value &hook_output = node_outputs[node_schedule]
+                                                   ? *node_outputs[node_schedule]
+                                                   : none_value;
                     config.node_completed_hook(
-                        AgentId{runner}, node_desc->name, node_output);
+                        AgentId{runner}, node_desc->name, hook_output);
                 }
+            }
+        }
+    }
+
+    // For identity workflows (no capability imports, no event buffer), all
+    // nodes completed on a successful run. On a failed run, the node-event
+    // buffer is absent, so determine completion from the state collection:
+    // a node with states is completed (or failed); a node without states was
+    // never executed (skipped).
+    if (descriptor.imports.empty()) {
+        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+            if (run_ok) {
+                node_completed[i] = true;
+            } else {
+                node_completed[i] = !states_per_node[i].empty();
             }
         }
     }
@@ -672,18 +714,17 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         workflow_output = std::move(*output);
                     }
                 }
-            } else {
+            } else if (tuple != nullptr &&
+                       tuple->output_ptr.value != 0 && tuple->output_len > 0) {
                 // WireJson: the output is raw JSON bytes at
                 // (output_ptr, output_len).
-                if (tuple->output_ptr.value != 0 && tuple->output_len > 0) {
-                    const std::string output_json(
-                        reinterpret_cast<const char *>(
-                            mem->data() + tuple->output_ptr.value),
-                        tuple->output_len);
-                    auto parsed = value_from_json(output_json);
-                    if (parsed.has_value()) {
-                        workflow_output = std::move(*parsed);
-                    }
+                const std::string output_json(
+                    reinterpret_cast<const char *>(
+                        mem->data() + tuple->output_ptr.value),
+                    tuple->output_len);
+                auto parsed = value_from_json(output_json);
+                if (parsed.has_value()) {
+                    workflow_output = std::move(*parsed);
                 }
             }
         }
@@ -699,29 +740,75 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         workflow_completed_count = *wc;
     }
 
-    // --- 13. Build the WorkflowResult ---
-    // P1-5: populate the ExecutionMetadataStore + ExecutionReport from the
-    // descriptor so the result carries the same metadata shape as the
-    // evaluator-backed WorkflowRuntime. D-D: a non-zero run2 status maps to
-    // NodeFailed + a wasm.run-failed diagnostic.
-    WorkflowResult result;
+    // P2-4: validate workflow_completed_count against
+    // descriptor.workflow_node_count. A successful run MUST complete every
+    // scheduled node; a failed run completes at most every node. A mismatch
+    // is evidence of a corrupt module (mirrors the JS oracle's validation).
     if (run_ok) {
-        populate_metadata_and_report(result, descriptor,
-                                     RunTerminalStatus::Completed, std::nullopt);
+        if (workflow_completed_count != descriptor.workflow_node_count) {
+            return std::unexpected(
+                "run_workflow_session: workflow_completed_count (" +
+                std::to_string(workflow_completed_count) +
+                ") disagrees with descriptor.workflow_node_count (" +
+                std::to_string(descriptor.workflow_node_count) + ")");
+        }
     } else {
-        populate_metadata_and_report(result, descriptor,
-                                     RunTerminalStatus::Failed,
-                                     WorkflowFailureKind::NodeFailed);
-        result.diagnostics.error()
-            .code("wasm.run-failed")
-            .message("run_workflow_session: run2 returned non-zero status " +
-                     std::to_string(tuple->raw_status))
-            .emit();
+        if (workflow_completed_count > descriptor.workflow_node_count) {
+            return std::unexpected(
+                "run_workflow_session: workflow_completed_count (" +
+                std::to_string(workflow_completed_count) +
+                ") exceeds descriptor.workflow_node_count (" +
+                std::to_string(descriptor.workflow_node_count) + ")");
+        }
     }
-    if (workflow_output.has_value()) {
-        result.values.push_back(std::move(*workflow_output));
-        result.report.output = RuntimeValueId{0};
+
+    // --- 13. Build per-node run facts and finalize via the lifecycle helper ---
+    WasmWorkflowRunFacts facts;
+    facts.status = run_status;
+    facts.failure_kind = run_failure_kind;
+    facts.failure_code = run_failure_code;
+    facts.failure_message = run_failure_message;
+    facts.workflow_output = std::move(workflow_output);
+    facts.nodes.reserve(descriptor.nodes.size());
+
+    // On a failed run, the first non-completed node (in schedule order) is
+    // the Failed node; subsequent nodes are Skipped.
+    std::optional<std::size_t> failed_node_index;
+    if (!run_ok) {
+        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+            if (!node_completed[i]) {
+                failed_node_index = i;
+                break;
+            }
+        }
     }
+
+    for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+        WasmNodeRunFacts node_facts;
+        node_facts.states = std::move(states_per_node[i]);
+        node_facts.output = std::move(node_outputs[i]);
+
+        if (run_ok || node_completed[i]) {
+            node_facts.terminal = WasmNodeRunFacts::Terminal::Completed;
+        } else if (failed_node_index.has_value() &&
+                   i == *failed_node_index) {
+            node_facts.terminal = WasmNodeRunFacts::Terminal::Failed;
+            node_facts.failure_kind = NodeFailureKind::AgentFailed;
+            node_facts.failure_code = run_failure_code;
+            node_facts.failure_message = run_failure_message;
+        } else {
+            node_facts.terminal = WasmNodeRunFacts::Terminal::Skipped;
+            // Blocking dependency: the failed node.
+            if (failed_node_index.has_value()) {
+                node_facts.blocking_dependencies.push_back(
+                    descriptor.nodes[*failed_node_index].node_id);
+            }
+        }
+        facts.nodes.push_back(std::move(node_facts));
+    }
+
+    WorkflowResult result;
+    (void)finalize_wasm_workflow_run(result, descriptor, std::move(facts));
 
     return WorkflowSessionResult{
         .result = std::move(result),
