@@ -1,0 +1,95 @@
+module wasm::wh4_trap_pipeline;
+
+// RFC 0026 KR6.8 WH-5 P2-1: multi-node identity-workflow trap fixture. The
+// first node completes; the second node divides by zero in Done (a real wasm
+// trap); the third node is never executed. The workflow session must
+// attribute the trap to the EXACT trapping node (second) and mark the
+// successor (third) Skipped, matching the evaluator's per-node terminal
+// semantics. This is an identity workflow (no capability imports, no event
+// buffer), so the session derives per-node completion from the
+// workflow_completed_count global rather than node-event records.
+
+pub struct Frame {
+    n: Int;
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+pub agent FirstAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for FirstAgent {
+    state Decide {
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: input.n };
+    }
+}
+
+pub agent TrapAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for TrapAgent {
+    state Decide {
+        goto Done;
+    }
+
+    state Done {
+        let x: Int = 1;
+        let y: Int = 0;
+        let z: Int = x / y;
+        return Frame { n: z };
+    }
+}
+
+pub agent ThirdAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [];
+    transition Decide -> Done;
+}
+
+flow for ThirdAgent {
+    state Decide {
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: input.n };
+    }
+}
+
+pub workflow TrapPipeline {
+    input: Frame;
+    output: Frame;
+
+    node first: FirstAgent(input);
+    node second: TrapAgent(first) after [first];
+    node third: ThirdAgent(second) after [second];
+
+    return: third;
+}

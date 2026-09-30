@@ -703,21 +703,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         }
     }
 
-    // For identity workflows (no capability imports, no event buffer), all
-    // nodes completed on a successful run. On a failed run, the node-event
-    // buffer is absent, so determine completion from the state collection:
-    // a node with states is completed (or failed); a node without states was
-    // never executed (skipped).
-    if (descriptor.imports.empty()) {
-        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
-            if (run_ok) {
-                node_completed[i] = true;
-            } else {
-                node_completed[i] = !states_per_node[i].empty();
-            }
-        }
-    }
-
     // --- 11. Read the workflow output ---
     std::optional<Value> workflow_output;
     if (run_ok) {
@@ -784,6 +769,23 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 std::to_string(workflow_completed_count) +
                 ") exceeds descriptor.workflow_node_count (" +
                 std::to_string(descriptor.workflow_node_count) + ")");
+        }
+    }
+
+    // For identity workflows (no capability imports, no event buffer) the
+    // module writes no node-event records, so node_completed is derived from
+    // the workflow_completed_count global: the module increments it once per
+    // node completion (core_wasm_codegen.cpp), so the first
+    // workflow_completed_count nodes (in schedule order) completed and the
+    // rest never executed. On a failed run the node at index
+    // workflow_completed_count is the trapping node (it produced states but
+    // did not complete); subsequent nodes are Skipped. The previous
+    // state-collection heuristic (!states_per_node[i].empty()) misattributed
+    // the trapping node as Completed because a trap mid-walk still leaves
+    // state entries behind.
+    if (descriptor.imports.empty()) {
+        for (std::size_t i = 0; i < descriptor.nodes.size(); ++i) {
+            node_completed[i] = i < workflow_completed_count;
         }
     }
 

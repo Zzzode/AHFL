@@ -774,6 +774,16 @@ void test_trap_workflow(const std::filesystem::path &repo_root) {
     check(report.status == ahfl::runtime::RunTerminalStatus::Failed,
           "trap_wf.report_failed");
 
+    // P2-1: per-node terminal. The single node trapped, so it MUST be
+    // Failed (not Completed). The old identity-workflow fallback marked a
+    // node with states as Completed even when it trapped.
+    check(report.nodes.size() == 1, "trap_wf.report_node_count");
+    if (report.nodes.size() == 1) {
+        check(report.nodes[0].status ==
+                  ahfl::runtime::NodeReportStatus::Failed,
+              "trap_wf.n0_failed");
+    }
+
     // P1-4: the diagnostic code is wasm.trap.
     bool found_trap = false;
     for (const auto &diag : result->result.diagnostics.entries()) {
@@ -783,6 +793,76 @@ void test_trap_workflow(const std::filesystem::path &repo_root) {
         }
     }
     check(found_trap, "trap_wf.found_diagnostic");
+}
+
+// ==== 7b. P2-1: trap on a multi-node identity workflow (per-node Failed +
+//         Skipped successors) ====
+
+void test_trap_pipeline(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh4_trap_pipeline.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "trap_pipe.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    auto input =
+        value_from_json(R"({"_type":"wasm::wh4_trap_pipeline::Frame","n":1})");
+    check(input.has_value(), "trap_pipe.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, wf->descriptor,
+                                           *input, std::move(config));
+    check(result.has_value(), "trap_pipe.session");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "trap_pipe.node_failed");
+
+    const auto &report = result->result.report;
+    check(report.status == ahfl::runtime::RunTerminalStatus::Failed,
+          "trap_pipe.report_failed");
+
+    // P2-1: the first node Completed, the second (trapping) node Failed,
+    // the third node Skipped (never executed because its dependency
+    // failed). This is the evaluator's per-node terminal semantics.
+    check(report.nodes.size() == 3, "trap_pipe.report_node_count");
+    if (report.nodes.size() == 3) {
+        check(report.nodes[0].status ==
+                  ahfl::runtime::NodeReportStatus::Completed,
+              "trap_pipe.n0_completed");
+        check(report.nodes[1].status ==
+                  ahfl::runtime::NodeReportStatus::Failed,
+              "trap_pipe.n1_failed");
+        check(report.nodes[2].status ==
+                  ahfl::runtime::NodeReportStatus::Skipped,
+              "trap_pipe.n2_skipped");
+    }
+
+    // The trapping node's diagnostic is wasm.trap.
+    bool found_trap = false;
+    for (const auto &diag : result->result.diagnostics.entries()) {
+        if (diag.code.has_value() && *diag.code == "wasm.trap") {
+            found_trap = true;
+            break;
+        }
+    }
+    check(found_trap, "trap_pipe.found_diagnostic");
 }
 
 // ==== 8. P1-5/P2-4: workflow_completed_count fail-closed ====
@@ -894,6 +974,7 @@ int main() {
     test_event_sequence_and_report_fields(repo_root);
     test_host_abort_workflow(repo_root);
     test_trap_workflow(repo_root);
+    test_trap_pipeline(repo_root);
     test_completed_count_fail_closed(repo_root);
     test_capability_kind_fail_closed(repo_root);
 
