@@ -90,6 +90,12 @@ event_type_name(const ahfl::runtime::ExecutionEventPayload &p) {
                                    T, ahfl::runtime::AgentStateEntered>)
                 return "AgentStateEntered";
             else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::CapabilityStarted>)
+                return "CapabilityStarted";
+            else if constexpr (std::is_same_v<
+                                   T, ahfl::runtime::CapabilityCompleted>)
+                return "CapabilityCompleted";
+            else if constexpr (std::is_same_v<
                                    T, ahfl::runtime::NodeCompleted>)
                 return "NodeCompleted";
             else if constexpr (std::is_same_v<T, ahfl::runtime::NodeFailed>)
@@ -593,8 +599,8 @@ void test_event_sequence_and_report_fields(
         return;
     }
 
-    // P1-2: same event sequence as the evaluator (the wasm lane does not
-    // emit CapabilityStarted/CapabilityCompleted in the basic path).
+    // P1-2: same event sequence as the evaluator, including
+    // CapabilityStarted/CapabilityCompleted for node 0 (which calls Echo).
     static constexpr std::string_view expected[] = {
         "RunStarted",
         "WorkflowStarted",
@@ -603,6 +609,8 @@ void test_event_sequence_and_report_fields(
         "NodeStarted",
         "AgentStateEntered",
         "AgentStateEntered",
+        "CapabilityStarted",
+        "CapabilityCompleted",
         "NodeCompleted",
         "NodeStarted",
         "AgentStateEntered",
