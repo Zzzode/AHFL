@@ -1,0 +1,42 @@
+module wasm::p2_15_failure_path;
+
+// P2-15: failure-path byte-parity fixture.
+// A workflow with one capability node. When the invoker returns Error,
+// both the evaluator lane and the wasm lane must produce the same
+// failure report (same status, same failure kind, same diagnostics).
+
+pub struct Frame {
+    value: String;
+}
+
+capability Echo(request: Frame) -> Frame;
+
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow FailurePipeline {
+    input: Frame;
+    output: Frame;
+
+    node first: EchoAgent(input);
+
+    return: first;
+}

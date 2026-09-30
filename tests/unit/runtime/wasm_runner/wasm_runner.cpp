@@ -1387,6 +1387,81 @@ void test_byte_compare(const std::filesystem::path &repo_root) {
         /*is_p6_frame=*/false);
 }
 
+// ==== 8b. P2-15: failure-path byte parity ====
+
+void test_failure_path_byte_parity(const std::filesystem::path &repo_root) {
+    // When the capability invoker returns Error, both the evaluator lane
+    // and the wasm lane must produce a failed WorkflowResult. The wasm
+    // lane traps (unreachable on non-zero status); the evaluator lane
+    // records a node failure. Both must report Failed / NodeFailed.
+    const auto source =
+        repo_root / "tests/golden/wasm/p2_15_failure_path.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "fail_byte.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::p2_15_failure_path::Frame","value":"fail"})");
+    check(input.has_value(), "fail_byte.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    // --- Evaluator lane (invoker returns Error) ---
+    ahfl::runtime::WorkflowRuntimeConfig eval_config;
+    eval_config.monotonic_clock = []() -> std::chrono::steady_clock::time_point {
+        return std::chrono::steady_clock::time_point{};
+    };
+    eval_config.contextual_capability_invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+    ahfl::runtime::WorkflowRuntime eval_runtime(*program,
+                                                 std::move(eval_config));
+    auto eval_result = eval_runtime.run(
+        "wasm::p2_15_failure_path::FailurePipeline",
+        ahfl::runtime::clone_value(*input));
+    check(eval_result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "fail_byte.eval_node_failed");
+
+    // --- Wasm lane (invoker returns Error) ---
+    wr::WasmWorkflowRuntimeConfig wasm_config;
+    wasm_config.invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+    wasm_config.name_resolver =
+        [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+    wr::WasmWorkflowRuntime wasm_runtime(*program, std::move(wasm_config));
+    auto wasm_result = wasm_runtime.run(
+        "wasm::p2_15_failure_path::FailurePipeline",
+        ahfl::runtime::clone_value(*input));
+    check(wasm_result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "fail_byte.wasm_node_failed");
+
+    // Both lanes must agree on the failure kind.
+    check(eval_result.report.failure_kind == wasm_result.report.failure_kind,
+          "fail_byte.failure_kind_parity");
+
+    // Both lanes must carry at least one diagnostic.
+    check(!eval_result.diagnostics.entries().empty(),
+          "fail_byte.eval_has_diag");
+    check(!wasm_result.diagnostics.entries().empty(),
+          "fail_byte.wasm_has_diag");
+}
+
 } // namespace
 
 int main() {
@@ -1408,6 +1483,7 @@ int main() {
     test_branching_wirejson_rejection(repo_root);
     test_v2c_bridge_fixtures(repo_root);
     test_byte_compare(repo_root);
+    test_failure_path_byte_parity(repo_root);
 
     std::cout << "wasm_runner: " << g_checks << " checks passed\n";
     return 0;
