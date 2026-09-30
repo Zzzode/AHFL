@@ -169,6 +169,16 @@ run_agent_step_walk(std::span<const std::uint8_t> module_bytes,
         return std::unexpected("failed to read final transition_count");
     }
     result.transition_count = *final_count;
+
+    // Probe the module's bump-heap cursor after the walk. alloc(0) returns
+    // the current heap_next without advancing it (the unchecked allocator
+    // adds len=0; the checked allocator's capacity test passes trivially).
+    // The canonical run replays this advancement so its fresh heap_next
+    // starts past the construct-scratch high-water, not at construct_heap_base
+    // where the host's input allocation would alias the first handler reset.
+    if (auto probe = engine.alloc_then_write({}); probe.has_value()) {
+        result.heap_next_after_walk = probe->value;
+    }
     return result;
 }
 

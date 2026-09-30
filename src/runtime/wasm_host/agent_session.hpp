@@ -56,6 +56,18 @@ using StateEnteredHook =
 struct AgentWalkResult {
     std::vector<std::string> states; // state names in walk order (incl. initial)
     std::uint32_t transition_count{0};
+    // The module's bump-heap cursor (heap_next) AFTER the step-walk, probed
+    // via alloc(0) so the canonical run can advance its own fresh heap_next
+    // past the same construct-scratch high-water before allocating the input
+    // frame. Without this, a fresh canonical instance starts heap_next at
+    // construct_heap_base, the host allocates the WireJson input there, and
+    // the first computed handler's `heap_next = construct_heap_base` reset
+    // (FB-1 fix-forward) overwrites the input JSON with construct scratch,
+    // corrupting the identity-final output the run2 tuple points back at.
+    // Zero when the module has no construct heap (heap_next stays at the
+    // identity base) or the probe failed (the canonical run then skips the
+    // advance, which is safe for construct-heap-free modules).
+    std::uint32_t heap_next_after_walk{0};
 };
 
 // Drive the step-walk on a fresh effects-free wasm3 instance.
