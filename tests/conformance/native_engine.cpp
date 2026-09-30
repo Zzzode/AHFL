@@ -21,12 +21,10 @@ namespace {
 
 using ahfl::runtime::AgentId;
 using ahfl::runtime::CapabilityCallResult;
-using ahfl::runtime::CapabilityCallStatus;
 using ahfl::runtime::CapabilityInvocationContext;
 using ahfl::runtime::CapabilityRegistry;
 using ahfl::runtime::Value;
 using ahfl::runtime::WorkflowResult;
-using ahfl::runtime::WorkflowStatus;
 namespace wr = ahfl::runtime::wasm_runner;
 
 // Wraps the registry's contextual invoker so BOTH the canonical capability
