@@ -266,18 +266,27 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
             // call multiple capabilities across branches).
             if (node.all_capabilities.empty()) {
                 // Legacy single-capability descriptor.
-                symbol_to_runner[node.source_symbol] = node.runner;
-                if (node.capability_ordinal < descriptor.imports.size()) {
-                    cap_name_to_node[descriptor.imports[node.capability_ordinal]
-                                         .canonical_name] = node.node_id;
+                // P2-10: fail closed when the descriptor's capability_ordinal
+                // is out of range for the imports table (silent skip would
+                // drop lifecycle event attribution).
+                if (node.capability_ordinal >= descriptor.imports.size()) {
+                    return std::unexpected(
+                        "descriptor node capability_ordinal out of range");
                 }
+                symbol_to_runner[node.source_symbol] = node.runner;
+                cap_name_to_node[descriptor.imports[node.capability_ordinal]
+                                     .canonical_name] = node.node_id;
             } else {
                 for (const auto &[ordinal, sym] : node.all_capabilities) {
-                    symbol_to_runner[sym] = node.runner;
-                    if (ordinal < descriptor.imports.size()) {
-                        cap_name_to_node[descriptor.imports[ordinal]
-                                             .canonical_name] = node.node_id;
+                    // P2-10: fail closed when any capability ordinal is out of
+                    // range (same rationale as the legacy path above).
+                    if (ordinal >= descriptor.imports.size()) {
+                        return std::unexpected(
+                            "descriptor node all_capabilities ordinal out of range");
                     }
+                    symbol_to_runner[sym] = node.runner;
+                    cap_name_to_node[descriptor.imports[ordinal]
+                                         .canonical_name] = node.node_id;
                 }
             }
         }

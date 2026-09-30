@@ -219,6 +219,52 @@ void test_capability_workflow(const std::filesystem::path &repo_root) {
     }
 }
 
+// ==== 2a-facade. P2-10: session failure propagates through FACADE ====
+
+void test_workflow_session_failure_facade(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_capability_workflow.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "wf_sess_fail.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    // The invoker returns Error; the workflow's capability node traps
+    // (unreachable on non-zero status). The FACADE must map the session
+    // failure to a failed WorkflowResult (wasm.session-failed), NOT crash.
+    wr::WasmWorkflowRuntimeConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})");
+    check(input.has_value(), "wf_sess_fail.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run("wasm::e3_capability_workflow::CapabilityPipeline",
+                              std::move(*input));
+    // P2-10: the FACADE must return a failed WorkflowResult when the
+    // underlying session fails (trap from Error invoker).
+    check(result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "wf_sess_fail.node_failed");
+}
+
 // ==== 2b. P2-5: WireJson reconstruction set -- resume fixture ====
 
 void test_capability_workflow_resume(const std::filesystem::path &repo_root) {
@@ -1128,6 +1174,7 @@ int main() {
 
     test_identity_workflow(repo_root);
     test_capability_workflow(repo_root);
+    test_workflow_session_failure_facade(repo_root);
     test_capability_workflow_resume(repo_root);
     test_float_output_e2e(repo_root);
     test_e2e_multi_agent_facade(repo_root);

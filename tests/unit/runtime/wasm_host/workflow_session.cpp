@@ -1044,6 +1044,66 @@ void test_capability_kind_fail_closed(
     }
 }
 
+// ==== 10. P2-10: capability_ordinal out-of-range fail-closed ====
+
+void test_capability_ordinal_oor_fail_closed(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_capability_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "ord_oor.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // Corrupt the descriptor: set the first node's capability ordinal beyond
+    // the imports table. The P2-10 production check must fail closed.
+    auto corrupted_desc = wf->descriptor;
+    if (!corrupted_desc.nodes.empty()) {
+        auto &node = corrupted_desc.nodes[0];
+        if (!node.all_capabilities.empty()) {
+            // P2-8 multi-capability path: corrupt the first ordinal.
+            node.all_capabilities[0].first =
+                static_cast<std::uint32_t>(corrupted_desc.imports.size() + 1);
+        } else {
+            // Legacy single-capability path.
+            node.capability_ordinal =
+                static_cast<std::uint32_t>(corrupted_desc.imports.size() + 1);
+        }
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})");
+    check(input.has_value(), "ord_oor.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, corrupted_desc,
+                                           *input, std::move(config));
+    // P2-10: the session must fail closed when capability_ordinal is out of
+    // range for the imports table.
+    check(!result.has_value(), "ord_oor.fail_closed");
+    if (result.has_value()) {
+        std::cerr << "  unexpected success with corrupted ordinal\n";
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1060,6 +1120,7 @@ int main() {
     test_corrupted_output_workflow();
     test_completed_count_fail_closed(repo_root);
     test_capability_kind_fail_closed(repo_root);
+    test_capability_ordinal_oor_fail_closed(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;
