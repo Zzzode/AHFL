@@ -777,6 +777,103 @@ void test_trap_workflow(const std::filesystem::path &repo_root) {
     check(found_trap, "trap_wf.found_diagnostic");
 }
 
+// ==== 8. P1-5/P2-4: workflow_completed_count fail-closed ====
+
+void test_completed_count_fail_closed(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_identity_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "count_fc.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // Corrupt the descriptor: claim fewer nodes than the module actually
+    // has. The module will complete 2 nodes, but the descriptor says 1.
+    // The P2-4 cross-check must fail closed.
+    auto corrupted_desc = wf->descriptor;
+    corrupted_desc.workflow_node_count = 1;
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_workflow::Frame","value":"identity"})");
+    check(input.has_value(), "count_fc.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, corrupted_desc,
+                                           *input, std::move(config));
+    // P2-4: the session must fail closed (std::unexpected) when
+    // workflow_completed_count disagrees with descriptor.workflow_node_count.
+    check(!result.has_value(), "count_fc.fail_closed");
+    if (result.has_value()) {
+        std::cerr << "  unexpected success with corrupted descriptor\n";
+    }
+}
+
+// ==== 9. P1-5/P2-3: node-event capability kind fail-closed ====
+
+void test_capability_kind_fail_closed(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e3_capability_workflow.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "cap_fc.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    // Corrupt the descriptor: claim the first node has NO capability, but
+    // the module actually invokes Echo on it. The P2-3 cross-check must
+    // fail closed when the node-event record says Capability but the
+    // descriptor says no capability.
+    auto corrupted_desc = wf->descriptor;
+    if (!corrupted_desc.nodes.empty()) {
+        corrupted_desc.nodes[0].has_capability = false;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e3_capability_workflow::Frame","value":"echo"})");
+    check(input.has_value(), "cap_fc.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WorkflowSessionConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        if (!args.empty()) {
+            r.value = ahfl::runtime::clone_value(args[0]);
+        }
+        return r;
+    };
+    config.name_resolver = [](std::uint64_t) -> std::optional<std::string> {
+        return "Echo";
+    };
+
+    auto result = wh::run_workflow_session(wf->module_bytes, corrupted_desc,
+                                           *input, std::move(config));
+    // P2-3: the session must fail closed (std::unexpected) when the
+    // node-event record's capability kind disagrees with the descriptor.
+    check(!result.has_value(), "cap_fc.fail_closed");
+    if (result.has_value()) {
+        std::cerr << "  unexpected success with corrupted descriptor\n";
+    }
+}
+
 } // namespace
 
 int main() {
@@ -789,6 +886,8 @@ int main() {
     test_event_sequence_and_report_fields(repo_root);
     test_host_abort_workflow(repo_root);
     test_trap_workflow(repo_root);
+    test_completed_count_fail_closed(repo_root);
+    test_capability_kind_fail_closed(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;
