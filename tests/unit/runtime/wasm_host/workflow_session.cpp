@@ -19,6 +19,7 @@
 #include "runtime/wasm_host/wasm3_engine.hpp"
 
 #include "runtime/engine/core_wasm_resume_engine.hpp"
+#include "runtime/engine/core_wasm_schema_module.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 
@@ -34,6 +35,7 @@
 #include "common/project_input_support.hpp"
 #include "unit/runtime/wasm_host/wasm_host_test_support.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -1222,6 +1224,268 @@ void test_hybrid_kahn_reordered(const std::filesystem::path &repo_root) {
     check(desc.wire_schema.has_value(), "hybrid_kahn.wire_schema");
 }
 
+// ==== WH-5b.1 fix-forward: hybrid P6-bridge + opaque cap manifest test ====
+//
+// Emission/descriptor-only: the exec-manifest must encode a P6-packaged node
+// as an IDENTITY scheduler-boundary event (cap_call_count 0, zero capability
+// entries) even when the P6 agent has in-handler bridge imports, while the
+// opaque capability-final node keeps cap_call_count 1. Also covers the
+// multi-P6 ordinal case (two P6 runners -> p6_block_ordinal 0 and 1,
+// node_blocks count == 2).
+//
+// End-to-end suspend/resume of this configuration is WH-5b.2/5b.3 scope.
+
+// One decoded exec-manifest node (the subset the test asserts).
+struct ManifestNode {
+    std::uint32_t node_id = 0;
+    std::uint32_t schedule_pos = 0;
+    std::uint8_t cap_call_count = 0;
+};
+
+// Minimal ULEB128 reader for the manifest grammar.
+struct UlebReader {
+    std::span<const std::uint8_t> bytes;
+    std::size_t pos = 0;
+
+    [[nodiscard]] std::optional<std::uint64_t> u64() {
+        std::uint64_t result = 0;
+        unsigned shift = 0;
+        while (pos < bytes.size()) {
+            const auto b = bytes[pos++];
+            result |= static_cast<std::uint64_t>(b & 0x7Fu) << shift;
+            if ((b & 0x80u) == 0) {
+                return result;
+            }
+            shift += 7;
+            if (shift >= 64) {
+                return std::nullopt;
+            }
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<std::uint32_t> u32() {
+        auto v = u64();
+        if (!v.has_value() || *v > 0xFFFFFFFFull) {
+            return std::nullopt;
+        }
+        return static_cast<std::uint32_t>(*v);
+    }
+
+    [[nodiscard]] std::optional<std::uint8_t> byte() {
+        if (pos >= bytes.size()) {
+            return std::nullopt;
+        }
+        return bytes[pos++];
+    }
+};
+
+// Extract the `ahfl.wasm-exec-manifest.v1` custom section payload from a wasm
+// module. Mirrors the A2 framing: skip the 8-byte header, then walk sections
+// (id + ULEB size + payload); a custom section (id 0) carries a name-length +
+// name + data. Returns the data of the first matching section.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>>
+extract_exec_manifest(std::span<const std::uint8_t> module_bytes) {
+    static constexpr std::string_view kManifestName = "ahfl.wasm-exec-manifest.v1";
+    if (module_bytes.size() < 8) {
+        return std::nullopt;
+    }
+    std::size_t pos = 8; // skip magic + version
+    while (pos < module_bytes.size()) {
+        const auto section_id = module_bytes[pos++];
+        UlebReader size_reader{module_bytes.subspan(pos)};
+        auto section_size = size_reader.u64();
+        if (!section_size.has_value()) {
+            return std::nullopt;
+        }
+        pos += size_reader.pos; // advance past the size ULEB
+        if (pos + *section_size > module_bytes.size()) {
+            return std::nullopt;
+        }
+        const auto payload = module_bytes.subspan(pos, static_cast<std::size_t>(*section_size));
+        pos += static_cast<std::size_t>(*section_size);
+        if (section_id != 0) {
+            continue; // not a custom section
+        }
+        UlebReader name_reader{payload};
+        auto name_len = name_reader.u64();
+        if (!name_len.has_value() ||
+            name_reader.pos + *name_len > payload.size()) {
+            return std::nullopt;
+        }
+        const auto name = std::string_view{
+            reinterpret_cast<const char *>(payload.data() + name_reader.pos),
+            static_cast<std::size_t>(*name_len)};
+        if (name == kManifestName) {
+            return std::vector<std::uint8_t>{
+                payload.begin() + static_cast<std::ptrdiff_t>(name_reader.pos + *name_len),
+                payload.end()};
+        }
+    }
+    return std::nullopt;
+}
+
+// Decode the workflow-arm exec-manifest payload (mirrors the A2 grammar:
+// magic(6) + version(1) + entry_kind=0 + workflow_id(4) + node_count(4) +
+// nodes[] { node_id(4) + schedule_pos(4) + cap_call_count(1) +
+// capabilities[] { cap_id(4) + source_symbol(8) } }).
+[[nodiscard]] std::optional<std::vector<ManifestNode>>
+decode_workflow_manifest(std::span<const std::uint8_t> payload) {
+    static constexpr std::array<std::uint8_t, 6> kMagic = {
+        'A', 'H', 'F', 'L', 'X', 'M'};
+    if (payload.size() < 8 ||
+        !std::equal(kMagic.begin(), kMagic.end(), payload.begin())) {
+        return std::nullopt;
+    }
+    UlebReader r{payload};
+    r.pos = 6; // magic
+    const auto version = r.byte();
+    if (!version.has_value() || *version != 1) {
+        return std::nullopt;
+    }
+    const auto entry_kind = r.byte();
+    if (!entry_kind.has_value() || *entry_kind != 0) {
+        return std::nullopt; // workflow arm only
+    }
+    const auto workflow_id = r.u32();
+    if (!workflow_id.has_value()) {
+        return std::nullopt;
+    }
+    const auto node_count = r.u32();
+    if (!node_count.has_value()) {
+        return std::nullopt;
+    }
+    std::vector<ManifestNode> nodes;
+    nodes.reserve(*node_count);
+    for (std::uint32_t i = 0; i < *node_count; ++i) {
+        ManifestNode node;
+        const auto nid = r.u32();
+        if (!nid.has_value()) {
+            return std::nullopt;
+        }
+        node.node_id = *nid;
+        const auto spos = r.u32();
+        if (!spos.has_value() || *spos != i) {
+            return std::nullopt;
+        }
+        node.schedule_pos = *spos;
+        const auto ccc = r.byte();
+        if (!ccc.has_value()) {
+            return std::nullopt;
+        }
+        node.cap_call_count = *ccc;
+        for (std::uint8_t c = 0; c < *ccc; ++c) {
+            const auto cap = r.u32();
+            if (!cap.has_value()) {
+                return std::nullopt;
+            }
+            const auto sym = r.u64();
+            if (!sym.has_value()) {
+                return std::nullopt;
+            }
+        }
+        nodes.push_back(node);
+    }
+    return nodes;
+}
+
+void test_hybrid_p6_bridge_manifest(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/wh5b_hybrid_p6_bridge.ahfl";
+    auto wf = emit_workflow(source);
+    check(wf.has_value(), "hybrid_bridge.emit");
+    if (!wf.has_value()) {
+        return;
+    }
+
+    const auto &desc = wf->descriptor;
+    check(desc.is_workflow, "hybrid_bridge.is_workflow");
+    check(desc.frame_contract == ahfl::backends::CoreWasmFrameContract::P6Frame,
+          "hybrid_bridge.p6_frame");
+    check(desc.workflow_node_count == 3, "hybrid_bridge.three_nodes");
+    check(desc.imports.size() == 2, "hybrid_bridge.two_imports");
+
+    // P2-5: per-node is_p6 flags + P6-only dense ordinals. The Kahn schedule
+    // is declaration order [bridge_a, bridge_b, echo]: P6, P6, opaque.
+    check(desc.nodes.size() == 3, "hybrid_bridge.nodes_size");
+    if (desc.nodes.size() == 3) {
+        check(desc.nodes[0].name == "bridge_a",
+              "hybrid_bridge.node0_name");
+        check(desc.nodes[0].is_p6, "hybrid_bridge.node0_is_p6");
+        check(desc.nodes[0].p6_block_ordinal == 0,
+              "hybrid_bridge.node0_p6_ordinal");
+        check(desc.nodes[1].name == "bridge_b",
+              "hybrid_bridge.node1_name");
+        check(desc.nodes[1].is_p6, "hybrid_bridge.node1_is_p6");
+        check(desc.nodes[1].p6_block_ordinal == 1,
+              "hybrid_bridge.node1_p6_ordinal");
+        check(desc.nodes[2].name == "echo", "hybrid_bridge.node2_name");
+        check(!desc.nodes[2].is_p6, "hybrid_bridge.node2_is_opaque");
+    }
+
+    // P2-5: P6-only dense node_blocks: exactly 2 entries (the two P6 runners).
+    check(desc.frame_section.has_value(), "hybrid_bridge.frame_section");
+    if (desc.frame_section.has_value()) {
+        check(desc.frame_section->node_blocks.size() == 2,
+              "hybrid_bridge.node_blocks_count");
+    }
+    check(desc.wire_schema.has_value(), "hybrid_bridge.wire_schema");
+
+    // P1: decode the exec-manifest and assert scheduler-boundary cap
+    // accounting. Both P6 nodes (bridge_a, bridge_b) have in-handler bridge
+    // imports but must encode cap_call_count 0 (identity); the opaque echo
+    // node encodes cap_call_count 1 (capability).
+    auto manifest_payload =
+        extract_exec_manifest(std::span<const std::uint8_t>(wf->module_bytes));
+    check(manifest_payload.has_value(), "hybrid_bridge.manifest_extracted");
+    if (!manifest_payload.has_value()) {
+        return;
+    }
+    auto nodes = decode_workflow_manifest(*manifest_payload);
+    check(nodes.has_value(), "hybrid_bridge.manifest_decoded");
+    if (!nodes.has_value()) {
+        return;
+    }
+    check(nodes->size() == 3, "hybrid_bridge.manifest_node_count");
+    if (nodes->size() == 3) {
+        // Node ids + schedule_pos order match the descriptor.
+        check((*nodes)[0].node_id == desc.nodes[0].node_id,
+              "hybrid_bridge.manifest_node0_id");
+        check((*nodes)[0].schedule_pos == 0,
+              "hybrid_bridge.manifest_node0_pos");
+        check((*nodes)[1].node_id == desc.nodes[1].node_id,
+              "hybrid_bridge.manifest_node1_id");
+        check((*nodes)[1].schedule_pos == 1,
+              "hybrid_bridge.manifest_node1_pos");
+        check((*nodes)[2].node_id == desc.nodes[2].node_id,
+              "hybrid_bridge.manifest_node2_id");
+        check((*nodes)[2].schedule_pos == 2,
+              "hybrid_bridge.manifest_node2_pos");
+        // P6 nodes: identity (cap_call_count 0) despite in-handler bridge caps.
+        check((*nodes)[0].cap_call_count == 0,
+              "hybrid_bridge.manifest_node0_identity");
+        check((*nodes)[1].cap_call_count == 0,
+              "hybrid_bridge.manifest_node1_identity");
+        // Opaque cap node: capability (cap_call_count 1).
+        check((*nodes)[2].cap_call_count == 1,
+              "hybrid_bridge.manifest_node2_capability");
+    }
+
+    // Document the A2 admission gap: the full A2 admission
+    // (make_verified_core_wasm_schema_module) enforces exact set equality
+    // between the wire-schema/import capability set and the manifest-
+    // referenced set. The P6 nodes' in-handler bridge caps are imported but
+    // not scheduler-boundary call sites, so they are unreferenced by the
+    // manifest and A2 admission fails closed. This is the WH-5b.2 gap (the
+    // in-runner site/memo representation, design 12.12.10); the manifest
+    // layer itself is now self-consistent.
+    auto admitted = ahfl::runtime::core_wasm_schema_module::
+        make_verified_core_wasm_schema_module(
+            std::span<const std::uint8_t>(wf->module_bytes));
+    check(!admitted.ok(),
+          "hybrid_bridge.a2_admission_fails_closed_bridge_caps_unreferenced");
+}
+
 } // namespace
 
 int main() {
@@ -1243,6 +1507,8 @@ int main() {
     test_hybrid_p6_before_cap(repo_root);
     test_hybrid_cap_before_p6(repo_root);
     test_hybrid_kahn_reordered(repo_root);
+    // WH-5b.1 fix-forward: P6-bridge manifest identity + multi-P6 ordinals.
+    test_hybrid_p6_bridge_manifest(repo_root);
 
     std::cout << "workflow_session: " << g_checks << " checks passed\n";
     return 0;

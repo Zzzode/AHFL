@@ -1,0 +1,123 @@
+// WH-5b.1 fix-forward fixture: hybrid workflow with TWO P6-packaged agents
+// that each HAVE an in-handler capability bridge call, plus one opaque
+// capability-final node. A P6 node's scheduler-level completion is an
+// identity event (design 12.12.5); its in-handler bridge call is NOT a
+// scheduler call site (WH-5b.2 adds the in-runner site/memo representation,
+// design 12.12.10).
+//
+// The module emits P6Frame (3 nodes, 2 imports). Both P6 nodes write a tag-0
+// identity record; the opaque cap node writes a tag-1 capability record.
+//
+// This fixture serves two tests:
+//   * P1 manifest: the exec-manifest encodes both P6 nodes with
+//     cap_call_count 0 (identity) and the opaque node with cap_call_count 1
+//     (capability), despite both P6 agents importing Bridge in-handler.
+//   * P2-5 ordinals: two P6 runners yield p6_block_ordinal 0 and 1 in P6
+//     dense order, node_blocks count == 2, Kahn schedule order correct.
+//
+// End-to-end suspend/resume of this configuration is WH-5b.2/5b.3 scope.
+
+module wasm::wh5b_hybrid_p6_bridge;
+
+pub struct Frame {
+    n: Int;
+}
+
+pub struct Ctx {
+    tag: Int = 0;
+}
+
+capability Bridge(n: Int) -> Frame;
+capability Echo(request: Frame) -> Frame;
+
+// P6-packaged agent A: computed-goto + in-handler capability bridge +
+// computed-final.
+pub agent BridgeAgentA {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Call, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [Bridge];
+    transition Decide -> Call;
+    transition Call -> Done;
+}
+
+flow for BridgeAgentA {
+    state Decide {
+        goto Call;
+    }
+
+    state Call {
+        let result = Bridge(input.n);
+        ctx.tag = result.n;
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: ctx.tag };
+    }
+}
+
+// P6-packaged agent B: same terminal shape, second P6 runner.
+pub agent BridgeAgentB {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Call, Decide];
+    initial: Decide;
+    final: [Done];
+    capabilities: [Bridge];
+    transition Decide -> Call;
+    transition Call -> Done;
+}
+
+flow for BridgeAgentB {
+    state Decide {
+        goto Call;
+    }
+
+    state Call {
+        let result = Bridge(input.n);
+        ctx.tag = result.n;
+        goto Done;
+    }
+
+    state Done {
+        return Frame { n: ctx.tag };
+    }
+}
+
+// Opaque capability-final agent.
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow HybridBridgePipeline {
+    input: Frame;
+    output: Frame;
+
+    node bridge_a: BridgeAgentA(input);
+    node bridge_b: BridgeAgentB(input);
+    node echo: EchoAgent(input);
+
+    return: bridge_a;
+}

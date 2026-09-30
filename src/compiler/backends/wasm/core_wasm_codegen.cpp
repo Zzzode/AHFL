@@ -13282,7 +13282,8 @@ build_workflow_plan(const CoreProgram &program,
 
     // Wire projection: capabilities plus per-node roots; the agent input/output
     // pair is the WORKFLOW boundary (so frame_roots.input/output name it) and
-    // node_inputs/node_outputs run parallel to the packaged-instance table.
+    // node_inputs/node_outputs run parallel to the P6-runner table (P6-only
+    // dense order, matching node_blocks; opaque runners have no entry).
     auto projection = ir::core::project_core_wire_schema(
         program, plan.imports,
         std::pair{*wf_input_vt, *wf_output_vt},
@@ -14475,6 +14476,16 @@ void append_i64_store_zero(ByteBuffer &body, std::uint32_t addr) {
 // RFC 0026 E4-B2-C: emit the AHFLXM execution-manifest payload, byte-identical to
 // the A2 decoder's canonical grammar. Private to this TU; no runtime code shared.
 // Nodes are emitted in schedule order so schedule_pos == array index.
+//
+// WH-5b.1 fix-forward: the node array models SCHEDULER-BOUNDARY completion
+// events (design 12.12.5: a bridge P6 node may carry capabilities, but its
+// scheduler-level completion is an identity event). A P6-packaged node's
+// in-handler bridge calls are NOT scheduler call sites, so it emits
+// cap_call_count 0 and ZERO capability entries regardless of its in-handler
+// imports; the in-runner site/memo representation is WH-5b.2 scope (design
+// 12.12.10). Opaque nodes keep exactly their byte/entries. is-p6 is determined
+// from the SAME authority as the scheduler branch (p6_block_by_runner), never
+// a second heuristic.
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
 encode_exec_manifest(const WorkflowPlan &plan) {
     if (plan.schedule.size() >
@@ -14502,13 +14513,23 @@ encode_exec_manifest(const WorkflowPlan &plan) {
         }
         out.u32(node.node.value);
         out.u32(index); // schedule_pos == array index
-        out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
-        for (const auto &[cap, sym] : node.capabilities) {
-            if (cap.value == CoreCapabilityId::kInvalid) {
-                return std::nullopt;
+        const auto runner = workflow_runner_index(plan, node.target_instance);
+        const bool is_p6 =
+            runner.has_value() &&
+            plan.p6_block_by_runner[*runner] != kInvalidP6Block;
+        if (is_p6) {
+            // Identity at the scheduler boundary: no scheduler-boundary
+            // capability call sites (design 12.12.5 + WH-5b.2).
+            out.byte(0);
+        } else {
+            out.byte(static_cast<std::uint8_t>(node.capabilities.size()));
+            for (const auto &[cap, sym] : node.capabilities) {
+                if (cap.value == CoreCapabilityId::kInvalid) {
+                    return std::nullopt;
+                }
+                out.u32(cap.value);
+                out.u64(sym);
             }
-            out.u32(cap.value);
-            out.u64(sym);
         }
     }
     return std::move(out).take();
@@ -17079,9 +17100,10 @@ build_import_descriptors(const CoreProgram &program,
         lane.rodata_extent = plan.workflow_rodata_extent;
         lane.payload_arena_base = plan.entry_payload_base;
         lane.payload_arena_capacity = plan.entry_payload_capacity;
-        // The workflow entry is packed into the first scheduled node's I block
-        // (the packer keys the node-block coordinate off the schedule) and run2
-        // returns the fixed workflow output slot.
+        // The workflow entry is packed into the first P6-runner node block
+        // (node_blocks is P6-only dense; an opaque schedule-front node receives
+        // the entry via wire JSON, not here) and run2 returns the fixed
+        // workflow output slot. Agent-lane only.
         lane.input_base = plan.node_blocks.front().input_base;
         lane.input_size = plan.node_blocks.front().input_size;
         lane.output_base = plan.wf_output_base;
@@ -17189,6 +17211,10 @@ build_import_descriptors(const CoreProgram &program,
         CoreWasmNodeDescriptor node_descriptor;
         node_descriptor.node_id = node.node.value;
         node_descriptor.schedule_pos = node.schedule_pos;
+        // The planner already rejected a node whose target_instance has no
+        // packaged runner ("workflow node target has no packaged runner
+        // plan"), so workflow_runner_index is always present here; value_or(0)
+        // is a defensive fallback that is never hit.
         node_descriptor.runner = workflow_runner_index(plan, node.target_instance).value_or(0);
         node_descriptor.name = workflow_decl.nodes[node.node.value].node_name;
         // WH-5b.1: per-node P6 flag + P6-only node_blocks ordinal.

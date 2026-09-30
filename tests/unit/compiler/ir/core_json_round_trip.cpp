@@ -648,6 +648,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/wh5b_hybrid_cap_before_p6.ahfl",
         "wasm/wh5b_hybrid_kahn_reordered.ahfl",
         "wasm/wh5b_hybrid_p6_before_cap.ahfl",
+        "wasm/wh5b_hybrid_p6_bridge.ahfl",
     };
 }
 

@@ -1036,6 +1036,20 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         }
 
         const auto p6_ord = descriptor.nodes[0].p6_block_ordinal;
+        // Bounds-check symmetry with the post-run path: the P6-only ordinal
+        // must index both the node_blocks array and the node_inputs wire
+        // roots (the post-run node-output read guards the same way).
+        if (p6_ord >= section.node_blocks.size()) {
+            return std::unexpected(
+                "run_workflow_session: P6 entry node block ordinal out of "
+                "range");
+        }
+        if (!wire.frame_roots.has_value() ||
+            p6_ord >= wire.frame_roots->node_inputs.size()) {
+            return std::unexpected(
+                "run_workflow_session: P6 entry node input wire root out of "
+                "range");
+        }
         const auto &block = section.node_blocks[p6_ord];
         const auto w_id = wire.frame_roots->node_inputs[p6_ord];
         const auto l_id = block.input_layout;
