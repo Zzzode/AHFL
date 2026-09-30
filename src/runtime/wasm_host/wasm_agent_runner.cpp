@@ -27,6 +27,7 @@
 #include "runtime/wasm_host/frame_packer.hpp"
 #include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
+#include "runtime/wasm_host/wasm_lifecycle.hpp"
 
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
@@ -400,64 +401,110 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
     }
 
     // Invoke the canonical entry point.
+    // P1-4: trap / host-abort / non-OK map to a FAILED WorkflowResult with
+    // diagnostic codes wasm.trap / wasm.host-abort / wasm.run-failed, NOT a
+    // bare std::string error. std::unexpected is reserved for PRE-RUN setup
+    // failures (admission, instantiation, pack, step-walk).
     std::optional<Value> output_value;
+    RunTerminalStatus run_status = RunTerminalStatus::Completed;
+    std::optional<WorkflowFailureKind> run_failure_kind;
+    std::string run_failure_code;
+    std::string run_failure_message;
     bool run_ok = false;
 
     if (is_p6) {
         auto outcome = engine.invoke_runv();
         if (!outcome.has_value()) {
-            return std::unexpected(
-                "run_wasm_agent: invoke_runv failed (engine error)");
-        }
-        if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
-            return std::unexpected(
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::NodeFailed;
+            run_failure_code = "wasm.trap";
+            run_failure_message =
+                "run_wasm_agent: invoke_runv failed (engine error)";
+        } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::NodeFailed;
+            run_failure_code = "wasm.host-abort";
+            run_failure_message =
                 "run_wasm_agent: runv host-aborted (capability import "
-                "failure)");
-        }
-        if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
-            return std::unexpected("run_wasm_agent: runv trapped");
-        }
-        const auto &runv = std::get<RunvResult>(*outcome);
-        run_ok = (runv.raw_status == 0);
-        if (run_ok) {
-            output_value =
-                read_p6_agent_output(engine, descriptor,
-                                     runv.value_ptr.value);
+                "failure)";
+            // P2-1: use the CapabilityImportError ENUM NAME, not the raw int.
+            if (canonical_import_state.last_error.has_value()) {
+                run_failure_message += " (CapabilityImportError=";
+                run_failure_message += std::string(
+                    to_string(*canonical_import_state.last_error));
+                run_failure_message += ")";
+            }
+        } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::NodeFailed;
+            run_failure_code = "wasm.trap";
+            run_failure_message = "run_wasm_agent: runv trapped";
+        } else {
+            const auto &runv = std::get<RunvResult>(*outcome);
+            run_ok = (runv.raw_status == 0);
+            if (run_ok) {
+                output_value =
+                    read_p6_agent_output(engine, descriptor,
+                                         runv.value_ptr.value);
+            } else {
+                run_status = RunTerminalStatus::Failed;
+                run_failure_kind = WorkflowFailureKind::NodeFailed;
+                run_failure_code = "wasm.run-failed";
+                run_failure_message =
+                    "run_wasm_agent: runv returned non-zero status " +
+                    std::to_string(runv.raw_status);
+            }
         }
     } else {
         auto outcome = engine.invoke_run2(entry_ptr, entry_len);
         if (!outcome.has_value()) {
-            return std::unexpected(
-                "run_wasm_agent: invoke_run2 failed (engine error)");
-        }
-        if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
-            std::string msg =
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::NodeFailed;
+            run_failure_code = "wasm.trap";
+            run_failure_message =
+                "run_wasm_agent: invoke_run2 failed (engine error)";
+        } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::NodeFailed;
+            run_failure_code = "wasm.host-abort";
+            run_failure_message =
                 "run_wasm_agent: run2 host-aborted (capability import "
                 "failure)";
+            // P2-1: use the CapabilityImportError ENUM NAME, not the raw int.
             if (canonical_import_state.last_error.has_value()) {
-                msg += " (CapabilityImportError=";
-                msg += std::to_string(
-                    static_cast<int>(*canonical_import_state.last_error));
-                msg += ")";
+                run_failure_message += " (CapabilityImportError=";
+                run_failure_message += std::string(
+                    to_string(*canonical_import_state.last_error));
+                run_failure_message += ")";
             }
-            return std::unexpected(std::move(msg));
-        }
-        if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
-            return std::unexpected("run_wasm_agent: run2 trapped");
-        }
-        const auto &tuple = std::get<eng::Run2ResultTuple>(*outcome);
-        run_ok = (tuple.raw_status == 0);
-        if (run_ok && tuple.output_ptr.value != 0 && tuple.output_len > 0) {
-            auto mem = engine.read_whole_memory();
-            if (mem.has_value()) {
-                const std::string output_json(
-                    reinterpret_cast<const char *>(
-                        mem->data() + tuple.output_ptr.value),
-                    tuple.output_len);
-                auto parsed = value_from_json(output_json);
-                if (parsed.has_value()) {
-                    output_value = std::move(*parsed);
+        } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
+            run_status = RunTerminalStatus::Failed;
+            run_failure_kind = WorkflowFailureKind::NodeFailed;
+            run_failure_code = "wasm.trap";
+            run_failure_message = "run_wasm_agent: run2 trapped";
+        } else {
+            const auto &tuple = std::get<eng::Run2ResultTuple>(*outcome);
+            run_ok = (tuple.raw_status == 0);
+            if (run_ok && tuple.output_ptr.value != 0 &&
+                tuple.output_len > 0) {
+                auto mem = engine.read_whole_memory();
+                if (mem.has_value()) {
+                    const std::string output_json(
+                        reinterpret_cast<const char *>(
+                            mem->data() + tuple.output_ptr.value),
+                        tuple.output_len);
+                    auto parsed = value_from_json(output_json);
+                    if (parsed.has_value()) {
+                        output_value = std::move(*parsed);
+                    }
                 }
+            } else if (!run_ok) {
+                run_status = RunTerminalStatus::Failed;
+                run_failure_kind = WorkflowFailureKind::NodeFailed;
+                run_failure_code = "wasm.run-failed";
+                run_failure_message =
+                    "run_wasm_agent: run2 returned non-zero status " +
+                    std::to_string(tuple.raw_status);
             }
         }
     }
@@ -468,17 +515,15 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         transition_count = *tc;
     }
 
-    // Build the result.
+    // P1-2: build the result via the shared lifecycle helper (metadata +
+    // lifecycle events + report from events, the SAME projection the
+    // evaluator uses). The agent lane wraps the bare agent in a synthetic
+    // single-node workflow.
     WasmAgentRunResult result;
-    result.result.report.status =
-        run_ok ? RunTerminalStatus::Completed : RunTerminalStatus::Failed;
-    if (!run_ok) {
-        result.result.report.failure_kind = WorkflowFailureKind::NodeFailed;
-    }
-    if (output_value.has_value()) {
-        result.result.values.push_back(std::move(*output_value));
-        result.result.report.output = RuntimeValueId{0};
-    }
+    (void)finalize_wasm_agent_run(
+        result.result, descriptor, walk->states, std::move(output_value),
+        run_status, run_failure_kind, std::move(run_failure_code),
+        std::move(run_failure_message));
 
     // Collect the state entries from the step-walk.
     for (const auto &state_name : walk->states) {
