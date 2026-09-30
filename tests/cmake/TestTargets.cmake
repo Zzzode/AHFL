@@ -1760,6 +1760,25 @@ if(AHFL_ENABLE_BACKEND_WASM)
     )
     ahfl_apply_project_warnings(ahfl_wasm_host_workflow_session_tests)
 
+    add_executable(ahfl_wasm_host_agent_runner_tests
+        unit/runtime/wasm_host/wasm_agent_runner.cpp
+    )
+    target_link_libraries(ahfl_wasm_host_agent_runner_tests
+        PRIVATE
+            ahfl_runtime_wasm_host
+            ahfl_compiler_backend_wasm
+            ahfl_runtime_engine
+            ahfl_runtime_value
+            ahfl_base_json
+            ahfl_base_support
+    )
+    target_include_directories(ahfl_wasm_host_agent_runner_tests
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/tests
+    )
+    ahfl_apply_project_warnings(ahfl_wasm_host_agent_runner_tests)
+
     add_executable(ahfl_core_wasm_codegen_tests
         unit/compiler/backends/core_wasm_codegen.cpp
     )

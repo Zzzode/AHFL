@@ -20,16 +20,20 @@
 #
 # WH-4 adds the state-trace decoder (state_trace_decoder.cpp), the observation
 # emitter (observation_emitter.cpp), the agent step-walk session
-# (agent_session.cpp), and the workflow session (workflow_session.cpp). The
-# decoder is the host-side reader for the guest-written state-entry trace ring
-# (u32 count + 8-byte (runner,state) records at the dynamic frame-section
-# coords); the emitter produces the canonical ahfl.node-observation.v1
-# document the conformance comparator consumes; the agent session drives a
-# separate effects-free wasm3 instance through step()/current_state/
-# transition_count to collect the state-entry sequence; the workflow session
-# runs a WORKFLOW module end-to-end on the canonical instance, wrapping the
-# WH-3 capability_import executor with the D1 hook-firing discipline
-# (import-boundary state_entered + post-run node_completed).
+# (agent_session.cpp), the workflow session (workflow_session.cpp), and the
+# wasm3-backed facade (wasm_agent_runner.cpp). The decoder is the host-side
+# reader for the guest-written state-entry trace ring (u32 count + 8-byte
+# (runner,state) records at the dynamic frame-section coords); the emitter
+# produces the canonical ahfl.node-observation.v1 document the conformance
+# comparator consumes; the agent session drives a separate effects-free wasm3
+# instance through step()/current_state/transition_count to collect the
+# state-entry sequence; the workflow session runs a WORKFLOW module end-to-end
+# on the canonical instance, wrapping the WH-3 capability_import executor with
+# the D1 hook-firing discipline (import-boundary state_entered + post-run
+# node_completed); the agent runner drives an AGENT module with the D1
+# dual-mode discipline (step-walk on a separate instance + canonical runv/run2);
+# the workflow runtime is a thin facade over the workflow session that accepts
+# the shared WasmRuntimeHooks (hook signatures identical to WorkflowRuntimeConfig).
 add_library(ahfl_runtime_wasm_host STATIC
     wasm3_engine.cpp
     frame_packer.cpp
@@ -40,6 +44,8 @@ add_library(ahfl_runtime_wasm_host STATIC
     observation_emitter.cpp
     agent_session.cpp
     workflow_session.cpp
+    wasm_agent_runner.cpp
+    wasm_workflow_runtime.cpp
 )
 
 target_link_libraries(ahfl_runtime_wasm_host
