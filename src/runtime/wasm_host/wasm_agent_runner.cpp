@@ -28,6 +28,7 @@
 #include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
 
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
 #include "runtime/value/value_json.hpp"
 
@@ -102,7 +103,8 @@ pack_p6_agent_input(Wasm3ResumeEngine &engine,
 
     // Zero the reserved named regions so padding/union words are 0 (the same
     // discipline as the JS oracle and the agent_session).
-    std::fill(page->begin() + 1024, page->begin() + 16384,
+    std::fill(page->begin() + irc::kP6AggregateInputBase,
+              page->begin() + irc::kP6CollectionBackingBase,
               std::uint8_t{0});
 
     auto packed = pack_p6_input(*page, *descriptor.frame_section, *binding,

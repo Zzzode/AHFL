@@ -14,7 +14,6 @@
 
 #include "ahfl/compiler/ir/program.hpp"
 
-#include <cstdint>
 #include <expected>
 #include <string>
 #include <string_view>

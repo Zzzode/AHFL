@@ -15,6 +15,7 @@
 #include "runtime/wasm_host/frame_walk.hpp"
 
 #include "ahfl/compiler/ir/core_frame_layout.hpp"
+#include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_schema.hpp"
 #include "ahfl/runtime/execution_event.hpp"
 #include "runtime/value/value_json.hpp"
@@ -459,7 +460,8 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
 
         // Zero the reserved named regions so padding/union words are 0 (the
         // same discipline as the JS oracle and the agent_session).
-        std::fill(page->begin() + 1024, page->begin() + 16384,
+        std::fill(page->begin() + irc::kP6AggregateInputBase,
+                  page->begin() + irc::kP6CollectionBackingBase,
                   std::uint8_t{0});
 
         FrameWalkContext ctx(section, wire);

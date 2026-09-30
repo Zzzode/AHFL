@@ -9,7 +9,6 @@
 
 #include "ahfl/compiler/ir/core_ir.hpp"
 #include "ahfl/compiler/ir/core_layout.hpp"
-#include "ahfl/compiler/ir/core_wire_migration.hpp"
 
 #include <utility>
 
