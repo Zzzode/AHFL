@@ -31,10 +31,21 @@
 //   6. Non-topological resume (P1-2): a workflow whose Kahn schedule
 //      differs from declaration order. The memo classification must
 //      compare schedule positions, not source-order node ids.
+//   7. WH-4b P2 fail-closed family:
+//      P2-A: shared capability, different args, resume identity (e6 fixture).
+//      P2-B: frontier never hit on replay (fabricated complete memo +
+//            tampered frontier ordinal).
+//      P2-C: zero-length OK memo (replay-side defense; recording path is
+//            provably unreachable on a deterministic guest).
+//      P2-E: unresolvable pending cap_id (load-time validation fail-closed).
+//      (P2-D is unreachable: the engine's alloc_then_write bounds check
+//      is the reachable guard; see the reachability comment in
+//      workflow_session.cpp origination.)
 //
 // The e4 fixture is tests/golden/wasm/e4_capability_workflow_resume_memo.ahfl.
 // The e3 fixture is tests/golden/wasm/e3_capability_workflow_resume.ahfl.
 // The e5 fixture is tests/golden/wasm/e5_non_topological_resume.ahfl.
+// The e6 fixture is tests/golden/wasm/e6_shared_cap_resume.ahfl.
 
 #include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 
@@ -1082,6 +1093,666 @@ void test_non_topological_resume(
     }
 }
 
+// ==== 7. WH-4b P2 fail-closed family ====
+//
+// P2-A: shared capability, different args, resume identity. Two nodes call
+// the SAME capability with DIFFERENT arguments. The memo identity tuple
+// (node, ordinal, cap_id, arg_hash) must distinguish them: cap_id-only
+// matching must NOT confuse the two nodes' memos.
+//
+// P2-B: frontier never hit on replay. A fabricated complete memo (including
+// a fabricated OK memo entry for the pending call itself) plus a tampered
+// frontier ordinal makes the replay complete without hitting the frontier.
+// The post-run guard must fail closed ("the pending call was never
+// reached").
+//
+// P2-C: zero-length OK memo. The recording path is provably unreachable on
+// a deterministic guest (handle_opaque always serializes to non-empty JSON;
+// the guest classifies OK-empty as ERROR). The replay-side defense (empty
+// authoritative_json rejected at MemoHit) is exercised here.
+//
+// P2-D: bogus guest result pointer. The session-level OOB guard is
+// defense-in-depth behind the engine's own alloc_then_write bounds check
+// (wasm3_engine.cpp), which rejects an out-of-bounds allocation pointer
+// before handle_opaque returns it. The session guard is therefore
+// unreachable through the production opaque lane and is not tested here;
+// see the reachability comment at workflow_session.cpp origination.
+//
+// P2-E: unresolvable pending cap_id. A pending SymbolId that no node in
+// the module calls must fail closed at load time (before any run/invoker).
+
+// --- P2-A: shared-capability resume identity ---
+
+struct SharedCapState {
+    int echo_calls{0};
+    std::optional<std::size_t> echo_symbol_id;
+    std::optional<std::uint64_t> first_arg_hash;
+    std::optional<std::uint64_t> second_arg_hash;
+};
+
+// Invoker for the e6 shared-capability fixture. Call 1 (node 1) returns
+// Success with a transformed frame (so node 2's arg differs); call 2
+// (node 2) returns Pending. The arg_hash is captured for both calls so
+// the test can assert the memo identity tuple distinguishes them.
+ahfl::runtime::ContextualCapabilityInvoker
+make_shared_cap_invoker(std::shared_ptr<SharedCapState> state) {
+    return [state = std::move(state)](
+               const CapabilityInvocationContext &ctx,
+               const std::string & /*name*/,
+               const std::vector<Value> &args) -> CapabilityCallResult {
+        ++state->echo_calls;
+        state->echo_symbol_id = ctx.source_capability_symbol_id;
+        auto hash = ahfl::runtime::hash_values(args);
+        CapabilityCallResult r;
+        if (state->echo_calls == 1) {
+            // Node 1: Success with a transformed frame (so node 2's arg
+            // differs from node 1's).
+            state->first_arg_hash = hash;
+            r.status = CapabilityCallStatus::Success;
+            auto transformed = value_from_json(
+                R"({"_type":"wasm::e6_shared_cap_resume::Frame","value":"shared-cap-ok"})");
+            if (transformed.has_value()) {
+                r.value = std::move(*transformed);
+            }
+        } else {
+            // Node 2: Pending.
+            state->second_arg_hash = hash;
+            r.status = CapabilityCallStatus::Pending;
+        }
+        return r;
+    };
+}
+
+void test_p2a_shared_cap_resume_identity(
+    const std::filesystem::path &repo_root,
+    const std::filesystem::path &work_dir) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e6_shared_cap_resume.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "p2a.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    const auto snapshot_path = work_dir / "p2a-snapshot.json";
+    std::error_code ec;
+    std::filesystem::remove(snapshot_path, ec);
+
+    static constexpr std::string_view kWorkflow =
+        "wasm::e6_shared_cap_resume::SharedCapPipeline";
+    static constexpr std::string_view kFrameJson =
+        R"({"_type":"wasm::e6_shared_cap_resume::Frame","value":"shared-cap"})";
+    static constexpr std::string_view kFinalJson =
+        R"({"_type":"wasm::e6_shared_cap_resume::Frame","value":"shared-cap-final"})";
+
+    // ---- Process A: node 1 OK (transformed), node 2 Pending. ----
+    auto state_a = std::make_shared<SharedCapState>();
+    WorkflowRecoverySnapshot snapshot_for_assert;
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_shared_cap_invoker(state_a);
+        config.recovery_store = &store;
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "p2a.input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto suspended =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+
+        check(suspended.status() == WorkflowStatus::Suspended,
+              "p2a.suspended");
+        check(!suspended.has_errors(), "p2a.no_errors");
+        check(state_a->echo_calls == 2, "p2a.echo_called_twice");
+        check(suspended.suspended.has_value(), "p2a.has_resume_record");
+        check_workflow_completed(suspended, 0, "p2a.suspend");
+
+        if (suspended.suspended.has_value()) {
+            snapshot_for_assert = std::move(*suspended.suspended);
+        }
+    }
+
+    // Assert the 7-field memo tuple: node 1's OK call with its own
+    // arg_hash (distinct from node 2's).
+    {
+        check(snapshot_for_assert.suspended.has_value(),
+              "p2a.tuple.has_suspended");
+        if (snapshot_for_assert.suspended.has_value()) {
+            const auto &susp = *snapshot_for_assert.suspended;
+            check(susp.memo.size() == 1, "p2a.tuple.memo_size_1");
+            if (susp.memo.size() == 1) {
+                const auto &entry = susp.memo[0];
+                // 1. Node coordinate: node 1 (first).
+                check(entry.node.has_value(), "p2a.tuple.has_node");
+                if (entry.node.has_value()) {
+                    check(entry.node->index() == 0,
+                          "p2a.tuple.node_is_first");
+                }
+                // 2. Ordinal 0.
+                check(entry.ordinal == 0, "p2a.tuple.ordinal_0");
+                // 3. cap_id: Echo's SymbolId.
+                check(state_a->echo_symbol_id.has_value(),
+                      "p2a.tuple.echo_symbol_captured");
+                if (state_a->echo_symbol_id.has_value()) {
+                    check(entry.cap_id == *state_a->echo_symbol_id,
+                          "p2a.tuple.cap_id_is_echo");
+                }
+                // 4. arg_hash: node 1's (non-zero, differs from node 2's).
+                check(entry.arg_hash != 0, "p2a.tuple.arg_hash_nonzero");
+                check(state_a->first_arg_hash.has_value(),
+                      "p2a.tuple.first_arg_hash_captured");
+                if (state_a->first_arg_hash.has_value()) {
+                    check(entry.arg_hash == *state_a->first_arg_hash,
+                          "p2a.tuple.arg_hash_is_first");
+                }
+                check(state_a->second_arg_hash.has_value(),
+                      "p2a.tuple.second_arg_hash_captured");
+                if (state_a->second_arg_hash.has_value()) {
+                    check(entry.arg_hash != *state_a->second_arg_hash,
+                          "p2a.tuple.arg_hash_differs_from_second");
+                }
+                // 5. Source: ExactSidecar.
+                check(entry.source ==
+                          ahfl::runtime::PersistedMemoResultSource::
+                              ExactSidecar,
+                      "p2a.tuple.exact_sidecar");
+                // 6. authoritative_json: present, non-empty.
+                check(entry.authoritative_json.has_value(),
+                      "p2a.tuple.has_authoritative_json");
+                if (entry.authoritative_json.has_value()) {
+                    check(!entry.authoritative_json->empty(),
+                          "p2a.tuple.authoritative_json_nonempty");
+                }
+                // 7. result_present: present, true.
+                check(entry.result_present.has_value(),
+                      "p2a.tuple.has_result_present");
+                if (entry.result_present.has_value()) {
+                    check(*entry.result_present,
+                          "p2a.tuple.result_present_true");
+                }
+            }
+        }
+    }
+
+    // ---- Process B: cold start. Node 1 is memo-supplied (zero live
+    // calls); node 2 is frontier-injected (zero live calls). ----
+    auto state_b = std::make_shared<SharedCapState>();
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        auto loaded = store.load();
+        check(loaded.has_value(), "p2a.snapshot_loaded");
+        if (!loaded.has_value()) {
+            return;
+        }
+
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_shared_cap_invoker(state_b);
+        config.recovery_snapshot = std::move(*loaded);
+        config.resume_pending_result_wire_json = std::string(kFinalJson);
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "p2a.resume_input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto resumed =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+
+        check(resumed.status() == WorkflowStatus::Completed,
+              "p2a.completed");
+        check(!resumed.has_errors(), "p2a.resume_no_errors");
+        // Zero live side effects on resume: node 1 memo-supplied, node 2
+        // frontier-injected.
+        check(state_b->echo_calls == 0, "p2a.zero_live_calls");
+        check_workflow_completed(resumed, 1, "p2a.complete");
+
+        const auto *output = resumed.output();
+        check(output != nullptr, "p2a.has_output");
+        if (output != nullptr) {
+            const auto json = ahfl::runtime::value_to_json(*output);
+            check(json == std::string(kFinalJson), "p2a.output_value");
+        }
+    }
+
+    // ---- Process C: cross-injection fails closed. Tamper the memo's
+    // arg_hash to node 2's arg_hash. On resume, node 1's MemoHit
+    // cross-check must reject it (node 1's live arg_hash != node 2's).
+    // This proves the arg_hash field distinguishes two nodes that share
+    // a cap_id. ----
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        auto loaded = store.load();
+        check(loaded.has_value(), "p2a.xinj.load");
+        if (!loaded.has_value()) {
+            return;
+        }
+        auto snapshot = std::move(*loaded);
+        if (snapshot.suspended.has_value() &&
+            !snapshot.suspended->memo.empty() &&
+            state_a->second_arg_hash.has_value()) {
+            snapshot.suspended->memo[0].arg_hash =
+                *state_a->second_arg_hash;
+        } else {
+            check(false, "p2a.xinj.tamper_preconditions");
+            return;
+        }
+
+        auto state_c = std::make_shared<SharedCapState>();
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_shared_cap_invoker(state_c);
+        config.recovery_snapshot = std::move(snapshot);
+        config.resume_pending_result_wire_json = std::string(kFinalJson);
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "p2a.xinj.resume_input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto resumed =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+
+        check(resumed.status() != WorkflowStatus::Completed,
+              "p2a.xinj.not_completed");
+        check(resumed.status() == WorkflowStatus::NodeFailed,
+              "p2a.xinj.node_failed");
+        check(resumed.has_errors(), "p2a.xinj.has_errors");
+        const auto msg = first_error_message(resumed);
+        check(!msg.empty(), "p2a.xinj.actionable_diagnostic");
+        check(msg.find("diverged from the recorded memo") !=
+                  std::string::npos,
+              "p2a.xinj.divergence_wording");
+        // The invoker is never called: the MemoHit cross-check aborts
+        // before the live invoker is reached.
+        check(state_c->echo_calls == 0, "p2a.xinj.zero_live_calls");
+    }
+}
+
+// --- P2-B: frontier never hit on replay ---
+//
+// Construct a recovery snapshot whose frontier identity doesn't occur
+// during replay. This is done by fabricating a COMPLETE memo (including
+// a fabricated OK memo entry for the pending call itself) and tampering
+// the pending_ordinal to a non-occurring value (1 when the node only
+// calls the capability once at ordinal 0). On replay, all calls are
+// MemoHit (served from the fabricated memo), the replay completes, and
+// the post-run guard fires: "the pending call was never reached".
+//
+// Uses the e4 fixture where A and B both echo the same input, so node 2's
+// arg_hash == node 1's arg_hash (reusable from the snapshot's memo[0]).
+
+void test_p2b_frontier_never_hit(
+    const std::filesystem::path &repo_root,
+    const std::filesystem::path &work_dir) {
+    const auto source =
+        repo_root /
+        "tests/golden/wasm/e4_capability_workflow_resume_memo.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "p2b.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    const auto snapshot_path = work_dir / "p2b-snapshot.json";
+    std::error_code ec;
+    std::filesystem::remove(snapshot_path, ec);
+
+    static constexpr std::string_view kWorkflow =
+        "wasm::e4_capability_workflow_resume_memo::MemoPipeline";
+    static constexpr std::string_view kFrameJson =
+        R"({"_type":"wasm::e4_capability_workflow_resume_memo::Frame","value":"p2b"})";
+
+    // ---- Process A: A OK (memoized), B Pending. ----
+    auto state_a = std::make_shared<InvokerState>();
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state_a);
+        config.recovery_store = &store;
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "p2b.input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto suspended =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+
+        check(suspended.status() == WorkflowStatus::Suspended,
+              "p2b.suspended");
+        check(!suspended.has_errors(), "p2b.no_errors");
+        check(state_a->a_calls == 1, "p2b.a_called_once");
+        check(state_a->b_calls == 1, "p2b.b_called_once");
+    }
+
+    // ---- Load + fabricate + tamper + resume. ----
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        auto loaded = store.load();
+        check(loaded.has_value(), "p2b.load");
+        if (!loaded.has_value()) {
+            return;
+        }
+        auto snapshot = std::move(*loaded);
+
+        check(snapshot.suspended.has_value(), "p2b.has_suspended");
+        if (!snapshot.suspended.has_value()) {
+            return;
+        }
+        auto &susp = *snapshot.suspended;
+        check(susp.memo.size() == 1, "p2b.memo_size_1");
+        if (susp.memo.size() != 1) {
+            return;
+        }
+        check(state_a->b_symbol_id.has_value(),
+              "p2b.b_symbol_captured");
+        if (!state_a->b_symbol_id.has_value()) {
+            return;
+        }
+
+        // In e4, A and B both echo the same input, so node 2's arg_hash
+        // == node 1's arg_hash (memo[0].arg_hash). Reuse it for the
+        // fabricated memo entry.
+        const auto node2_arg_hash = susp.memo[0].arg_hash;
+        const auto node2_json =
+            susp.memo[0].authoritative_json.value_or("");
+
+        // Fabricate an OK memo entry for node 2 (the suspended node).
+        // This makes node 2's call a MemoHit on replay instead of the
+        // frontier.
+        ahfl::runtime::CapabilityMemoEntry fabricated;
+        fabricated.ordinal = 0;
+        fabricated.cap_id = *state_a->b_symbol_id;
+        fabricated.arg_hash = node2_arg_hash;
+        fabricated.source =
+            ahfl::runtime::PersistedMemoResultSource::ExactSidecar;
+        fabricated.authoritative_json = node2_json;
+        fabricated.result_present = true;
+        fabricated.node = susp.node;
+        susp.memo.push_back(std::move(fabricated));
+
+        // Tamper the frontier ordinal to 1 (node 2 only calls B once at
+        // ordinal 0, so ordinal 1 never occurs).
+        susp.pending_ordinal = 1;
+
+        auto state_b = std::make_shared<InvokerState>();
+        state_b->b_pending = false;
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state_b);
+        config.recovery_snapshot = std::move(snapshot);
+        // Supply a pending result (it will never be used: the frontier
+        // is never hit).
+        auto pending_result = value_from_json(std::string(kFrameJson));
+        if (pending_result.has_value()) {
+            config.resume_pending_result = std::move(*pending_result);
+        }
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+        auto input = value_from_json(std::string(kFrameJson));
+        check(input.has_value(), "p2b.resume_input");
+        if (!input.has_value()) {
+            return;
+        }
+
+        auto resumed =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+
+        // The replay completed (all calls MemoHit) but the frontier was
+        // never hit -> post-run guard fails closed.
+        check(resumed.status() != WorkflowStatus::Completed,
+              "p2b.not_completed");
+        check(resumed.status() == WorkflowStatus::NodeFailed,
+              "p2b.node_failed");
+        check(resumed.has_errors(), "p2b.has_errors");
+        const auto msg = first_error_message(resumed);
+        check(!msg.empty(), "p2b.actionable_diagnostic");
+        check(msg.find("the pending call was never reached") !=
+                  std::string::npos,
+              "p2b.divergence_wording");
+        // The invoker is never called: every call is a MemoHit.
+        check(state_b->a_calls == 0 && state_b->b_calls == 0,
+              "p2b.zero_live_calls");
+        // No WorkflowCompleted event: the run failed.
+        check_workflow_completed(resumed, 0, "p2b.no_complete");
+    }
+}
+
+// --- P2-C: zero-length OK memo (replay-side defense) ---
+//
+// The recording path (zero-length OK memo) is provably unreachable on a
+// deterministic guest: handle_opaque always serializes the result through
+// serialize_value_for_wire_json (non-empty even for NoneValue -> "null"),
+// and the guest classifies an OK reply with a null pointer or zero length
+// as ERROR (core_wasm_codegen.cpp cap-status dispatch). The guard at
+// workflow_session.cpp origination is retained as defense-in-depth (see
+// the reachability comment there).
+//
+// The reachable replay-side defense is exercised here: a memo entry with
+// an empty authoritative_json is rejected at MemoHit (the session refuses
+// to serve empty bytes as a capability result).
+
+void test_p2c_zero_length_memo_replay(
+    const std::filesystem::path &repo_root,
+    const std::filesystem::path &work_dir) {
+    const auto source =
+        repo_root /
+        "tests/golden/wasm/e4_capability_workflow_resume_memo.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "p2c.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    const auto snapshot_path = work_dir / "p2c-snapshot.json";
+    std::error_code ec;
+    std::filesystem::remove(snapshot_path, ec);
+
+    static constexpr std::string_view kWorkflow =
+        "wasm::e4_capability_workflow_resume_memo::MemoPipeline";
+    static constexpr std::string_view kFrameJson =
+        R"({"_type":"wasm::e4_capability_workflow_resume_memo::Frame","value":"p2c"})";
+
+    // Suspend (A OK, B Pending).
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        auto state = std::make_shared<InvokerState>();
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state);
+        config.recovery_store = &store;
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+        auto input = value_from_json(std::string(kFrameJson));
+        if (!input.has_value()) {
+            check(false, "p2c.input");
+            return;
+        }
+        auto suspended =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+        check(suspended.status() == WorkflowStatus::Suspended,
+              "p2c.suspended");
+    }
+
+    // Load + tamper + resume.
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        auto loaded = store.load();
+        check(loaded.has_value(), "p2c.load");
+        if (!loaded.has_value()) {
+            return;
+        }
+        auto snapshot = std::move(*loaded);
+        // Tamper the memo's authoritative_json to empty. The MemoHit
+        // cross-check must reject it (the session refuses to serve empty
+        // bytes as a capability result).
+        if (snapshot.suspended.has_value() &&
+            !snapshot.suspended->memo.empty()) {
+            snapshot.suspended->memo[0].authoritative_json = "";
+        } else {
+            check(false, "p2c.tamper_preconditions");
+            return;
+        }
+
+        auto state = std::make_shared<InvokerState>();
+        state->b_pending = false;
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state);
+        config.recovery_snapshot = std::move(snapshot);
+        auto pending_result = value_from_json(std::string(kFrameJson));
+        if (pending_result.has_value()) {
+            config.resume_pending_result = std::move(*pending_result);
+        }
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+        auto input = value_from_json(std::string(kFrameJson));
+        if (!input.has_value()) {
+            check(false, "p2c.resume_input");
+            return;
+        }
+        auto resumed =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+
+        check(resumed.status() != WorkflowStatus::Completed,
+              "p2c.not_completed");
+        check(resumed.status() == WorkflowStatus::NodeFailed,
+              "p2c.node_failed");
+        check(resumed.has_errors(), "p2c.has_errors");
+        const auto msg = first_error_message(resumed);
+        check(!msg.empty(), "p2c.actionable_diagnostic");
+        check(msg.find("diverged from the recorded memo") !=
+                  std::string::npos,
+              "p2c.divergence_wording");
+        check(state->a_calls == 0 && state->b_calls == 0,
+              "p2c.zero_live_calls");
+    }
+}
+
+// --- P2-E: unresolvable pending cap_id ---
+//
+// A pending SymbolId that no node in the module calls must fail closed at
+// load time (validate_wasm_recovery_snapshot), before any run/invoker.
+// The diagnostic must pin the wording "pending capability is not
+// resolvable in this module".
+
+void test_p2e_pending_cap_unresolvable(
+    const std::filesystem::path &repo_root,
+    const std::filesystem::path &work_dir) {
+    const auto source =
+        repo_root /
+        "tests/golden/wasm/e4_capability_workflow_resume_memo.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "p2e.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    const auto snapshot_path = work_dir / "p2e-snapshot.json";
+    std::error_code ec;
+    std::filesystem::remove(snapshot_path, ec);
+
+    static constexpr std::string_view kWorkflow =
+        "wasm::e4_capability_workflow_resume_memo::MemoPipeline";
+    static constexpr std::string_view kFrameJson =
+        R"({"_type":"wasm::e4_capability_workflow_resume_memo::Frame","value":"p2e"})";
+
+    // Suspend (A OK, B Pending).
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        auto state = std::make_shared<InvokerState>();
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state);
+        config.recovery_store = &store;
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+        auto input = value_from_json(std::string(kFrameJson));
+        if (!input.has_value()) {
+            check(false, "p2e.input");
+            return;
+        }
+        auto suspended =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+        check(suspended.status() == WorkflowStatus::Suspended,
+              "p2e.suspended");
+    }
+
+    // Load + tamper + resume.
+    {
+        WorkflowRecoveryStore store(snapshot_path);
+        auto loaded = store.load();
+        check(loaded.has_value(), "p2e.load");
+        if (!loaded.has_value()) {
+            return;
+        }
+        auto snapshot = std::move(*loaded);
+        // Tamper the pending cap_id to an unresolvable SymbolId.
+        if (snapshot.suspended.has_value()) {
+            snapshot.suspended->pending_cap_id = 999;
+        } else {
+            check(false, "p2e.tamper_preconditions");
+            return;
+        }
+
+        auto state = std::make_shared<InvokerState>();
+        state->b_pending = false;
+        wr::WasmWorkflowRuntimeConfig config;
+        config.invoker = make_counting_invoker(state);
+        config.recovery_snapshot = std::move(snapshot);
+        auto pending_result = value_from_json(std::string(kFrameJson));
+        if (pending_result.has_value()) {
+            config.resume_pending_result = std::move(*pending_result);
+        }
+
+        wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+        auto input = value_from_json(std::string(kFrameJson));
+        if (!input.has_value()) {
+            check(false, "p2e.resume_input");
+            return;
+        }
+        auto resumed =
+            runtime.run(std::string(kWorkflow), std::move(*input));
+
+        // The load-time validation fails closed: the pending cap_id is
+        // not resolvable in the module.
+        check(resumed.status() != WorkflowStatus::Completed,
+              "p2e.not_completed");
+        check(resumed.status() == WorkflowStatus::NodeFailed,
+              "p2e.node_failed");
+        check(resumed.has_errors(), "p2e.has_errors");
+        const auto msg = first_error_message(resumed);
+        check(!msg.empty(), "p2e.actionable_diagnostic");
+        check(msg.find("pending capability is not resolvable") !=
+                  std::string::npos,
+              "p2e.wording");
+        // The invoker is never called: the validation aborts before any
+        // run/invoker.
+        check(state->a_calls == 0 && state->b_calls == 0,
+              "p2e.zero_live_calls");
+        // No WorkflowCompleted event: the run failed at load time.
+        check_workflow_completed(resumed, 0, "p2e.no_complete");
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1111,6 +1782,12 @@ int main(int argc, char **argv) {
 
     // P1-2: non-topological schedule.
     test_non_topological_resume(repo, work);
+
+    // WH-4b P2 fail-closed family.
+    test_p2a_shared_cap_resume_identity(repo, work);
+    test_p2b_frontier_never_hit(repo, work);
+    test_p2c_zero_length_memo_replay(repo, work);
+    test_p2e_pending_cap_unresolvable(repo, work);
 
     std::cout << g_pass << "/" << g_checks << " e2e checks passed\n";
     return (g_pass == g_checks) ? EXIT_SUCCESS : EXIT_FAILURE;

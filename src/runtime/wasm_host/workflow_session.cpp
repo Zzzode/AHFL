@@ -947,6 +947,27 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         // P2-3: record the memo even for a zero-length OK
                         // result (an empty-but-valid reply is still a
                         // deterministic outcome the resume must replay).
+                        //
+                        // Reachability note (WH-4b P2-C): on the production
+                        // opaque lane this zero-length branch is provably
+                        // unreachable for two independent reasons:
+                        //   1. handle_opaque (capability_import.cpp) always
+                        //      serializes the result through
+                        //      serialize_value_for_wire_json, which produces
+                        //      non-empty output even for NoneValue ("null").
+                        //   2. The guest classifies an OK reply with a null
+                        //      result pointer or zero length as ERROR
+                        //      (core_wasm_codegen.cpp cap-status dispatch),
+                        //      so an AHFL_CAP_OK import reply always carries
+                        //      a non-empty body.
+                        // The guard is retained as defense-in-depth: a future
+                        //      capability lane that returns raw (unserialized)
+                        //      bytes could legitimately produce an empty OK
+                        //      body, and the memo must still record it.
+                        //      The replay-side defense (empty authoritative
+                        //      JSON rejected at MemoHit) is exercised by the
+                        //      P2-C test in wasm_workflow_resume_e2e.cpp.
+                        //
                         // Read the exact reply wire bytes from guest
                         // memory (never re-serialized: no spelling drift).
                         const auto offset =

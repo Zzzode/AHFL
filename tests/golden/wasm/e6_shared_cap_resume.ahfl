@@ -1,0 +1,51 @@
+// RFC 0026 KR6.8 WH-4b P2-A: shared-capability resume identity fixture.
+//
+// Two opaque nodes call the SAME capability (Echo) with provably DIFFERENT
+// arguments: `first` forwards the workflow input, `second` forwards `first`'s
+// output (which the test invoker transforms, so the two args differ). This
+// exercises the memo identity tuple (node, ordinal, cap_id, arg_hash) when a
+// capability is shared across nodes: cap_id-only matching must NOT confuse the
+// two nodes' memos. On suspend (second Pending), first's OK call is memoized
+// with its own arg_hash; on resume, first is a MemoHit (arg_hash matches) and
+// second is frontier-injected. Bounded String(0,64) so the F1 preflight's
+// canonical-size bound is finite. Both capability calls are in the final
+// state (opaque lane); context is Unit on both agents.
+
+module wasm::e6_shared_cap_resume;
+
+pub struct Frame {
+    value: String(0, 64);
+}
+
+capability Echo(request: Frame) -> Frame;
+
+pub agent EchoAgent {
+    input: Frame;
+    context: Unit;
+    output: Frame;
+    states: [Done, Start];
+    initial: Start;
+    final: [Done];
+    capabilities: [Echo];
+    transition Start -> Done;
+}
+
+flow for EchoAgent {
+    state Done {
+        return Echo(input);
+    }
+
+    state Start {
+        goto Done;
+    }
+}
+
+pub workflow SharedCapPipeline {
+    input: Frame;
+    output: Frame;
+
+    node first: EchoAgent(input);
+    node second: EchoAgent(first) after [first];
+
+    return: second;
+}
