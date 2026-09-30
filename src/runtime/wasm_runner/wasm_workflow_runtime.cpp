@@ -4,6 +4,7 @@
 #include "runtime/wasm_runner/wasm_workflow_runtime.hpp"
 
 #include "runtime/wasm_host/wasm_workflow_runtime.hpp"
+#include "runtime/wasm_host/wasm_error_codes.hpp"
 
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
@@ -77,7 +78,7 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         result.report.status = RunTerminalStatus::Failed;
         result.report.failure_kind = WorkflowFailureKind::NodeFailed;
         result.diagnostics.error()
-            .code("wasm.compile-failed")
+            .code(std::string{wasm_host::wasm_diag::kCompileFailed})
             .message(*compile_error_)
             .emit();
         return result;
@@ -90,7 +91,7 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         result.report.status = RunTerminalStatus::Failed;
         result.report.failure_kind = WorkflowFailureKind::NodeFailed;
         result.diagnostics.error()
-            .code("wasm.workflow-not-found")
+            .code(std::string{wasm_host::wasm_diag::kWorkflowNotFound})
             .message("wasm workflow runtime: workflow '" + workflow_name +
                      "' not found")
             .emit();
@@ -110,7 +111,7 @@ WorkflowResult WasmWorkflowRuntime::run(const std::string &workflow_name,
         result.report.status = RunTerminalStatus::Failed;
         result.report.failure_kind = WorkflowFailureKind::NodeFailed;
         result.diagnostics.error()
-            .code("wasm.session-failed")
+            .code(std::string{wasm_host::wasm_diag::kSessionFailed})
             .message("wasm workflow runtime: " + session_result.error())
             .emit();
         return result;

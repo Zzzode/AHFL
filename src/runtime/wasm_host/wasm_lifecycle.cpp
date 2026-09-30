@@ -2,6 +2,7 @@
 // implementation. See the header comment for the full contract.
 
 #include "runtime/wasm_host/wasm_lifecycle.hpp"
+#include "runtime/wasm_host/wasm_error_codes.hpp"
 
 #include "ahfl/runtime/execution_report.hpp"
 
@@ -47,7 +48,7 @@ bool build_report(WorkflowResult &result) {
         return true;
     }
     result.diagnostics.error()
-        .code("wasm.event-stream-invalid")
+        .code(std::string{wasm_diag::kEventStreamInvalid})
         .message("wasm lane event stream violated the accepted lifecycle contract")
         .emit();
     return false;

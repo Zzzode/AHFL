@@ -15,6 +15,7 @@
 
 #include "runtime/wasm_host/workflow_session.hpp"
 #include "runtime/wasm_host/wasm_lifecycle.hpp"
+#include "runtime/wasm_host/wasm_error_codes.hpp"
 
 #include "runtime/engine/core_wasm_node_events.hpp"
 #include "runtime/engine/core_wasm_schema_module.hpp"
@@ -521,13 +522,13 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     if (!outcome.has_value()) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
-        run_failure_code = "wasm.trap";
+        run_failure_code = wasm_diag::kTrap;
         run_failure_message =
             "run_workflow_session: invoke_run2 failed (engine error)";
     } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
-        run_failure_code = "wasm.host-abort";
+        run_failure_code = wasm_diag::kHostAbort;
         run_failure_message =
             "run_workflow_session: run2 host-aborted (capability import "
             "failure)";
@@ -542,7 +543,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
         run_status = RunTerminalStatus::Failed;
         run_failure_kind = WorkflowFailureKind::NodeFailed;
-        run_failure_code = "wasm.trap";
+        run_failure_code = wasm_diag::kTrap;
         run_failure_message = "run_workflow_session: run2 trapped";
     } else {
         tuple = &std::get<eng::Run2ResultTuple>(*outcome);
@@ -550,7 +551,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         if (!run_ok) {
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = "wasm.run-failed";
+            run_failure_code = wasm_diag::kRunFailed;
             run_failure_message =
                 "run_workflow_session: run2 returned non-zero status " +
                 std::to_string(tuple->raw_status);

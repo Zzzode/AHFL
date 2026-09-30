@@ -28,6 +28,7 @@
 #include "runtime/wasm_host/frame_reader.hpp"
 #include "runtime/wasm_host/frame_walk.hpp"
 #include "runtime/wasm_host/wasm_lifecycle.hpp"
+#include "runtime/wasm_host/wasm_error_codes.hpp"
 
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
 #include "ahfl/compiler/ir/core_wire_migration.hpp"
@@ -417,13 +418,13 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         if (!outcome.has_value()) {
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = "wasm.trap";
+            run_failure_code = wasm_diag::kTrap;
             run_failure_message =
                 "run_wasm_agent: invoke_runv failed (engine error)";
         } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = "wasm.host-abort";
+            run_failure_code = wasm_diag::kHostAbort;
             run_failure_message =
                 "run_wasm_agent: runv host-aborted (capability import "
                 "failure)";
@@ -437,7 +438,7 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = "wasm.trap";
+            run_failure_code = wasm_diag::kTrap;
             run_failure_message = "run_wasm_agent: runv trapped";
         } else {
             const auto &runv = std::get<RunvResult>(*outcome);
@@ -449,7 +450,7 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             } else {
                 run_status = RunTerminalStatus::Failed;
                 run_failure_kind = WorkflowFailureKind::NodeFailed;
-                run_failure_code = "wasm.run-failed";
+                run_failure_code = wasm_diag::kRunFailed;
                 run_failure_message =
                     "run_wasm_agent: runv returned non-zero status " +
                     std::to_string(runv.raw_status);
@@ -460,13 +461,13 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         if (!outcome.has_value()) {
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = "wasm.trap";
+            run_failure_code = wasm_diag::kTrap;
             run_failure_message =
                 "run_wasm_agent: invoke_run2 failed (engine error)";
         } else if (std::holds_alternative<eng::Run2HostAborted>(*outcome)) {
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = "wasm.host-abort";
+            run_failure_code = wasm_diag::kHostAbort;
             run_failure_message =
                 "run_wasm_agent: run2 host-aborted (capability import "
                 "failure)";
@@ -480,7 +481,7 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
         } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
             run_status = RunTerminalStatus::Failed;
             run_failure_kind = WorkflowFailureKind::NodeFailed;
-            run_failure_code = "wasm.trap";
+            run_failure_code = wasm_diag::kTrap;
             run_failure_message = "run_wasm_agent: run2 trapped";
         } else {
             const auto &tuple = std::get<eng::Run2ResultTuple>(*outcome);
@@ -501,7 +502,7 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             } else if (!run_ok) {
                 run_status = RunTerminalStatus::Failed;
                 run_failure_kind = WorkflowFailureKind::NodeFailed;
-                run_failure_code = "wasm.run-failed";
+                run_failure_code = wasm_diag::kRunFailed;
                 run_failure_message =
                     "run_wasm_agent: run2 returned non-zero status " +
                     std::to_string(tuple.raw_status);
