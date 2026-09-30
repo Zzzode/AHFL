@@ -11,6 +11,8 @@
 #include "ahfl/compiler/ir/program_view.hpp"
 #include "base/json/json_value.hpp"
 #include "conformance/compile_source.hpp"
+#include "conformance/conformance_mock_registry.hpp"
+#include "conformance/observation_document.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/wire_value.hpp"
@@ -37,84 +39,6 @@ using ahfl::runtime::WorkflowRuntimeConfig;
 using ahfl::runtime::WorkflowStatus;
 namespace json = ahfl::json;
 
-// Builds the mock capability table declared by the case. `ok` outcomes are
-// materialized ONCE from canonical wire JSON (value_from_json) and cloned per
-// invocation through register_function; `error` / `pending` outcomes return
-// their terminal status directly. This deliberately mirrors the canonical
-// native-value path rather than the CLI's string-wrapping LLM-tool seam.
-[[nodiscard]] std::optional<CapabilityRegistry>
-build_mock_registry(const ConformanceCase &manifest, std::string &error_out) {
-    CapabilityRegistry registry;
-    for (const auto &capability : manifest.capabilities) {
-        switch (capability.status) {
-        case CapabilityOutcomeStatus::Ok: {
-            if (!capability.result_json.has_value()) {
-                error_out = "manifest capability '" + capability.name +
-                            "' is 'ok' without a result frame";
-                return std::nullopt;
-            }
-            auto canned = runtime::value_from_json(*capability.result_json);
-            if (!canned.has_value()) {
-                error_out = "failed to decode result_json for capability '" + capability.name +
-                            "'";
-                return std::nullopt;
-            }
-            auto shared = std::make_shared<Value>(std::move(*canned));
-            registry.register_function(
-                capability.name,
-                [shared](const std::vector<Value> &) -> Value {
-                    return runtime::clone_value(*shared);
-                });
-            break;
-        }
-        case CapabilityOutcomeStatus::Error: {
-            // Register directly so the mock can return a non-Success terminal
-            // (register_function only models an `ok` outcome).
-            const std::string cap_name = capability.name;
-            const std::string detail = capability.result_json.value_or("");
-            ahfl::runtime::CapabilityBinding binding;
-            binding.name = cap_name;
-            binding.handler = [cap_name, detail](const std::vector<Value> &) -> CapabilityCallResult {
-                CapabilityCallResult result;
-                result.status = CapabilityCallStatus::Error;
-                result.error_message =
-                    "conformance mock error for capability '" + cap_name + "'" +
-                    (detail.empty() ? std::string{} : ": " + detail);
-                return result;
-            };
-            registry.register_capability(std::move(binding));
-            break;
-        }
-        case CapabilityOutcomeStatus::Pending: {
-            ahfl::runtime::CapabilityBinding binding;
-            binding.name = capability.name;
-            binding.handler = [](const std::vector<Value> &) -> CapabilityCallResult {
-                CapabilityCallResult result;
-                result.status = CapabilityCallStatus::Pending;
-                return result;
-            };
-            registry.register_capability(std::move(binding));
-            break;
-        }
-        }
-    }
-    return registry;
-}
-
-[[nodiscard]] const char *status_name_workflow(WorkflowStatus status) {
-    switch (status) {
-    case WorkflowStatus::Completed:
-        return "completed";
-    case WorkflowStatus::Suspended:
-        return "suspended";
-    case WorkflowStatus::NodeFailed:
-    case WorkflowStatus::DependencyFailed:
-    case WorkflowStatus::EvalError:
-        return "failed";
-    }
-    return "failed";
-}
-
 [[nodiscard]] const char *status_name_agent(AgentStatus status) {
     switch (status) {
     case AgentStatus::Completed:
@@ -135,80 +59,6 @@ build_mock_registry(const ConformanceCase &manifest, std::string &error_out) {
 // events carry zero offsets and observations never depend on wall time.
 [[nodiscard]] std::chrono::steady_clock::time_point fixed_clock() {
     return std::chrono::steady_clock::time_point{};
-}
-
-[[nodiscard]] std::unique_ptr<json::JsonValue> make_string_node(std::string value) {
-    return json::JsonValue::make_string(std::move(value));
-}
-
-// Serializes one engine run into the canonical observation DOM. `states` are
-// declaration-order (agent, state) pairs; `capabilities` the canonical
-// capability-name sequence; `argument_envelopes` the per-call canonical wire
-// argument envelope (serialize_args_for_wire_json SSOT) in the same order.
-[[nodiscard]] std::string render_observation(const ConformanceCase &manifest,
-                                             const ConformanceScenario &scenario,
-                                             const char *status,
-                                             const std::vector<std::pair<std::string, std::string>>
-                                                 &states,
-                                             const std::vector<std::string> &capabilities,
-                                             const std::vector<std::string> &argument_envelopes,
-                                             const Value *output) {
-    auto root = json::JsonValue::make_object();
-    root->set("schema", make_string_node("ahfl.evaluator-observation.v1"));
-    root->set("case", make_string_node(manifest.source));
-    root->set("scenario", make_string_node(scenario.name));
-    root->set("status", make_string_node(status));
-
-    auto state_array = json::JsonValue::make_array();
-    for (const auto &[agent_name, state_name] : states) {
-        auto entry = json::JsonValue::make_object();
-        entry->set("agent", make_string_node(agent_name));
-        entry->set("state", make_string_node(state_name));
-        state_array->push(std::move(entry));
-    }
-    root->set("state_sequence", std::move(state_array));
-
-    auto capability_array = json::JsonValue::make_array();
-    for (const auto &capability : capabilities) {
-        capability_array->push(make_string_node(capability));
-    }
-    root->set("capability_sequence", std::move(capability_array));
-
-    // The per-call argument envelope is the SAME canonical frame every C++
-    // transport sends (serialize_args_for_wire_json): bare struct /
-    // {"value":..} / {"args":[..]} / {}. Embedded as a value subtree (never a
-    // string) so the differential comparator can canonicalize bytes, exactly
-    // like output_json.
-    auto argument_array = json::JsonValue::make_array();
-    for (const std::string &envelope : argument_envelopes) {
-        auto parsed = json::parse_json(envelope);
-        if (parsed.has_value() && *parsed) {
-            argument_array->push(std::move(*parsed));
-        } else {
-            argument_array->push(make_string_node(envelope));
-        }
-    }
-    root->set("capability_arguments", std::move(argument_array));
-
-    if (output != nullptr) {
-        // value_to_json is canonical compact wire JSON; re-parse only to embed
-        // the value subtree (never as a string) into the observation DOM.
-        auto output_dom = json::parse_json(runtime::value_to_json(*output));
-        if (output_dom.has_value() && *output_dom) {
-            root->set("output_json", std::move(*output_dom));
-        }
-    }
-
-    // Emit the envelope through the SAME canonical emitter the manifest
-    // expectation gate uses (detail::canonical_json): `_type` stays first,
-    // remaining keys sort deterministically, and the embedded output subtree
-    // reproduces value_to_json byte-for-byte for every kind. Serializing with
-    // json::serialize_json instead would diverge on integral-valued floats,
-    // whose float syntax (e.g. "2.0") it would collapse to a bare integer
-    // ("2") - the non-canonical spelling the wire codec's "no int widening"
-    // contract rejects - making such a case un-blessable and any cross-engine
-    // adapter that emits canonical bytes fail the byte gate falsely.
-    return detail::canonical_json(*root);
 }
 
 [[nodiscard]] EvaluatorScenarioResult
