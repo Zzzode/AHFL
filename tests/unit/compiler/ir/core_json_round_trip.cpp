@@ -623,6 +623,9 @@ lower_golden_file(const std::filesystem::path &path) {
         // dereferenced as an inline nested frame is verifier-clean Core; the
         // fail-closed gate lives in wasm workflow codegen, not the verifier.
         "wasm/v2d_nonentry_nested_frame_reject.ahfl",
+        // WH-4: the trace-ring KAT fixture lowers to a verifier-clean Core
+        // program, so it belongs in the lowering corpus.
+        "wasm/wh4_trace_workflow.ahfl",
     };
 }
 
