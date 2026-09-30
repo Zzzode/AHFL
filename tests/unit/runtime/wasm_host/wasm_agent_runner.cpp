@@ -55,6 +55,8 @@ using ahfl::runtime::CapabilityCallStatus;
 using ahfl::runtime::CapabilityCompleted;
 using ahfl::runtime::CapabilityInvocationContext;
 using ahfl::runtime::CapabilityStarted;
+using ahfl::runtime::CapabilityUsage;
+using ahfl::runtime::CapabilityUsageRecorded;
 using ahfl::runtime::Value;
 using ahfl::runtime::value_from_json;
 using ahfl::runtime::value_to_json;
@@ -394,17 +396,28 @@ void test_wirejson_capability_agent(
 
     // P2-4: the agent lane must emit CapabilityStarted /
     // CapabilityCompleted lifecycle events for each capability call.
+    // P2-5: the CapabilityCompleted event must carry the REAL attempts /
+    // cache_hit from the CapabilityCallResult (not hardcoded 1/false).
     int cap_started_count = 0;
     int cap_completed_count = 0;
+    std::size_t completed_attempts = 0;
+    bool completed_cache_hit = true;
     for (const auto &event : result->result.events.events()) {
-        if (std::holds_alternative<CapabilityStarted>(event.payload)) {
+        if (const auto *started =
+                std::get_if<CapabilityStarted>(&event.payload)) {
             ++cap_started_count;
-        } else if (std::holds_alternative<CapabilityCompleted>(event.payload)) {
+            check(started->attempt == 1, "wirejson_cap.started_attempt");
+        } else if (const auto *completed =
+                       std::get_if<CapabilityCompleted>(&event.payload)) {
             ++cap_completed_count;
+            completed_attempts = completed->attempts;
+            completed_cache_hit = completed->cache_hit;
         }
     }
     check(cap_started_count == 1, "wirejson_cap.cap_started_count");
     check(cap_completed_count == 1, "wirejson_cap.cap_completed_count");
+    check(completed_attempts == 1, "wirejson_cap.completed_attempts");
+    check(!completed_cache_hit, "wirejson_cap.completed_cache_hit");
 
     // The run completed successfully.
     check(result->result.status() ==
@@ -424,6 +437,106 @@ void test_wirejson_capability_agent(
     }
 }
 
+// ==== 4. WireJson capability agent with usage + non-default attempts ====
+
+void test_wirejson_capability_agent_with_usage(
+    const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e2_capability_agent.ahfl";
+    auto emitted = emit_agent(source);
+    check(emitted.has_value(), "wirejson_cap_usage.emit");
+    if (!emitted.has_value()) {
+        return;
+    }
+
+    const auto &desc = emitted->descriptor;
+    check(!desc.is_workflow, "wirejson_cap_usage.not_workflow");
+    if (desc.imports.empty()) {
+        return;
+    }
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e2_capability::InputFrame","value":"hello"})");
+    check(input.has_value(), "wirejson_cap_usage.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    wh::WasmRuntimeHooks hooks;
+
+    // Echo mock that reports usage data and non-default attempts/cache_hit.
+    auto invoker = [](const CapabilityInvocationContext &,
+                      const std::string &,
+                      const std::vector<Value> &args) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.attempts = 3;
+        r.cache_hit = true;
+        r.usage = CapabilityUsage{
+            .prompt_tokens = 100,
+            .completion_tokens = 50,
+            .total_tokens = 150,
+            .total_cost_usd = 0.001,
+            .cost_estimated = false,
+        };
+        if (!args.empty()) {
+            auto cloned = ahfl::runtime::clone_value(args[0]);
+            if (auto *sv = std::get_if<ahfl::runtime::StructValue>(&cloned.node)) {
+                sv->type_name = "wasm::e2_capability::OutputFrame";
+            }
+            r.value = std::move(cloned);
+        }
+        return r;
+    };
+
+    auto result = wh::run_wasm_agent(emitted->module_bytes, desc, *input,
+                                     std::move(hooks), std::move(invoker));
+    check(result.has_value(), "wirejson_cap_usage.run");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    // P2-5: CapabilityUsageRecorded must be emitted with the real usage
+    // data, and CapabilityCompleted must carry attempts=3 + cache_hit=true.
+    int usage_count = 0;
+    int completed_count = 0;
+    std::size_t usage_prompt = 0;
+    std::size_t usage_completion = 0;
+    std::size_t usage_total = 0;
+    double usage_cost = 0.0;
+    std::size_t completed_attempts = 0;
+    bool completed_cache_hit = false;
+    for (const auto &event : result->result.events.events()) {
+        if (const auto *usage =
+                std::get_if<CapabilityUsageRecorded>(&event.payload)) {
+            ++usage_count;
+            usage_prompt = usage->prompt_tokens;
+            usage_completion = usage->completion_tokens;
+            usage_total = usage->total_tokens;
+            usage_cost = usage->total_cost_usd;
+        } else if (const auto *completed =
+                       std::get_if<CapabilityCompleted>(&event.payload)) {
+            ++completed_count;
+            completed_attempts = completed->attempts;
+            completed_cache_hit = completed->cache_hit;
+        }
+    }
+    check(usage_count == 1, "wirejson_cap_usage.usage_count");
+    check(usage_prompt == 100, "wirejson_cap_usage.usage_prompt");
+    check(usage_completion == 50, "wirejson_cap_usage.usage_completion");
+    check(usage_total == 150, "wirejson_cap_usage.usage_total");
+    check(usage_cost == 0.001, "wirejson_cap_usage.usage_cost");
+    check(completed_count == 1, "wirejson_cap_usage.completed_count");
+    check(completed_attempts == 3, "wirejson_cap_usage.completed_attempts");
+    check(completed_cache_hit, "wirejson_cap_usage.completed_cache_hit");
+
+    // The run completed successfully.
+    check(result->result.status() ==
+              ahfl::runtime::WorkflowStatus::Completed,
+          "wirejson_cap_usage.completed");
+}
+
 } // namespace
 
 int main() {
@@ -433,6 +546,7 @@ int main() {
     test_wirejson_identity_agent(repo_root);
     test_p6frame_computed_agent(repo_root);
     test_wirejson_capability_agent(repo_root);
+    test_wirejson_capability_agent_with_usage(repo_root);
 
     std::cout << "wasm_agent_runner: " << g_checks << " checks passed\n";
     return 0;

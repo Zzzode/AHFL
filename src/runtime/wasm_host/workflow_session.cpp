@@ -310,6 +310,9 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         if (cap_call.success && result.value.has_value()) {
             cap_call.output = clone_value(*result.value);
         }
+        cap_call.attempts = result.attempts;
+        cap_call.cache_hit = result.cache_hit;
+        cap_call.usage = result.usage;
         auto node_it = cap_name_to_node.find(name);
         cap_call.node_id = node_it != cap_name_to_node.end()
                                ? node_it->second

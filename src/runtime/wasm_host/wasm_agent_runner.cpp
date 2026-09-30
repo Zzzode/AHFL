@@ -258,6 +258,9 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             .output = result.value.has_value()
                           ? std::optional{clone_value(*result.value)}
                           : std::nullopt,
+            .attempts = result.attempts,
+            .cache_hit = result.cache_hit,
+            .usage = result.usage,
         });
         return result;
     };

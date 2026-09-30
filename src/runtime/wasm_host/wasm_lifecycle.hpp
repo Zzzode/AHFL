@@ -12,6 +12,7 @@
 // produce correct counts on both lanes.
 
 #include "runtime/engine/workflow_result.hpp"
+#include "runtime/engine/capability_bridge.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
 #include <cstdint>
@@ -60,6 +61,16 @@ struct WasmCapabilityCall {
     std::string capability_name;
     bool success{true};
     std::optional<Value> output;
+    // Real attempt count from CapabilityCallResult (the wasm lane does not
+    // retry, so this is typically 1, but the value is carried through rather
+    // than hardcoded).
+    std::size_t attempts{1};
+    // Real cache_hit from CapabilityCallResult.
+    bool cache_hit{false};
+    // Usage data from CapabilityCallResult (nullopt when the capability
+    // does not report usage). When present, the lifecycle helper emits a
+    // CapabilityUsageRecorded event.
+    std::optional<CapabilityUsage> usage;
 };
 
 // All facts for one wasm workflow lane run.

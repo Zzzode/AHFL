@@ -218,6 +218,10 @@ void emit_workflow_events(WorkflowResult &result,
         // Capability lifecycle: emit CapabilityStarted / CapabilityCompleted
         // for each capability call from this node, matching the evaluator's
         // event order (between AgentStateEntered and the node terminal).
+        // The wasm lane does not retry, so there is exactly one
+        // CapabilityStarted (attempt=1) and one CapabilityCompleted per
+        // call. Real attempts / cache_hit / usage are carried through from
+        // the CapabilityCallResult rather than hardcoded.
         for (auto &cap_call : facts.capability_calls) {
             auto node_it = plan.node_by_id.find(cap_call.node_id);
             if (node_it == plan.node_by_id.end() ||
@@ -237,6 +241,17 @@ void emit_workflow_events(WorkflowResult &result,
                 .provider = plan.provider,
                 .attempt = 1,
             });
+            if (cap_call.usage.has_value()) {
+                emit(CapabilityUsageRecorded{
+                    .invocation = invocation,
+                    .prompt_tokens = cap_call.usage->prompt_tokens,
+                    .completion_tokens = cap_call.usage->completion_tokens,
+                    .total_tokens = cap_call.usage->total_tokens,
+                    .total_cost_usd = cap_call.usage->total_cost_usd,
+                    .cost_estimated = cap_call.usage->cost_estimated,
+                    .notices = cap_call.usage->notices,
+                });
+            }
             std::optional<RuntimeValueId> output_id;
             if (cap_call.success && cap_call.output.has_value()) {
                 output_id = add_value(result, std::move(*cap_call.output));
@@ -244,8 +259,8 @@ void emit_workflow_events(WorkflowResult &result,
             emit(CapabilityCompleted{
                 .invocation = invocation,
                 .output = output_id,
-                .attempts = 1,
-                .cache_hit = false,
+                .attempts = cap_call.attempts,
+                .cache_hit = cap_call.cache_hit,
             });
         }
 
@@ -349,11 +364,11 @@ bool finalize_wasm_agent_run(
 
     // Capability lifecycle: emit CapabilityStarted / CapabilityCompleted
     // for each capability call, matching the evaluator's event order
-    // (between AgentStateEntered and the node terminal). This is the same
-    // simplified pattern as emit_workflow_events: one attempt, no
-    // CapabilityFailed (the failure is reflected in the node terminal,
-    // not the capability event). P2-5 will populate real attempts /
-    // cache_hit / usage.
+    // (between AgentStateEntered and the node terminal). The wasm lane
+    // does not retry, so there is exactly one CapabilityStarted
+    // (attempt=1) and one CapabilityCompleted per call. Real attempts /
+    // cache_hit / usage are carried through from the CapabilityCallResult
+    // rather than hardcoded.
     for (auto &cap_call : capability_calls) {
         const auto cap_id =
             capability_by_name.count(cap_call.capability_name)
@@ -368,6 +383,17 @@ bool finalize_wasm_agent_run(
             .provider = provider,
             .attempt = 1,
         });
+        if (cap_call.usage.has_value()) {
+            emit(CapabilityUsageRecorded{
+                .invocation = invocation,
+                .prompt_tokens = cap_call.usage->prompt_tokens,
+                .completion_tokens = cap_call.usage->completion_tokens,
+                .total_tokens = cap_call.usage->total_tokens,
+                .total_cost_usd = cap_call.usage->total_cost_usd,
+                .cost_estimated = cap_call.usage->cost_estimated,
+                .notices = cap_call.usage->notices,
+            });
+        }
         std::optional<RuntimeValueId> cap_output_id;
         if (cap_call.success && cap_call.output.has_value()) {
             cap_output_id = add_value(result, std::move(*cap_call.output));
@@ -375,8 +401,8 @@ bool finalize_wasm_agent_run(
         emit(CapabilityCompleted{
             .invocation = invocation,
             .output = cap_output_id,
-            .attempts = 1,
-            .cache_hit = false,
+            .attempts = cap_call.attempts,
+            .cache_hit = cap_call.cache_hit,
         });
     }
 
