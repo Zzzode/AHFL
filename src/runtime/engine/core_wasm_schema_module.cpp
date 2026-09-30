@@ -11,6 +11,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "ahfl/compiler/ir/core_wasm_abi_constants.hpp"
@@ -19,6 +20,7 @@
 
 namespace ahfl::runtime::core_wasm_schema_module {
 
+using ir::core::CoreAgentId;
 using ir::core::CoreCapabilityId;
 using ir::core::CoreDiagnosticSeverity;
 using ir::core::CoreLowerDiagnostic;
@@ -58,6 +60,10 @@ constexpr std::uint8_t kMemoryLimitsFlagNoMax = 0;
 constexpr std::uint8_t kMemoryLimitsFlagWithMax = 1;
 
 constexpr std::uint8_t kEntryKindWorkflow = 0;
+// RFC 0026 KR6.8 WH-4 fix-forward D-C: the agent entry kind. A capability
+// agent module carries a flat capability-list manifest (no workflow schedule
+// / nodes); the factory turns each capability into one call site.
+constexpr std::uint8_t kEntryKindAgent = 1;
 
 // Every diagnostic this file raises uses the shared fixed code, a null range, and a
 // fixed message that echoes no observed byte, name, digest, or manifest field.
@@ -625,10 +631,27 @@ struct ManifestNode {
     std::uint64_t source_symbol = 0;
 };
 
-struct DecodedManifest {
+struct DecodedWorkflowManifest {
     CoreWorkflowId entry_id{};
     std::vector<ManifestNode> nodes;
 };
+
+// One decoded agent-manifest capability (the agent arm's flat list).
+struct ManifestCapability {
+    CoreCapabilityId capability{};
+    std::uint64_t source_symbol = 0;
+};
+
+struct DecodedAgentManifest {
+    CoreAgentId agent_id{};
+    std::vector<ManifestCapability> capabilities;
+};
+
+// The decoded exec-manifest, tagged by entry kind. The factory visits the
+// variant to build the module payload (workflow: nodes + call sites; agent:
+// call sites directly from the capability list).
+using DecodedManifest =
+    std::variant<DecodedWorkflowManifest, DecodedAgentManifest>;
 
 // Decode + canonically re-encode-check the exec-manifest payload (AHFLXM). Mirrors
 // the wire-schema / resume-record discipline: canonical ULEB, count-before-reserve,
@@ -650,10 +673,70 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
         return std::nullopt;
     }
     const auto entry_kind = cursor.byte();
-    if (!entry_kind.has_value() || *entry_kind != kEntryKindWorkflow) {
+    if (!entry_kind.has_value() ||
+        (*entry_kind != kEntryKindWorkflow && *entry_kind != kEntryKindAgent)) {
         diagnostics.push_back(error("exec-manifest has an unsupported entry kind"));
         return std::nullopt;
     }
+
+    if (*entry_kind == kEntryKindAgent) {
+        // Agent arm: magic + version + entry_kind=1 + agent_id(4) +
+        // capability_count(4) + capabilities[] { capability_id(4) +
+        // source_symbol(8) }.
+        const auto agent_id = cursor.u32();
+        if (!agent_id.has_value() || *agent_id == CoreAgentId::kInvalid) {
+            diagnostics.push_back(
+                error("exec-manifest agent id is missing or the invalid sentinel"));
+            return std::nullopt;
+        }
+        const auto cap_count = cursor.u32();
+        if (!cap_count.has_value()) {
+            diagnostics.push_back(error("exec-manifest capability count is malformed"));
+            return std::nullopt;
+        }
+        // Count-before-reserve: min capability entry = capability_id ULEB (>= 1
+        // byte) + source_symbol ULEB (>= 1 byte) >= 2 bytes.
+        constexpr std::size_t kMinCapEntryBytes = 2;
+        if (*cap_count > cursor.remaining() / kMinCapEntryBytes) {
+            diagnostics.push_back(
+                error("exec-manifest declares more capabilities than remaining bytes"));
+            return std::nullopt;
+        }
+        DecodedAgentManifest manifest;
+        manifest.agent_id = CoreAgentId{*agent_id};
+        manifest.capabilities.reserve(*cap_count);
+        std::unordered_set<std::uint32_t> seen_caps;
+        seen_caps.reserve(*cap_count);
+        for (std::uint32_t i = 0; i < *cap_count; ++i) {
+            const auto capability = cursor.u32();
+            if (!capability.has_value() ||
+                *capability == CoreCapabilityId::kInvalid) {
+                diagnostics.push_back(error(
+                    "exec-manifest capability is missing or the invalid sentinel"));
+                return std::nullopt;
+            }
+            if (!seen_caps.insert(*capability).second) {
+                diagnostics.push_back(
+                    error("exec-manifest capability is not unique"));
+                return std::nullopt;
+            }
+            const auto source_symbol = cursor.u64();
+            if (!source_symbol.has_value()) {
+                diagnostics.push_back(
+                    error("exec-manifest source symbol is malformed"));
+                return std::nullopt;
+            }
+            manifest.capabilities.push_back(
+                {CoreCapabilityId{*capability}, *source_symbol});
+        }
+        if (!cursor.at_end()) {
+            diagnostics.push_back(error("exec-manifest has trailing bytes"));
+            return std::nullopt;
+        }
+        return manifest;
+    }
+
+    // Workflow arm (entry_kind == 0).
     const auto entry_id = cursor.u32();
     if (!entry_id.has_value() || *entry_id == CoreWorkflowId::kInvalid) {
         diagnostics.push_back(error("exec-manifest entry id is missing or the invalid sentinel"));
@@ -671,7 +754,7 @@ decode_exec_manifest(std::span<const std::uint8_t> bytes,
         diagnostics.push_back(error("exec-manifest declares more nodes than remaining bytes"));
         return std::nullopt;
     }
-    DecodedManifest manifest;
+    DecodedWorkflowManifest manifest;
     manifest.entry_id = CoreWorkflowId{*entry_id};
     manifest.nodes.reserve(*node_count);
     std::unordered_set<std::uint32_t> seen_ids;
@@ -736,20 +819,33 @@ void encode_exec_manifest(std::vector<std::uint8_t> &out, const DecodedManifest 
 
 namespace detail {
 
-// One pre-minted capability call site.
+// One pre-minted capability call site. The capability + source_symbol are
+// stored on the record itself (not indirected through nodes) so the record is
+// self-contained for BOTH manifest kinds: a workflow call site references its
+// cap node via `node_index`; an agent call site has no node (the agent arm
+// builds one call site per manifest capability) and leaves `node_index` at 0.
 struct CallSiteRecord {
-    std::size_t node_index = 0; // index into nodes
+    std::size_t node_index = 0; // index into nodes (workflow only; 0 for agent)
     CapabilityImportOrdinal import_ordinal{};
     VerifiedWireSchemaBinding param;
     VerifiedWireSchemaBinding result;
+    CoreCapabilityId capability{};
+    std::uint64_t source_symbol = 0;
 };
 
 // The single immutable payload shared by the module handle and every node /
 // call-site token it resolves. All three handles hold a
 // `std::shared_ptr<const SchemaModulePayload>` to THIS one type.
 struct SchemaModulePayload {
+    // Workflow-only identity (invalid for an agent module; the resume
+    // controller / event envelope are workflow-only consumers). An agent
+    // module carries `is_agent` + `agent_id` instead and leaves `nodes`
+    // empty; its call sites are built directly from the manifest capability
+    // list.
     CoreWorkflowId entry_id{};
     std::vector<ManifestNode> nodes;
+    bool is_agent = false;
+    CoreAgentId agent_id{};
     std::vector<CallSiteRecord> call_sites;
     // The structurally-parsed Memory (id 5) section, plus whether the module
     // carries one. `have_memory_section == false` yields MissingMemorySection
@@ -791,18 +887,33 @@ void encode_exec_manifest(std::vector<std::uint8_t> &out, const DecodedManifest 
     };
     out.insert(out.end(), kExecManifestMagic.begin(), kExecManifestMagic.end());
     out.push_back(kExecManifestVersion);
-    out.push_back(kEntryKindWorkflow);
-    put_u32(m.entry_id.value);
-    put_u32(static_cast<std::uint32_t>(m.nodes.size()));
-    for (const ManifestNode &node : m.nodes) {
-        put_u32(node.workflow_node_id.value);
-        put_u32(node.schedule_pos);
-        out.push_back(node.cap_call_count);
-        if (node.cap_call_count == 1) {
-            put_u32(node.capability.value);
-            put_u64(node.source_symbol);
-        }
-    }
+    std::visit(
+        [&](const auto &arm) {
+            using T = std::decay_t<decltype(arm)>;
+            if constexpr (std::is_same_v<T, DecodedAgentManifest>) {
+                out.push_back(kEntryKindAgent);
+                put_u32(arm.agent_id.value);
+                put_u32(static_cast<std::uint32_t>(arm.capabilities.size()));
+                for (const ManifestCapability &cap : arm.capabilities) {
+                    put_u32(cap.capability.value);
+                    put_u64(cap.source_symbol);
+                }
+            } else {
+                out.push_back(kEntryKindWorkflow);
+                put_u32(arm.entry_id.value);
+                put_u32(static_cast<std::uint32_t>(arm.nodes.size()));
+                for (const ManifestNode &node : arm.nodes) {
+                    put_u32(node.workflow_node_id.value);
+                    put_u32(node.schedule_pos);
+                    out.push_back(node.cap_call_count);
+                    if (node.cap_call_count == 1) {
+                        put_u32(node.capability.value);
+                        put_u64(node.source_symbol);
+                    }
+                }
+            }
+        },
+        m);
 }
 
 } // namespace
@@ -848,10 +959,10 @@ core_wasm_resume::InvocationOrdinal VerifiedCoreWasmCallSite::invocation_ordinal
     return core_wasm_resume::InvocationOrdinal{0};
 }
 ir::core::CoreCapabilityId VerifiedCoreWasmCallSite::capability() const noexcept {
-    return payload_->nodes[payload_->call_sites[call_site_index_].node_index].capability;
+    return payload_->call_sites[call_site_index_].capability;
 }
 std::uint64_t VerifiedCoreWasmCallSite::source_symbol() const noexcept {
-    return payload_->nodes[payload_->call_sites[call_site_index_].node_index].source_symbol;
+    return payload_->call_sites[call_site_index_].source_symbol;
 }
 CapabilityImportOrdinal VerifiedCoreWasmCallSite::import_ordinal() const noexcept {
     return payload_->call_sites[call_site_index_].import_ordinal;
@@ -873,6 +984,12 @@ std::size_t VerifiedCoreWasmSchemaModule::node_count() const noexcept {
 }
 std::size_t VerifiedCoreWasmSchemaModule::call_site_count() const noexcept {
     return payload_->call_sites.size();
+}
+bool VerifiedCoreWasmSchemaModule::is_agent() const noexcept {
+    return payload_->is_agent;
+}
+ir::core::CoreAgentId VerifiedCoreWasmSchemaModule::agent_id() const noexcept {
+    return payload_->agent_id;
 }
 ArtifactDigest VerifiedCoreWasmSchemaModule::module_sha256() const noexcept {
     return payload_->module_sha256;
@@ -1009,11 +1126,13 @@ struct SchemaModuleFactory {
 
         // 5. EXACT set equality: the unique manifest capability identities must equal
         //    the schema/import capability authority set. Build the authority set from
-        //    the verified table, then account each cap-bearing manifest node against
-        //    it (sparse ids resolved by lower_bound to the exact entry; the import
+        //    the verified table, then account each manifest capability against it
+        //    (sparse ids resolved by lower_bound to the exact entry; the import
         //    ordinal is that entry's position, never cap-id-as-index). Any manifest
         //    cap absent from the authority, or any authority cap unreferenced by the
-        //    manifest, fails closed.
+        //    manifest, fails closed. BOTH manifest kinds share this discipline: a
+        //    workflow accounts its cap-bearing nodes (node_index = schedule slot),
+        //    an agent accounts its flat capability list (node_index unused, 0).
         std::unordered_set<std::uint32_t> referenced;
         auto verified_table = ir::core::make_verified_wire_schema_table(*decoded_table.table);
         if (!verified_table.ok() || !verified_table.table.has_value()) {
@@ -1024,8 +1143,6 @@ struct SchemaModuleFactory {
             return result;
         }
         auto payload = std::make_shared<detail::SchemaModulePayload>();
-        payload->entry_id = manifest->entry_id;
-        payload->nodes = manifest->nodes;
         payload->have_memory_section = framing->have_memory_section;
         payload->memory = framing->memory;
         // Copy the three digests computed once during framing (no re-hash here).
@@ -1033,42 +1150,43 @@ struct SchemaModuleFactory {
         payload->wire_schema_sha256 = framing->wire_schema_sha256;
         payload->exec_manifest_sha256 = framing->exec_manifest_sha256;
 
-        for (std::size_t n = 0; n < manifest->nodes.size(); ++n) {
-            const ManifestNode &node = manifest->nodes[n];
-            if (node.cap_call_count == 0) {
-                continue;
-            }
+        // Resolve one capability identity against the authority set and mint its
+        // Param{0} + Result bindings through the shared authority. On any authority
+        // violation the diagnostic is pushed and false returned.
+        auto resolve_capability_call_site =
+            [&](CoreCapabilityId capability, std::uint64_t source_symbol,
+                std::size_t node_index) -> bool {
             // Locate the capability by IDENTITY in the (strictly increasing, unique)
             // table via lower_bound; the ordinal is its position.
             const auto it = std::lower_bound(
-                table.capabilities.begin(), table.capabilities.end(), node.capability,
+                table.capabilities.begin(), table.capabilities.end(), capability,
                 [](const CoreWireCapabilitySchema &entry, CoreCapabilityId target) noexcept {
                     return entry.capability.value < target.value;
                 });
-            if (it == table.capabilities.end() || !(it->capability == node.capability)) {
+            if (it == table.capabilities.end() || !(it->capability == capability)) {
                 result.diagnostics.push_back(
                     error("exec-manifest capability is not present in the authority set"));
-                return result;
+                return false;
             }
-            if (it->source_symbol != node.source_symbol) {
+            if (it->source_symbol != source_symbol) {
                 result.diagnostics.push_back(
                     error("exec-manifest source symbol does not match the capability entry"));
-                return result;
+                return false;
             }
             const auto ordinal =
                 static_cast<std::uint32_t>(it - table.capabilities.begin());
-            referenced.insert(node.capability.value);
+            referenced.insert(capability.value);
 
             // 6. Emitter contract: exactly one Param today. Eagerly mint Param{0} +
             //    Result through the shared authority; any failure fails the module.
             if (it->params.size() != 1) {
                 result.diagnostics.push_back(
                     error("exec-manifest capability does not have exactly one parameter"));
-                return result;
+                return false;
             }
-            const CoreWireRootSelector param_selector{node.capability, node.source_symbol,
+            const CoreWireRootSelector param_selector{capability, source_symbol,
                                                       CoreWireRootKind::Param, 0};
-            const CoreWireRootSelector result_selector{node.capability, node.source_symbol,
+            const CoreWireRootSelector result_selector{capability, source_symbol,
                                                        CoreWireRootKind::Result, 0};
             std::vector<CoreLowerDiagnostic> mint_diags;
             auto param = ir::core::make_wire_binding_from_verified_table(
@@ -1079,7 +1197,7 @@ struct SchemaModuleFactory {
                     result.diagnostics.push_back(
                         error("exec-manifest Param binding could not be minted"));
                 }
-                return result;
+                return false;
             }
             auto result_binding = ir::core::make_wire_binding_from_verified_table(
                 *verified_table.table, result_selector, mint_diags);
@@ -1089,11 +1207,56 @@ struct SchemaModuleFactory {
                     result.diagnostics.push_back(
                         error("exec-manifest Result binding could not be minted"));
                 }
-                return result;
+                return false;
             }
             payload->call_sites.push_back(
-                detail::CallSiteRecord{n, CapabilityImportOrdinal{ordinal}, std::move(*param),
-                                       std::move(*result_binding)});
+                detail::CallSiteRecord{node_index, CapabilityImportOrdinal{ordinal},
+                                       std::move(*param), std::move(*result_binding),
+                                       capability, source_symbol});
+            return true;
+        };
+
+        bool call_sites_ok = true;
+        std::visit(
+            [&](const auto &arm) {
+                using T = std::decay_t<decltype(arm)>;
+                if constexpr (std::is_same_v<T, DecodedAgentManifest>) {
+                    // Agent arm: one call site per manifest capability. The agent
+                    // module carries no workflow schedule, so node_index is unused
+                    // (left at 0); the workflow-only accessors on the resolved call
+                    // site have a workflow-module precondition and are never called
+                    // for an agent module (the WH-3 executor consumes only
+                    // import_ordinal / param / result / source_symbol).
+                    payload->is_agent = true;
+                    payload->agent_id = arm.agent_id;
+                    for (const ManifestCapability &cap : arm.capabilities) {
+                        if (!resolve_capability_call_site(cap.capability,
+                                                          cap.source_symbol, 0)) {
+                            call_sites_ok = false;
+                            return;
+                        }
+                    }
+                } else {
+                    // Workflow arm: identity + nodes, then one call site per
+                    // cap-bearing node.
+                    payload->entry_id = arm.entry_id;
+                    payload->nodes = arm.nodes;
+                    for (std::size_t n = 0; n < arm.nodes.size(); ++n) {
+                        const ManifestNode &node = arm.nodes[n];
+                        if (node.cap_call_count == 0) {
+                            continue;
+                        }
+                        if (!resolve_capability_call_site(node.capability,
+                                                          node.source_symbol, n)) {
+                            call_sites_ok = false;
+                            return;
+                        }
+                    }
+                }
+            },
+            *manifest);
+        if (!call_sites_ok) {
+            return result;
         }
 
         // Set equality: every authority capability must be referenced by the manifest.

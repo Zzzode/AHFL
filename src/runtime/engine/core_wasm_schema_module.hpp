@@ -193,9 +193,19 @@ class VerifiedCoreWasmSchemaModule {
     VerifiedCoreWasmSchemaModule &operator=(const VerifiedCoreWasmSchemaModule &) = default;
 
     // Narrow full-workflow read surface (for B2-D coordinate comparison).
+    // Workflow-module precondition: an agent module has no workflow identity /
+    // nodes (entry_id is the invalid sentinel, node_count is 0); use is_agent()
+    // / agent_id() for the agent arm.
     [[nodiscard]] ir::core::CoreWorkflowId entry_id() const noexcept;
     [[nodiscard]] std::size_t node_count() const noexcept;
     [[nodiscard]] std::size_t call_site_count() const noexcept;
+
+    // WH-4 fix-forward D-C: the manifest entry kind. An agent module carries a
+    // flat capability-list manifest (no workflow schedule); the factory builds
+    // one call site per manifest capability. `agent_id()` is the agent arm's
+    // declared identity (the invalid sentinel for a workflow module).
+    [[nodiscard]] bool is_agent() const noexcept;
+    [[nodiscard]] ir::core::CoreAgentId agent_id() const noexcept;
 
     // Resolve ANY node (incl. identity nodes) by schedule index.
     [[nodiscard]] VerifiedCoreWasmNodeResult resolve_node(ManifestNodeIndex index) const;
@@ -239,12 +249,15 @@ struct VerifiedCoreWasmSchemaModuleResult {
     [[nodiscard]] bool ok() const noexcept { return module.has_value() && !has_errors(); }
 };
 
-// Admit a capability-workflow module: frame it, admit the exec-manifest + wire
-// schema (manifest immediately before the EOF wire-schema section), cross-check
-// import<->schema<->manifest capability identity to an EXACT authority set, and
-// eagerly mint Param{0}+Result for every call site. Fails closed (no module) on any
-// framing, decode, cross-check, cardinality, or mint error, with fixed no-echo
-// diagnostics. Pure over `module_bytes` (borrowed).
+// Admit a capability module (workflow OR agent, WH-4 fix-forward D-C): frame
+// it, admit the exec-manifest + wire schema (manifest immediately before the
+// EOF wire-schema section), cross-check import<->schema<->manifest capability
+// identity to an EXACT authority set, and eagerly mint Param{0}+Result for
+// every call site. A workflow manifest accounts its cap-bearing nodes; an
+// agent manifest accounts its flat capability list (one call site each, no
+// workflow schedule). Fails closed (no module) on any framing, decode,
+// cross-check, cardinality, or mint error, with fixed no-echo diagnostics.
+// Pure over `module_bytes` (borrowed).
 [[nodiscard]] VerifiedCoreWasmSchemaModuleResult
 make_verified_core_wasm_schema_module(std::span<const std::uint8_t> module_bytes);
 

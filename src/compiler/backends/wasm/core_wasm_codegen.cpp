@@ -179,6 +179,10 @@ constexpr std::string_view kExecManifestSectionName = "ahfl.wasm-exec-manifest.v
 constexpr std::array<std::uint8_t, 6> kExecManifestMagic = {'A', 'H', 'F', 'L', 'X', 'M'};
 constexpr std::uint8_t kExecManifestVersion = 1;
 constexpr std::uint8_t kExecManifestEntryKindWorkflow = 0;
+// RFC 0026 KR6.8 WH-4 fix-forward D-C: the agent entry kind. A capability
+// AGENT module carries a flat capability-list manifest (no workflow schedule /
+// nodes), mirroring the A2 decoder's agent arm.
+constexpr std::uint8_t kExecManifestEntryKindAgent = 1;
 
 // RFC 0026 E4-B2-C node-event record tags. The buffer base / header / record
 // size constants live in the public ABI SSOT
@@ -13995,6 +13999,11 @@ make_runv_body(const AgentPlan &plan, const FunctionTable &functions) {
     return body;
 }
 
+// Forward declaration: the agent exec-manifest encoder is defined after
+// encode_module but emitted by it (WH-4 fix-forward D-C).
+[[nodiscard]] std::optional<std::vector<std::uint8_t>>
+encode_agent_exec_manifest(const CoreProgram &program, const AgentPlan &plan);
+
 [[nodiscard]] std::optional<std::vector<std::uint8_t>>
 encode_module(const CoreProgram &program,
               const AgentPlan &plan,
@@ -14309,6 +14318,36 @@ encode_module(const CoreProgram &program,
         }
     }
 
+    // RFC 0026 KR6.8 WH-4 fix-forward D-C: a NON-FRAME capability agent ends
+    // with the exec-manifest custom section (AHFLXM) EXACTLY ONCE, IMMEDIATELY
+    // BEFORE the wire-schema custom section (AHFLWS), mirroring the capability-
+    // workflow emission. The manifest is the flat capability list the A2
+    // decoder's agent arm turns into call sites (one per capability).
+    //
+    // The predicate is `!p6_frame && !plan.imports.empty()`, NOT just
+    // `!plan.imports.empty()`: a FRAME module may carry a BRIDGE import (the
+    // bridge lane is part of the frame lane -- a bridge handler's bytes embed
+    // the control-block coordinates), and such a module is driven by the frame
+    // driver, not by A2 call sites. Emitting the manifest there would (a) break
+    // the frame admit's exactly-two-custom-sections contract (the AHFLXM would
+    // sit between the core-layout and the wire-schema) and (b) be dead weight.
+    // The wire-JSON (opaque) capability lane and the frame lane never mix, so a
+    // non-frame agent with imports is always an opaque-lane capability agent.
+    if (!p6_frame && !plan.imports.empty()) {
+        auto manifest = encode_agent_exec_manifest(program, plan);
+        if (!manifest.has_value()) {
+            return std::nullopt;
+        }
+        ByteBuffer manifest_custom;
+        if (!manifest_custom.name(kExecManifestSectionName)) {
+            return std::nullopt;
+        }
+        manifest_custom.raw_span(*manifest);
+        if (!append_section(module, kSectionCustom, manifest_custom)) {
+            return std::nullopt;
+        }
+    }
+
     if (!wire_schema_payload.empty()) {
         ByteBuffer custom;
         if (!custom.name(kWireSchemaSectionName)) {
@@ -14431,6 +14470,45 @@ encode_exec_manifest(const WorkflowPlan &plan) {
             out.u32(node.capability.value);
             out.u64(node.source_symbol);
         }
+    }
+    return std::move(out).take();
+}
+
+// RFC 0026 KR6.8 WH-4 fix-forward D-C: emit the AHFLXM execution-manifest
+// payload for a capability AGENT module, byte-identical to the A2 decoder's
+// agent arm. Grammar: magic(6) + version(1) + entry_kind=1 + agent_id(4) +
+// capability_count(4) + capabilities[] { capability_id(4) + source_symbol(8)
+// }. An agent has no workflow schedule / nodes, so the manifest is a flat
+// capability list; each capability becomes one A2 call site. Only a NON-FRAME
+// capability agent reaches here: a frame module may carry a bridge import (the
+// bridge lane is part of the frame lane) and is driven by the frame driver, so
+// the caller gates emission on `!p6_frame && !plan.imports.empty()`.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>>
+encode_agent_exec_manifest(const CoreProgram &program, const AgentPlan &plan) {
+    if (plan.agent.value == CoreAgentId::kInvalid) {
+        return std::nullopt;
+    }
+    if (plan.imports.size() >
+        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+        return std::nullopt;
+    }
+    ByteBuffer out;
+    out.raw_span(
+        std::span<const std::uint8_t>(kExecManifestMagic.data(), kExecManifestMagic.size()));
+    out.byte(kExecManifestVersion);
+    out.byte(kExecManifestEntryKindAgent);
+    out.u32(plan.agent.value);
+    out.u32(static_cast<std::uint32_t>(plan.imports.size()));
+    for (const auto cap_id : plan.imports) {
+        if (cap_id.value == CoreCapabilityId::kInvalid) {
+            return std::nullopt;
+        }
+        const auto &symbol = program.capabilities[cap_id.value].symbol_ref;
+        if (!symbol.id.has_value()) {
+            return std::nullopt;
+        }
+        out.u32(cap_id.value);
+        out.u64(*symbol.id);
     }
     return std::move(out).take();
 }

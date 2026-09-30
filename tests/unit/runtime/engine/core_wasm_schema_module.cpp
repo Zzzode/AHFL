@@ -25,25 +25,22 @@
 // MODULE context + exec-manifest decoder. Hand-rolled check()/main().
 //
 // Evidence is split by attribution:
-//   * REAL emitter artifact: a genuine `emit_core_wasm` E2 module (no AHFLXM) must
-//     FAIL CLOSED (missing exec-manifest).
-//   * REAL emitter bytes + SYNTHETIC manifest injection: a test-built canonical
-//     AHFLXM injected immediately before the EOF AHFLWS proves A2's framing /
-//     table-decode / cross-check / eager-mint are compatible with genuine
-//     Type/Import/AHFLWS bytes. This is NOT capability-workflow emitter/topology
-//     evidence.
-//   * GENUINE B2-C emitter -> A2 (no injection): a real capability-workflow
-//     `emit_core_wasm` artifact already carries its AHFLXM exec-manifest, so its
-//     bytes are admitted directly and its exact topology / call-site coordinates
-//     are asserted -- true compiler->A2 cross-layer topology evidence.
+//   * REAL emitter artifact: a genuine `emit_core_wasm` E2 capability AGENT
+//     module now carries its AHFLXM agent manifest (WH-4 fix-forward D-C) and is
+//     admitted directly; a genuine E3 capability WORKFLOW module is admitted
+//     directly too. Both are true compiler->A2 cross-layer evidence.
 //   * HAND-BUILT canonical two-section fixture: all placement/canonical/set-equality
 //     negatives, sparse {3,7} cap ids, SymbolId{0}, repeated capability, and the
-//     distinct import-vs-invocation ordinal, exercised without any emitter.
+//     distinct import-vs-invocation ordinal, exercised without any emitter. The
+//     agent-manifest family (entry_kind=1) covers its own positive + negative
+//     cases (sentinel agent/cap ids, duplicate cap, authority mismatch, trailing
+//     bytes, huge cap count, hidden unreferenced capability, empty cap list).
 // Node/Wasmtime/native are NOT evidence of B2 real-Wasm durable resume.
 
 namespace {
 
 using namespace ahfl::runtime::core_wasm_schema_module;
+using ahfl::ir::core::CoreAgentId;
 using ahfl::ir::core::CoreCapabilityId;
 using ahfl::ir::core::CoreWireCapabilitySchema;
 using ahfl::ir::core::CoreWireSchemaInt;
@@ -196,6 +193,28 @@ std::vector<std::uint8_t> exec_manifest_body(std::uint32_t entry_id,
             put_uleb(b, n.capability);
             put_uleb(b, n.source_symbol);
         }
+    }
+    return b;
+}
+
+// WH-4 fix-forward D-C: a canonical AHFLXM manifest body for an AGENT with the
+// given flat capability list. Grammar: magic + version + entry_kind=1 +
+// agent_id + capability_count + caps[] { capability_id + source_symbol }.
+std::vector<std::uint8_t>
+agent_manifest_body(std::uint32_t agent_id,
+                    const std::vector<std::pair<std::uint32_t, std::uint64_t>> &caps) {
+    std::vector<std::uint8_t> b;
+    const char magic[6] = {'A', 'H', 'F', 'L', 'X', 'M'};
+    for (char c : magic) {
+        b.push_back(static_cast<std::uint8_t>(c));
+    }
+    b.push_back(1); // version
+    b.push_back(1); // entry.kind = Agent
+    put_uleb(b, agent_id);
+    put_uleb(b, caps.size());
+    for (const auto &[cap_id, symbol] : caps) {
+        put_uleb(b, cap_id);
+        put_uleb(b, symbol);
     }
     return b;
 }
@@ -516,45 +535,6 @@ std::optional<std::vector<std::uint8_t>> real_capability_workflow_module_bytes()
         return std::nullopt;
     }
     return emitted.artifact->bytes;
-}
-
-// Inject a synthetic canonical AHFLXM section immediately before the EOF AHFLWS
-// section of a real module. Returns nullopt if the module does not end with an
-// AHFLWS custom section (it always should for an E2 capability artifact).
-std::optional<std::vector<std::uint8_t>>
-inject_manifest_before_schema(const std::vector<std::uint8_t> &module,
-                              const std::vector<std::uint8_t> &manifest_body) {
-    // The AHFLWS section is the final section. Find its start by walking sections.
-    // Simpler + robust: the E2 writer appends exactly one custom section at EOF, so
-    // we locate the last section header by re-walking from offset 8.
-    std::size_t off = 8;
-    std::size_t last_section_start = std::string::npos;
-    while (off < module.size()) {
-        last_section_start = off;
-        // id
-        ++off;
-        // size ULEB
-        std::uint64_t size = 0;
-        std::uint32_t shift = 0;
-        while (off < module.size()) {
-            const std::uint8_t b = module[off++];
-            size |= static_cast<std::uint64_t>(b & 0x7fU) << shift;
-            if ((b & 0x80U) == 0) {
-                break;
-            }
-            shift += 7;
-        }
-        off += static_cast<std::size_t>(size);
-    }
-    if (last_section_start == std::string::npos || off != module.size()) {
-        return std::nullopt;
-    }
-    std::vector<std::uint8_t> out(module.begin(),
-                                  module.begin() + static_cast<std::ptrdiff_t>(last_section_start));
-    put_section(out, 0, custom_payload("ahfl.wasm-exec-manifest.v1", manifest_body));
-    out.insert(out.end(),
-               module.begin() + static_cast<std::ptrdiff_t>(last_section_start), module.end());
-    return out;
 }
 
 // Read the emitter's sole capability identity (cap id, source_symbol) out of the
@@ -1065,6 +1045,173 @@ int main() {
                                              encode_schema(schema_table({{3, 300}}))));
             check(admit_fails(m), "bridge.import_third_functype_rejected");
         }
+
+        // ==== WH-4 fix-forward D-C: AGENT manifest (entry_kind=1) ====
+        // A capability agent carries a flat capability-list manifest (no workflow
+        // schedule / nodes); the factory builds one call site per capability.
+        // Positive: a single-cap agent manifest is admitted with the agent arm.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
+                                             agent_manifest_body(7, {{3, 300}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_ok(m), "agent.handbuilt_admitted");
+            auto admitted = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(m));
+            check(admitted.ok() && admitted.module->is_agent(), "agent.is_agent");
+            check(admitted.ok() && admitted.module->agent_id() == CoreAgentId{7},
+                  "agent.agent_id");
+            check(admitted.ok() && admitted.module->node_count() == 0, "agent.no_nodes");
+            check(admitted.ok() && admitted.module->call_site_count() == 1,
+                  "agent.one_call_site");
+            if (admitted.ok()) {
+                auto cs = admitted.module->resolve(ManifestCallSiteIndex{0});
+                check(cs.ok() && cs.call_site->capability() == CoreCapabilityId{3} &&
+                          cs.call_site->source_symbol() == 300 &&
+                          cs.call_site->import_ordinal() == CapabilityImportOrdinal{0},
+                      "agent.callsite_identity");
+            }
+        }
+        // Positive: a multi-cap agent manifest yields one call site per capability,
+        // ordinals assigned by schema-table position.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}, {700, 0}}));
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
+                                             agent_manifest_body(7, {{3, 300}, {7, 700}})));
+            put_section(m, 0,
+                        custom_payload("ahfl.wire-schema.v1",
+                                       encode_schema(schema_table({{3, 300}, {7, 700}}))));
+            auto admitted = make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(m));
+            check(admitted.ok() && admitted.module->call_site_count() == 2,
+                  "agent.multi_cap_two_call_sites");
+            if (admitted.ok()) {
+                auto cs0 = admitted.module->resolve(ManifestCallSiteIndex{0});
+                auto cs1 = admitted.module->resolve(ManifestCallSiteIndex{1});
+                check(cs0.ok() && cs0.call_site->capability() == CoreCapabilityId{3} &&
+                          cs0.call_site->import_ordinal() == CapabilityImportOrdinal{0},
+                      "agent.multi_cap_ordinal_0");
+                check(cs1.ok() && cs1.call_site->capability() == CoreCapabilityId{7} &&
+                          cs1.call_site->import_ordinal() == CapabilityImportOrdinal{1},
+                      "agent.multi_cap_ordinal_1");
+            }
+        }
+        // Negative: agent_id is the invalid sentinel.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            put_section(m, 0,
+                        custom_payload("ahfl.wasm-exec-manifest.v1",
+                                       agent_manifest_body(CoreAgentId::kInvalid, {{3, 300}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "agent.neg_agent_id_sentinel");
+        }
+        // Negative: a capability id is the invalid sentinel.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            put_section(m, 0,
+                        custom_payload("ahfl.wasm-exec-manifest.v1",
+                                       agent_manifest_body(7, {{CoreCapabilityId::kInvalid, 300}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "agent.neg_capability_sentinel");
+        }
+        // Negative: a duplicate capability id in the agent list.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            put_section(m, 0,
+                        custom_payload("ahfl.wasm-exec-manifest.v1",
+                                       agent_manifest_body(7, {{3, 300}, {3, 999}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "agent.neg_duplicate_capability");
+        }
+        // Negative: a manifest capability absent from the schema authority set.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
+                                             agent_manifest_body(7, {{99, 300}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "agent.neg_cap_absent_from_authority");
+        }
+        // Negative: the capability is present but its source_symbol mismatches.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
+                                             agent_manifest_body(7, {{3, 999}})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "agent.neg_source_symbol_mismatch");
+        }
+        // Negative: trailing bytes after the capability list.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            auto body = agent_manifest_body(7, {{3, 300}});
+            body.push_back(0x00); // trailing byte
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1", body));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "agent.neg_trailing_bytes");
+        }
+        // Negative: a capability_count that exceeds the remaining bytes.
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            auto body = agent_manifest_body(7, {{3, 300}});
+            // Corrupt the capability_count ULEB to a huge value. Layout: magic(6) +
+            // version(1) + kind(1) = 8, agent_id=7 is 1 byte (offset 8), so
+            // cap_count is at offset 9. 255 caps with only one entry following
+            // trips the count-before-reserve check.
+            body[9] = 0xFF;
+            body[10] = 0x01; // 255 capabilities
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1", body));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "agent.neg_huge_cap_count");
+        }
+        // Negative: the schema carries a capability the agent manifest does NOT
+        // reference (set equality fails closed).
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}, {700, 0}}));
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
+                                             agent_manifest_body(7, {{3, 300}})));
+            put_section(m, 0,
+                        custom_payload("ahfl.wire-schema.v1",
+                                       encode_schema(schema_table({{3, 300}, {7, 700}}))));
+            check(admit_fails(m), "agent.neg_hidden_unreferenced_capability");
+        }
+        // Negative: an empty capability list against a non-empty schema (set
+        // equality fails closed; an agent module with imports must reference all).
+        {
+            std::vector<std::uint8_t> m = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+            put_section(m, 1, type_payload({capability_tuple()}));
+            put_section(m, 2, import_payload({{300, 0}}));
+            put_section(m, 0, custom_payload("ahfl.wasm-exec-manifest.v1",
+                                             agent_manifest_body(7, {})));
+            put_section(m, 0, custom_payload("ahfl.wire-schema.v1",
+                                             encode_schema(schema_table({{3, 300}}))));
+            check(admit_fails(m), "agent.neg_empty_cap_list");
+        }
+
         // duplicate EOF wire-schema section: two AHFLWS sections -> the second is a
         // section after the (first) EOF-target and fails the not-at-EOF gate.
         {
@@ -1129,52 +1276,46 @@ int main() {
         auto real = real_e2_module_bytes();
         check(real.has_value(), "real.e2_emit_ok");
         if (real) {
-            // raw real E2 has NO AHFLXM -> must fail closed (missing manifest).
-            check(admit_fails(*real), "real.raw_e2_missing_manifest_fails_closed");
-
-            // real emitter bytes + SYNTHETIC manifest injection immediately before
-            // the EOF AHFLWS. We read the emitter's ACTUAL sole capability identity
-            // (cap id + source_symbol) out of the genuine AHFLWS section via the C1
-            // decoder, then synthesize a matching single-cap-node Workflow manifest.
-            // This proves A2 framing/table-decode/cross-check/eager-mint accept
-            // genuine Type/Import/AHFLWS bytes -- it is NOT capability-workflow
-            // emitter/topology evidence (the manifest is test-synthesized).
-            auto identity = real_e2_sole_capability(*real);
-            check(identity.has_value(), "real.read_sole_capability");
-            if (identity) {
-                const auto manifest = exec_manifest_body(
-                    3, {{50, 1, identity->first, identity->second}});
-                auto injected = inject_manifest_before_schema(*real, manifest);
-                check(injected.has_value(), "real.injection_built");
-                if (injected) {
-                    // Full-chain assertion over genuine Type/Import/AHFLWS bytes:
-                    // framing -> C1 table decode -> cross-check/set-equality ->
-                    // eager mint -> read surface.
-                    auto admitted = make_verified_core_wasm_schema_module(
-                        std::span<const std::uint8_t>(*injected));
-                    check(admitted.ok(), "real.injected_admitted");
-                    if (admitted.ok()) {
-                        check(admitted.module->call_site_count() == 1,
-                              "real.injected_one_call_site");
-                        auto cs = admitted.module->resolve(ManifestCallSiteIndex{0});
-                        check(cs.ok(), "real.injected_resolve_ok");
-                        if (cs.ok()) {
-                            check(cs.call_site->capability() ==
+            // WH-4 fix-forward D-C: the real E2 capability agent now emits a
+            // GENUINE AHFLXM agent manifest (entry_kind=1) immediately before the
+            // EOF AHFLWS section, so its bytes are admitted directly (no synthetic
+            // injection). This is the true compiler->A2 cross-layer consistency
+            // evidence for a capability AGENT.
+            auto admitted =
+                make_verified_core_wasm_schema_module(std::span<const std::uint8_t>(*real));
+            check(admitted.ok(), "real.e2_genuine_agent_admitted");
+            if (admitted.ok()) {
+                check(admitted.module->is_agent(), "real.e2_is_agent");
+                check(admitted.module->agent_id() == CoreAgentId{0}, "real.e2_agent_id");
+                // An agent module has no workflow schedule: nodes are empty and the
+                // workflow identity is the invalid sentinel.
+                check(admitted.module->node_count() == 0, "real.e2_agent_no_nodes");
+                check(admitted.module->entry_id() ==
+                                  CoreWorkflowId{CoreWorkflowId::kInvalid},
+                      "real.e2_agent_entry_id_sentinel");
+                // The agent's flat capability list becomes one call site whose
+                // identity matches the genuine AHFLWS capability.
+                check(admitted.module->call_site_count() == 1, "real.e2_one_call_site");
+                auto identity = real_e2_sole_capability(*real);
+                check(identity.has_value(), "real.read_sole_capability");
+                if (identity) {
+                    auto cs = admitted.module->resolve(ManifestCallSiteIndex{0});
+                    check(cs.ok(), "real.e2_resolve_ok");
+                    if (cs.ok()) {
+                        check(cs.call_site->capability() ==
                                           CoreCapabilityId{identity->first} &&
                                       cs.call_site->source_symbol() == identity->second,
-                                  "real.injected_callsite_identity_matches_ahflws");
-                            check(cs.call_site->import_ordinal() == CapabilityImportOrdinal{0},
-                                  "real.injected_import_ordinal");
-                            auto p = cs.call_site->param_binding();
-                            auto r = cs.call_site->result_binding();
-                            check(p.selector().capability ==
+                                  "real.e2_callsite_identity_matches_ahflws");
+                        check(cs.call_site->import_ordinal() == CapabilityImportOrdinal{0},
+                              "real.e2_import_ordinal");
+                        auto p = cs.call_site->param_binding();
+                        auto r = cs.call_site->result_binding();
+                        check(p.selector().capability ==
                                           CoreCapabilityId{identity->first} &&
                                       r.selector().capability ==
                                           CoreCapabilityId{identity->first},
-                                  "real.injected_binding_selectors_match_identity");
-                            check(&p.table() == &r.table(),
-                                  "real.injected_param_result_shared_backing");
-                        }
+                                  "real.e2_binding_selectors_match_identity");
+                        check(&p.table() == &r.table(), "real.e2_param_result_shared_backing");
                     }
                 }
             }
