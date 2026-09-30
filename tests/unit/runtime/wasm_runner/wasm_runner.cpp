@@ -251,6 +251,139 @@ void test_agent_runner(const std::filesystem::path &repo_root) {
     }
 }
 
+// ==== 4. P1-4: trap on agent lane (bridge lane non-zero status) ====
+
+void test_agent_trap(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/v2c_single_arg_bridge.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "agent_trap.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    // The states_invoker (effects-free step-walk) returns Success so the
+    // step-walk completes. The canonical invoker returns Error, which the
+    // bridge lane maps to AHFL_CAP_ERROR; the guest's bridge code hits
+    // unreachable on any non-zero status, trapping the canonical run.
+    wr::WasmAgentRunnerConfig config;
+    config.states_invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = value_from_json(
+            R"({"_type":"wasm::v2c_single_arg_bridge::RoutingDecision","owner":"agent-1"})");
+        return r;
+    };
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Error;
+        return r;
+    };
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::v2c_single_arg_bridge::TicketRequest","ticket_id":"T-123"})");
+    check(input.has_value(), "agent_trap.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = wr::run_wasm_agent(
+        *program, "wasm::v2c_single_arg_bridge::RoutingAgent", *input,
+        std::move(config));
+    // P1-4: trap maps to a FAILED WorkflowResult with wasm.trap, NOT
+    // std::unexpected (which is reserved for pre-run setup failures).
+    check(result.has_value(), "agent_trap.run");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "agent_trap.node_failed");
+
+    // P1-4: the diagnostic code is wasm.trap.
+    bool found_trap = false;
+    for (const auto &diag : result->result.diagnostics.entries()) {
+        if (diag.code.has_value() && *diag.code == "wasm.trap") {
+            found_trap = true;
+            break;
+        }
+    }
+    check(found_trap, "agent_trap.found_diagnostic");
+}
+
+// ==== 5. P1-4/P2-1: host-abort on agent lane (wrong result type) ====
+
+void test_agent_host_abort(const std::filesystem::path &repo_root) {
+    const auto source =
+        repo_root / "tests/golden/wasm/e2_capability_agent.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "agent_host_abort.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    // The invoker returns a Value of the WRONG type (Int instead of
+    // OutputFrame). The capability_import executor validates the result
+    // against the result binding, fails with ResultSchemaInvalid, and
+    // host-aborts.
+    wr::WasmAgentRunnerConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = ahfl::runtime::Value{ahfl::runtime::IntValue{42}};
+        return r;
+    };
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::e2_capability::InputFrame","value":"echo"})");
+    check(input.has_value(), "agent_host_abort.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = wr::run_wasm_agent(
+        *program, "wasm::e2_capability::CapabilityAgent", *input,
+        std::move(config));
+    // P1-4: host-abort maps to a FAILED WorkflowResult with
+    // wasm.host-abort, NOT std::unexpected.
+    check(result.has_value(), "agent_host_abort.run");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    check(result->result.status() == ahfl::runtime::WorkflowStatus::NodeFailed,
+          "agent_host_abort.node_failed");
+
+    // P1-4: the diagnostic code is wasm.host-abort.
+    bool found_host_abort = false;
+    for (const auto &diag : result->result.diagnostics.entries()) {
+        if (diag.code.has_value() && *diag.code == "wasm.host-abort") {
+            found_host_abort = true;
+            // P2-1: the message carries the CapabilityImportError ENUM NAME.
+            check(diag.message.find("CapabilityImportError=") !=
+                      std::string::npos,
+                  "agent_host_abort.enum_name_in_message");
+            check(diag.message.find("ResultSchemaInvalid") !=
+                      std::string::npos,
+                  "agent_host_abort.enum_name_is_ResultSchemaInvalid");
+            break;
+        }
+    }
+    check(found_host_abort, "agent_host_abort.found_diagnostic");
+}
+
 } // namespace
 
 int main() {
@@ -260,6 +393,8 @@ int main() {
     test_identity_workflow(repo_root);
     test_capability_workflow(repo_root);
     test_agent_runner(repo_root);
+    test_agent_trap(repo_root);
+    test_agent_host_abort(repo_root);
 
     std::cout << "wasm_runner: " << g_checks << " checks passed\n";
     return 0;
