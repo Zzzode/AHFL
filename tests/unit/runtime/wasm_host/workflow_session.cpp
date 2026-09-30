@@ -217,11 +217,14 @@ void test_p6_trace_workflow(const std::filesystem::path &repo_root) {
     }
 
     std::vector<std::string> hook_states;
+    std::vector<std::string> hook_node_names;
     wh::WorkflowSessionConfig config;
     config.state_entered_hook =
-        [&hook_states](AgentId, std::string_view, std::string_view,
-                       std::string_view state_name) {
+        [&hook_states, &hook_node_names](AgentId, std::string_view,
+                                         std::string_view node_name,
+                                         std::string_view state_name) {
             hook_states.emplace_back(state_name);
+            hook_node_names.emplace_back(node_name);
         };
     config.invoker = [](const CapabilityInvocationContext &, const std::string &,
                         const std::vector<Value> &) -> CapabilityCallResult {
@@ -252,6 +255,12 @@ void test_p6_trace_workflow(const std::filesystem::path &repo_root) {
         check(hook_states[0] == "Decide", "p6_trace.hook_0");
         check(hook_states[1] == "High", "p6_trace.hook_1");
         check(hook_states[2] == "Done", "p6_trace.hook_2");
+    }
+
+    // P2-7: the hook must receive the real node name (not empty).
+    check(hook_node_names.size() == 3, "p6_trace.hook_node_count");
+    for (const auto &name : hook_node_names) {
+        check(name == "route", "p6_trace.hook_node_name");
     }
 
     // No capabilities were invoked.

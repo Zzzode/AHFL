@@ -94,9 +94,20 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
         }
         const std::string &agent_name = agent.agent;
         const std::string &state_name = agent.all_states[rec.state];
+        // P2-7: resolve the real node name from the runner index via
+        // runner_to_schedule. The trace record carries only the runner
+        // index; the node name lives in the descriptor. Falls back to
+        // empty when the runner is not in the schedule map (should not
+        // happen for a well-formed module, but the hook must not crash).
+        std::string_view node_name;
+        auto node_it = runner_to_schedule.find(rec.runner);
+        if (node_it != runner_to_schedule.end() &&
+            node_it->second < descriptor.nodes.size()) {
+            node_name = descriptor.nodes[node_it->second].name;
+        }
         if (config.state_entered_hook) {
-            config.state_entered_hook(AgentId{rec.runner}, agent_name, "",
-                                      state_name);
+            config.state_entered_hook(AgentId{rec.runner}, agent_name,
+                                      node_name, state_name);
         }
         collected_states.push_back({agent_name, state_name});
         // P1-2: also collect per-node for lifecycle event emission.
