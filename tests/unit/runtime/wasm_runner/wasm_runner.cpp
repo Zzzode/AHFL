@@ -972,6 +972,60 @@ void test_shared_import_attribution(const std::filesystem::path &repo_root) {
     check(hook_node_names.size() == 4, "shared.hook_node_names_count");
 }
 
+// ==== 6d. P2-13: branching-WireJson rejection (computed-goto terminal) ====
+
+void test_branching_wirejson_rejection(
+    const std::filesystem::path &repo_root) {
+    // A WireJson agent whose walk terminal is a ComputedGotoAction must be
+    // rejected at codegen time with wasm.UNSUPPORTED_ORCHESTRATION.
+    const auto source =
+        repo_root / "tests/golden/wasm/p2_13_branching_wirejson.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "branch.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    wr::WasmWorkflowRuntimeConfig config;
+    config.invoker = [](const CapabilityInvocationContext &,
+                        const std::string &,
+                        const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        return r;
+    };
+
+    wr::WasmWorkflowRuntime runtime(*program, std::move(config));
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::p2_13_branching_wirejson::Frame","value":"test","urgent":true})");
+    check(input.has_value(), "branch.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = runtime.run(
+        "wasm::p2_13_branching_wirejson::BranchWorkflow", std::move(*input));
+    // The workflow must be rejected (not Completed) because the agent's
+    // walk terminal is a ComputedGotoAction.
+    check(result.status() != ahfl::runtime::WorkflowStatus::Completed,
+          "branch.rejected");
+
+    // The diagnostic must carry wasm.compile-failed (the facade maps
+    // codegen rejection to a compile error).
+    bool found_compile_failed = false;
+    for (const auto &diag : result.diagnostics.entries()) {
+        if (diag.code.has_value() &&
+            *diag.code == "wasm.compile-failed") {
+            found_compile_failed = true;
+            break;
+        }
+    }
+    check(found_compile_failed, "branch.found_diagnostic");
+}
+
 // ==== 7. P1-7: v2c bridge fixtures through WH-3 executor on wasm3 ====
 
 // Helper: drive a v2c bridge agent through the facade (which uses the WH-3
@@ -1340,6 +1394,7 @@ int main() {
     test_states_invoker_separation(repo_root);
     test_states_invoker_multi_call(repo_root);
     test_shared_import_attribution(repo_root);
+    test_branching_wirejson_rejection(repo_root);
     test_v2c_bridge_fixtures(repo_root);
     test_byte_compare(repo_root);
 
