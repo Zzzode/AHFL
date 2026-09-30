@@ -816,6 +816,86 @@ void test_states_invoker_separation(const std::filesystem::path &repo_root) {
     check(result->states.size() == 3, "sep.state_count");
 }
 
+// ==== 6b. P2-11: states_invoker multi-call (two calls in two states) ====
+
+void test_states_invoker_multi_call(const std::filesystem::path &repo_root) {
+    // v2c_bridge_chain calls RouteTicket in BOTH Routing and Routing2 states.
+    // The states_invoker must fire once per call site (twice total) during
+    // the effects-free step-walk, and the canonical invoker twice during
+    // the canonical run.
+    const auto source =
+        repo_root / "tests/golden/wasm/v2c_bridge_chain.ahfl";
+    std::string error;
+    auto program = conf::compile_conformance_source(source, error);
+    check(program.has_value(), "multi.compile");
+    if (!program.has_value()) {
+        std::cerr << "  compile failed: " << error << "\n";
+        return;
+    }
+
+    int walk_calls = 0;
+    int canonical_calls = 0;
+
+    wr::WasmAgentRunnerConfig config;
+    config.states_invoker =
+        [&walk_calls](const CapabilityInvocationContext &,
+                      const std::string &,
+                      const std::vector<Value> &) -> CapabilityCallResult {
+        ++walk_calls;
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = value_from_json(
+            R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"scripted","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Web"}})");
+        return r;
+    };
+    config.invoker =
+        [&canonical_calls](const CapabilityInvocationContext &,
+                           const std::string &,
+                           const std::vector<Value> &) -> CapabilityCallResult {
+        ++canonical_calls;
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = value_from_json(
+            R"({"_type":"wasm::v2c_bridge_chain::RoutingDecision","owner":"canonical","route":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"}})");
+        return r;
+    };
+
+    auto input = value_from_json(
+        R"({"_type":"wasm::v2c_bridge_chain::TicketRequest","channel":{"_enum":"wasm::v2c_bridge_chain::Channel","_variant":"Phone"},"ticket_id":"T-999","urgent":true})");
+    check(input.has_value(), "multi.input");
+    if (!input.has_value()) {
+        return;
+    }
+
+    auto result = wr::run_wasm_agent(
+        *program, "wasm::v2c_bridge_chain::RoutingAgent", *input,
+        std::move(config));
+    check(result.has_value(), "multi.run");
+    if (!result.has_value()) {
+        std::cerr << "  error: " << result.error() << "\n";
+        return;
+    }
+
+    // The step-walk called the states_invoker exactly twice (one per call
+    // site in Routing and Routing2).
+    check(walk_calls == 2, "multi.walk_calls");
+    // The canonical run called the canonical invoker exactly twice.
+    check(canonical_calls == 2, "multi.canonical_calls");
+
+    // The output reflects the CANONICAL invoker's result.
+    const auto *output = result->result.output();
+    check(output != nullptr, "multi.has_output");
+    if (output != nullptr) {
+        const auto json = value_to_json(*output);
+        check(json.find("\"owner\":\"canonical\"") != std::string::npos,
+              "multi.output_is_canonical");
+    }
+
+    // The step-walk collected the full state sequence
+    // (Init -> Routing -> Routing2 -> Done).
+    check(result->states.size() == 4, "multi.state_count");
+}
+
 // ==== 7. P1-7: v2c bridge fixtures through WH-3 executor on wasm3 ====
 
 // Helper: drive a v2c bridge agent through the facade (which uses the WH-3
@@ -1182,6 +1262,7 @@ int main() {
     test_agent_trap(repo_root);
     test_agent_host_abort(repo_root);
     test_states_invoker_separation(repo_root);
+    test_states_invoker_multi_call(repo_root);
     test_v2c_bridge_fixtures(repo_root);
     test_byte_compare(repo_root);
 
