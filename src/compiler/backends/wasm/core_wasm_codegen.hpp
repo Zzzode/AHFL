@@ -91,6 +91,7 @@ struct CoreWasmNodeDescriptor {
     std::uint32_t node_id{0};      // workflow node id (node-event record)
     std::uint32_t schedule_pos{0}; // dense execution position
     std::uint32_t runner{0};       // index into CoreWasmExecutionDescriptor::agents
+    std::string name;              // source-level node name (display / hooks)
     bool has_capability{false};
     std::uint32_t capability_ordinal{0}; // index into imports when has_capability
     std::uint64_t source_symbol{0};      // source SymbolId carried in the event record

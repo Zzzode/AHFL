@@ -237,12 +237,24 @@ void test_wirejson_capability_workflow(
     int cap_result_count = 0;
     int node_completed_count = 0;
     std::vector<std::string> completed_nodes;
+    std::vector<std::string> hook_states;
+    std::vector<std::string> hook_node_names;
 
     wh::WorkflowSessionConfig config;
+    config.state_entered_hook =
+        [&hook_states, &hook_node_names](
+            AgentId, std::string_view, std::string_view node_name,
+            std::string_view state_name) {
+            hook_states.emplace_back(state_name);
+            hook_node_names.emplace_back(node_name);
+        };
     config.capability_invoked_hook =
-        [&cap_invoked_count](AgentId, std::string_view name) {
+        [&cap_invoked_count](AgentId agent_id, std::string_view name) {
             ++cap_invoked_count;
             check(name == "Echo", "wirejson_cap.hook_cap_name");
+            // P1-6: the Echo capability is invoked by the `first` node,
+            // whose runner is agent 0 (FirstAgent).
+            check(agent_id.index() == 0, "wirejson_cap.hook_agent_id");
         };
     config.capability_result_observer =
         [&cap_result_count](const CapabilityInvocationContext &,
@@ -303,6 +315,36 @@ void test_wirejson_capability_workflow(
 
     // node_completed_hook should have fired for both nodes.
     check(node_completed_count == 2, "wirejson_cap.node_completed_count");
+    // P1-6: the hook receives the REAL node names (not agent names).
+    check(completed_nodes.size() == 2, "wirejson_cap.completed_nodes_size");
+    if (completed_nodes.size() == 2) {
+        check(completed_nodes[0] == "first",
+              "wirejson_cap.completed_nodes[0]");
+        check(completed_nodes[1] == "second",
+              "wirejson_cap.completed_nodes[1]");
+    }
+
+    // D-B + P1-6: the WireJson state reconstruction fires state_entered_hook
+    // post-run with the REAL node names. Each node walks Start -> Done.
+    check(hook_states.size() == 4, "wirejson_cap.hook_states_count");
+    if (hook_states.size() == 4) {
+        check(hook_states[0] == "Start", "wirejson_cap.hook_state_0");
+        check(hook_states[1] == "Done", "wirejson_cap.hook_state_1");
+        check(hook_states[2] == "Start", "wirejson_cap.hook_state_2");
+        check(hook_states[3] == "Done", "wirejson_cap.hook_state_3");
+    }
+    check(hook_node_names.size() == 4,
+          "wirejson_cap.hook_node_names_count");
+    if (hook_node_names.size() == 4) {
+        check(hook_node_names[0] == "first",
+              "wirejson_cap.hook_node_name_0");
+        check(hook_node_names[1] == "first",
+              "wirejson_cap.hook_node_name_1");
+        check(hook_node_names[2] == "second",
+              "wirejson_cap.hook_node_name_2");
+        check(hook_node_names[3] == "second",
+              "wirejson_cap.hook_node_name_3");
+    }
 
     // The workflow completed successfully.
     check(result->result.status() == ahfl::runtime::WorkflowStatus::Completed,

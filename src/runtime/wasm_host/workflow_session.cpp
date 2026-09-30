@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -112,7 +113,8 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
             for (const auto &state_name : agent.walk) {
                 if (config.state_entered_hook) {
                     config.state_entered_hook(
-                        AgentId{node.runner}, agent.agent, "", state_name);
+                        AgentId{node.runner}, agent.agent, node.name,
+                        state_name);
                 }
                 collected_states.push_back({agent.agent, state_name});
             }
@@ -145,7 +147,8 @@ build_string_regions(const irc::CoreFrameLayoutSection &section) {
         for (const auto &state_name : agent.walk) {
             if (config.state_entered_hook) {
                 config.state_entered_hook(
-                    AgentId{node_desc->runner}, agent.agent, "", state_name);
+                    AgentId{node_desc->runner}, agent.agent, node_desc->name,
+                    state_name);
             }
             collected_states.push_back({agent.agent, state_name});
         }
@@ -182,6 +185,20 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // out-of-range record (D-B fail-closed). Checked post-run.
     std::optional<std::string> trace_error;
 
+    // P1-6: build a map from canonical capability name to runner (agent_id)
+    // so the capability hooks receive the REAL per-import agent_id instead of
+    // a hardcoded AgentId{0}. Each capability node's runner is the agent that
+    // invokes the capability.
+    std::unordered_map<std::string, std::uint32_t> name_to_runner;
+    for (const auto &node : descriptor.nodes) {
+        if (node.has_capability &&
+            node.capability_ordinal < descriptor.imports.size()) {
+            name_to_runner.emplace(
+                descriptor.imports[node.capability_ordinal].canonical_name,
+                node.runner);
+        }
+    }
+
     // --- 3. Build the wrapped invoker (fires hooks, collects data) ---
     // Capture config by VALUE (copy): the lambda is stored in a
     // ContextualCapabilityInvoker that the CapabilityImportConfig references,
@@ -190,20 +207,30 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
     // WorkflowSessionConfig is copyable (all std::function members).
     ContextualCapabilityInvoker wrapped_invoker =
         [config, &collected_capabilities, &collected_cap_args,
-         &collected_failures](const CapabilityInvocationContext &ctx,
-                              const std::string &name,
-                              const std::vector<Value> &args)
+         &collected_failures, &name_to_runner](
+            const CapabilityInvocationContext &ctx,
+            const std::string &name,
+            const std::vector<Value> &args)
         -> CapabilityCallResult {
+        // P1-6: resolve the REAL per-import agent_id from the capability's
+        // canonical name. The WH-3 executor passes a single context for all
+        // calls; the session layer overrides agent_id per-call so the hooks
+        // and invoker see the agent that actually invokes the capability.
+        CapabilityInvocationContext real_ctx = ctx;
+        if (auto it = name_to_runner.find(name);
+            it != name_to_runner.end()) {
+            real_ctx.agent_id = AgentId{it->second};
+        }
         collected_capabilities.push_back(name);
         if (config.capability_invoked_hook) {
-            config.capability_invoked_hook(ctx.agent_id, name);
+            config.capability_invoked_hook(real_ctx.agent_id, name);
         }
         if (auto envelope = serialize_args_for_wire_json(args)) {
             collected_cap_args.push_back(std::move(*envelope));
         }
-        auto result = config.invoker(ctx, name, args);
+        auto result = config.invoker(real_ctx, name, args);
         if (config.capability_result_observer) {
-            config.capability_result_observer(ctx, result);
+            config.capability_result_observer(real_ctx, result);
         }
         if (result.failure_kind.has_value()) {
             collected_failures.push_back(*result.failure_kind);
@@ -498,7 +525,6 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                             "run_workflow_session: node-event record runner "
                             "index out of range");
                     }
-                    const auto &agent_name = descriptor.agents[runner].agent;
 
                     // P6-frame: read the node output from its runner's O_k
                     // block. WireJson: individual node outputs are not
@@ -527,7 +553,7 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         }
                     }
                     config.node_completed_hook(
-                        AgentId{runner}, agent_name, node_output);
+                        AgentId{runner}, node_desc->name, node_output);
                 }
             }
         }

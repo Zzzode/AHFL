@@ -17082,6 +17082,7 @@ build_import_descriptors(const CoreProgram &program,
 
     // Node schedule in Kahn execution order.
     descriptor.nodes.reserve(plan.schedule.size());
+    const auto &workflow_decl = program.workflows[plan.workflow.value];
     for (std::uint32_t position = 0; position < plan.schedule.size(); ++position) {
         const auto node_id = plan.schedule[position];
         const auto &node = plan.nodes[node_id.value];
@@ -17089,6 +17090,7 @@ build_import_descriptors(const CoreProgram &program,
         node_descriptor.node_id = node.node.value;
         node_descriptor.schedule_pos = node.schedule_pos;
         node_descriptor.runner = workflow_runner_index(plan, node.target_instance).value_or(0);
+        node_descriptor.name = workflow_decl.nodes[node.node.value].node_name;
         node_descriptor.has_capability = node.has_capability;
         if (node.has_capability) {
             node_descriptor.capability_ordinal =
