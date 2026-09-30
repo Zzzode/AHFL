@@ -559,6 +559,14 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/fb4_effect_clause_pure_body.ahfl",
         "wasm/fb4_effectful_fn.ahfl",
         "wasm/fb4_int64_capability_abi.ahfl",
+        // P2-1..P2-15: the byte-parity and trap-attribution fixtures lower to
+        // verifier-clean Core (the wasm-codegen rejection in p2_13 is a
+        // codegen-level gate, not a Core-verifier gate), so they belong in the
+        // lowering corpus.
+        "wasm/p2_12_shared_import.ahfl",
+        "wasm/p2_13_branching_wirejson.ahfl",
+        "wasm/p2_14_diamond_dag.ahfl",
+        "wasm/p2_15_failure_path.ahfl",
         "wasm/p6_aggregate.ahfl",
         "wasm/p6_cascade.ahfl",
         "wasm/p6_cascade_high.ahfl",
@@ -628,6 +636,7 @@ lower_golden_file(const std::filesystem::path &path) {
         "wasm/wh4_trace_workflow.ahfl",
         // WH-4: the trap fixture (divide-by-zero in Done) is a runtime trap,
         // not a compile-time rejection; the Core program is verifier-clean.
+        "wasm/wh4_trap_pipeline.ahfl",
         "wasm/wh4_trap_workflow.ahfl",
     };
 }
