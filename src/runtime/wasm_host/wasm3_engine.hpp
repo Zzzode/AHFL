@@ -134,6 +134,13 @@ class Wasm3ResumeEngine final : public core_wasm_resume_engine::CoreWasmResumeEn
     [[nodiscard]] std::expected<std::uint32_t, core_wasm_resume_engine::EngineError>
     read_transition_count();
 
+    // WH-4 additive: read an exported mutable i32 global by name. Found
+    // lazily on first call (like runv). The workflow_session uses this for
+    // `transition_count` and `workflow_completed_count`; a module that does
+    // not export the named global returns InstanceUnavailable.
+    [[nodiscard]] std::expected<std::uint32_t, core_wasm_resume_engine::EngineError>
+    read_exported_global_u32(std::string_view name);
+
   private:
     std::unique_ptr<detail::Wasm3EngineImpl> impl_;
 };

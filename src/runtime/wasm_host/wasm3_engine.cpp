@@ -867,24 +867,43 @@ Wasm3ResumeEngine::invoke_current_state() {
 
 std::expected<std::uint32_t, eng::EngineError>
 Wasm3ResumeEngine::read_transition_count() {
+    return read_exported_global_u32("transition_count");
+}
+
+std::expected<std::uint32_t, eng::EngineError>
+Wasm3ResumeEngine::read_exported_global_u32(std::string_view name) {
     if (!impl_->instantiated) {
         return std::unexpected(eng::EngineError::InvalidSequence);
     }
-    if (impl_->transition_count == nullptr) {
-        impl_->transition_count =
-            m3_FindGlobal(impl_->module, "transition_count");
-        if (impl_->transition_count == nullptr) {
+    // Cache the global handle by name. The transition_count handle is kept
+    // as a member for the agent_session's hot loop; other globals (e.g.
+    // workflow_completed_count) are found on demand.
+    IM3Global *cache_slot = nullptr;
+    if (name == "transition_count") {
+        cache_slot = &impl_->transition_count;
+    }
+    IM3Global global = nullptr;
+    if (cache_slot != nullptr && *cache_slot != nullptr) {
+        global = *cache_slot;
+    } else {
+        // m3_FindGlobal takes a null-terminated name.
+        const std::string owned_name(name);
+        global = m3_FindGlobal(impl_->module, owned_name.c_str());
+        if (global == nullptr) {
             return std::unexpected(eng::EngineError::InstanceUnavailable);
+        }
+        if (cache_slot != nullptr) {
+            *cache_slot = global;
         }
     }
     M3TaggedValue value{};
-    if (m3_GetGlobal(impl_->transition_count, &value) != nullptr) {
+    if (m3_GetGlobal(global, &value) != nullptr) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
     if (value.type != c_m3Type_i32) {
         return std::unexpected(eng::EngineError::InstanceUnavailable);
     }
-    return value.value.i32;
+    return static_cast<std::uint32_t>(value.value.i32);
 }
 
 } // namespace ahfl::runtime::wasm_host
