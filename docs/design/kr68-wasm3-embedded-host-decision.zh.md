@@ -516,3 +516,385 @@ Files (all under `src/runtime/wasm_host/` unless noted):
 6. **Breakpoint-pause semantics on agent step**: emulate the DAP's `pause()` — a `state_entered_hook` blocking on a condition variable; a separate thread resumes; prove the step-walk pauses between steps and resumes exactly (the next `step()` fires after resume).
 7. **Hook ordering guarantee**: for a workflow, the hook firing order matches the guarantee table (capability hooks live at imports interleaved with state-prefix hooks; post-run: remaining state hooks + `node_completed_hook` in schedule order). A hook log asserts the exact order.
 8. **Neutral result extraction**: no wasm-host TU includes `evaluator.hpp` (compile-time check — the wasm host's header dependency on the evaluator is structurally impossible); `render_execution_result` renders a wasm-produced `WorkflowResult` identically to an evaluator-produced one for the same case (byte-parity of human/json output for a no-capability case).
+
+---
+
+## 12.5 WH-4 fix-forward decisions (2026-09-30 revision, dedicated decision agent, no human gate)
+
+The WH-4 implementation (commits `0bfc56ac..534217eb`) landed the sessions /
+decoder / emitter / facade, but the adversarial review returned 3 P0s + 7 P1s.
+This section records the five decisions that resolve them. The original §12.1 /
+§12.2 / §12.3 text above is PRESERVED; this is a dated revision, not a rewrite.
+The review's findings are restated inline where a decision turns on them.
+
+### D-A. Facade shape — compile-to-wasm + class facade in a NEW peer-tier runtime component (resolves P1-2)
+
+**Chosen: Option B.** The session free functions (`run_wasm_agent` /
+`run_wasm_workflow`, bytes + descriptor in, results out) STAY in
+`ahfl_runtime_wasm_host` as the engine-session layer. The compile-to-wasm +
+class facade promised by §12.3 moves into a NEW peer-tier directory
+**`src/runtime/wasm_runner/`** (target **`ahfl_runtime_wasm_runner`**), gated
+behind `AHFL_ENABLE_BACKEND_WASM`, linking `ahfl_compiler_backend_wasm` +
+`ahfl_runtime_wasm_host` + `ahfl_compiler_ir` + `ahfl_runtime_engine`.
+
+The new target hosts:
+
+- **`class WasmWorkflowRuntime(const ir::Program &, WasmWorkflowRuntimeConfig)`**
+  — compiles each named workflow in the constructor (`lower_ahfl_to_core` →
+  `compute_core_layouts` → `resolve_core_wasm_entry` with a `PackageMetadata`
+  built from the workflow name, mirroring `tests/conformance/wasm_engine.cpp:587-592`
+  → `emit_core_wasm`), admits the module, and on `run(name, input) -> WorkflowResult`
+  dispatches on module kind (agent → agent session + canonical runv/run2;
+  workflow → workflow session) and returns the neutral result.
+- **`class WasmAgentRunner`** — one-shot agent runs for REPL / DAP: compile a
+  single-agent program → drive the agent session → return the output Value.
+
+The compile pipeline (4 calls + diagnostic mapping + `PackageMetadata`
+construction) lives ONCE in this target. CLI (WH-6), REPL (WH-7), and DAP
+(WH-8) each construct the facade through one shared header — no triplication.
+
+**Rejected:**
+
+- **Option A (class inside `ahfl_runtime_wasm_host`; link `ahfl_compiler_backend_wasm`).**
+  Rejected — it inverts the established layering invariant. Verified today: ZERO
+  runtime targets link a compiler backend (`grep ahfl_compiler_backend_wasm
+  src/runtime/**/CMakeLists.txt` is empty; `ahfl_runtime_engine` links
+  `ahfl_compiler_ir` PUBLIC but never a backend). The engine-session layer
+  consumes wasm bytes; it must not produce them. The reference hierarchy
+  agrees: Rust's `miri` does not link `rustc_codegen_llvm`; the execution engine
+  and the compiler backend are peers composed by a driver, not dependent.
+  Making `wasm_host` link the backend makes the engine depend on a specific
+  producer — an inverted producer/consumer edge.
+- **Option C (move / duplicate the compile pipeline into the runtime).**
+  Rejected — two compile paths to keep in sync (Principle 1 parallel
+  implementation).
+- **`src/tooling/` shared adapter.** Rejected — the facade is a RUNTIME
+  component (it runs programs), not a tool. Placing it in `tooling/` lets the
+  directory lie about the architecture (Principle 1 directory honesty). Tooling
+  is the consumer tier; the facade is consumed BY tooling.
+
+**AHFL-specific rationale:** the existing evaluator-backed `WorkflowRuntime`
+lives in `src/runtime/engine/` and takes a `Program` — but it runs via the
+tree-walking evaluator (runtime-tier), never via a compiler backend. The wasm
+path fundamentally requires the wasm backend (compiler-tier) to compile. The
+composition of compile + run is a NEW role that did not exist when the engine
+was evaluator-only. It deserves its own peer tier rather than being forced into
+the engine (inverted edge) or tooling (directory dishonesty). The wasm_host
+target's own CMakeLists comment already calls it "a peer execution engine of
+src/runtime/engine"; the wasm_runner is the peer that composes it with the
+backend.
+
+**WASM=OFF gating:** `ahfl_runtime_wasm_runner` is built only inside
+`if(AHFL_ENABLE_BACKEND_WASM)`. The `#ifdef` gate lives in the TOOLING
+consumers (CLI / REPL / DAP), which conditionally construct the facade. The
+facade itself is unconditionally compiled within its gated target. Under
+WASM=OFF the tools either refuse with a diagnostic (CLI `ahflc run`) or disable
+the wasm-only feature (REPL eval) — decided per-tool at WH-6 / WH-7 / WH-8.
+
+**Costs:** one new CMake target + directory; the compile pipeline moves from
+each tool into the facade; `PackageMetadata` construction from the workflow
+name (mirrors the conformance producer).
+
+**Acceptance:**
+
+1. `ahfl_runtime_wasm_runner` links `ahfl_compiler_backend_wasm`;
+   `ahfl_runtime_wasm_host` does NOT (grep-zero — the engine stays backend-free).
+2. `WasmWorkflowRuntime(program, config).run(name, input)` returns a neutral
+   `WorkflowResult`; no wasm_host TU includes `evaluator.hpp`.
+3. CLI / REPL / DAP each construct the facade through one shared header (no
+   triplication of `lower_ahfl_to_core` → `emit_core_wasm`).
+4. WASM=OFF configures + builds clean (facade target absent; tools carry the
+   `#ifdef`).
+
+### D-B. D1 revision — WireJson workflow state evidence from node-event reconstruction (resolves P0-1)
+
+**Chosen.** For WireJson (non-P6) workflows the session reconstructs
+`state_sequence` and fires `state_entered_hook` from decoded node-event records
+joined to the descriptor agent walks — EXACTLY as the JS oracle does at
+`node_embedded_host.mjs:1413` (`records.map(record => recordStates(lane,
+record)).flat()`). P6-frame workflows keep the trace-prefix-at-imports +
+post-run union (unchanged from §12.1).
+
+The P0 root cause: `workflow_session.cpp:96-100` gates trace decode on
+`is_p6`, so WireJson workflows produce an EMPTY `state_sequence` (9 census
+scenarios blocked). The trace ring exists only on P6 modules; WireJson
+workflows carry the node-event buffer instead.
+
+**Rules:**
+
+- **Join source of truth:** the descriptor's `agents[].walk` (the declared
+  state names entered on one runner call) for WireJson — NOT `all_states`
+  (which indexes the P6 trace ring's dense state ids). The oracle uses
+  `agentWalk.walk` for WireJson (`recordStates:1235`) and `all_states ?? walk`
+  for P6 (`:1328`). The session mirrors this.
+- **Ordering:** node-event records are in schedule order (record `i` has
+  `schedule_pos == i`, enforced by the oracle `:1193` and the C++ decoder).
+  For each record the session finds the node by `node_id`
+  (`descriptor.nodes[].node_id`), gets the runner (`node.runner`), and emits
+  `agents[runner].walk` states in order. The flat sequence is schedule-order
+  walks — byte-identical to the oracle's `records.map(...).flat()`.
+- **Identity workflows (no imports, no event region):** the oracle reconstructs
+  from `lane.nodes.map(...)` (`:1227`) — schedule-order walks from the
+  descriptor. The session mirrors: for a workflow with no event region, emit
+  each node's runner walk in schedule order.
+- **Import-boundary live hooks on WireJson: NONE.** WireJson node events are
+  decoded POST-RUN only (the guest writes the event buffer during `run2`; the
+  host has no mid-run access without the P6 trace ring). `state_entered_hook`
+  for WireJson workflows fires POST-RUN, in schedule order. **Honest liveness
+  consequence for WH-8:** WireJson state hooks are post-run (post-mortem), NOT
+  live. The §12.1 guarantee table's "IMPORT-BOUNDARY-LIVE" cell for workflows
+  applies ONLY to P6-frame workflows (which have the trace ring). This is a
+  DATED REVISION of D1: the original table did not distinguish P6 vs WireJson
+  liveness; the revision states that WireJson state hooks are post-run.
+- **OOR / corruption fail-closed:** the session MUST call
+  `validate_state_trace_bounds` (P6) and the equivalent node-event bounds check
+  (WireJson: `runner >= agents.size()` or `state >= walk.size()` → fail-closed,
+  NOT the silent `continue` at `workflow_session.cpp:69-75`). The oracle fails
+  at `:1329-1331` (OOR runner/state) and `:1318-1320` (count exceeds capacity).
+  The session deletes the silent `continue` and returns a terminal `NodeFailed`
+  + diagnostic on any OOR / corrupt record.
+
+**Acceptance:**
+
+1. A WireJson workflow with capabilities produces a non-empty `state_sequence`
+   byte-identical to the oracle's (the 9 blocked census scenarios unblock).
+2. An identity workflow (no imports) produces schedule-order walks from the
+   descriptor.
+3. A hand-corrupted node-event record (OOR runner / state) yields `NodeFailed`
+   + diagnostic, NOT a silent empty sequence.
+4. P6 workflows keep the import-boundary-live + post-run union (unchanged).
+
+### D-C. Agent capability integration — big-bang collapse onto the WH-3 executor (resolves P0-2, P0-3, P1-1)
+
+**Chosen: Option A (big-bang collapse).**
+
+1. **Codegen emits the AHFLXM exec-manifest for capability AGENT modules.**
+   New `kEntryKindAgent = 1` in both codegen (`core_wasm_codegen.cpp:181`) and
+   A2 (`core_wasm_schema_module.cpp:60`). Agent manifest grammar:
+   `magic(6) + version(1) + entry_kind=1 + agent_id(4) + capability_count(4) +
+   capabilities[] { capability_id(4) + source_symbol(8) }`. This mirrors the
+   workflow manifest but with a flat capability list (an agent has no workflow
+   schedule / nodes).
+2. **A2 admission gains the agent entry kind.** `decode_exec_manifest`
+   decodes the agent arm; the `SchemaModulePayload` builds `call_sites` from
+   the capability list (each capability = one call site, with `import_ordinal`
+   resolved from the wire-schema / imports cross-check, exactly as the workflow
+   path does for cap nodes). Real agent modules admit WITHOUT synthetic
+   manifests (the WH-3 `a5a6d1b0` synthetic-injection technique was test-only
+   evidence; production must not inject).
+3. **BOTH the canonical instance AND the effects-free step instance reuse
+   `make_capability_import_callback`** (the WH-3 executor: schema-bound opaque
+   + bridge lanes, `capability_import.cpp`). The simplified handler
+   (`wasm_agent_runner.cpp:247-337`) is DELETED entirely.
+4. **Effects-free step instance: scripted replay.** The WH-3 executor runs on
+   the effects-free instance with a SCRIPTED-REPLAY invoker (the caller's
+   states-mode invoker). Bridge control-block resolution and schema validation
+   still run (host-side, not effects), but the invoker's results are scripted —
+   never a live side effect. The facade config gains `states_invoker`
+   (optional; defaults to the canonical invoker for side-effect-free mock
+   invokers — the conformance case). For WH-4 conformance the harness supplies
+   the mock as both.
+5. **Canonical name (P0-3):** the WH-3 executor uses
+   `config.name_resolver(source_symbol)` → canonical name. The
+   `local_capability_name` strip (`wasm_agent_runner.cpp:51-58`) is deleted with
+   the simplified handler. The `e2_capability_agent.echo` blessing expects
+   `wasm::e2_capability::Echo` (verified in
+   `tests/conformance/observations/e2_capability_agent.echo.json`) — the
+   canonical name the executor produces. The simplified handler's comment
+   ("the evaluator's capability name is the local declaration name") was WRONG:
+   the evaluator blessing carries the canonical name.
+
+**Rejected:**
+
+- **Option B (separate descriptor-based executor).** Rejected — a parallel
+  implementation (Principle 1). The WH-3 executor already handles both lanes
+  with schema-bound validation; a second executor duplicates the envelope /
+  validate / pack logic and is precisely what introduced the P0-3 canonical-name
+  bug and the P0-2 missing-bridge-lane gap.
+
+**Acceptance:**
+
+1. All 4 v2c bridge fixtures run through the WH-3 executor on wasm3 (no
+   simplified handler; grep-zero for `local_capability_name`).
+2. `e2_capability_agent.echo` produces `capability_sequence
+   ["wasm::e2_capability::Echo"]` (canonical, not stripped).
+3. Malformed params / results fail closed (`ParamSchemaInvalid` /
+   `ResultSchemaInvalid` → `ImportAbort`).
+4. Closure results fail closed pre-call (`ResultEncodeFailed`).
+5. The effects-free step instance's invoker is called with scripted results;
+   the canonical instance's invoker is called exactly once per capability
+   (effects-once).
+6. A2 admits a real emitted agent module with the agent manifest (no synthetic
+   injection in production code).
+
+### D-D. Fix-forward scope boundaries
+
+**IN the fix-forward (gate / honesty):**
+
+- **P0-1** (D-B): WireJson state reconstruction + fail-closed OOR.
+- **P0-2 / P0-3 / P1-1** (D-C): collapse onto WH-3 executor + canonical names.
+- **P1-6 (node-name semantics):** add `std::string name` to
+  `CoreWasmNodeDescriptor` (codegen populates from the `WorkflowNodeDecl`
+  source name). `node_completed_hook` fires with the REAL node name +
+  `AgentId{node.runner}` (not `agent_name` in the node slot, not `AgentId{0}`).
+  `state_entered_hook` for workflows resolves `node_name` from the current
+  context (import boundary: call site → node; post-run: runner → schedule →
+  node). `capability_invoked_hook` / observer fire with the real `AgentId`
+  (resolved per-import from the call site's node runner, not a fixed
+  `AgentId{0}`). The evaluator passes `node.source->name`
+  (`workflow_runtime.cpp:1456`); the wasm lane matches.
+- **P1-7** (D-E): install-neutering.
+- **P2-1:** OOR fail-closed (covered by D-B).
+- **P2-3:** ABI constants (use `kCoreWasmFixedLinearMemory*` SSOT, not magic
+  numbers).
+- **P2-4:** include cleanup.
+- **P2-6:** strong oracles (assert WireJson states + canonical names in the
+  conformance adapter).
+- **P1-5 (populate stores):** the session populates
+  `ExecutionMetadataStore` (workflow + agents + nodes with display names),
+  `ExecutionReport` (status, workflow, `nodes[]` with node / agent / status /
+  output, `execution_order`, `output`, `failure_kind`), and
+  `ExecutionEventStore` (the `RunStarted` / `NodeScheduled` / `NodeStarted` /
+  `NodeCompleted` / `RunCompleted` lifecycle events so the replay + audit
+  projections in `execution_renderer.cpp:333-396` produce correct counts). The
+  session emits these from decoded node-events + trace + capability
+  observations. This is the minimum the renderer + audit projections consume.
+- **Terminal mapping:** sessions yield `WorkflowResult` with
+  `Completed` / `NodeFailed` + diagnostics (trap / host-abort / non-OK →
+  `NodeFailed` + a fixed-code diagnostic carrying the `CapabilityImportError`
+  enum name or trap classification). NOT bare error strings. Host-abort / trap
+  diagnostic shape: `DiagnosticBag` with a fixed code (`wasm.host-abort` /
+  `wasm.trap`) + the `CapabilityImportError` name. **NO `Suspended` in the
+  fix-forward** (see WH-4b below).
+- **`agent_input_hook`:** added to `WasmRuntimeHooks`; fires LIVE on the agent
+  lane before the step-walk (the D1 guarantee table promised it; the delivered
+  facade omitted it). Workflow lane stays unfired (recorded D1: in-guest
+  materialized input is not host-observable).
+
+**OUT (deferred):**
+
+- **Suspended snapshot origination (P1-4) → WH-4b slice, gated before WH-6.**
+  The fix-forward maps Pending → `NodeFailed` (honest: the wasm lane does not
+  suspend yet) with a diagnostic. WH-4b adds: opaque-lane Pending observation
+  (the import callback returns `raw_status=2`; the session observes it via
+  `import_state`), `Suspended` status, and `WorkflowRecoverySnapshot`
+  construction (node input + memo table + pending cap_id / ordinal).
+  **CRITICAL fixture finding:** the `durable_resume_cli_smoke.py` suspend
+  fixture uses a single-Param `Echo` capability
+  (`tests/scripts/durable_resume_cli_smoke.py:58`) → the BRIDGE lane
+  `(i32)->(i32,i32)` → Pending TRAPS (the bridge has no graceful PENDING arm;
+  WH-3 D3 sealed contract). WH-4b / WH-6 MUST switch the suspend fixture to an
+  OPAQUE-lane capability (2+ params, which has the graceful `(2,0,0)` PENDING
+  arm) or add an opaque-lane suspend fixture. The bridge-lane trap is a
+  sealed-ABI contract, not a bug.
+- **`recovery_snapshot` / `resume_pending_result_wire_json` /
+  `durable_write_intent_sink`:** WH-6 (CLI config fields; consumed with the
+  suspend / resume path).
+- **`cancellation_requested`:** WH-8 (checked at import boundaries; never
+  thread-kill wasm3 — per the wh8 prep map).
+- **`monotonic_clock`:** WH-8 or later (DAP timing; the WH-6 CLI does not set
+  it — the CLI sets only four config fields per the wh6 prep map).
+
+### D-E. Install neutrality — move workflow_result.hpp to src-internal (resolves P1-7)
+
+**Chosen: Option B.** Move `include/ahfl/runtime/workflow_result.hpp` to
+**`src/runtime/engine/workflow_result.hpp`** (its survivor home, next to
+`workflow_result.cpp`). Flip all include sites from
+`ahfl/runtime/workflow_result.hpp` to `runtime/engine/workflow_result.hpp`
+(the build-tree `src/` path, matching the engine's other internal headers —
+e.g. `capability_transport_adapter.hpp:3-4`). Include sites:
+`workflow_runtime.hpp:15`, `execution_renderer.cpp:11`,
+`execution_projection.cpp:7`, `wasm_agent_runner.hpp:24`,
+`workflow_session.hpp:28`.
+
+**Rejected:**
+
+- **Option A (promote `value.hpp` + `workflow_recovery.hpp` +
+  `atomic_file.hpp` into installed `include/`).** Reasons:
+  1. `value.hpp` is the survivor host wire type, deliberately kept src-internal
+     by WH-S ("Internal src/ headers ... NOT part of the installed SDK
+     surface", `src/runtime/value/CMakeLists.txt:28-30`). Promoting it ships
+     the Value type as SDK surface — a far bigger commitment than fixing one
+     header.
+  2. `workflow_recovery.hpp` includes `base/support/atomic_file.hpp`
+     (src-internal) — promoting it drags `atomic_file.hpp` too, and that may
+     cascade further.
+  3. `ahfl_runtime_value` is in the INTERNAL install targets
+     (`AhflInstall.cmake:108`, only with `AHFL_INSTALL_INTERNAL_TARGETS=ON`)
+     and its headers are BUILD_INTERFACE-only. Promoting `value.hpp` to
+     `include/` while the target's headers stay src-internal is inconsistent.
+  4. No external SDK consumer needs `WorkflowResult` today: the installed
+     `execution_renderer.hpp` / `execution_projection.hpp` only
+     FORWARD-DECLARE it (they take it by reference). An SDK consumer calling
+     `render_execution_result` needs the complete type — but that is an
+     in-tree tooling scenario (CLI / REPL / DAP), not an external SDK
+     scenario.
+  5. `ahfl_runtime_wasm_host` is NOT installed (WH-1 decision 10.6). Its
+     headers are src-internal. `workflow_result.hpp` is consumed by wasm_host +
+     engine + tooling — all in-tree.
+
+**AHFL-specific rationale:** the installed SDK surface is the compiler
+frontend + IR + pipeline (the `ahflc` / `ahfl-lsp` tools and the CMake target
+graph). The runtime execution result is an in-tree implementation detail of the
+tools, not a public API. Keeping it src-internal is honest: the directory
+structure reflects that the runtime result is internal, not SDK surface.
+
+**Costs:** one file move + 5 include-site flips. No compat shim (Principle 1:
+big-bang).
+
+**Acceptance:**
+
+1. `include/ahfl/runtime/workflow_result.hpp` is deleted;
+   `src/runtime/engine/workflow_result.hpp` exists.
+2. No installed header (under `include/ahfl/`) includes a src-internal header
+   (grep `#include "runtime/` or `#include "base/` in `include/ahfl/` → zero;
+   today `workflow_result.hpp:34-35` is the sole violator).
+3. `cmake --install` + an external compile test succeeds (the installed SDK
+   has no dangling includes).
+4. All in-tree consumers build unchanged (include path flip only).
+
+### Resulting ordered fix-forward worklist
+
+1. **D-E install move** (unblocks everything; mechanical): move
+   `workflow_result.hpp` → `src/runtime/engine/`; flip 5 includes; verify
+   install + build.
+2. **D-C codegen + A2 agent manifest**: emit AHFLXM for capability agents
+   (`kEntryKindAgent`); A2 decodes the agent arm + builds call sites.
+3. **D-C collapse**: delete the simplified handler; both canonical +
+   effects-free instances use `make_capability_import_callback`; add
+   `states_invoker`; delete `local_capability_name`.
+4. **D-B WireJson state reconstruction**: node-event → descriptor-walk join;
+   identity-workflow descriptor reconstruction; delete silent `continue`;
+   fail-closed OOR.
+5. **P1-6 node-name + AgentId semantics**: add `CoreWasmNodeDescriptor.name`;
+   real node name in `node_completed_hook`; real `AgentId` in capability hooks;
+   node_name resolution in `state_entered_hook`.
+6. **P1-5 store population + terminal mapping + diagnostics**: lifecycle events
+   → report / metadata / event stores; trap / abort → `NodeFailed` +
+   `DiagnosticBag`; add `agent_input_hook` to `WasmRuntimeHooks` (agent lane).
+7. **D-A wasm_runner facade**: new peer target; `WasmWorkflowRuntime` +
+   `WasmAgentRunner`; compile pipeline once; gated CMake.
+8. **P2-3 / P2-4 / P2-6**: ABI constants, include cleanup, strong oracles.
+9. **Tests**: all acceptance criteria above; the 9 blocked WireJson census
+   scenarios unblocked; 4 v2c fixtures through the WH-3 executor;
+   `e2_capability_agent.echo` canonical name; OOR fail-closed; store
+   population byte-parity with the evaluator renderer.
+
+**Prep-map impacts (flagged for the WH-5 / 6 / 7 / 8 surveys):**
+
+- **WH-5:** the native adapter drives through the NEW `WasmWorkflowRuntime`
+  facade (not the free functions). The compile-then-drive pattern
+  (`wasm_engine.cpp:554-619`) moves into the facade. WireJson state
+  reconstruction (D-B) is required for the 7 workflow cases (e2e_multi_agent
+  first). The 4 v2c bridge fixtures need the D-C collapse.
+- **WH-6:** the CLI flips to `WasmWorkflowRuntime`. The four config fields map
+  to `WasmWorkflowRuntimeConfig`. Suspend / resume waits for WH-4b. The suspend
+  fixture MUST switch to an opaque-lane capability (bridge Pending traps).
+- **WH-7:** the REPL uses `WasmAgentRunner` (one-shot compile + run). The
+  compile pipeline is in the facade (no triplication).
+- **WH-8:** the DAP uses `WasmWorkflowRuntime`. Hook semantics are fixed in
+  this fix-forward (node_name, AgentId, agent_input_hook). Cancellation is
+  WH-8. WireJson state hooks are post-run (D-B liveness consequence — the DAP's
+  `verified:true` breakpoint claim on a no-import WireJson node would lie; the
+  DAP must classify breakpoints as live / post-run using descriptor
+  observability).
