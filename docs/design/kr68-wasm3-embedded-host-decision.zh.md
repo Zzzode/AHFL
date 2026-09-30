@@ -2312,3 +2312,261 @@ Bridge-pending trap 影响**所有 bridge workflow**,不仅是 hybrid:
 - **§12.6(WH-4b suspend/resume):** 保留,不重写。Option A' 保持 opaque terminal 的 PENDING latch 和 WH-4b memo/replay 完整。bridge-pending 泛化(WH-5b.2)是独立切片,不改变 §12.6 的 recorder 设计。
 - **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。Option A' 关闭 hybrid parity gap;WH-5b.2 关闭 bridge-pending parity gap。WASM=OFF 策略不变。
 - **§12.11(Option C):** 原样保留作历史档案。其事实复现(§12.11.1-12.11.3)和根因分析(§12.11.2)仍然正确;致命缺陷在 §12.12.1-12.12.3 中记录。
+
+## 12.13 WH-5b.3 decision: hybrid P6/opaque encoding-boundary transcode (2026-10-01, dedicated decision agent, no human gate)
+
+本节修订 §12.12。§12.12 修复了 hybrid 模块的 event-record 归属(tag-0/tag-1)和 is_p6 分类,但**遗漏了编码边界**:P6 节点与 opaque 节点之间的数据流不能直接传递 P4-D frame words。本节关闭该 gap,作为新切片 WH-5b.3。
+
+### 12.13.1 §12.12 遗漏了什么
+
+§12.12 的修复 (a)/(b) 是必要的:tag-0 identity record(P6 节点)与 tag-1 capability record(opaque 节点)的 event_count 归属、is_p6 分类、wrapped_callback 的 node attribution。但这些修复只解决了**控制面**(event record、memo identity、schedule position)。**数据面**未解决:
+
+- **Opaque 节点**消费/生产 wire-JSON:`capability_import.cpp:269` `parse_args_from_wire_json`、`:310` `serialize_value_for_wire_json`。opaque terminal ABI `(i32,i32)->(i32,i32,i32)` 的参数是 wire-JSON buffer (ptr, len)。
+- **P6 节点**消费/生产 P4-D binary frame:`frame_packer.hpp:75` `pack_value_at`(Value -> P4-D INLINE)、`frame_reader.hpp:86` `read_value_at`(P4-D INLINE -> Value)。P6 runner 的参数是 P4-D frame address。
+
+两种编码在字节层不兼容。当 hybrid workflow 的 crossed edge(P6->opaque 或 opaque->P6)直接传递 frame words 时:
+
+- **P6-before-cap**:opaque 节点收到 P4-D words,`parse_args_from_wire_json` 解析失败 -> ImportAbort -> NodeFailed。
+- **cap-before-P6**:materializer 把 wire-JSON 当作 P4-D 读取 -> garbage -> computed-final materialization 产出错误输出。
+- **cross-node NodeOutput edge**:`append_workflow_source`(`core_wasm_codegen.cpp:15864-15865`)push upstream (ptr, len) locals,在 crossed lane 上传递错误编码的 words。
+
+§12.12 的 (a)/(b) 是 WH-5b.3 的**必要前置**(is_p6 flag 用于 crossed-edge 分类,tag-0/event_count 用于 wrapped_callback attribution),但不充分。
+
+### 12.13.2 选择:Option A - host boundary transcode
+
+**在 host 侧、wasm 边界处做编码转换。** host 已经拥有全部 codec(P4-D pack/read、wire-JSON serialize/parse)。新增一个 wasm import namespace `ahfl_xcode`,每个 crossed edge 一个 import `xcode_<N>`,functype 复用 opaque terminal 的 3-result 形状 `(i32,i32)->(i32,i32,i32)`。scheduler 在每个 crossed edge 处插入一次 transcode call。
+
+**为什么是 host 侧而不是 module 侧:** module 内没有 JSON codec(P4-D 是唯一的 in-module 编码);在 module 内实现 JSON parser 是重新发明 host 已有的轮子,违反 Principle 1。Rust/Clang 的参考模型:host(编译器/runtime)拥有 ABI 边界处的序列化,module 只处理一种内部编码。
+
+### 12.13.3 Transcode import ABI
+
+```
+namespace: ahfl_xcode
+field:     xcode_<N>          (N = transcode-site ordinal, decimal, compiler 按 schedule 顺序分配)
+functype:  (i32, i32) -> (i32, i32, i32)
+           params:  src_ptr, src_len
+           results: status (0=OK, nonzero=error), dst_ptr, dst_len
+```
+
+两个方向:
+
+| direction | src 编码 | dst 编码 | host handler |
+|-----------|----------|----------|--------------|
+| `P4D_TO_JSON` | P4-D INLINE frame | wire-JSON | `read_value_at` -> Value -> `validate_value` -> `serialize_value_for_wire_json` -> `alloc_then_write` -> reply (0, json_ptr, json_len) |
+| `JSON_TO_P4D` | wire-JSON | P4-D INLINE (shadow) | `decode_json` -> Value -> `pack_value_at`(INLINE)into shadow -> reply (0, shadow_base, shadow_extent) |
+
+**Frame section 扩展:** `CoreFrameLayoutSection` 新增 `transcode_sites` table。每个 entry:
+
+```
+struct TranscodeSite {
+    uint32_t import_ordinal;      // 对应 ahfl_xcode.xcode_<N> 的 import ordinal
+    enum Direction { P4D_TO_JSON, JSON_TO_P4D } direction;
+    enum Source { ENTRY, NODE_OUTPUT } source;
+    uint32_t source_node_ordinal; // 若 source=NODE_OUTPUT
+    uint32_t target_node_ordinal;
+    TypeLayout layout;             // P4-D layout(用于 read_value_at / pack_value_at)
+    FramePlacement shadow;         // JSON_TO_P4D 的 shadow region placement
+}
+```
+
+**Admission(安全门):** `wasm3_engine.cpp:509-554` 的 admission path 扩展,接受 `ahfl_xcode.xcode_<decimal>` + opaque 3-result functype。tight check:namespace == `ahfl_xcode`、field prefix `xcode_`、decimal suffix、functype `(i32,i32)->(i32,i32,i32)`。与 `ahfl_cap` 相同的 sealed-functype discipline。
+
+**Linking:** `m3_LinkRawFunctionEx`,signature `"iii(ii)"`(与 opaque lane 相同)。
+
+**Routing:** `workflow_session.cpp` 的 `wrapped_callback` 在 memo/replay/event_count 逻辑**之前**路由 transcode ordinal 到 `handle_transcode`(与 bridge skip `:708-713` 同构,但针对 transcode ordinal)。session 从 frame section 的 `transcode_sites` table 解析 import ordinal -> transcode site;未找到则 fail closed(ImportAbort)。
+
+**`handle_transcode` 永远:**
+- 不调用 capability invoker
+- 不触碰 memo(不读不写)
+- 不 fire `capability_invoked` hook
+- 不写 event record
+- 是纯确定性 codec adapter
+
+### 12.13.4 Shadow ingress spans
+
+JSON_TO_P4D 方向需要一个 in-page 的 shadow region 作为 P4-D INLINE 的落地空间。设计:
+
+- **单一复用 static region** `[shadow_base, shadow_base + max_shadow_extent)`:所有 JSON_TO_P4D transcode 复用(每次 overwrite)。`max_shadow_extent` 由 compiler 从所有 crossed edge 的 layout 计算最大值。
+- **Payload arena** `[shadow_payload_base, shadow_payload_base + capacity)`:String bytes 的落地空间(`pack_value_at` 把 String bytes 写入 arena,shadow frame 里的 (ptr, len) 指向 arena)。
+- **Entry shadow** `[entry_shadow_base, +entry_extent)`:当存在 source=ENTRY 的 P4D_TO_JSON transcode site 时,host 把 entry pack 成 INLINE 到 entry shadow(永不 normalize),再 memcpy 到 I_k。transcode 读 entry shadow(inline 完整)。scalar entry(fixture 场景)下 I_k 本就 inline,entry shadow 是一次小的额外 memcpy,但统一正确。
+
+**Verifier 扩展:** `core_frame_layout.cpp:1325-1442` `verify_workflow_spans` 扩展,检查 shadow region / payload arena / entry shadow 与 node_blocks、bridge_control、entry_payload、workflow_output、state_trace 互不相交。5b.1 承诺 verifier 不变;**本切片扩展 verifier**,因为 shadow spans 是新的 in-page region,必须验证 disjointness(否则 shadow overwrite 会 corrupt node block)。
+
+### 12.13.5 Materializer 交互
+
+**JSON_TO_P4D(opaque source -> P6 target):**
+1. scheduler call `xcode_N`(src = opaque node 的 wire-JSON output buffer)
+2. host `handle_transcode`:`decode_json` -> Value -> `pack_value_at`(INLINE)into shadow -> reply (0, shadow_base, shadow_extent)
+3. scheduler check status;若 nonzero -> NodeFailed(fail closed)
+4. scheduler call `normalize_inline_input(shadow)`(`core_wasm_codegen.cpp:15034`):把 shadow 的 INLINE aggregate 重写为 pointer-tree(src==dst, in-place)
+5. materializer 通过 `emit_root_base`(`:15403`)读 shadow:对 crossed source,`emit_root_base` 返回 `shadow_base`(static constant,不是 local)——materializer 从 shadow 读取 pointer-tree 字段,materialize 到 I_k
+6. `copy_aggregate`(`:15697`)读 pointer-tree、写 INLINE 到 I_k
+
+**P4D_TO_JSON(P6 source/entry -> opaque target):**
+1. scheduler `append_workflow_source`(`:15853`)push (src_ptr, src_len):
+   - source=NODE_OUTPUT:src = O_k base(computed-final materializer `:7311-7313` 保证 O_k 是 INLINE)
+   - source=ENTRY:src = entry_shadow_base(INLINE,永不 normalize)
+2. scheduler call `xcode_N`
+3. host `handle_transcode`:`read_value_at`(INLINE)-> Value -> `validate_value` -> `serialize_value_for_wire_json` -> `alloc_then_write` -> reply (0, json_ptr, json_len)
+4. scheduler check status;results (json_ptr, json_len) 成为 opaque runner 的参数
+
+**关键 form 约束:** `read_value_at` 只读 INLINE(`frame_reader.cpp:209-235` 字段在 `addr + field_offsets[i]` 处)。P4D_TO_JSON 的 source 必须是 INLINE。O_k 是 INLINE(computed-final 保证);entry I_k 在 normalize 后是 pointer-tree,所以需要 entry shadow。
+
+**String payload:** `pack_value_at` 把 String bytes 写入 shadow payload arena;shadow frame 里的 PtrLen (ptr, len) 指向 arena。`read_value_at` 读 PtrLen 时用 `string_regions` 解析。transcode 的 P4D_TO_JSON 方向读 O_k/entry_shadow 的 String 时,String bytes 在 entry payload arena 或 node block 的 string region 内(已有的 string_regions 机制)。
+
+**Fan-out:** 一个 crossed edge 一个 transcode site;shadow region 复用(每次 transcode overwrite)。若一个 opaque node 的 output 被多个 P6 node 消费,每个消费 edge 一个 JSON_TO_P4D transcode site(各自 normalize 各自的 shadow 副本——但 shadow 复用,所以 scheduler 必须在每个 consumer 的 materialize 之前重新 transcode+normalize)。
+
+**Workflow output crossing:** 若 workflow return 是 opaque node,scheduler 插入一个 JSON_TO_P4D transcode(opaque output -> workflow_output region)。host post-run 用 `read_value_at` 读 workflow_output(INLINE)。fixture 场景(return P6 node)不触发此路径。**注意:此 shape 在 hybrid workflow 中当前不可表达** —— hybrid(p6=true)的 output 走 materializer path(`:16282-16297`),`emit_root_base`(`:15410-15412`)对 opaque-rooted return region 返回 false(comment `:15399-15402`)。WH-5b.3 的 transcode(JSON_TO_P4D into workflow_output shadow,materializer 从 shadow 读)使其可表达;opaque-return fixture 是 WH-5b.3 的 scope(见 §12.13.9 item 4、§12.13.10 AC1(b))。
+
+### 12.13.6 Value round-trip fidelity
+
+transcode 是纯 Value->Value round-trip,经过 host 已有的 codec:
+
+- **P4D_TO_JSON:** `read_value_at`(P4-D INLINE->Value)-> `serialize_value_for_wire_json`(Value->wire JSON)。fidelity 由 `core_json_round_trip` corpus 保证。
+- **JSON_TO_P4D:** `decode_json`(wire JSON->Value)-> `pack_value_at`(Value->P4-D INLINE)。fidelity 由同一 corpus 保证。
+
+类型覆盖:
+- struct/enum/Option/Result:P4-D binary layout(CoreLayoutTable)<-> wire JSON object。enum discriminant、Option tag、Result tag 在 P4-D 里是 integer tag,在 wire JSON 里是 object field。
+- String:PtrLen <-> wire JSON string。payload arena 落地。
+- Decimal/Duration:P4-D scalar <-> wire JSON number/string。
+- **Closure:fail closed。** `serialize_value_for_wire_json`(`wire_value.hpp:20`)对 closure 失败(`try_value_to_json` 不支持 closure)。transcode 不引入新的 closure 支持。
+
+### 12.13.7 Determinism + WH-4b replay
+
+**transcode 是确定性的:** 纯 codec,无 invoker、无 side effect、无 heap allocation 影响语义(alloc_then_write 的 buffer 地址不进入 memo identity)。
+
+**WH-4b resume/replay:**
+- fresh-instance replay 时,transcode 被重新执行(同样的输入 -> 同样的输出)。
+- memo identity tuple `(WorkflowNodeId, per-node ordinal, cap SymbolId, arg_hash)` 不变。transcode 不写 memo,不读 memo。arg_hash 从 decoded Value 计算(不是 pointer)。
+- transcode 不写 event record -> `event_count` invariant 不变。tag-0/tag-1 归属仍由 §12.12 (a)/(b) 保证。
+- Pending 不会在 transcode 中产生(无 invoker)。transcode 的 status 只有 OK / error(fail closed)。
+- `wrapped_callback` 在 memo/replay/event_count 之前路由 transcode(与 bridge skip 同构)。
+
+**ExactSidecar:** transcode 不影响 opaque node 的 ExactSidecar(verbatim wire bytes)。transcode 的输出是 opaque node 的输入(wire JSON),opaque node 的 memo 仍记录其 verbatim wire bytes。
+
+### 12.13.8 Kahn reordering 与 crossed-edge 分类
+
+**分类规则(显式):** 一个 crossed edge 存在当且仅当 (target node 的 lane) != (其 source 的编码)。其中:
+- ENTRY source 的编码 = `schedule.front()` 的 lane 编码(host entry-pack 规则:`workflow_session.cpp:1017-1018` 按 schedule 顺序取 `nodes[0]`,host 按 front node 的 lane pack entry)。
+- NODE_OUTPUT source 的编码 = producing node 的 lane。
+- 同 lane 的 ENTRY consumer(如 kahn_reordered 的 echo2)永远不获得 transcode site。
+
+entry lane 由 `schedule.front()` 决定。transcode sites 从 schedule 计算,不是 declaration order。
+
+**三个 fixture 的正确 walkthrough(全部节点消费 ENTRY,无 NodeOutput edge):**
+
+`wh5b_hybrid_p6_before_cap.ahfl`:schedule [compute(P6), echo(opaque)],both consume ENTRY,return compute。
+- schedule.front() = compute(P6) -> entry lane = P6(P4-D)。host pack entry 成 P4-D 到 I_0。
+- compute:source=ENTRY,lane=P6,entry 编码=P4-D。同 lane -> 无 transcode。compute 从 host-packed I_0 运行。
+- echo:source=ENTRY,lane=opaque,entry 编码=P4-D。crossed(opaque != P4-D)-> P4D_TO_JSON transcode,source=ENTRY。host pack entry_shadow(inline P4-D,因 schedule.front() 是 P6,entry I_k 可能被 normalize);transcode 读 entry_shadow,产出 wire-JSON 给 echo runner。
+
+`wh5b_hybrid_cap_before_p6.ahfl`:schedule [echo(opaque), compute(P6)],both consume ENTRY,return compute。
+- schedule.front() = echo(opaque) -> entry lane = opaque(wire-JSON)。host pack entry 成 wire-JSON。
+- echo:source=ENTRY,lane=opaque,entry 编码=wire-JSON。同 lane -> 无 transcode。echo 直接在 (0,1) wire-JSON 上运行。
+- compute:source=ENTRY,lane=P6,entry 编码=wire-JSON。crossed(P6 != wire-JSON)-> JSON_TO_P4D transcode,source=ENTRY。transcode 把 wire-JSON 解成 Value,pack 成 INLINE P4-D 到 shadow;bare-forward materialize 读 shadow result words(non-front node 今天就 emit 自己的 region),写入 I_k。
+
+`wh5b_hybrid_kahn_reordered.ahfl`:declared [echo2, compute, echo1],Kahn schedule [echo1(opaque), compute(P6), echo2(opaque)],all consume ENTRY,return compute。
+- schedule.front() = echo1(opaque) -> entry lane = opaque(wire-JSON)。host pack entry 成 wire-JSON。
+- echo1:source=ENTRY,lane=opaque。同 lane -> 无 transcode。
+- compute:source=ENTRY,lane=P6。crossed -> JSON_TO_P4D transcode,source=ENTRY。
+- echo2:source=ENTRY,lane=opaque,entry 编码=wire-JSON。同 lane(schedule.front() 也是 opaque)-> 无 transcode,直接 (0,1) passthrough。
+- return compute(P6)-> host read O_k(P4-D)。
+
+transcode site 的 ordinal 按 schedule 顺序分配,与 Kahn 重排一致。
+
+### 12.13.9 Evaluator parity tests
+
+evaluator 今天就能跑 hybrid workflow(Value transport,无编码边界)。wasm host 必须匹配。测试:
+
+1. **3 个 entry-consumer fixture 作为 standalone ctest**(Completed + value assertion):
+   - `wh5b_hybrid_p6_before_cap.ahfl`:schedule [compute(P6), echo(opaque)],return compute
+   - `wh5b_hybrid_cap_before_p6.ahfl`:schedule [echo(opaque), compute(P6)],return compute
+   - `wh5b_hybrid_kahn_reordered.ahfl`:Kahn [echo1, compute, echo2],return compute
+   这三个 fixture 全部节点消费 ENTRY(无 NodeOutput edge),覆盖 ENTRY crossing 的两个方向(P4D_TO_JSON from entry_shadow、JSON_TO_P4D into shadow)和 same-lane passthrough。
+
+2. **NodeOutput cross-lane fixture(P6->opaque 方向):** 一个 workflow,opaque node 消费 P6 node 的 O_k(NodeOutput source)。覆盖 P4D_TO_JSON 从 O_k words 读取(§12.13.5 的 NODE_OUTPUT path)。**此 shape 在当前 language/IR 中可表达:** `check_path`(`core_wasm_codegen.cpp:11815-11856`)对 packaged P6 source 通过(dispatch_types.size()==3、payload 非 null);`append_workflow_source`(`:1859-1866`)push P6 node 的 (ptr,len) locals。当前 runtime blocker(opaque runner 把 P4-D 当 wire-JSON 解析失败)正是 WH-5b.3 transcode 修复的目标。
+
+3. **NodeOutput cross-lane fixture(opaque->P6 方向):** 一个 workflow,P6 node 消费 opaque node 的 output(NodeOutput source),input region 为 constructed(V2D-CTX 支持 capability-result -> constructed node input)。覆盖 JSON_TO_P4D into shadow + normalize + materialize(constructed region)。**此 shape 在当前 codegen 中不可表达:** `emit_root_base`(`core_wasm_codegen.cpp:15410-15412`)对 opaque upstream 返回 false(comment `:15399-15402`:"An upstream OPAQUE node owns no fixed output block... a frame region that roots an opaque output is not materializable on this rung")。WH-5b.3 的 transcode 设计(shadow 作为 materializer root,`emit_root_base` 对 crossed source 返回 shadow_base)使其可表达。**此 fixture 是 WH-5b.3 的 scope,不是 pre-existing capability。**
+
+4. **Opaque-return fixture:** 一个 workflow,return 是 opaque node。覆盖 JSON_TO_P4D into workflow_output region + host post-run read path。**此 shape 在 hybrid workflow 中当前不可表达:** hybrid workflow(p6=true)的 output 走 materializer path(`:16282-16297`),materializer 的 `emit_root_base` 对 opaque-rooted return region 返回 false(同 :15410-15412)。WH-5b.3 的 transcode(JSON_TO_P4D into workflow_output shadow)使其可表达。**此 fixture 是 WH-5b.3 的 scope。**
+
+5. **Hybrid WH-4b resume test:** hybrid workflow suspend/resume,验证 transcode 在 fresh-instance replay 中重新执行、memo identity 不变、event_count invariant 保持。
+
+6. **core_json_round_trip corpus pin:** 把 transcode 的 Value round-trip 加入 corpus,保证 P4-D<->wire-JSON fidelity。
+
+7. **Fail-closed tests:**
+   - schema mismatch(wire JSON 与 P4-D layout 不匹配)-> transcode status nonzero -> NodeFailed
+   - oversized frame(shadow extent 超过 max_shadow_extent)-> fail closed
+   - corrupt shadow(normalize 后 materializer 读到非法 pointer)-> fail closed
+   - transcode abort attribution(import ordinal 不在 transcode_sites table)-> ImportAbort
+
+### 12.13.10 Acceptance criteria
+
+- [ ] AC1:hybrid fixture 作为 standalone ctest 通过,workflow status == Completed,output value 与 evaluator 一致。fixture 分两类:
+  - **(a) Entry-consumer(3 个,当前可表达):** `wh5b_hybrid_p6_before_cap`、`wh5b_hybrid_cap_before_p6`、`wh5b_hybrid_kahn_reordered`。全部节点消费 ENTRY,覆盖 ENTRY crossing 两方向 + same-lane passthrough。
+  - **(b) NodeOutput cross-lane + opaque-return(3 个,WH-5b.3 scope):**
+    - P6->opaque NodeOutput fixture(当前可表达,runtime blocker 由 transcode 修复)。
+    - opaque->P6 NodeOutput constructed-region fixture(当前不可表达:`emit_root_base` :15410-15412 拒绝 opaque upstream;WH-5b.3 shadow-root 使其可表达)。
+    - opaque-return fixture(当前不可表达:hybrid output 走 materializer path,`emit_root_base` 拒绝 opaque-rooted return;WH-5b.3 JSON_TO_P4D into workflow_output shadow 使其可表达)。
+  - (b) 类 fixture 的 .ahfl 源文件与 ctest 在 WH-5b.3 实现中一并落地;若实现中发现 (b) 类某 shape 仍不可表达,必须以 file evidence 记录并在 AC1 中标注为 deferred,不得静默丢弃。
+- [ ] AC2:hybrid WH-4b resume test 通过:suspend -> resume -> fresh-instance replay -> Completed,event_count invariant 保持,memo identity 不变。
+- [ ] AC3:core_json_round_trip corpus 包含 transcode 的 P4-D<->wire-JSON round-trip,全绿。
+- [ ] AC4:fail-closed tests 全绿(schema mismatch / oversized / corrupt shadow / transcode abort attribution)。
+- [ ] AC5:`verify_workflow_spans` 扩展后,所有 hybrid fixture 的 shadow spans disjointness 验证通过。
+- [ ] AC6:ASan build 全绿(无 heap-buffer-overflow / use-after-free,shadow region 复用安全)。
+- [ ] AC7:WASM=OFF build 全绿(transcode 是 wasm-host-only,不影响 WASM=OFF)。
+- [ ] AC8:census:66 manifests / 0 blessing changes(hybrid fixture 是新的,不改变现有 blessing)。
+- [ ] AC9:fresh `-Werror` build 全绿(develop 分支)。
+- [ ] AC10:`ctest -L wasm` baseline:84 pass / 4 skip(与 5b.1 后一致,新增 hybrid tests 计入 pass)。
+- [ ] AC11:full dev `ctest`:570/573,仅 3 个已知 beta/install/readme env failure。
+- [ ] AC12:admission path 的 `ahfl_xcode` sealed-functype check 有 unit test(namespace / prefix / decimal / functype 缺一不可)。
+
+### 12.13.11 Costs / LOC
+
+估算(基于代码阅读):
+
+| 组件 | LOC | 说明 |
+|------|-----|------|
+| `core_wasm_codegen.cpp` scheduler | ~150 | crossed-edge 分类、transcode call 插入、shadow region 分配、entry shadow |
+| `core_frame_layout.cpp` verifier | ~40 | shadow spans disjointness |
+| `core_frame_layout.hpp` frame section | ~30 | TranscodeSite table |
+| `workflow_session.cpp` routing | ~80 | wrapped_callback transcode routing、handle_transcode、entry shadow pack |
+| `capability_import.cpp` / 新 `transcode.cpp` | ~120 | handle_transcode 两个方向 |
+| `wasm3_engine.cpp` admission | ~30 | ahfl_xcode sealed-functype |
+| tests | ~350 | 3 entry-consumer fixture ctest + 3 NodeOutput/opaque-return fixture ctest + hybrid resume + fail-closed + admission unit |
+| **合计** | **~800** | |
+
+### 12.13.12 Rejected alternatives
+
+**Option B(unify encoding)- REJECTED。**
+- all-JSON:module 内需要 JSON codec(P4-D 是唯一 in-module 编码)。在 module 内实现 JSON parser 是重新发明 host 已有的轮子,违反 Principle 1。且 P4-D 的 CoreLayoutTable 是 zero-copy 的,JSON 解析引入运行时开销。
+- all-P4-D:opaque node 的 WH-4b ExactSidecar 是 verbatim wire bytes(`§12.6`),wire-schema 是 capability transport 的契约。改成 P4-D 会破坏 ExactSidecar、wire-schema、evaluator parity(evaluator 用 Value,不是 P4-D)。
+- AHFL-specific reason:host 已经拥有全部 codec;在 module 内重新实现是 duplicate ownership,违反 Rust/Clang 的"host owns ABI serialization"模型。
+
+**Option C(§12.11 normalization)- REJECTED(已在 §12.12 否决,此处简述)。**
+- bridge ABI `(i32)->(i32,i32)` 在 Pending 时 trap,不能用于 suspend-capable opaque node。
+- evaluator 消费 AHFL-IR,不是 Core-IR;normalization 是 wasm 侧概念,evaluator 无对等物。
+- 详见 §12.12.1-12.12.3。
+
+**Option D(defer / reject hybrid)- REJECTED。**
+- evaluator 今天就能跑 hybrid workflow;WH-6 把 `ahflc run` 切到 wasm 后,hybrid 会 parity regression。
+- WH-9 删除 evaluator 后,hybrid 永久不可用 = 语言收窄,与 north-star(embeddable verifiable agent-workflow DSL,RFC 0020)矛盾。
+- census 当前无 hybrid case(58 manifests),但 north-star 是通用 embeddable DSL,hybrid 是基本能力(P6 computed-goto + opaque capability 在同一 workflow)。
+- host 已经拥有全部 codec,transcode 是自然的边界适配,不是新能力。
+
+### 12.13.13 Sequencing + gate revision
+
+**顺序:**
+1. **WH-5b.1**(§12.12 修复 (a)/(b))- 立即落地,作为独立 commit。这是 WH-5b.3 的必要前置(is_p6 flag 用于 crossed-edge 分类,tag-0/event_count 用于 wrapped_callback attribution)。
+2. **WH-5b.3**(本节,transcode)- 在 5b.1 之后。
+3. **WH-5b.2**(#78,bridge-pending 泛化)- 在 5b.3 之后。
+4. **WH-6**(ahflc run cutover)- 在 5b.1 + 5b.3 + 5b.2 之后。
+
+**Gate revision:** §12.12.10 的 gate set 是 "WH-6 gated on 5b.1 + 5b.2"。**修订为:WH-6 gated on 5b.1 + 5b.3 + 5b.2。** 理由:5b.1 关闭 hybrid 控制面 gap,5b.3 关闭 hybrid 数据面 gap(本节),5b.2 关闭 bridge-pending gap。三者缺一,WH-6 cutover 会有 parity regression。
+
+### 12.13.14 Prior-decision preservation statement
+
+- **§12.6(WH-4b suspend/resume):** 保留,不重写。transcode 不改变 opaque terminal 的 PENDING latch、memo/replay、ExactSidecar。transcode 是确定性的,在 fresh-instance replay 中重新执行。
+- **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。WASM=OFF 策略不变。gate set 修订(§12.13.13)。
+- **§12.11(Option C):** 原样保留作历史档案。
+- **§12.12(Option A'):** 保留作历史档案。其修复 (a)/(b) 是 WH-5b.3 的必要前置,作为 WH-5b.1 落地。§12.12 的遗漏(编码边界)在 §12.13.1 中记录,由本节关闭。
