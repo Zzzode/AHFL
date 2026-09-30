@@ -46,6 +46,7 @@ add_library(ahfl_runtime_wasm_host STATIC
     workflow_session.cpp
     wasm_agent_runner.cpp
     wasm_workflow_runtime.cpp
+    wasm_lifecycle.cpp
 )
 
 target_link_libraries(ahfl_runtime_wasm_host
