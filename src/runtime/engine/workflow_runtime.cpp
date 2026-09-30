@@ -549,44 +549,8 @@ decode_persisted_memo_result(const CapabilityMemoEntry &entry,
 
 } // namespace
 
-bool WorkflowResult::has_errors() const {
-    return diagnostics.has_error();
-}
-
-WorkflowStatus WorkflowResult::status() const noexcept {
-    if (report.status == RunTerminalStatus::Completed) {
-        return WorkflowStatus::Completed;
-    }
-    if (report.status == RunTerminalStatus::Suspended) {
-        return WorkflowStatus::Suspended;
-    }
-    if (!report.failure_kind.has_value()) {
-        return WorkflowStatus::NodeFailed;
-    }
-    switch (*report.failure_kind) {
-    case WorkflowFailureKind::DependencyFailed:
-        return WorkflowStatus::DependencyFailed;
-    case WorkflowFailureKind::EvaluationFailed:
-        return WorkflowStatus::EvalError;
-    case WorkflowFailureKind::NodeFailed:
-    case WorkflowFailureKind::BudgetRejected:
-    case WorkflowFailureKind::Cancelled:
-    case WorkflowFailureKind::Interrupted:
-        return WorkflowStatus::NodeFailed;
-    }
-    return WorkflowStatus::NodeFailed;
-}
-
-const Value *WorkflowResult::value(RuntimeValueId id) const noexcept {
-    if (!id.valid() || id.index() >= values.size()) {
-        return nullptr;
-    }
-    return &values[id.index()];
-}
-
-const Value *WorkflowResult::output() const noexcept {
-    return report.output.has_value() ? value(*report.output) : nullptr;
-}
+// WorkflowResult::{has_errors,status,value,output} moved to workflow_result.cpp
+// (WH-4 Decision 2, Option Z neutral extraction).
 
 WorkflowRuntime::WorkflowRuntime(const ir::Program &program, WorkflowRuntimeConfig config)
     : program_(program), index_(program_), config_(std::move(config)),

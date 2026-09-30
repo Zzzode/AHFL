@@ -9,12 +9,10 @@
 #include <string_view>
 #include <vector>
 
-#include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
 #include "ahfl/runtime/execution_event.hpp"
-#include "ahfl/runtime/execution_metadata.hpp"
-#include "ahfl/runtime/execution_report.hpp"
+#include "ahfl/runtime/workflow_result.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/native_host_binding.hpp"
@@ -30,38 +28,11 @@ namespace ahfl::runtime {
 // header. WorkflowRuntime holds one by shared_ptr<const> (see below).
 struct WireResultBindingCache;
 
-// Workflow execution status
-enum class WorkflowStatus {
-    Completed,
-    NodeFailed,
-    DependencyFailed,
-    EvalError,
-    // RFC 0022 (durable resume): a node suspended on a pending capability call.
-    // Not a failure — WorkflowResult::suspended holds the resume record.
-    Suspended,
-};
-
-// Workflow execution result
-struct WorkflowResult {
-    ExecutionMetadataStore metadata;
-    ExecutionEventStore events;
-    ExecutionReport report;
-    std::vector<Value> values;
-    DiagnosticBag diagnostics;
-    // RFC 0022 (durable resume): present iff status() == Suspended. The resume
-    // record for the suspended node — its input Value plus the memo table of
-    // capability results already produced — so the run can be continued by
-    // passing this snapshot back via WorkflowRuntimeConfig::recovery_snapshot
-    // together with exactly one pending-result source: the native
-    // resume_pending_result Value or the raw resume_pending_result_wire_json bytes
-    // (mutually exclusive; the runtime rejects supplying both at the consume gate).
-    std::optional<WorkflowRecoverySnapshot> suspended{};
-
-    [[nodiscard]] bool has_errors() const;
-    [[nodiscard]] WorkflowStatus status() const noexcept;
-    [[nodiscard]] const Value *value(RuntimeValueId id) const noexcept;
-    [[nodiscard]] const Value *output() const noexcept;
-};
+// WorkflowRuntimeConfig + WorkflowRuntime live below. The neutral
+// WorkflowResult / WorkflowStatus types they produce moved to
+// ahfl/runtime/workflow_result.hpp (WH-4 Decision 2, Option Z) so the wasm
+// facade produces the same type without including this evaluator-coupled
+// header.
 
 // Workflow runtime configuration
 struct WorkflowRuntimeConfig {

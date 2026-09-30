@@ -8,8 +8,8 @@
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/base/support/diagnostic_serialization.hpp"
 #include "ahfl/runtime/execution_projection.hpp"
+#include "ahfl/runtime/workflow_result.hpp"
 #include "base/json/json_value.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/value/value.hpp"
 #include "runtime/value/value_json.hpp"
 

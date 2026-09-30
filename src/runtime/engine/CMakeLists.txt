@@ -7,6 +7,7 @@ add_library(ahfl_runtime_engine STATIC
     execution_report.cpp
     agent_runtime.cpp
     workflow_runtime.cpp
+    workflow_result.cpp
     workflow_recovery.cpp
     capability_bridge.cpp
     capability_eval.cpp

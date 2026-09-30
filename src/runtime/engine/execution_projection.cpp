@@ -4,7 +4,7 @@
 #include <set>
 
 #include "ahfl/base/support/overloaded.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "ahfl/runtime/workflow_result.hpp"
 
 namespace ahfl::runtime {
 
