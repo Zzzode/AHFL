@@ -943,16 +943,18 @@ int main() {
                                     std::vector<std::string>{"ahfl_cap.cap_42"},
                   "E2 omits an unreachable final capability from the import authority set");
 
-            // RFC 0026 E4-B1: the E2 capability artifact carries exactly one
-            // wire-schema custom section. This block proves exactly-one target
-            // section + that its raw table (name framing stripped) decodes and
-            // re-encodes through the C1 authority; the trailing placement and the
-            // byte-identical pre-B1 prefix are locked by wasm_e2_binary_gate.py.
+            // RFC 0026 E4-B1 + KR6.8 WH-4 D-C: the E2 capability artifact
+            // carries two custom sections: the AHFLXM exec-manifest (D-C, for
+            // capability agents) and the wire-schema section. This block proves
+            // the wire-schema target section + that its raw table (name framing
+            // stripped) decodes and re-encodes through the C1 authority; the
+            // trailing placement and the byte-identical pre-B1 prefix are locked
+            // by wasm_e2_binary_gate.py.
             const auto e2_custom = first.ok()
                                        ? wire_schema_custom_section(first.artifact->bytes)
                                        : WireSchemaCustomSection{};
-            check(e2_custom.custom_count == 1 && e2_custom.table_bytes.has_value(),
-                  "E2 artifact carries exactly one wire-schema custom section");
+            check(e2_custom.custom_count == 2 && e2_custom.table_bytes.has_value(),
+                  "E2 artifact carries AHFLXM + wire-schema custom sections");
 
             if (e2_custom.table_bytes.has_value()) {
                 const auto decoded = ahfl::ir::core::decode_core_wire_schema_table(
@@ -1008,12 +1010,13 @@ int main() {
             }
 
             // Least-privilege: the extra unreachable capability appears in
-            // neither the imports nor the decoded wire-schema table.
+            // neither the imports nor the decoded wire-schema table. The
+            // AHFLXM + wire-schema custom sections are still present.
             const auto least_custom = least.ok()
                                           ? wire_schema_custom_section(least.artifact->bytes)
                                           : WireSchemaCustomSection{};
-            check(least_custom.custom_count == 1 && least_custom.table_bytes.has_value(),
-                  "E2 least-privilege artifact still carries one wire-schema section");
+            check(least_custom.custom_count == 2 && least_custom.table_bytes.has_value(),
+                  "E2 least-privilege artifact still carries AHFLXM + wire-schema sections");
             if (least_custom.table_bytes.has_value()) {
                 const auto decoded = ahfl::ir::core::decode_core_wire_schema_table(
                     std::span<const std::uint8_t>(*least_custom.table_bytes));
