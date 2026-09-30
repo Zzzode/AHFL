@@ -1684,3 +1684,399 @@ std::function<bool()> interruption_requested;
 - **monotonic_clock**:(a) 为"DAP 时序"加入 facade(前提过时,DAP 从不使用)——否;(b) 为 event offset 加入(DAP 不消费 event 流,独立 slice)——否。**选**:不引入。
 - **agent_input_hook**:(a) 保留 `on_agent_input`(workflow lane 死代码,Principle 1)——否;(b) 从 workflow input 合成 node 输入(node 输入是投影,合成即说谎)——否;(c) 删除 + 诚实"input 不可得"契约——**选**。
 - **WASM=OFF**:(a) evaluator 回退(禁止并行路径,Principle 1)——否;(b) 构建失败(破坏非执行功能)——否;(c) launch 拒绝——**选**(继承)。
+
+## 12.10 WH-9 decisions (2026-09-30, dedicated decision agent, no human gate)
+
+> Commissioned 2026-09-30; recorded 2026-10-01。HEAD at commission: `85f5132e`。
+> WH-6(CLI wasm-only run)、WH-7(REPL wasm cutover)、WH-8(DAP cutover)在该 HEAD **已决策但未实现**。以下 file:line 钉于 `85f5132e`;builder MUST 在 WH-6/7/8 落地后重新核对行号,但**决策本身稳定**——WH-6/7/8 的任何实现选择都不改变本节结论。
+>
+> **Coordinator sequencing note(2026-10-01):** §12.10.9 staging 第 1 步/W1-W3 提到的 CLI/REPL/DAP 切换**不是** WH-9 commit 的内容——它们是 §12.7/§12.8/§12.9 已决策的独立切片(WH-6/7/8),各自 implement → adversarial review → fix-forward 后独立落地。WH-9 从"零生产调用者"状态开始,只包含删除本身(一个原子 `BREAKING CHANGE` commit)。本节其余内容(删除 census、closure 裁决、EvalError 裁决、Node 降级、测试分诊、验收)不变。
+
+### 12.10.1 Closure arm fork — DECISION: Option (a), big-bang delete
+
+**Chosen: 删除 `Value` closure arm、`InterpreterClosureHandle`、`InterpreterClosure`/`InterpreterClosureRef`、`make_interpreter_closure`、`next_closure_id`、`ValueKind::Callable`、全部 `value.cpp`/`value_json.cpp` closure arms、`frame_packer.cpp` 拒绝检查、`debug_session.cpp` 类型名 lambda——在同一 commit。**
+
+**Rejected: Option (b),保留防御性 opaque-id handle。** 唯一生产者死亡之时,防御性 arm 就是死重。Principle 1 禁止 "just in case" 留代码;Principle 3(hash-consed, flat)被一个无任何路径可构造的 variant arm 违反。若未来 wasm lane 需要一等 callable Value,那是一个新 RFC + 新设计,不是幽灵 arm。
+
+#### 7-stem observation 问题的精确回答
+
+WH-S 复审的阻断问题:*closure arm 删除后,7 个 closure-stem conformance case 怎样?*
+
+**7 个 stem 的 `output_json` 不含 closure。** 已在 HEAD 逐个 manifest 核实:
+
+| Stem | `output_json` 形状 |
+|------|---------------------|
+| `fb1_direct_call` | `{"_type":"wasm::fb1_direct_call::Frame","value":"identity"}` |
+| `fb1_aggregate_direct_call` | plain struct(无 callable) |
+| `fb3_byvalue_capture` | plain struct(无 callable) |
+| `fb3_higher_order` | plain struct(无 callable) |
+| `fb3_nested_activation` | plain struct(无 callable) |
+| `fb3_nested_lambda_flow` | plain struct(无 callable) |
+| `fb4_effect_clause_pure_body` | plain struct(无 callable) |
+
+这些程序中的闭包是**wasm lane 内部状态**——funcref table 的 `call_indirect`,从不跨 frame 边界。codegen 拒绝闭包跨 fn 边界(`core_wasm_codegen.cpp:4188`、`:4363`、`:4288`);frame packer 拒绝 closure Value(`frame_packer.cpp:140`)。native lane 的输出 Value 由 wire JSON 经 `value_from_json` 解码,该函数**无 closure arm**——结构上不可能产出 closure。`render_observation`(`observation_document.cpp:86`)对解码后的 Value 调 `runtime::value_to_json(*output)`;closure arm 删除后,`value_to_json` 没有可命中的 closure 分支。
+
+**结论:删除 closure arm 改变 ZERO 个 blessing,不需要任何非 Value renderer 源码变更。** 7 个 stem 保留,manifest 的 `node_observation_skip: "evaluator_surface_awaits_kr68"` 退役(见 §12.10.4),改为数据驱动的 blessing-or-expectation 比较(见 §12.10.6)。
+
+#### Closure 删除 census(file:line at HEAD `85f5132e`)
+
+**生产源码:**
+
+| 文件 | 行 | 删除内容 |
+|------|-------|-----------|
+| `src/runtime/value/value.hpp` | `:49` | `struct InterpreterClosure;` 前向声明 |
+| | `:50` | `using InterpreterClosureRef = std::shared_ptr<const InterpreterClosure>;` |
+| | `:52-59` | `struct InterpreterClosureHandle { id, descriptor, operator== }` |
+| | `:213` | `ValueNode` variant arm `InterpreterClosureHandle` |
+| | `:240` | `ValueKind::Callable` |
+| | `:417` | `make_interpreter_closure` 声明 |
+| | `:20-48` | closure rationale 注释(更新为删除后事实) |
+| `src/runtime/value/value.cpp` | `:202-211` | `compare_values` closure arm(id 序) |
+| | `:345-351` | `structurally_equal` closure arm |
+| | `:400-401` | `value_kind` → `Callable` |
+| | `:543-546` | `print_value` `<lambda/id>` |
+| | `:559-576` | `next_closure_id` + `make_interpreter_closure` |
+| | `:786-791` | `clone_value` closure arm |
+| `src/runtime/value/value_json.cpp` | `:45` | `kOpaqueClosureJson = R"({"_callable":"runtime"})"` |
+| | `:172-178` | `write_json_impl` closure arm(Strict→拒绝,否则→opaque) |
+| | `:268` | `try_value_to_json` strict 拒绝路径(arm 亡 → 路径亡) |
+| | `:276` | `hash_values` strict closure 拒绝(arm 亡 → 路径亡) |
+| `src/runtime/evaluator/evaluator.cpp` | `:271-283` | `eval_lambda_expr`——**唯一生产 closure 生产者** |
+| `src/runtime/evaluator/evaluator.hpp` | `:42-53` | `InterpreterClosure` struct 定义(随目录亡) |
+| `src/runtime/wasm_host/frame_packer.cpp` | `:140` | `std::holds_alternative<InterpreterClosureHandle>` 拒绝(arm 亡 → 检查亡) |
+| | `:290`,`:356` | 提及 closure 的注释(更新措辞) |
+| `src/tooling/dap/debug_session.cpp` | `:119` | `value_type_name` 的 `[](const InterpreterClosureHandle&) → "Callable"` lambda(删除后不可达) |
+
+**测试源码:**
+
+| 文件 | 行 | 删除内容 |
+|------|-------|-----------|
+| `tests/unit/runtime/engine/wire_value.cpp` | `:39-42` | `make_closure_value()`(需要 evaluator.hpp 的 InterpreterClosure) |
+| | `:103-167` | `test_closure_rejected_top_level`、`test_closure_rejected_nested`、`test_closure_observation_spelling`、`test_closure_identity` |
+| | `:305-308` | `main()` 中 4 个 closure 测试调用 |
+| | `:12` | `#include "runtime/evaluator/evaluator.hpp"` |
+| `tests/unit/runtime/wasm_host/frame_packer_reader.cpp` | `:713`,`:866`,`:885`,`:908`,`:977` | 测试专用 closure 构造(packer 拒绝测试) |
+| `tests/unit/runtime/wasm_host/capability_import.cpp` | `:713` | 测试专用 closure 构造 |
+
+**Post-cut grep gates(commit 后 builder 执行):**
+
+```
+grep -rn "InterpreterClosure" src/ include/ tests/   # must be zero
+grep -rn "Callable" src/runtime/value/               # must be zero
+grep -rn "_callable" src/ tests/                     # must be zero
+grep -rn "make_interpreter_closure" src/ tests/      # must be zero
+```
+
+注意:`grep -rn "evaluator" src/` 会有 **const-evaluator 误报**(如 constexpr-evaluator 注释、third_party 内)。builder grep `ahfl::evaluator` / `runtime::evaluator` / `ahfl_runtime_evaluator` / `evaluator::`——`third_party/` 之外必须为零。
+
+### 12.10.2 删除 census 定稿
+
+#### 生产:`src/runtime/evaluator/` — 5840 LOC,整目录删除
+
+| 文件 | LOC |
+|------|-----|
+| evaluator.cpp | 2261 |
+| builtins.cpp | 2014 |
+| executor.cpp | 415 |
+| runtime_fn_table.cpp | 350 |
+| eval_context.cpp | 134 |
+| pattern_match.cpp | 188 |
+| evaluator.hpp | 123 |
+| builtins.hpp | 67 |
+| eval_context.hpp | 55 |
+| executor.hpp | 117 |
+| runtime_fn_table.hpp | 98 |
+| pattern_match.hpp | 18 |
+| CMakeLists.txt | — |
+
+#### 生产:engine 库 evaluator 驱动 TU
+
+| 文件 | LOC | 命运 |
+|------|-----|------|
+| `src/runtime/engine/agent_runtime.cpp` | 356 | **删除**(evaluator 驱动 agent 执行) |
+| `src/runtime/engine/capability_eval.cpp` | 251 | **删除**(evaluator 驱动 capability 求值) |
+| `src/runtime/engine/native_host_binding.cpp` | 115 | **删除**(evaluator 驱动 native host binding) |
+| `src/runtime/engine/workflow_runtime.cpp` | 1597 | **删除**(evaluator 驱动 `WorkflowRuntime::run`;WH-6/7/8 后零生产用户——已核:只有 workflow_run.cpp 与 debug_session.cpp include workflow_runtime.hpp,届时均已切换) |
+| `src/runtime/engine/workflow_runtime.hpp` | — | **删除**(定义 WorkflowRuntimeConfig + WorkflowRuntime;wasm lane 有自己的 `WasmWorkflowRuntimeConfig`,`wasm_workflow_runtime.hpp:38`) |
+
+**存活 engine TU**(40 个文件,evaluator-free):execution_event.cpp、execution_metadata.cpp、execution_otel.cpp、execution_projection.cpp、execution_renderer.cpp、execution_report.cpp、workflow_result.cpp、workflow_recovery.cpp、capability_bridge.cpp、capability_transport_adapter.cpp、standard_capabilities.cpp、connection_pool.cpp、http_transport.cpp、grpc_transport.cpp、parallel_scheduler.cpp、data_pipeline.cpp、sandbox.cpp、distributed.cpp、wire_capability.cpp、wire_value.cpp、wire_transport_adapter.cpp、core_wire_codec.cpp、core_wasm_schema_transport.cpp、core_wasm_resume_record.cpp、core_wasm_schema_module.cpp、core_wasm_frame_module.cpp、core_wasm_node_events.cpp、core_wire_canonical_size.cpp、core_wasm_resume_controller.cpp、core_wasm_resume_host_codes.cpp、core_wasm_resume_host.cpp、core_wasm_resume_capacity.cpp、core_wasm_idempotency_token.cpp、host_event_envelope.cpp、durable_effect_intent.cpp、durable_effect_authority.cpp、payload_store_codec.cpp、payload_store.cpp。
+
+#### CMake / build edges
+
+| 文件 | 行 | 删除内容 |
+|------|------|-----------|
+| `src/CMakeLists.txt` | `:28` | `add_subdirectory(runtime/evaluator)` |
+| | `:83` | `ahfl_runtime` bundle 中的 `ahfl_runtime_evaluator` |
+| `src/runtime/engine/CMakeLists.txt` | — | TU 列表中的 agent_runtime.cpp、workflow_runtime.cpp、capability_eval.cpp、native_host_binding.cpp |
+| | — | `PUBLIC ahfl_runtime_evaluator` link edge |
+| `cmake/modules/AhflInstall.cmake` | `:109` | install 集中的 `ahfl_runtime_evaluator` |
+| `src/tooling/repl/CMakeLists.txt` | `:7` | `ahfl_runtime_evaluator` link(WH-7 先 drop) |
+
+### 12.10.3 EvalError / EvaluationFailed — DECISION: 分裂存活
+
+**这是对 §12.2(line 450)与 §12.7.4(line 1227)"wasm lane 永不产生 EvalError" 声明的 dated revision。该声明在 HEAD `85f5132e` 事实层面已过时。**
+
+**已核实的 wasm-lane `WorkflowFailureKind::EvaluationFailed` 生产者:**
+
+| 文件 | 行 | 上下文 |
+|------|------|---------|
+| `src/runtime/wasm_host/wasm_lifecycle.cpp` | `:57` | `build_report` fail-closed:event-stream-invalid → `result.report.failure_kind = WorkflowFailureKind::EvaluationFailed` |
+| `src/runtime/wasm_host/workflow_session.cpp` | `:1333` | P6 输出解码失败 → `run_failure_kind = EvaluationFailed` |
+| `src/runtime/wasm_host/workflow_session.cpp` | `:1355` | WireJson 输出解析失败 → `run_failure_kind = EvaluationFailed` |
+
+`workflow_result.cpp:29-30` 把 `WorkflowFailureKind::EvaluationFailed` 映射为 `WorkflowStatus::EvalError`。wasm lane **确实**经 fail-closed 路径产生 `EvalError`。wasm-lane **测试**钉住这一点:`tests/unit/runtime/wasm_host/workflow_session.cpp:928` 断言损坏输出场景下 `result->result.status() == WorkflowStatus::EvalError`。
+
+**决策:**
+
+| 枚举 arm | 命运 | 理由 |
+|----------|------|------|
+| `WorkflowStatus::EvalError`(`workflow_result.hpp:50`) | **存活** | wasm lane 经 fail-closed 路径产生 |
+| `WorkflowFailureKind::EvaluationFailed`(`execution_event.hpp:107`) | **存活** | wasm lane 产生(上述 3 个生产者) |
+| `NodeFailureKind::EvaluationFailed`(`execution_event.hpp:97`) | **删除** | 唯一生产者:`workflow_runtime.cpp:1297,1419,1471`(evaluator 驱动,随删)。grep 已核零非生产者消费者。 |
+
+**同 commit 更正的过时注释:**
+
+- `src/runtime/engine/workflow_result.hpp:14-18`——声称 "wasm lane never produces it … deleted at WH-9"。替换为:"The wasm lane produces `EvalError` through fail-closed paths (event-stream-invalid, output decode failure); see `wasm_lifecycle.cpp:57`, `workflow_session.cpp:1333,1355`."
+- `tests/conformance/native_engine.cpp:80`——"never EvalError" 过时;wasm lane 可在 fail-closed 路径产生 `EvalError`。
+
+**`ahfl.run-report` JSON schema 影响:无。** `run_status_name`(`execution_renderer.cpp:21-36`)映射 `RunTerminalStatus`(Completed/Failed/Cancelled/Interrupted/Suspended),无 `EvalError` arm。`WorkflowStatus::EvalError` 是由 report `failure_kind` 计算的高层状态;经 `status_name_workflow`(`observation_document.cpp:25-37`)呈现为 `"failed"`。JSON schema 不变。
+
+### 12.10.4 Node 降级形状
+
+#### Conformance node runner:gut 为 parity-only
+
+`tests/integration/conformance_wasm_node_runner.cpp`(909 行)**gut**:
+
+- **删除**:evaluator 依赖(`:42`、`:53`、`:498-507`、`:575-579`)、`kExpectedAgreed=66`/`kExpectedSkipped=0` census pin(`:147-148`)、`kExpectedNodeOnlyStems`(`:158-166`)、evaluator-vs-node differential 比较、blessing-determinism 模式、mutation 模式。
+- **保留**:node-parity smoke——编译一个 fixture,Node 上跑,断言 observation 与 checked-in blessing 一致。这是 "Node 仍工作" 的金丝雀,不是 differential 引擎。
+- **重命名**:存活 ctest 名保留 `ahfl.conformance.wasm_node_differential`(名字被 CI 配置钉住;重命名超范围),但语义变为 "node-parity smoke"。
+
+#### Native conformance runner:存活,census pin 更新
+
+`tests/integration/conformance_wasm_native_runner.cpp`(625 行)存活。变更:
+
+- **删除**:evaluator 依赖(`:41`、`:56`、`:198-207`、`:464`)、`kExpectedNodeOnlyStems`(`:73`)、node-only 分支(`:219-234`)。
+- **更新**:census pin 为 `kExpectedAgreed=66` / `kExpectedSkipped=0`(全部 66 场景改为 native-vs-blessing 比较;7 个前 node-only stem 经数据驱动 blessing-or-expectation 进入普查——见 §12.10.6)。
+
+#### Node resume port:整删
+
+| 文件 | LOC | 命运 |
+|------|-----|------|
+| `tests/integration/core_wasm_node_resume_engine.hpp` | 145 | **删除**(Node/V8 resume port) |
+| `tests/integration/core_wasm_node_resume_engine.cpp` | 892 | **删除** |
+| `tests/integration/core_wasm_resume_node_e2e.cpp` | 428 | **删除**(resume e2e) |
+
+`--self-test-arity` V8 自测(e2e `:600-681`)随删。wasm3 lane 有自己的 resume 测试(`tests/unit/runtime/wasm_host/workflow_session.cpp`、`tests/unit/runtime/engine/core_wasm_resume_*.cpp`)存活。
+
+#### Node-host 脚本与探针:删除
+
+| 对象 | 数量 | 命运 |
+|------|-------|------|
+| `tests/scripts/wasm_*_node_host.py` | 25 | **删除**(被 66-census + gutted node-parity ctest 取代) |
+| `tests/conformance/node_embedded_host_v2*_probe.mjs` | 5 | **删除**(`v2a_probe`、`v2b_probe`、`v2b_passthrough_probe`、`v2b_arena_probe`、`v2b_enum_probe`——仅被将死 py 脚本消费) |
+| `tests/conformance/node_embedded_host.mjs` | 1 | **存活**(gutted node-parity ctest 使用,`conformance_wasm_node_runner.cpp:601,687`) |
+| `tests/CMakeLists.txt` skip-77 ctests | 30 | **删除**(`:61,91,129,...,989` 依赖 node 的 SKIP_RETURN_CODE 77 ctests) |
+| `tests/integration/core_wasm_e1_probe.cpp` | 161 | **删除**(evaluator-forking differential) |
+| `tests/integration/core_wasm_e2_probe.cpp` | 247 | **删除** |
+| `tests/integration/core_wasm_e3_probe.cpp` | 154 | **删除**(用 WorkflowRuntime 作 "native" 参照) |
+| `tests/integration/core_wasm_p6_probe.cpp` | 793 | **删除**(用 AgentRuntime 作 "native" 参照) |
+| `tests/integration/core_wasm_capability_workflow_probe.cpp` | 111 | **存活**(已核 evaluator-free) |
+
+#### `EvaluatorSurfaceAwaitsKr68` 枚举退役
+
+`tests/conformance/conformance_case.hpp:126-138` 定义 `WasmNodeObservationSkip::EvaluatorSurfaceAwaitsKr68`。**退役该枚举值**(它等待的 evaluator surface 已亡)。7 个声明 `"node_observation_skip": "evaluator_surface_awaits_kr68"` 的 manifest **移除该字段**(不是改成另一个值——skip 理由已不存在)。`wasm_eligibility.cpp:232-236` 检查删除。parser(`conformance_case.hpp:1068`)不再接受该字符串。
+
+#### `engines.evaluator` 字段退役
+
+`tests/conformance/conformance_case.hpp:153` 的 engines struct 有 `bool evaluator{false}`;`:977-1004` 解析它。**退役该字段**:从 struct、parser 与全部 58 个 manifest 移除(36 个 `"evaluator": true` + 7 个 `"evaluator": false` + 15 个 minified `"evaluator":true`)。唯一消费者是 `conformance_evaluator_runner.cpp:113`(随删)。native 与 node runner 从不检查它。
+
+### 12.10.5 语义 / GUT 测试分诊
+
+#### 分类规则
+
+每个触及 evaluator 的测试文件归入:
+
+- **Class A — 存活,evaluator-free**:无 evaluator 符号依赖;原样存活(或清理 stale include/注释)。
+- **Class B — 分裂**:同一文件有存活测试与 evaluator 依赖测试;删除后者及其 `main()` 调用,保留前者。
+- **Class C — 整删**:文件唯一主体是 evaluator 或 evaluator 驱动组件;删除文件与其 CMake target。
+
+#### Class C — 整删
+
+`tests/unit/runtime/evaluator/evaluator.cpp`(993)、`evaluator_generics.cpp`(646)、`executor.cpp`(450);`tests/unit/runtime/engine/agent_runtime.cpp`(613)、`workflow_runtime.cpp`(4426)、`native_host_binding.cpp`(222);`tests/conformance/evaluator_engine.{hpp,cpp}`(75+291);`tests/integration/conformance_evaluator_runner.cpp`(448);`core_wasm_node_resume_engine.{hpp,cpp}`(1037);`core_wasm_resume_node_e2e.cpp`(428);`core_wasm_e1_probe.cpp`(161)、`e2_probe.cpp`(247)、`e3_probe.cpp`(154)、`p6_probe.cpp`(793)。连同各自 CMake target。
+
+#### Class B — 分裂
+
+| 文件 | 删除 | 保留 |
+|------|--------|--------|
+| `tests/unit/runtime/evaluator/set_map_uuid_timestamp.cpp`(567) | `:307-530`(`eval_expr` 驱动测试 + `main()` evaluator 调用)、`:7-8` includes、`:26` using | `:1-303`(Value/json/Set/Map 测试) |
+| `tests/unit/runtime/engine/wire_value.cpp`(318) | `:39-42`、`:103-167`(4 个 closure 测试)、`:305-308`、`:12` include | `:45-90`(serialize_args)、`:172-206`(hash_stable)、`:207-298`(parse_args) |
+| `tests/unit/runtime/engine/native_wasm_differential.cpp`(1298) | `:1-376`(Part A:4 个 evaluator-differential 函数) | `:378-1288`(Part B:c3 inspector)、`:1289` `main()` |
+| `tests/unit/runtime/wasm_runner/wasm_runner.cpp`(1490) | `:1205-1490`(section 8:evaluator vs wasm 字节比较、`eval_runtime`、`fail_byte`) | `:62-1204`(sections 1-7:wasm3 facade 测试) |
+| `tests/unit/runtime/engine/core_wire_codec.cpp`(1320) | `:941-960`(`test_builtin_callers` 用 `evaluator::BuiltinTable`/`EvalContext`)、`:7-8` includes、`:944` using | 其余 wire codec 测试 |
+| `tests/unit/runtime/engine/capability_bridge.cpp`(2013) | evaluator 依赖测试函数(`:1012`、`:1162` 用 `evaluator::EvalContext`) | evaluator-free 测试(若有存活;builder 核实) |
+
+#### Class A — 存活(含清理)
+
+- 清理 stale 引用:`execution_projection.cpp:14`(`using namespace ahfl::evaluator;` + stale include)、`execution_renderer.cpp:18`(同)、`workflow_recovery.cpp` 测试注释 `:271,294`、`observation_compare.hpp` 措辞/错误串("evaluator" → "engine-agnostic")、`native_engine.cpp:80` 注释、`src/runtime/engine/workflow_recovery.cpp:5` stale include。
+- 无需清理(已核 evaluator-free):`observation_document.cpp`、`conformance_case.hpp`(减去退役枚举/字段)、`wasm_eligibility.cpp`(减去退役检查)、`conformance_mock_registry.*`、`resume_test_support.hpp`、engine 下 execution_*/report/event/metadata/otel、sandbox、distributed、parallel_scheduler、connection_pool、http/grpc_transport、host_event_envelope、core_wasm_*、core_wire_*、durable_effect_*、payload_store*、`tests/unit/runtime/wasm_host/*.cpp` 全部、wasm_runner.cpp(分裂后)、`tests/unit/runtime/value/*.cpp` 全部、`tests/unit/compiler/**` 全部、`tests/cmake/WasmTargetTests.cmake`(5 个结构性 gate)。
+
+### 12.10.6 存活保证
+
+| 存活者 | 保证 | 证据 |
+|----------|-----------|----------|
+| `observation_compare.hpp` | 引擎中立比较器;`observations_agree`(`:154`)与 `node_observation_matches_expectation`(`:215`)比较 observation JSON,不碰 evaluator 内部。注释/错误串更新。 | 无 evaluator include/符号 |
+| 59 个 blessings | `tests/conformance/observations/` 下全部 checked-in observation 是 evaluator-free JSON。7 个 closure-stem manifest **无 blessing**(用 manifest-expectation 比较)。 | `ls ... \| wc -l` = 59 |
+| `conformance_case.hpp` | 退役 `EvaluatorSurfaceAwaitsKr68` + `engines.evaluator`;其余 manifest schema 存活。 | parser `:977-1004` 更新 |
+| `compile_source` | evaluator-free 测试支撑。 | 无 evaluator include |
+| `wasm_eligibility.cpp` | 退役 `:232-236` 检查;文件其余 evaluator-free。**命运:存活**(eligibility catalogue 对 wasm lane 仍 load-bearing) | 无 evaluator include |
+| `resume_test_support.hpp` | evaluator-free。 | 无 evaluator include |
+| `value_json` 测试 | evaluator-free(对非 closure Value 测 value_to_json/try_value_to_json/hash_values)。 | 无 evaluator include |
+| `node_observation_matches_expectation` | **存活。** 7 个前 node-only stem 无 blessing;它们与 manifest 声明的 `output_json` 期望经此引擎中立函数比较。这是独立契约(对 Node bless,不对 evaluator)。 | `observation_compare.hpp:215` |
+| 7-stem WH-9 后比较 | 数据驱动:blessing 文件存在 → native-vs-blessing(59 stem);不存在 → 经 `node_observation_matches_expectation` 比 manifest 期望(7 stem)。无需 manifest 标记,按 blessing 文件存在性分支。 | — |
+
+**`observation_document.cpp` schema 字符串:保留。** `"ahfl.evaluator-observation.v1"`(`:47`)是 wire-format 标识符,不是对执行引擎的声明。重命名会破坏每个 blessing 的 schema 字段。schema 描述的是引擎中立的 observation JSON 格式。加 dated 注释:"The schema name is historical; the observation format is engine-agnostic and survives the evaluator retirement."
+
+### 12.10.7 Product scope freeze、文档、commit 形状
+
+#### product-scope-freeze.json
+
+**不变。** `config/product-scope-freeze.json` 列的是 CommandKind 与 emit artifact。evaluator 两者皆非。`ahflc run` 命令存活(内部切换引擎)。gate 对本 commit 是 no-op;commit message 明文声明这一点。
+
+#### 同 commit 更新的文档
+
+| 文档 | 更新 |
+|-----|--------|
+| `docs/design/kr68-wasm3-embedded-host-decision.zh.md` | 加入 §12.10;WH-9 标记 implemented |
+| `docs/plans/q4-2026-roadmap.zh.md` | KR6.8 行:⬜ → ✅;注记 evaluator retired at WH-9 |
+| `docs/plans/project-status.zh.md` | 加 WH-9 完成条目 |
+| `docs/rfcs/0026-ir-tower-and-execution-model.zh.md` | status:`implementing` → `implemented`(KR6.8 是最后开放 KR);更新 evaluator 引用 |
+| `docs/plans/issue-backlog-global-gaps.zh.md` | 关闭 evaluator-retirement gap 项 |
+
+#### Commit title 与 footer
+
+```
+refactor(runtime)!: retire tree-walking evaluator behind wasm3 embedded host (WH-9)
+
+BREAKING CHANGE: The tree-walking evaluator (src/runtime/evaluator/, 5840 LOC)
+is deleted. ahflc run, the REPL, and the DAP now execute exclusively through
+the vendored wasm3 embedded host. The Value closure arm (InterpreterClosureHandle,
+ValueKind::Callable), NodeFailureKind::EvaluationFailed, the evaluator-driven
+WorkflowRuntime/AgentRuntime/capability_eval/native_host_binding, the Node/V8
+resume port, 25 node-host scripts, 5 v2 probe mjs files, 30 node-dependent
+ctests, and 4 evaluator-forking probes are deleted in the same change.
+WorkflowStatus::EvalError and WorkflowFailureKind::EvaluationFailed survive:
+the wasm lane produces them through fail-closed paths (event-stream-invalid,
+output decode failure). The conformance schema retires the
+evaluator_surface_awaits_kr68 skip reason and the engines.evaluator field.
+product-scope-freeze.json is unchanged (no CommandKind or emit artifact is
+removed).
+```
+
+**ASCII-only**(commit-msg hook)。subject/body 无 CJK。
+
+### 12.10.8 验证阶梯
+
+builder 按序执行,全部须通过:
+
+1. **Grep-zero gates**(commit 后,repo root):
+   ```
+   grep -rn "InterpreterClosure" src/ include/ tests/                                              # zero
+   grep -rn "ahfl::evaluator\|runtime::evaluator\|ahfl_runtime_evaluator" src/ include/ tests/     # zero
+   grep -rn "evaluator_surface_awaits_kr68" src/ include/ tests/                                   # zero
+   grep -rn "engines.evaluator" tests/                                                             # zero
+   grep -rn "NodeFailureKind::EvaluationFailed" src/ include/ tests/                               # zero
+   ```
+   注意 `grep evaluator` 的 const-evaluator 误报,用上面的 qualified patterns。
+2. **66/0 census**:`ahfl.conformance.wasm_native` 报告 `66 agreed, 0 skipped`;native runner pin `kExpectedAgreed=66`/`kExpectedSkipped=0` 成立。
+3. **Node skip-77 + mutation**:gutted node-parity ctest(`ahfl.conformance.wasm_node_differential`)Node 不可用时 exit 77(SKIP_RETURN_CODE 77 保留),Node 在场时通过。
+4. **dev preset**:`cmake --preset dev && cmake --build --preset build-dev && ctest --preset test-dev --output-on-failure` 全绿。
+5. **release preset**:preset/build/test-release 全绿。
+6. **WASM ON/OFF**:`-DAHFL_ENABLE_BACKEND_WASM=ON`(默认)与 `=OFF` 两矩阵。WASM=OFF 下 `ahflc run` 以可行动诊断拒绝(§12.7.1);无 evaluator fallback;两矩阵构建均成功。
+7. **FRESH -Werror build**:`rm -rf build/dev` 后全新 configure+build,零警告(develop 可累积 -Werror 破坏;fresh build 强制)。
+8. **ASan**:asan preset build+test 全绿、无 leak。
+9. **install/export**:`cmake --install build/dev` 成功;安装的 CMake package 不导出 `ahfl_runtime_evaluator` target。
+10. **wasm3 LICENSE**:vendored wasm3 LICENSE 在位、未修改。
+11. **LOC-deleted sanity**:`git diff --stat HEAD~1` 净删除 ≥ 12000 LOC(5840 evaluator + ~2000 engine TU + ~5000 tests + ~1000 scripts/probes)。数字是信息性,非 gate。
+
+### 12.10.9 Commit 内编辑顺序
+
+**ONE commit。** 以下编辑顺序保证中间态不累积额外债务;中间态可以不编译,最终态必须全绿。
+
+1. **删除 `src/runtime/evaluator/`**(整目录)。从 engine 删除 agent_runtime.cpp、capability_eval.cpp、native_host_binding.cpp、workflow_runtime.cpp、workflow_runtime.hpp。更新 src/CMakeLists.txt、engine/CMakeLists.txt、AhflInstall.cmake。(前提:WH-6/7/8 已作为独立切片落地,零生产消费者——见顶部 coordinator note。)
+2. **删除 closure arm**:value.hpp、value.cpp、value_json.cpp、frame_packer.cpp、debug_session.cpp 的 closure arms。从 execution_event.hpp 删除 `NodeFailureKind::EvaluationFailed`。
+3. **更正过时注释**:workflow_result.hpp:14-18、native_engine.cpp:80、workflow_recovery.cpp:5、observation_compare.hpp 措辞、value.hpp:20-48 rationale。
+4. **删除 Class C 测试**整文件与其 CMake targets(TestTargets.cmake / ProjectTests.cmake)。
+5. **分裂 Class B 测试**:set_map_uuid_timestamp.cpp、wire_value.cpp、native_wasm_differential.cpp、wasm_runner.cpp、core_wire_codec.cpp、capability_bridge.cpp。
+6. **清理 Class A stale refs**:execution_projection.cpp、execution_renderer.cpp。
+7. **退役 conformance schema**:`EvaluatorSurfaceAwaitsKr68` + `engines.evaluator` 从 conformance_case.hpp 移除;更新全部 58 manifest;退役 wasm_eligibility.cpp:232-236 检查。
+8. **删除 node 基础设施**:core_wasm_node_resume_engine.{hpp,cpp}、core_wasm_resume_node_e2e.cpp、25 个 py 脚本、5 个 v2 mjs 探针、tests/CMakeLists.txt 中 30 个 skip-77 ctests、4 个 evaluator-forking probes。
+9. **Gut node runner**:conformance_wasm_node_runner.cpp → parity-only;更新 conformance_wasm_native_runner.cpp census pin。
+10. **更新文档**(§12.10.7 表)。
+11. **执行验证阶梯**(§12.10.8)。
+
+**回滚风险注记:**
+
+- 最高风险步是删除本身(WH-6/7/8 已先独立落地);若 wasm lane 有 66-census 未捕获的潜伏语义缺口,整个 commit revert。无部分回滚——删除是原子的。
+- closure arm 步骤安全:存活路径无 closure 生产者(已核:唯一生产者 evaluator.cpp:276 在步骤 1 删除)。
+- manifest 批量编辑是机械的:builder 用脚本移除 58 个 manifest 的两个字段,然后 `git diff --stat` 核恰好 58 文件变更。
+
+### 12.10.10 Worklist 与验收标准
+
+**Worklist**(WH-9 本体;WH-6/7/8 由各自切片拥有,不在此列):
+
+| # | 项 | 文件 |
+|---|------|-------|
+| W4 | 删除 `src/runtime/evaluator/` | 整目录 |
+| W5 | 删除 engine evaluator TU | agent_runtime.cpp、capability_eval.cpp、native_host_binding.cpp、workflow_runtime.{cpp,hpp} |
+| W6 | 删除 closure arm | value.hpp、value.cpp、value_json.cpp、frame_packer.cpp、debug_session.cpp |
+| W7 | 删除 `NodeFailureKind::EvaluationFailed` | execution_event.hpp |
+| W8 | 更正过时注释 | workflow_result.hpp、native_engine.cpp、workflow_recovery.cpp、observation_compare.hpp、value.hpp |
+| W9 | 删除 Class C 测试 + CMake targets | 15+ 文件 + TestTargets.cmake / ProjectTests.cmake |
+| W10 | 分裂 Class B 测试 | 6 文件 |
+| W11 | 清理 Class A stale refs | 2+ 文件 |
+| W12 | 退役 conformance schema | conformance_case.hpp、58 manifest、wasm_eligibility.cpp |
+| W13 | 删除 node 基础设施 | resume port、25 py、5 mjs、30 ctests、4 probes |
+| W14 | Gut node runner + 更新 native runner | conformance_wasm_node_runner.cpp、conformance_wasm_native_runner.cpp |
+| W15 | 更新 CMake edges | src/CMakeLists.txt、engine/CMakeLists.txt、AhflInstall.cmake、TestTargets.cmake、ProjectTests.cmake、tests/CMakeLists.txt |
+| W16 | 更新文档 | 5 个文档 |
+| W17 | 执行验证阶梯 | — |
+
+**验收标准:**
+
+1. `grep -rn "InterpreterClosure" src/ include/ tests/` 为零。
+2. `grep -rn "ahfl::evaluator\|runtime::evaluator\|ahfl_runtime_evaluator" src/ include/ tests/` 为零。
+3. `grep -rn "evaluator_surface_awaits_kr68" src/ include/ tests/` 为零。
+4. `grep -rn "NodeFailureKind::EvaluationFailed" src/ include/ tests/` 为零。
+5. `src/runtime/evaluator/` 不存在。
+6. 任何 CMake 文件中无 `ahfl_runtime_evaluator` target。
+7. `ahflc run` 经 wasm3 lane 执行并产出正确输出(66-census 证)。
+8. `-DAHFL_ENABLE_BACKEND_WASM=OFF` 下 `ahflc run` 以可行动诊断拒绝;无 evaluator fallback。
+9. `ahfl.conformance.wasm_native` 报告 `66 agreed, 0 skipped`。
+10. `ahfl.conformance.wasm_node_differential` 无 Node exit 77,有 Node 通过。
+11. Fresh `-Werror` dev build 零警告。
+12. ASan ctest 全绿、无 leak。
+13. `cmake --install` 成功;安装导出无 `ahfl_runtime_evaluator`。
+14. `WorkflowStatus::EvalError` 与 `WorkflowFailureKind::EvaluationFailed` 存活;`tests/unit/runtime/wasm_host/workflow_session.cpp:928` 仍通过。
+15. 7 个前 closure stem 经 `node_observation_matches_expectation` 与 manifest 期望比较;不需要 blessing 文件。
+16. `git diff --stat` 净删除 ≥ 12000 LOC。
+17. Commit message ASCII-only、含 `BREAKING CHANGE:`、声明 product-scope-freeze.json 不变。
+18. RFC 0026 status 为 `implemented`;KR6.8 roadmap 行为 ✅。
+
+### 12.10.11 被否方案(按分叉)
+
+**Closure arm:**
+- **Option (b) 保留防御性 opaque-id handle**——否。无存活路径构造 closure Value;防御性 arm 是死重,违反 Principle 1 与 Principle 3。未来需要 = 新 RFC。
+
+**EvalError:**
+- **删除 `WorkflowStatus::EvalError` + `WorkflowFailureKind::EvaluationFailed`**——否。wasm lane 经 fail-closed 路径产生它们(`wasm_lifecycle.cpp:57`、`workflow_session.cpp:1333,1355`)。删除会破坏 wasm lane fail-closed 契约与 `workflow_session.cpp:928` 测试。
+
+**Node 降级:**
+- **保留完整 node differential runner 作永久第二引擎**——否。native(wasm3)66-census 是权威契约。Node 是可移植性金丝雀,不是对等引擎。维护对第二个 JS 引擎的完整 differential 线束成本持续、边际信心递减。
+- **完全删除 node runner**——否。单个 parity smoke 是防 wasm3 特有 ABI 漂移(wasm3 解释器与 V8 可能在边界情形分歧)的廉价保险。gutted runner 约 100 行。
+
+**测试分诊:**
+- **把 evaluator 测试当 "legacy" 测试继续编译**——否。Principle 1 禁止 legacy/compat 目录。evaluator 删除,其测试同 commit 删除或分裂。
+
+**Commit 形状:**
+- **把 WH-9 拆成多个 commit(先删 evaluator、再删 closure arm、再清测试)**——否。evaluator 与 closure arm 相互依赖(evaluator 是唯一 closure 生产者),拆开产生不编译/测试失败的中间态。一个原子 commit 是唯一安全形状。
+- **保留 `engines.evaluator` 字段作 no-op 兼容**——否。Principle 1 禁止前向兼容 shim。evaluator runner 死后该字段无消费者,同 commit 移除。
