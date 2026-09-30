@@ -12,7 +12,7 @@
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
 #include "ahfl/runtime/execution_event.hpp"
-#include "ahfl/runtime/workflow_result.hpp"
+#include "runtime/engine/workflow_result.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/native_host_binding.hpp"
@@ -30,9 +30,9 @@ struct WireResultBindingCache;
 
 // WorkflowRuntimeConfig + WorkflowRuntime live below. The neutral
 // WorkflowResult / WorkflowStatus types they produce moved to
-// ahfl/runtime/workflow_result.hpp (WH-4 Decision 2, Option Z) so the wasm
-// facade produces the same type without including this evaluator-coupled
-// header.
+// runtime/engine/workflow_result.hpp (WH-4 Decision 2, Option Z; WH-4
+// fix-forward D-E moved it src-internal) so the wasm facade produces the same
+// type without including this evaluator-coupled header.
 
 // Workflow runtime configuration
 struct WorkflowRuntimeConfig {

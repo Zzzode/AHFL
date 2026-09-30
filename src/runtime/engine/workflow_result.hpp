@@ -1,11 +1,12 @@
 #pragma once
 
-// RFC 0026 KR6.8 WH-4 (Decision 2, Option Z): the evaluator-FREE neutral
-// workflow result type. `WorkflowResult` + `WorkflowStatus` were moved here
-// from `runtime/engine/workflow_runtime.hpp` so that BOTH the evaluator-backed
-// `WorkflowRuntime` and the wasm3-backed `WasmWorkflowRuntime` produce the
-// same neutral type without either depending on the other's implementation
-// header. The renderer + projections consume only these neutral fields.
+// RFC 0026 KR6.8 WH-4 (Decision 2, Option Z) + WH-4 fix-forward D-E: the
+// evaluator-FREE neutral workflow result type. `WorkflowResult` +
+// `WorkflowStatus` were moved here from `runtime/engine/workflow_runtime.hpp`
+// so that BOTH the evaluator-backed `WorkflowRuntime` and the wasm3-backed
+// `WasmWorkflowRuntime` produce the same neutral type without either depending
+// on the other's implementation header. The renderer + projections consume
+// only these neutral fields.
 //
 // The struct is a bag of evaluator-free fields (event store / metadata /
 // report / values / diagnostics / durable-resume snapshot); the evaluator
@@ -16,12 +17,17 @@
 // `EvaluationFailed` path). It is a documented WH-9 deletion, not hidden
 // coupling.
 //
-// Include note: this header lives under include/ahfl/runtime/ but includes two
-// src-internal headers (`runtime/value/value.hpp`,
-// `runtime/engine/workflow_recovery.hpp`). Every in-tree consumer already has
-// the build-tree src/ dir on its include path (the engine target PRIVATE, the
-// wasm host target PUBLIC BUILD_INTERFACE, each tooling/test target
-// explicitly), so this is a build-tree-neutral move, not a new edge.
+// Include note (D-E, 2026-09-30): this header is SRC-INTERNAL. It lived under
+// include/ahfl/runtime/ until the fix-forward moved it here, because it
+// includes two src-internal headers (`runtime/value/value.hpp`,
+// `runtime/engine/workflow_recovery.hpp`) and no installed header may reference
+// a src-internal path. Every in-tree consumer has the build-tree src/ dir on
+// its include path (the engine target PRIVATE, the wasm host / wasm runner
+// targets PUBLIC BUILD_INTERFACE, each tooling/test target explicitly), so
+// this is a build-tree-neutral move, not a new edge. It is NOT installed SDK
+// surface (the installed execution_renderer.hpp / execution_projection.hpp
+// only forward-declare the type; an in-tree tool that needs the complete type
+// links the engine target).
 
 #include <cstddef>
 #include <optional>

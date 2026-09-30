@@ -21,7 +21,7 @@
 #include "runtime/value/value.hpp"
 
 #include "ahfl/runtime/execution_event.hpp"
-#include "ahfl/runtime/workflow_result.hpp"
+#include "runtime/engine/workflow_result.hpp"
 #include "compiler/backends/wasm/core_wasm_codegen.hpp"
 
 #include <cstdint>

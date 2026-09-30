@@ -5,7 +5,7 @@
 // target — the survivor home that holds the resume/wire authorities and
 // survives WH-9.
 
-#include "ahfl/runtime/workflow_result.hpp"
+#include "runtime/engine/workflow_result.hpp"
 
 namespace ahfl::runtime {
 
