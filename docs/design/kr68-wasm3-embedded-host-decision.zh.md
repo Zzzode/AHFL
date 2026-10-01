@@ -2945,3 +2945,368 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 - **§12.7(WH-6 ahflc run cutover,无 fallback):** 保留,不重写。WASM=OFF 策略不变。gate set 不变(§12.14.13)。
 - **§12.12(Option A'):** 保留作历史档案。§12.12.10 记录的 bridge-pending parity gap 由本节关闭。
 - **§12.13(WH-5b.3 transcode):** 保留,不重写。WH-5b.2 不改变 transcode 的 routing order、shadow/payload arena、fail-closed guards。xcode 与 bridge memo/replay 无 contamination(§12.14.8)。
+
+## 12.15 WH-5c decisions: cutover-blocking guest codegen gaps (2026-10-02, dedicated decision agent, no human gate)
+
+本节关闭 WH-6(`ahflc run` cutover,工作树中 uncommitted)暴露出的 9 个 product-test red。独立验证(逐 test 运行 + 读 ahflc stderr + code-section byte dump + host 内存 dump)确认这 9 个 test 分裂为 **FIVE 个独立机制**,不是 builder 初步诊断的四个。所有五个 shape 都是 evaluator 已 shipped 的行为,CLI contract 要求 wasm lane 对齐——不接受 "honest limitation"、不弱化 fixture、不引入 fallback。
+
+### 12.15.1 问题复现与证据链
+
+**Runtime 复现:** WH-6 cutover 后 `ahflc run` 驱动 wasm lane。9 个 product test 失败(#213/#214/#421/#422/#423/#424/#425/#426/#427),外加 #79(runtime_evidence_smoke)作为 #421 的纯 cascade。baseline 585/588(#81/#84/#85 是无关的 pre-existing pnpm env failure)。
+
+**逐 test 的精确 ahflc stderr(2026-10-02 在 uncommitted cutover 上运行):**
+
+| Test | 机制 | 精确 error |
+|------|------|-----------|
+| #213 #214 #421 #422 | GAP 1 | `error [wasm.RESOURCE_EXHAUSTED]: two workflow nodes reuse one packaged agent instance; V2-D assigns one node-frame block per instance in a P6-frame workflow and rejects reuse (re-use analysis pending)` |
+| #423 | GAP 2 | `error [wasm.UNSUPPORTED_CAPABILITY_FRAME]: KR6.5 E2 capability final must contain canonical input, one call, and return` |
+| #424 | GAP 5 | `error [wasm.UNSUPPORTED_CAPABILITY_FRAME]: RFC 0026 P6 scalar codegen cannot lower body 'Evaluate': a String literal is constructible only inside a P6-7 frame-bridge v2 computed final: this builder owns no in-module rodata region (the E1-E3/FB lanes never build one, and V2-B does not construct String literals in a non-final frame handler)` |
+| #425 #426 #427 | GAP 3 | `error [wasm.host-abort]: run_workflow_session: run2 host-aborted (capability import failure) (CapabilityImportError=ArgDecodeFailed)` |
+| (parity) | GAP 4 | `ahfl.run-report` v1 的 `output_value_id` 在 wasm lane 为 null,evaluator 为 0/1 |
+
+**Source 证据链(HEAD c960bff0 + uncommitted cutover):**
+
+1. **GAP 1(instance reuse):** `core_wasm_codegen.cpp:13078-13088` D5 lifecycle rule——`if (plan.has_p6_nodes) for (instance_users) if (users > 1) -> kResourceExhausted`。`node_blocks` 按 packaged-instance dense runner index keyed(`p6_block_by_runner` 12348-12357;`node_blocks` P6-dense 13878-13894)。runner code **not frame-base-reentrant**:`P6FrameRelocation` 把 `I_k/C_k/scratch_k/O_k` bake 成 `i32.const` immediate(13455-13463);runner 忽略其 `(ptr,len)` args 做 addressing(15351-15353);每个 runner 有 private `current_state` global(globals (5/6)+runner);scheduler 验证 returned `O_k` 命名 runner 自己的 block(16706-16721)。
+2. **GAP 2(opaque capability-final canonical-only):** `validate_capability_final`(1428-1517)要求 canonical 3-statement shape `let in=input; let r=Cap(in); return r;`。fixture `state Done { return Echo(Request{value: input.value}); }` 构造 aggregate arg,被拒。第二道 gate:scheduler materializer 拒绝 constructed P4-D input 到 opaque node(13041-13046 "add the frame-bridge packaging")。§12.12 forbids normalizing opaque-final to bridge。
+3. **GAP 5(#424 String literal in non-final handler):** `examples/execution-demo/src/decision.ahfl` 的 `state Evaluate`(non-final)赋值 String literal(`ctx.reason = "high severity incident";`)。P6 scalar/FB builder 不 own rodata Data region——V2-B 的 `shared_rodata_pool` + active Data(11) segment 只在 P6-7 frame-bridge v2 computed-final 路径 build。
+4. **GAP 3(null-root descriptor):** host 侧 `build_bridge_root_regions`(180-238)**已**包含每个 node block 的 `scratch_k`(workflow lane);`build_bridge_string_regions`(129-172)已包含 entry payload arena `[1136,3184)`。host authorization **正确且 fail-closed**。`capability_import.cpp:674` 的 `len==layout->size` check **PASS**(8-byte inline Request root);`:678` 的 root-region check **FAIL**,因为 guest 写的 descriptor 是 `(ptr=0, len=8)`——constructed aggregate 的 root address 是 NULL。**关键经验注记:** code-section byte dump 显示 relocated Init handler 发射了正确的 construct address(`i32.const 1104; local.set 2; local.get 2; i32.store @1080`),但 runtime descriptor 读到 0。builder 必须 pin 精确机制(见 §12.15.6)。
+5. **GAP 4(output_value_id parity + fail-open):** canonical identity agent 分类为 `IdentityAction` 在 OPAQUE WireJson lane(`validate_identity_final` 1354-1394;p6 requires computed final/goto/bridge at 12964-12966;module contract WireJson 17756-17758)。该 lane 的 node output **deliberately never decoded**(`workflow_session.cpp:1789-1815` guard `is_p6` false);completion 从 `workflow_completed_count` global 推导(2012-2027);identity runner 原样返回 host-packed input tuple(15121-15128,scheduler `append_workflow_source` 16352-16366),只有 workflow final output 被 decode + id 0。evaluator 存 node ids 0,1 然后 workflow id 2(`workflow_runtime.cpp:1427-1433` `add_runtime_value` + `emit(NodeCompleted{.output=output_id})` at 1480)。byte-parity harness **deliberately strips** `output_value_id`(`wasm_runner.cpp:1356-1366`);CLI run-report **不 strip**。**真实 asymmetry:** node-output decode failure **fail OPEN**(silent `NoneValue` 1808-1810),workflow-output decode failure **fail CLOSED**(`kOutputDecodeFailed` 1965-1974)。
+
+### 12.15.2 决策摘要
+
+**ONE coherent big-bang change(WH-5c):** wasm lane 的 guest codegen + host session 对齐 evaluator 的五个 shipped 行为。具体:
+
+1. **GAP 1 → per-node frame blocks。** `node_blocks` 从 per-packaged-instance 改为 per-node。runner 变为 frame-base-reentrant:不再 bake `I_k/C_k/scratch_k/O_k` 为 `i32.const`,而是接收 frame-base `i32` arg 并 relative addressing(`i32.add`)。per-node `current_state` slot(按 node ordinal index)。scheduler 在 dispatch 时传 node 的 block base。删除 D5 reuse rejection(big-bang)。
+2. **GAP 2 → opaque capability-final 接受 constructed aggregate arg。** 在 opaque lane 上 in-module 构造 aggregate(复用 V2-B bump scratch arena + rodata Data),host 把构造的 P4-D span transcode 成 wire JSON 喂给 capability。relax `validate_capability_final` 的 canonical shape 与 scheduler materializer 的 constructed-input gate。**不**转 bridge(§12.12 保留)。
+3. **GAP 5 → P6 lane 全 handler rodata。** 把 V2-B 的 `shared_rodata_pool` + active Data(11) emission 从 computed-final-only 扩展到所有 P6 handler(含 non-final state)。String literal 的 PtrLen 命名 rodata region(已在 `string_regions` via `rodata_base/extent`)。**不 duplicate** machinery——扩展现有 scope。
+4. **GAP 3 → guest descriptor 命名 construct root。** 修复 guest codegen 使 bridge descriptor 的 ptr 字段命名 construct 的 scratch address(不是 0)。host 保持 fail-closed 不变。diagnostic 携带精确 sub-reason(root-outside-region / length-mismatch / spill-oob / string-leaf-region)。
+5. **GAP 4 → node output decode + fail-closed alignment。** wasm lane 在 node completion 时 decode node output(WireJson lane 也 decode)并分配 sequential `RuntimeValueId`(node completion order,然后 workflow output),与 evaluator 对齐。node-output decode failure 从 fail-OPEN 改为 fail-CLOSED(对齐 workflow-output path)。byte-parity harness 的 `output_value_id` stripping **删除**(big-bang)。
+
+### 12.15.3 Q1: GAP 1 — per-node frame blocks (instance reuse)
+
+**决策:`node_blocks` 改为 per-node;runner 变为 frame-base-reentrant;删除 D5。**
+
+**Root cause:** V2-D 把 node-frame block 按 packaged-instance 分配(`p6_block_by_runner`),一个 instance 一个 block。fan-out(多个 node 复用一个 agent type)是 core DAG pattern,evaluator 天然支持(每个 node invocation 有独立的 frame)。wasm lane 的 D5 rule 直接 reject。
+
+**Design:**
+
+- **`CoreFrameLayoutSection::node_blocks`**(`core_frame_layout.hpp:183`)从 P6-dense(per packaged instance)改为 per-node(per workflow node)。cardinality = `workflow.nodes.size()`(P6 node),不是 `packaged_instances.size()`。
+- **Runner frame-base parameterization:** `P6FrameRelocation` 不再 bake `input_base/context_base/scratch_base/output_base` 为 `i32.const`。runner 的 functype 增加一个 `i32 frame_base` param;handler 内所有 frame addressing 变为 `frame_base + offset`(`i32.add`)。scheduler 在 dispatch node 时把该 node 的 `block.input_base`(或 block base)作为 `frame_base` 传入。
+- **Per-node state slots:** 每个 runner 的 private `current_state` global 从 single global 改为 per-node slot(按 node ordinal index 的 dense array,或 scheduler 在 dispatch 时 write/read 的 per-node state word)。scheduler 维护 `node_state[node_ordinal]`。
+- **Scheduler re-addressing:** scheduler 的 node dispatch(`core_wasm_codegen.cpp:16706-16721` 附近)不再验证 returned `O_k` 命名 runner 自己的 block(因为 block 是 per-node 的);改为验证 returned `O_k` 命名 **dispatched node** 的 block。
+- **删除 D5:** `core_wasm_codegen.cpp:13078-13088` 的 `instance_users` reuse rejection **删除**(big-bang)。`instance_users` map 本身删除。
+- **Re-use analysis 保证:** 不再需要 "observable overlap" 分析——per-node block 天然 non-overlapping(每个 node 有自己的 fixed block)。scheduler 串行执行 node(DAG topological order),但 block 是 fixed address,不依赖时间复用。
+
+**Reference Hierarchy:** 这偏离 Clang 的 monomorphization 模型(per-instance baked address),转向 Swift 的 generic runtime 模型(per-node frame-base parameter + witness-table 式 dispatch)。AHFL-specific divergence reason:fixed 64KiB page 无法为 fan-out workflow 的每个 node 存一个 baked block;runtime frame-base parameterization 让 N 个 node 共享一个 runner code body,page 只存 N 个 block 的 data。Rust 的 monomorphization 是 compile-time code duplication(不占 data page);AHFL 的 wasm3 单 page 约束使 code duplication 不可行(一个 runner body 已占 code space),因此选 runtime parameterization。
+
+**Stale comment 修正(builder 必做):**
+- `core_frame_layout.hpp:165-166`("parallel to the workflow module's sorted packaged-instance table")——false,改为 per-node。
+- `core_wasm_codegen.cpp:15246-15250`(oversells reset safety)——修正为 per-node 语义。
+
+### 12.15.4 Q2: GAP 2 — opaque capability-final constructed aggregate arg
+
+**决策:opaque lane 支持 in-module aggregate 构造 + host wire-JSON encoding;relax canonical shape gate;不转 bridge。**
+
+**Root cause:** `validate_capability_final`(1428-1517)只接受 `let in=input; let r=Cap(in); return r;`——arg 必须是 bare `input` reference。`Echo(Request{value: input.value})` 构造新 aggregate,被拒。第二道 gate(scheduler materializer 13041-13046)拒绝 constructed P4-D input 到 opaque node。
+
+**Design:**
+
+- **In-module 构造(opaque lane):** opaque capability-final 的 arg 如果是 construct expression,在 module 内用 V2-B 的 bump scratch arena(`scratch_addr_cursor_` + `scratch_capacity()`)构造 aggregate。construct 的 field 从 input frame / context / literal 读取。这复用 `plan_construct`(4704-4808)+ `emit_construct`(7014-7121)的现有 machinery——agent/P6 lane 已在用。
+- **Host wire-JSON encoding:** opaque lane 的 capability arg 是 wire JSON。host 在 call opaque capability 前,把构造的 P4-D span 用 `ahfl_xcode` 的 P4D_TO_JSON transcode(WH-5b.3 已有)encode 成 wire JSON。transcode site 的 source 是 construct 的 scratch span,target 是 capability 的 wire param。
+- **Relax `validate_capability_final`:** canonical shape 从 "bare input reference" 扩展为 "input reference OR in-module construct whose leaves are input/context/literal references"。仍拒绝跨 lane 的 heap edge(由 WH-5b.3 xcode 处理)。
+- **Relax scheduler materializer gate(13041-13046):** opaque node 的 constructed input 在 in-module 构造 + xcode 后变为 wire JSON,gate 从 "reject constructed P4-D input" 改为 "accept in-module construct + xcode"。
+- **不转 bridge:** §12.12 的 prohibition 保留。opaque lane 是 wire-JSON boundary;把 opaque-final 转 bridge 会 blur lane discipline。construct 在 opaque lane 内 in-module 完成,不经过 bridge ABI。
+
+**Reference Hierarchy:** Rust 的 monomorphization——opaque lane 为每个 concrete construct type 生成 specialized in-module construction code(不引入 runtime type info)。AHFL-specific divergence:opaque lane 的 wire-JSON boundary 要求 construct 在 module 内完成(不能依赖 host-side heap allocation),这与 Rust 的 compile-time specialization 一致——construct 的 layout 是 compile-time 已知的 P4-D layout。
+
+### 12.15.5 Q3: GAP 5 — rodata for non-final handler String literals
+
+**决策:把 V2-B rodata machinery 从 computed-final-only 扩展到所有 P6 handler;不 duplicate。**
+
+**Root cause:** `#424` 的 `state Evaluate`(non-final)赋值 String literal(`ctx.reason = "high severity incident";`)。P6 scalar/FB builder 不 own rodata Data region——`shared_rodata_pool` + active Data(11) segment 只在 P6-7 frame-bridge v2 computed-final 路径 build。error message 明确:"this builder owns no in-module rodata region"。
+
+**Design:**
+
+- **扩展 `shared_rodata_pool` scope:** 从 "computed-final only" 扩展到 "all P6 handlers"。任何 P6 handler(Init/Evaluate/Done/...)中的 String literal 都 intern 到 `shared_rodata_pool`,emitted 到 active Data(11) segment(base 256,capacity 768)。
+- **PtrLen naming rodata:** String literal 的 PtrLen `(ptr, len)` 命名 rodata region(`rodata_base=256, rodata_extent=<Data length>`)。host 的 `build_bridge_string_regions` 已包含 rodata(129-172),所以 bridge call 用 String literal arg 时 authorization 已覆盖。
+- **不 duplicate machinery:** 复用现有 `shared_rodata_pool` + Data(11) emission。唯一改动是 scope 从 computed-final 扩展到 all handlers。
+- **Capacity accounting:** rodata region `[256, 1024)` 是 768 bytes。String literal 的总 byte length 不能超过。超限 fail-closed with `kResourceExhausted` + SourceRange diagnostic(Principle 5)。
+
+**Reference Hierarchy:** Swift 的 string-literal interning(compile-time uniquing into a shared rodata pool)。AHFL-specific divergence:wasm3 单 page 的 rodata region 固定在 `[256, 1024)`,不能像 Swift 那样动态扩展;capacity 是 compile-time checked 的。
+
+### 12.15.6 Q4: GAP 3 — null-root descriptor for constructed aggregate bridge arg
+
+**决策:修复 guest codegen 使 bridge descriptor 命名 construct root;host 保持 fail-closed;diagnostic 携带 sub-reason。**
+
+**Root cause(经验证):** host 侧 authorization **正确**——`build_bridge_root_regions` 已包含 `scratch_k [1104,1120)`,`build_bridge_string_regions` 已包含 entry payload arena `[1136,3184)`。`capability_import.cpp:674` 的 `len==layout->size` PASS(8-byte inline Request root)。`:678` 的 root-region check FAIL,因为 guest 写的 descriptor 是 `(ptr=0, len=8)`。
+
+**未解决的机制矛盾(builder 必须 pin):** code-section byte dump 显示 relocated Init handler 发射了 `i32.const 1104; local.set 2`(construct address)和 `local.get 2; i32.const 1080; i32.store`(descriptor ptr = 1104)。emitted wasm bytes 是正确的。但 runtime `whole_memory[1080]` 读到 0。同样,construct store `i32.const 1104; local.get 0; i32.store` 应写 `[1088]=1136` 到 `[1104]`,但 runtime `[1104]=1080`。len store(`[1108]=local 1=5`)正确。这指向 local-read 路径在 workflow relocated lane 上的 defect(construct-result local binding / relocation / wasm3 0.9.0 interaction 三者之一)。
+
+**Builder 必做的 pinning steps(在 scratch build 中):**
+
+1. 在 `emit_bridge_call` 的 Ptr-arg branch(6663-6685)加 compile-time assertion:descriptor ptr 必须等于 `scratch_base() + construct_addrs_[id.value]`(对 construct arg)。如果 assertion 失败,codegen 路径有 defect。
+2. 在 host `decode_bridge_import_args` 加 scratch-build-only check:descriptor ptr 必须在 `root_regions` 内且非 0;如果 emitted bytes 正确但 runtime 读到 0,用 wasm3 execution trace 或 isolated module run 定位是 wasm3 mis-execution 还是 module/instance lifecycle mismatch。
+3. 对比 agent-lane(non-relocated)handler body 与 workflow-lane(relocated)body 的 construct+bridge pattern,找 differentiator。agent lane 是 older tested path,如果 agent lane 的 construct+bridge 正常,defect 是 relocation-specific。
+
+**Fix direction(guest-side):** 无论 pinning 结果是 codegen 还是 wasm3 interaction,fix 在 guest 侧:
+- 如果是 construct-result local binding 在 relocated builder 中丢失/rebind:修复 `readable_local(arg)` / `bind_value` 在 workflow packaging lane 的 local 分配。
+- 如果是 relocation 没 apply 到 descriptor root:修复 `P6FrameRelocation` 使其覆盖 construct-result local 的 address。
+- 如果是 wasm3 0.9.0 mis-execution(block-wrapped handler + `local.tee` + `i32.load` pattern):升级 wasm3 或改写 handler body 避免触发 pattern(后者是 workaround,需注释说明)。
+
+**Host 侧不变:** `decode_bridge_import_args` 的 fail-closed 保持原样。唯一 host 改动是 diagnostic sub-reason(下条)。
+
+**Diagnostic sub-reason(Principle 5):** `ArgDecodeFailed` 当前 swallow sub-reason。改为携带 enum:
+- `kRootOutsideRegion`(root-region check fail,:678)
+- `kLengthMismatch`(len != layout->size,:674)
+- `kSpillOutOfBounds`(spill window check fail,:664-668)
+- `kStringLeafOutsideRegion`(string-leaf region check fail,`read_value_at` 内)
+- `kNullDescriptor`(ptr==0,新增——明确区分 "guest 写了 null" 与 "guest 写了 valid-but-unauthorized address")
+
+`CapabilityImportError` enum 增加 `ArgDecodeFailedRootOutsideRegion` 等 sub-code,或 `ArgDecodeFailed` 携带一个 `ArgDecodeSubReason` field。diagnostic message 用 human-readable 语言(不 echo address bytes,per `core_frame_layout.hpp:20` 的 fixed-diagnostic discipline——但 sub-reason enum 是 schema-only string,允许)。
+
+**Reference Hierarchy:** Clang 的 diagnostic infrastructure(`err_fe_backend_unsupported` 携带 sub-reason)。AHFL-specific divergence:wasm3 单 page 的 region authorization 是 security boundary,diagnostic 不能 echo address bytes(防 leak),但 sub-reason enum 是安全的。
+
+### 12.15.7 Q5: GAP 4 — output_value_id parity + fail-closed alignment
+
+**决策:wasm lane decode node output 并分配 sequential RuntimeValueId;node-output decode failure 改 fail-closed;删除 parity harness 的 output_value_id stripping。**
+
+**Root cause:** 两个独立问题:
+1. **Parity:** WireJson lane 的 node output deliberately never decoded(`workflow_session.cpp:1789-1815` guard `is_p6` false)。evaluator 给每个 node output 分配 sequential `RuntimeValueId`(`workflow_runtime.cpp:1427-1433`)。wasm lane 只给 workflow final output 分配 id 0。CLI run-report 不 strip,所以 `output_value_id` 在 wasm 为 null、evaluator 为 0/1。
+2. **Fail-open asymmetry:** node-output decode failure silent `NoneValue`(1808-1810),workflow-output decode failure fail-CLOSED(`kOutputDecodeFailed` 1965-1974)。
+
+**Design:**
+
+- **Node output decode(WireJson lane):** `workflow_session.cpp:1789-1815` 的 guard 从 `if (node_desc->is_p6 && ...)` 扩展为 **all nodes**(P6 + WireJson)。WireJson node 的 output 从 `workflow_completed_count` global + identity runner 的 host-packed tuple 推导:identity node 的 output = 其 input tuple(host 已 packed);capability node 的 output = capability result(wire JSON)。host 用 `value_from_json` decode wire JSON output(与 workflow-output path 1960-1974 相同),`add_runtime_value` 注册,分配 sequential id。
+- **Sequential id ordering:** node output id 按 node completion order 分配(scheduler 的 `schedule_pos` order),与 evaluator 的 node loop order 一致。workflow output id 在所有 node output 之后分配。这匹配 evaluator 的 0,1,...,N-1(node),N(workflow)。
+- **Fail-closed alignment:** node-output decode failure 从 silent `NoneValue` 改为 `run_ok = false; run_failure_code = kOutputDecodeFailed`(与 workflow-output path 1965-1974 相同)。node-output 与 workflow-output 的 decode failure 用同一 fail-closed path。
+- **删除 parity harness stripping:** `wasm_runner.cpp:1356-1366` 的 `output_value_id` stripping **删除**(big-bang)。harness 比较 full parity(含 `output_value_id`)。这是 test-paper 的 removal,不是 weakening——wasm lane 现在产生正确的 id。
+
+**Reference Hierarchy:** Dafny 的 decreases/termination——fail-closed alignment 确保 wasm lane 不能 silently 产生与 evaluator 不同的 output set。AHFL-specific divergence:evaluator 的 `add_runtime_value` 是 in-process 的;wasm lane 的 host 必须跨 wasm3 boundary decode wire JSON,但 id 分配逻辑必须与 evaluator 一致(sequential,completion order)。
+
+### 12.15.8 Q6: Wire/manifest verdict — no version bump
+
+**决策:不升任何 wire-format version。AHFLXM v2 不变;core-layout section 保持 format_version=3;recovery snapshot 保持 v2。**
+
+理由:
+
+- **AHFLXM v2 manifest bytes 不变:** GAP 1 的 per-node block 不增加 manifest 字段(`ManifestNode` at `schema_module 672-684` 无 ordinal/block field)。node_blocks cardinality 变化是 core-layout section 的语义变化,不是 manifest 的 wire-format 变化。
+- **Core-layout section format_version=3 不变:** `node_blocks` field 已存在(`core_frame_layout.hpp:183`);GAP 1 只改其 cardinality(per-instance → per-node)和 host descriptor join(node ordinal → block mapping)。GAP 2/3/5 不增加新 field——construct scratch、rodata、spill window 都在现有 field 内。
+- **Recovery snapshot `ahfl.workflow-recovery.v2` 不变:** per-node frame base 是 runtime scheduling concern,不是 snapshot concern。snapshot 的 `suspended.node` / `per_node_counters_` 已按 node ordinal index,不依赖 block 是 per-instance 还是 per-node。
+- **Big-bang,无 compat flag:** 不引入 dual encoding、不保留 per-instance block path、不增加 env var / flag。`node_blocks` 的 cardinality 变化是 big-bang:host decoder 只接受 per-node cardinality(与 module emitter 同步)。
+
+### 12.15.9 Q7: Page capacity accounting + user-facing diagnostic
+
+**决策:64KiB page 的 capacity check 覆盖 per-node blocks + rodata;超限 fail-closed with SourceRange diagnostic。**
+
+- **Per-node blocks(GAP 1):** page 必须 hold N 个 node block(每个 `I_k + C_k + scratch_k + O_k`)。`core_wasm_codegen.cpp` 的 page layout planner 计算 `sum(node_blocks) + bridge_control + spill + rodata + payload arena + state_trace + event_log <= 65536`。超限 `kResourceExhausted` + diagnostic 命名 page capacity(65536)与 required bytes + SourceRange(Principle 5)。
+- **Rodata(GAP 5):** rodata region `[256, 1024)` 是 768 bytes。String literal 总 byte length 超限 fail-closed。
+- **Construct scratch(GAP 2/3):** V2-B bump scratch arena(`scratch_base=7168, capacity=5120`)的 high-water 检查已存在(`scratch_high_water`);GAP 2 的 opaque-lane construct 用同一 arena,capacity check 自然覆盖。
+- **Diagnostic 语言:** human-readable,actionable,命名 frame/page 与两个 size(与 `fits_frame_region` 1971-1988 同 style)。不 echo address bytes。
+
+### 12.15.10 Q8: Census, tests, conformance
+
+**新增 conformance case(mandatory):**
+
+1. **GAP 1 — fan-out instance reuse:** 一个 agent type 被 2+ node 复用的 workflow(如 `llm_provider_smoke` 的 SmokeWorkflow)。census scenario + golden fixture。验证 per-node block 不 overlap、runner frame-base reentrant。
+2. **GAP 2 — opaque capability-final constructed arg:** `state Done { return Cap(Struct{field: input.x}); }` 的 opaque workflow。验证 in-module construct + xcode + wire-JSON capability arg。
+3. **GAP 3 — constructed aggregate bridge arg with String leaf(mandatory per coordinator):** `state Init { let r = Cap(Struct{value: input.value}); ... }` 其中 `input.value` 是 String。验证 String leaf 从 input frame inline word → payload arena 的 walk end-to-end 成功。**现有 conformance corpus 没有任何 case 把 String field thread 过 constructed aggregate bridge arg——此 case 必须新增。**
+4. **GAP 5 — String literal in non-final handler:** `state Mid { ctx.reason = "literal"; goto Done; }`。验证 rodata Data emission 在 non-final handler。
+5. **GAP 4 — node output_value_id parity:** 多 node workflow(identity + capability node),验证 wasm lane 的 `output_value_id` sequence 与 evaluator 一致(0,1,...,N)。
+
+**Fail-closed mutation cases:**
+
+- GAP 3:guest 写 null descriptor(ptr=0)→ `kNullDescriptor` sub-reason。
+- GAP 3:guest 写 valid-but-unauthorized address → `kRootOutsideRegion`。
+- GAP 3:String leaf payload 在 scratch/heap(非 rodata/arena)→ `kStringLeafOutsideRegion`。
+- GAP 4:node output wire JSON corrupt → fail-closed `kOutputDecodeFailed`(不是 silent NoneValue)。
+- GAP 1:page capacity 超限 → `kResourceExhausted`。
+
+**Census pin movements(predicted):**
+
+- `kExpectedAgreed`:67 → **72**(+5 个新 case 全部 agree)。
+- `kExpectedSkipped`:0 不变。
+- `kExpectedNodeOnlyStems`:增加新 stem(若适用)。
+
+**Golden fixtures:** 每个新 conformance case 有 golden `.ahfl` + expected run-event sequence。GAP 4 的 golden 包含 `output_value_id` field(不 strip)。
+
+### 12.15.11 Q9: Acceptance criteria (1:1 to 9 tests)
+
+| Test | 机制 | Acceptance |
+|------|------|-----------|
+| #213 `ahflc.run.manifest.entry_workflow_default` | GAP 1 | exit 0,manifest 正确 |
+| #214 `ahflc.run.manifest.entry_workflow_default` variant | GAP 1 | exit 0 |
+| #421 `llm_provider_runtime.smoke` | GAP 1 | exit 0,SmokeWorkflow fan-out 正常 |
+| #422 `real_llm.evidence` | GAP 1 | exit 0(AHFL_LLAMA_SERVER-gated) |
+| #423 `durable_resume_flags.smoke` | GAP 2 | exit 0,suspend/resume contract 保持 |
+| #424 `profile_and_output_contract` | GAP 5 | exit 0,Evaluate state String literal 正常 |
+| #425 `llm_failure_matrix` | GAP 3 | exit 0,HTTP 401 diagnostic 出现 |
+| #426 `llm_secret_manager` | GAP 3 | exit 0,vault secret success |
+| #427 `capability_bindings` | GAP 3 | exit 0,bridge construct arg 正常 |
+| #79 `runtime_evidence_smoke` | cascade of #421 | exit 0(自动解除) |
+
+**Additional gates:**
+- Conformance census:`kExpectedAgreed=72`,`kExpectedSkipped=0`。
+- ASan build & test clean(`cmake --preset asan && ctest --preset test-asan`)。
+- WASM=OFF build clean(KR6.8 WASM=OFF 策略不变)。
+- `ahfl.run-report` v1 byte parity:wasm lane 与 evaluator 的 `output_value_id` sequence 一致。
+- Fresh build `-Werror` clean(CLAUDE.md memory:develop 可积累 -Werror breakage,commit 前 fresh build)。
+
+### 12.15.12 Q10: Rejected alternatives
+
+1. **弱化/重写 CLI smoke fixture 以 dodge limitation — REJECTED。** 所有五个 shape 都是 evaluator shipped 的合法行为;grammar + spec 确认合法(evaluator 编译并执行它们)。弱化 fixture 是 falsify conformance,不是 fix。
+2. **接受 "honest limitation" 并长期 refuse 这些 program — REJECTED。** KR6.8 的 north-star 是 evaluator retirement behind wasm3 host;这五个 shape 是 CLI contract 的一部分。"Honest limitation" 在无 human-gate 的 autonomous repo 中不是可接受的终态。
+3. **Evaluator fallback — REJECTED。** KR6.8 retire evaluator;fallback 是 dual path,违反 Principle 1(no old-and-new coexistence)。evaluator 在 WH-6 cutover 后不可达。
+4. **Engine-selection flag(wasm vs evaluator per-invocation)— REJECTED。** 同上,dual path + compat flag,big-bang ethos 禁止。
+5. **Over-broad region authorization(授权整个 scratch/heap arena)— REJECTED。** Security boundary。host 已正确授权 `scratch_k`(root)与 payload arena(string leaf);widening 到 whole arena 会授权 unrelated data,破坏 fail-closed precision。GAP 3 的 defect 是 guest 写 null,不是 host 授权不足。
+6. **Normalize opaque-final to bridge(§12.12)— REJECTED。** Opaque lane 是 wire-JSON boundary;转 bridge 会 blur lane discipline。GAP 2 的 fix 在 opaque lane 内 in-module construct,不经过 bridge ABI。
+7. **在 CLI run-report 中 strip `output_value_id` — REJECTED。** 弱化 parity。wasm lane 必须产生与 evaluator 一致的 id sequence;stripping 是 hide 差异,不是 fix。
+8. **升 wire-format version(v3/v4)— REJECTED。** 无新 wire field;变化是 cardinality/semantic,不是 format。big-bang ethos:extend existing field,不 bump version。
+
+### 12.15.13 Costs / LOC
+
+| Component | LOC delta | Notes |
+|-----------|-----------|-------|
+| `core_wasm_codegen.cpp` | ~400 | per-node blocks + frame-base runner(~200)、opaque construct(~80)、rodata scope(~40)、GAP 3 descriptor fix(~80) |
+| `core_frame_layout.hpp` | ~20 | node_blocks 语义注释 + 无新 field |
+| `workflow_session.cpp` | ~120 | node output decode + fail-closed(~80)、GAP 2 xcode routing(~40) |
+| `capability_import.cpp` | ~60 | ArgDecodeSubReason enum + diagnostic(~40)、null check(~20) |
+| `wasm_runner.cpp`(parity harness) | ~-20 | 删除 output_value_id stripping(negative LOC) |
+| `core_wasm_schema_module.cpp` | ~30 | node_blocks cardinality join(per-node) |
+| Tests | ~500 | 5 个新 conformance case + golden + fail-closed mutation |
+| Docs | ~120 | 本节 |
+| **Total** | **~1230** | |
+
+### 12.15.14 Sequencing + gate revision
+
+**顺序:**
+1. **WH-5c.1**(GAP 3 descriptor fix + diagnostic)— 最高优先,unblock #425/#426/#427(三个 LLM smoke)。
+2. **WH-5c.2**(GAP 1 per-node blocks)— unblock #213/#214/#421/#422。
+3. **WH-5c.3**(GAP 5 rodata)— unblock #424。
+4. **WH-5c.4**(GAP 2 opaque construct)— unblock #423。
+5. **WH-5c.5**(GAP 4 parity + fail-closed)— 最后,依赖前四个的 node output 可用。
+6. **WH-6**(ahflc run cutover commit)— gated on 全部 9 test green + census 72/0 + ASan + WASM=OFF。
+
+**Gate revision:** §12.14.13 的 gate set 是 "WH-6 gated on 5b.1 + 5b.3 + 5b.2"。本节扩展为 "WH-6 gated on 5b.1 + 5b.3 + 5b.2 + **5c.1-5c.5**"。WH-5c 的五个 sub-slice 全部 landed 且 9 test green 后,WH-6 cutover 才能 commit。
+
+### 12.15.15 Prior-decision preservation statement
+
+- **§12.5(embedded host facade):** 保留,不重写。WH-5c 不改变 wasm3 engine facade / import callback ABI / region authorization 模型。
+- **§12.6(WH-4b suspend/resume):** 保留,不重写。GAP 2 的 opaque construct 不改变 memo/replay;snapshot schema v2 不变。
+- **§12.7(WH-6 cutover,无 fallback):** 保留,不重写。WASM=OFF 策略不变。gate set 扩展(§12.15.14)。
+- **§12.11 / §12.12(WH-5b / Option A'):** 保留。§12.12 的 opaque-final-no-bridge prohibition 保留;GAP 2 在 opaque lane 内 fix,不转 bridge。
+- **§12.13(WH-5b.3 transcode):** 保留,不重写。GAP 2 复用 xcode 的 P4D_TO_JSON direction,不改变 transcode routing order / shadow / payload arena / fail-closed guards。
+- **§12.14(WH-5b.2 bridge-pending parity):** 保留,不重写。GAP 3 的 descriptor fix 不改变 PENDING graceful arm / memo-replay / snapshot schema。
+
+### 12.15.16 GAP 1 approach revision (2026-10-02, dedicated decision-revision agent)
+
+本节修订 §12.15.3。§12.15.3 原文保留作历史档案(append-only)。修订动因为协调者转交的技术挑战:codebase 已存在 per-packaged-instance 的 whole-body relocation 机制(`P6FrameRelocation`),挑战方主张把该机制的 cardinality 从 per-instance 推广到 per-node(APPROACH B),而不是 §12.15.3 选择的 frame-base-reentrant runner(APPROACH A)。所有代码断言已对工作树(HEAD c960bff0 + uncommitted WH-6 cutover)逐条复核。
+
+#### 12.15.16.1 挑战摘要
+
+§12.15.3 选择 APPROACH A(runner 变为 frame-base-reentrant:新增 frame_base param、把每个 baked `i32.const I_k/C_k/scratch_k/O_k` immediate 改写为 `frame_base + offset` relative addressing、per-node current_state slot array)的核心理由是:"fixed 64KiB page 无法为 fan-out workflow 的每个 node 存一个 baked block;AHFL 的 wasm3 单 page 约束使 code duplication 不可行(一个 runner body 已占 code space)"。
+
+挑战方主张:(1) wasm3 的 CODE section 不受 64KiB linear-memory page 约束——code duplication 占的是 code section(wasm3 heap),不是 data page;data page 在两种方案下都需要 N 个 block。(2) `P6FrameRelocation`(`core_wasm_codegen.cpp:847-862`)本就是为 per-context baked address 设计的;把它的 cardinality 从 per-instance 推广到 per-node 是机械变更,复用现有 relocation machinery,不需要 relative-addressing 重写。
+
+#### 12.15.16.2 已验证的代码事实(file:line)
+
+**Relocation 机制(挑战方的事实成立):**
+
+- `P6FrameRelocation` 持有全部四个 base+capacity+三个 global index(`core_wasm_codegen.cpp:847-862`)。
+- 每个 packaged P6 instance 做一次 relocated build,在 `build_agent_plan` 前安装(`core_wasm_codegen.cpp:13410-13465`):relocation 在 13411-13426 填充,`build_agent_plan` 在 13427-13449 以 `.frame_relocation = &relocation` 调用。
+- `p6_block_by_runner` 把 packaged-instance runner index 映射到 P6-dense `node_blocks` 下标(`core_wasm_codegen.cpp:950,983,12309,13112`)。
+- `node_blocks` 是 P6-dense(per packaged instance),在 D6 planner 中按 per-runner gathered scratch high-water 分配(`core_wasm_codegen.cpp:12345-12373`);frame section 发射在 13833-13848。
+- D6 block planner 按 P6 runner 迭代,block 四区域在 block 内连续(`plan_p6_node_block_cursor` `core_wasm_codegen.cpp:17410-17441`:`bases[part] = cursor + within; within += parts[part]`)。
+- runner 忽略其 `(ptr,len)` args 做 addressing,返回 baked `O_k`(`make_workflow_p6_runner_body` `core_wasm_codegen.cpp:15197-15309`:params 是 local 0/1 但从不用于 addressing;返回 `block.output_base`/`block.output_size` 在 15306-15308)。
+- scheduler 验证 returned `O_k` 命名 dispatched node 的 block(`core_wasm_codegen.cpp:16659-16672`);C_k zero-fill 在 16548-16651;per-dispatch state global reset 在 15201-15205。
+- state globals:`(capability?6:5) + runner_count` 个,每个 P6 runner 一个 private `current_state`(`core_wasm_codegen.cpp:17183-17198`)。
+- D5 rejection gate:`core_wasm_codegen.cpp:13025-13044`(`instance_users` count > 1 -> `kResourceExhausted`)。
+
+**Handler 架构(APPROACH A 的真实重写面):**
+
+- handler 是 `() -> i32` 函数(type index 5,`core_wasm_codegen.cpp:17091,17161`),无 param。
+- runner 在 dispatch ladder 中调用 handler:`core_wasm_codegen.cpp:15279-15280`(computed-goto)、`15288-15289`(computed-return)。
+- relocation accessor(`input_base()` 等)在 handler builder 中被 ~15 处消费:`core_wasm_codegen.cpp:3031-3053`(定义)、`3776-3792`(ProjectionRoot)、`4801,5678`(scratch capacity)、`6836`(bridge arg)、`6931,7023`(construct)、`7747-7837`(computed final)。
+- runner 已接收 `(I_k, input_size)` 作为 local 0/1(`core_wasm_codegen.cpp:16617-16619` scheduler 传入),但 handler 是独立函数,看不到 runner 的 local 0。APPROACH A 必须要么改 handler functype 为 `(i32)->i32`(param shift 影响 handler builder 的 local 分配),要么引入 global frame_base(每个 addressing site 多 2 条指令)。
+
+**APPROACH A 的 host-side 身份不变量破坏(决定性):**
+
+- host 的 `runner_to_schedule` 假设 runner -> node 是 1:1(`workflow_session.cpp:412-415`:`runner_to_schedule[descriptor.nodes[i].runner] = i`;消费在 121-134)。APPROACH A 让两个 node 共享一个 runner,第二个 node 覆盖第一个的映射。
+- state-trace ring 记录 `rec.runner`(`workflow_session.cpp:106-134`),host 用 `runner_to_schedule` 把 runner 归因到 node。共享 runner 使两个 node 的 trace 记录无法区分。
+- manifest v2 的 per-node `bridge_sites` table(`core_wasm_schema_module.cpp:672-684,864-903`)要求 `call_site_id` 在 workflow 内 unique(§12.14.4 host trust check)。APPROACH A 让两个 node 共享同一 runner 的 bridge sites,manifest 会出现 duplicate `call_site_id`。
+
+**wasm3 code-section 限制(§12.15.3 前提证伪):**
+
+- `third_party/wasm3/source/m3_config.h` 只定义 `d_m3MaxLinearMemoryPages = 65536`(linear memory / data page 上限)和 `d_m3MaxFunctionStackHeight = 8000`(per-function 栈高,非 code size 上限)。**没有 code-section size 或 function-count 上限。** code section 存储在 wasm3 自己的 heap(`d_malloc`),与 64KiB linear memory 完全独立。
+- §12.15.3 的 "一个 runner body 已占 code space" 和 "code duplication 不可行" 前提**事实错误**:code duplication 占 code section(wasm3 heap,实际无界),不占 data page(64KiB)。data page 在两种方案下都需要 N 个 block。
+
+**实测 code size(measured,非估计):**
+
+- `bridge_pending_suspends.wasm`(2 个 P6 node,bridge 调用):code section 1869 bytes;runner 306+306 bytes;handler 89+128+89+128=434 bytes。per-node(runner + 2 handler)= **523 bytes**。
+- `priority_high.wasm`(3 个 P6 agent,e2e_multi_agent):code section 3635 bytes;runner 318+506+318=1142 bytes;handler 1335 bytes。
+- fan-out 度数:SmokeWorkflow(`tests/scripts/llm_provider_runtime_smoke.py:159-160`)是 2 个 node(`first`、`second`)复用 `EchoAgent`。APPROACH B 额外 code = 1 个 node 的 runner + handler ≈ **523 bytes**。
+- 结论:fan-out 2-5 node 的 code duplication 成本是 0.5-2.6 KB,对 wasm3 code section 可忽略。
+
+**Manifest v2 无 block 字段(再次确认):**
+
+- `ManifestNode`(`core_wasm_schema_module.cpp:672-684`)字段:`workflow_node_id`、`schedule_pos`、`cap_call_count`、`capabilities[]`、`bridge_sites[]`。**无 block/base/ordinal 字段。** 两种方案都不改变 AHFLXM bytes。§12.15.8 的 no-version-bump verdict 不变。
+
+#### 12.15.16.3 逐轴对比
+
+| 轴 | APPROACH A(§12.15.3,frame-base reentrant) | APPROACH B(per-node relocated copies) |
+|----|---------------------------------------------|----------------------------------------|
+| **Change surface** | 深:handler functype `()->i32` => `(i32)->i32`(type/function section + param shift 影响 handler builder local 分配)、~15 个 accessor site + 每个 emit consumer 改 relative addressing、runner 2 个 handler call site 传 frame_base、runner return 改算 O_k。**外加 host 身份修复**(下条)。 | 广但机械:relocation loop 改 per-node 迭代、`relocated_handlers`/`runner_count`/state-globals/`p6_block_by_runner` cardinality 改 per-node、D6 planner per-node、bridge registry `wf_runner` tag 改 node ordinal、scheduler per-node runner lookup。**`P6ComputationHandlerBuilder` 和 `make_workflow_p6_runner_body` 完全不变。** |
+| **Correctness hazards** | (1) 破坏 host `runner_to_schedule` 1:1(`workflow_session.cpp:412-415,121-134`);(2) state-trace ring `rec.runner` 归因歧义(106-134);(3) manifest v2 per-node `bridge_sites` duplicate `call_site_id`(§12.14.4 uniqueness);(4) handler builder hot-path relative-addressing 重写的 silent memory-corruption 风险。 | (1) code 增长 ~523 B/node(实测,可忽略);(2) bridge registry 必须用 unique per-node tag(否则 `compact_workflow_runner` 的 contiguous-tail 隔离破坏);(3) rodata 必须保持 ONE shared Data segment(`shared_rodata_pool` 不变,天然满足);(4) dense control-base/stride identity 保持(`capability_import.cpp:504-541` 验证 `block_ptr == control_base + site.block_offset`,per-node site 仍 dense)。 |
+| **Page capacity(DATA)** | N 个 block(与 B 相同)。 | N 个 block(与 A 相同);D6 planner 已按 per-instance gathered scratch high-water 分配,推广到 per-node 是 cardinality 变更。 |
+| **Reference Hierarchy** | Swift generics(runtime parameterization)——codebase 中**不存在**的新模型。 | Clang monomorphization(per-context code emission)——**现有 V2-D 模型**(`P6FrameRelocation` 本就是为此设计)。 |
+| **WH-5b.2/§12.14/§12.6 交互** | 共享 bridge site => manifest duplicate `call_site_id`、trace-ring runner 歧义;PENDING replay 本身 OK(scheduler 每次 dispatch 传 block base,fresh instance replay)。 | per-node bridge site => manifest v2 per-node table 干净、trace ring 归因干净;PENDING replay 不变(fresh instance + per-node memo,`(node, ordinal)` identity 天然 per-node)。 |
+| **Hybrid(dedup)** | 无安全 dedup:同 agent type 的不同 node 有不同 frame(不同 I/O block base),baked address 不同,无法共享 block。 | 不适用。 |
+
+#### 12.15.16.4 决策:REVERSE 到 APPROACH B(per-node relocated copies)
+
+**§12.15.3 的 frame-base-reentrant runner 设计被否决。选择 APPROACH B:把现有 per-packaged-instance relocation 的 cardinality 推广到 per-workflow-node。**
+
+**理由:**
+
+1. **§12.15.3 的核心前提事实错误。** "wasm3 单 page 约束使 code duplication 不可行" 混淆了 code section 与 linear-memory data page。wasm3 code section 无 size 上限(`m3_config.h` 只 bound `d_m3MaxLinearMemoryPages`);data page 在两种方案下都需要 N 个 block。实测 per-node code 成本 ~523 bytes,fan-out 2-5 node 可忽略。
+
+2. **APPROACH B 复用现有 V2-D relocation machinery,不引入新寻址模型。** `P6FrameRelocation` 本就是为 per-context baked address 设计的(Clang monomorphization 模型)。把 cardinality 从 per-instance 推广到 per-node 是机械变更:`P6ComputationHandlerBuilder` 和 `make_workflow_p6_runner_body` 完全不变。APPROACH A 则需要在 handler builder 的 hot path 引入 relative-addressing 新模型,并改 handler functype + local 分配。
+
+3. **APPROACH A 破坏三个 host-side 身份不变量,APPROACH B 全部保持。** (a) `runner_to_schedule` 1:1(`workflow_session.cpp:412-415`);(b) state-trace ring `rec.runner` 归因(106-134);(c) manifest v2 per-node `bridge_sites` 的 `call_site_id` uniqueness(§12.14.4)。APPROACH A 让两个 node 共享一个 runner,三者全部破坏;APPROACH B 保持 one-runner-per-node,三者全部不变。
+
+4. **APPROACH B 与 WH-5b.2/§12.14/§12.6 的交互更干净。** per-node bridge site 使 manifest v2 per-node table、resume frontier `(node, ordinal)`、trace-ring 归因全部天然 per-node,无需 relax 任何 uniqueness check。
+
+**AHFL-specific divergence reason(替代 §12.15.3 的错误理由):** 选择 monomorphization(B)而非 runtime parameterization(A)的 AHFL-specific 理由不是 "code duplication 不可行"(该前提已证伪),而是:V2-D relocation machinery 已实现 per-context address baking,推广其 cardinality 是机械变更且保持全部现有身份不变量(runner->node 1:1、bridge-site dense identity、trace-ring 归因);runtime frame-base parameterization 会 (a) 在 handler builder hot path 引入新 relative-addressing 模型,(b) 破坏 host 的 runner->node 1:1 身份,(c) 在 manifest v2 per-node table 产生 duplicate bridge-site identity,(d) 模糊 state-trace ring 的 runner 归因。monomorphization 保持 one-runner-per-node,与 Reference Hierarchy 的 Clang 模型一致。
+
+#### 12.15.16.5 修订后的 builder 指令(amended)
+
+**保留(与 §12.15.3 相同):**
+
+1. **`node_blocks` per-node。** `CoreFrameLayoutSection::node_blocks` 从 P6-dense(per packaged instance)改为 per-node(per workflow node)。cardinality = P6 node 数。
+2. **删除 D5。** `core_wasm_codegen.cpp:13025-13044` 的 `instance_users` reuse rejection 删除(big-bang)。`instance_users` map 本身删除。
+3. **Stale comment 修正。** `core_frame_layout.hpp:165-166`、`core_wasm_codegen.cpp:15246-15250`(注释 "one packaged instance runs exactly once per run2 today" 改为 per-node 语义)。
+4. **Manifest verdict 不变。** AHFLXM v2 不 bump(`ManifestNode` 无 block 字段,`core_wasm_schema_module.cpp:672-684`)。
+
+**替换(§12.15.3 的 frame-base 设计被以下 per-node relocation 设计替换):**
+
+5. **Relocation loop per-node。** `core_wasm_codegen.cpp:13345-13465` 的循环从 per-packaged-instance 改为 per-P6-node。每个 node 用自己的 `node_blocks[node]`(per-node block)填充 `P6FrameRelocation` 的四个 base+capacity;`current_state_global = (plan.imports.empty() ? 5u : 6u) + node_ordinal`。
+6. **`relocated_handlers` per-node。** `core_wasm_codegen.cpp:1020` 的 `vector<vector<CompiledHandler>>` 按 node ordinal 索引(不是 runner)。所有消费点(13345,13465,17051,17157,17237,17289)改索引。
+7. **`runner_count` = P6 node 数。** `core_wasm_codegen.cpp:17045-17046` 的 `runner_count` 从 `packaged_instances.size()` 改为 P6 node 数。`WorkflowFunctionTable`(17057)的 `runner(node)` 按 node ordinal 映射。
+8. **State globals per-node。** `core_wasm_codegen.cpp:17183-17198` 的 `global_count = (capability?6:5) + (p6 ? p6_node_count : 0)`;每个 P6 node 一个 private `current_state` global,初值 `agent_plans[node.runner].initial.value`。
+9. **`p6_block_by_runner` -> per-node ordinal。** 删除 `p6_block_by_runner` 间接层;`node_blocks` 直接按 node ordinal 索引。descriptor 的 `p6_block_ordinal`(`core_wasm_codegen.cpp:17839-17843`)设为 node ordinal。host 消费点(`workflow_session.cpp:1422-1438,1795-1807`)不变——它们已按 `p6_block_ordinal` 索引。
+10. **D6 planner per-node。** `core_wasm_codegen.cpp:12289-12376` 的 block planning 从 per-P6-runner 改为 per-P6-node;`gathered[node.runner].scratch_high` 按 node 取。bridge/spill reservation(12418-12421)从 per-runner 改为 per-node。
+11. **Bridge registry per-node tag。** `wf_runner`(`core_wasm_codegen.cpp:832,13444`)设为 node ordinal(每个 build unique)。`compact_workflow_runner`/`site_count_for_runner`/`runner_spill_extent`(677-760)按 node ordinal 隔离。`global_site_base`/`runner_spill_base` 按 node 累加。
+12. **Scheduler dispatch per-node。** `core_wasm_codegen.cpp:16521-16691` 的 `runner = workflow_runner_index(...)` 改为 per-node runner lookup;`functions.runner(*runner)` 改为 `functions.runner(node_runner[node_id])`;block lookup 改为 `node_blocks[node_id]`(直接 per-node)。O_k verification(16659-16672)、C_k zero-fill(16548-16551)、PENDING arm(16630-16648)不变——它们已按 dispatched node 的 block 工作。
+13. **`make_workflow_p6_runner_body` 不变。** 该函数(`core_wasm_codegen.cpp:15183-15310`)已接收 `block` + `state_global` 参数并 bake 它们;per-node 调用即可,函数体不变。
+14. **`P6ComputationHandlerBuilder` 不变。** relocation machinery(`install_frame_relocation` + accessor)按原样复用;每个 per-node build 安装自己的 `P6FrameRelocation`。
+15. **不做:** 不改 handler functype(保持 `() -> i32`)、不做 relative-addressing 重写、不引入 frame_base param/global、不做 per-node current_state slot array(每个 per-node build 有自己的 private global,runner 在每次 invocation reset 到 initial,15201-15205,天然安全)。
+
+#### 12.15.16.6 对 §12.15.6-12.15.14 的 knock-on 影响
+
+- **§12.15.6(GAP 3 descriptor fix):** 不受影响。descriptor fix 在 bridge arg path,与 runner cardinality 独立。
+- **§12.15.7(GAP 4 output parity):** 不受影响。node output decode 用 `p6_block_ordinal` per-node 索引 `node_blocks`,APPROACH B 提供 per-node ordinal。
+- **§12.15.8(manifest verdict):** 不变。两种方案都不 bump AHFLXM version。
+- **§12.15.9(page capacity):** 不变。N 个 block 在两种方案下相同;D6 planner per-node 是 cardinality 变更,不改变 capacity 模型。
+- **§12.15.10(tests):** GAP 1 conformance case(fan-out instance reuse)的验收不变——验证 per-node block 不 overlap、fan-out 正常运行。APPROACH B 满足。
+- **§12.15.11(AC):** 不变。#213/#214/#421/#422 的验收是 exit 0 + fan-out 正常,不依赖内部机制(frame-base vs per-node copy)。
+- **§12.15.13(LOC):** GAP 1 的 LOC 估计从 "per-node blocks + frame-base runner(~200)" 修订为 "per-node blocks + per-node relocated copies(~250)"。`core_wasm_codegen.cpp` 行从 ~400 修订为 ~450;总计从 ~1230 修订为 ~1280。
+- **§12.15.14(sequencing):** 不变。WH-5c.2(GAP 1)的优先级和 gate 不变。
