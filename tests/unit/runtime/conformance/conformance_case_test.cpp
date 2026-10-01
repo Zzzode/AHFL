@@ -578,6 +578,18 @@ void test_committed_cases(const std::filesystem::path &repo_root) {
             "wasm::wh5b_hybrid_p6_bridge::HybridBridgePipeline",
             2, 1, WasmEligibility::Orchestration,
         },
+        // WH-5c.1: P6-packaged agent whose non-final handler constructs an
+        // aggregate with a String field from the input frame and passes it to
+        // a bridge capability. The relocated workflow-lane runner names the
+        // construct root scratch_base()+offset so the host decodes the
+        // descriptor instead of aborting with ArgDecodeFailed.
+        {
+            "wh5c_construct_bridge.case.json",
+            "tests/golden/wasm/wh5c_construct_bridge.ahfl",
+            CaseKind::Workflow,
+            "wasm::wh5c_construct_bridge::ConstructPipeline",
+            1, 1, WasmEligibility::Orchestration,
+        },
     };
 
     const auto cases_dir = repo_root / "tests" / "conformance" / "cases";

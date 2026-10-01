@@ -58,6 +58,11 @@ enum class CapabilityCallStatus {
     Pending,
 };
 
+/// Stable lowercase name for a CapabilityCallStatus, for diagnostics shared by
+/// the native evaluator and the wasm bridge/opaque import lanes.
+[[nodiscard]] std::string_view
+capability_call_status_name(CapabilityCallStatus status) noexcept;
+
 struct CapabilityUsage {
     std::size_t prompt_tokens{0};
     std::size_t completion_tokens{0};

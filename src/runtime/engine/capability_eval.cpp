@@ -10,25 +10,6 @@ namespace ahfl::runtime {
 
 namespace {
 
-[[nodiscard]] std::string_view capability_call_status_name(CapabilityCallStatus status) {
-    switch (status) {
-    case CapabilityCallStatus::Success:
-        return "success";
-    case CapabilityCallStatus::Error:
-        return "error";
-    case CapabilityCallStatus::Timeout:
-        return "timeout";
-    case CapabilityCallStatus::RetryExhausted:
-        return "retry_exhausted";
-    case CapabilityCallStatus::CircuitOpen:
-        return "circuit_open";
-    case CapabilityCallStatus::Pending:
-        return "pending";
-    }
-
-    return "unknown";
-}
-
 [[nodiscard]] evaluator::EvalResult make_capability_error(std::string message,
                                                           std::string diagnostic_code = {}) {
     evaluator::EvalResult result;

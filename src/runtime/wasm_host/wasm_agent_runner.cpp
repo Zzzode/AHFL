@@ -489,6 +489,16 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
                 run_failure_message += " (CapabilityImportError=";
                 run_failure_message += std::string(
                     to_string(*canonical_import_state.last_error));
+                // WH-5c.1: surface the precise arg-decode sub-reason,
+                // mirroring the workflow session path.
+                if (*canonical_import_state.last_error ==
+                        CapabilityImportError::ArgDecodeFailed &&
+                    canonical_import_state.last_arg_decode_sub_reason
+                        .has_value()) {
+                    run_failure_message += ": ";
+                    run_failure_message += std::string(to_string(
+                        *canonical_import_state.last_arg_decode_sub_reason));
+                }
                 run_failure_message += ")";
             }
         } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
@@ -532,6 +542,16 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
                 run_failure_message += " (CapabilityImportError=";
                 run_failure_message += std::string(
                     to_string(*canonical_import_state.last_error));
+                // WH-5c.1: surface the precise arg-decode sub-reason,
+                // mirroring the workflow session path.
+                if (*canonical_import_state.last_error ==
+                        CapabilityImportError::ArgDecodeFailed &&
+                    canonical_import_state.last_arg_decode_sub_reason
+                        .has_value()) {
+                    run_failure_message += ": ";
+                    run_failure_message += std::string(to_string(
+                        *canonical_import_state.last_arg_decode_sub_reason));
+                }
                 run_failure_message += ")";
             }
         } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
@@ -539,6 +559,13 @@ run_wasm_agent(std::span<const std::uint8_t> module_bytes,
             run_failure_kind = WorkflowFailureKind::NodeFailed;
             run_failure_code = wasm_diag::kTrap;
             run_failure_message = "run_wasm_agent: run2 trapped";
+            // WH-5c.1: surface the human-readable capability failure that
+            // caused the trap (mirrors the workflow session path).
+            if (canonical_import_state.last_capability_error.has_value()) {
+                run_failure_message += " (";
+                run_failure_message += *canonical_import_state.last_capability_error;
+                run_failure_message += ")";
+            }
         } else {
             const auto &tuple = std::get<eng::Run2ResultTuple>(*outcome);
             run_ok = (tuple.raw_status == 0);

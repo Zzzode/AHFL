@@ -1,0 +1,56 @@
+module wasm::wh5c_construct_bridge;
+
+// WH-5c.1 fixture: a workflow with one P6-packaged agent whose non-final
+// handler constructs an aggregate containing a String field sourced from the
+// input frame and passes it to a bridge capability. The defect was that the
+// relocated workflow-lane runner emitted the descriptor with the wrong wasm
+// stack order (value pushed before address), so the host read ptr=0 and
+// aborted with ArgDecodeFailed. The fix names the construct root
+// scratch_base()+offset for every construct-aggregate bridge arg on the
+// relocated workflow lane.
+
+pub struct Frame {
+    value: String;
+}
+
+pub struct Request {
+    value: String;
+}
+
+pub struct Ctx {
+    echoed: String = "";
+}
+
+capability Echo(request: Request) -> Frame;
+
+pub agent ConstructAgent {
+    input: Frame;
+    context: Ctx;
+    output: Frame;
+    states: [Done, Init];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+
+flow for ConstructAgent {
+    state Init {
+        let reply = Echo(Request { value: input.value });
+        ctx.echoed = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return Frame { value: ctx.echoed };
+    }
+}
+
+pub workflow ConstructPipeline {
+    input: Frame;
+    output: Frame;
+
+    node construct: ConstructAgent(input);
+
+    return: construct;
+}

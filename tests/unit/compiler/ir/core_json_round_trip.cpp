@@ -665,6 +665,10 @@ lower_golden_file(const std::filesystem::path &path) {
         // NODE_OUTPUT boundaries lower to verifier-clean Core.
         "wasm/wh5b_hybrid_rich_fidelity.ahfl",
         "wasm/wh5b_hybrid_rich_p6_to_opaque.ahfl",
+        // WH-5c.1: P6-packaged agent whose non-final handler constructs an
+        // aggregate with a String field from the input frame and passes it to
+        // a bridge capability; lowers to verifier-clean Core.
+        "wasm/wh5c_construct_bridge.ahfl",
     };
     std::sort(pinned.begin(), pinned.end());
     return pinned;

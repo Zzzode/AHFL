@@ -1,0 +1,32 @@
+{
+  "format_version": "ahfl.conformance-case.v1",
+  "source": "tests/golden/wasm/wh5c_construct_bridge.ahfl",
+  "kind": "workflow",
+  "entry": "wasm::wh5c_construct_bridge::ConstructPipeline",
+  "scenarios": [
+    {
+      "name": "construct_bridge",
+      "input": {"_type":"wasm::wh5c_construct_bridge::Frame","value":"hello"},
+      "expect": {
+        "run_status": "completed",
+        "state_sequence": [],
+        "capability_sequence": ["wasm::wh5c_construct_bridge::Echo"],
+        "output_json": {"_type":"wasm::wh5c_construct_bridge::Frame","value":"hello"}
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "wasm::wh5c_construct_bridge::Echo",
+      "status": "ok",
+      "result_json": {"_type":"wasm::wh5c_construct_bridge::Frame","value":"hello"}
+    }
+  ],
+  "engines": {
+    "evaluator": true,
+    "wasm": {
+      "eligible": "orchestration",
+      "reason": "P6-packaged agent whose non-final handler constructs an aggregate with a String field from the input frame and passes it to a bridge capability; the relocated workflow-lane runner names the construct root scratch_base()+offset (WH-5c.1)"
+    }
+  }
+}

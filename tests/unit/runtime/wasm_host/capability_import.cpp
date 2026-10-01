@@ -1058,10 +1058,11 @@ void test_abort_bridge_span_region() {
     auto callback = wh::make_capability_import_callback(std::move(config));
 
     // Set up the control block, then overwrite the arg descriptor's ptr to
-    // address 0 (outside the spill region [kSpillBase, kSpillBase+8)).
+    // a non-zero address outside the spill window [kSpillBase, kSpillBase+8).
     setup_bridge_control_block(engine, 42);
     auto page = engine.mutable_whole_memory();
-    put_i32_le(*page, kControlBase + 8, 0); // ptr = 0 (outside spill region)
+    constexpr auto kOutsideSpill = kSpillBase + 100; // non-zero, outside window
+    put_i32_le(*page, kControlBase + 8, static_cast<std::int32_t>(kOutsideSpill));
 
     eng::ImportObservation obs;
     obs.import_ordinal = 0;
@@ -1076,7 +1077,133 @@ void test_abort_bridge_span_region() {
     check(state.last_error.has_value() &&
               *state.last_error == wh::CapabilityImportError::ArgDecodeFailed,
           "abort bridge span-region: error is ArgDecodeFailed");
+    check(state.last_arg_decode_sub_reason.has_value() &&
+              *state.last_arg_decode_sub_reason ==
+                  wh::ArgDecodeSubReason::kSpillOutOfBounds,
+          "abort bridge span-region: sub-reason is kSpillOutOfBounds");
     check(mock.call_count == 0, "abort bridge span-region: invoker not called");
+}
+
+// 16b. WH-5c.1: a forged null descriptor (ptr==0, len>0) is rejected with the
+//      explicit kNullDescriptor sub-reason (not a generic region failure).
+//      Pre-effect: the invoker is NEVER called.
+void test_abort_bridge_null_descriptor() {
+    constexpr std::uint64_t kSymbol = 407;
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort bridge null-descriptor: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort bridge null-descriptor: engine instantiated");
+
+    auto section = make_bridge_section(kSymbol);
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    // Set up the control block, then forge the arg descriptor's ptr to 0
+    // (null root) while keeping len=8 (len>0).
+    setup_bridge_control_block(engine, 42);
+    auto page = engine.mutable_whole_memory();
+    put_i32_le(*page, kControlBase + 8, 0); // ptr = 0 (null), len stays 8
+
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.scalar_arg = kControlBase;
+    obs.param_frame = {};
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort bridge null-descriptor: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::ArgDecodeFailed,
+          "abort bridge null-descriptor: error is ArgDecodeFailed");
+    check(state.last_arg_decode_sub_reason.has_value() &&
+              *state.last_arg_decode_sub_reason ==
+                  wh::ArgDecodeSubReason::kNullDescriptor,
+          "abort bridge null-descriptor: sub-reason is kNullDescriptor");
+    check(mock.call_count == 0, "abort bridge null-descriptor: invoker not called");
+}
+
+// 16c. WH-5c.1: a descriptor whose length does not match the layout size is
+//      rejected with the kLengthMismatch sub-reason. Pre-effect: the invoker
+//      is NEVER called.
+void test_abort_bridge_length_mismatch() {
+    constexpr std::uint64_t kSymbol = 408;
+    auto bytes = wht::with_a2_admission(wht::capability_module(kSymbol, 2), kSymbol);
+    auto admitted = csm::make_verified_core_wasm_schema_module(bytes);
+    check(admitted.ok(), "abort bridge length-mismatch: A2 admission");
+
+    wh::Wasm3ResumeEngine engine;
+    auto inst = engine.fresh_instance(
+        bytes, [](const eng::ImportObservation &) -> eng::ImportCallbackResult {
+            return eng::ImportReply{};
+        });
+    check(inst.has_value(), "abort bridge length-mismatch: engine instantiated");
+
+    auto section = make_bridge_section(kSymbol);
+
+    ScriptedInvoker mock;
+    mock.result.status = runtime::CapabilityCallStatus::Success;
+    auto invoker = mock.as_invoker();
+
+    wh::CapabilityImportState state;
+    runtime::CapabilityInvocationContext context;
+    wh::CapabilityImportConfig config{
+        .engine = engine,
+        .module = *admitted.module,
+        .frame_section = section,
+        .invoker = invoker,
+        .context = context,
+        .name_resolver = [](std::uint64_t) { return std::optional<std::string>{"test_cap"}; },
+        .state = state,
+    };
+    auto callback = wh::make_capability_import_callback(std::move(config));
+
+    // Set up the control block, then forge the arg descriptor's len to 4
+    // (the spill layout expects 8).
+    setup_bridge_control_block(engine, 42);
+    auto page = engine.mutable_whole_memory();
+    put_u32_le(*page, kControlBase + 12, 4); // len = 4 (expected 8)
+
+    eng::ImportObservation obs;
+    obs.import_ordinal = 0;
+    obs.scalar_arg = kControlBase;
+    obs.param_frame = {};
+    auto mem = engine.read_whole_memory();
+    obs.whole_memory = *mem;
+
+    auto reply = callback(obs);
+    check(std::holds_alternative<eng::ImportAbort>(reply),
+          "abort bridge length-mismatch: reply is ImportAbort");
+    check(state.last_error.has_value() &&
+              *state.last_error == wh::CapabilityImportError::ArgDecodeFailed,
+          "abort bridge length-mismatch: error is ArgDecodeFailed");
+    check(state.last_arg_decode_sub_reason.has_value() &&
+              *state.last_arg_decode_sub_reason ==
+                  wh::ArgDecodeSubReason::kLengthMismatch,
+          "abort bridge length-mismatch: sub-reason is kLengthMismatch");
+    check(mock.call_count == 0, "abort bridge length-mismatch: invoker not called");
 }
 
 } // anonymous namespace
@@ -1098,6 +1225,8 @@ int main() {
     test_abort_bridge_expected_addr();
     test_abort_bridge_wire_schema_arity();
     test_abort_bridge_span_region();
+    test_abort_bridge_null_descriptor();
+    test_abort_bridge_length_mismatch();
 
     std::cout << pass_count << "/" << test_count << " checks passed\n";
     return (pass_count == test_count) ? 0 : 1;

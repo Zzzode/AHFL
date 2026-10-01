@@ -6632,13 +6632,6 @@ class P6ComputationHandlerBuilder {
             body_.u32(kAlignI32);
             body_.u32(0);
         };
-        // Store one SSA i32 word (pushed by the caller) into `address`.
-        const auto store_i32_stack_word = [&](std::uint32_t address) {
-            emit_const_i32(static_cast<std::int32_t>(address));
-            body_.byte(kOpI32Store);
-            body_.u32(kAlignI32);
-            body_.u32(0);
-        };
         store_i32_word(block_ptr, static_cast<std::int32_t>(site.call_site_id));
         store_i32_word(block_ptr + 4u, static_cast<std::int32_t>(s.args.size()));
 
@@ -6660,11 +6653,16 @@ class P6ComputationHandlerBuilder {
                     return reject("bridge aggregate argument has no finalized P4-D layout", range);
                 }
                 // The value word IS its root address; the span length is the
-                // layout root size (8 for a collection header).
+                // layout root size (8 for a collection header). i32.store
+                // expects [address, value] with the value on top, so name the
+                // descriptor slot first and read the root address second.
+                emit_const_i32(static_cast<std::int32_t>(desc_addr));
                 if (!emit_value_read(arg, range)) {
                     return false;
                 }
-                store_i32_stack_word(desc_addr);
+                body_.byte(kOpI32Store);
+                body_.u32(kAlignI32);
+                body_.u32(0);
                 store_i32_word(desc_addr + 4u,
                                static_cast<std::int32_t>(layout->size));
                 continue;

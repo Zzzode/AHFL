@@ -1,10 +1,29 @@
 #include "runtime/engine/capability_bridge.hpp"
 
 #include <memory>
+#include <string_view>
 #include <thread>
 #include <utility>
 
 namespace ahfl::runtime {
+
+std::string_view capability_call_status_name(CapabilityCallStatus status) noexcept {
+    switch (status) {
+    case CapabilityCallStatus::Success:
+        return "success";
+    case CapabilityCallStatus::Error:
+        return "error";
+    case CapabilityCallStatus::Timeout:
+        return "timeout";
+    case CapabilityCallStatus::RetryExhausted:
+        return "retry_exhausted";
+    case CapabilityCallStatus::CircuitOpen:
+        return "circuit_open";
+    case CapabilityCallStatus::Pending:
+        return "pending";
+    }
+    return "unknown";
+}
 
 // ============================================================================
 // CircuitBreakerState

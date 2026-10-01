@@ -92,10 +92,42 @@ enum class CapabilityImportError {
 [[nodiscard]] std::string_view
 to_string(CapabilityImportError error) noexcept;
 
+/// WH-5c.1: the precise fail-closed reason for an ArgDecodeFailed bridge
+/// argument decode. Distinguishes the five ways a forged or corrupt arg
+/// descriptor / span is rejected, so the diagnostic is actionable instead
+/// of a coarse "arg decode failed". Never carries raw guest addresses/bytes.
+enum class ArgDecodeSubReason {
+    /// Defensive/non-specific failure (schema corruption, layout fault).
+    kUnspecified,
+    /// The descriptor named ptr==0 with len>0 (a forged null root).
+    kNullDescriptor,
+    /// An aggregate root lies outside the authorized root regions.
+    kRootOutsideRegion,
+    /// The descriptor's length does not match the layout's expected size.
+    kLengthMismatch,
+    /// A spilled scalar slot lies outside the call site's spill window.
+    kSpillOutOfBounds,
+    /// A String leaf's (ptr,len) points outside the string regions.
+    kStringLeafOutsideRegion,
+};
+
+/// The stable lowercase name for an ArgDecodeSubReason, for diagnostics.
+[[nodiscard]] std::string_view
+to_string(ArgDecodeSubReason reason) noexcept;
+
 /// Shared error state: the callback writes the precise reason here before
 /// returning ImportAbort, so the driver can classify the host-decision failure.
 struct CapabilityImportState {
     std::optional<CapabilityImportError> last_error;
+    /// WH-5c.1: when a capability executes and returns a non-Success,
+    /// non-Pending status the guest traps by design (the bridge/opaque lanes
+    /// have a graceful PENDING arm only). The callback records the human-
+    /// readable capability failure here so the session can surface it in the
+    /// trap diagnostic instead of a bare "run2 trapped". Never carries raw
+    /// guest addresses/bytes.
+    std::optional<std::string> last_capability_error;
+    /// WH-5c.1: the precise sub-reason when last_error is ArgDecodeFailed.
+    std::optional<ArgDecodeSubReason> last_arg_decode_sub_reason;
 };
 
 /// Configuration for the capability-import callback. All references must
@@ -185,7 +217,9 @@ find_bridge_site_by_id(const ir::core::CoreFrameLayoutSection &section,
 /// origination and replay arg_hash are computed by the SAME code path. The
 /// caller supplies the resolved call site (for the wire binding), bridge site
 /// (for the P4-D layouts + spill regions), and control-block pointer (the
-/// descriptor addresses are read at block_ptr + 8 + 8*i).
+/// descriptor addresses are read at block_ptr + 8 + 8*i). On failure, sets
+/// `error` to ArgDecodeFailed and `sub_reason` to the precise fail-closed
+/// reason (WH-5c.1).
 [[nodiscard]] std::optional<std::vector<runtime::Value>>
 decode_bridge_import_args(
     const ir::core::CoreFrameLayoutSection &section,
@@ -193,7 +227,8 @@ decode_bridge_import_args(
     const ir::core::CoreFrameBridgeCallSite &site,
     std::uint32_t block_ptr,
     std::span<const std::uint8_t> whole_memory,
-    CapabilityImportError &error);
+    CapabilityImportError &error,
+    ArgDecodeSubReason &sub_reason);
 
 /// WH-5b.2: pack a host Value into a bridge call site's disjoint result
 /// placement (the same packing handle_bridge performs on a live success).

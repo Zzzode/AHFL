@@ -983,15 +983,24 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                         std::uint64_t live_arg_hash = 0;
                         if (is_bridge) {
                             CapabilityImportError decode_error{};
+                            ArgDecodeSubReason decode_sub_reason{
+                                ArgDecodeSubReason::kUnspecified};
                             auto bargs = decode_bridge_import_args(
                                 *descriptor.frame_section, *call_site,
                                 *bridge_site, obs.scalar_arg,
-                                obs.whole_memory, decode_error);
+                                obs.whole_memory, decode_error,
+                                decode_sub_reason);
                             if (!bargs.has_value()) {
                                 replay_divergence =
                                     "durable resume replay diverged from "
                                     "the recorded memo (ordinal " +
-                                    std::to_string(ordinal) + ")";
+                                    std::to_string(ordinal) +
+                                    ": bridge argument decode failed: " +
+                                    std::string(to_string(decode_error)) +
+                                    "/" +
+                                    std::string(
+                                        to_string(decode_sub_reason)) +
+                                    ")";
                                 return eng::ImportAbort{};
                             }
                             auto h = runtime::hash_values(*bargs);
@@ -1626,6 +1635,14 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
                 " (CapabilityImportError=";
             run_failure_message +=
                 std::string(to_string(*import_state.last_error));
+            // WH-5c.1: surface the precise arg-decode sub-reason.
+            if (*import_state.last_error ==
+                    CapabilityImportError::ArgDecodeFailed &&
+                import_state.last_arg_decode_sub_reason.has_value()) {
+                run_failure_message += ": ";
+                run_failure_message += std::string(
+                    to_string(*import_state.last_arg_decode_sub_reason));
+            }
             run_failure_message += ")";
         }
     } else if (std::holds_alternative<eng::Run2Trapped>(*outcome)) {
@@ -1633,6 +1650,15 @@ run_workflow_session(std::span<const std::uint8_t> module_bytes,
         run_failure_kind = WorkflowFailureKind::NodeFailed;
         run_failure_code = wasm_diag::kTrap;
         run_failure_message = "run_workflow_session: run2 trapped";
+        // WH-5c.1: a capability that executed and failed traps the guest by
+        // design (the bridge/opaque lanes have a graceful PENDING arm only).
+        // Surface the human-readable capability failure so the diagnostic is
+        // actionable instead of a bare trap.
+        if (import_state.last_capability_error.has_value()) {
+            run_failure_message += " (";
+            run_failure_message += *import_state.last_capability_error;
+            run_failure_message += ")";
+        }
     } else {
         tuple = &std::get<eng::Run2ResultTuple>(*outcome);
         if (tuple->raw_status == AHFL_CAP_PENDING) {

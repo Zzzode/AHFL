@@ -291,7 +291,18 @@ handle_opaque(const CapabilityImportConfig &config,
 
     if (result.status != runtime::CapabilityCallStatus::Success) {
         // A capability that executed but failed/pending is a raw non-OK reply,
-        // never an abort (2026-09-30 decision, Option A).
+        // never an abort (2026-09-30 decision, Option A). Pending has a graceful
+        // guest arm (suspend); every other non-OK status traps the guest by
+        // design, so record the human-readable failure for the trap diagnostic.
+        if (result.status != runtime::CapabilityCallStatus::Pending) {
+            std::string message = "capability '" + *name + "' failed with status " +
+                                  std::string(capability_call_status_name(result.status));
+            if (!result.error_message.empty()) {
+                message += ": ";
+                message += result.error_message;
+            }
+            config.state.last_capability_error = std::move(message);
+        }
         return eng::ImportReply{raw_status, eng::GuestPointer{0}, 0};
     }
 
@@ -373,10 +384,15 @@ handle_bridge(const CapabilityImportConfig &config,
 
     // Walk the arguments (shared with the session memo-replay arg_hash, so the
     // origination and replay hashes are computed by the SAME code path).
+    ArgDecodeSubReason arg_sub_reason{ArgDecodeSubReason::kUnspecified};
     auto args = decode_bridge_import_args(section, call_site, site, obs.scalar_arg,
-                                          obs.whole_memory, resolve_error);
+                                          obs.whole_memory, resolve_error,
+                                          arg_sub_reason);
     if (!args.has_value()) {
         config.state.last_error = resolve_error;
+        if (resolve_error == CapabilityImportError::ArgDecodeFailed) {
+            config.state.last_arg_decode_sub_reason = arg_sub_reason;
+        }
         return eng::ImportAbort{};
     }
 
@@ -398,6 +414,19 @@ handle_bridge(const CapabilityImportConfig &config,
         // pointer. The guest's PENDING arm reads only the status word and
         // suspends; it never dereferences the pointer. This is the
         // defense-in-depth invariant that makes case 6 unreachable.
+        //
+        // WH-5c.1: ERROR traps the guest by design, so record the
+        // human-readable capability failure for the session's trap diagnostic
+        // (mirrors the native evaluator's capability_call_status_name path).
+        if (result.status != runtime::CapabilityCallStatus::Pending) {
+            std::string message = "capability '" + *name + "' failed with status " +
+                                  std::string(capability_call_status_name(result.status));
+            if (!result.error_message.empty()) {
+                message += ": ";
+                message += result.error_message;
+            }
+            config.state.last_capability_error = std::move(message);
+        }
         return eng::ImportReply{raw_status, eng::GuestPointer{0}, 0};
     }
 
@@ -451,6 +480,24 @@ std::string_view to_string(CapabilityImportError error) noexcept {
         return "EngineMemoryFailed";
     }
     return "Unknown";
+}
+
+std::string_view to_string(ArgDecodeSubReason reason) noexcept {
+    switch (reason) {
+    case ArgDecodeSubReason::kUnspecified:
+        return "unspecified arg decode failure";
+    case ArgDecodeSubReason::kNullDescriptor:
+        return "null descriptor (ptr==0 with len>0)";
+    case ArgDecodeSubReason::kRootOutsideRegion:
+        return "aggregate root outside authorized region";
+    case ArgDecodeSubReason::kLengthMismatch:
+        return "descriptor length does not match layout size";
+    case ArgDecodeSubReason::kSpillOutOfBounds:
+        return "spilled slot outside spill window";
+    case ArgDecodeSubReason::kStringLeafOutsideRegion:
+        return "string leaf outside authorized string region";
+    }
+    return "unknown";
 }
 
 // WH-4b: exposed for the session memo-replay layer (see the header comment).
@@ -558,7 +605,13 @@ decode_bridge_import_args(
     const ir::core::CoreFrameBridgeCallSite &site,
     std::uint32_t block_ptr,
     std::span<const std::uint8_t> whole_memory,
-    CapabilityImportError &error) {
+    CapabilityImportError &error,
+    ArgDecodeSubReason &sub_reason) {
+    const auto fail = [&](ArgDecodeSubReason reason) {
+        error = CapabilityImportError::ArgDecodeFailed;
+        sub_reason = reason;
+        return std::nullopt;
+    };
     const auto param_binding = call_site.param_binding();
     const auto &wire = param_binding.table();
     const auto *cap = find_capability(wire, call_site.source_symbol());
@@ -580,37 +633,37 @@ decode_bridge_import_args(
         const auto ptr = read_i32_le(whole_memory, desc_addr);
         const auto len = read_u32_le(whole_memory, desc_addr + 4);
         if (!ptr.has_value() || !len.has_value()) {
-            error = CapabilityImportError::ArgDecodeFailed;
-            return std::nullopt;
+            return fail(ArgDecodeSubReason::kUnspecified);
         }
         const auto ptr_u = static_cast<std::uint32_t>(*ptr);
         // Bounds-check the span against the page.
         if (ptr_u > whole_memory.size() ||
             *len > whole_memory.size() - ptr_u) {
-            error = CapabilityImportError::ArgDecodeFailed;
-            return std::nullopt;
+            return fail(ArgDecodeSubReason::kUnspecified);
+        }
+        // WH-5c.1: an explicit null-descriptor check (ptr==0 with len>0).
+        // Without this, a forged null root falls through to the region check
+        // and is reported as a generic region failure.
+        if (ptr_u == 0u && *len > 0u) {
+            return fail(ArgDecodeSubReason::kNullDescriptor);
         }
         // Classify the parameter by its wire shape.
         if (cap->params[i].value >= wire.nodes.size()) {
-            error = CapabilityImportError::ArgDecodeFailed;
-            return std::nullopt;
+            return fail(ArgDecodeSubReason::kUnspecified);
         }
         const auto &wire_node = wire.nodes[cap->params[i].value];
         const auto kind = bridge_param_kind(wire_node);
         if (kind == BridgeParamKind::Reject) {
-            error = CapabilityImportError::ArgDecodeFailed;
-            return std::nullopt;
+            return fail(ArgDecodeSubReason::kUnspecified);
         }
         // Get the layout for this parameter.
         if (i >= site.param_layouts.size()) {
-            error = CapabilityImportError::ArgDecodeFailed;
-            return std::nullopt;
+            return fail(ArgDecodeSubReason::kUnspecified);
         }
         const auto layout_id = site.param_layouts[i];
         const auto *layout = ctx.layout(layout_id);
         if (layout == nullptr) {
-            error = CapabilityImportError::ArgDecodeFailed;
-            return std::nullopt;
+            return fail(ArgDecodeSubReason::kUnspecified);
         }
         if (kind == BridgeParamKind::Spill) {
             // Every spilled slot is one 8-byte private slot in THIS site's
@@ -620,15 +673,13 @@ decode_bridge_import_args(
                 std::holds_alternative<ir::core::CoreLayoutPtrLen>(layout->shape) ||
                 std::holds_alternative<ir::core::CoreLayoutEnum>(layout->shape);
             if (!layout_ok || *len != 8) {
-                error = CapabilityImportError::ArgDecodeFailed;
-                return std::nullopt;
+                return fail(ArgDecodeSubReason::kLengthMismatch);
             }
             const StringRegion spill_region{site.spill_base,
                                             site.spill_base + site.spill_extent};
             if (spill_region.hi <= spill_region.lo ||
                 !region_contains(spill_region, ptr_u, 8)) {
-                error = CapabilityImportError::ArgDecodeFailed;
-                return std::nullopt;
+                return fail(ArgDecodeSubReason::kSpillOutOfBounds);
             }
         } else {
             // An aggregate root stays at its existing stable address.
@@ -636,20 +687,22 @@ decode_bridge_import_args(
                 std::holds_alternative<ir::core::CoreLayoutStruct>(layout->shape) ||
                 std::holds_alternative<ir::core::CoreLayoutEnum>(layout->shape);
             if (!layout_ok || static_cast<std::uint64_t>(*len) != layout->size) {
-                error = CapabilityImportError::ArgDecodeFailed;
-                return std::nullopt;
+                return fail(ArgDecodeSubReason::kLengthMismatch);
             }
             if (!string_in_regions(root_regions, ptr_u, *len)) {
-                error = CapabilityImportError::ArgDecodeFailed;
-                return std::nullopt;
+                return fail(ArgDecodeSubReason::kRootOutsideRegion);
             }
         }
         // Walk the P4-D span into a host Value.
         auto value = read_value_at(ctx, whole_memory, cap->params[i], layout_id,
                                    ptr_u, string_regions);
         if (!value.has_value()) {
-            error = CapabilityImportError::ArgDecodeFailed;
-            return std::nullopt;
+            // A String leaf whose (ptr,len) escapes the authorized string
+            // regions is the one FrameReadError with a dedicated sub-reason.
+            if (value.error() == FrameReadError::StringOutsideAuthorizedRegion) {
+                return fail(ArgDecodeSubReason::kStringLeafOutsideRegion);
+            }
+            return fail(ArgDecodeSubReason::kUnspecified);
         }
         args.push_back(std::move(*value));
     }

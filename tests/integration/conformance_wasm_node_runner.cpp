@@ -144,7 +144,7 @@ using ahfl::conformance::detail::is_conformance_case_sidecar;
 // fb4_effectful_fn (an in-fn capability call sends a constructed frame over
 // the opaque lane, which only accepts the borrowed input bytes) stay on
 // bespoke hosts.
-constexpr int kExpectedAgreed = 67;
+constexpr int kExpectedAgreed = 68;
 constexpr int kExpectedSkipped = 0;
 
 // Pinned STEM SET (not merely a census) of cases allowed to declare

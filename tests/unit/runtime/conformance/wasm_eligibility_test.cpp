@@ -391,6 +391,17 @@ void test_committed_catalogue(const std::filesystem::path &repo_root) {
          "",
          "",
          CoreWasmFrameContract::P6Frame},
+        // WH-5c.1: P6-packaged agent whose non-final handler constructs an
+        // aggregate with a String field from the input frame and passes it to
+        // a bridge capability. The module emits P6Frame; the relocated
+        // workflow-lane runner names the construct root scratch_base()+offset
+        // so the host decodes the descriptor. Runnable on the orchestration
+        // lane; the completed outcome is pinned by the case scenario.
+        {"wh5c_construct_bridge.case.json",
+         WasmEligibilityVerdict::RunnableOrchestration,
+         "",
+         "",
+         CoreWasmFrameContract::P6Frame},
     };
     for (const auto &expectation : runnable) {
         const auto classification = classify_case(repo_root, expectation.sidecar);
