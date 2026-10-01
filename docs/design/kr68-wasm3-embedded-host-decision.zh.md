@@ -3083,6 +3083,8 @@ frame section(`ahfl.core-layout.v1`)是 P4-D layout authority,不携带 capabili
 
 **Reference Hierarchy:** Dafny 的 decreases/termination——fail-closed alignment 确保 wasm lane 不能 silently 产生与 evaluator 不同的 output set。AHFL-specific divergence:evaluator 的 `add_runtime_value` 是 in-process 的;wasm lane 的 host 必须跨 wasm3 boundary decode wire JSON,但 id 分配逻辑必须与 evaluator 一致(sequential,completion order)。
 
+> **机制修订(2026-10-02,§12.15.19):** 本节的 per-node output host 可读性机制——"identity node 的 output = 其 input tuple(host 已 packed)"与"capability node 的 output = capability result"——经独立复核证伪(仅单节点 pure-identity workflow 成立;多节点 chain / canonical compute / cap-then-compute 均不成立,per-node tuple 活在 wasm scheduler local 里、host 不可读)。机制改由 guest stash table 承担,见 §12.15.19。本节的 id 分配规则、fail-closed alignment、stripping 删除决策**不变**。
+
 ### 12.15.8 Q6: Wire/manifest verdict — no version bump
 
 **决策:不升任何 wire-format version。AHFLXM v2 不变;core-layout section 保持 format_version=3;recovery snapshot 保持 v2。**
@@ -3745,3 +3747,181 @@ C_k zero-fill 是 once-per-node(`:16628-16634`,在 runner 启动前),不是 per-
 - **§12.7.3(WH-9 evaluator deletion):** 保留,但增加 prerequisite:`capability_bridge.hpp` + `capability_event_projection.{hpp,cpp}` 必须 relocate(不删)。
 - **§12.15.8(no version bump):** 不变。GAP 8/9 不增加 wire field(event projection 是 host-side;String carry 是 codegen 层 frame 操作)。AHFLXM v2 不 bump。
 - **§12.6/§12.14(memo/replay):** 保留。GAP 8/9 与 memo replay 正交(§12.15.18.1/18.2 交互节)。
+
+### 12.15.19 WH-5c GAP 4 机制修订:per-node output stash table(2026-10-02,dedicated decision-revision agent)
+
+本节修订 §12.15.7 的 **per-node output host 可读性机制**(GAP 4)。§12.15.7 原文保留作历史档案(append-only),其 id 分配规则、fail-closed alignment、parity harness stripping 删除决策**不变**;仅"host 如何获得 per-node output"这一机制被替换。修订动因为协调者转交的经验证据(wh5c-builder-supplements.md §12.15.7):opaque WireJson lane 的 run2 只返回 final tuple,per-node result tuple 活在 scheduler local 里、host 不可读。所有代码断言已对工作树(HEAD `453d3888` + uncommitted WH-6 cutover)逐条复核。
+
+#### 12.15.19.1 §12.15.7 的事实证伪
+
+§12.15.7 的 Design 节声称:"identity node 的 output = 其 input tuple(host 已 packed);capability node 的 output = capability result(wire JSON)"。独立复核确认这**不是 under-specification,而是事实错误**(仅单节点 pure-identity workflow 成立):
+
+1. **host 只 packed ENTRY tuple。** opaque lane 的 entry JSON 由 host 经 `alloc_then_write` 写入 bump heap(`wasm_agent_runner.cpp:451`);workflow lane 的 entry frame 由 host packed 进 schedule 首个 node 的 I_k(P6)或经 `alloc_then_write`(opaque)。host **从不** packed 非 entry node 的 input——非 entry node 的 input 是 upstream node 的 output,由 scheduler 在 guest 内 materialize / 透传。
+2. **per-node result tuple 活在 wasm scheduler local 里。** scheduler 为每个 node 分配一对 local(`core_wasm_codegen.cpp:16499-16512`:`workflow_node_ptr_local` = `2 + node.value*2`、`workflow_node_len_local` = `+1`),runner 返回的 `(status, ptr, len)` 存入这对 local(`:16920-16924`)。wasm local **host 不可读**——host 只能读 linear memory 与 exported global。
+3. **run2 只返回 final tuple。** `make_workflow_run2_body` 的 opaque 路径以 `append_workflow_source(body, plan.output)` 收尾(`:17124-17127`),只把 workflow output source(最终 node 的 ptr/len local)压栈返回。中间 node 的 tuple 不离开 guest。
+4. **canonical / compute node 的 output ≠ input。** 无 capability 的 canonical agent(whole run in-guest,不做 host call)的 output 是在 guest 内计算的新 JSON bytes,host 无法从 input 重建。
+5. **capability node 的 output ≠ cap result(一般情况)。** host 侧 `WasmCapabilityCall.output`(`wasm_lifecycle.hpp:64-79`)是 **capability result**,不是 node output。一个 node 可以 call cap 后再 compute(`let r = Cap(...); return Struct{x: r.x};`),其 node output 是计算产物,不是 cap result。§12.15.7 的等式只对 capability-FINAL node(`return Cap(...)`)成立,且需要 host 做 shape 分析才能识别 finality——host 不做这种分析。
+
+结论:§12.15.7 的 "host 已 packed / cap result" 机制对多节点 chain、canonical compute、cap-then-compute 三类 shape 均不成立。GAP 4 的 conformance case(多 node identity + capability workflow)在该机制下无法实现。需要一个 guest 侧机制把 per-node output 暴露给 host。
+
+#### 12.15.19.2 已验证的机器行为(file:line)
+
+**scheduler 与 completion(`core_wasm_codegen.cpp`):**
+
+- `append_workflow_schedule`(`:16731-17017`)按 `plan.schedule` 顺序逐 node 发射。P6 node 走 `:16754-16903`(materialize I_k → call runner → 校验 O_k → 写 tag-0 event record(仅 capability workflow)→ bump `workflow_completed_count`);opaque node 走 `:16905-17016`(xcode/source → call runner → 状态分派 → 写 event record(仅 capability workflow)→ bump `workflow_completed_count`)。
+- `workflow_completed_count` global(`kWorkflowGlobalCompletedCount = 4`,`:1180`)在**每条** node 完成路径上 +1(P6 `:16899-16902`、identity opaque `:16936-16939`、capability opaque `:17013-17016`)。PENDING(suspend)路径在 bump 之前 return(`:16856` / `:16962`),不 bump。
+- identity workflow(无 imports)不写 event record;completion 由 host 从 `workflow_completed_count` global 推导(`workflow_session.cpp:2049-2053`:`node_completed[i] = i < workflow_completed_count`)。
+- workflow module 的 `fn_count = 0`(`:1129-1137`):packaged agent 的 outlined fn 不进 workflow module,故 workflow module 内无 fn-mode heap bump。
+
+**heap 纪律(决定 stash 指向的 bytes 是否 stable):**
+
+- opaque runner 无 computed handler(computed final → `has_computed_final` → P6;computed goto → P6),故**不经过** `P6ComputationHandlerBuilder`,**不发射** `heap_next = construct_heap_base` reset(`:2681-2684` 只在 handler-mode `reset_construct_heap_` 时发射)。opaque lane 的 bump heap 在整次 run 内**单调递增**,不回收。
+- P6 relocated handler 的 construct-heap reset(若 `construct_heap_enabled`)把 `heap_next` 设为 relocated build 的 `construct_heap_base`;该 base 在 legacy lane 下 `backing_high ≥ kP6CollectionBackingBase = 16384`(`:10544-10573`),故 reset 总是把 `heap_next` **向上跳**到 ≥16384,**不会向下回收到** opaque JSON 所在的 `[heap_base, 16384)` 区间。opaque node 的 JSON bytes 在整次 run 内不被覆盖。
+- bump allocator(`alloc` import,`:14213-14221`)单调推进 `heap_next`,超限 fail-closed。
+
+**host 侧 join 现状(`workflow_session.cpp`):**
+
+- node-output decode 路径(`:1760-1854`):遍历 node-event record,仅对 `node_desc->is_p6` 的 node 从 O_k block decode(`:1816-1838`,`read_value_at`);opaque node 得 silent `NoneValue`(`:1808-1815` 注释明言 "not host-observable")。decode 失败 silent(`:1834-1836`:`if (output.has_value())` 否则留 `NoneValue`)。
+- identity workflow 无 event record,故事实上 `node_outputs` 全空、`node_completed_hook` 不触发(evaluator 对每个 completed node 触发 hook,`workflow_runtime.cpp:1429-1431`——这是既有 parity gap)。
+- workflow output decode 已 fail-closed:P6 `:1952-1961`、WireJson `:1974-2001`(range check + `value_from_json` + `kOutputDecodeFailed`)。
+- `workflow_completed_count` 校验(`:2020-2036`):成功 run 必须 `== workflow_node_count`;失败 run `<=`。
+- evaluator id 分配(`workflow_runtime.cpp`):cap result id(`:1138`)在 node output id(`:1432`)之前,逐 node 按 schedule 顺序;workflow output id 在所有 node 之后(`:1525`)。wasm lifecycle helper 的 `add_value`(`wasm_lifecycle.cpp:24-25`)按相同顺序分配(cap_call output `:255-261` → node output `:268-272` → workflow output `:300-304`)。**id 排序机制已正确,唯一缺口是 opaque node output 未 decode → `node_facts.output` 为空 → 无 id。**
+
+**wire schema / manifest:**
+
+- `CoreWireFrameRoots.node_outputs`(`core_wire_schema.hpp:152-163`)是 **P6-dense**(parallel to `node_blocks`),all-opaque workflow 为空。opaque node output **无** wire-schema root——host 用 schemaless `value_from_json` decode(与 workflow output path `:1988` 相同)。无需 manifest / wire-schema 变更。
+- `CoreWasmExecutionDescriptor`(`core_wasm_codegen.hpp:217-264`)已携带 `nodes`(schedule order,含 `is_p6`/`schedule_pos`/`p6_block_ordinal`)、`imports`、`workflow_node_count`、`heap_base`、`event_records_base`、`event_record_bytes`——host 计算 stash base 所需的一切,**无需新 descriptor field**。
+
+**parity harness stripping(`wasm_runner.cpp`):**
+
+- `strip_output_value_id`(`:1223-1238`)把 eval 与 wasm 两侧的 `output_value_id` 统一替换为 `null`;调用点 `:1335-1338`(仅 `!is_p6_frame`)。注释 `:1218-1222` 明言原因:"the wasm lane cannot observe individual node outputs"。
+
+#### 12.15.19.3 决策:guest scheduler stash table(APPROACH A-revised)
+
+**选择:guest scheduler 在每个 opaque node 完成后,把其 output tuple 的 `(ptr, len)` 存入一张 host-known 的固定页表(per-schedule_pos 索引,8 字节/slot);host 在 run 后读表,对 opaque node 用 `value_from_json` decode、对 P6 node 沿用既有 O_k `read_value_at` 路径,按 schedule 顺序 join 全部 node output 并分配 sequential `RuntimeValueId`。**
+
+这是协调者候选空间中的 (A),但做两处收窄:(a) stash **只覆盖 opaque node**(P6 node 沿用 O_k,不 stash——见 §12.15.19.9 拒绝项 3);(b) 表按 `schedule_pos` 直接索引(8×N slot,P6 slot 留零),不引入 opaque-dense ordinal 映射。
+
+**Reference Hierarchy:** Rust/Clang 的 flat store + index-based identity(Principle 2/3):一张 `vector<(u32 ptr, u32 len)>` 风格的固定表,index 是 `schedule_pos`(编译期已知的 dense ordinal),不是 string key。host 侧 join 是单一 decode loop(P6 → `read_value_at`,opaque → `value_from_json`),与 evaluator 的 node loop 同构。AHFL-specific divergence 见 §12.15.19.12。
+
+#### 12.15.19.4 页区域放置(addresses / sizing / max-nodes / overflow)
+
+stash 表是 node-event region **同族**的固定低页区域,位于 event region 之后、bump heap / P6 cursor 之前:
+
+- **slot 布局:** 8 字节,`[0..4) = ptr (u32-LE)`、`[4..8) = len (u32-LE)`。按 `schedule_pos` 直接索引。
+- **stash_base 推导(纯算术,ABI 常量 + N + imports flag,host 与 codegen 同一公式):**
+  - `event_end = imports.empty() ? kNodeEventLogBase (1024) : event_records_base + N * event_record_bytes`(后者 = `1032 + 40*N`,天然 8 对齐)。
+  - `stash_base = event_end`。
+  - `stash_extent = 8 * N`(仅当 workflow 至少有一个 opaque node;pure-P6 workflow 为 0,不 reserved)。
+- **各 lane 的 heap_base / cursor:**
+  - pure-opaque identity(无 imports、无 P6):`heap_base = align8(1024 + 8*N)`(原 1024)。
+  - pure-opaque capability(有 imports、无 P6):`heap_base = align8(1032 + 40*N + 8*N) = align8(1032 + 48*N)`(`compute_event_layout` 扩展 stash 项)。
+  - hybrid / P6(有 P6 node):cursor planner 的 cursor 起点从 `event_end` 上移到 `event_end + 8*N`(`:12324-12339`),后续 bridge control / node blocks / scratch / entry payload / result placements / wf_output / state-trace / normalize / transcode 全部顺移;`wf_heap_base` 是顺移后的 cursor 末值。
+  - pure-P6(无 opaque node):`stash_extent = 0`,cursor 起点不变,**module bytes 与现状逐字节相同**。
+- **slot 0 与 event header 复用(identity lane)的安全条件(协调者已复核):** identity workflow(imports 为空)的 stash slot 0 占据 `[1024,1032)`,即 8 字节 node-event header 的同一地址。安全因为:(a) event header 的 reset 发射以 `capability_workflow` 为条件(`core_wasm_codegen.cpp:16711-16716`),identity workflow **不写** header;(b) host 的 node-event record decode 只对 capability workflow 进行,identity workflow 的 completion 只从 `workflow_completed_count` global 推导(`workflow_session.cpp:2049-2053`),**不读** `[1024,1032)`。builder 必须加一条 pin:identity workflow 跑完后 `[1024,1032)` 解析为 stash slot 0(ptr,len),且 event-decode 路径不被触发。
+- **max-nodes bound(协调者按 `heap_base = 1024 + 8 + per*N ≤ 65536` 重算,decider 初稿数字有误,以本处为准):** capability workflow 低页预算从每 node 40 B 增至 48 B(40 B event record + 8 B stash slot),`heap_base = 1032 + 48*N`:**N=1343 可容(heap_base 65496),N=1344 被拒(65544)**。既有 40 B 布局的实测边界是 **N=1612 可容(65512)、1613 被拒(65552)**(`core_wasm_codegen.cpp:14937-14938` 注释同值;decider 初稿所写 1365 / 1637 是漏掉 `kNodeEventLogBase=1024` 基数的算术错误,作废)。identity workflow 为 `1024 + 8*N ≤ 65536 → N ≤ 8064`(初稿 8191 同样作废),但 scheduler local(`2*N + status + materializer locals`)与 wasm3 function local 上限先收紧——既有 local bound 不变,stash 只增加页字节预算;builder 不得硬编码 1343,一律以 exact checked arithmetic 推导(与 `compute_event_layout` 两阶段同风格)。
+- **overflow:** 既有 capacity check 自然覆盖——P6 cursor 的 `cursor >= kP6CollectionBackingBase`(`:12795`)与 `cursor > kPage`(`:12801`);`compute_event_layout` 的 `heap_base > 65536`(`:14969`)。超限 fail-closed `kResourceExhausted` + SourceRange diagnostic(Principle 5,与 §12.15.9 同 style),命名 stash region 与 65536 page capacity。
+- **host 侧校验:** `stash_base + 8*N <= descriptor.heap_base`(corrupt module → fail-closed);每个 opaque slot 的 `(ptr, len)` 校验 `ptr >= heap_base && ptr + len <= 65536 && ptr != 0 && len != 0`(与 workflow output range check `:1971-1982` 同 style)。
+
+**不增加任何 wire / manifest / core-layout section / snapshot 字段**(§12.15.8 no-version-bump verdict 不变):stash_base 是 ABI 常量 + N + imports flag 的纯算术,host 从 descriptor 既有字段推导。AHFLXM v2 manifest bytes 不变;core-layout section `format_version=3` 不变;recovery snapshot v2 不变。
+
+#### 12.15.19.5 id 排序规则(interleaved completion / suspend / retry)
+
+- **成功 run:** `workflow_completed_count == N`(`:2021` 校验)。host 按 `schedule_pos = 0..N-1` 顺序逐 node decode(P6 → O_k,opaque → stash),`node_facts.output` 赋值;lifecycle helper 的 `add_value`(`wasm_lifecycle.cpp:268-272`)按此顺序分配 node output id 0..N-1;workflow output id = N(`:300-304`)。与 evaluator 的 `0,1,...,N-1(node),N(workflow)` 一致。
+- **cap-result id 交错:** evaluator 在每个 node 的 cap success 时分配 cap-result id(`workflow_runtime.cpp:1138`)、node output id(`:1432`)在后;wasm lifecycle helper 同序(cap_call output `:255-261` → node output `:268-272`)。stash 不改变这一交错——cap-result id 由 GAP 8(§12.15.18.1)的 event projection 保证,wasm lane 单次 invoke、evaluator 的 per-attempt event 由 attempts=N 合成。stash 只填 node output 这一格。
+- **失败 run:** 仅 `i < workflow_completed_count` 的 node completed(`:2029` 校验 `<= N`)。host 只 decode completed node;trapping node 无 stash entry(scheduler 在 OK 校验之后才 stash,trapping node 未到 stash 点)、无 id——与 evaluator 一致(failed node 无 output id)。
+- **suspend(PENDING):** scheduler 在 bump `workflow_completed_count` 之前 return(`:16856` / `:16962`),suspended node 无 stash entry。host 只 decode `i < workflow_completed_count` 的 node。resume 是 **fresh-instance whole-module replay**(§12.6):module 重新实例化、整个 schedule 重跑、memo replay 逐字喂回 `authoritative_json`(`workflow_session.cpp:1044-1053`),scheduler 确定性重跑 → stash 表逐字节重建(bump heap 分配顺序确定、cap bytes 逐字相同 → JSON bytes 落在相同地址)。host 在 replay run 的 run 后读重建后的 stash,与 origination run 得到相同的 per-node output 与 id 序列。**replay 不需要特殊 stash 处理——stash 每次 run 重建。**
+- **retry:** wasm lane 不 retry(单次 invoke);cap 失败 → node 失败 → 无 stash entry、无 id。evaluator 的 retry 是 GAP 8 event-parity 范畴,与 stash 正交。
+
+#### 12.15.19.6 guest codegen 发射(per opaque node)
+
+在 `append_workflow_schedule` 的 opaque node 路径,runner 返回 OK 且全部 OK 校验通过之后、bump `workflow_completed_count` 之前,发射:
+
+```
+i32.const <stash_base + schedule_pos*8>   ; 编译期常量地址
+local.get ptr_local                        ; runner 返回的 output ptr
+i32.store align=2 offset=0
+i32.const <stash_base + schedule_pos*8>
+local.get len_local                        ; runner 返回的 output len
+i32.store align=2 offset=4
+```
+
+约 16 bytes / opaque node(2 × `i32.const` + 2 × `local.get` + 2 × `i32.store`)。P6 node **不发射** stash store(沿用 O_k)。identity opaque 路径(`:16926-16940`)与 capability opaque 路径(`:16967-17016`)各加一处;PENDING / ERROR 路径不发射(未完成)。`stash_base` 作为编译期常量 bake 进 scheduler(与 `kNodeEventLogBase` 同等待遇)。
+
+#### 12.15.19.7 host post-run join + replay
+
+`workflow_session.cpp` 的 post-run 路径(§10/§11/§12)重构为统一 node loop:
+
+1. 读 `workflow_completed_count` global(既有,`:2011-2014`)并校验(既有,`:2020-2036`)。
+2. 若 workflow 至少有一个 opaque node:计算 `stash_base`(§12.15.19.4 公式),校验 `stash_base + 8*N <= heap_base`。
+3. 按 `schedule_pos = 0..N-1` 逐 node:
+   - `i >= workflow_completed_count` → 未完成,`node_outputs[i] = nullopt`,不触发 hook。
+   - `is_p6` → 既有 O_k `read_value_at` 路径(`:1816-1838`)。
+   - opaque → 读 stash slot `(ptr, len)`,range 校验(§12.15.19.4),`value_from_json(mem[ptr..ptr+len])`。
+   - decode 失败(P6 `read_value_at` 或 opaque `value_from_json` 或 range 校验)→ **fail-closed** `run_ok = false; run_failure_code = kOutputDecodeFailed`(与 workflow output path 同一 fail-closed path,§12.15.7 决策不变)。
+   - `node_outputs[i] = decoded`;触发 `node_completed_hook`(带真实 output,不再 `NoneValue`——顺带修复 identity workflow 不触发 hook 的既有 parity gap)。
+4. lifecycle helper 按 schedule 顺序 `add_value` 分配 id 0..N-1,workflow output id N(既有机制,§12.15.19.5)。
+5. **不依赖 event record:** node completion 与 output join 只依赖 `workflow_completed_count` + stash/O_k;event record 仍 decode 供 capability lifecycle(GAP 8),但不是 completion authority。identity workflow(无 event record)由此获得完整 per-node output。
+6. **replay:** 同 §12.15.19.5——fresh-instance replay 重建 stash,host 在 replay run 后走同一 join。`decode_opaque_import_args` 的 arg-hash identity(`:1016-1035`)不变。
+7. **无 host heap 新分配模式:** raw JSON bytes 直接从 `read_whole_memory()` 的 span 读(与 workflow output path `:1984-1987` 相同的 `std::string` 构造,既有模式);decoded `Value` 经 `add_value` 入 value store(既有)。无 bridge ABI 使用(stash 是 raw memory 表,不是 bridge call)。
+
+#### 12.15.19.8 失败模式与 diagnostic ranges
+
+| 失败 | 站点 | 行为 |
+|------|------|------|
+| stash slot `ptr == 0` 或 `len == 0`(completed opaque node) | host join | `kOutputDecodeFailed`(scheduler 的 OK-empty=ERROR 契约 `:16977-16985` 保证 completed node 必有非空 output;零 entry = corrupt) |
+| stash slot `ptr + len > 65536` 或 `ptr < heap_base` | host join | `kOutputDecodeFailed`(forged/corrupt entry,与 workflow output range check 同) |
+| `value_from_json` 失败(opaque) | host join | `kOutputDecodeFailed`(与 workflow output `:1991-1999` 同) |
+| `read_value_at` 失败(P6) | host join | `kOutputDecodeFailed`(原 silent `NoneValue`,§12.15.7 fail-closed alignment) |
+| `stash_base + 8*N > heap_base` | host join | `kOutputDecodeFailed`(corrupt module layout) |
+| stash + event + 固定区域超 65536 | codegen | `kResourceExhausted` + SourceRange(Principle 5,§12.15.9 同 style) |
+
+所有 diagnostic 附 node 的 SourceRange(经 §12.15.17 GAP 6 的 facade resolver 表),**不 echo guest 地址**(协调者 choreography 注记)。
+
+#### 12.15.19.9 拒绝的替代方案
+
+1. **(B) host-side join only(identity/canonical 从 entry tuple + input edges 重建;cap node 从 host cap result 重建)— REJECTED。** §12.15.19.1 已证伪:非 entry node 的 input 是 upstream output(host 无副本)、canonical compute node 的 output ≠ input(无法重建)、cap node 的 output 一般 ≠ cap result(`WasmCapabilityCall.output` 是 cap result 不是 node output)。仅单节点 pure-identity 成立。不可 sound。
+2. **(C) hybrid(identity/canonical/P6 用 guest stash,capability node 用 host cap result)— REJECTED。** 同 (B) 的 cap-node unsoundness(cap-then-compute node 的 output 不是 cap result);且把 decode path 劈成 stash / cap-result 两条,违反 uniform decode path。stash 统一覆盖全部 opaque node。
+3. **(A-variant) stash 全部 node(含 P6),host 从 stash decode 一切 — REJECTED。** P6 output 是 P4-D bytes(不是 JSON),host 仍需 `read_value_at`(P6)与 `value_from_json`(opaque)两个 decode 函数——stash P6 不消除分支。却给每个 P6 node 加 8 字节 slot + ~16 bytes code,并把每个 P6 workflow(含 pure-P6)的固定区域上移 8*N、破坏 byte-parity,零收益。收窄为 opaque-only。
+4. **(D) per-node 固定 output region(把 JSON bytes 拷进 O_k 式固定块)— REJECTED。** JSON output 变长(unbounded String/collection 无静态上界),固定 region 无法 sizing。`(ptr,len)` 表 + bump-heap bytes 是变长 output 的正确模型(与 workflow output path 一致)。
+5. **(E) 扩展 run2 multi-value 返回全部 node tuple — REJECTED。** 2*N 值的 multi-value return 不切实际(wasm3 multi-value 支持、ABI churn、scheduler local 生命周期)。固定表是 flat-store 正解(Principle 3)。
+6. **(F) 把 per-node output 编进 node-event record(40→48 字节)— REJECTED。** identity workflow 不写 event record(这正是问题本身),扩展 record 救不了 identity workflow;且改 event record ABI 是 wire-format 变更。stash 与 event system 解耦。
+7. **(G) 新增 core-layout section field 携带 stash_base — REJECTED。** stash_base 是 ABI 常量 + N + imports flag 的纯算术,host 从 descriptor 既有字段可推导;section field 冗余且改 section bytes。§12.15.8 no-version-bump 保持。
+
+#### 12.15.19.10 成本 / LOC
+
+| Component | LOC delta | Notes |
+|-----------|-----------|-------|
+| `core_wasm_codegen.cpp` | ~80 | stash store 发射(identity + capability 两条 opaque 路径)+ stash_base 计算 + `compute_event_layout` 扩展 + cursor 起点调整 |
+| `core_wasm_abi_constants.hpp` | ~15 | `kNodeStashRecordBytes = 8` + 布局推导注释 |
+| `workflow_session.cpp` | ~120 | 统一 node loop + stash base 计算 + range 校验 + opaque decode + fail-closed alignment + hook 修复 |
+| `wasm_runner.cpp`(parity harness) | ~-25 | 删除 `strip_output_value_id` + 调用点(big-bang) |
+| Tests | ~250 | GAP 4 conformance case(多 node identity + capability)+ fail-closed mutation pins(stash 越界 / 零 entry / JSON 损坏 / P6 decode 失败)+ replay stash 重建 |
+| Docs | ~150 | 本节 |
+| **Total** | **~590** | |
+
+#### 12.15.19.11 验收标准
+
+1. **GAP 4 conformance case(§12.15.10 case 5):** 多 node workflow(identity + capability node),wasm lane 的 `output_value_id` 序列与 evaluator 逐字节一致(0,1,...,N),`ahfl.run-report` byte-parity(不 strip)。
+2. **parity harness stripping 删除(big-bang):** `wasm_runner.cpp:1223-1238` 的 `strip_output_value_id` 与 `:1335-1338` 调用点删除;`e3_identity_workflow`、`e3_capability_workflow`、`p2_14_diamond_dag` 三个 WireJson fixture 在**不 strip** 下 byte-parity。
+3. **fail-closed pins:** (a) forged stash entry(ptr 越界)→ `kOutputDecodeFailed`;(b) completed opaque node 的 stash slot 为零 → `kOutputDecodeFailed`;(c) node-output JSON 损坏 → `kOutputDecodeFailed`(非 silent `NoneValue`);(d) P6 node-output decode 失败 → `kOutputDecodeFailed`(原 silent)。
+4. **page capacity:** stash + event + 固定区域超 65536 的 workflow → `kResourceExhausted` + SourceRange。
+5. **byte parity:** pure-P6 workflow(无 opaque node)module bytes 与现状逐字节相同(无 stash region、无 stash store)——既有 P6 conformance golden 验证。
+6. **replay:** 带 opaque node 的 suspend/resume workflow,resume run 的 stash 重建、`output_value_id` 序列与 evaluator 一致。
+7. **census:** `kExpectedAgreed = 73` 不变(GAP 4 已计入 §12.15.17.4 的 72→73 预测;机制修订不新增 case)。
+8. **gates:** ASan build & test clean;WASM=OFF build clean;fresh build `-Werror` clean(CLAUDE.md memory:develop 可积累 -Werror breakage,commit 前 fresh build)。
+
+#### 12.15.19.12 AHFL-specific divergence + prior-decision preservation
+
+**AHFL-specific divergence:** `(ptr,len)` stash 表本身是主流 flat-store 模式(Rust/Clang:index-based 固定表,无 string key)。divergence 在于 fixed 64 KiB single-page 约束(wasm3 embedded host):主流 wasm runtime 有 growable memory,per-node output 表会走 heap allocation;AHFL 的 fixed page 迫使编译期 region 规划 + fail-closed capacity gate。这与 §12.15.9(page capacity accounting)记录的 divergence 同源,不是新 divergence。
+
+**Prior-decision preservation:**
+
+- **§12.15.1-12.15.15:** 保留,不重写。§12.15.7 的 id 分配 / fail-closed / stripping 删除决策不变;仅 per-node output host 可读性机制被本节替换(§12.15.7 顶部已加 superseding pointer)。
+- **§12.15.16(APPROACH B per-node blocks):** 保留。stash 与 per-node relocation 正交;P6 node 的 O_k 路径不变。
+- **§12.15.17(GAP 6/7):** 保留。GAP 6 的 SourceRange resolver 被 stash 的 fail-closed diagnostic 复用;GAP 7 的 rich type matrix 与 stash 正交。
+- **§12.15.18(GAP 8/9):** 保留。GAP 8 的 capability event projection 保证 cap-result id 交错(§12.15.19.5);GAP 9 的 String PtrLen carry 与 stash 正交。
+- **§12.15.8(no version bump):** 不变。stash 不增加 wire / manifest / core-layout section / snapshot 字段。
+- **§12.15.9(page capacity):** 保留,扩展。stash region 纳入同一 capacity check 家族(§12.15.19.4)。
+- **§12.6/§12.14(memo/replay):** 保留。stash 在 fresh-instance replay 中确定性重建(§12.15.19.5),与 memo arg-hash identity 正交。
+- **§12.7(WH-6 cutover,无 fallback):** 保留。WH-5c.5 仍按 §12.15.18.3 sequencing 排在 5c.4 后;gate set 不变(5c.1-5c.9)。
